@@ -1,9 +1,11 @@
-import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
+import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
 import type { Logger } from 'pino';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository } from '@alfred/storage';
 import { AnthropicProvider } from '@alfred/llm';
 import { TelegramAdapter, type MessagingAdapter } from '@alfred/messaging';
+import { RuleEngine, SecurityManager } from '@alfred/security';
+import { SkillRegistry, SkillSandbox, CalculatorSkill, SystemInfoSkill, WebSearchSkill } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
 
@@ -22,20 +24,50 @@ export class Alfred {
 
     // 1. Initialize storage
     this.database = new Database(this.config.storage.path);
-    const conversationRepo = new ConversationRepository(this.database.getDb());
-    const userRepo = new UserRepository(this.database.getDb());
+    const db = this.database.getDb();
+    const conversationRepo = new ConversationRepository(db);
+    const userRepo = new UserRepository(db);
+    const auditRepo = new AuditRepository(db);
     this.logger.info('Storage initialized');
 
-    // 2. Initialize LLM provider
+    // 2. Initialize security
+    const ruleEngine = new RuleEngine();
+    const securityManager = new SecurityManager(
+      ruleEngine,
+      auditRepo,
+      this.logger.child({ component: 'security' }),
+    );
+    this.logger.info('Security engine initialized');
+
+    // 3. Initialize skills
+    const skillRegistry = new SkillRegistry();
+    skillRegistry.register(new CalculatorSkill());
+    skillRegistry.register(new SystemInfoSkill());
+    skillRegistry.register(new WebSearchSkill());
+    this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
+
+    const skillSandbox = new SkillSandbox(
+      this.logger.child({ component: 'sandbox' }),
+    );
+
+    // 4. Initialize LLM provider
     const llmProvider = new AnthropicProvider(this.config.llm);
     await llmProvider.initialize();
     this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
 
-    // 3. Create conversation manager and pipeline
+    // 5. Create conversation manager and pipeline
     const conversationManager = new ConversationManager(conversationRepo);
-    this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger);
+    this.pipeline = new MessagePipeline(
+      llmProvider,
+      conversationManager,
+      userRepo,
+      this.logger.child({ component: 'pipeline' }),
+      skillRegistry,
+      skillSandbox,
+      securityManager,
+    );
 
-    // 4. Initialize messaging adapters
+    // 6. Initialize messaging adapters
     if (this.config.telegram.enabled && this.config.telegram.token) {
       const telegram = new TelegramAdapter(this.config.telegram.token);
       this.adapters.set('telegram', telegram);

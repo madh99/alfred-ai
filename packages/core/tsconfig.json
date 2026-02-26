@@ -12,6 +12,7 @@
     { "path": "../storage" },
     { "path": "../llm" },
     { "path": "../messaging" },
-    { "path": "../security" }
+    { "path": "../security" },
+    { "path": "../skills" }
   ]
 }

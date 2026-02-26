@@ -24,6 +24,7 @@
     "@alfred/llm": "workspace:*",
     "@alfred/messaging": "workspace:*",
     "@alfred/security": "workspace:*",
+    "@alfred/skills": "workspace:*",
     "pino": "^9.6.0"
   }
 }

@@ -3,6 +3,7 @@
 # First matching rule wins.
 
 rules:
+  # Allow all read-level skills (calculator, system_info, web_search) for everyone
   - id: allow-all-read
     effect: allow
     priority: 100
@@ -10,6 +11,7 @@ rules:
     actions: ["*"]
     riskLevels: [read]
 
+  # Allow write-level skills in DMs
   - id: allow-write-for-dm
     effect: allow
     priority: 200
@@ -19,6 +21,18 @@ rules:
     conditions:
       chatType: dm
 
+  # Rate-limit write actions: max 30 per hour per user
+  - id: rate-limit-write
+    effect: allow
+    priority: 250
+    scope: user
+    actions: ["*"]
+    riskLevels: [write]
+    rateLimit:
+      maxInvocations: 30
+      windowSeconds: 3600
+
+  # Deny destructive and admin actions by default
   - id: deny-destructive
     effect: deny
     priority: 500
@@ -26,6 +40,7 @@ rules:
     actions: ["*"]
     riskLevels: [destructive, admin]
 
+  # Catch-all deny
   - id: deny-default
     effect: deny
     priority: 9999

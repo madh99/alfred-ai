@@ -19,6 +19,7 @@
   "dependencies": {
     "@alfred/types": "workspace:*",
     "@alfred/logger": "workspace:*",
-    "@alfred/storage": "workspace:*"
+    "@alfred/storage": "workspace:*",
+    "pino": "^9.6.0"
   }
 }
