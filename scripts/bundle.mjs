@@ -5,11 +5,15 @@
  */
 import { build } from 'esbuild';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const outfile = 'packages/cli/bundle/index.js';
+// Resolve paths relative to the repo root (one level up from scripts/)
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const outfile = resolve(root, 'packages/cli/bundle/index.js');
 
 await build({
-  entryPoints: ['packages/cli/dist/index.js'],
+  entryPoints: [resolve(root, 'packages/cli/dist/index.js')],
   bundle: true,
   platform: 'node',
   target: 'node20',
@@ -26,6 +30,10 @@ await build({
         b.onResolve({ filter: /^[^.]/ }, (args) => {
           if (args.path.startsWith('@alfred/')) {
             return null; // let esbuild resolve & bundle it
+          }
+          // Don't externalize absolute paths (entry points, resolved files)
+          if (args.path.startsWith('/') || /^[a-zA-Z]:/.test(args.path)) {
+            return null;
           }
           return { path: args.path, external: true };
         });
