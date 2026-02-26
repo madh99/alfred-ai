@@ -204,8 +204,21 @@ export async function setupCommand(): Promise<void> {
         `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`,
       );
       console.log(`  ${green('>')} API key set: ${dim(maskKey(apiKey))}`);
-    } else {
-      console.log(`  ${dim('No API key needed for Ollama.')}`);
+    }
+
+    // ── 3b. Base URL (for Ollama / OpenRouter / custom endpoints) ──
+    let baseUrl = provider.baseUrl ?? '';
+    if (provider.name === 'ollama') {
+      console.log('');
+      baseUrl = await askWithDefault(
+        rl,
+        'Ollama URL (use a remote address if Ollama runs on another machine)',
+        'http://localhost:11434',
+      );
+      if (!baseUrl.endsWith('/v1')) {
+        baseUrl = baseUrl.replace(/\/+$/, '') + '/v1';
+      }
+      console.log(`  ${green('>')} Ollama URL: ${dim(baseUrl)}`);
     }
 
     // ── 4. Model ─────────────────────────────────────────────────
@@ -316,8 +329,8 @@ export async function setupCommand(): Promise<void> {
       envLines.push(`ALFRED_LLM_MODEL=${model}`);
     }
 
-    if (provider.baseUrl) {
-      envLines.push(`ALFRED_LLM_BASE_URL=${provider.baseUrl}`);
+    if (baseUrl) {
+      envLines.push(`ALFRED_LLM_BASE_URL=${baseUrl}`);
     }
 
     envLines.push('', '# === Messaging Platforms ===', '');

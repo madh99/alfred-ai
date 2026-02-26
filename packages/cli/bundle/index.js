@@ -9,11 +9,11 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// ../config/dist/schema.js
+// packages/config/dist/schema.js
 import { z } from "zod";
 var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
-  "../config/dist/schema.js"() {
+  "packages/config/dist/schema.js"() {
     "use strict";
     TelegramConfigSchema = z.object({
       token: z.string().default(""),
@@ -74,10 +74,10 @@ var init_schema = __esm({
   }
 });
 
-// ../config/dist/defaults.js
+// packages/config/dist/defaults.js
 var DEFAULT_CONFIG;
 var init_defaults = __esm({
-  "../config/dist/defaults.js"() {
+  "packages/config/dist/defaults.js"() {
     "use strict";
     DEFAULT_CONFIG = {
       name: "Alfred",
@@ -125,7 +125,7 @@ var init_defaults = __esm({
   }
 });
 
-// ../config/dist/loader.js
+// packages/config/dist/loader.js
 import fs from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -164,7 +164,7 @@ function applyEnvOverrides(config) {
 }
 var ENV_MAP, ConfigLoader;
 var init_loader = __esm({
-  "../config/dist/loader.js"() {
+  "packages/config/dist/loader.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -208,9 +208,9 @@ var init_loader = __esm({
   }
 });
 
-// ../config/dist/index.js
+// packages/config/dist/index.js
 var init_dist = __esm({
-  "../config/dist/index.js"() {
+  "packages/config/dist/index.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -218,7 +218,7 @@ var init_dist = __esm({
   }
 });
 
-// ../logger/dist/logger.js
+// packages/logger/dist/logger.js
 import pino from "pino";
 function createLogger(name, level) {
   const logLevel = level ?? process.env.LOG_LEVEL ?? "info";
@@ -233,35 +233,35 @@ function createLogger(name, level) {
   return pino({ name, level: logLevel });
 }
 var init_logger = __esm({
-  "../logger/dist/logger.js"() {
+  "packages/logger/dist/logger.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/audit.js
+// packages/logger/dist/audit.js
 import pino2 from "pino";
 var init_audit = __esm({
-  "../logger/dist/audit.js"() {
+  "packages/logger/dist/audit.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/index.js
+// packages/logger/dist/index.js
 var init_dist2 = __esm({
-  "../logger/dist/index.js"() {
+  "packages/logger/dist/index.js"() {
     "use strict";
     init_logger();
     init_audit();
   }
 });
 
-// ../storage/dist/database.js
+// packages/storage/dist/database.js
 import BetterSqlite3 from "better-sqlite3";
 import fs2 from "node:fs";
 import path2 from "node:path";
 var Database;
 var init_database = __esm({
-  "../storage/dist/database.js"() {
+  "packages/storage/dist/database.js"() {
     "use strict";
     Database = class {
       db;
@@ -335,11 +335,11 @@ var init_database = __esm({
   }
 });
 
-// ../storage/dist/repositories/conversation-repository.js
+// packages/storage/dist/repositories/conversation-repository.js
 import crypto from "node:crypto";
 var ConversationRepository;
 var init_conversation_repository = __esm({
-  "../storage/dist/repositories/conversation-repository.js"() {
+  "packages/storage/dist/repositories/conversation-repository.js"() {
     "use strict";
     ConversationRepository = class {
       db;
@@ -417,11 +417,11 @@ var init_conversation_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/user-repository.js
+// packages/storage/dist/repositories/user-repository.js
 import crypto2 from "node:crypto";
 var UserRepository;
 var init_user_repository = __esm({
-  "../storage/dist/repositories/user-repository.js"() {
+  "packages/storage/dist/repositories/user-repository.js"() {
     "use strict";
     UserRepository = class {
       db;
@@ -488,10 +488,10 @@ var init_user_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/audit-repository.js
+// packages/storage/dist/repositories/audit-repository.js
 var AuditRepository;
 var init_audit_repository = __esm({
-  "../storage/dist/repositories/audit-repository.js"() {
+  "packages/storage/dist/repositories/audit-repository.js"() {
     "use strict";
     AuditRepository = class {
       db;
@@ -558,24 +558,24 @@ var init_audit_repository = __esm({
   }
 });
 
-// ../storage/dist/migrations/migrator.js
+// packages/storage/dist/migrations/migrator.js
 var init_migrator = __esm({
-  "../storage/dist/migrations/migrator.js"() {
+  "packages/storage/dist/migrations/migrator.js"() {
     "use strict";
   }
 });
 
-// ../storage/dist/migrations/index.js
+// packages/storage/dist/migrations/index.js
 var init_migrations = __esm({
-  "../storage/dist/migrations/index.js"() {
+  "packages/storage/dist/migrations/index.js"() {
     "use strict";
     init_migrator();
   }
 });
 
-// ../storage/dist/index.js
+// packages/storage/dist/index.js
 var init_dist3 = __esm({
-  "../storage/dist/index.js"() {
+  "packages/storage/dist/index.js"() {
     "use strict";
     init_database();
     init_conversation_repository();
@@ -586,10 +586,10 @@ var init_dist3 = __esm({
   }
 });
 
-// ../llm/dist/provider.js
+// packages/llm/dist/provider.js
 var LLMProvider;
 var init_provider = __esm({
-  "../llm/dist/provider.js"() {
+  "packages/llm/dist/provider.js"() {
     "use strict";
     LLMProvider = class {
       config;
@@ -600,11 +600,11 @@ var init_provider = __esm({
   }
 });
 
-// ../llm/dist/providers/anthropic.js
+// packages/llm/dist/providers/anthropic.js
 import Anthropic from "@anthropic-ai/sdk";
 var AnthropicProvider;
 var init_anthropic = __esm({
-  "../llm/dist/providers/anthropic.js"() {
+  "packages/llm/dist/providers/anthropic.js"() {
     "use strict";
     init_provider();
     AnthropicProvider = class extends LLMProvider {
@@ -735,11 +735,11 @@ var init_anthropic = __esm({
   }
 });
 
-// ../llm/dist/providers/openai.js
+// packages/llm/dist/providers/openai.js
 import OpenAI from "openai";
 var OpenAIProvider;
 var init_openai = __esm({
-  "../llm/dist/providers/openai.js"() {
+  "packages/llm/dist/providers/openai.js"() {
     "use strict";
     init_provider();
     OpenAIProvider = class extends LLMProvider {
@@ -962,10 +962,10 @@ var init_openai = __esm({
   }
 });
 
-// ../llm/dist/providers/openrouter.js
+// packages/llm/dist/providers/openrouter.js
 var OpenRouterProvider;
 var init_openrouter = __esm({
-  "../llm/dist/providers/openrouter.js"() {
+  "packages/llm/dist/providers/openrouter.js"() {
     "use strict";
     init_openai();
     OpenRouterProvider = class extends OpenAIProvider {
@@ -982,10 +982,10 @@ var init_openrouter = __esm({
   }
 });
 
-// ../llm/dist/providers/ollama.js
+// packages/llm/dist/providers/ollama.js
 var OllamaProvider;
 var init_ollama = __esm({
-  "../llm/dist/providers/ollama.js"() {
+  "packages/llm/dist/providers/ollama.js"() {
     "use strict";
     init_provider();
     OllamaProvider = class extends LLMProvider {
@@ -1244,7 +1244,7 @@ var init_ollama = __esm({
   }
 });
 
-// ../llm/dist/provider-factory.js
+// packages/llm/dist/provider-factory.js
 function createLLMProvider(config) {
   switch (config.provider) {
     case "anthropic":
@@ -1260,7 +1260,7 @@ function createLLMProvider(config) {
   }
 }
 var init_provider_factory = __esm({
-  "../llm/dist/provider-factory.js"() {
+  "packages/llm/dist/provider-factory.js"() {
     "use strict";
     init_anthropic();
     init_openai();
@@ -1269,10 +1269,10 @@ var init_provider_factory = __esm({
   }
 });
 
-// ../llm/dist/prompt-builder.js
+// packages/llm/dist/prompt-builder.js
 var PromptBuilder;
 var init_prompt_builder = __esm({
-  "../llm/dist/prompt-builder.js"() {
+  "packages/llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
       buildSystemPrompt() {
@@ -1310,9 +1310,9 @@ var init_prompt_builder = __esm({
   }
 });
 
-// ../llm/dist/index.js
+// packages/llm/dist/index.js
 var init_dist4 = __esm({
-  "../llm/dist/index.js"() {
+  "packages/llm/dist/index.js"() {
     "use strict";
     init_provider();
     init_anthropic();
@@ -1324,10 +1324,10 @@ var init_dist4 = __esm({
   }
 });
 
-// ../security/dist/rate-limiter.js
+// packages/security/dist/rate-limiter.js
 var RateLimiter;
 var init_rate_limiter = __esm({
-  "../security/dist/rate-limiter.js"() {
+  "packages/security/dist/rate-limiter.js"() {
     "use strict";
     RateLimiter = class {
       buckets = /* @__PURE__ */ new Map();
@@ -1373,10 +1373,10 @@ var init_rate_limiter = __esm({
   }
 });
 
-// ../security/dist/rule-engine.js
+// packages/security/dist/rule-engine.js
 var RuleEngine;
 var init_rule_engine = __esm({
-  "../security/dist/rule-engine.js"() {
+  "packages/security/dist/rule-engine.js"() {
     "use strict";
     init_rate_limiter();
     RuleEngine = class {
@@ -1519,10 +1519,10 @@ var init_rule_engine = __esm({
   }
 });
 
-// ../security/dist/rule-loader.js
+// packages/security/dist/rule-loader.js
 var VALID_EFFECTS, VALID_SCOPES, VALID_RISK_LEVELS, RuleLoader;
 var init_rule_loader = __esm({
-  "../security/dist/rule-loader.js"() {
+  "packages/security/dist/rule-loader.js"() {
     "use strict";
     VALID_EFFECTS = ["allow", "deny"];
     VALID_SCOPES = ["global", "user", "conversation", "platform"];
@@ -1602,11 +1602,11 @@ var init_rule_loader = __esm({
   }
 });
 
-// ../security/dist/security-manager.js
+// packages/security/dist/security-manager.js
 import crypto3 from "node:crypto";
 var SecurityManager;
 var init_security_manager = __esm({
-  "../security/dist/security-manager.js"() {
+  "packages/security/dist/security-manager.js"() {
     "use strict";
     SecurityManager = class {
       ruleEngine;
@@ -1652,9 +1652,9 @@ var init_security_manager = __esm({
   }
 });
 
-// ../security/dist/index.js
+// packages/security/dist/index.js
 var init_dist5 = __esm({
-  "../security/dist/index.js"() {
+  "packages/security/dist/index.js"() {
     "use strict";
     init_rule_engine();
     init_rate_limiter();
@@ -1663,20 +1663,20 @@ var init_dist5 = __esm({
   }
 });
 
-// ../skills/dist/skill.js
+// packages/skills/dist/skill.js
 var Skill;
 var init_skill = __esm({
-  "../skills/dist/skill.js"() {
+  "packages/skills/dist/skill.js"() {
     "use strict";
     Skill = class {
     };
   }
 });
 
-// ../skills/dist/skill-registry.js
+// packages/skills/dist/skill-registry.js
 var SkillRegistry;
 var init_skill_registry = __esm({
-  "../skills/dist/skill-registry.js"() {
+  "packages/skills/dist/skill-registry.js"() {
     "use strict";
     SkillRegistry = class {
       skills = /* @__PURE__ */ new Map();
@@ -1707,10 +1707,10 @@ var init_skill_registry = __esm({
   }
 });
 
-// ../skills/dist/skill-sandbox.js
+// packages/skills/dist/skill-sandbox.js
 var DEFAULT_TIMEOUT_MS, SkillSandbox;
 var init_skill_sandbox = __esm({
-  "../skills/dist/skill-sandbox.js"() {
+  "packages/skills/dist/skill-sandbox.js"() {
     "use strict";
     DEFAULT_TIMEOUT_MS = 3e4;
     SkillSandbox = class {
@@ -1743,20 +1743,20 @@ var init_skill_sandbox = __esm({
   }
 });
 
-// ../skills/dist/plugin-loader.js
+// packages/skills/dist/plugin-loader.js
 import fs3 from "node:fs";
 import path3 from "node:path";
 var init_plugin_loader = __esm({
-  "../skills/dist/plugin-loader.js"() {
+  "packages/skills/dist/plugin-loader.js"() {
     "use strict";
     init_skill();
   }
 });
 
-// ../skills/dist/built-in/calculator.js
+// packages/skills/dist/built-in/calculator.js
 var ALLOWED_PATTERN, SAFE_EXPRESSION_PATTERN, CalculatorSkill;
 var init_calculator = __esm({
-  "../skills/dist/built-in/calculator.js"() {
+  "packages/skills/dist/built-in/calculator.js"() {
     "use strict";
     init_skill();
     ALLOWED_PATTERN = /^[\d+\-*/().,%\s]|Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/;
@@ -1824,10 +1824,10 @@ var init_calculator = __esm({
   }
 });
 
-// ../skills/dist/built-in/system-info.js
+// packages/skills/dist/built-in/system-info.js
 var SystemInfoSkill;
 var init_system_info = __esm({
-  "../skills/dist/built-in/system-info.js"() {
+  "packages/skills/dist/built-in/system-info.js"() {
     "use strict";
     init_skill();
     SystemInfoSkill = class extends Skill {
@@ -1910,10 +1910,10 @@ var init_system_info = __esm({
   }
 });
 
-// ../skills/dist/built-in/web-search.js
+// packages/skills/dist/built-in/web-search.js
 var WebSearchSkill;
 var init_web_search = __esm({
-  "../skills/dist/built-in/web-search.js"() {
+  "packages/skills/dist/built-in/web-search.js"() {
     "use strict";
     init_skill();
     WebSearchSkill = class extends Skill {
@@ -1947,11 +1947,11 @@ var init_web_search = __esm({
   }
 });
 
-// ../skills/dist/built-in/reminder.js
+// packages/skills/dist/built-in/reminder.js
 import { randomUUID } from "node:crypto";
 var ReminderSkill;
 var init_reminder = __esm({
-  "../skills/dist/built-in/reminder.js"() {
+  "packages/skills/dist/built-in/reminder.js"() {
     "use strict";
     init_skill();
     ReminderSkill = class extends Skill {
@@ -2078,11 +2078,11 @@ ${userReminders.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${new
   }
 });
 
-// ../skills/dist/built-in/note.js
+// packages/skills/dist/built-in/note.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 var NoteSkill;
 var init_note = __esm({
-  "../skills/dist/built-in/note.js"() {
+  "packages/skills/dist/built-in/note.js"() {
     "use strict";
     init_skill();
     NoteSkill = class extends Skill {
@@ -2241,10 +2241,10 @@ ${matches.map((n) => `- ${n.noteId}: "${n.title}"`).join("\n")}`
   }
 });
 
-// ../skills/dist/built-in/summarize.js
+// packages/skills/dist/built-in/summarize.js
 var DEFAULT_MAX_LENGTH, SummarizeSkill;
 var init_summarize = __esm({
-  "../skills/dist/built-in/summarize.js"() {
+  "packages/skills/dist/built-in/summarize.js"() {
     "use strict";
     init_skill();
     DEFAULT_MAX_LENGTH = 280;
@@ -2442,10 +2442,10 @@ var init_summarize = __esm({
   }
 });
 
-// ../skills/dist/built-in/translate.js
+// packages/skills/dist/built-in/translate.js
 var TranslateSkill;
 var init_translate = __esm({
-  "../skills/dist/built-in/translate.js"() {
+  "packages/skills/dist/built-in/translate.js"() {
     "use strict";
     init_skill();
     TranslateSkill = class extends Skill {
@@ -2507,10 +2507,10 @@ Requested text: "${text}"`
   }
 });
 
-// ../skills/dist/built-in/weather.js
+// packages/skills/dist/built-in/weather.js
 var WeatherSkill;
 var init_weather = __esm({
-  "../skills/dist/built-in/weather.js"() {
+  "packages/skills/dist/built-in/weather.js"() {
     "use strict";
     init_skill();
     WeatherSkill = class extends Skill {
@@ -2558,9 +2558,9 @@ var init_weather = __esm({
   }
 });
 
-// ../skills/dist/index.js
+// packages/skills/dist/index.js
 var init_dist6 = __esm({
-  "../skills/dist/index.js"() {
+  "packages/skills/dist/index.js"() {
     "use strict";
     init_skill();
     init_skill_registry();
@@ -2577,10 +2577,10 @@ var init_dist6 = __esm({
   }
 });
 
-// ../core/dist/conversation-manager.js
+// packages/core/dist/conversation-manager.js
 var ConversationManager;
 var init_conversation_manager = __esm({
-  "../core/dist/conversation-manager.js"() {
+  "packages/core/dist/conversation-manager.js"() {
     "use strict";
     ConversationManager = class {
       conversations;
@@ -2605,10 +2605,10 @@ var init_conversation_manager = __esm({
   }
 });
 
-// ../core/dist/message-pipeline.js
+// packages/core/dist/message-pipeline.js
 var MAX_TOOL_ITERATIONS, MessagePipeline;
 var init_message_pipeline = __esm({
-  "../core/dist/message-pipeline.js"() {
+  "packages/core/dist/message-pipeline.js"() {
     "use strict";
     init_dist4();
     MAX_TOOL_ITERATIONS = 10;
@@ -2743,11 +2743,11 @@ var init_message_pipeline = __esm({
   }
 });
 
-// ../messaging/dist/adapter.js
+// packages/messaging/dist/adapter.js
 import { EventEmitter } from "node:events";
 var MessagingAdapter;
 var init_adapter = __esm({
-  "../messaging/dist/adapter.js"() {
+  "packages/messaging/dist/adapter.js"() {
     "use strict";
     MessagingAdapter = class extends EventEmitter {
       status = "disconnected";
@@ -2758,7 +2758,7 @@ var init_adapter = __esm({
   }
 });
 
-// ../messaging/dist/adapters/telegram.js
+// packages/messaging/dist/adapters/telegram.js
 import { Bot } from "grammy";
 function mapParseMode(mode) {
   if (mode === "markdown")
@@ -2769,7 +2769,7 @@ function mapParseMode(mode) {
 }
 var TelegramAdapter;
 var init_telegram = __esm({
-  "../messaging/dist/adapters/telegram.js"() {
+  "packages/messaging/dist/adapters/telegram.js"() {
     "use strict";
     init_adapter();
     TelegramAdapter = class extends MessagingAdapter {
@@ -2829,11 +2829,11 @@ var init_telegram = __esm({
   }
 });
 
-// ../messaging/dist/adapters/discord.js
+// packages/messaging/dist/adapters/discord.js
 import { Client, GatewayIntentBits, Events } from "discord.js";
 var DiscordAdapter;
 var init_discord = __esm({
-  "../messaging/dist/adapters/discord.js"() {
+  "packages/messaging/dist/adapters/discord.js"() {
     "use strict";
     init_adapter();
     DiscordAdapter = class extends MessagingAdapter {
@@ -2925,10 +2925,10 @@ var init_discord = __esm({
   }
 });
 
-// ../messaging/dist/adapters/matrix.js
+// packages/messaging/dist/adapters/matrix.js
 var MatrixAdapter;
 var init_matrix = __esm({
-  "../messaging/dist/adapters/matrix.js"() {
+  "packages/messaging/dist/adapters/matrix.js"() {
     "use strict";
     init_adapter();
     MatrixAdapter = class extends MessagingAdapter {
@@ -3001,10 +3001,10 @@ var init_matrix = __esm({
   }
 });
 
-// ../messaging/dist/adapters/whatsapp.js
+// packages/messaging/dist/adapters/whatsapp.js
 var WhatsAppAdapter;
 var init_whatsapp = __esm({
-  "../messaging/dist/adapters/whatsapp.js"() {
+  "packages/messaging/dist/adapters/whatsapp.js"() {
     "use strict";
     init_adapter();
     WhatsAppAdapter = class extends MessagingAdapter {
@@ -3104,10 +3104,10 @@ var init_whatsapp = __esm({
   }
 });
 
-// ../messaging/dist/adapters/signal.js
+// packages/messaging/dist/adapters/signal.js
 var SignalAdapter;
 var init_signal = __esm({
-  "../messaging/dist/adapters/signal.js"() {
+  "packages/messaging/dist/adapters/signal.js"() {
     "use strict";
     init_adapter();
     SignalAdapter = class extends MessagingAdapter {
@@ -3216,7 +3216,7 @@ var init_signal = __esm({
   }
 });
 
-// ../messaging/dist/index.js
+// packages/messaging/dist/index.js
 var dist_exports = {};
 __export(dist_exports, {
   DiscordAdapter: () => DiscordAdapter,
@@ -3227,7 +3227,7 @@ __export(dist_exports, {
   WhatsAppAdapter: () => WhatsAppAdapter
 });
 var init_dist7 = __esm({
-  "../messaging/dist/index.js"() {
+  "packages/messaging/dist/index.js"() {
     "use strict";
     init_adapter();
     init_telegram();
@@ -3238,10 +3238,10 @@ var init_dist7 = __esm({
   }
 });
 
-// ../core/dist/alfred.js
+// packages/core/dist/alfred.js
 var Alfred;
 var init_alfred = __esm({
-  "../core/dist/alfred.js"() {
+  "packages/core/dist/alfred.js"() {
     "use strict";
     init_dist2();
     init_dist3();
@@ -3371,9 +3371,9 @@ var init_alfred = __esm({
   }
 });
 
-// ../core/dist/index.js
+// packages/core/dist/index.js
 var init_dist8 = __esm({
-  "../core/dist/index.js"() {
+  "packages/core/dist/index.js"() {
     "use strict";
     init_alfred();
     init_message_pipeline();
@@ -3381,7 +3381,7 @@ var init_dist8 = __esm({
   }
 });
 
-// dist/commands/start.js
+// packages/cli/dist/commands/start.js
 var start_exports = {};
 __export(start_exports, {
   startCommand: () => startCommand
@@ -3433,7 +3433,7 @@ async function startCommand() {
   }
 }
 var init_start = __esm({
-  "dist/commands/start.js"() {
+  "packages/cli/dist/commands/start.js"() {
     "use strict";
     init_dist();
     init_dist2();
@@ -3441,7 +3441,7 @@ var init_start = __esm({
   }
 });
 
-// dist/commands/setup.js
+// packages/cli/dist/commands/setup.js
 var setup_exports = {};
 __export(setup_exports, {
   setupCommand: () => setupCommand
@@ -3497,8 +3497,15 @@ ${bold("Which LLM provider would you like to use?")}`);
       console.log("");
       apiKey = await askRequired(rl, `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`);
       console.log(`  ${green(">")} API key set: ${dim(maskKey(apiKey))}`);
-    } else {
-      console.log(`  ${dim("No API key needed for Ollama.")}`);
+    }
+    let baseUrl = provider.baseUrl ?? "";
+    if (provider.name === "ollama") {
+      console.log("");
+      baseUrl = await askWithDefault(rl, "Ollama URL (use a remote address if Ollama runs on another machine)", "http://localhost:11434");
+      if (!baseUrl.endsWith("/v1")) {
+        baseUrl = baseUrl.replace(/\/+$/, "") + "/v1";
+      }
+      console.log(`  ${green(">")} Ollama URL: ${dim(baseUrl)}`);
     }
     console.log("");
     const model = await askWithDefault(rl, "Which model?", provider.defaultModel);
@@ -3580,8 +3587,8 @@ ${bold("Writing configuration files...")}`);
     if (model !== provider.defaultModel) {
       envLines.push(`ALFRED_LLM_MODEL=${model}`);
     }
-    if (provider.baseUrl) {
-      envLines.push(`ALFRED_LLM_BASE_URL=${provider.baseUrl}`);
+    if (baseUrl) {
+      envLines.push(`ALFRED_LLM_BASE_URL=${baseUrl}`);
     }
     envLines.push("", "# === Messaging Platforms ===", "");
     for (const [envKey, envVal] of Object.entries(envOverrides)) {
@@ -3724,7 +3731,7 @@ ${DIM}  Personal AI Assistant \u2014 Setup Wizard${RESET}
 }
 var RESET, BOLD, DIM, GREEN, YELLOW, CYAN, RED, MAGENTA, PROVIDERS, PLATFORMS;
 var init_setup = __esm({
-  "dist/commands/setup.js"() {
+  "packages/cli/dist/commands/setup.js"() {
     "use strict";
     RESET = "\x1B[0m";
     BOLD = "\x1B[1m";
@@ -3849,7 +3856,7 @@ var init_setup = __esm({
   }
 });
 
-// dist/commands/config.js
+// packages/cli/dist/commands/config.js
 var config_exports = {};
 __export(config_exports, {
   configCommand: () => configCommand
@@ -3896,14 +3903,14 @@ async function configCommand() {
 }
 var SENSITIVE_KEYS;
 var init_config = __esm({
-  "dist/commands/config.js"() {
+  "packages/cli/dist/commands/config.js"() {
     "use strict";
     init_dist();
     SENSITIVE_KEYS = ["token", "apikey", "api_key", "accesstoken", "secret", "password"];
   }
 });
 
-// dist/commands/rules.js
+// packages/cli/dist/commands/rules.js
 var rules_exports = {};
 __export(rules_exports, {
   rulesCommand: () => rulesCommand
@@ -3982,14 +3989,14 @@ async function rulesCommand() {
   }
 }
 var init_rules = __esm({
-  "dist/commands/rules.js"() {
+  "packages/cli/dist/commands/rules.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/status.js
+// packages/cli/dist/commands/status.js
 var status_exports = {};
 __export(status_exports, {
   statusCommand: () => statusCommand
@@ -4089,14 +4096,14 @@ async function statusCommand() {
   console.log(`  Pretty: ${config.logger.pretty}`);
 }
 var init_status = __esm({
-  "dist/commands/status.js"() {
+  "packages/cli/dist/commands/status.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/logs.js
+// packages/cli/dist/commands/logs.js
 var logs_exports = {};
 __export(logs_exports, {
   logsCommand: () => logsCommand
@@ -4159,14 +4166,14 @@ async function logsCommand(tail) {
   }
 }
 var init_logs = __esm({
-  "dist/commands/logs.js"() {
+  "packages/cli/dist/commands/logs.js"() {
     "use strict";
     init_dist();
     init_dist3();
   }
 });
 
-// dist/index.js
+// packages/cli/dist/index.js
 var VERSION = "0.1.0";
 var HELP_TEXT = `
 Alfred CLI v${VERSION}
