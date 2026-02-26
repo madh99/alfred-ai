@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 
-import { startCommand } from './commands/start.js';
-import { configCommand } from './commands/config.js';
-import { rulesCommand } from './commands/rules.js';
-import { statusCommand } from './commands/status.js';
-import { logsCommand } from './commands/logs.js';
+// Commands are loaded dynamically via import() to avoid pulling in heavy
+// dependencies (core → messaging → native modules) at startup. This keeps
+// lightweight commands like --help, setup, config, status instant.
 
 const VERSION = '0.1.0';
 
@@ -17,6 +15,7 @@ Usage:
 
 Commands:
   start          Start Alfred (load config, bootstrap, and run)
+  setup          Interactive setup wizard (configure LLM, platforms, API keys)
   config         Show current resolved configuration (API keys redacted)
   rules          List loaded security rules from the rules path
   status         Show status overview (adapters, LLM, rules)
@@ -89,23 +88,37 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // Dispatch to command
+  // Dispatch to command — dynamic imports keep startup fast
   switch (parsed.command) {
-    case 'start':
+    case 'start': {
+      const { startCommand } = await import('./commands/start.js');
       await startCommand();
       break;
+    }
 
-    case 'config':
+    case 'setup': {
+      const { setupCommand } = await import('./commands/setup.js');
+      await setupCommand();
+      break;
+    }
+
+    case 'config': {
+      const { configCommand } = await import('./commands/config.js');
       await configCommand();
       break;
+    }
 
-    case 'rules':
+    case 'rules': {
+      const { rulesCommand } = await import('./commands/rules.js');
       await rulesCommand();
       break;
+    }
 
-    case 'status':
+    case 'status': {
+      const { statusCommand } = await import('./commands/status.js');
       await statusCommand();
       break;
+    }
 
     case 'logs': {
       const tailValue = parsed.flags['tail'];
@@ -118,6 +131,7 @@ async function main(): Promise<void> {
         }
         tail = tailNum;
       }
+      const { logsCommand } = await import('./commands/logs.js');
       await logsCommand(tail);
       break;
     }
