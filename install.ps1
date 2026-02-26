@@ -4,7 +4,7 @@
 # ──────────────────────────────────────────────────────────────────
 
 $ErrorActionPreference = "Stop"
-$Package = "alfred-ai"
+$Package = "@madh-io/alfred-ai"
 
 Write-Host ""
 Write-Host "     _    _     _____ ____  _____ ____  " -ForegroundColor Magenta
