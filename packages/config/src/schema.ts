@@ -6,7 +6,25 @@ export const TelegramConfigSchema = z.object({
 });
 
 export const DiscordConfigSchema = z.object({
-  token: z.string(),
+  token: z.string().default(''),
+  enabled: z.boolean(),
+});
+
+export const WhatsAppConfigSchema = z.object({
+  enabled: z.boolean(),
+  dataPath: z.string(),
+});
+
+export const MatrixConfigSchema = z.object({
+  homeserverUrl: z.string(),
+  accessToken: z.string().default(''),
+  userId: z.string().default(''),
+  enabled: z.boolean(),
+});
+
+export const SignalConfigSchema = z.object({
+  apiUrl: z.string(),
+  phoneNumber: z.string().default(''),
   enabled: z.boolean(),
 });
 
@@ -39,6 +57,9 @@ export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
   discord: DiscordConfigSchema.optional(),
+  whatsapp: WhatsAppConfigSchema.optional(),
+  matrix: MatrixConfigSchema.optional(),
+  signal: SignalConfigSchema.optional(),
   llm: LLMProviderConfigSchema,
   storage: StorageConfigSchema,
   logger: LoggerConfigSchema,

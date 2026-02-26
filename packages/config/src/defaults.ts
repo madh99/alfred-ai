@@ -10,6 +10,25 @@ export const DEFAULT_CONFIG: DeepPartial<AlfredConfig> = {
     token: '',
     enabled: false,
   },
+  discord: {
+    token: '',
+    enabled: false,
+  },
+  whatsapp: {
+    enabled: false,
+    dataPath: './data/whatsapp',
+  },
+  matrix: {
+    homeserverUrl: 'https://matrix.org',
+    accessToken: '',
+    userId: '',
+    enabled: false,
+  },
+  signal: {
+    apiUrl: 'http://localhost:8080',
+    phoneNumber: '',
+    enabled: false,
+  },
   llm: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-20250514',

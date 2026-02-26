@@ -1,9 +1,16 @@
-import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
+import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
 import type { Logger } from 'pino';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository } from '@alfred/storage';
 import { AnthropicProvider } from '@alfred/llm';
-import { TelegramAdapter, type MessagingAdapter } from '@alfred/messaging';
+import {
+  TelegramAdapter,
+  DiscordAdapter,
+  MatrixAdapter,
+  WhatsAppAdapter,
+  SignalAdapter,
+  type MessagingAdapter,
+} from '@alfred/messaging';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import { SkillRegistry, SkillSandbox, CalculatorSkill, SystemInfoSkill, WebSearchSkill } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
@@ -68,13 +75,45 @@ export class Alfred {
     );
 
     // 6. Initialize messaging adapters
-    if (this.config.telegram.enabled && this.config.telegram.token) {
-      const telegram = new TelegramAdapter(this.config.telegram.token);
-      this.adapters.set('telegram', telegram);
+    this.initializeAdapters();
+
+    this.logger.info('Alfred initialized');
+  }
+
+  private initializeAdapters(): void {
+    const { config } = this;
+
+    if (config.telegram.enabled && config.telegram.token) {
+      this.adapters.set('telegram', new TelegramAdapter(config.telegram.token));
       this.logger.info('Telegram adapter registered');
     }
 
-    this.logger.info('Alfred initialized');
+    if (config.discord?.enabled && config.discord.token) {
+      this.adapters.set('discord', new DiscordAdapter(config.discord.token));
+      this.logger.info('Discord adapter registered');
+    }
+
+    if (config.whatsapp?.enabled) {
+      this.adapters.set('whatsapp', new WhatsAppAdapter(config.whatsapp.dataPath));
+      this.logger.info('WhatsApp adapter registered');
+    }
+
+    if (config.matrix?.enabled && config.matrix.accessToken) {
+      this.adapters.set('matrix', new MatrixAdapter(
+        config.matrix.homeserverUrl,
+        config.matrix.accessToken,
+        config.matrix.userId,
+      ));
+      this.logger.info('Matrix adapter registered');
+    }
+
+    if (config.signal?.enabled && config.signal.phoneNumber) {
+      this.adapters.set('signal', new SignalAdapter(
+        config.signal.apiUrl,
+        config.signal.phoneNumber,
+      ));
+      this.logger.info('Signal adapter registered');
+    }
   }
 
   async start(): Promise<void> {
