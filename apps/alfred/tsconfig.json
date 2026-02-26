@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/types" },
+    { "path": "../../packages/config" },
+    { "path": "../../packages/logger" },
+    { "path": "../../packages/storage" },
+    { "path": "../../packages/llm" },
+    { "path": "../../packages/messaging" },
+    { "path": "../../packages/security" },
+    { "path": "../../packages/core" }
+  ]
+}

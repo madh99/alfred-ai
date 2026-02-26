@@ -1,0 +1,24 @@
+{
+  "name": "@alfred/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "node --watch dist/index.js",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@alfred/types": "workspace:*",
+    "@alfred/config": "workspace:*",
+    "@alfred/logger": "workspace:*",
+    "@alfred/storage": "workspace:*",
+    "@alfred/llm": "workspace:*",
+    "@alfred/messaging": "workspace:*",
+    "@alfred/security": "workspace:*",
+    "@alfred/core": "workspace:*",
+    "pino": "^9.6.0"
+  }
+}

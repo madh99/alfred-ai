@@ -1,0 +1,26 @@
+# Alfred — Default Configuration
+# Override values via environment variables or a custom config file.
+
+name: Alfred
+
+telegram:
+  token: ""
+  enabled: false
+
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-20250514
+  temperature: 0.7
+  maxTokens: 4096
+
+storage:
+  path: ./data/alfred.db
+
+logger:
+  level: info
+  pretty: true
+  auditLogPath: ./data/audit.log
+
+security:
+  rulesPath: ./config/rules
+  defaultEffect: deny
