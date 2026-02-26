@@ -15,6 +15,13 @@
   "dependencies": {
     "@alfred/types": "workspace:*",
     "@alfred/config": "workspace:*",
-    "@alfred/logger": "workspace:*"
+    "@alfred/logger": "workspace:*",
+    "@alfred/core": "workspace:*",
+    "@alfred/storage": "workspace:*",
+    "@alfred/security": "workspace:*",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

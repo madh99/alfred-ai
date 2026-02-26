@@ -1,6 +1,12 @@
 export { Skill } from './skill.js';
 export { SkillRegistry } from './skill-registry.js';
 export { SkillSandbox } from './skill-sandbox.js';
+export { PluginLoader } from './plugin-loader.js';
 export { CalculatorSkill } from './built-in/calculator.js';
 export { SystemInfoSkill } from './built-in/system-info.js';
 export { WebSearchSkill } from './built-in/web-search.js';
+export { ReminderSkill } from './built-in/reminder.js';
+export { NoteSkill } from './built-in/note.js';
+export { SummarizeSkill } from './built-in/summarize.js';
+export { TranslateSkill } from './built-in/translate.js';
+export { WeatherSkill } from './built-in/weather.js';

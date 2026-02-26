@@ -8,6 +8,9 @@
   "references": [
     { "path": "../types" },
     { "path": "../config" },
-    { "path": "../logger" }
+    { "path": "../logger" },
+    { "path": "../core" },
+    { "path": "../storage" },
+    { "path": "../security" }
   ]
 }

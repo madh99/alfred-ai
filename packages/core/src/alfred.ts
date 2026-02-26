@@ -12,7 +12,18 @@ import {
   type MessagingAdapter,
 } from '@alfred/messaging';
 import { RuleEngine, SecurityManager } from '@alfred/security';
-import { SkillRegistry, SkillSandbox, CalculatorSkill, SystemInfoSkill, WebSearchSkill } from '@alfred/skills';
+import {
+  SkillRegistry,
+  SkillSandbox,
+  CalculatorSkill,
+  SystemInfoSkill,
+  WebSearchSkill,
+  ReminderSkill,
+  NoteSkill,
+  SummarizeSkill,
+  TranslateSkill,
+  WeatherSkill,
+} from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
 
@@ -51,6 +62,11 @@ export class Alfred {
     skillRegistry.register(new CalculatorSkill());
     skillRegistry.register(new SystemInfoSkill());
     skillRegistry.register(new WebSearchSkill());
+    skillRegistry.register(new ReminderSkill());
+    skillRegistry.register(new NoteSkill());
+    skillRegistry.register(new SummarizeSkill());
+    skillRegistry.register(new TranslateSkill());
+    skillRegistry.register(new WeatherSkill());
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     const skillSandbox = new SkillSandbox(
