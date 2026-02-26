@@ -1,12 +1,9 @@
-import baileys from '@whiskeysockets/baileys';
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys;
-type WASocket = ReturnType<typeof makeWASocket>;
 import type { NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
 export class WhatsAppAdapter extends MessagingAdapter {
   readonly platform = 'whatsapp' as const;
-  private socket: WASocket | undefined;
+  private socket: any;
   private readonly dataPath: string;
 
   constructor(dataPath: string) {
@@ -17,6 +14,9 @@ export class WhatsAppAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
+    const baileys = await import('@whiskeysockets/baileys');
+    const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys.default ?? baileys;
+
     const { state, saveCreds } = await useMultiFileAuthState(this.dataPath);
 
     this.socket = makeWASocket({
@@ -26,7 +26,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
 
     this.socket.ev.on('creds.update', saveCreds);
 
-    this.socket.ev.on('connection.update', (update) => {
+    this.socket.ev.on('connection.update', (update: any) => {
       if (update.connection === 'open') {
         this.status = 'connected';
         this.emit('connected');
@@ -47,7 +47,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
       }
     });
 
-    this.socket.ev.on('messages.upsert', ({ messages, type }) => {
+    this.socket.ev.on('messages.upsert', ({ messages, type }: { messages: any[]; type: string }) => {
       if (type !== 'notify') return;
 
       for (const message of messages) {

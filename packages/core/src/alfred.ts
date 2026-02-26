@@ -1,16 +1,9 @@
 import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
 import type { Logger } from 'pino';
+import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository } from '@alfred/storage';
 import { createLLMProvider } from '@alfred/llm';
-import {
-  TelegramAdapter,
-  DiscordAdapter,
-  MatrixAdapter,
-  WhatsAppAdapter,
-  SignalAdapter,
-  type MessagingAdapter,
-} from '@alfred/messaging';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
   SkillRegistry,
@@ -91,30 +84,34 @@ export class Alfred {
     );
 
     // 6. Initialize messaging adapters
-    this.initializeAdapters();
+    await this.initializeAdapters();
 
     this.logger.info('Alfred initialized');
   }
 
-  private initializeAdapters(): void {
+  private async initializeAdapters(): Promise<void> {
     const { config } = this;
 
     if (config.telegram.enabled && config.telegram.token) {
+      const { TelegramAdapter } = await import('@alfred/messaging');
       this.adapters.set('telegram', new TelegramAdapter(config.telegram.token));
       this.logger.info('Telegram adapter registered');
     }
 
     if (config.discord?.enabled && config.discord.token) {
+      const { DiscordAdapter } = await import('@alfred/messaging');
       this.adapters.set('discord', new DiscordAdapter(config.discord.token));
       this.logger.info('Discord adapter registered');
     }
 
     if (config.whatsapp?.enabled) {
+      const { WhatsAppAdapter } = await import('@alfred/messaging');
       this.adapters.set('whatsapp', new WhatsAppAdapter(config.whatsapp.dataPath));
       this.logger.info('WhatsApp adapter registered');
     }
 
     if (config.matrix?.enabled && config.matrix.accessToken) {
+      const { MatrixAdapter } = await import('@alfred/messaging');
       this.adapters.set('matrix', new MatrixAdapter(
         config.matrix.homeserverUrl,
         config.matrix.accessToken,
@@ -124,6 +121,7 @@ export class Alfred {
     }
 
     if (config.signal?.enabled && config.signal.phoneNumber) {
+      const { SignalAdapter } = await import('@alfred/messaging');
       this.adapters.set('signal', new SignalAdapter(
         config.signal.apiUrl,
         config.signal.phoneNumber,

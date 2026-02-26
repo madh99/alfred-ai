@@ -1,14 +1,9 @@
-import {
-  MatrixClient,
-  SimpleFsStorageProvider,
-  AutojoinRoomsMixin,
-} from 'matrix-bot-sdk';
 import type { NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
 export class MatrixAdapter extends MessagingAdapter {
   readonly platform = 'matrix' as const;
-  private client!: MatrixClient;
+  private client!: any;
   private readonly homeserverUrl: string;
   private readonly accessToken: string;
   private readonly botUserId: string;
@@ -22,6 +17,12 @@ export class MatrixAdapter extends MessagingAdapter {
 
   async connect(): Promise<void> {
     this.status = 'connecting';
+
+    const {
+      MatrixClient,
+      SimpleFsStorageProvider,
+      AutojoinRoomsMixin,
+    } = await import('matrix-bot-sdk');
 
     const storageProvider = new SimpleFsStorageProvider(
       './data/matrix-storage',

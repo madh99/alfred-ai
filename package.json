@@ -8,10 +8,13 @@
     "test": "turbo test",
     "lint": "turbo lint",
     "clean": "turbo clean",
-    "setup": "node packages/cli/dist/index.js setup"
+    "bundle": "node scripts/bundle.mjs",
+    "setup": "node packages/cli/dist/index.js setup",
+    "prepublish": "pnpm build && pnpm bundle"
   },
   "devDependencies": {
     "@types/node": "^22.13.0",
+    "esbuild": "^0.24.0",
     "prettier": "^3.4.0",
     "turbo": "^2.4.0",
     "typescript": "^5.7.0",
