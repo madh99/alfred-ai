@@ -2,7 +2,7 @@ import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
 import type { Logger } from 'pino';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository } from '@alfred/storage';
-import { AnthropicProvider } from '@alfred/llm';
+import { createLLMProvider } from '@alfred/llm';
 import {
   TelegramAdapter,
   DiscordAdapter,
@@ -57,8 +57,8 @@ export class Alfred {
       this.logger.child({ component: 'sandbox' }),
     );
 
-    // 4. Initialize LLM provider
-    const llmProvider = new AnthropicProvider(this.config.llm);
+    // 4. Initialize LLM provider (via factory — supports anthropic, openai, openrouter, ollama)
+    const llmProvider = createLLMProvider(this.config.llm);
     await llmProvider.initialize();
     this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
 
