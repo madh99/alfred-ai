@@ -166,6 +166,53 @@ const PLATFORMS: PlatformDef[] = [
   },
 ];
 
+// ── Load existing config ──────────────────────────────────────────────
+
+interface ExistingConfig {
+  name?: string;
+  llm?: { provider?: string; model?: string; baseUrl?: string };
+  telegram?: { token?: string; enabled?: boolean };
+  discord?: { token?: string; enabled?: boolean };
+  whatsapp?: { enabled?: boolean; dataPath?: string };
+  matrix?: { homeserverUrl?: string; accessToken?: string; userId?: string; enabled?: boolean };
+  signal?: { apiUrl?: string; phoneNumber?: string; enabled?: boolean };
+  security?: { ownerUserId?: string };
+}
+
+function loadExistingConfig(projectRoot: string): { config: ExistingConfig; env: Record<string, string> } {
+  const config: ExistingConfig = {};
+  const env: Record<string, string> = {};
+
+  // Load config/default.yml
+  const configPath = path.join(projectRoot, 'config', 'default.yml');
+  if (fs.existsSync(configPath)) {
+    try {
+      const parsed = yaml.load(fs.readFileSync(configPath, 'utf-8'));
+      if (parsed && typeof parsed === 'object') {
+        Object.assign(config, parsed);
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  // Load .env
+  const envPath = path.join(projectRoot, '.env');
+  if (fs.existsSync(envPath)) {
+    try {
+      const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx > 0) {
+          env[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1);
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { config, env };
+}
+
 // ── Main setup command ────────────────────────────────────────────────
 
 export async function setupCommand(): Promise<void> {
@@ -174,68 +221,113 @@ export async function setupCommand(): Promise<void> {
   // Resolve project root (two levels up from packages/cli/src or dist)
   const projectRoot = process.cwd();
 
+  // Load existing configuration for defaults
+  const existing = loadExistingConfig(projectRoot);
+  const hasExisting = Object.keys(existing.config).length > 0;
+
   try {
     printBanner();
 
-    console.log(
-      `${CYAN}Welcome to the Alfred setup wizard!${RESET}\n` +
-      `${DIM}This will walk you through configuring your AI assistant.${RESET}\n` +
-      `${DIM}Press Enter to accept defaults shown in [brackets].${RESET}\n`,
-    );
+    if (hasExisting) {
+      console.log(
+        `${CYAN}Existing configuration found — press Enter to keep current values.${RESET}\n` +
+        `${DIM}Only change what you need to update.${RESET}\n`,
+      );
+    } else {
+      console.log(
+        `${CYAN}Welcome to the Alfred setup wizard!${RESET}\n` +
+        `${DIM}This will walk you through configuring your AI assistant.${RESET}\n` +
+        `${DIM}Press Enter to accept defaults shown in [brackets].${RESET}\n`,
+      );
+    }
 
     // ── 1. Bot name ───────────────────────────────────────────────
-    const botName = await askWithDefault(rl, 'What should your bot be called?', 'Alfred');
+    const botName = await askWithDefault(rl, 'What should your bot be called?', existing.config.name ?? 'Alfred');
 
     // ── 2. LLM Provider ──────────────────────────────────────────
+    const existingProviderIdx = existing.config.llm?.provider
+      ? PROVIDERS.findIndex(p => p.name === existing.config.llm?.provider)
+      : -1;
+    const defaultProviderChoice = existingProviderIdx >= 0 ? existingProviderIdx + 1 : 1;
+
     console.log(`\n${bold('Which LLM provider would you like to use?')}`);
     for (let i = 0; i < PROVIDERS.length; i++) {
-      console.log(`  ${cyan(String(i + 1) + ')')} ${PROVIDERS[i].label}`);
+      const current = i === existingProviderIdx ? ` ${dim('(current)')}` : '';
+      console.log(`  ${cyan(String(i + 1) + ')')} ${PROVIDERS[i].label}${current}`);
     }
-    const providerChoice = await askNumber(rl, '> ', 1, PROVIDERS.length, 1);
+    const providerChoice = await askNumber(rl, '> ', 1, PROVIDERS.length, defaultProviderChoice);
     const provider = PROVIDERS[providerChoice - 1];
     console.log(`  ${green('>')} Selected: ${bold(provider.label)}`);
 
     // ── 3. API key ───────────────────────────────────────────────
     let apiKey = '';
+    const existingApiKey = existing.env[provider.envKeyName] ?? '';
     if (provider.needsApiKey) {
       console.log('');
-      apiKey = await askRequired(
-        rl,
-        `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`,
-      );
+      if (existingApiKey) {
+        apiKey = await askWithDefault(
+          rl,
+          `${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`,
+          existingApiKey,
+        );
+      } else {
+        apiKey = await askRequired(
+          rl,
+          `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`,
+        );
+      }
       console.log(`  ${green('>')} API key set: ${dim(maskKey(apiKey))}`);
     }
 
     // ── 3b. Base URL (for Ollama / OpenRouter / custom endpoints) ──
     let baseUrl = provider.baseUrl ?? '';
     if (provider.name === 'ollama') {
+      const existingUrl = existing.config.llm?.baseUrl ?? 'http://localhost:11434';
       console.log('');
       baseUrl = await askWithDefault(
         rl,
         'Ollama URL (use a remote address if Ollama runs on another machine)',
-        'http://localhost:11434',
+        existingUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, ''),
       );
       baseUrl = baseUrl.replace(/\/+$/, '');
       console.log(`  ${green('>')} Ollama URL: ${dim(baseUrl)}`);
     }
 
     // ── 4. Model ─────────────────────────────────────────────────
+    const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log('');
-    const model = await askWithDefault(rl, 'Which model?', provider.defaultModel);
+    const model = await askWithDefault(rl, 'Which model?', existingModel);
 
     // ── 5. Platforms ─────────────────────────────────────────────
+    // Determine which platforms are currently enabled
+    const currentlyEnabled: number[] = [];
+    for (let i = 0; i < PLATFORMS.length; i++) {
+      const p = PLATFORMS[i];
+      const ec = existing.config as Record<string, any>;
+      if (ec[p.configKey]?.enabled) {
+        currentlyEnabled.push(i + 1);
+      }
+    }
+    const currentDefault = currentlyEnabled.length > 0
+      ? currentlyEnabled.join(',')
+      : '';
+
     console.log(`\n${bold('Which messaging platforms do you want to enable?')}`);
     console.log(`${dim('(Enter comma-separated numbers, e.g. 1,3)')}`);
     for (let i = 0; i < PLATFORMS.length; i++) {
-      console.log(`  ${cyan(String(i + 1) + ')')} ${PLATFORMS[i].label}`);
+      const enabled = currentlyEnabled.includes(i + 1) ? ` ${dim('(enabled)')}` : '';
+      console.log(`  ${cyan(String(i + 1) + ')')} ${PLATFORMS[i].label}${enabled}`);
     }
     console.log(`  ${cyan('0)')} None (configure later)`);
 
-    const platformInput = (await rl.question(`${YELLOW}> ${RESET}`)).trim();
+    const platformInput = (await rl.question(
+      `${YELLOW}> ${RESET}${currentDefault ? dim(`[${currentDefault}] `) : ''}`
+    )).trim();
 
     const selectedPlatforms: PlatformDef[] = [];
-    if (platformInput && platformInput !== '0') {
-      const nums = platformInput.split(',').map((s) => parseInt(s.trim(), 10));
+    const effectiveInput = platformInput || currentDefault;
+    if (effectiveInput && effectiveInput !== '0') {
+      const nums = effectiveInput.split(',').map((s) => parseInt(s.trim(), 10));
       for (const n of nums) {
         if (n >= 1 && n <= PLATFORMS.length) {
           const plat = PLATFORMS[n - 1];
@@ -272,8 +364,12 @@ export async function setupCommand(): Promise<void> {
       const creds: Record<string, string> = {};
 
       for (const cred of platform.credentials) {
+        // Use existing value from .env or config as default
+        const existingVal = existing.env[cred.envKey] ?? '';
         let value: string;
-        if (cred.defaultValue) {
+        if (existingVal) {
+          value = await askWithDefault(rl, `  ${cred.prompt}`, existingVal);
+        } else if (cred.defaultValue) {
           value = await askWithDefault(rl, `  ${cred.prompt}`, cred.defaultValue);
         } else if (cred.required) {
           value = await askRequired(rl, `  ${cred.prompt}`);
@@ -297,15 +393,18 @@ export async function setupCommand(): Promise<void> {
     }
 
     // ── 7. Owner user ID ─────────────────────────────────────────
+    const existingOwnerId = existing.config.security?.ownerUserId ?? existing.env['ALFRED_OWNER_USER_ID'] ?? '';
     console.log('');
-    const ownerUserIdInput = (
-      await rl.question(
+    let ownerUserId: string;
+    if (existingOwnerId) {
+      ownerUserId = await askWithDefault(rl, 'Owner user ID (for elevated permissions)', existingOwnerId);
+    } else {
+      const input = (await rl.question(
         `${BOLD}Owner user ID${RESET} ${dim('(optional, for elevated permissions)')}: ${YELLOW}`,
-      )
-    ).trim();
-    process.stdout.write(RESET);
-
-    const ownerUserId = ownerUserIdInput || '';
+      )).trim();
+      process.stdout.write(RESET);
+      ownerUserId = input;
+    }
 
     // ── 8. Generate .env ─────────────────────────────────────────
     console.log(`\n${bold('Writing configuration files...')}`);

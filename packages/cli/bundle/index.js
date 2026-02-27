@@ -3484,50 +3484,110 @@ function maskKey(key) {
     return "****";
   return "*".repeat(key.length - 4) + key.slice(-4);
 }
+function loadExistingConfig(projectRoot) {
+  const config = {};
+  const env = {};
+  const configPath = path4.join(projectRoot, "config", "default.yml");
+  if (fs4.existsSync(configPath)) {
+    try {
+      const parsed = yaml2.load(fs4.readFileSync(configPath, "utf-8"));
+      if (parsed && typeof parsed === "object") {
+        Object.assign(config, parsed);
+      }
+    } catch {
+    }
+  }
+  const envPath = path4.join(projectRoot, ".env");
+  if (fs4.existsSync(envPath)) {
+    try {
+      const lines = fs4.readFileSync(envPath, "utf-8").split("\n");
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#"))
+          continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx > 0) {
+          env[trimmed.slice(0, eqIdx)] = trimmed.slice(eqIdx + 1);
+        }
+      }
+    } catch {
+    }
+  }
+  return { config, env };
+}
 async function setupCommand() {
   const rl = createInterface({ input, output });
   const projectRoot = process.cwd();
+  const existing = loadExistingConfig(projectRoot);
+  const hasExisting = Object.keys(existing.config).length > 0;
   try {
     printBanner();
-    console.log(`${CYAN}Welcome to the Alfred setup wizard!${RESET}
+    if (hasExisting) {
+      console.log(`${CYAN}Existing configuration found \u2014 press Enter to keep current values.${RESET}
+${DIM}Only change what you need to update.${RESET}
+`);
+    } else {
+      console.log(`${CYAN}Welcome to the Alfred setup wizard!${RESET}
 ${DIM}This will walk you through configuring your AI assistant.${RESET}
 ${DIM}Press Enter to accept defaults shown in [brackets].${RESET}
 `);
-    const botName = await askWithDefault(rl, "What should your bot be called?", "Alfred");
+    }
+    const botName = await askWithDefault(rl, "What should your bot be called?", existing.config.name ?? "Alfred");
+    const existingProviderIdx = existing.config.llm?.provider ? PROVIDERS.findIndex((p) => p.name === existing.config.llm?.provider) : -1;
+    const defaultProviderChoice = existingProviderIdx >= 0 ? existingProviderIdx + 1 : 1;
     console.log(`
 ${bold("Which LLM provider would you like to use?")}`);
     for (let i = 0; i < PROVIDERS.length; i++) {
-      console.log(`  ${cyan(String(i + 1) + ")")} ${PROVIDERS[i].label}`);
+      const current = i === existingProviderIdx ? ` ${dim("(current)")}` : "";
+      console.log(`  ${cyan(String(i + 1) + ")")} ${PROVIDERS[i].label}${current}`);
     }
-    const providerChoice = await askNumber(rl, "> ", 1, PROVIDERS.length, 1);
+    const providerChoice = await askNumber(rl, "> ", 1, PROVIDERS.length, defaultProviderChoice);
     const provider = PROVIDERS[providerChoice - 1];
     console.log(`  ${green(">")} Selected: ${bold(provider.label)}`);
     let apiKey = "";
+    const existingApiKey = existing.env[provider.envKeyName] ?? "";
     if (provider.needsApiKey) {
       console.log("");
-      apiKey = await askRequired(rl, `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`);
+      if (existingApiKey) {
+        apiKey = await askWithDefault(rl, `${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`, existingApiKey);
+      } else {
+        apiKey = await askRequired(rl, `Enter your ${provider.name.charAt(0).toUpperCase() + provider.name.slice(1)} API key`);
+      }
       console.log(`  ${green(">")} API key set: ${dim(maskKey(apiKey))}`);
     }
     let baseUrl = provider.baseUrl ?? "";
     if (provider.name === "ollama") {
+      const existingUrl = existing.config.llm?.baseUrl ?? "http://localhost:11434";
       console.log("");
-      baseUrl = await askWithDefault(rl, "Ollama URL (use a remote address if Ollama runs on another machine)", "http://localhost:11434");
+      baseUrl = await askWithDefault(rl, "Ollama URL (use a remote address if Ollama runs on another machine)", existingUrl.replace(/\/v1\/?$/, "").replace(/\/+$/, ""));
       baseUrl = baseUrl.replace(/\/+$/, "");
       console.log(`  ${green(">")} Ollama URL: ${dim(baseUrl)}`);
     }
+    const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log("");
-    const model = await askWithDefault(rl, "Which model?", provider.defaultModel);
+    const model = await askWithDefault(rl, "Which model?", existingModel);
+    const currentlyEnabled = [];
+    for (let i = 0; i < PLATFORMS.length; i++) {
+      const p = PLATFORMS[i];
+      const ec = existing.config;
+      if (ec[p.configKey]?.enabled) {
+        currentlyEnabled.push(i + 1);
+      }
+    }
+    const currentDefault = currentlyEnabled.length > 0 ? currentlyEnabled.join(",") : "";
     console.log(`
 ${bold("Which messaging platforms do you want to enable?")}`);
     console.log(`${dim("(Enter comma-separated numbers, e.g. 1,3)")}`);
     for (let i = 0; i < PLATFORMS.length; i++) {
-      console.log(`  ${cyan(String(i + 1) + ")")} ${PLATFORMS[i].label}`);
+      const enabled = currentlyEnabled.includes(i + 1) ? ` ${dim("(enabled)")}` : "";
+      console.log(`  ${cyan(String(i + 1) + ")")} ${PLATFORMS[i].label}${enabled}`);
     }
     console.log(`  ${cyan("0)")} None (configure later)`);
-    const platformInput = (await rl.question(`${YELLOW}> ${RESET}`)).trim();
+    const platformInput = (await rl.question(`${YELLOW}> ${RESET}${currentDefault ? dim(`[${currentDefault}] `) : ""}`)).trim();
     const selectedPlatforms = [];
-    if (platformInput && platformInput !== "0") {
-      const nums = platformInput.split(",").map((s) => parseInt(s.trim(), 10));
+    const effectiveInput = platformInput || currentDefault;
+    if (effectiveInput && effectiveInput !== "0") {
+      const nums = effectiveInput.split(",").map((s) => parseInt(s.trim(), 10));
       for (const n of nums) {
         if (n >= 1 && n <= PLATFORMS.length) {
           const plat = PLATFORMS[n - 1];
@@ -3556,8 +3616,11 @@ ${bold("Which messaging platforms do you want to enable?")}`);
 ${bold(platform.label + " configuration:")}`);
       const creds = {};
       for (const cred of platform.credentials) {
+        const existingVal = existing.env[cred.envKey] ?? "";
         let value;
-        if (cred.defaultValue) {
+        if (existingVal) {
+          value = await askWithDefault(rl, `  ${cred.prompt}`, existingVal);
+        } else if (cred.defaultValue) {
           value = await askWithDefault(rl, `  ${cred.prompt}`, cred.defaultValue);
         } else if (cred.required) {
           value = await askRequired(rl, `  ${cred.prompt}`);
@@ -3575,10 +3638,16 @@ ${bold(platform.label + " configuration:")}`);
       }
       platformCredentials[platform.configKey] = creds;
     }
+    const existingOwnerId = existing.config.security?.ownerUserId ?? existing.env["ALFRED_OWNER_USER_ID"] ?? "";
     console.log("");
-    const ownerUserIdInput = (await rl.question(`${BOLD}Owner user ID${RESET} ${dim("(optional, for elevated permissions)")}: ${YELLOW}`)).trim();
-    process.stdout.write(RESET);
-    const ownerUserId = ownerUserIdInput || "";
+    let ownerUserId;
+    if (existingOwnerId) {
+      ownerUserId = await askWithDefault(rl, "Owner user ID (for elevated permissions)", existingOwnerId);
+    } else {
+      const input2 = (await rl.question(`${BOLD}Owner user ID${RESET} ${dim("(optional, for elevated permissions)")}: ${YELLOW}`)).trim();
+      process.stdout.write(RESET);
+      ownerUserId = input2;
+    }
     console.log(`
 ${bold("Writing configuration files...")}`);
     const envLines = [
