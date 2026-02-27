@@ -85,7 +85,6 @@ export class MessagePipeline {
       // 7. Agentic tool-use loop
       let response: LLMResponse;
       let iteration = 0;
-      const toolLog: Array<{ tool: string; input: Record<string, unknown>; output: string; isError?: boolean }> = [];
 
       while (true) {
         response = await this.llm.complete({
@@ -136,15 +135,27 @@ export class MessagePipeline {
             content: result.content,
             is_error: result.isError,
           });
-
-          // Track tool interactions for conversation history
-          toolLog.push({
-            tool: toolCall.name,
-            input: toolCall.input,
-            output: result.content,
-            isError: result.isError,
-          });
         }
+
+        // Save intermediate tool interaction to DB so follow-up questions have context
+        const toolCallSummary = response.toolCalls.map(tc =>
+          `[Used ${tc.name}: ${JSON.stringify(tc.input)}]`
+        ).join('\n');
+        const toolResultSummary = toolResultBlocks.map(tr => {
+          const output = tr.type === 'tool_result' ? String(tr.content).slice(0, 1000) : '';
+          return `[Result: ${output}]`;
+        }).join('\n');
+        this.conversationManager.addMessage(
+          conversation.id,
+          'assistant',
+          `${response.content ? response.content + '\n' : ''}${toolCallSummary}`,
+          JSON.stringify(response.toolCalls),
+        );
+        this.conversationManager.addMessage(
+          conversation.id,
+          'user',
+          toolResultSummary,
+        );
 
         // Add tool results as user message
         messages.push({ role: 'user', content: toolResultBlocks });
@@ -152,22 +163,11 @@ export class MessagePipeline {
 
       const responseText = response.content || '(no response)';
 
-      // 8. Save assistant response with tool context
-      // Include tool interaction summaries so follow-up questions have context
-      let savedContent = responseText;
-      if (toolLog.length > 0) {
-        const toolSummary = toolLog.map(t => {
-          const inputStr = Object.entries(t.input).map(([k, v]) => `${k}=${v}`).join(', ');
-          const outputPreview = String(t.output).slice(0, 500);
-          return `[${t.tool}(${inputStr}) → ${outputPreview}]`;
-        }).join('\n');
-        savedContent = `${toolSummary}\n\n${responseText}`;
-      }
-
+      // 8. Save final assistant response
       this.conversationManager.addMessage(
         conversation.id,
         'assistant',
-        savedContent,
+        responseText,
       );
 
       const duration = Date.now() - startTime;

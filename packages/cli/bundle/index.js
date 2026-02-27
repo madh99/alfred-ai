@@ -1667,18 +1667,45 @@ var init_prompt_builder = __esm({
         const homeDir = process.env["HOME"] || process.env["USERPROFILE"] || "~";
         let prompt = `You are Alfred, a personal AI assistant. You run on ${os} (home: ${homeDir}).
 
-## How you work
-- You have tools (skills) that you MUST use proactively to help the user.
-- When a user asks you to do something, USE YOUR TOOLS. Do not just talk about what you could do \u2014 actually do it.
-- If the user asks about files, folders, documents, or anything on their computer: use the shell tool to look at the filesystem (ls, find, cat, etc.).
-- If the user asks for information you don't have: use web_search to look it up online.
-- If the user asks for the date/time: use system_info with category "datetime".
-- If the user asks you to remember something: use the memory tool immediately.
-- If a tool fails or is denied, explain why and suggest alternatives.
-- Be concise but thorough. Respond in the same language the user writes in.
+## Core principles
+- ACT, don't just talk. When the user asks you to do something, USE YOUR TOOLS immediately. Never say "I could do X" \u2014 just do X.
+- Respond in the same language the user writes in.
+- Be concise. No filler text, no unnecessary explanations.
 
-## Common paths on ${os}
-${os === "macOS" ? "- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads" : os === "Windows" ? "- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads" : "- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads"}`;
+## Multi-step reasoning
+When a task requires multiple steps, work through them one at a time:
+1. **Understand** what the user wants.
+2. **Plan** the steps needed (you can use multiple tools in sequence).
+3. **Execute** each step, using tool results to inform the next step.
+4. **Summarize** the final result clearly.
+
+Example: "What documents do I have?"
+\u2192 Step 1: Use shell to list ~/Documents
+\u2192 Step 2: If results are unclear, use shell to get more details (file types, sizes)
+\u2192 Step 3: Present a clear summary
+
+Example: "Search for X and save the result"
+\u2192 Step 1: Use web_search to find information
+\u2192 Step 2: Use memory to save the key findings
+
+You can call tools multiple times in a conversation. After getting a tool result, CONTINUE working if the task isn't complete yet. Don't stop after one tool call if more steps are needed.
+
+## When to use which tool
+- **Files, folders, system tasks** \u2192 shell (ls, cat, find, file, du, etc.)
+- **Internet/web lookups** \u2192 web_search
+- **Date, time** \u2192 system_info (category: datetime)
+- **Remember facts/preferences** \u2192 memory
+- **Calculations** \u2192 calculator
+- **Emails** \u2192 email
+- **Reminders** \u2192 reminder
+- If a tool fails or is denied, explain why and try an alternative approach.
+
+## Environment
+- OS: ${os}
+- Home: ${homeDir}
+- Documents: ${homeDir}/Documents
+- Desktop: ${homeDir}/Desktop
+- Downloads: ${homeDir}/Downloads`;
         if (skills && skills.length > 0) {
           prompt += "\n\n## Available tools\n";
           for (const s of skills) {
@@ -3914,7 +3941,6 @@ var init_message_pipeline = __esm({
           const messages = this.trimToContextWindow(system, allMessages);
           let response;
           let iteration = 0;
-          const toolLog = [];
           while (true) {
             response = await this.llm.complete({
               messages,
@@ -3957,28 +3983,18 @@ var init_message_pipeline = __esm({
                 content: result.content,
                 is_error: result.isError
               });
-              toolLog.push({
-                tool: toolCall.name,
-                input: toolCall.input,
-                output: result.content,
-                isError: result.isError
-              });
             }
+            const toolCallSummary = response.toolCalls.map((tc) => `[Used ${tc.name}: ${JSON.stringify(tc.input)}]`).join("\n");
+            const toolResultSummary = toolResultBlocks.map((tr) => {
+              const output2 = tr.type === "tool_result" ? String(tr.content).slice(0, 1e3) : "";
+              return `[Result: ${output2}]`;
+            }).join("\n");
+            this.conversationManager.addMessage(conversation.id, "assistant", `${response.content ? response.content + "\n" : ""}${toolCallSummary}`, JSON.stringify(response.toolCalls));
+            this.conversationManager.addMessage(conversation.id, "user", toolResultSummary);
             messages.push({ role: "user", content: toolResultBlocks });
           }
           const responseText = response.content || "(no response)";
-          let savedContent = responseText;
-          if (toolLog.length > 0) {
-            const toolSummary = toolLog.map((t) => {
-              const inputStr = Object.entries(t.input).map(([k, v]) => `${k}=${v}`).join(", ");
-              const outputPreview = String(t.output).slice(0, 500);
-              return `[${t.tool}(${inputStr}) \u2192 ${outputPreview}]`;
-            }).join("\n");
-            savedContent = `${toolSummary}
-
-${responseText}`;
-          }
-          this.conversationManager.addMessage(conversation.id, "assistant", savedContent);
+          this.conversationManager.addMessage(conversation.id, "assistant", responseText);
           const duration = Date.now() - startTime;
           this.logger.info({ duration, tokens: response.usage, stopReason: response.stopReason, toolIterations: iteration }, "Message processed");
           return responseText;
