@@ -211,8 +211,37 @@ export class Alfred {
   private setupAdapterHandlers(platform: Platform, adapter: MessagingAdapter): void {
     adapter.on('message', async (message: NormalizedMessage) => {
       try {
-        const response = await this.pipeline.process(message);
-        await adapter.sendMessage(message.chatId, response);
+        // Send a placeholder message and update it with progress
+        let statusMessageId: string | undefined;
+        let lastStatus = '';
+
+        const onProgress = async (status: string) => {
+          if (status === lastStatus) return;
+          lastStatus = status;
+          try {
+            if (!statusMessageId) {
+              statusMessageId = await adapter.sendMessage(message.chatId, status);
+            } else {
+              await adapter.editMessage(message.chatId, statusMessageId, status);
+            }
+          } catch {
+            // Ignore edit failures (e.g. message unchanged)
+          }
+        };
+
+        const response = await this.pipeline.process(message, onProgress);
+
+        // Replace status message with final response, or send new if no status was shown
+        if (statusMessageId) {
+          try {
+            await adapter.editMessage(message.chatId, statusMessageId, response);
+          } catch {
+            // If edit fails (e.g. response too different), send as new message
+            await adapter.sendMessage(message.chatId, response);
+          }
+        } else {
+          await adapter.sendMessage(message.chatId, response);
+        }
       } catch (error) {
         this.logger.error({ platform, err: error, chatId: message.chatId }, 'Failed to handle message');
         try {

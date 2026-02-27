@@ -17,6 +17,8 @@ import { ConversationManager } from './conversation-manager.js';
 const MAX_TOOL_ITERATIONS = 10;
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
+export type ProgressCallback = (status: string) => void;
+
 export class MessagePipeline {
   private readonly promptBuilder: PromptBuilder;
 
@@ -33,7 +35,7 @@ export class MessagePipeline {
     this.promptBuilder = new PromptBuilder();
   }
 
-  async process(message: NormalizedMessage): Promise<string> {
+  async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<string> {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
 
@@ -85,6 +87,7 @@ export class MessagePipeline {
       // 7. Agentic tool-use loop
       let response: LLMResponse;
       let iteration = 0;
+      onProgress?.('Thinking...');
 
       while (true) {
         response = await this.llm.complete({
@@ -122,6 +125,8 @@ export class MessagePipeline {
         // Execute each tool call
         const toolResultBlocks: LLMContentBlock[] = [];
         for (const toolCall of response.toolCalls) {
+          const toolLabel = this.getToolLabel(toolCall.name, toolCall.input);
+          onProgress?.(toolLabel);
           const result = await this.executeToolCall(toolCall, {
             userId: message.userId,
             chatId: message.chatId,
@@ -159,6 +164,9 @@ export class MessagePipeline {
 
         // Add tool results as user message
         messages.push({ role: 'user', content: toolResultBlocks });
+        if (iteration < MAX_TOOL_ITERATIONS) {
+          onProgress?.('Thinking...');
+        }
       }
 
       const responseText = response.content || '(no response)';
@@ -235,6 +243,20 @@ export class MessagePipeline {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return { content: `Skill execution failed: ${msg}`, isError: true };
+    }
+  }
+
+  private getToolLabel(toolName: string, input: Record<string, unknown>): string {
+    switch (toolName) {
+      case 'shell': return `Running: ${String(input.command ?? '').slice(0, 60)}`;
+      case 'web_search': return `Searching: ${String(input.query ?? '')}`;
+      case 'email': return `Email: ${String(input.action ?? '')}`;
+      case 'memory': return `Memory: ${String(input.action ?? '')}`;
+      case 'reminder': return `Reminder: ${String(input.action ?? '')}`;
+      case 'calculator': return `Calculating...`;
+      case 'system_info': return `Getting system info...`;
+      case 'delegate': return `Delegating sub-task...`;
+      default: return `Using ${toolName}...`;
     }
   }
 

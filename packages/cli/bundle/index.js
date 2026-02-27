@@ -3898,7 +3898,7 @@ var init_message_pipeline = __esm({
         this.memoryRepo = memoryRepo;
         this.promptBuilder = new PromptBuilder();
       }
-      async process(message) {
+      async process(message, onProgress) {
         const startTime = Date.now();
         this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, "Processing message");
         try {
@@ -3921,6 +3921,7 @@ var init_message_pipeline = __esm({
           const messages = this.trimToContextWindow(system, allMessages);
           let response;
           let iteration = 0;
+          onProgress?.("Thinking...");
           while (true) {
             response = await this.llm.complete({
               messages,
@@ -3950,6 +3951,8 @@ var init_message_pipeline = __esm({
             messages.push({ role: "assistant", content: assistantContent });
             const toolResultBlocks = [];
             for (const toolCall of response.toolCalls) {
+              const toolLabel = this.getToolLabel(toolCall.name, toolCall.input);
+              onProgress?.(toolLabel);
               const result = await this.executeToolCall(toolCall, {
                 userId: message.userId,
                 chatId: message.chatId,
@@ -3972,6 +3975,9 @@ var init_message_pipeline = __esm({
             this.conversationManager.addMessage(conversation.id, "assistant", `${response.content ? response.content + "\n" : ""}${toolCallSummary}`, JSON.stringify(response.toolCalls));
             this.conversationManager.addMessage(conversation.id, "user", toolResultSummary);
             messages.push({ role: "user", content: toolResultBlocks });
+            if (iteration < MAX_TOOL_ITERATIONS) {
+              onProgress?.("Thinking...");
+            }
           }
           const responseText = response.content || "(no response)";
           this.conversationManager.addMessage(conversation.id, "assistant", responseText);
@@ -4022,6 +4028,28 @@ var init_message_pipeline = __esm({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           return { content: `Skill execution failed: ${msg}`, isError: true };
+        }
+      }
+      getToolLabel(toolName, input2) {
+        switch (toolName) {
+          case "shell":
+            return `Running: ${String(input2.command ?? "").slice(0, 60)}`;
+          case "web_search":
+            return `Searching: ${String(input2.query ?? "")}`;
+          case "email":
+            return `Email: ${String(input2.action ?? "")}`;
+          case "memory":
+            return `Memory: ${String(input2.action ?? "")}`;
+          case "reminder":
+            return `Reminder: ${String(input2.action ?? "")}`;
+          case "calculator":
+            return `Calculating...`;
+          case "system_info":
+            return `Getting system info...`;
+          case "delegate":
+            return `Delegating sub-task...`;
+          default:
+            return `Using ${toolName}...`;
         }
       }
       /**
@@ -4748,8 +4776,31 @@ var init_alfred = __esm({
       setupAdapterHandlers(platform, adapter) {
         adapter.on("message", async (message) => {
           try {
-            const response = await this.pipeline.process(message);
-            await adapter.sendMessage(message.chatId, response);
+            let statusMessageId;
+            let lastStatus = "";
+            const onProgress = async (status) => {
+              if (status === lastStatus)
+                return;
+              lastStatus = status;
+              try {
+                if (!statusMessageId) {
+                  statusMessageId = await adapter.sendMessage(message.chatId, status);
+                } else {
+                  await adapter.editMessage(message.chatId, statusMessageId, status);
+                }
+              } catch {
+              }
+            };
+            const response = await this.pipeline.process(message, onProgress);
+            if (statusMessageId) {
+              try {
+                await adapter.editMessage(message.chatId, statusMessageId, response);
+              } catch {
+                await adapter.sendMessage(message.chatId, response);
+              }
+            } else {
+              await adapter.sendMessage(message.chatId, response);
+            }
           } catch (error) {
             this.logger.error({ platform, err: error, chatId: message.chatId }, "Failed to handle message");
             try {
