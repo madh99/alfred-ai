@@ -322,7 +322,8 @@ export async function setupCommand(): Promise<void> {
     ];
 
     if (apiKey) {
-      envLines.push(`${provider.envKeyName}=${apiKey}`);
+      const envKeyName = provider.envKeyName || 'ALFRED_OLLAMA_API_KEY';
+      envLines.push(`${envKeyName}=${apiKey}`);
     }
 
     if (model !== provider.defaultModel) {

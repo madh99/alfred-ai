@@ -17,8 +17,19 @@ export class OllamaProvider extends LLMProvider {
     super(config);
   }
 
+  private apiKey: string = '';
+
   async initialize(): Promise<void> {
     this.baseUrl = this.config.baseUrl ?? 'http://localhost:11434';
+    this.apiKey = this.config.apiKey ?? '';
+  }
+
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.apiKey) {
+      headers['Authorization'] = `Bearer ${this.apiKey}`;
+    }
+    return headers;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {
@@ -38,7 +49,7 @@ export class OllamaProvider extends LLMProvider {
 
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -69,7 +80,7 @@ export class OllamaProvider extends LLMProvider {
 
     const res = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: this.getHeaders(),
       body: JSON.stringify(body),
     });
 

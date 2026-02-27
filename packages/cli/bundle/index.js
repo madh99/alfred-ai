@@ -993,8 +993,17 @@ var init_ollama = __esm({
       constructor(config) {
         super(config);
       }
+      apiKey = "";
       async initialize() {
         this.baseUrl = this.config.baseUrl ?? "http://localhost:11434";
+        this.apiKey = this.config.apiKey ?? "";
+      }
+      getHeaders() {
+        const headers = { "Content-Type": "application/json" };
+        if (this.apiKey) {
+          headers["Authorization"] = `Bearer ${this.apiKey}`;
+        }
+        return headers;
       }
       async complete(request) {
         const messages = this.buildMessages(request.messages, request.system);
@@ -1010,7 +1019,7 @@ var init_ollama = __esm({
         }
         const res = await fetch(`${this.baseUrl}/api/chat`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: this.getHeaders(),
           body: JSON.stringify(body)
         });
         if (!res.ok) {
@@ -1034,7 +1043,7 @@ var init_ollama = __esm({
         }
         const res = await fetch(`${this.baseUrl}/api/chat`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: this.getHeaders(),
           body: JSON.stringify(body)
         });
         if (!res.ok) {
@@ -3582,7 +3591,8 @@ ${bold("Writing configuration files...")}`);
       `ALFRED_LLM_PROVIDER=${provider.name}`
     ];
     if (apiKey) {
-      envLines.push(`${provider.envKeyName}=${apiKey}`);
+      const envKeyName = provider.envKeyName || "ALFRED_OLLAMA_API_KEY";
+      envLines.push(`${envKeyName}=${apiKey}`);
     }
     if (model !== provider.defaultModel) {
       envLines.push(`ALFRED_LLM_MODEL=${model}`);
