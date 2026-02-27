@@ -168,17 +168,17 @@ export class Alfred {
         const response = await this.pipeline.process(message);
         await adapter.sendMessage(message.chatId, response);
       } catch (error) {
-        this.logger.error({ platform, error, chatId: message.chatId }, 'Failed to handle message');
+        this.logger.error({ platform, err: error, chatId: message.chatId }, 'Failed to handle message');
         try {
           await adapter.sendMessage(message.chatId, 'Sorry, I encountered an error processing your message. Please try again.');
         } catch (sendError) {
-          this.logger.error({ error: sendError }, 'Failed to send error message');
+          this.logger.error({ err: sendError }, 'Failed to send error message');
         }
       }
     });
 
     adapter.on('error', (error: Error) => {
-      this.logger.error({ platform, error }, 'Adapter error');
+      this.logger.error({ platform, err: error }, 'Adapter error');
     });
 
     adapter.on('connected', () => {

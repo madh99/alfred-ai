@@ -143,7 +143,7 @@ export class MessagePipeline {
 
       return responseText;
     } catch (error) {
-      this.logger.error({ error }, 'Failed to process message');
+      this.logger.error({ err: error }, 'Failed to process message');
       throw error;
     }
   }

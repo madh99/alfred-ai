@@ -20,7 +20,9 @@ export class OllamaProvider extends LLMProvider {
   private apiKey: string = '';
 
   async initialize(): Promise<void> {
-    this.baseUrl = this.config.baseUrl ?? 'http://localhost:11434';
+    // Strip trailing /v1 — Ollama uses /api/chat, not OpenAI-compatible paths
+    const raw = this.config.baseUrl ?? 'http://localhost:11434';
+    this.baseUrl = raw.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
     this.apiKey = this.config.apiKey ?? '';
   }
 

@@ -215,9 +215,7 @@ export async function setupCommand(): Promise<void> {
         'Ollama URL (use a remote address if Ollama runs on another machine)',
         'http://localhost:11434',
       );
-      if (!baseUrl.endsWith('/v1')) {
-        baseUrl = baseUrl.replace(/\/+$/, '') + '/v1';
-      }
+      baseUrl = baseUrl.replace(/\/+$/, '');
       console.log(`  ${green('>')} Ollama URL: ${dim(baseUrl)}`);
     }
 

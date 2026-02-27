@@ -995,7 +995,8 @@ var init_ollama = __esm({
       }
       apiKey = "";
       async initialize() {
-        this.baseUrl = this.config.baseUrl ?? "http://localhost:11434";
+        const raw = this.config.baseUrl ?? "http://localhost:11434";
+        this.baseUrl = raw.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
         this.apiKey = this.config.apiKey ?? "";
       }
       getHeaders() {
@@ -2704,7 +2705,7 @@ var init_message_pipeline = __esm({
           this.logger.info({ duration, tokens: response.usage, stopReason: response.stopReason, toolIterations: iteration }, "Message processed");
           return responseText;
         } catch (error) {
-          this.logger.error({ error }, "Failed to process message");
+          this.logger.error({ err: error }, "Failed to process message");
           throw error;
         }
       }
@@ -3358,16 +3359,16 @@ var init_alfred = __esm({
             const response = await this.pipeline.process(message);
             await adapter.sendMessage(message.chatId, response);
           } catch (error) {
-            this.logger.error({ platform, error, chatId: message.chatId }, "Failed to handle message");
+            this.logger.error({ platform, err: error, chatId: message.chatId }, "Failed to handle message");
             try {
               await adapter.sendMessage(message.chatId, "Sorry, I encountered an error processing your message. Please try again.");
             } catch (sendError) {
-              this.logger.error({ error: sendError }, "Failed to send error message");
+              this.logger.error({ err: sendError }, "Failed to send error message");
             }
           }
         });
         adapter.on("error", (error) => {
-          this.logger.error({ platform, error }, "Adapter error");
+          this.logger.error({ platform, err: error }, "Adapter error");
         });
         adapter.on("connected", () => {
           this.logger.info({ platform }, "Adapter connected");
@@ -3511,9 +3512,7 @@ ${bold("Which LLM provider would you like to use?")}`);
     if (provider.name === "ollama") {
       console.log("");
       baseUrl = await askWithDefault(rl, "Ollama URL (use a remote address if Ollama runs on another machine)", "http://localhost:11434");
-      if (!baseUrl.endsWith("/v1")) {
-        baseUrl = baseUrl.replace(/\/+$/, "") + "/v1";
-      }
+      baseUrl = baseUrl.replace(/\/+$/, "");
       console.log(`  ${green(">")} Ollama URL: ${dim(baseUrl)}`);
     }
     console.log("");
