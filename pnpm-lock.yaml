@@ -236,6 +236,9 @@ importers:
 
   packages/skills:
     dependencies:
+      '@alfred/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@alfred/logger':
         specifier: workspace:*
         version: link:../logger

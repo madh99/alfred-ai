@@ -2,7 +2,7 @@ import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository } from '@alfred/storage';
 import { createLLMProvider } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
@@ -16,14 +16,19 @@ import {
   SummarizeSkill,
   TranslateSkill,
   WeatherSkill,
+  ShellSkill,
+  MemorySkill,
+  DelegateSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
+import { ReminderScheduler } from './reminder-scheduler.js';
 
 export class Alfred {
   private readonly logger: Logger;
   private database!: Database;
   private pipeline!: MessagePipeline;
+  private reminderScheduler?: ReminderScheduler;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
 
   constructor(private readonly config: AlfredConfig) {
@@ -39,6 +44,8 @@ export class Alfred {
     const conversationRepo = new ConversationRepository(db);
     const userRepo = new UserRepository(db);
     const auditRepo = new AuditRepository(db);
+    const memoryRepo = new MemoryRepository(db);
+    const reminderRepo = new ReminderRepository(db);
     this.logger.info('Storage initialized');
 
     // 2. Initialize security
@@ -50,26 +57,29 @@ export class Alfred {
     );
     this.logger.info('Security engine initialized');
 
-    // 3. Initialize skills
+    // 3. Initialize LLM provider
+    const llmProvider = createLLMProvider(this.config.llm);
+    await llmProvider.initialize();
+    this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
+
+    // 4. Initialize skills
     const skillRegistry = new SkillRegistry();
     skillRegistry.register(new CalculatorSkill());
     skillRegistry.register(new SystemInfoSkill());
     skillRegistry.register(new WebSearchSkill());
-    skillRegistry.register(new ReminderSkill());
+    skillRegistry.register(new ReminderSkill(reminderRepo));
     skillRegistry.register(new NoteSkill());
     skillRegistry.register(new SummarizeSkill());
     skillRegistry.register(new TranslateSkill());
     skillRegistry.register(new WeatherSkill());
+    skillRegistry.register(new ShellSkill());
+    skillRegistry.register(new MemorySkill(memoryRepo));
+    skillRegistry.register(new DelegateSkill(llmProvider));
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     const skillSandbox = new SkillSandbox(
       this.logger.child({ component: 'sandbox' }),
     );
-
-    // 4. Initialize LLM provider (via factory — supports anthropic, openai, openrouter, ollama)
-    const llmProvider = createLLMProvider(this.config.llm);
-    await llmProvider.initialize();
-    this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
 
     // 5. Create conversation manager and pipeline
     const conversationManager = new ConversationManager(conversationRepo);
@@ -81,9 +91,24 @@ export class Alfred {
       skillRegistry,
       skillSandbox,
       securityManager,
+      memoryRepo,
     );
 
-    // 6. Initialize messaging adapters
+    // 6. Initialize reminder scheduler
+    this.reminderScheduler = new ReminderScheduler(
+      reminderRepo,
+      async (platform, chatId, text) => {
+        const adapter = this.adapters.get(platform);
+        if (adapter) {
+          await adapter.sendMessage(chatId, text);
+        } else {
+          this.logger.warn({ platform, chatId }, 'No adapter for reminder platform');
+        }
+      },
+      this.logger.child({ component: 'reminders' }),
+    );
+
+    // 7. Initialize messaging adapters
     await this.initializeAdapters();
 
     this.logger.info('Alfred initialized');
@@ -139,6 +164,9 @@ export class Alfred {
       this.logger.info({ platform }, 'Adapter connected');
     }
 
+    // Start reminder scheduler
+    this.reminderScheduler?.start();
+
     if (this.adapters.size === 0) {
       this.logger.warn('No messaging adapters enabled. Configure at least one platform.');
     }
@@ -149,12 +177,15 @@ export class Alfred {
   async stop(): Promise<void> {
     this.logger.info('Stopping Alfred...');
 
+    // Stop reminder scheduler
+    this.reminderScheduler?.stop();
+
     for (const [platform, adapter] of this.adapters) {
       try {
         await adapter.disconnect();
         this.logger.info({ platform }, 'Adapter disconnected');
       } catch (error) {
-        this.logger.error({ platform, error }, 'Failed to disconnect adapter');
+        this.logger.error({ platform, err: error }, 'Failed to disconnect adapter');
       }
     }
 

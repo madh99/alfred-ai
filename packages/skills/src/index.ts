@@ -10,3 +10,6 @@ export { NoteSkill } from './built-in/note.js';
 export { SummarizeSkill } from './built-in/summarize.js';
 export { TranslateSkill } from './built-in/translate.js';
 export { WeatherSkill } from './built-in/weather.js';
+export { ShellSkill } from './built-in/shell.js';
+export { MemorySkill } from './built-in/memory.js';
+export { DelegateSkill } from './built-in/delegate.js';

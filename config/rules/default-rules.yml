@@ -32,6 +32,17 @@ rules:
       maxInvocations: 30
       windowSeconds: 3600
 
+  # Allow admin actions (shell, etc.) for the owner only
+  # Uncomment and set your user ID to enable:
+  # - id: allow-owner-admin
+  #   effect: allow
+  #   priority: 50
+  #   scope: global
+  #   actions: ["*"]
+  #   riskLevels: [admin, destructive]
+  #   conditions:
+  #     users: ["YOUR_USER_ID_HERE"]
+
   # Deny destructive and admin actions by default
   - id: deny-destructive
     effect: deny

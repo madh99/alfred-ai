@@ -7,9 +7,27 @@ import type {
   ToolCall,
 } from '@alfred/types';
 
+export interface MemoryForPrompt {
+  key: string;
+  value: string;
+  category: string;
+}
+
 export class PromptBuilder {
-  buildSystemPrompt(): string {
-    return 'You are Alfred, a personal AI assistant. You are helpful, precise, and security-conscious. You have access to various tools (skills) that you can use to help the user. Always explain what you are doing before using a tool. Be concise but thorough.';
+  buildSystemPrompt(memories?: MemoryForPrompt[]): string {
+    let prompt = 'You are Alfred, a personal AI assistant. You are helpful, precise, and security-conscious. You have access to various tools (skills) that you can use to help the user. Always explain what you are doing before using a tool. Be concise but thorough.';
+
+    if (memories && memories.length > 0) {
+      prompt += '\n\nYou have the following memories about this user. Use them to personalize your responses:\n';
+      for (const m of memories) {
+        prompt += `- [${m.category}] ${m.key}: ${m.value}\n`;
+      }
+      prompt += '\nWhen the user tells you new facts or preferences, use the memory tool to save them for future reference.';
+    } else {
+      prompt += '\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.';
+    }
+
+    return prompt;
   }
 
   buildMessages(history: ConversationMessage[]): LLMMessage[] {

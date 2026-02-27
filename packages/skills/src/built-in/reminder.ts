@@ -1,13 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import { randomUUID } from 'node:crypto';
 import { Skill } from '../skill.js';
-
-interface ReminderEntry {
-  userId: string;
-  message: string;
-  triggerAt: number;
-  timeout: ReturnType<typeof setTimeout>;
-}
+import type { ReminderRepository } from '@alfred/storage';
 
 type ReminderAction = 'set' | 'list' | 'cancel';
 
@@ -16,7 +9,7 @@ export class ReminderSkill extends Skill {
     name: 'reminder',
     description: 'Set, list, or cancel reminders',
     riskLevel: 'write',
-    version: '1.0.0',
+    version: '2.0.0',
     inputSchema: {
       type: 'object',
       properties: {
@@ -42,7 +35,9 @@ export class ReminderSkill extends Skill {
     },
   };
 
-  private readonly reminders: Map<string, ReminderEntry> = new Map();
+  constructor(private readonly reminderRepo: ReminderRepository) {
+    super();
+  }
 
   async execute(
     input: Record<string, unknown>,
@@ -86,47 +81,39 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    const reminderId = randomUUID();
-    const triggerAt = Date.now() + delayMinutes * 60 * 1000;
+    const triggerAt = new Date(Date.now() + delayMinutes * 60 * 1000);
 
-    const timeout = setTimeout(() => {
-      this.reminders.delete(reminderId);
-    }, delayMinutes * 60 * 1000);
-
-    this.reminders.set(reminderId, {
-      userId: context.userId,
+    const entry = this.reminderRepo.create(
+      context.userId,
+      context.platform,
+      context.chatId,
       message,
       triggerAt,
-      timeout,
-    });
+    );
 
     return {
       success: true,
-      data: { reminderId, message, triggerAt },
-      display: `Reminder set (${reminderId}): "${message}" in ${delayMinutes} minute(s)`,
+      data: { reminderId: entry.id, message, triggerAt: entry.triggerAt },
+      display: `Reminder set (${entry.id}): "${message}" in ${delayMinutes} minute(s)`,
     };
   }
 
   private listReminders(context: SkillContext): SkillResult {
-    const userReminders: Array<{ reminderId: string; message: string; triggerAt: number }> = [];
+    const reminders = this.reminderRepo.getByUser(context.userId);
 
-    for (const [reminderId, entry] of this.reminders) {
-      if (entry.userId === context.userId) {
-        userReminders.push({
-          reminderId,
-          message: entry.message,
-          triggerAt: entry.triggerAt,
-        });
-      }
-    }
+    const reminderList = reminders.map((r) => ({
+      reminderId: r.id,
+      message: r.message,
+      triggerAt: r.triggerAt,
+    }));
 
     return {
       success: true,
-      data: userReminders,
+      data: reminderList,
       display:
-        userReminders.length === 0
+        reminderList.length === 0
           ? 'No active reminders.'
-          : `Active reminders:\n${userReminders.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${new Date(r.triggerAt).toISOString()})`).join('\n')}`,
+          : `Active reminders:\n${reminderList.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${r.triggerAt})`).join('\n')}`,
     };
   }
 
@@ -140,17 +127,14 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    const entry = this.reminders.get(reminderId);
+    const deleted = this.reminderRepo.cancel(reminderId);
 
-    if (!entry) {
+    if (!deleted) {
       return {
         success: false,
         error: `Reminder "${reminderId}" not found`,
       };
     }
-
-    clearTimeout(entry.timeout);
-    this.reminders.delete(reminderId);
 
     return {
       success: true,

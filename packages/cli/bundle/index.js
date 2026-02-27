@@ -558,6 +558,78 @@ var init_audit_repository = __esm({
   }
 });
 
+// packages/storage/dist/repositories/memory-repository.js
+import { randomUUID } from "node:crypto";
+var MemoryRepository;
+var init_memory_repository = __esm({
+  "packages/storage/dist/repositories/memory-repository.js"() {
+    "use strict";
+    MemoryRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      save(userId, key, value, category = "general") {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const existing = this.db.prepare("SELECT id FROM memories WHERE user_id = ? AND key = ?").get(userId, key);
+        if (existing) {
+          this.db.prepare("UPDATE memories SET value = ?, category = ?, updated_at = ? WHERE id = ?").run(value, category, now, existing.id);
+          return {
+            id: existing.id,
+            userId,
+            key,
+            value,
+            category,
+            createdAt: this.db.prepare("SELECT created_at FROM memories WHERE id = ?").get(existing.id).created_at,
+            updatedAt: now
+          };
+        }
+        const id = randomUUID();
+        this.db.prepare("INSERT INTO memories (id, user_id, key, value, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, userId, key, value, category, now, now);
+        return { id, userId, key, value, category, createdAt: now, updatedAt: now };
+      }
+      recall(userId, key) {
+        const row = this.db.prepare("SELECT * FROM memories WHERE user_id = ? AND key = ?").get(userId, key);
+        if (!row)
+          return void 0;
+        return this.mapRow(row);
+      }
+      search(userId, query) {
+        const pattern = `%${query}%`;
+        const rows = this.db.prepare("SELECT * FROM memories WHERE user_id = ? AND (key LIKE ? OR value LIKE ?) ORDER BY updated_at DESC").all(userId, pattern, pattern);
+        return rows.map((row) => this.mapRow(row));
+      }
+      listByCategory(userId, category) {
+        const rows = this.db.prepare("SELECT * FROM memories WHERE user_id = ? AND category = ? ORDER BY updated_at DESC").all(userId, category);
+        return rows.map((row) => this.mapRow(row));
+      }
+      listAll(userId) {
+        const rows = this.db.prepare("SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC").all(userId);
+        return rows.map((row) => this.mapRow(row));
+      }
+      delete(userId, key) {
+        const result = this.db.prepare("DELETE FROM memories WHERE user_id = ? AND key = ?").run(userId, key);
+        return result.changes > 0;
+      }
+      getRecentForPrompt(userId, limit = 20) {
+        const rows = this.db.prepare("SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?").all(userId, limit);
+        return rows.map((row) => this.mapRow(row));
+      }
+      mapRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          key: row.key,
+          value: row.value,
+          category: row.category,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+      }
+    };
+  }
+});
+
 // packages/storage/dist/migrations/migrator.js
 var init_migrator = __esm({
   "packages/storage/dist/migrations/migrator.js"() {
@@ -573,6 +645,66 @@ var init_migrations = __esm({
   }
 });
 
+// packages/storage/dist/repositories/reminder-repository.js
+import { randomUUID as randomUUID2 } from "node:crypto";
+var ReminderRepository;
+var init_reminder_repository = __esm({
+  "packages/storage/dist/repositories/reminder-repository.js"() {
+    "use strict";
+    ReminderRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      create(userId, platform, chatId, message, triggerAt) {
+        const entry = {
+          id: randomUUID2(),
+          userId,
+          platform,
+          chatId,
+          message,
+          triggerAt: triggerAt.toISOString(),
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          fired: false
+        };
+        this.db.prepare(`
+      INSERT INTO reminders (id, user_id, platform, chat_id, message, trigger_at, created_at, fired)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(entry.id, entry.userId, entry.platform, entry.chatId, entry.message, entry.triggerAt, entry.createdAt, 0);
+        return entry;
+      }
+      getDue() {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const rows = this.db.prepare(`SELECT * FROM reminders WHERE fired = 0 AND trigger_at <= ? ORDER BY trigger_at ASC`).all(now);
+        return rows.map((row) => this.mapRow(row));
+      }
+      getByUser(userId) {
+        const rows = this.db.prepare(`SELECT * FROM reminders WHERE fired = 0 AND user_id = ? ORDER BY trigger_at ASC`).all(userId);
+        return rows.map((row) => this.mapRow(row));
+      }
+      markFired(id) {
+        this.db.prepare(`UPDATE reminders SET fired = 1 WHERE id = ?`).run(id);
+      }
+      cancel(id) {
+        const result = this.db.prepare(`DELETE FROM reminders WHERE id = ?`).run(id);
+        return result.changes > 0;
+      }
+      mapRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          platform: row.platform,
+          chatId: row.chat_id,
+          message: row.message,
+          triggerAt: row.trigger_at,
+          createdAt: row.created_at,
+          fired: row.fired === 1
+        };
+      }
+    };
+  }
+});
+
 // packages/storage/dist/index.js
 var init_dist3 = __esm({
   "packages/storage/dist/index.js"() {
@@ -581,8 +713,10 @@ var init_dist3 = __esm({
     init_conversation_repository();
     init_user_repository();
     init_audit_repository();
+    init_memory_repository();
     init_migrator();
     init_migrations();
+    init_reminder_repository();
   }
 });
 
@@ -1285,8 +1419,19 @@ var init_prompt_builder = __esm({
   "packages/llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
-      buildSystemPrompt() {
-        return "You are Alfred, a personal AI assistant. You are helpful, precise, and security-conscious. You have access to various tools (skills) that you can use to help the user. Always explain what you are doing before using a tool. Be concise but thorough.";
+      buildSystemPrompt(memories) {
+        let prompt = "You are Alfred, a personal AI assistant. You are helpful, precise, and security-conscious. You have access to various tools (skills) that you can use to help the user. Always explain what you are doing before using a tool. Be concise but thorough.";
+        if (memories && memories.length > 0) {
+          prompt += "\n\nYou have the following memories about this user. Use them to personalize your responses:\n";
+          for (const m of memories) {
+            prompt += `- [${m.category}] ${m.key}: ${m.value}
+`;
+          }
+          prompt += "\nWhen the user tells you new facts or preferences, use the memory tool to save them for future reference.";
+        } else {
+          prompt += "\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.";
+        }
+        return prompt;
       }
       buildMessages(history) {
         return history.filter((msg) => msg.role === "user" || msg.role === "assistant").map((msg) => {
@@ -1958,18 +2103,18 @@ var init_web_search = __esm({
 });
 
 // packages/skills/dist/built-in/reminder.js
-import { randomUUID } from "node:crypto";
 var ReminderSkill;
 var init_reminder = __esm({
   "packages/skills/dist/built-in/reminder.js"() {
     "use strict";
     init_skill();
     ReminderSkill = class extends Skill {
+      reminderRepo;
       metadata = {
         name: "reminder",
         description: "Set, list, or cancel reminders",
         riskLevel: "write",
-        version: "1.0.0",
+        version: "2.0.0",
         inputSchema: {
           type: "object",
           properties: {
@@ -1994,7 +2139,10 @@ var init_reminder = __esm({
           required: ["action"]
         }
       };
-      reminders = /* @__PURE__ */ new Map();
+      constructor(reminderRepo) {
+        super();
+        this.reminderRepo = reminderRepo;
+      }
       async execute(input2, context) {
         const action = input2.action;
         switch (action) {
@@ -2026,39 +2174,26 @@ var init_reminder = __esm({
             error: 'Missing or invalid "delayMinutes" for set action (must be a positive number)'
           };
         }
-        const reminderId = randomUUID();
-        const triggerAt = Date.now() + delayMinutes * 60 * 1e3;
-        const timeout = setTimeout(() => {
-          this.reminders.delete(reminderId);
-        }, delayMinutes * 60 * 1e3);
-        this.reminders.set(reminderId, {
-          userId: context.userId,
-          message,
-          triggerAt,
-          timeout
-        });
+        const triggerAt = new Date(Date.now() + delayMinutes * 60 * 1e3);
+        const entry = this.reminderRepo.create(context.userId, context.platform, context.chatId, message, triggerAt);
         return {
           success: true,
-          data: { reminderId, message, triggerAt },
-          display: `Reminder set (${reminderId}): "${message}" in ${delayMinutes} minute(s)`
+          data: { reminderId: entry.id, message, triggerAt: entry.triggerAt },
+          display: `Reminder set (${entry.id}): "${message}" in ${delayMinutes} minute(s)`
         };
       }
       listReminders(context) {
-        const userReminders = [];
-        for (const [reminderId, entry] of this.reminders) {
-          if (entry.userId === context.userId) {
-            userReminders.push({
-              reminderId,
-              message: entry.message,
-              triggerAt: entry.triggerAt
-            });
-          }
-        }
+        const reminders = this.reminderRepo.getByUser(context.userId);
+        const reminderList = reminders.map((r) => ({
+          reminderId: r.id,
+          message: r.message,
+          triggerAt: r.triggerAt
+        }));
         return {
           success: true,
-          data: userReminders,
-          display: userReminders.length === 0 ? "No active reminders." : `Active reminders:
-${userReminders.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${new Date(r.triggerAt).toISOString()})`).join("\n")}`
+          data: reminderList,
+          display: reminderList.length === 0 ? "No active reminders." : `Active reminders:
+${reminderList.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${r.triggerAt})`).join("\n")}`
         };
       }
       cancelReminder(input2) {
@@ -2069,15 +2204,13 @@ ${userReminders.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${new
             error: 'Missing required field "reminderId" for cancel action'
           };
         }
-        const entry = this.reminders.get(reminderId);
-        if (!entry) {
+        const deleted = this.reminderRepo.cancel(reminderId);
+        if (!deleted) {
           return {
             success: false,
             error: `Reminder "${reminderId}" not found`
           };
         }
-        clearTimeout(entry.timeout);
-        this.reminders.delete(reminderId);
         return {
           success: true,
           data: { reminderId },
@@ -2089,7 +2222,7 @@ ${userReminders.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${new
 });
 
 // packages/skills/dist/built-in/note.js
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 var NoteSkill;
 var init_note = __esm({
   "packages/skills/dist/built-in/note.js"() {
@@ -2163,7 +2296,7 @@ var init_note = __esm({
             error: 'Missing required field "content" for save action'
           };
         }
-        const noteId = randomUUID2();
+        const noteId = randomUUID3();
         const createdAt = Date.now();
         this.notes.set(noteId, {
           noteId,
@@ -2568,6 +2701,331 @@ var init_weather = __esm({
   }
 });
 
+// packages/skills/dist/built-in/shell.js
+import { exec } from "node:child_process";
+function truncate(text) {
+  if (text.length > MAX_OUTPUT_SIZE) {
+    return text.slice(0, MAX_OUTPUT_SIZE) + "\n[output truncated]";
+  }
+  return text;
+}
+var DEFAULT_TIMEOUT, MAX_OUTPUT_SIZE, ShellSkill;
+var init_shell = __esm({
+  "packages/skills/dist/built-in/shell.js"() {
+    "use strict";
+    init_skill();
+    DEFAULT_TIMEOUT = 3e4;
+    MAX_OUTPUT_SIZE = 1e4;
+    ShellSkill = class extends Skill {
+      metadata = {
+        name: "shell",
+        description: "Execute shell commands on the host system and return stdout/stderr output. Use this tool to run CLI commands, scripts, or system utilities. Commands run in a child process with a configurable timeout and working directory.",
+        riskLevel: "admin",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            command: {
+              type: "string",
+              description: "The shell command to execute"
+            },
+            timeout: {
+              type: "number",
+              description: "Timeout in milliseconds (default: 30000)"
+            },
+            cwd: {
+              type: "string",
+              description: "Working directory for the command"
+            }
+          },
+          required: ["command"]
+        }
+      };
+      async execute(input2, _context) {
+        const command = input2.command;
+        if (!command || typeof command !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "command"'
+          };
+        }
+        const timeout = typeof input2.timeout === "number" && input2.timeout > 0 ? input2.timeout : DEFAULT_TIMEOUT;
+        const cwd = typeof input2.cwd === "string" && input2.cwd.length > 0 ? input2.cwd : void 0;
+        try {
+          const { stdout, stderr, exitCode } = await this.run(command, timeout, cwd);
+          const parts = [];
+          if (stdout)
+            parts.push(`stdout:
+${truncate(stdout)}`);
+          if (stderr)
+            parts.push(`stderr:
+${truncate(stderr)}`);
+          if (parts.length === 0)
+            parts.push("(no output)");
+          parts.push(`exit code: ${exitCode}`);
+          return {
+            success: exitCode === 0,
+            data: { stdout, stderr, exitCode },
+            display: parts.join("\n\n"),
+            ...exitCode !== 0 && { error: `Command exited with code ${exitCode}` }
+          };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            success: false,
+            error: `Shell execution failed: ${message}`
+          };
+        }
+      }
+      run(command, timeout, cwd) {
+        return new Promise((resolve) => {
+          exec(command, { timeout, cwd }, (error, stdout, stderr) => {
+            const exitCode = error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+            resolve({
+              stdout: typeof stdout === "string" ? stdout : "",
+              stderr: typeof stderr === "string" ? stderr : "",
+              exitCode
+            });
+          });
+        });
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/memory.js
+var MemorySkill;
+var init_memory = __esm({
+  "packages/skills/dist/built-in/memory.js"() {
+    "use strict";
+    init_skill();
+    MemorySkill = class extends Skill {
+      memoryRepo;
+      metadata = {
+        name: "memory",
+        description: "Store and retrieve persistent memories. Use this to remember user preferences, facts, and important information across conversations.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["save", "recall", "search", "list", "delete"],
+              description: "The memory action to perform"
+            },
+            key: {
+              type: "string",
+              description: "The memory key/label"
+            },
+            value: {
+              type: "string",
+              description: "The value to remember (for save)"
+            },
+            category: {
+              type: "string",
+              description: "Optional category (for save/list)"
+            },
+            query: {
+              type: "string",
+              description: "Search query (for search)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(memoryRepo) {
+        super();
+        this.memoryRepo = memoryRepo;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        switch (action) {
+          case "save":
+            return this.saveMemory(input2, context);
+          case "recall":
+            return this.recallMemory(input2, context);
+          case "search":
+            return this.searchMemories(input2, context);
+          case "list":
+            return this.listMemories(input2, context);
+          case "delete":
+            return this.deleteMemory(input2, context);
+          default:
+            return {
+              success: false,
+              error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete`
+            };
+        }
+      }
+      saveMemory(input2, context) {
+        const key = input2.key;
+        const value = input2.value;
+        const category = input2.category;
+        if (!key || typeof key !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "key" for save action'
+          };
+        }
+        if (!value || typeof value !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "value" for save action'
+          };
+        }
+        const entry = this.memoryRepo.save(context.userId, key, value, category ?? "general");
+        return {
+          success: true,
+          data: entry,
+          display: `Remembered "${key}" = "${value}" (category: ${entry.category})`
+        };
+      }
+      recallMemory(input2, context) {
+        const key = input2.key;
+        if (!key || typeof key !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "key" for recall action'
+          };
+        }
+        const entry = this.memoryRepo.recall(context.userId, key);
+        if (!entry) {
+          return {
+            success: true,
+            data: null,
+            display: `No memory found for key "${key}".`
+          };
+        }
+        return {
+          success: true,
+          data: entry,
+          display: `${key} = "${entry.value}" (category: ${entry.category}, updated: ${entry.updatedAt})`
+        };
+      }
+      searchMemories(input2, context) {
+        const query = input2.query;
+        if (!query || typeof query !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "query" for search action'
+          };
+        }
+        const entries = this.memoryRepo.search(context.userId, query);
+        return {
+          success: true,
+          data: entries,
+          display: entries.length === 0 ? `No memories matching "${query}".` : `Found ${entries.length} memory(ies):
+${entries.map((e) => `- ${e.key}: "${e.value}"`).join("\n")}`
+        };
+      }
+      listMemories(input2, context) {
+        const category = input2.category;
+        const entries = category && typeof category === "string" ? this.memoryRepo.listByCategory(context.userId, category) : this.memoryRepo.listAll(context.userId);
+        const label = category ? `in category "${category}"` : "total";
+        return {
+          success: true,
+          data: entries,
+          display: entries.length === 0 ? `No memories found${category ? ` in category "${category}"` : ""}.` : `${entries.length} memory(ies) ${label}:
+${entries.map((e) => `- [${e.category}] ${e.key}: "${e.value}"`).join("\n")}`
+        };
+      }
+      deleteMemory(input2, context) {
+        const key = input2.key;
+        if (!key || typeof key !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "key" for delete action'
+          };
+        }
+        const deleted = this.memoryRepo.delete(context.userId, key);
+        return {
+          success: true,
+          data: { key, deleted },
+          display: deleted ? `Memory "${key}" deleted.` : `No memory found for key "${key}".`
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/delegate.js
+var DelegateSkill;
+var init_delegate = __esm({
+  "packages/skills/dist/built-in/delegate.js"() {
+    "use strict";
+    init_skill();
+    DelegateSkill = class extends Skill {
+      llm;
+      metadata = {
+        name: "delegate",
+        description: "Delegate a complex sub-task to a separate AI agent. The sub-agent will process the task independently and return a result. Use this for tasks that require focused attention or multiple steps.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            task: {
+              type: "string",
+              description: "The task to delegate to a sub-agent"
+            },
+            context: {
+              type: "string",
+              description: "Additional context for the sub-agent (optional)"
+            }
+          },
+          required: ["task"]
+        }
+      };
+      constructor(llm) {
+        super();
+        this.llm = llm;
+      }
+      async execute(input2, _context) {
+        const task = input2.task;
+        const additionalContext = input2.context;
+        if (!task || typeof task !== "string") {
+          return {
+            success: false,
+            error: 'Missing required field "task"'
+          };
+        }
+        const systemPrompt = "You are a sub-agent of Alfred. Complete the following task concisely and return the result. Do not use tools.";
+        let userContent = task;
+        if (additionalContext && typeof additionalContext === "string") {
+          userContent = `${task}
+
+Additional context: ${additionalContext}`;
+        }
+        const messages = [
+          {
+            role: "user",
+            content: userContent
+          }
+        ];
+        try {
+          const response = await this.llm.complete({
+            messages,
+            system: systemPrompt,
+            maxTokens: 2048
+          });
+          return {
+            success: true,
+            data: { response: response.content, usage: response.usage },
+            display: response.content
+          };
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          return {
+            success: false,
+            error: `Sub-agent failed: ${errorMessage}`
+          };
+        }
+      }
+    };
+  }
+});
+
 // packages/skills/dist/index.js
 var init_dist6 = __esm({
   "packages/skills/dist/index.js"() {
@@ -2584,6 +3042,9 @@ var init_dist6 = __esm({
     init_summarize();
     init_translate();
     init_weather();
+    init_shell();
+    init_memory();
+    init_delegate();
   }
 });
 
@@ -2630,8 +3091,9 @@ var init_message_pipeline = __esm({
       skillRegistry;
       skillSandbox;
       securityManager;
+      memoryRepo;
       promptBuilder;
-      constructor(llm, conversationManager, users, logger, skillRegistry, skillSandbox, securityManager) {
+      constructor(llm, conversationManager, users, logger, skillRegistry, skillSandbox, securityManager, memoryRepo) {
         this.llm = llm;
         this.conversationManager = conversationManager;
         this.users = users;
@@ -2639,6 +3101,7 @@ var init_message_pipeline = __esm({
         this.skillRegistry = skillRegistry;
         this.skillSandbox = skillSandbox;
         this.securityManager = securityManager;
+        this.memoryRepo = memoryRepo;
         this.promptBuilder = new PromptBuilder();
       }
       async process(message) {
@@ -2649,7 +3112,14 @@ var init_message_pipeline = __esm({
           const conversation = this.conversationManager.getOrCreateConversation(message.platform, message.chatId, user.id);
           const history = this.conversationManager.getHistory(conversation.id);
           this.conversationManager.addMessage(conversation.id, "user", message.text);
-          const system = this.promptBuilder.buildSystemPrompt();
+          let memories;
+          if (this.memoryRepo) {
+            try {
+              memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+            } catch {
+            }
+          }
+          const system = this.promptBuilder.buildSystemPrompt(memories);
           const messages = this.promptBuilder.buildMessages(history);
           messages.push({ role: "user", content: message.text });
           const tools = this.skillRegistry ? this.promptBuilder.buildTools(this.skillRegistry.getAll().map((s) => s.metadata)) : void 0;
@@ -2747,6 +3217,55 @@ var init_message_pipeline = __esm({
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           return { content: `Skill execution failed: ${msg}`, isError: true };
+        }
+      }
+    };
+  }
+});
+
+// packages/core/dist/reminder-scheduler.js
+var ReminderScheduler;
+var init_reminder_scheduler = __esm({
+  "packages/core/dist/reminder-scheduler.js"() {
+    "use strict";
+    ReminderScheduler = class {
+      reminderRepo;
+      sendMessage;
+      logger;
+      intervalId;
+      checkIntervalMs;
+      constructor(reminderRepo, sendMessage, logger, checkIntervalMs = 15e3) {
+        this.reminderRepo = reminderRepo;
+        this.sendMessage = sendMessage;
+        this.logger = logger;
+        this.checkIntervalMs = checkIntervalMs;
+      }
+      start() {
+        this.logger.info("Reminder scheduler started");
+        this.intervalId = setInterval(() => this.checkDueReminders(), this.checkIntervalMs);
+        this.checkDueReminders();
+      }
+      stop() {
+        if (this.intervalId) {
+          clearInterval(this.intervalId);
+          this.intervalId = void 0;
+        }
+        this.logger.info("Reminder scheduler stopped");
+      }
+      async checkDueReminders() {
+        try {
+          const due = this.reminderRepo.getDue();
+          for (const reminder of due) {
+            try {
+              await this.sendMessage(reminder.platform, reminder.chatId, `\u23F0 Reminder: ${reminder.message}`);
+              this.reminderRepo.markFired(reminder.id);
+              this.logger.info({ reminderId: reminder.id }, "Reminder fired");
+            } catch (err) {
+              this.logger.error({ err, reminderId: reminder.id }, "Failed to send reminder");
+            }
+          }
+        } catch (err) {
+          this.logger.error({ err }, "Error checking due reminders");
         }
       }
     };
@@ -3260,11 +3779,13 @@ var init_alfred = __esm({
     init_dist6();
     init_conversation_manager();
     init_message_pipeline();
+    init_reminder_scheduler();
     Alfred = class {
       config;
       logger;
       database;
       pipeline;
+      reminderScheduler;
       adapters = /* @__PURE__ */ new Map();
       constructor(config) {
         this.config = config;
@@ -3277,26 +3798,39 @@ var init_alfred = __esm({
         const conversationRepo = new ConversationRepository(db);
         const userRepo = new UserRepository(db);
         const auditRepo = new AuditRepository(db);
+        const memoryRepo = new MemoryRepository(db);
+        const reminderRepo = new ReminderRepository(db);
         this.logger.info("Storage initialized");
         const ruleEngine = new RuleEngine();
         const securityManager = new SecurityManager(ruleEngine, auditRepo, this.logger.child({ component: "security" }));
         this.logger.info("Security engine initialized");
+        const llmProvider = createLLMProvider(this.config.llm);
+        await llmProvider.initialize();
+        this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, "LLM provider initialized");
         const skillRegistry = new SkillRegistry();
         skillRegistry.register(new CalculatorSkill());
         skillRegistry.register(new SystemInfoSkill());
         skillRegistry.register(new WebSearchSkill());
-        skillRegistry.register(new ReminderSkill());
+        skillRegistry.register(new ReminderSkill(reminderRepo));
         skillRegistry.register(new NoteSkill());
         skillRegistry.register(new SummarizeSkill());
         skillRegistry.register(new TranslateSkill());
         skillRegistry.register(new WeatherSkill());
+        skillRegistry.register(new ShellSkill());
+        skillRegistry.register(new MemorySkill(memoryRepo));
+        skillRegistry.register(new DelegateSkill(llmProvider));
         this.logger.info({ skills: skillRegistry.getAll().map((s) => s.metadata.name) }, "Skills registered");
         const skillSandbox = new SkillSandbox(this.logger.child({ component: "sandbox" }));
-        const llmProvider = createLLMProvider(this.config.llm);
-        await llmProvider.initialize();
-        this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, "LLM provider initialized");
         const conversationManager = new ConversationManager(conversationRepo);
-        this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger.child({ component: "pipeline" }), skillRegistry, skillSandbox, securityManager);
+        this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger.child({ component: "pipeline" }), skillRegistry, skillSandbox, securityManager, memoryRepo);
+        this.reminderScheduler = new ReminderScheduler(reminderRepo, async (platform, chatId, text) => {
+          const adapter = this.adapters.get(platform);
+          if (adapter) {
+            await adapter.sendMessage(chatId, text);
+          } else {
+            this.logger.warn({ platform, chatId }, "No adapter for reminder platform");
+          }
+        }, this.logger.child({ component: "reminders" }));
         await this.initializeAdapters();
         this.logger.info("Alfred initialized");
       }
@@ -3335,6 +3869,7 @@ var init_alfred = __esm({
           await adapter.connect();
           this.logger.info({ platform }, "Adapter connected");
         }
+        this.reminderScheduler?.start();
         if (this.adapters.size === 0) {
           this.logger.warn("No messaging adapters enabled. Configure at least one platform.");
         }
@@ -3342,12 +3877,13 @@ var init_alfred = __esm({
       }
       async stop() {
         this.logger.info("Stopping Alfred...");
+        this.reminderScheduler?.stop();
         for (const [platform, adapter] of this.adapters) {
           try {
             await adapter.disconnect();
             this.logger.info({ platform }, "Adapter disconnected");
           } catch (error) {
-            this.logger.error({ platform, error }, "Failed to disconnect adapter");
+            this.logger.error({ platform, err: error }, "Failed to disconnect adapter");
           }
         }
         this.database.close();
@@ -3388,6 +3924,7 @@ var init_dist8 = __esm({
     init_alfred();
     init_message_pipeline();
     init_conversation_manager();
+    init_reminder_scheduler();
   }
 });
 

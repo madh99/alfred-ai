@@ -9,7 +9,7 @@ import type {
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
 import { PromptBuilder } from '@alfred/llm';
-import type { UserRepository } from '@alfred/storage';
+import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
@@ -27,6 +27,7 @@ export class MessagePipeline {
     private readonly skillRegistry?: SkillRegistry,
     private readonly skillSandbox?: SkillSandbox,
     private readonly securityManager?: SecurityManager,
+    private readonly memoryRepo?: MemoryRepository,
   ) {
     this.promptBuilder = new PromptBuilder();
   }
@@ -57,8 +58,18 @@ export class MessagePipeline {
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
 
-      // 5. Build LLM request
-      const system = this.promptBuilder.buildSystemPrompt();
+      // 5. Load user memories for prompt injection
+      let memories: { key: string; value: string; category: string }[] | undefined;
+      if (this.memoryRepo) {
+        try {
+          memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+        } catch {
+          // Memory loading is non-critical
+        }
+      }
+
+      // 6. Build LLM request
+      const system = this.promptBuilder.buildSystemPrompt(memories);
       const messages: LLMMessage[] = this.promptBuilder.buildMessages(history);
       messages.push({ role: 'user', content: message.text });
 

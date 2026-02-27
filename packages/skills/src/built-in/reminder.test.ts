@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { SkillContext } from '@alfred/types';
+import type { ReminderRepository, ReminderEntry } from '@alfred/storage';
 import { ReminderSkill } from './reminder.js';
 
 const ctx: SkillContext = {
@@ -9,16 +10,46 @@ const ctx: SkillContext = {
   conversationId: 'conv1',
 };
 
+function createMockRepo(): ReminderRepository {
+  const entries: ReminderEntry[] = [];
+
+  return {
+    create: vi.fn((userId: string, platform: string, chatId: string, message: string, triggerAt: Date): ReminderEntry => {
+      const entry: ReminderEntry = {
+        id: `reminder-${entries.length + 1}`,
+        userId,
+        platform,
+        chatId,
+        message,
+        triggerAt: triggerAt.toISOString(),
+        createdAt: new Date().toISOString(),
+        fired: false,
+      };
+      entries.push(entry);
+      return entry;
+    }),
+    getDue: vi.fn(() => entries.filter((e) => !e.fired)),
+    getByUser: vi.fn((userId: string) => entries.filter((e) => e.userId === userId && !e.fired)),
+    markFired: vi.fn((id: string) => {
+      const entry = entries.find((e) => e.id === id);
+      if (entry) entry.fired = true;
+    }),
+    cancel: vi.fn((id: string) => {
+      const idx = entries.findIndex((e) => e.id === id);
+      if (idx === -1) return false;
+      entries.splice(idx, 1);
+      return true;
+    }),
+  } as unknown as ReminderRepository;
+}
+
 describe('ReminderSkill', () => {
   let skill: ReminderSkill;
+  let repo: ReminderRepository;
 
   beforeEach(() => {
-    vi.useFakeTimers();
-    skill = new ReminderSkill();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
+    repo = createMockRepo();
+    skill = new ReminderSkill(repo);
   });
 
   it('should set a reminder and return id', async () => {
