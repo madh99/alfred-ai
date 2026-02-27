@@ -164,7 +164,8 @@ export class RuleEngine {
         }
       } else {
         // Overnight range, e.g., 22-6 (wraps around midnight)
-        if (currentHour < timeWindow.startHour && currentHour >= timeWindow.endHour) {
+        // Allow: hour >= start OR hour < end. Deny: hour >= end AND hour < start
+        if (currentHour >= timeWindow.endHour && currentHour < timeWindow.startHour) {
           return false;
         }
       }

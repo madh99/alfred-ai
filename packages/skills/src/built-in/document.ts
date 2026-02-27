@@ -97,6 +97,20 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Missing required field "mime_type" for ingest action' };
     }
 
+    // Security: prevent path traversal — reject paths with ..
+    const path = await import('node:path');
+    const resolved = path.resolve(filePath);
+    if (resolved !== path.normalize(filePath) && filePath.includes('..')) {
+      return { success: false, error: 'Invalid file path: path traversal not allowed' };
+    }
+
+    // Reject obvious system paths
+    const lower = resolved.toLowerCase();
+    if (lower.startsWith('/etc/') || lower.startsWith('/proc/') || lower.startsWith('/sys/') ||
+        lower.startsWith('c:\\windows\\') || lower.startsWith('/root/')) {
+      return { success: false, error: 'Access to system directories is not allowed' };
+    }
+
     try {
       const result = await this.processor.ingest(context.userId, filePath, filename, mimeType);
       return {

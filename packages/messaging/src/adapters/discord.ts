@@ -179,8 +179,8 @@ export class DiscordAdapter extends MessagingAdapter {
           size: att.size ?? data.length,
           data,
         });
-      } catch {
-        // Skip failed downloads
+      } catch (err) {
+        console.error('[discord] Failed to download attachment', att.url, err);
       }
     }
 

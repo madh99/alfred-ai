@@ -114,7 +114,7 @@ export class UserRepository {
 
   getLinkedUsers(masterUserId: string): User[] {
     const rows = this.db.prepare(
-      'SELECT * FROM users WHERE master_user_id = ? OR id = ?'
+      'SELECT DISTINCT * FROM users WHERE master_user_id = ? OR id = ?'
     ).all(masterUserId, masterUserId) as Record<string, string>[];
     return rows.map(r => this.mapRow(r));
   }

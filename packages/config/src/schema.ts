@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
 export const TelegramConfigSchema = z.object({
-  token: z.string().default(''),
+  token: z.string().optional(),
   enabled: z.boolean(),
 });
 
 export const DiscordConfigSchema = z.object({
-  token: z.string().default(''),
+  token: z.string().optional(),
   enabled: z.boolean(),
 });
 
@@ -17,14 +17,14 @@ export const WhatsAppConfigSchema = z.object({
 
 export const MatrixConfigSchema = z.object({
   homeserverUrl: z.string(),
-  accessToken: z.string().default(''),
-  userId: z.string().default(''),
+  accessToken: z.string().optional(),
+  userId: z.string().optional(),
   enabled: z.boolean(),
 });
 
 export const SignalConfigSchema = z.object({
   apiUrl: z.string(),
-  phoneNumber: z.string().default(''),
+  phoneNumber: z.string().optional(),
   enabled: z.boolean(),
 });
 
@@ -46,7 +46,7 @@ export const SecurityConfigSchema = z.object({
 
 export const LLMProviderConfigSchema = z.object({
   provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama']),
-  apiKey: z.string().default(''),
+  apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   model: z.string(),
   temperature: z.number().optional(),

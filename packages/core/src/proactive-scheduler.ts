@@ -74,7 +74,9 @@ export class ProactiveScheduler {
         resultText = `Scheduled action "${action.name}" failed: unknown skill "${action.skillName}"`;
       } else {
         try {
-          const input = JSON.parse(action.skillInput);
+          let input: Record<string, unknown>;
+          try { input = JSON.parse(action.skillInput); }
+          catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
           const context = {
             userId: action.userId,
             chatId: action.chatId,

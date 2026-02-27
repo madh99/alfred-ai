@@ -31,8 +31,14 @@ export class MCPClient {
       if (this.config.command) {
         // stdio transport
         const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js');
-        // Resolve env vars in config.env
-        const env = { ...process.env };
+        // Build a minimal safe environment — only explicit vars + essentials
+        const env: Record<string, string> = {
+          PATH: process.env.PATH ?? '',
+          HOME: process.env.HOME ?? process.env.USERPROFILE ?? '',
+          LANG: process.env.LANG ?? 'en_US.UTF-8',
+          NODE_ENV: process.env.NODE_ENV ?? '',
+          SYSTEMROOT: process.env.SYSTEMROOT ?? '',
+        };
         if (this.config.env) {
           for (const [key, value] of Object.entries(this.config.env)) {
             env[key] = value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? '');
@@ -41,7 +47,7 @@ export class MCPClient {
         this.transport = new StdioClientTransport({
           command: this.config.command,
           args: this.config.args ?? [],
-          env: env as Record<string, string>,
+          env,
         });
       } else if (this.config.url) {
         // SSE transport

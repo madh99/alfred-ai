@@ -55,6 +55,14 @@ export class FileSkill extends Skill {
 
     const resolvedPath = this.resolvePath(rawPath);
 
+    // Block access to sensitive system directories
+    const lowerPath = resolvedPath.toLowerCase();
+    const blocked = ['/etc/shadow', '/etc/passwd', '/proc/', '/sys/', '/dev/',
+                     'c:\\windows\\system32', 'c:\\windows\\syswow64'];
+    if (blocked.some(b => lowerPath.startsWith(b) || lowerPath === b.replace(/\/$/, ''))) {
+      return { success: false, error: 'Access to system directories/files is blocked for security' };
+    }
+
     switch (action) {
       case 'read': return this.readFile(resolvedPath);
       case 'write': return this.writeFile(resolvedPath, content);

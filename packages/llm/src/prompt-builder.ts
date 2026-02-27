@@ -181,7 +181,9 @@ For complex tasks, work through multiple steps:
       .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
       .map((msg): LLMMessage => {
         if (msg.toolCalls) {
-          const toolCalls = JSON.parse(msg.toolCalls) as ToolCall[];
+          let toolCalls: ToolCall[];
+          try { toolCalls = JSON.parse(msg.toolCalls) as ToolCall[]; }
+          catch { toolCalls = []; }
           const content: LLMContentBlock[] = [];
 
           if (msg.content) {

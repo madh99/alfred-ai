@@ -36,7 +36,17 @@ export class CodeExecutor {
         const proc = spawn(cmd, args, {
           cwd: tmpDir,
           timeout,
-          env: { ...process.env, ...options?.env, TMPDIR: tmpDir, TEMP: tmpDir },
+          env: {
+            PATH: process.env.PATH ?? '',
+            HOME: process.env.HOME ?? process.env.USERPROFILE ?? '',
+            LANG: process.env.LANG ?? 'en_US.UTF-8',
+            NODE_ENV: 'sandbox',
+            PYTHONDONTWRITEBYTECODE: '1',
+            ...options?.env,
+            TMPDIR: tmpDir,
+            TEMP: tmpDir,
+            TMP: tmpDir,
+          },
           stdio: ['pipe', 'pipe', 'pipe'],
         });
 

@@ -253,7 +253,8 @@ export class MatrixAdapter extends MessagingAdapter {
         size: size ?? data.length,
         data,
       };
-    } catch {
+    } catch (err) {
+      console.error('[matrix] Failed to download attachment', mxcUrl, err);
       return undefined;
     }
   }

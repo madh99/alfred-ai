@@ -25,11 +25,11 @@ export function setupGracefulShutdown(alfred: Alfred, logger: Logger): void {
 
   process.on('uncaughtException', (error) => {
     logger.fatal({ error }, 'Uncaught exception');
-    shutdown('uncaughtException');
+    void shutdown('uncaughtException').catch(() => process.exit(1));
   });
 
   process.on('unhandledRejection', (reason) => {
     logger.fatal({ reason }, 'Unhandled rejection');
-    shutdown('unhandledRejection');
+    void shutdown('unhandledRejection').catch(() => process.exit(1));
   });
 }

@@ -271,7 +271,7 @@ export class OpenAIProvider extends LLMProvider {
     const toolCalls: ToolCall[] | undefined = message?.tool_calls?.map((tc) => ({
       id: tc.id,
       name: tc.function.name,
-      input: JSON.parse(tc.function.arguments),
+      input: (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })(),
     }));
 
     return {

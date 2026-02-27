@@ -50,11 +50,15 @@ export class HttpSkill extends Skill {
       return { success: false, error: 'Missing required field "url"' };
     }
 
-    // Basic URL validation
+    // URL validation and scheme check
+    let parsed: URL;
     try {
-      new URL(url);
+      parsed = new URL(url);
     } catch {
       return { success: false, error: `Invalid URL: "${url}"` };
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { success: false, error: `Unsupported URL scheme "${parsed.protocol}". Only http: and https: are allowed.` };
     }
 
     try {

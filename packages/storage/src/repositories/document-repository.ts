@@ -63,8 +63,23 @@ export class DocumentRepository {
   }
 
   deleteDocument(id: string): void {
-    this.db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(id);
-    this.db.prepare('DELETE FROM documents WHERE id = ?').run(id);
+    const deleteAll = this.db.transaction(() => {
+      // Get embedding IDs from chunks before deleting them
+      const chunks = this.db.prepare(
+        'SELECT embedding_id FROM document_chunks WHERE document_id = ? AND embedding_id IS NOT NULL'
+      ).all(id) as { embedding_id: string }[];
+
+      // Delete embeddings
+      if (chunks.length > 0) {
+        const embeddingIds = chunks.map(c => c.embedding_id);
+        const placeholders = embeddingIds.map(() => '?').join(', ');
+        this.db.prepare(`DELETE FROM embeddings WHERE key IN (${placeholders})`).run(...embeddingIds);
+      }
+
+      this.db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(id);
+      this.db.prepare('DELETE FROM documents WHERE id = ?').run(id);
+    });
+    deleteAll();
   }
 
   getChunksByEmbeddingIds(embeddingIds: string[]): DocumentChunk[] {

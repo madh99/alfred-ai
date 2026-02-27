@@ -32,8 +32,8 @@ export class DocumentProcessor {
       try {
         await this.embeddingService.embedAndStore(userId, chunks[i], 'document', `${doc.id}:${i}`);
         embeddingId = `${doc.id}:${i}`;
-      } catch {
-        this.logger.warn({ documentId: doc.id, chunkIndex: i }, 'Embedding failed for chunk, continuing');
+      } catch (err) {
+        this.logger.warn({ documentId: doc.id, chunkIndex: i, err }, 'Embedding failed for chunk, continuing');
       }
       this.docRepo.addChunk(doc.id, i, chunks[i], embeddingId);
     }

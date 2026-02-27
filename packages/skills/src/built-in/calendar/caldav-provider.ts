@@ -156,7 +156,8 @@ export class CalDAVProvider extends CalendarProvider {
         description: description || undefined,
         allDay,
       };
-    } catch {
+    } catch (err) {
+      console.error('[caldav] Failed to parse iCal event', err);
       return undefined;
     }
   }

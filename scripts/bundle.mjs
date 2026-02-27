@@ -20,7 +20,8 @@ await build({
   format: 'esm',
   outfile,
   sourcemap: false,
-  minify: false,
+  minify: true,
+  keepNames: true,
   plugins: [
     {
       name: 'externalize-deps',

@@ -54,6 +54,23 @@ export class ShellSkill extends Skill {
       };
     }
 
+    // Block obviously dangerous shell patterns
+    const dangerous = [
+      /\brm\s+-rf\s+\/(?:\s|$)/,  // rm -rf /
+      /:(){ :|:& };:/,             // fork bomb
+      />\s*\/dev\/sd[a-z]/,        // write to raw disk
+      /\bmkfs\b/,                  // format filesystem
+      /\bdd\s+.*of=\/dev/,         // dd to device
+    ];
+    for (const pattern of dangerous) {
+      if (pattern.test(command)) {
+        return {
+          success: false,
+          error: 'Command blocked: potentially destructive system operation',
+        };
+      }
+    }
+
     const timeout =
       typeof input.timeout === 'number' && input.timeout > 0
         ? input.timeout

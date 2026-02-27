@@ -94,7 +94,9 @@ export class MessagePipeline {
       );
 
       // Resolve master user for cross-platform shared context
-      const masterUserId = (this.users as any).getMasterUserId?.(user.id) ?? user.id;
+      const masterUserId = 'getMasterUserId' in this.users
+        ? (this.users as { getMasterUserId(id: string): string }).getMasterUserId(user.id)
+        : user.id;
 
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
@@ -136,23 +138,19 @@ export class MessagePipeline {
           } else {
             memories = this.memoryRepo.getRecentForPrompt(masterUserId, 20);
           }
-        } catch {
-          // Memory loading is non-critical
-        }
+        } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
       }
 
       // 5b. Load user profile for prompt injection
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {
         if ('getProfile' in this.users) {
-          userProfile = (this.users as any).getProfile(user.id);
+          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(user.id);
           if (userProfile && !userProfile.displayName) {
             userProfile.displayName = user.displayName ?? user.username;
           }
         }
-      } catch {
-        // Profile loading is non-critical
-      }
+      } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
 
       // 5c. Resolve timezone: user profile > server timezone
       const resolvedTimezone = userProfile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;

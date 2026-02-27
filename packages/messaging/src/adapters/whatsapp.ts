@@ -6,6 +6,8 @@ export class WhatsAppAdapter extends MessagingAdapter {
   private socket: any;
   private downloadMedia: any;
   private readonly dataPath: string;
+  private reconnectAttempts = 0;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
 
   constructor(dataPath: string) {
     super();
@@ -33,6 +35,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
     this.socket.ev.on('connection.update', (update: any) => {
       if (update.connection === 'open') {
         this.status = 'connected';
+        this.reconnectAttempts = 0;
         this.emit('connected');
       }
 
@@ -46,7 +49,9 @@ export class WhatsAppAdapter extends MessagingAdapter {
         this.emit('disconnected');
 
         if (shouldReconnect) {
-          this.connect();
+          const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 60_000);
+          this.reconnectAttempts++;
+          this.reconnectTimer = setTimeout(() => this.connect(), delay);
         }
       }
     });
@@ -66,6 +71,11 @@ export class WhatsAppAdapter extends MessagingAdapter {
   }
 
   async disconnect(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+    this.reconnectAttempts = 0;
     this.socket?.end(undefined);
     this.socket = undefined;
     this.status = 'disconnected';
@@ -247,7 +257,8 @@ export class WhatsAppAdapter extends MessagingAdapter {
       if (!this.downloadMedia) return undefined;
       const buffer = await this.downloadMedia(message, 'buffer', {});
       return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
-    } catch {
+    } catch (err) {
+      console.error('[whatsapp] Failed to download media', err);
       return undefined;
     }
   }

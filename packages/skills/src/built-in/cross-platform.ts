@@ -84,9 +84,37 @@ export class CrossPlatformSkill extends Skill {
     }
   }
 
+  private failedConfirmAttempts = new Map<string, { count: number; resetAt: number }>();
+
+  private checkConfirmRateLimit(userId: string): string | null {
+    const now = Date.now();
+    const entry = this.failedConfirmAttempts.get(userId);
+    if (entry && now < entry.resetAt && entry.count >= 5) {
+      const waitSec = Math.ceil((entry.resetAt - now) / 1000);
+      return `Too many failed attempts. Please wait ${waitSec}s before trying again.`;
+    }
+    return null;
+  }
+
+  private recordFailedConfirm(userId: string): void {
+    const now = Date.now();
+    const entry = this.failedConfirmAttempts.get(userId);
+    if (entry && now < entry.resetAt) {
+      entry.count++;
+    } else {
+      this.failedConfirmAttempts.set(userId, { count: 1, resetAt: now + 5 * 60_000 });
+    }
+  }
+
   private async linkStart(context: SkillContext): Promise<SkillResult> {
     // Clean up expired tokens first
     this.linkTokens.cleanup();
+
+    // Rate limit: max 5 active codes per user per 10 minutes
+    const recentCount = this.linkTokens.countRecentByUser(context.userId, 10);
+    if (recentCount >= 5) {
+      return { success: false, error: 'Too many linking codes generated recently. Please wait a few minutes.' };
+    }
 
     const token = this.linkTokens.create(context.userId, context.platform);
 
@@ -109,8 +137,15 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: 'Missing required field "code"' };
     }
 
+    // Rate limit failed confirmation attempts (max 5 per 5 minutes)
+    const rateLimitError = this.checkConfirmRateLimit(context.userId);
+    if (rateLimitError) {
+      return { success: false, error: rateLimitError };
+    }
+
     const token = this.linkTokens.findByCode(code.trim());
     if (!token) {
+      this.recordFailedConfirm(context.userId);
       return {
         success: false,
         error: 'Invalid or expired linking code. Please generate a new one.',
@@ -131,7 +166,7 @@ export class CrossPlatformSkill extends Skill {
 
     let masterUserId: string;
     if (existingMaster1 !== token.userId) {
-      // Token user already has a master — use it
+      // Token user already has a master — use it as canonical master
       masterUserId = existingMaster1;
     } else if (existingMaster2 !== context.userId) {
       // Current user already has a master — use it
@@ -139,6 +174,20 @@ export class CrossPlatformSkill extends Skill {
     } else {
       // Neither has a master — use the token user as master
       masterUserId = token.userId;
+    }
+
+    // If BOTH users have different existing master groups, merge them:
+    // Re-point the second group to the canonical master
+    if (
+      existingMaster1 !== token.userId &&
+      existingMaster2 !== context.userId &&
+      existingMaster1 !== existingMaster2
+    ) {
+      // Merge: re-point all users from master2's group to master1
+      const groupToMerge = this.users.getLinkedUsers(existingMaster2);
+      for (const u of groupToMerge) {
+        this.users.setMasterUser(u.id, masterUserId);
+      }
     }
 
     // Link both users to the master

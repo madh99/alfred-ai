@@ -171,7 +171,8 @@ export class SignalAdapter extends MessagingAdapter {
         size: att.size ?? data.length,
         data,
       };
-    } catch {
+    } catch (err) {
+      console.error('[signal] Failed to download attachment', att.id, err);
       return undefined;
     }
   }

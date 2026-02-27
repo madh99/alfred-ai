@@ -25,10 +25,10 @@ export class MCPSkillAdapter extends Skill {
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const result = await this.client.callTool(this.toolName, input);
     return {
-      success: !result.isError,
+      success: result.isError !== true,
       data: result.content,
       display: result.content,
-      error: result.isError ? result.content : undefined,
+      error: result.isError === true ? result.content : undefined,
     };
   }
 }

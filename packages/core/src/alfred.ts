@@ -347,8 +347,8 @@ export class Alfred {
             } else {
               await adapter.editMessage(message.chatId, statusMessageId, status);
             }
-          } catch {
-            // Ignore edit failures (e.g. message unchanged)
+          } catch (err) {
+            this.logger.debug({ err, chatId: message.chatId }, 'Status message edit failed');
           }
         };
 
@@ -362,8 +362,8 @@ export class Alfred {
         if (statusMessageId) {
           try {
             await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
-          } catch {
-            // If edit fails (e.g. response too different), send as new message
+          } catch (err) {
+            this.logger.debug({ err, chatId: message.chatId }, 'Final response edit failed, sending as new message');
             await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
           }
         } else {

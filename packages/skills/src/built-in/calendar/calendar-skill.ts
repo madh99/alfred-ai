@@ -84,7 +84,8 @@ export class CalendarSkill extends Skill {
     const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
     try {
       return await this.calendarProvider.listEvents(startOfDay, endOfDay);
-    } catch {
+    } catch (err) {
+      console.error('[calendar] Failed to fetch today events', err);
       return [];
     }
   }

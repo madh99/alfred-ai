@@ -250,7 +250,8 @@ export class TelegramAdapter extends MessagingAdapter {
         size: buffer.length,
         data: buffer,
       };
-    } catch {
+    } catch (err) {
+      console.error('[telegram] Failed to download file', fileId, err);
       return undefined;
     }
   }

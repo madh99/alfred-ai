@@ -9,6 +9,7 @@ export class BackgroundTaskRunner {
   private running = 0;
   private readonly maxConcurrent = 3;
   private readonly pollIntervalMs = 5000;
+  private readonly taskTimeoutMs = 5 * 60_000; // 5 minutes max per task
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -57,7 +58,13 @@ export class BackgroundTaskRunner {
         return;
       }
 
-      const input = JSON.parse(task.skillInput);
+      let input: Record<string, unknown>;
+      try { input = JSON.parse(task.skillInput); }
+      catch (err) {
+        this.logger.warn({ taskId: task.id, err }, 'Malformed skill input JSON');
+        this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
+        return;
+      }
       const context = {
         userId: task.userId,
         chatId: task.chatId,
@@ -66,7 +73,14 @@ export class BackgroundTaskRunner {
         chatType: 'dm' as const,
       };
 
-      const result = await this.skillSandbox.execute(skill, input, context);
+      // Enforce task timeout
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Background task timed out')), this.taskTimeoutMs),
+      );
+      const result = await Promise.race([
+        this.skillSandbox.execute(skill, input, context),
+        timeoutPromise,
+      ]);
       const resultJson = JSON.stringify(result.data ?? result.display ?? result.error);
 
       this.taskRepo.updateStatus(
