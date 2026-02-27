@@ -34,6 +34,23 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
     messageId: string,
   ): Promise<void>;
 
+  async sendPhoto(
+    _chatId: string,
+    _photo: Buffer,
+    _caption?: string,
+  ): Promise<string | undefined> {
+    return undefined; // Not supported by default
+  }
+
+  async sendFile(
+    _chatId: string,
+    _file: Buffer,
+    _fileName: string,
+    _caption?: string,
+  ): Promise<string | undefined> {
+    return undefined; // Not supported by default
+  }
+
   getStatus(): MessagingAdapterStatus {
     return this.status;
   }

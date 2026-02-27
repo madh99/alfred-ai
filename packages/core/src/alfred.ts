@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository } from '@alfred/storage';
 import { createLLMProvider } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
@@ -16,17 +16,21 @@ import {
   WebSearchSkill,
   ReminderSkill,
   NoteSkill,
-  SummarizeSkill,
-  TranslateSkill,
   WeatherSkill,
   ShellSkill,
   MemorySkill,
   DelegateSkill,
   EmailSkill,
+  HttpSkill,
+  FileSkill,
+  ClipboardSkill,
+  ScreenshotSkill,
+  BrowserSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
 import { ReminderScheduler } from './reminder-scheduler.js';
+import { SpeechTranscriber } from './speech-transcriber.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -50,6 +54,7 @@ export class Alfred {
     const auditRepo = new AuditRepository(db);
     const memoryRepo = new MemoryRepository(db);
     const reminderRepo = new ReminderRepository(db);
+    const noteRepo = new NoteRepository(db);
     this.logger.info('Storage initialized');
 
     // 2. Initialize security — load rules from YAML files
@@ -69,6 +74,9 @@ export class Alfred {
     this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
 
     // 4. Initialize skills
+    const skillSandbox = new SkillSandbox(
+      this.logger.child({ component: 'sandbox' }),
+    );
     const skillRegistry = new SkillRegistry();
     skillRegistry.register(new CalculatorSkill());
     skillRegistry.register(new SystemInfoSkill());
@@ -78,26 +86,37 @@ export class Alfred {
       baseUrl: this.config.search.baseUrl,
     } : undefined));
     skillRegistry.register(new ReminderSkill(reminderRepo));
-    skillRegistry.register(new NoteSkill());
-    skillRegistry.register(new SummarizeSkill());
-    skillRegistry.register(new TranslateSkill());
+    skillRegistry.register(new NoteSkill(noteRepo));
     skillRegistry.register(new WeatherSkill());
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo));
-    skillRegistry.register(new DelegateSkill(llmProvider));
+    skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
     skillRegistry.register(new EmailSkill(this.config.email ? {
       imap: this.config.email.imap,
       smtp: this.config.email.smtp,
       auth: this.config.email.auth,
     } : undefined));
+    skillRegistry.register(new HttpSkill());
+    skillRegistry.register(new FileSkill());
+    skillRegistry.register(new ClipboardSkill());
+    skillRegistry.register(new ScreenshotSkill());
+    skillRegistry.register(new BrowserSkill());
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
-    const skillSandbox = new SkillSandbox(
-      this.logger.child({ component: 'sandbox' }),
-    );
+    // 5. Initialize speech-to-text (optional)
+    let speechTranscriber: SpeechTranscriber | undefined;
+    if (this.config.speech?.apiKey) {
+      speechTranscriber = new SpeechTranscriber(
+        this.config.speech,
+        this.logger.child({ component: 'speech' }),
+      );
+      this.logger.info({ provider: this.config.speech.provider }, 'Speech-to-text initialized');
+    }
 
-    // 5. Create conversation manager and pipeline
+    // 6. Create conversation manager and pipeline
     const conversationManager = new ConversationManager(conversationRepo);
+    // Derive inbox path from storage path (e.g. ./data/alfred.db → ./data/inbox)
+    const inboxPath = path.resolve(path.dirname(this.config.storage.path), 'inbox');
     this.pipeline = new MessagePipeline(
       llmProvider,
       conversationManager,
@@ -107,6 +126,8 @@ export class Alfred {
       skillSandbox,
       securityManager,
       memoryRepo,
+      speechTranscriber,
+      inboxPath,
     );
 
     // 6. Initialize reminder scheduler

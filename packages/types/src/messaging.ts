@@ -25,6 +25,7 @@ export interface Attachment {
   mimeType?: string;
   fileName?: string;
   size?: number;
+  data?: Buffer;
 }
 
 export interface SendMessageOptions {

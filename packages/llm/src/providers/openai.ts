@@ -175,6 +175,14 @@ export class OpenAIProvider extends LLMProvider {
           case 'text':
             textParts.push({ type: 'text', text: block.text });
             break;
+          case 'image':
+            textParts.push({
+              type: 'image_url',
+              image_url: {
+                url: `data:${block.source.media_type};base64,${block.source.data}`,
+              },
+            });
+            break;
           case 'tool_use':
             toolUseParts.push({
               id: block.id,

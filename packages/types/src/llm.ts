@@ -14,8 +14,18 @@ export interface LLMMessage {
 
 export type LLMContentBlock =
   | LLMTextBlock
+  | LLMImageBlock
   | LLMToolUseBlock
   | LLMToolResultBlock;
+
+export interface LLMImageBlock {
+  type: 'image';
+  source: {
+    type: 'base64';
+    media_type: string;
+    data: string;
+  };
+}
 
 export interface LLMTextBlock {
   type: 'text';

@@ -9,3 +9,5 @@ export type { Migration } from './migrations/migrator.js';
 export { MIGRATIONS } from './migrations/index.js';
 export { ReminderRepository } from './repositories/reminder-repository.js';
 export type { ReminderEntry } from './repositories/reminder-repository.js';
+export { NoteRepository } from './repositories/note-repository.js';
+export type { NoteEntry } from './repositories/note-repository.js';

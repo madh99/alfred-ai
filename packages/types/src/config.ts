@@ -73,6 +73,12 @@ export interface EmailConfig {
   auth: EmailAuthConfig;
 }
 
+export interface SpeechConfig {
+  provider: 'openai' | 'groq';
+  apiKey: string;
+  baseUrl?: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -86,4 +92,5 @@ export interface AlfredConfig {
   security: SecurityConfig;
   search?: SearchConfig;
   email?: EmailConfig;
+  speech?: SpeechConfig;
 }

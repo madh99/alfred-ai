@@ -51,6 +51,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_SEARCH_BASE_URL: ['search', 'baseUrl'],
   ALFRED_EMAIL_USER: ['email', 'auth', 'user'],
   ALFRED_EMAIL_PASS: ['email', 'auth', 'pass'],
+  ALFRED_SPEECH_PROVIDER: ['speech', 'provider'],
+  ALFRED_SPEECH_API_KEY: ['speech', 'apiKey'],
+  ALFRED_SPEECH_BASE_URL: ['speech', 'baseUrl'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type {
   NormalizedMessage,
   LLMResponse,
@@ -5,6 +7,7 @@ import type {
   LLMContentBlock,
   ToolCall,
   SkillContext,
+  Attachment,
 } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
@@ -13,9 +16,11 @@ import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
+import type { SpeechTranscriber } from './speech-transcriber.js';
 
 const MAX_TOOL_ITERATIONS = 10;
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
+const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 
 export type ProgressCallback = (status: string) => void;
 
@@ -31,6 +36,8 @@ export class MessagePipeline {
     private readonly skillSandbox?: SkillSandbox,
     private readonly securityManager?: SecurityManager,
     private readonly memoryRepo?: MemoryRepository,
+    private readonly speechTranscriber?: SpeechTranscriber,
+    private readonly inboxPath?: string,
   ) {
     this.promptBuilder = new PromptBuilder();
   }
@@ -80,7 +87,10 @@ export class MessagePipeline {
         : undefined;
       const system = this.promptBuilder.buildSystemPrompt(memories, skillMetas);
       const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
-      allMessages.push({ role: 'user', content: message.text });
+
+      // Build user message with attachments (images, transcribed audio)
+      const userContent = await this.buildUserContent(message, onProgress);
+      allMessages.push({ role: 'user', content: userContent });
 
       const messages = this.trimToContextWindow(system, allMessages);
 
@@ -256,6 +266,13 @@ export class MessagePipeline {
       case 'calculator': return `Calculating...`;
       case 'system_info': return `Getting system info...`;
       case 'delegate': return `Delegating sub-task...`;
+      case 'http': return `Fetching: ${String(input.url ?? '').slice(0, 60)}`;
+      case 'file': return `File: ${String(input.action ?? '')} ${String(input.path ?? '').slice(0, 50)}`;
+      case 'clipboard': return `Clipboard: ${String(input.action ?? '')}`;
+      case 'screenshot': return `Taking screenshot...`;
+      case 'browser': return `Browser: ${String(input.action ?? '')} ${String(input.url ?? '').slice(0, 50)}`;
+      case 'weather': return `Weather: ${String(input.location ?? '')}`;
+      case 'note': return `Note: ${String(input.action ?? '')}`;
       default: return `Using ${toolName}...`;
     }
   }
@@ -309,5 +326,143 @@ export class MessagePipeline {
 
     keptMessages.push(latestMsg);
     return keptMessages;
+  }
+
+  /**
+   * Build the user content for the LLM request.
+   * Handles images (as vision blocks), audio (transcribed via Whisper),
+   * documents/files (saved to inbox), and plain text.
+   */
+  private async buildUserContent(
+    message: NormalizedMessage,
+    onProgress?: ProgressCallback,
+  ): Promise<string | LLMContentBlock[]> {
+    const attachments = message.attachments?.filter(a => a.data) ?? [];
+
+    if (attachments.length === 0) {
+      return message.text;
+    }
+
+    const blocks: LLMContentBlock[] = [];
+
+    // Process attachments
+    for (const attachment of attachments) {
+      if (attachment.type === 'image' && attachment.data) {
+        blocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: attachment.mimeType ?? 'image/jpeg',
+            data: attachment.data.toString('base64'),
+          },
+        });
+        this.logger.info({ mimeType: attachment.mimeType, size: attachment.size }, 'Image attached to LLM request');
+      } else if (attachment.type === 'audio' && attachment.data) {
+        // Transcribe audio via Whisper
+        if (this.speechTranscriber) {
+          onProgress?.('Transcribing voice...');
+          try {
+            const transcript = await this.speechTranscriber.transcribe(
+              attachment.data,
+              attachment.mimeType ?? 'audio/ogg',
+            );
+            const label = message.text === '[Voice message]' ? '' : `${message.text}\n\n`;
+            blocks.push({
+              type: 'text',
+              text: `${label}[Voice transcript]: ${transcript}`,
+            });
+            this.logger.info({ transcriptLength: transcript.length }, 'Voice message transcribed');
+            return blocks.length === 1 ? blocks[0].type === 'text' ? (blocks[0] as { type: 'text'; text: string }).text : blocks : blocks;
+          } catch (err) {
+            this.logger.error({ err }, 'Voice transcription failed');
+            blocks.push({
+              type: 'text',
+              text: '[Voice message could not be transcribed]',
+            });
+          }
+        } else {
+          blocks.push({
+            type: 'text',
+            text: '[Voice message received but speech-to-text is not configured. Add speech config to enable transcription.]',
+          });
+        }
+      } else if ((attachment.type === 'document' || attachment.type === 'video' || attachment.type === 'other') && attachment.data) {
+        // Save file to inbox and tell the LLM about it
+        const savedPath = this.saveToInbox(attachment);
+        if (savedPath) {
+          const isTextFile = this.isTextMimeType(attachment.mimeType);
+          let fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? 'unknown type'})]\n[Saved to: ${savedPath}]`;
+
+          // For text-based files, include the content inline
+          if (isTextFile && attachment.data.length <= MAX_INLINE_FILE_SIZE) {
+            const textContent = attachment.data.toString('utf-8');
+            fileNote += `\n[File content]:\n${textContent}`;
+          }
+
+          blocks.push({ type: 'text', text: fileNote });
+          this.logger.info({ fileName: attachment.fileName, savedPath, size: attachment.data.length }, 'File saved to inbox');
+        }
+      }
+    }
+
+    // Add the text content
+    const skipTexts = ['[Photo]', '[Voice message]', '[Video]', '[Video note]', '[Document]', '[File]'];
+    if (message.text && !skipTexts.includes(message.text)) {
+      blocks.push({ type: 'text', text: message.text });
+    } else if (blocks.some(b => b.type === 'image') && !blocks.some(b => b.type === 'text')) {
+      blocks.push({ type: 'text', text: 'What do you see in this image?' });
+    } else if (blocks.length === 0) {
+      blocks.push({ type: 'text', text: message.text || '(empty message)' });
+    }
+
+    return blocks;
+  }
+
+  /**
+   * Save an attachment to the inbox directory.
+   * Returns the saved file path, or undefined on failure.
+   */
+  private saveToInbox(attachment: Attachment): string | undefined {
+    if (!attachment.data) return undefined;
+
+    const inboxDir = this.inboxPath ?? path.resolve('./data/inbox');
+    try {
+      fs.mkdirSync(inboxDir, { recursive: true });
+    } catch {
+      this.logger.error({ inboxDir }, 'Cannot create inbox directory');
+      return undefined;
+    }
+
+    // Generate unique filename: timestamp_originalname
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const originalName = attachment.fileName ?? `file_${timestamp}`;
+    const safeName = originalName.replace(/[<>:"/\\|?*]/g, '_');
+    const fileName = `${timestamp}_${safeName}`;
+    const filePath = path.join(inboxDir, fileName);
+
+    try {
+      fs.writeFileSync(filePath, attachment.data);
+      return filePath;
+    } catch (err) {
+      this.logger.error({ err, filePath }, 'Failed to save file to inbox');
+      return undefined;
+    }
+  }
+
+  private isTextMimeType(mimeType?: string): boolean {
+    if (!mimeType) return false;
+    const textTypes = [
+      'text/', 'application/json', 'application/xml', 'application/javascript',
+      'application/typescript', 'application/x-yaml', 'application/yaml',
+      'application/toml', 'application/x-sh', 'application/sql',
+      'application/csv', 'application/x-csv',
+    ];
+    return textTypes.some(t => mimeType.startsWith(t));
+  }
+
+  private formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 }

@@ -1,23 +1,17 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import { randomUUID } from 'node:crypto';
+import type { NoteRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
-
-interface NoteEntry {
-  noteId: string;
-  userId: string;
-  title: string;
-  content: string;
-  createdAt: number;
-}
 
 type NoteAction = 'save' | 'list' | 'search' | 'delete';
 
 export class NoteSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'note',
-    description: 'Save, list, search, or delete persistent notes. Use when the user wants to write down or retrieve text notes, lists, or ideas.',
+    description:
+      'Save, list, search, or delete persistent notes (stored in SQLite). ' +
+      'Use when the user wants to write down or retrieve text notes, lists, or ideas.',
     riskLevel: 'write',
-    version: '1.0.0',
+    version: '2.0.0',
     inputSchema: {
       type: 'object',
       properties: {
@@ -47,7 +41,9 @@ export class NoteSkill extends Skill {
     },
   };
 
-  private readonly notes: Map<string, NoteEntry> = new Map();
+  constructor(private readonly noteRepo: NoteRepository) {
+    super();
+  }
 
   async execute(
     input: Record<string, unknown>,
@@ -72,136 +68,73 @@ export class NoteSkill extends Skill {
     }
   }
 
-  private saveNote(
-    input: Record<string, unknown>,
-    context: SkillContext,
-  ): SkillResult {
+  private saveNote(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const title = input.title as string | undefined;
     const content = input.content as string | undefined;
 
     if (!title || typeof title !== 'string') {
-      return {
-        success: false,
-        error: 'Missing required field "title" for save action',
-      };
+      return { success: false, error: 'Missing required field "title" for save action' };
     }
-
     if (!content || typeof content !== 'string') {
-      return {
-        success: false,
-        error: 'Missing required field "content" for save action',
-      };
+      return { success: false, error: 'Missing required field "content" for save action' };
     }
 
-    const noteId = randomUUID();
-    const createdAt = Date.now();
-
-    this.notes.set(noteId, {
-      noteId,
-      userId: context.userId,
-      title,
-      content,
-      createdAt,
-    });
+    const entry = this.noteRepo.save(context.userId, title, content);
 
     return {
       success: true,
-      data: { noteId, title, createdAt },
-      display: `Note saved (${noteId}): "${title}"`,
+      data: { noteId: entry.id, title: entry.title },
+      display: `Note saved: "${title}"`,
     };
   }
 
   private listNotes(context: SkillContext): SkillResult {
-    const userNotes: Array<{ noteId: string; title: string; createdAt: number }> = [];
+    const notes = this.noteRepo.list(context.userId);
 
-    for (const [, entry] of this.notes) {
-      if (entry.userId === context.userId) {
-        userNotes.push({
-          noteId: entry.noteId,
-          title: entry.title,
-          createdAt: entry.createdAt,
-        });
-      }
+    if (notes.length === 0) {
+      return { success: true, data: [], display: 'No notes found.' };
     }
 
-    return {
-      success: true,
-      data: userNotes,
-      display:
-        userNotes.length === 0
-          ? 'No notes found.'
-          : `Notes:\n${userNotes.map((n) => `- ${n.noteId}: "${n.title}"`).join('\n')}`,
-    };
+    const display = notes
+      .map(n => `- **${n.title}** (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`)
+      .join('\n');
+
+    return { success: true, data: notes, display: `${notes.length} note(s):\n${display}` };
   }
 
-  private searchNotes(
-    input: Record<string, unknown>,
-    context: SkillContext,
-  ): SkillResult {
+  private searchNotes(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const query = input.query as string | undefined;
 
     if (!query || typeof query !== 'string') {
-      return {
-        success: false,
-        error: 'Missing required field "query" for search action',
-      };
+      return { success: false, error: 'Missing required field "query" for search action' };
     }
 
-    const lowerQuery = query.toLowerCase();
-    const matches: Array<{ noteId: string; title: string; content: string }> = [];
+    const matches = this.noteRepo.search(context.userId, query);
 
-    for (const [, entry] of this.notes) {
-      if (entry.userId !== context.userId) {
-        continue;
-      }
-
-      if (
-        entry.title.toLowerCase().includes(lowerQuery) ||
-        entry.content.toLowerCase().includes(lowerQuery)
-      ) {
-        matches.push({
-          noteId: entry.noteId,
-          title: entry.title,
-          content: entry.content,
-        });
-      }
+    if (matches.length === 0) {
+      return { success: true, data: [], display: `No notes matching "${query}".` };
     }
 
-    return {
-      success: true,
-      data: matches,
-      display:
-        matches.length === 0
-          ? `No notes matching "${query}".`
-          : `Found ${matches.length} note(s):\n${matches.map((n) => `- ${n.noteId}: "${n.title}"`).join('\n')}`,
-    };
+    const display = matches
+      .map(n => `- **${n.title}** (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`)
+      .join('\n');
+
+    return { success: true, data: matches, display: `Found ${matches.length} note(s):\n${display}` };
   }
 
   private deleteNote(input: Record<string, unknown>): SkillResult {
     const noteId = input.noteId as string | undefined;
 
     if (!noteId || typeof noteId !== 'string') {
-      return {
-        success: false,
-        error: 'Missing required field "noteId" for delete action',
-      };
+      return { success: false, error: 'Missing required field "noteId" for delete action' };
     }
 
-    const entry = this.notes.get(noteId);
+    const deleted = this.noteRepo.delete(noteId);
 
-    if (!entry) {
-      return {
-        success: false,
-        error: `Note "${noteId}" not found`,
-      };
+    if (!deleted) {
+      return { success: false, error: `Note "${noteId}" not found` };
     }
 
-    this.notes.delete(noteId);
-
-    return {
-      success: true,
-      data: { noteId },
-      display: `Note "${noteId}" deleted.`,
-    };
+    return { success: true, data: { noteId }, display: `Note deleted.` };
   }
 }

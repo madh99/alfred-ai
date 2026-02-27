@@ -9,11 +9,11 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// packages/config/dist/schema.js
+// ../config/dist/schema.js
 import { z } from "zod";
-var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, AlfredConfigSchema;
+var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, SpeechConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
-  "packages/config/dist/schema.js"() {
+  "../config/dist/schema.js"() {
     "use strict";
     TelegramConfigSchema = z.object({
       token: z.string().default(""),
@@ -80,6 +80,11 @@ var init_schema = __esm({
         pass: z.string()
       })
     });
+    SpeechConfigSchema = z.object({
+      provider: z.enum(["openai", "groq"]),
+      apiKey: z.string(),
+      baseUrl: z.string().optional()
+    });
     AlfredConfigSchema = z.object({
       name: z.string(),
       telegram: TelegramConfigSchema,
@@ -92,15 +97,16 @@ var init_schema = __esm({
       logger: LoggerConfigSchema,
       security: SecurityConfigSchema,
       search: SearchConfigSchema.optional(),
-      email: EmailConfigSchema.optional()
+      email: EmailConfigSchema.optional(),
+      speech: SpeechConfigSchema.optional()
     });
   }
 });
 
-// packages/config/dist/defaults.js
+// ../config/dist/defaults.js
 var DEFAULT_CONFIG;
 var init_defaults = __esm({
-  "packages/config/dist/defaults.js"() {
+  "../config/dist/defaults.js"() {
     "use strict";
     DEFAULT_CONFIG = {
       name: "Alfred",
@@ -148,7 +154,7 @@ var init_defaults = __esm({
   }
 });
 
-// packages/config/dist/loader.js
+// ../config/dist/loader.js
 import fs from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -187,7 +193,7 @@ function applyEnvOverrides(config) {
 }
 var ENV_MAP, ConfigLoader;
 var init_loader = __esm({
-  "packages/config/dist/loader.js"() {
+  "../config/dist/loader.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -212,7 +218,10 @@ var init_loader = __esm({
       ALFRED_SEARCH_API_KEY: ["search", "apiKey"],
       ALFRED_SEARCH_BASE_URL: ["search", "baseUrl"],
       ALFRED_EMAIL_USER: ["email", "auth", "user"],
-      ALFRED_EMAIL_PASS: ["email", "auth", "pass"]
+      ALFRED_EMAIL_PASS: ["email", "auth", "pass"],
+      ALFRED_SPEECH_PROVIDER: ["speech", "provider"],
+      ALFRED_SPEECH_API_KEY: ["speech", "apiKey"],
+      ALFRED_SPEECH_BASE_URL: ["speech", "baseUrl"]
     };
     ConfigLoader = class {
       loadConfig(configPath) {
@@ -236,9 +245,9 @@ var init_loader = __esm({
   }
 });
 
-// packages/config/dist/index.js
+// ../config/dist/index.js
 var init_dist = __esm({
-  "packages/config/dist/index.js"() {
+  "../config/dist/index.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -246,7 +255,7 @@ var init_dist = __esm({
   }
 });
 
-// packages/logger/dist/logger.js
+// ../logger/dist/logger.js
 import pino from "pino";
 function createLogger(name, level) {
   const logLevel = level ?? process.env.LOG_LEVEL ?? "info";
@@ -261,32 +270,32 @@ function createLogger(name, level) {
   return pino({ name, level: logLevel });
 }
 var init_logger = __esm({
-  "packages/logger/dist/logger.js"() {
+  "../logger/dist/logger.js"() {
     "use strict";
   }
 });
 
-// packages/logger/dist/audit.js
+// ../logger/dist/audit.js
 import pino2 from "pino";
 var init_audit = __esm({
-  "packages/logger/dist/audit.js"() {
+  "../logger/dist/audit.js"() {
     "use strict";
   }
 });
 
-// packages/logger/dist/index.js
+// ../logger/dist/index.js
 var init_dist2 = __esm({
-  "packages/logger/dist/index.js"() {
+  "../logger/dist/index.js"() {
     "use strict";
     init_logger();
     init_audit();
   }
 });
 
-// packages/storage/dist/migrations/migrator.js
+// ../storage/dist/migrations/migrator.js
 var Migrator;
 var init_migrator = __esm({
-  "packages/storage/dist/migrations/migrator.js"() {
+  "../storage/dist/migrations/migrator.js"() {
     "use strict";
     Migrator = class {
       db;
@@ -335,10 +344,10 @@ var init_migrator = __esm({
   }
 });
 
-// packages/storage/dist/migrations/index.js
+// ../storage/dist/migrations/index.js
 var MIGRATIONS;
 var init_migrations = __esm({
-  "packages/storage/dist/migrations/index.js"() {
+  "../storage/dist/migrations/index.js"() {
     "use strict";
     init_migrator();
     MIGRATIONS = [
@@ -403,18 +412,37 @@ var init_migrations = __esm({
           ON reminders(user_id, fired);
       `);
         }
+      },
+      {
+        version: 4,
+        description: "Add notes table for persistent note storage",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS notes (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_notes_user
+          ON notes(user_id, updated_at DESC);
+      `);
+        }
       }
     ];
   }
 });
 
-// packages/storage/dist/database.js
+// ../storage/dist/database.js
 import BetterSqlite3 from "better-sqlite3";
 import fs2 from "node:fs";
 import path2 from "node:path";
 var Database;
 var init_database = __esm({
-  "packages/storage/dist/database.js"() {
+  "../storage/dist/database.js"() {
     "use strict";
     init_migrator();
     init_migrations();
@@ -495,11 +523,11 @@ var init_database = __esm({
   }
 });
 
-// packages/storage/dist/repositories/conversation-repository.js
+// ../storage/dist/repositories/conversation-repository.js
 import crypto from "node:crypto";
 var ConversationRepository;
 var init_conversation_repository = __esm({
-  "packages/storage/dist/repositories/conversation-repository.js"() {
+  "../storage/dist/repositories/conversation-repository.js"() {
     "use strict";
     ConversationRepository = class {
       db;
@@ -577,11 +605,11 @@ var init_conversation_repository = __esm({
   }
 });
 
-// packages/storage/dist/repositories/user-repository.js
+// ../storage/dist/repositories/user-repository.js
 import crypto2 from "node:crypto";
 var UserRepository;
 var init_user_repository = __esm({
-  "packages/storage/dist/repositories/user-repository.js"() {
+  "../storage/dist/repositories/user-repository.js"() {
     "use strict";
     UserRepository = class {
       db;
@@ -648,10 +676,10 @@ var init_user_repository = __esm({
   }
 });
 
-// packages/storage/dist/repositories/audit-repository.js
+// ../storage/dist/repositories/audit-repository.js
 var AuditRepository;
 var init_audit_repository = __esm({
-  "packages/storage/dist/repositories/audit-repository.js"() {
+  "../storage/dist/repositories/audit-repository.js"() {
     "use strict";
     AuditRepository = class {
       db;
@@ -718,11 +746,11 @@ var init_audit_repository = __esm({
   }
 });
 
-// packages/storage/dist/repositories/memory-repository.js
+// ../storage/dist/repositories/memory-repository.js
 import { randomUUID } from "node:crypto";
 var MemoryRepository;
 var init_memory_repository = __esm({
-  "packages/storage/dist/repositories/memory-repository.js"() {
+  "../storage/dist/repositories/memory-repository.js"() {
     "use strict";
     MemoryRepository = class {
       db;
@@ -790,11 +818,11 @@ var init_memory_repository = __esm({
   }
 });
 
-// packages/storage/dist/repositories/reminder-repository.js
+// ../storage/dist/repositories/reminder-repository.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 var ReminderRepository;
 var init_reminder_repository = __esm({
-  "packages/storage/dist/repositories/reminder-repository.js"() {
+  "../storage/dist/repositories/reminder-repository.js"() {
     "use strict";
     ReminderRepository = class {
       db;
@@ -850,9 +878,67 @@ var init_reminder_repository = __esm({
   }
 });
 
-// packages/storage/dist/index.js
+// ../storage/dist/repositories/note-repository.js
+import { randomUUID as randomUUID3 } from "node:crypto";
+var NoteRepository;
+var init_note_repository = __esm({
+  "../storage/dist/repositories/note-repository.js"() {
+    "use strict";
+    NoteRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      save(userId, title, content) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const id = randomUUID3();
+        this.db.prepare("INSERT INTO notes (id, user_id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, userId, title, content, now, now);
+        return { id, userId, title, content, createdAt: now, updatedAt: now };
+      }
+      getById(noteId) {
+        const row = this.db.prepare("SELECT * FROM notes WHERE id = ?").get(noteId);
+        return row ? this.mapRow(row) : void 0;
+      }
+      list(userId, limit = 50) {
+        const rows = this.db.prepare("SELECT * FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?").all(userId, limit);
+        return rows.map((r) => this.mapRow(r));
+      }
+      search(userId, query) {
+        const pattern = `%${query}%`;
+        const rows = this.db.prepare("SELECT * FROM notes WHERE user_id = ? AND (title LIKE ? OR content LIKE ?) ORDER BY updated_at DESC").all(userId, pattern, pattern);
+        return rows.map((r) => this.mapRow(r));
+      }
+      update(noteId, title, content) {
+        const existing = this.getById(noteId);
+        if (!existing)
+          return void 0;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const newTitle = title ?? existing.title;
+        const newContent = content ?? existing.content;
+        this.db.prepare("UPDATE notes SET title = ?, content = ?, updated_at = ? WHERE id = ?").run(newTitle, newContent, now, noteId);
+        return { ...existing, title: newTitle, content: newContent, updatedAt: now };
+      }
+      delete(noteId) {
+        const result = this.db.prepare("DELETE FROM notes WHERE id = ?").run(noteId);
+        return result.changes > 0;
+      }
+      mapRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          title: row.title,
+          content: row.content,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+      }
+    };
+  }
+});
+
+// ../storage/dist/index.js
 var init_dist3 = __esm({
-  "packages/storage/dist/index.js"() {
+  "../storage/dist/index.js"() {
     "use strict";
     init_database();
     init_conversation_repository();
@@ -862,10 +948,11 @@ var init_dist3 = __esm({
     init_migrator();
     init_migrations();
     init_reminder_repository();
+    init_note_repository();
   }
 });
 
-// packages/llm/dist/provider.js
+// ../llm/dist/provider.js
 function lookupContextWindow(model) {
   if (KNOWN_CONTEXT_WINDOWS[model])
     return KNOWN_CONTEXT_WINDOWS[model];
@@ -877,7 +964,7 @@ function lookupContextWindow(model) {
 }
 var KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, LLMProvider;
 var init_provider = __esm({
-  "packages/llm/dist/provider.js"() {
+  "../llm/dist/provider.js"() {
     "use strict";
     KNOWN_CONTEXT_WINDOWS = {
       // Anthropic
@@ -920,11 +1007,11 @@ var init_provider = __esm({
   }
 });
 
-// packages/llm/dist/providers/anthropic.js
+// ../llm/dist/providers/anthropic.js
 import Anthropic from "@anthropic-ai/sdk";
 var AnthropicProvider;
 var init_anthropic = __esm({
-  "packages/llm/dist/providers/anthropic.js"() {
+  "../llm/dist/providers/anthropic.js"() {
     "use strict";
     init_provider();
     AnthropicProvider = class extends LLMProvider {
@@ -1004,6 +1091,15 @@ var init_anthropic = __esm({
             switch (block.type) {
               case "text":
                 return { type: "text", text: block.text };
+              case "image":
+                return {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: block.source.media_type,
+                    data: block.source.data
+                  }
+                };
               case "tool_use":
                 return {
                   type: "tool_use",
@@ -1058,11 +1154,11 @@ var init_anthropic = __esm({
   }
 });
 
-// packages/llm/dist/providers/openai.js
+// ../llm/dist/providers/openai.js
 import OpenAI from "openai";
 var OpenAIProvider;
 var init_openai = __esm({
-  "packages/llm/dist/providers/openai.js"() {
+  "../llm/dist/providers/openai.js"() {
     "use strict";
     init_provider();
     OpenAIProvider = class extends LLMProvider {
@@ -1200,6 +1296,14 @@ var init_openai = __esm({
               case "text":
                 textParts.push({ type: "text", text: block.text });
                 break;
+              case "image":
+                textParts.push({
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${block.source.media_type};base64,${block.source.data}`
+                  }
+                });
+                break;
               case "tool_use":
                 toolUseParts.push({
                   id: block.id,
@@ -1288,10 +1392,10 @@ var init_openai = __esm({
   }
 });
 
-// packages/llm/dist/providers/openrouter.js
+// ../llm/dist/providers/openrouter.js
 var OpenRouterProvider;
 var init_openrouter = __esm({
-  "packages/llm/dist/providers/openrouter.js"() {
+  "../llm/dist/providers/openrouter.js"() {
     "use strict";
     init_openai();
     OpenRouterProvider = class extends OpenAIProvider {
@@ -1308,10 +1412,10 @@ var init_openrouter = __esm({
   }
 });
 
-// packages/llm/dist/providers/ollama.js
+// ../llm/dist/providers/ollama.js
 var OllamaProvider;
 var init_ollama = __esm({
-  "packages/llm/dist/providers/ollama.js"() {
+  "../llm/dist/providers/ollama.js"() {
     "use strict";
     init_provider();
     OllamaProvider = class extends LLMProvider {
@@ -1558,10 +1662,14 @@ var init_ollama = __esm({
       }
       mapContentBlocks(role, blocks) {
         const textParts = [];
+        const images = [];
         for (const block of blocks) {
           switch (block.type) {
             case "text":
               textParts.push(block.text);
+              break;
+            case "image":
+              images.push(block.source.data);
               break;
             case "tool_use":
               textParts.push(`[Tool call: ${block.name}(${JSON.stringify(block.input)})]`);
@@ -1571,7 +1679,11 @@ var init_ollama = __esm({
               break;
           }
         }
-        return { role, content: textParts.join("\n") };
+        const msg = { role, content: textParts.join("\n") };
+        if (images.length > 0) {
+          msg.images = images;
+        }
+        return msg;
       }
       mapTools(tools) {
         return tools.map((tool) => ({
@@ -1608,7 +1720,7 @@ var init_ollama = __esm({
   }
 });
 
-// packages/llm/dist/provider-factory.js
+// ../llm/dist/provider-factory.js
 function createLLMProvider(config) {
   switch (config.provider) {
     case "anthropic":
@@ -1624,7 +1736,7 @@ function createLLMProvider(config) {
   }
 }
 var init_provider_factory = __esm({
-  "packages/llm/dist/provider-factory.js"() {
+  "../llm/dist/provider-factory.js"() {
     "use strict";
     init_anthropic();
     init_openai();
@@ -1633,7 +1745,7 @@ var init_provider_factory = __esm({
   }
 });
 
-// packages/llm/dist/prompt-builder.js
+// ../llm/dist/prompt-builder.js
 function estimateTokens(text) {
   return Math.ceil(text.length / 3.5);
 }
@@ -1647,6 +1759,9 @@ function estimateMessageTokens(msg) {
       case "text":
         tokens += estimateTokens(block.text);
         break;
+      case "image":
+        tokens += 1e3;
+        break;
       case "tool_use":
         tokens += estimateTokens(block.name) + estimateTokens(JSON.stringify(block.input));
         break;
@@ -1659,13 +1774,13 @@ function estimateMessageTokens(msg) {
 }
 var PromptBuilder;
 var init_prompt_builder = __esm({
-  "packages/llm/dist/prompt-builder.js"() {
+  "../llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
       buildSystemPrompt(memories, skills) {
-        const os = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
+        const os3 = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
         const homeDir = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-        let prompt = `You are Alfred, a personal AI assistant. You run on ${os} (home: ${homeDir}).
+        let prompt = `You are Alfred, a personal AI assistant. You run on ${os3} (home: ${homeDir}).
 
 ## Core principles
 - ACT, don't just talk. When the user asks you to do something, USE YOUR TOOLS immediately. Never say "I could do X" \u2014 just do X.
@@ -1681,7 +1796,7 @@ For complex tasks, work through multiple steps:
 4. **Summarize** the final result clearly.
 
 ## Environment
-- OS: ${os}
+- OS: ${os3}
 - Home: ${homeDir}
 - Documents: ${homeDir}/Documents
 - Desktop: ${homeDir}/Desktop
@@ -1737,9 +1852,9 @@ For complex tasks, work through multiple steps:
   }
 });
 
-// packages/llm/dist/index.js
+// ../llm/dist/index.js
 var init_dist4 = __esm({
-  "packages/llm/dist/index.js"() {
+  "../llm/dist/index.js"() {
     "use strict";
     init_provider();
     init_anthropic();
@@ -1751,10 +1866,10 @@ var init_dist4 = __esm({
   }
 });
 
-// packages/security/dist/rate-limiter.js
+// ../security/dist/rate-limiter.js
 var RateLimiter;
 var init_rate_limiter = __esm({
-  "packages/security/dist/rate-limiter.js"() {
+  "../security/dist/rate-limiter.js"() {
     "use strict";
     RateLimiter = class {
       buckets = /* @__PURE__ */ new Map();
@@ -1800,10 +1915,10 @@ var init_rate_limiter = __esm({
   }
 });
 
-// packages/security/dist/rule-engine.js
+// ../security/dist/rule-engine.js
 var RuleEngine;
 var init_rule_engine = __esm({
-  "packages/security/dist/rule-engine.js"() {
+  "../security/dist/rule-engine.js"() {
     "use strict";
     init_rate_limiter();
     RuleEngine = class {
@@ -1946,10 +2061,10 @@ var init_rule_engine = __esm({
   }
 });
 
-// packages/security/dist/rule-loader.js
+// ../security/dist/rule-loader.js
 var VALID_EFFECTS, VALID_SCOPES, VALID_RISK_LEVELS, RuleLoader;
 var init_rule_loader = __esm({
-  "packages/security/dist/rule-loader.js"() {
+  "../security/dist/rule-loader.js"() {
     "use strict";
     VALID_EFFECTS = ["allow", "deny"];
     VALID_SCOPES = ["global", "user", "conversation", "platform"];
@@ -2029,11 +2144,11 @@ var init_rule_loader = __esm({
   }
 });
 
-// packages/security/dist/security-manager.js
+// ../security/dist/security-manager.js
 import crypto3 from "node:crypto";
 var SecurityManager;
 var init_security_manager = __esm({
-  "packages/security/dist/security-manager.js"() {
+  "../security/dist/security-manager.js"() {
     "use strict";
     SecurityManager = class {
       ruleEngine;
@@ -2079,9 +2194,9 @@ var init_security_manager = __esm({
   }
 });
 
-// packages/security/dist/index.js
+// ../security/dist/index.js
 var init_dist5 = __esm({
-  "packages/security/dist/index.js"() {
+  "../security/dist/index.js"() {
     "use strict";
     init_rule_engine();
     init_rate_limiter();
@@ -2090,20 +2205,20 @@ var init_dist5 = __esm({
   }
 });
 
-// packages/skills/dist/skill.js
+// ../skills/dist/skill.js
 var Skill;
 var init_skill = __esm({
-  "packages/skills/dist/skill.js"() {
+  "../skills/dist/skill.js"() {
     "use strict";
     Skill = class {
     };
   }
 });
 
-// packages/skills/dist/skill-registry.js
+// ../skills/dist/skill-registry.js
 var SkillRegistry;
 var init_skill_registry = __esm({
-  "packages/skills/dist/skill-registry.js"() {
+  "../skills/dist/skill-registry.js"() {
     "use strict";
     SkillRegistry = class {
       skills = /* @__PURE__ */ new Map();
@@ -2134,10 +2249,10 @@ var init_skill_registry = __esm({
   }
 });
 
-// packages/skills/dist/skill-sandbox.js
+// ../skills/dist/skill-sandbox.js
 var DEFAULT_TIMEOUT_MS, SkillSandbox;
 var init_skill_sandbox = __esm({
-  "packages/skills/dist/skill-sandbox.js"() {
+  "../skills/dist/skill-sandbox.js"() {
     "use strict";
     DEFAULT_TIMEOUT_MS = 3e4;
     SkillSandbox = class {
@@ -2170,20 +2285,20 @@ var init_skill_sandbox = __esm({
   }
 });
 
-// packages/skills/dist/plugin-loader.js
+// ../skills/dist/plugin-loader.js
 import fs3 from "node:fs";
 import path3 from "node:path";
 var init_plugin_loader = __esm({
-  "packages/skills/dist/plugin-loader.js"() {
+  "../skills/dist/plugin-loader.js"() {
     "use strict";
     init_skill();
   }
 });
 
-// packages/skills/dist/built-in/calculator.js
+// ../skills/dist/built-in/calculator.js
 var ALLOWED_PATTERN, SAFE_EXPRESSION_PATTERN, CalculatorSkill;
 var init_calculator = __esm({
-  "packages/skills/dist/built-in/calculator.js"() {
+  "../skills/dist/built-in/calculator.js"() {
     "use strict";
     init_skill();
     ALLOWED_PATTERN = /^[\d+\-*/().,%\s]|Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/;
@@ -2251,10 +2366,10 @@ var init_calculator = __esm({
   }
 });
 
-// packages/skills/dist/built-in/system-info.js
+// ../skills/dist/built-in/system-info.js
 var SystemInfoSkill;
 var init_system_info = __esm({
-  "packages/skills/dist/built-in/system-info.js"() {
+  "../skills/dist/built-in/system-info.js"() {
     "use strict";
     init_skill();
     SystemInfoSkill = class extends Skill {
@@ -2354,10 +2469,10 @@ var init_system_info = __esm({
   }
 });
 
-// packages/skills/dist/built-in/web-search.js
+// ../skills/dist/built-in/web-search.js
 var WebSearchSkill;
 var init_web_search = __esm({
-  "packages/skills/dist/built-in/web-search.js"() {
+  "../skills/dist/built-in/web-search.js"() {
     "use strict";
     init_skill();
     WebSearchSkill = class extends Skill {
@@ -2572,10 +2687,10 @@ ${display}`
   }
 });
 
-// packages/skills/dist/built-in/reminder.js
+// ../skills/dist/built-in/reminder.js
 var ReminderSkill;
 var init_reminder = __esm({
-  "packages/skills/dist/built-in/reminder.js"() {
+  "../skills/dist/built-in/reminder.js"() {
     "use strict";
     init_skill();
     ReminderSkill = class extends Skill {
@@ -2691,19 +2806,19 @@ ${reminderList.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${r.tr
   }
 });
 
-// packages/skills/dist/built-in/note.js
-import { randomUUID as randomUUID3 } from "node:crypto";
+// ../skills/dist/built-in/note.js
 var NoteSkill;
 var init_note = __esm({
-  "packages/skills/dist/built-in/note.js"() {
+  "../skills/dist/built-in/note.js"() {
     "use strict";
     init_skill();
     NoteSkill = class extends Skill {
+      noteRepo;
       metadata = {
         name: "note",
-        description: "Save, list, search, or delete persistent notes. Use when the user wants to write down or retrieve text notes, lists, or ideas.",
+        description: "Save, list, search, or delete persistent notes (stored in SQLite). Use when the user wants to write down or retrieve text notes, lists, or ideas.",
         riskLevel: "write",
-        version: "1.0.0",
+        version: "2.0.0",
         inputSchema: {
           type: "object",
           properties: {
@@ -2732,7 +2847,10 @@ var init_note = __esm({
           required: ["action"]
         }
       };
-      notes = /* @__PURE__ */ new Map();
+      constructor(noteRepo) {
+        super();
+        this.noteRepo = noteRepo;
+      }
       async execute(input2, context) {
         const action = input2.action;
         switch (action) {
@@ -2755,394 +2873,101 @@ var init_note = __esm({
         const title = input2.title;
         const content = input2.content;
         if (!title || typeof title !== "string") {
-          return {
-            success: false,
-            error: 'Missing required field "title" for save action'
-          };
+          return { success: false, error: 'Missing required field "title" for save action' };
         }
         if (!content || typeof content !== "string") {
-          return {
-            success: false,
-            error: 'Missing required field "content" for save action'
-          };
+          return { success: false, error: 'Missing required field "content" for save action' };
         }
-        const noteId = randomUUID3();
-        const createdAt = Date.now();
-        this.notes.set(noteId, {
-          noteId,
-          userId: context.userId,
-          title,
-          content,
-          createdAt
-        });
+        const entry = this.noteRepo.save(context.userId, title, content);
         return {
           success: true,
-          data: { noteId, title, createdAt },
-          display: `Note saved (${noteId}): "${title}"`
+          data: { noteId: entry.id, title: entry.title },
+          display: `Note saved: "${title}"`
         };
       }
       listNotes(context) {
-        const userNotes = [];
-        for (const [, entry] of this.notes) {
-          if (entry.userId === context.userId) {
-            userNotes.push({
-              noteId: entry.noteId,
-              title: entry.title,
-              createdAt: entry.createdAt
-            });
-          }
+        const notes = this.noteRepo.list(context.userId);
+        if (notes.length === 0) {
+          return { success: true, data: [], display: "No notes found." };
         }
-        return {
-          success: true,
-          data: userNotes,
-          display: userNotes.length === 0 ? "No notes found." : `Notes:
-${userNotes.map((n) => `- ${n.noteId}: "${n.title}"`).join("\n")}`
-        };
+        const display = notes.map((n) => `- **${n.title}** (${n.id.slice(0, 8)}\u2026)
+  ${n.content.slice(0, 100)}${n.content.length > 100 ? "\u2026" : ""}`).join("\n");
+        return { success: true, data: notes, display: `${notes.length} note(s):
+${display}` };
       }
       searchNotes(input2, context) {
         const query = input2.query;
         if (!query || typeof query !== "string") {
-          return {
-            success: false,
-            error: 'Missing required field "query" for search action'
-          };
+          return { success: false, error: 'Missing required field "query" for search action' };
         }
-        const lowerQuery = query.toLowerCase();
-        const matches = [];
-        for (const [, entry] of this.notes) {
-          if (entry.userId !== context.userId) {
-            continue;
-          }
-          if (entry.title.toLowerCase().includes(lowerQuery) || entry.content.toLowerCase().includes(lowerQuery)) {
-            matches.push({
-              noteId: entry.noteId,
-              title: entry.title,
-              content: entry.content
-            });
-          }
+        const matches = this.noteRepo.search(context.userId, query);
+        if (matches.length === 0) {
+          return { success: true, data: [], display: `No notes matching "${query}".` };
         }
-        return {
-          success: true,
-          data: matches,
-          display: matches.length === 0 ? `No notes matching "${query}".` : `Found ${matches.length} note(s):
-${matches.map((n) => `- ${n.noteId}: "${n.title}"`).join("\n")}`
-        };
+        const display = matches.map((n) => `- **${n.title}** (${n.id.slice(0, 8)}\u2026)
+  ${n.content.slice(0, 100)}${n.content.length > 100 ? "\u2026" : ""}`).join("\n");
+        return { success: true, data: matches, display: `Found ${matches.length} note(s):
+${display}` };
       }
       deleteNote(input2) {
         const noteId = input2.noteId;
         if (!noteId || typeof noteId !== "string") {
-          return {
-            success: false,
-            error: 'Missing required field "noteId" for delete action'
-          };
+          return { success: false, error: 'Missing required field "noteId" for delete action' };
         }
-        const entry = this.notes.get(noteId);
-        if (!entry) {
-          return {
-            success: false,
-            error: `Note "${noteId}" not found`
-          };
+        const deleted = this.noteRepo.delete(noteId);
+        if (!deleted) {
+          return { success: false, error: `Note "${noteId}" not found` };
         }
-        this.notes.delete(noteId);
-        return {
-          success: true,
-          data: { noteId },
-          display: `Note "${noteId}" deleted.`
-        };
+        return { success: true, data: { noteId }, display: `Note deleted.` };
       }
     };
   }
 });
 
-// packages/skills/dist/built-in/summarize.js
-var DEFAULT_MAX_LENGTH, SummarizeSkill;
-var init_summarize = __esm({
-  "packages/skills/dist/built-in/summarize.js"() {
-    "use strict";
-    init_skill();
-    DEFAULT_MAX_LENGTH = 280;
-    SummarizeSkill = class extends Skill {
-      metadata = {
-        name: "summarize",
-        description: "Produce an extractive summary of the given text",
-        riskLevel: "read",
-        version: "1.0.0",
-        inputSchema: {
-          type: "object",
-          properties: {
-            text: {
-              type: "string",
-              description: "The text to summarize"
-            },
-            maxLength: {
-              type: "number",
-              description: "Maximum character length for the summary (default: 280)"
-            }
-          },
-          required: ["text"]
-        }
-      };
-      async execute(input2, _context) {
-        const text = input2.text;
-        const maxLength = input2.maxLength ?? DEFAULT_MAX_LENGTH;
-        if (!text || typeof text !== "string") {
-          return {
-            success: false,
-            error: 'Invalid input: "text" must be a non-empty string'
-          };
-        }
-        if (text.length <= maxLength) {
-          return {
-            success: true,
-            data: { summary: text },
-            display: text
-          };
-        }
-        const summary = this.extractiveSummarize(text, maxLength);
-        return {
-          success: true,
-          data: { summary },
-          display: summary
-        };
-      }
-      extractiveSummarize(text, maxLength) {
-        const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter((s) => s.length > 0);
-        if (sentences.length === 0) {
-          return text.slice(0, maxLength);
-        }
-        const wordFrequency = this.buildWordFrequency(text);
-        const scored = sentences.map((sentence, index) => ({
-          sentence,
-          index,
-          score: this.scoreSentence(sentence, wordFrequency)
-        }));
-        const ranked = [...scored].sort((a, b) => b.score - a.score);
-        const selected = [];
-        let currentLength = 0;
-        for (const entry of ranked) {
-          const addition = currentLength === 0 ? entry.sentence.length : entry.sentence.length + 1;
-          if (currentLength + addition > maxLength) {
-            continue;
-          }
-          selected.push(entry);
-          currentLength += addition;
-        }
-        if (selected.length === 0) {
-          return sentences[0].slice(0, maxLength);
-        }
-        selected.sort((a, b) => a.index - b.index);
-        return selected.map((s) => s.sentence).join(" ");
-      }
-      buildWordFrequency(text) {
-        const stopWords = /* @__PURE__ */ new Set([
-          "the",
-          "a",
-          "an",
-          "is",
-          "are",
-          "was",
-          "were",
-          "be",
-          "been",
-          "being",
-          "have",
-          "has",
-          "had",
-          "do",
-          "does",
-          "did",
-          "will",
-          "would",
-          "could",
-          "should",
-          "may",
-          "might",
-          "shall",
-          "can",
-          "to",
-          "of",
-          "in",
-          "for",
-          "on",
-          "with",
-          "at",
-          "by",
-          "from",
-          "as",
-          "into",
-          "through",
-          "during",
-          "before",
-          "after",
-          "and",
-          "but",
-          "or",
-          "nor",
-          "not",
-          "so",
-          "yet",
-          "both",
-          "either",
-          "neither",
-          "each",
-          "every",
-          "all",
-          "any",
-          "few",
-          "more",
-          "most",
-          "other",
-          "some",
-          "such",
-          "no",
-          "only",
-          "own",
-          "same",
-          "than",
-          "too",
-          "very",
-          "just",
-          "because",
-          "if",
-          "when",
-          "where",
-          "how",
-          "what",
-          "which",
-          "who",
-          "whom",
-          "this",
-          "that",
-          "these",
-          "those",
-          "it",
-          "its",
-          "i",
-          "me",
-          "my",
-          "we",
-          "our",
-          "you",
-          "your",
-          "he",
-          "him",
-          "his",
-          "she",
-          "her",
-          "they",
-          "them",
-          "their"
-        ]);
-        const frequency = /* @__PURE__ */ new Map();
-        const words = text.toLowerCase().match(/\b[a-z]+\b/g) ?? [];
-        for (const word of words) {
-          if (stopWords.has(word) || word.length < 3) {
-            continue;
-          }
-          frequency.set(word, (frequency.get(word) ?? 0) + 1);
-        }
-        return frequency;
-      }
-      scoreSentence(sentence, wordFrequency) {
-        const words = sentence.toLowerCase().match(/\b[a-z]+\b/g) ?? [];
-        let score = 0;
-        for (const word of words) {
-          score += wordFrequency.get(word) ?? 0;
-        }
-        return score;
-      }
-    };
-  }
-});
-
-// packages/skills/dist/built-in/translate.js
-var TranslateSkill;
-var init_translate = __esm({
-  "packages/skills/dist/built-in/translate.js"() {
-    "use strict";
-    init_skill();
-    TranslateSkill = class extends Skill {
-      metadata = {
-        name: "translate",
-        description: "Translate text between languages (placeholder \u2014 requires external API)",
-        riskLevel: "read",
-        version: "0.1.0",
-        inputSchema: {
-          type: "object",
-          properties: {
-            text: {
-              type: "string",
-              description: "The text to translate"
-            },
-            targetLanguage: {
-              type: "string",
-              description: 'The language to translate into (e.g. "es", "fr", "de")'
-            },
-            sourceLanguage: {
-              type: "string",
-              description: "The source language (optional, auto-detected if omitted)"
-            }
-          },
-          required: ["text", "targetLanguage"]
-        }
-      };
-      async execute(input2, _context) {
-        const text = input2.text;
-        const targetLanguage = input2.targetLanguage;
-        const sourceLanguage = input2.sourceLanguage;
-        if (!text || typeof text !== "string") {
-          return {
-            success: false,
-            error: 'Invalid input: "text" must be a non-empty string'
-          };
-        }
-        if (!targetLanguage || typeof targetLanguage !== "string") {
-          return {
-            success: false,
-            error: 'Invalid input: "targetLanguage" must be a non-empty string'
-          };
-        }
-        const sourceLabel = sourceLanguage ? ` from "${sourceLanguage}"` : "";
-        return {
-          success: true,
-          data: {
-            note: "Translation is not yet connected to a translation API",
-            text,
-            targetLanguage,
-            sourceLanguage: sourceLanguage ?? "auto"
-          },
-          display: `Translation${sourceLabel} to "${targetLanguage}" is not yet implemented. This skill will be connected to a translation API in a future update.
-
-Requested text: "${text}"`
-        };
-      }
-    };
-  }
-});
-
-// packages/skills/dist/built-in/weather.js
-var WeatherSkill;
+// ../skills/dist/built-in/weather.js
+var WEATHER_CODES, WeatherSkill;
 var init_weather = __esm({
-  "packages/skills/dist/built-in/weather.js"() {
+  "../skills/dist/built-in/weather.js"() {
     "use strict";
     init_skill();
+    WEATHER_CODES = {
+      0: "Clear sky",
+      1: "Mainly clear",
+      2: "Partly cloudy",
+      3: "Overcast",
+      45: "Foggy",
+      48: "Depositing rime fog",
+      51: "Light drizzle",
+      53: "Moderate drizzle",
+      55: "Dense drizzle",
+      61: "Slight rain",
+      63: "Moderate rain",
+      65: "Heavy rain",
+      71: "Slight snow",
+      73: "Moderate snow",
+      75: "Heavy snow",
+      77: "Snow grains",
+      80: "Slight rain showers",
+      81: "Moderate rain showers",
+      82: "Violent rain showers",
+      85: "Slight snow showers",
+      86: "Heavy snow showers",
+      95: "Thunderstorm",
+      96: "Thunderstorm with slight hail",
+      99: "Thunderstorm with heavy hail"
+    };
     WeatherSkill = class extends Skill {
       metadata = {
         name: "weather",
-        description: "Get weather information for a location (placeholder \u2014 requires API key)",
+        description: "Get current weather for any location. Uses Open-Meteo (free, no API key). Use when the user asks about weather, temperature, or conditions somewhere.",
         riskLevel: "read",
-        version: "0.1.0",
+        version: "2.0.0",
         inputSchema: {
           type: "object",
           properties: {
             location: {
               type: "string",
-              description: 'The location to get weather for (e.g. "London", "New York, NY")'
-            },
-            units: {
-              type: "string",
-              enum: ["metric", "imperial"],
-              description: "Unit system for temperature (default: metric)"
+              description: 'City or place name (e.g. "Vienna", "New York", "Tokyo")'
             }
           },
           required: ["location"]
@@ -3150,28 +2975,55 @@ var init_weather = __esm({
       };
       async execute(input2, _context) {
         const location = input2.location;
-        const units = input2.units ?? "metric";
         if (!location || typeof location !== "string") {
-          return {
-            success: false,
-            error: 'Invalid input: "location" must be a non-empty string'
-          };
+          return { success: false, error: 'Missing required field "location"' };
         }
-        return {
-          success: true,
-          data: {
-            note: "Weather data is not yet available \u2014 API key configuration required",
-            location,
-            units
-          },
-          display: `Weather for "${location}" (${units}) is not yet implemented. This skill requires a weather API key to be configured.`
-        };
+        try {
+          const geo = await this.geocode(location);
+          if (!geo) {
+            return { success: false, error: `Location "${location}" not found` };
+          }
+          const weather = await this.fetchWeather(geo.latitude, geo.longitude);
+          const condition = WEATHER_CODES[weather.weathercode] ?? `Code ${weather.weathercode}`;
+          const locationLabel = geo.admin1 ? `${geo.name}, ${geo.admin1}, ${geo.country}` : `${geo.name}, ${geo.country}`;
+          const data = {
+            location: locationLabel,
+            temperature: weather.temperature,
+            unit: "\xB0C",
+            condition,
+            windSpeed: weather.windspeed,
+            windDirection: weather.winddirection,
+            isDay: weather.is_day === 1
+          };
+          const display = `${locationLabel}: ${weather.temperature}\xB0C, ${condition}
+Wind: ${weather.windspeed} km/h`;
+          return { success: true, data, display };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Weather fetch failed: ${msg}` };
+        }
+      }
+      async geocode(query) {
+        const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=en&format=json`;
+        const res = await fetch(url);
+        if (!res.ok)
+          throw new Error(`Geocoding API returned ${res.status}`);
+        const data = await res.json();
+        return data.results?.[0];
+      }
+      async fetchWeather(lat, lon) {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&timezone=auto`;
+        const res = await fetch(url);
+        if (!res.ok)
+          throw new Error(`Weather API returned ${res.status}`);
+        const data = await res.json();
+        return data.current_weather;
       }
     };
   }
 });
 
-// packages/skills/dist/built-in/shell.js
+// ../skills/dist/built-in/shell.js
 import { exec } from "node:child_process";
 function truncate(text) {
   if (text.length > MAX_OUTPUT_SIZE) {
@@ -3181,7 +3033,7 @@ function truncate(text) {
 }
 var DEFAULT_TIMEOUT, MAX_OUTPUT_SIZE, ShellSkill;
 var init_shell = __esm({
-  "packages/skills/dist/built-in/shell.js"() {
+  "../skills/dist/built-in/shell.js"() {
     "use strict";
     init_skill();
     DEFAULT_TIMEOUT = 3e4;
@@ -3263,10 +3115,10 @@ ${truncate(stderr)}`);
   }
 });
 
-// packages/skills/dist/built-in/memory.js
+// ../skills/dist/built-in/memory.js
 var MemorySkill;
 var init_memory = __esm({
-  "packages/skills/dist/built-in/memory.js"() {
+  "../skills/dist/built-in/memory.js"() {
     "use strict";
     init_skill();
     MemorySkill = class extends Skill {
@@ -3419,39 +3271,46 @@ ${entries.map((e) => `- [${e.category}] ${e.key}: "${e.value}"`).join("\n")}`
   }
 });
 
-// packages/skills/dist/built-in/delegate.js
-var DelegateSkill;
+// ../skills/dist/built-in/delegate.js
+var MAX_SUB_AGENT_ITERATIONS, DelegateSkill;
 var init_delegate = __esm({
-  "packages/skills/dist/built-in/delegate.js"() {
+  "../skills/dist/built-in/delegate.js"() {
     "use strict";
     init_skill();
+    MAX_SUB_AGENT_ITERATIONS = 5;
     DelegateSkill = class extends Skill {
       llm;
+      skillRegistry;
+      skillSandbox;
+      securityManager;
       metadata = {
         name: "delegate",
-        description: "Delegate a text-processing sub-task to a separate AI agent (no tool access). Use for: summarizing long text, translating content, rewriting/reformatting text, analyzing or comparing information, drafting emails or messages. Do NOT use for tasks that require tools (files, web search, shell) \u2014 do those yourself.",
+        description: 'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. The sub-agent can use shell, web search, calculator, memory, email, and all other tools. Use when a task is independent enough to run in parallel or when it requires a focused, multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", "check the weather and draft a packing list"). The sub-agent runs up to 5 tool iterations autonomously.',
         riskLevel: "write",
-        version: "1.0.0",
+        version: "2.0.0",
         inputSchema: {
           type: "object",
           properties: {
             task: {
               type: "string",
-              description: "The task to delegate to a sub-agent"
+              description: "The task to delegate to the sub-agent. Be specific about what you want."
             },
             context: {
               type: "string",
-              description: "Additional context for the sub-agent (optional)"
+              description: "Additional context the sub-agent needs (optional)"
             }
           },
           required: ["task"]
         }
       };
-      constructor(llm) {
+      constructor(llm, skillRegistry, skillSandbox, securityManager) {
         super();
         this.llm = llm;
+        this.skillRegistry = skillRegistry;
+        this.skillSandbox = skillSandbox;
+        this.securityManager = securityManager;
       }
-      async execute(input2, _context) {
+      async execute(input2, context) {
         const task = input2.task;
         const additionalContext = input2.context;
         if (!task || typeof task !== "string") {
@@ -3460,7 +3319,8 @@ var init_delegate = __esm({
             error: 'Missing required field "task"'
           };
         }
-        const systemPrompt = "You are a sub-agent of Alfred. Complete the following task concisely and return the result. Do not use tools.";
+        const tools = this.buildSubAgentTools();
+        const systemPrompt = "You are a sub-agent of Alfred, a personal AI assistant. Complete the assigned task using the tools available to you. Work step by step: use tools to gather information, then synthesize a clear result. Be concise and return only the final answer when done.";
         let userContent = task;
         if (additionalContext && typeof additionalContext === "string") {
           userContent = `${task}
@@ -3468,22 +3328,58 @@ var init_delegate = __esm({
 Additional context: ${additionalContext}`;
         }
         const messages = [
-          {
-            role: "user",
-            content: userContent
-          }
+          { role: "user", content: userContent }
         ];
         try {
-          const response = await this.llm.complete({
-            messages,
-            system: systemPrompt,
-            maxTokens: 2048
-          });
-          return {
-            success: true,
-            data: { response: response.content, usage: response.usage },
-            display: response.content
-          };
+          let iteration = 0;
+          let totalInputTokens = 0;
+          let totalOutputTokens = 0;
+          while (true) {
+            const response = await this.llm.complete({
+              messages,
+              system: systemPrompt,
+              tools: tools.length > 0 ? tools : void 0,
+              maxTokens: 2048
+            });
+            totalInputTokens += response.usage.inputTokens;
+            totalOutputTokens += response.usage.outputTokens;
+            if (!response.toolCalls || response.toolCalls.length === 0 || iteration >= MAX_SUB_AGENT_ITERATIONS) {
+              return {
+                success: true,
+                data: {
+                  response: response.content,
+                  iterations: iteration,
+                  usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }
+                },
+                display: response.content
+              };
+            }
+            iteration++;
+            const assistantContent = [];
+            if (response.content) {
+              assistantContent.push({ type: "text", text: response.content });
+            }
+            for (const tc of response.toolCalls) {
+              assistantContent.push({
+                type: "tool_use",
+                id: tc.id,
+                name: tc.name,
+                input: tc.input
+              });
+            }
+            messages.push({ role: "assistant", content: assistantContent });
+            const toolResultBlocks = [];
+            for (const toolCall of response.toolCalls) {
+              const result = await this.executeSubAgentTool(toolCall, context);
+              toolResultBlocks.push({
+                type: "tool_result",
+                tool_use_id: toolCall.id,
+                content: result.content,
+                is_error: result.isError
+              });
+            }
+            messages.push({ role: "user", content: toolResultBlocks });
+          }
         } catch (err) {
           const errorMessage = err instanceof Error ? err.message : String(err);
           return {
@@ -3492,14 +3388,62 @@ Additional context: ${additionalContext}`;
           };
         }
       }
+      buildSubAgentTools() {
+        if (!this.skillRegistry)
+          return [];
+        return this.skillRegistry.getAll().filter((s) => s.metadata.name !== "delegate").map((s) => ({
+          name: s.metadata.name,
+          description: s.metadata.description,
+          inputSchema: s.metadata.inputSchema
+        }));
+      }
+      async executeSubAgentTool(toolCall, context) {
+        const skill = this.skillRegistry?.get(toolCall.name);
+        if (!skill) {
+          return { content: `Error: Unknown tool "${toolCall.name}"`, isError: true };
+        }
+        if (this.securityManager) {
+          const evaluation = this.securityManager.evaluate({
+            userId: context.userId,
+            action: toolCall.name,
+            riskLevel: skill.metadata.riskLevel,
+            platform: context.platform,
+            chatId: context.chatId,
+            chatType: context.chatType
+          });
+          if (!evaluation.allowed) {
+            return {
+              content: `Access denied: ${evaluation.reason}`,
+              isError: true
+            };
+          }
+        }
+        if (this.skillSandbox) {
+          const result = await this.skillSandbox.execute(skill, toolCall.input, context);
+          return {
+            content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? "Unknown error"),
+            isError: !result.success
+          };
+        }
+        try {
+          const result = await skill.execute(toolCall.input, context);
+          return {
+            content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? "Unknown error"),
+            isError: !result.success
+          };
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          return { content: `Skill execution failed: ${msg}`, isError: true };
+        }
+      }
     };
   }
 });
 
-// packages/skills/dist/built-in/email.js
+// ../skills/dist/built-in/email.js
 var EmailSkill;
 var init_email = __esm({
-  "packages/skills/dist/built-in/email.js"() {
+  "../skills/dist/built-in/email.js"() {
     "use strict";
     init_skill();
     EmailSkill = class extends Skill {
@@ -3818,9 +3762,805 @@ Message ID: ${info.messageId}`
   }
 });
 
-// packages/skills/dist/index.js
+// ../skills/dist/built-in/http.js
+var MAX_RESPONSE_SIZE, HttpSkill;
+var init_http = __esm({
+  "../skills/dist/built-in/http.js"() {
+    "use strict";
+    init_skill();
+    MAX_RESPONSE_SIZE = 1e5;
+    HttpSkill = class extends Skill {
+      metadata = {
+        name: "http",
+        description: "Make HTTP requests to fetch web pages or call REST APIs. Use when you need to read a URL, call an API endpoint, or fetch data from the web. Supports GET, POST, PUT, PATCH, DELETE methods.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "The URL to request"
+            },
+            method: {
+              type: "string",
+              enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+              description: "HTTP method (default: GET)"
+            },
+            headers: {
+              type: "object",
+              description: "Request headers as key-value pairs (optional)"
+            },
+            body: {
+              type: "string",
+              description: "Request body for POST/PUT/PATCH (optional)"
+            }
+          },
+          required: ["url"]
+        }
+      };
+      async execute(input2, _context) {
+        const url = input2.url;
+        const method = (input2.method ?? "GET").toUpperCase();
+        const headers = input2.headers;
+        const body = input2.body;
+        if (!url || typeof url !== "string") {
+          return { success: false, error: 'Missing required field "url"' };
+        }
+        try {
+          new URL(url);
+        } catch {
+          return { success: false, error: `Invalid URL: "${url}"` };
+        }
+        try {
+          const fetchOptions = {
+            method,
+            headers: {
+              "User-Agent": "Alfred/1.0",
+              ...headers ?? {}
+            },
+            signal: AbortSignal.timeout(15e3)
+          };
+          if (body && ["POST", "PUT", "PATCH"].includes(method)) {
+            fetchOptions.body = body;
+            if (!headers?.["Content-Type"] && !headers?.["content-type"]) {
+              fetchOptions.headers["Content-Type"] = "application/json";
+            }
+          }
+          const res = await fetch(url, fetchOptions);
+          const contentType = res.headers.get("content-type") ?? "";
+          const text = await res.text();
+          const truncated = text.length > MAX_RESPONSE_SIZE;
+          const responseBody = truncated ? text.slice(0, MAX_RESPONSE_SIZE) + "\n\n[... truncated]" : text;
+          let display = responseBody;
+          if (contentType.includes("text/html")) {
+            display = this.stripHtml(responseBody).slice(0, 1e4);
+          }
+          const data = {
+            status: res.status,
+            statusText: res.statusText,
+            contentType,
+            bodyLength: text.length,
+            truncated,
+            body: responseBody
+          };
+          if (!res.ok) {
+            return {
+              success: true,
+              data,
+              display: `HTTP ${res.status} ${res.statusText}
+
+${display.slice(0, 2e3)}`
+            };
+          }
+          return {
+            success: true,
+            data,
+            display: `HTTP ${res.status} OK (${text.length} bytes)
+
+${display.slice(0, 5e3)}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `HTTP request failed: ${msg}` };
+        }
+      }
+      stripHtml(html) {
+        return html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "").replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/file.js
+import fs4 from "node:fs";
+import path4 from "node:path";
+var MAX_READ_SIZE, FileSkill;
+var init_file = __esm({
+  "../skills/dist/built-in/file.js"() {
+    "use strict";
+    init_skill();
+    MAX_READ_SIZE = 5e5;
+    FileSkill = class extends Skill {
+      metadata = {
+        name: "file",
+        description: 'Read, write, move, or copy files. Use for reading file contents, writing text to files, saving binary data, listing directory contents, moving/copying files, or getting file info. Prefer this over shell for file operations. When a user sends a file attachment, it is saved to the inbox \u2014 use "move" to relocate it.',
+        riskLevel: "write",
+        version: "2.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["read", "write", "write_binary", "append", "list", "info", "exists", "move", "copy", "delete"],
+              description: "The file operation to perform"
+            },
+            path: {
+              type: "string",
+              description: "Absolute or relative file/directory path (~ expands to home)"
+            },
+            destination: {
+              type: "string",
+              description: "Destination path for move/copy actions (~ expands to home)"
+            },
+            content: {
+              type: "string",
+              description: "Content to write (required for write/append; base64-encoded for write_binary)"
+            }
+          },
+          required: ["action", "path"]
+        }
+      };
+      async execute(input2, _context) {
+        const action = input2.action;
+        const rawPath = input2.path;
+        const content = input2.content;
+        const destination = input2.destination;
+        if (!action || !rawPath) {
+          return { success: false, error: 'Missing required fields "action" and "path"' };
+        }
+        const resolvedPath = this.resolvePath(rawPath);
+        switch (action) {
+          case "read":
+            return this.readFile(resolvedPath);
+          case "write":
+            return this.writeFile(resolvedPath, content);
+          case "write_binary":
+            return this.writeBinaryFile(resolvedPath, content);
+          case "append":
+            return this.appendFile(resolvedPath, content);
+          case "list":
+            return this.listDir(resolvedPath);
+          case "info":
+            return this.fileInfo(resolvedPath);
+          case "exists":
+            return this.fileExists(resolvedPath);
+          case "move":
+            return this.moveFile(resolvedPath, destination);
+          case "copy":
+            return this.copyFile(resolvedPath, destination);
+          case "delete":
+            return this.deleteFile(resolvedPath);
+          default:
+            return { success: false, error: `Unknown action "${action}". Valid: read, write, write_binary, append, list, info, exists, move, copy, delete` };
+        }
+      }
+      resolvePath(raw) {
+        const home = process.env["HOME"] || process.env["USERPROFILE"] || "";
+        const expanded = raw.startsWith("~") ? raw.replace("~", home) : raw;
+        return path4.resolve(expanded);
+      }
+      readFile(filePath) {
+        try {
+          const stat = fs4.statSync(filePath);
+          if (stat.isDirectory()) {
+            return { success: false, error: `"${filePath}" is a directory, not a file. Use action "list" instead.` };
+          }
+          if (stat.size > MAX_READ_SIZE) {
+            const content2 = fs4.readFileSync(filePath, "utf-8").slice(0, MAX_READ_SIZE);
+            return {
+              success: true,
+              data: { path: filePath, size: stat.size, truncated: true },
+              display: `${filePath} (${stat.size} bytes, truncated to ${MAX_READ_SIZE}):
+
+${content2}`
+            };
+          }
+          const content = fs4.readFileSync(filePath, "utf-8");
+          return {
+            success: true,
+            data: { path: filePath, size: stat.size, content },
+            display: content
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot read "${filePath}": ${err.message}` };
+        }
+      }
+      writeFile(filePath, content) {
+        if (content === void 0 || content === null) {
+          return { success: false, error: 'Missing "content" for write action' };
+        }
+        try {
+          const dir = path4.dirname(filePath);
+          fs4.mkdirSync(dir, { recursive: true });
+          fs4.writeFileSync(filePath, content, "utf-8");
+          return {
+            success: true,
+            data: { path: filePath, bytes: Buffer.byteLength(content) },
+            display: `Written ${Buffer.byteLength(content)} bytes to ${filePath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot write "${filePath}": ${err.message}` };
+        }
+      }
+      appendFile(filePath, content) {
+        if (content === void 0 || content === null) {
+          return { success: false, error: 'Missing "content" for append action' };
+        }
+        try {
+          fs4.appendFileSync(filePath, content, "utf-8");
+          return {
+            success: true,
+            data: { path: filePath, appendedBytes: Buffer.byteLength(content) },
+            display: `Appended ${Buffer.byteLength(content)} bytes to ${filePath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot append to "${filePath}": ${err.message}` };
+        }
+      }
+      listDir(dirPath) {
+        try {
+          const entries = fs4.readdirSync(dirPath, { withFileTypes: true });
+          const items = entries.map((e) => ({
+            name: e.name,
+            type: e.isDirectory() ? "dir" : e.isSymbolicLink() ? "symlink" : "file"
+          }));
+          const display = items.length === 0 ? `${dirPath}: (empty)` : items.map((i) => `${i.type === "dir" ? "\u{1F4C1}" : "\u{1F4C4}"} ${i.name}`).join("\n");
+          return { success: true, data: { path: dirPath, entries: items }, display };
+        } catch (err) {
+          return { success: false, error: `Cannot list "${dirPath}": ${err.message}` };
+        }
+      }
+      fileInfo(filePath) {
+        try {
+          const stat = fs4.statSync(filePath);
+          const info = {
+            path: filePath,
+            type: stat.isDirectory() ? "directory" : stat.isFile() ? "file" : "other",
+            size: stat.size,
+            created: stat.birthtime.toISOString(),
+            modified: stat.mtime.toISOString(),
+            permissions: stat.mode.toString(8)
+          };
+          return {
+            success: true,
+            data: info,
+            display: `${info.type}: ${filePath}
+Size: ${stat.size} bytes
+Modified: ${info.modified}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot stat "${filePath}": ${err.message}` };
+        }
+      }
+      fileExists(filePath) {
+        const exists = fs4.existsSync(filePath);
+        return {
+          success: true,
+          data: { path: filePath, exists },
+          display: exists ? `Yes, "${filePath}" exists` : `No, "${filePath}" does not exist`
+        };
+      }
+      writeBinaryFile(filePath, base64Content) {
+        if (!base64Content) {
+          return { success: false, error: 'Missing "content" (base64-encoded) for write_binary action' };
+        }
+        try {
+          const dir = path4.dirname(filePath);
+          fs4.mkdirSync(dir, { recursive: true });
+          const buffer = Buffer.from(base64Content, "base64");
+          fs4.writeFileSync(filePath, buffer);
+          return {
+            success: true,
+            data: { path: filePath, bytes: buffer.length },
+            display: `Written ${buffer.length} bytes (binary) to ${filePath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot write "${filePath}": ${err.message}` };
+        }
+      }
+      moveFile(source, destination) {
+        if (!destination) {
+          return { success: false, error: 'Missing "destination" for move action' };
+        }
+        const resolvedDest = this.resolvePath(destination);
+        try {
+          const destDir = path4.dirname(resolvedDest);
+          fs4.mkdirSync(destDir, { recursive: true });
+          fs4.renameSync(source, resolvedDest);
+          return {
+            success: true,
+            data: { from: source, to: resolvedDest },
+            display: `Moved ${source} \u2192 ${resolvedDest}`
+          };
+        } catch (err) {
+          try {
+            fs4.copyFileSync(source, resolvedDest);
+            fs4.unlinkSync(source);
+            return {
+              success: true,
+              data: { from: source, to: resolvedDest },
+              display: `Moved ${source} \u2192 ${resolvedDest}`
+            };
+          } catch (err2) {
+            return { success: false, error: `Cannot move "${source}" to "${resolvedDest}": ${err2.message}` };
+          }
+        }
+      }
+      copyFile(source, destination) {
+        if (!destination) {
+          return { success: false, error: 'Missing "destination" for copy action' };
+        }
+        const resolvedDest = this.resolvePath(destination);
+        try {
+          const destDir = path4.dirname(resolvedDest);
+          fs4.mkdirSync(destDir, { recursive: true });
+          fs4.copyFileSync(source, resolvedDest);
+          return {
+            success: true,
+            data: { from: source, to: resolvedDest },
+            display: `Copied ${source} \u2192 ${resolvedDest}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot copy "${source}" to "${resolvedDest}": ${err.message}` };
+        }
+      }
+      deleteFile(filePath) {
+        try {
+          if (!fs4.existsSync(filePath)) {
+            return { success: false, error: `"${filePath}" does not exist` };
+          }
+          const stat = fs4.statSync(filePath);
+          if (stat.isDirectory()) {
+            return { success: false, error: `"${filePath}" is a directory. Use shell for directory deletion.` };
+          }
+          fs4.unlinkSync(filePath);
+          return {
+            success: true,
+            data: { path: filePath },
+            display: `Deleted ${filePath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Cannot delete "${filePath}": ${err.message}` };
+        }
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/clipboard.js
+import { execSync } from "node:child_process";
+var ClipboardSkill;
+var init_clipboard = __esm({
+  "../skills/dist/built-in/clipboard.js"() {
+    "use strict";
+    init_skill();
+    ClipboardSkill = class extends Skill {
+      metadata = {
+        name: "clipboard",
+        description: "Read or write the system clipboard. Use when the user asks to copy something, paste from clipboard, or check what is in their clipboard.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["read", "write"],
+              description: '"read" to get clipboard contents, "write" to set clipboard contents'
+            },
+            text: {
+              type: "string",
+              description: "Text to copy to clipboard (required for write)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      async execute(input2, _context) {
+        const action = input2.action;
+        switch (action) {
+          case "read":
+            return this.readClipboard();
+          case "write":
+            return this.writeClipboard(input2.text);
+          default:
+            return { success: false, error: `Unknown action "${action}". Valid: read, write` };
+        }
+      }
+      readClipboard() {
+        try {
+          let content;
+          switch (process.platform) {
+            case "darwin":
+              content = execSync("pbpaste", { encoding: "utf-8", timeout: 5e3 });
+              break;
+            case "win32":
+              content = execSync("powershell -NoProfile -Command Get-Clipboard", {
+                encoding: "utf-8",
+                timeout: 5e3
+              }).replace(/\r\n$/, "");
+              break;
+            default:
+              content = execSync("xclip -selection clipboard -o 2>/dev/null || xsel --clipboard --output", {
+                encoding: "utf-8",
+                timeout: 5e3
+              });
+              break;
+          }
+          if (!content || content.trim().length === 0) {
+            return { success: true, data: { content: "" }, display: "Clipboard is empty." };
+          }
+          return {
+            success: true,
+            data: { content },
+            display: content.length > 2e3 ? content.slice(0, 2e3) + "\n\n[... truncated]" : content
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to read clipboard: ${err.message}` };
+        }
+      }
+      writeClipboard(text) {
+        if (!text || typeof text !== "string") {
+          return { success: false, error: 'Missing "text" for write action' };
+        }
+        try {
+          switch (process.platform) {
+            case "darwin":
+              execSync("pbcopy", { input: text, timeout: 5e3 });
+              break;
+            case "win32":
+              execSync('powershell -NoProfile -Command "$input | Set-Clipboard"', {
+                input: text,
+                timeout: 5e3
+              });
+              break;
+            default:
+              execSync("xclip -selection clipboard 2>/dev/null || xsel --clipboard --input", {
+                input: text,
+                timeout: 5e3
+              });
+              break;
+          }
+          return {
+            success: true,
+            data: { copiedLength: text.length },
+            display: `Copied ${text.length} characters to clipboard.`
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to write clipboard: ${err.message}` };
+        }
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/screenshot.js
+import { execSync as execSync2 } from "node:child_process";
+import path5 from "node:path";
+import os from "node:os";
+var ScreenshotSkill;
+var init_screenshot = __esm({
+  "../skills/dist/built-in/screenshot.js"() {
+    "use strict";
+    init_skill();
+    ScreenshotSkill = class extends Skill {
+      metadata = {
+        name: "screenshot",
+        description: "Take a screenshot of the current screen and save it to a file. Use when the user asks to capture their screen or take a screenshot.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Output file path (optional, defaults to ~/Desktop/screenshot-<timestamp>.png)"
+            }
+          }
+        }
+      };
+      async execute(input2, _context) {
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const defaultDir = path5.join(os.homedir(), "Desktop");
+        const outputPath = input2.path || path5.join(defaultDir, `screenshot-${timestamp}.png`);
+        try {
+          switch (process.platform) {
+            case "darwin":
+              execSync2(`screencapture -x "${outputPath}"`, { timeout: 1e4 });
+              break;
+            case "win32":
+              execSync2(`powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds; $bitmap = New-Object System.Drawing.Bitmap($screen.Width, $screen.Height); $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size); $bitmap.Save('${outputPath.replace(/'/g, "''")}'); $graphics.Dispose(); $bitmap.Dispose()"`, { timeout: 1e4 });
+              break;
+            default:
+              try {
+                execSync2(`scrot "${outputPath}"`, { timeout: 1e4 });
+              } catch {
+                try {
+                  execSync2(`import -window root "${outputPath}"`, { timeout: 1e4 });
+                } catch {
+                  execSync2(`gnome-screenshot -f "${outputPath}"`, { timeout: 1e4 });
+                }
+              }
+              break;
+          }
+          return {
+            success: true,
+            data: { path: outputPath },
+            display: `Screenshot saved to ${outputPath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Screenshot failed: ${err.message}` };
+        }
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/browser.js
+import path6 from "node:path";
+import os2 from "node:os";
+var MAX_TEXT_LENGTH, BrowserSkill;
+var init_browser = __esm({
+  "../skills/dist/built-in/browser.js"() {
+    "use strict";
+    init_skill();
+    MAX_TEXT_LENGTH = 5e4;
+    BrowserSkill = class extends Skill {
+      browser = null;
+      page = null;
+      metadata = {
+        name: "browser",
+        description: "Open web pages in a real browser (Puppeteer/Chromium). Renders JavaScript, so it works with SPAs and dynamic sites. Can also interact with pages: click buttons, fill forms, take screenshots. Use when http skill returns empty/broken content, or when you need to interact with a web page.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["open", "screenshot", "click", "type", "evaluate", "close"],
+              description: "open = navigate to URL and return page text. screenshot = save screenshot of current page. click = click element by CSS selector. type = type text into input by CSS selector. evaluate = run JavaScript on the page. close = close the browser."
+            },
+            url: {
+              type: "string",
+              description: 'URL to open (required for "open", optional for "screenshot")'
+            },
+            selector: {
+              type: "string",
+              description: 'CSS selector for the element (required for "click" and "type")'
+            },
+            text: {
+              type: "string",
+              description: 'Text to type (required for "type")'
+            },
+            script: {
+              type: "string",
+              description: 'JavaScript code to evaluate (required for "evaluate")'
+            },
+            path: {
+              type: "string",
+              description: "File path to save screenshot (optional, defaults to Desktop)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      async execute(input2, _context) {
+        const action = input2.action;
+        if (action === "close") {
+          return this.closeBrowser();
+        }
+        const pup = await this.loadPuppeteer();
+        if (!pup) {
+          return {
+            success: false,
+            error: "Puppeteer is not installed. Run: npm install -g puppeteer\nOr add it to Alfred: npm install puppeteer"
+          };
+        }
+        switch (action) {
+          case "open":
+            return this.openPage(pup, input2);
+          case "screenshot":
+            return this.screenshotPage(pup, input2);
+          case "click":
+            return this.clickElement(input2);
+          case "type":
+            return this.typeText(input2);
+          case "evaluate":
+            return this.evaluateScript(input2);
+          default:
+            return { success: false, error: `Unknown action "${action}". Valid: open, screenshot, click, type, evaluate, close` };
+        }
+      }
+      async loadPuppeteer() {
+        try {
+          const mod = await Function('return import("puppeteer")')();
+          return this.resolvePuppeteerModule(mod);
+        } catch {
+          try {
+            const mod = await Function('return import("puppeteer-core")')();
+            return this.resolvePuppeteerModule(mod);
+          } catch {
+            return null;
+          }
+        }
+      }
+      resolvePuppeteerModule(mod) {
+        const m = mod;
+        if (typeof m.launch === "function")
+          return m;
+        const def = m.default;
+        return def;
+      }
+      async ensureBrowser(pup) {
+        if (this.browser && this.browser.connected) {
+          return this.browser;
+        }
+        this.browser = await pup.launch({
+          headless: true,
+          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        });
+        return this.browser;
+      }
+      async ensurePage(pup) {
+        const browser = await this.ensureBrowser(pup);
+        if (!this.page) {
+          this.page = await browser.newPage();
+          await this.page.setViewport({ width: 1280, height: 900 });
+        }
+        return this.page;
+      }
+      async openPage(pup, input2) {
+        const url = input2.url;
+        if (!url) {
+          return { success: false, error: 'Missing "url" for open action' };
+        }
+        try {
+          const page = await this.ensurePage(pup);
+          await page.goto(url, { waitUntil: "networkidle2", timeout: 3e4 });
+          const title = await page.title();
+          const text = await page.evaluate(`
+        (() => {
+          document.querySelectorAll('script, style, noscript').forEach(el => el.remove());
+          return document.body?.innerText ?? '';
+        })()
+      `);
+          const trimmed = text.length > MAX_TEXT_LENGTH ? text.slice(0, MAX_TEXT_LENGTH) + "\n\n[... truncated]" : text;
+          const cleaned = trimmed.replace(/\n{3,}/g, "\n\n").trim();
+          return {
+            success: true,
+            data: { url: page.url(), title, length: text.length },
+            display: `**${title}** (${page.url()})
+
+${cleaned}`
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to open "${url}": ${err.message}` };
+        }
+      }
+      async screenshotPage(pup, input2) {
+        try {
+          const page = await this.ensurePage(pup);
+          const url = input2.url;
+          if (url) {
+            await page.goto(url, { waitUntil: "networkidle2", timeout: 3e4 });
+          }
+          const currentUrl = page.url();
+          if (currentUrl === "about:blank") {
+            return { success: false, error: 'No page is open. Use action "open" with a URL first, or provide a URL.' };
+          }
+          const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+          const outputPath = input2.path || path6.join(os2.homedir(), "Desktop", `browser-${timestamp}.png`);
+          await page.screenshot({ path: outputPath, fullPage: false });
+          return {
+            success: true,
+            data: { path: outputPath, url: currentUrl },
+            display: `Screenshot saved to ${outputPath}`
+          };
+        } catch (err) {
+          return { success: false, error: `Screenshot failed: ${err.message}` };
+        }
+      }
+      async clickElement(input2) {
+        const selector = input2.selector;
+        if (!selector) {
+          return { success: false, error: 'Missing "selector" for click action' };
+        }
+        if (!this.page) {
+          return { success: false, error: 'No page is open. Use action "open" first.' };
+        }
+        try {
+          await this.page.waitForSelector(selector, { timeout: 5e3 });
+          await this.page.click(selector);
+          try {
+            await this.page.waitForNavigation({ timeout: 3e3 });
+          } catch {
+          }
+          const title = await this.page.title();
+          return {
+            success: true,
+            data: { selector, url: this.page.url(), title },
+            display: `Clicked "${selector}" \u2014 now on: ${title} (${this.page.url()})`
+          };
+        } catch (err) {
+          return { success: false, error: `Click failed on "${selector}": ${err.message}` };
+        }
+      }
+      async typeText(input2) {
+        const selector = input2.selector;
+        const text = input2.text;
+        if (!selector)
+          return { success: false, error: 'Missing "selector" for type action' };
+        if (!text)
+          return { success: false, error: 'Missing "text" for type action' };
+        if (!this.page) {
+          return { success: false, error: 'No page is open. Use action "open" first.' };
+        }
+        try {
+          await this.page.waitForSelector(selector, { timeout: 5e3 });
+          await this.page.click(selector);
+          await this.page.type(selector, text, { delay: 50 });
+          return {
+            success: true,
+            data: { selector, textLength: text.length },
+            display: `Typed ${text.length} characters into "${selector}"`
+          };
+        } catch (err) {
+          return { success: false, error: `Type failed on "${selector}": ${err.message}` };
+        }
+      }
+      async evaluateScript(input2) {
+        const script = input2.script;
+        if (!script) {
+          return { success: false, error: 'Missing "script" for evaluate action' };
+        }
+        if (!this.page) {
+          return { success: false, error: 'No page is open. Use action "open" first.' };
+        }
+        try {
+          const result = await this.page.evaluate(script);
+          const output2 = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+          return {
+            success: true,
+            data: { result },
+            display: output2?.slice(0, 1e4) ?? "(no output)"
+          };
+        } catch (err) {
+          return { success: false, error: `Evaluate failed: ${err.message}` };
+        }
+      }
+      async closeBrowser() {
+        try {
+          this.page = null;
+          if (this.browser) {
+            await this.browser.close();
+            this.browser = null;
+          }
+          return { success: true, display: "Browser closed." };
+        } catch (err) {
+          this.browser = null;
+          this.page = null;
+          return { success: false, error: `Close failed: ${err.message}` };
+        }
+      }
+    };
+  }
+});
+
+// ../skills/dist/index.js
 var init_dist6 = __esm({
-  "packages/skills/dist/index.js"() {
+  "../skills/dist/index.js"() {
     "use strict";
     init_skill();
     init_skill_registry();
@@ -3831,20 +4571,23 @@ var init_dist6 = __esm({
     init_web_search();
     init_reminder();
     init_note();
-    init_summarize();
-    init_translate();
     init_weather();
     init_shell();
     init_memory();
     init_delegate();
     init_email();
+    init_http();
+    init_file();
+    init_clipboard();
+    init_screenshot();
+    init_browser();
   }
 });
 
-// packages/core/dist/conversation-manager.js
+// ../core/dist/conversation-manager.js
 var ConversationManager;
 var init_conversation_manager = __esm({
-  "packages/core/dist/conversation-manager.js"() {
+  "../core/dist/conversation-manager.js"() {
     "use strict";
     ConversationManager = class {
       conversations;
@@ -3869,14 +4612,17 @@ var init_conversation_manager = __esm({
   }
 });
 
-// packages/core/dist/message-pipeline.js
-var MAX_TOOL_ITERATIONS, TOKEN_BUDGET_RATIO, MessagePipeline;
+// ../core/dist/message-pipeline.js
+import fs5 from "node:fs";
+import path7 from "node:path";
+var MAX_TOOL_ITERATIONS, TOKEN_BUDGET_RATIO, MAX_INLINE_FILE_SIZE, MessagePipeline;
 var init_message_pipeline = __esm({
-  "packages/core/dist/message-pipeline.js"() {
+  "../core/dist/message-pipeline.js"() {
     "use strict";
     init_dist4();
     MAX_TOOL_ITERATIONS = 10;
     TOKEN_BUDGET_RATIO = 0.85;
+    MAX_INLINE_FILE_SIZE = 1e5;
     MessagePipeline = class {
       llm;
       conversationManager;
@@ -3886,8 +4632,10 @@ var init_message_pipeline = __esm({
       skillSandbox;
       securityManager;
       memoryRepo;
+      speechTranscriber;
+      inboxPath;
       promptBuilder;
-      constructor(llm, conversationManager, users, logger, skillRegistry, skillSandbox, securityManager, memoryRepo) {
+      constructor(llm, conversationManager, users, logger, skillRegistry, skillSandbox, securityManager, memoryRepo, speechTranscriber, inboxPath) {
         this.llm = llm;
         this.conversationManager = conversationManager;
         this.users = users;
@@ -3896,6 +4644,8 @@ var init_message_pipeline = __esm({
         this.skillSandbox = skillSandbox;
         this.securityManager = securityManager;
         this.memoryRepo = memoryRepo;
+        this.speechTranscriber = speechTranscriber;
+        this.inboxPath = inboxPath;
         this.promptBuilder = new PromptBuilder();
       }
       async process(message, onProgress) {
@@ -3917,7 +4667,8 @@ var init_message_pipeline = __esm({
           const tools = skillMetas ? this.promptBuilder.buildTools(skillMetas) : void 0;
           const system = this.promptBuilder.buildSystemPrompt(memories, skillMetas);
           const allMessages = this.promptBuilder.buildMessages(history);
-          allMessages.push({ role: "user", content: message.text });
+          const userContent = await this.buildUserContent(message, onProgress);
+          allMessages.push({ role: "user", content: userContent });
           const messages = this.trimToContextWindow(system, allMessages);
           let response;
           let iteration = 0;
@@ -4048,6 +4799,20 @@ var init_message_pipeline = __esm({
             return `Getting system info...`;
           case "delegate":
             return `Delegating sub-task...`;
+          case "http":
+            return `Fetching: ${String(input2.url ?? "").slice(0, 60)}`;
+          case "file":
+            return `File: ${String(input2.action ?? "")} ${String(input2.path ?? "").slice(0, 50)}`;
+          case "clipboard":
+            return `Clipboard: ${String(input2.action ?? "")}`;
+          case "screenshot":
+            return `Taking screenshot...`;
+          case "browser":
+            return `Browser: ${String(input2.action ?? "")} ${String(input2.url ?? "").slice(0, 50)}`;
+          case "weather":
+            return `Weather: ${String(input2.location ?? "")}`;
+          case "note":
+            return `Note: ${String(input2.action ?? "")}`;
           default:
             return `Using ${toolName}...`;
         }
@@ -4089,14 +4854,143 @@ var init_message_pipeline = __esm({
         keptMessages.push(latestMsg);
         return keptMessages;
       }
+      /**
+       * Build the user content for the LLM request.
+       * Handles images (as vision blocks), audio (transcribed via Whisper),
+       * documents/files (saved to inbox), and plain text.
+       */
+      async buildUserContent(message, onProgress) {
+        const attachments = message.attachments?.filter((a) => a.data) ?? [];
+        if (attachments.length === 0) {
+          return message.text;
+        }
+        const blocks = [];
+        for (const attachment of attachments) {
+          if (attachment.type === "image" && attachment.data) {
+            blocks.push({
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: attachment.mimeType ?? "image/jpeg",
+                data: attachment.data.toString("base64")
+              }
+            });
+            this.logger.info({ mimeType: attachment.mimeType, size: attachment.size }, "Image attached to LLM request");
+          } else if (attachment.type === "audio" && attachment.data) {
+            if (this.speechTranscriber) {
+              onProgress?.("Transcribing voice...");
+              try {
+                const transcript = await this.speechTranscriber.transcribe(attachment.data, attachment.mimeType ?? "audio/ogg");
+                const label = message.text === "[Voice message]" ? "" : `${message.text}
+
+`;
+                blocks.push({
+                  type: "text",
+                  text: `${label}[Voice transcript]: ${transcript}`
+                });
+                this.logger.info({ transcriptLength: transcript.length }, "Voice message transcribed");
+                return blocks.length === 1 ? blocks[0].type === "text" ? blocks[0].text : blocks : blocks;
+              } catch (err) {
+                this.logger.error({ err }, "Voice transcription failed");
+                blocks.push({
+                  type: "text",
+                  text: "[Voice message could not be transcribed]"
+                });
+              }
+            } else {
+              blocks.push({
+                type: "text",
+                text: "[Voice message received but speech-to-text is not configured. Add speech config to enable transcription.]"
+              });
+            }
+          } else if ((attachment.type === "document" || attachment.type === "video" || attachment.type === "other") && attachment.data) {
+            const savedPath = this.saveToInbox(attachment);
+            if (savedPath) {
+              const isTextFile = this.isTextMimeType(attachment.mimeType);
+              let fileNote = `[File received: "${attachment.fileName ?? "unknown"}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? "unknown type"})]
+[Saved to: ${savedPath}]`;
+              if (isTextFile && attachment.data.length <= MAX_INLINE_FILE_SIZE) {
+                const textContent = attachment.data.toString("utf-8");
+                fileNote += `
+[File content]:
+${textContent}`;
+              }
+              blocks.push({ type: "text", text: fileNote });
+              this.logger.info({ fileName: attachment.fileName, savedPath, size: attachment.data.length }, "File saved to inbox");
+            }
+          }
+        }
+        const skipTexts = ["[Photo]", "[Voice message]", "[Video]", "[Video note]", "[Document]", "[File]"];
+        if (message.text && !skipTexts.includes(message.text)) {
+          blocks.push({ type: "text", text: message.text });
+        } else if (blocks.some((b) => b.type === "image") && !blocks.some((b) => b.type === "text")) {
+          blocks.push({ type: "text", text: "What do you see in this image?" });
+        } else if (blocks.length === 0) {
+          blocks.push({ type: "text", text: message.text || "(empty message)" });
+        }
+        return blocks;
+      }
+      /**
+       * Save an attachment to the inbox directory.
+       * Returns the saved file path, or undefined on failure.
+       */
+      saveToInbox(attachment) {
+        if (!attachment.data)
+          return void 0;
+        const inboxDir = this.inboxPath ?? path7.resolve("./data/inbox");
+        try {
+          fs5.mkdirSync(inboxDir, { recursive: true });
+        } catch {
+          this.logger.error({ inboxDir }, "Cannot create inbox directory");
+          return void 0;
+        }
+        const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+        const originalName = attachment.fileName ?? `file_${timestamp}`;
+        const safeName = originalName.replace(/[<>:"/\\|?*]/g, "_");
+        const fileName = `${timestamp}_${safeName}`;
+        const filePath = path7.join(inboxDir, fileName);
+        try {
+          fs5.writeFileSync(filePath, attachment.data);
+          return filePath;
+        } catch (err) {
+          this.logger.error({ err, filePath }, "Failed to save file to inbox");
+          return void 0;
+        }
+      }
+      isTextMimeType(mimeType) {
+        if (!mimeType)
+          return false;
+        const textTypes = [
+          "text/",
+          "application/json",
+          "application/xml",
+          "application/javascript",
+          "application/typescript",
+          "application/x-yaml",
+          "application/yaml",
+          "application/toml",
+          "application/x-sh",
+          "application/sql",
+          "application/csv",
+          "application/x-csv"
+        ];
+        return textTypes.some((t) => mimeType.startsWith(t));
+      }
+      formatBytes(bytes) {
+        if (bytes < 1024)
+          return `${bytes} B`;
+        if (bytes < 1024 * 1024)
+          return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      }
     };
   }
 });
 
-// packages/core/dist/reminder-scheduler.js
+// ../core/dist/reminder-scheduler.js
 var ReminderScheduler;
 var init_reminder_scheduler = __esm({
-  "packages/core/dist/reminder-scheduler.js"() {
+  "../core/dist/reminder-scheduler.js"() {
     "use strict";
     ReminderScheduler = class {
       reminderRepo;
@@ -4142,14 +5036,78 @@ var init_reminder_scheduler = __esm({
   }
 });
 
-// packages/messaging/dist/adapter.js
+// ../core/dist/speech-transcriber.js
+var SpeechTranscriber;
+var init_speech_transcriber = __esm({
+  "../core/dist/speech-transcriber.js"() {
+    "use strict";
+    SpeechTranscriber = class {
+      logger;
+      apiKey;
+      baseUrl;
+      constructor(config, logger) {
+        this.logger = logger;
+        this.apiKey = config.apiKey;
+        if (config.provider === "groq") {
+          this.baseUrl = config.baseUrl ?? "https://api.groq.com/openai/v1";
+        } else {
+          this.baseUrl = config.baseUrl ?? "https://api.openai.com/v1";
+        }
+      }
+      async transcribe(audioBuffer, mimeType) {
+        const ext = this.mimeToExtension(mimeType);
+        const formData = new FormData();
+        formData.append("file", new Blob([audioBuffer], { type: mimeType }), `audio.${ext}`);
+        formData.append("model", "whisper-1");
+        try {
+          const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${this.apiKey}`
+            },
+            body: formData
+          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Whisper API ${response.status}: ${errorText}`);
+          }
+          const data = await response.json();
+          this.logger.info({ textLength: data.text.length }, "Voice transcribed");
+          return data.text;
+        } catch (err) {
+          this.logger.error({ err }, "Voice transcription failed");
+          throw err;
+        }
+      }
+      mimeToExtension(mimeType) {
+        const map = {
+          "audio/ogg": "ogg",
+          "audio/mpeg": "mp3",
+          "audio/mp4": "m4a",
+          "audio/wav": "wav",
+          "audio/webm": "webm",
+          "audio/x-m4a": "m4a"
+        };
+        return map[mimeType] ?? "ogg";
+      }
+    };
+  }
+});
+
+// ../messaging/dist/adapter.js
 import { EventEmitter } from "node:events";
 var MessagingAdapter;
 var init_adapter = __esm({
-  "packages/messaging/dist/adapter.js"() {
+  "../messaging/dist/adapter.js"() {
     "use strict";
     MessagingAdapter = class extends EventEmitter {
       status = "disconnected";
+      async sendPhoto(_chatId, _photo, _caption) {
+        return void 0;
+      }
+      async sendFile(_chatId, _file, _fileName, _caption) {
+        return void 0;
+      }
       getStatus() {
         return this.status;
       }
@@ -4157,8 +5115,8 @@ var init_adapter = __esm({
   }
 });
 
-// packages/messaging/dist/adapters/telegram.js
-import { Bot } from "grammy";
+// ../messaging/dist/adapters/telegram.js
+import { Bot, InputFile } from "grammy";
 function mapParseMode(mode) {
   if (mode === "markdown")
     return "MarkdownV2";
@@ -4168,7 +5126,7 @@ function mapParseMode(mode) {
 }
 var TelegramAdapter;
 var init_telegram = __esm({
-  "packages/messaging/dist/adapters/telegram.js"() {
+  "../messaging/dist/adapters/telegram.js"() {
     "use strict";
     init_adapter();
     TelegramAdapter = class extends MessagingAdapter {
@@ -4181,20 +5139,64 @@ var init_telegram = __esm({
       async connect() {
         this.status = "connecting";
         this.bot.on("message:text", (ctx) => {
+          this.emit("message", this.normalizeMessage(ctx.message, ctx.message.text));
+        });
+        this.bot.on("message:photo", async (ctx) => {
           const msg = ctx.message;
-          const normalized = {
-            id: String(msg.message_id),
-            platform: "telegram",
-            chatId: String(msg.chat.id),
-            chatType: msg.chat.type === "private" ? "dm" : "group",
-            userId: String(msg.from.id),
-            userName: msg.from.username ?? String(msg.from.id),
-            displayName: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" "),
-            text: msg.text,
-            timestamp: new Date(msg.date * 1e3),
-            replyToMessageId: msg.reply_to_message ? String(msg.reply_to_message.message_id) : void 0
-          };
+          const caption = msg.caption ?? "";
+          const text = caption || "[Photo]";
+          const photo = msg.photo[msg.photo.length - 1];
+          const attachment = await this.downloadAttachment(photo.file_id, "image", "image/jpeg");
+          const normalized = this.normalizeMessage(msg, text);
+          normalized.attachments = attachment ? [attachment] : void 0;
           this.emit("message", normalized);
+        });
+        this.bot.on("message:voice", async (ctx) => {
+          const msg = ctx.message;
+          const attachment = await this.downloadAttachment(msg.voice.file_id, "audio", msg.voice.mime_type ?? "audio/ogg");
+          const normalized = this.normalizeMessage(msg, "[Voice message]");
+          normalized.attachments = attachment ? [attachment] : void 0;
+          this.emit("message", normalized);
+        });
+        this.bot.on("message:audio", async (ctx) => {
+          const msg = ctx.message;
+          const caption = msg.caption ?? "";
+          const text = caption || `[Audio: ${msg.audio.file_name ?? "audio"}]`;
+          const attachment = await this.downloadAttachment(msg.audio.file_id, "audio", msg.audio.mime_type ?? "audio/mpeg");
+          const normalized = this.normalizeMessage(msg, text);
+          normalized.attachments = attachment ? [attachment] : void 0;
+          this.emit("message", normalized);
+        });
+        this.bot.on("message:video", async (ctx) => {
+          const msg = ctx.message;
+          const caption = msg.caption ?? "";
+          const text = caption || "[Video]";
+          const attachment = await this.downloadAttachment(msg.video.file_id, "video", msg.video.mime_type ?? "video/mp4");
+          const normalized = this.normalizeMessage(msg, text);
+          normalized.attachments = attachment ? [attachment] : void 0;
+          this.emit("message", normalized);
+        });
+        this.bot.on("message:document", async (ctx) => {
+          const msg = ctx.message;
+          const doc = msg.document;
+          const caption = msg.caption ?? "";
+          const text = caption || `[Document: ${doc.file_name ?? "file"}]`;
+          const attachment = await this.downloadAttachment(doc.file_id, "document", doc.mime_type ?? "application/octet-stream", doc.file_name);
+          const normalized = this.normalizeMessage(msg, text);
+          normalized.attachments = attachment ? [attachment] : void 0;
+          this.emit("message", normalized);
+        });
+        this.bot.on("message:video_note", async (ctx) => {
+          const msg = ctx.message;
+          const attachment = await this.downloadAttachment(msg.video_note.file_id, "video", "video/mp4");
+          const normalized = this.normalizeMessage(msg, "[Video note]");
+          normalized.attachments = attachment ? [attachment] : void 0;
+          this.emit("message", normalized);
+        });
+        this.bot.on("message:sticker", (ctx) => {
+          const msg = ctx.message;
+          const emoji = msg.sticker.emoji ?? "\u{1F3F7}\uFE0F";
+          this.emit("message", this.normalizeMessage(msg, `[Sticker: ${emoji}]`));
         });
         this.bot.catch((err) => {
           this.emit("error", err.error);
@@ -4224,15 +5226,59 @@ var init_telegram = __esm({
       async deleteMessage(chatId, messageId) {
         await this.bot.api.deleteMessage(Number(chatId), Number(messageId));
       }
+      async sendPhoto(chatId, photo, caption) {
+        const result = await this.bot.api.sendPhoto(Number(chatId), new InputFile(photo, "image.png"), { caption });
+        return String(result.message_id);
+      }
+      async sendFile(chatId, file, fileName, caption) {
+        const result = await this.bot.api.sendDocument(Number(chatId), new InputFile(file, fileName), { caption });
+        return String(result.message_id);
+      }
+      normalizeMessage(msg, text) {
+        return {
+          id: String(msg.message_id),
+          platform: "telegram",
+          chatId: String(msg.chat.id),
+          chatType: msg.chat.type === "private" ? "dm" : "group",
+          userId: String(msg.from.id),
+          userName: msg.from.username ?? String(msg.from.id),
+          displayName: [msg.from.first_name, msg.from.last_name].filter(Boolean).join(" "),
+          text,
+          timestamp: new Date(msg.date * 1e3),
+          replyToMessageId: msg.reply_to_message ? String(msg.reply_to_message.message_id) : void 0
+        };
+      }
+      async downloadAttachment(fileId, type, mimeType, fileName) {
+        try {
+          const file = await this.bot.api.getFile(fileId);
+          const filePath = file.file_path;
+          if (!filePath)
+            return void 0;
+          const url = `https://api.telegram.org/file/bot${this.bot.token}/${filePath}`;
+          const response = await fetch(url);
+          if (!response.ok)
+            return void 0;
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return {
+            type,
+            mimeType,
+            fileName: fileName ?? filePath.split("/").pop(),
+            size: buffer.length,
+            data: buffer
+          };
+        } catch {
+          return void 0;
+        }
+      }
     };
   }
 });
 
-// packages/messaging/dist/adapters/discord.js
+// ../messaging/dist/adapters/discord.js
 import { Client, GatewayIntentBits, Events } from "discord.js";
 var DiscordAdapter;
 var init_discord = __esm({
-  "packages/messaging/dist/adapters/discord.js"() {
+  "../messaging/dist/adapters/discord.js"() {
     "use strict";
     init_adapter();
     DiscordAdapter = class extends MessagingAdapter {
@@ -4253,22 +5299,29 @@ var init_discord = __esm({
             GatewayIntentBits.DirectMessages
           ]
         });
-        this.client.on(Events.MessageCreate, (message) => {
+        this.client.on(Events.MessageCreate, async (message) => {
           if (message.author.bot)
             return;
-          const normalized = {
-            id: message.id,
-            platform: "discord",
-            chatId: message.channelId,
-            chatType: message.channel.isDMBased() ? "dm" : "group",
-            userId: message.author.id,
-            userName: message.author.username,
-            displayName: message.author.displayName,
-            text: message.content,
-            timestamp: message.createdAt,
-            replyToMessageId: message.reference?.messageId ?? void 0
-          };
-          this.emit("message", normalized);
+          try {
+            const attachments = await this.downloadAttachments(message);
+            const text = message.content || this.inferTextFromAttachments(attachments);
+            const normalized = {
+              id: message.id,
+              platform: "discord",
+              chatId: message.channelId,
+              chatType: message.channel.isDMBased() ? "dm" : "group",
+              userId: message.author.id,
+              userName: message.author.username,
+              displayName: message.author.displayName,
+              text,
+              timestamp: message.createdAt,
+              replyToMessageId: message.reference?.messageId ?? void 0,
+              attachments: attachments.length > 0 ? attachments : void 0
+            };
+            this.emit("message", normalized);
+          } catch (err) {
+            this.emit("error", err instanceof Error ? err : new Error(String(err)));
+          }
         });
         this.client.on(Events.ClientReady, () => {
           this.status = "connected";
@@ -4320,14 +5373,90 @@ var init_discord = __esm({
         const message = await channel.messages.fetch(messageId);
         await message.delete();
       }
+      async sendPhoto(chatId, photo, caption) {
+        if (!this.client)
+          return void 0;
+        const channel = await this.client.channels.fetch(chatId);
+        if (!channel?.isTextBased() || !("send" in channel))
+          return void 0;
+        const msg = await channel.send({
+          content: caption,
+          files: [{ attachment: photo, name: "image.png" }]
+        });
+        return msg.id;
+      }
+      async sendFile(chatId, file, fileName, caption) {
+        if (!this.client)
+          return void 0;
+        const channel = await this.client.channels.fetch(chatId);
+        if (!channel?.isTextBased() || !("send" in channel))
+          return void 0;
+        const msg = await channel.send({
+          content: caption,
+          files: [{ attachment: file, name: fileName }]
+        });
+        return msg.id;
+      }
+      // ── Private helpers ──────────────────────────────────────────────
+      async downloadAttachments(message) {
+        const result = [];
+        const discordAttachments = message.attachments;
+        if (!discordAttachments || discordAttachments.size === 0)
+          return result;
+        for (const [, att] of discordAttachments) {
+          try {
+            const res = await fetch(att.url);
+            if (!res.ok)
+              continue;
+            const arrayBuffer = await res.arrayBuffer();
+            const data = Buffer.from(arrayBuffer);
+            const type = this.classifyContentType(att.contentType);
+            result.push({
+              type,
+              url: att.url,
+              mimeType: att.contentType ?? void 0,
+              fileName: att.name ?? void 0,
+              size: att.size ?? data.length,
+              data
+            });
+          } catch {
+          }
+        }
+        return result;
+      }
+      classifyContentType(contentType) {
+        if (!contentType)
+          return "other";
+        if (contentType.startsWith("image/"))
+          return "image";
+        if (contentType.startsWith("audio/"))
+          return "audio";
+        if (contentType.startsWith("video/"))
+          return "video";
+        return "document";
+      }
+      inferTextFromAttachments(attachments) {
+        if (attachments.length === 0)
+          return "";
+        const types = attachments.map((a) => a.type);
+        if (types.includes("image"))
+          return "[Photo]";
+        if (types.includes("audio"))
+          return "[Voice message]";
+        if (types.includes("video"))
+          return "[Video]";
+        if (types.includes("document"))
+          return "[Document]";
+        return "[File]";
+      }
     };
   }
 });
 
-// packages/messaging/dist/adapters/matrix.js
+// ../messaging/dist/adapters/matrix.js
 var MatrixAdapter;
 var init_matrix = __esm({
-  "packages/messaging/dist/adapters/matrix.js"() {
+  "../messaging/dist/adapters/matrix.js"() {
     "use strict";
     init_adapter();
     MatrixAdapter = class extends MessagingAdapter {
@@ -4338,7 +5467,7 @@ var init_matrix = __esm({
       botUserId;
       constructor(homeserverUrl, accessToken, botUserId) {
         super();
-        this.homeserverUrl = homeserverUrl;
+        this.homeserverUrl = homeserverUrl.replace(/\/+$/, "");
         this.accessToken = accessToken;
         this.botUserId = botUserId;
       }
@@ -4348,23 +5477,20 @@ var init_matrix = __esm({
         const storageProvider = new SimpleFsStorageProvider("./data/matrix-storage");
         this.client = new MatrixClient(this.homeserverUrl, this.accessToken, storageProvider);
         AutojoinRoomsMixin.setupOnClient(this.client);
-        this.client.on("room.message", (roomId, event) => {
+        this.client.on("room.message", async (roomId, event) => {
           if (event.sender === this.botUserId)
             return;
-          if (event.content?.msgtype !== "m.text")
+          const msgtype = event.content?.msgtype;
+          if (!msgtype)
             return;
-          const normalized = {
-            id: event.event_id,
-            platform: "matrix",
-            chatId: roomId,
-            chatType: "group",
-            userId: event.sender,
-            userName: event.sender.split(":")[0].slice(1),
-            text: event.content.body,
-            timestamp: new Date(event.origin_server_ts),
-            replyToMessageId: event.content["m.relates_to"]?.["m.in_reply_to"]?.event_id
-          };
-          this.emit("message", normalized);
+          try {
+            const message = await this.normalizeEvent(roomId, event, msgtype);
+            if (message) {
+              this.emit("message", message);
+            }
+          } catch (err) {
+            this.emit("error", err instanceof Error ? err : new Error(String(err)));
+          }
         });
         await this.client.start();
         this.status = "connected";
@@ -4396,19 +5522,158 @@ var init_matrix = __esm({
       async deleteMessage(chatId, messageId) {
         await this.client.redactEvent(chatId, messageId);
       }
+      async sendPhoto(chatId, photo, caption) {
+        const mxcUrl = await this.client.uploadContent(photo, "image/png", "image.png");
+        const content = {
+          msgtype: "m.image",
+          body: caption ?? "image.png",
+          url: mxcUrl,
+          info: {
+            mimetype: "image/png",
+            size: photo.length
+          }
+        };
+        const eventId = await this.client.sendEvent(chatId, "m.room.message", content);
+        return eventId;
+      }
+      async sendFile(chatId, file, fileName, caption) {
+        const mimeType = this.guessMimeType(fileName);
+        const mxcUrl = await this.client.uploadContent(file, mimeType, fileName);
+        const content = {
+          msgtype: "m.file",
+          body: caption ?? fileName,
+          filename: fileName,
+          url: mxcUrl,
+          info: {
+            mimetype: mimeType,
+            size: file.length
+          }
+        };
+        const eventId = await this.client.sendEvent(chatId, "m.room.message", content);
+        return eventId;
+      }
+      // ── Private helpers ──────────────────────────────────────────────
+      async normalizeEvent(roomId, event, msgtype) {
+        const base = {
+          id: event.event_id,
+          platform: "matrix",
+          chatId: roomId,
+          chatType: "group",
+          userId: event.sender,
+          userName: event.sender.split(":")[0].slice(1),
+          timestamp: new Date(event.origin_server_ts),
+          replyToMessageId: event.content["m.relates_to"]?.["m.in_reply_to"]?.event_id
+        };
+        switch (msgtype) {
+          case "m.text":
+            return { ...base, text: event.content.body };
+          case "m.image": {
+            const attachment = await this.downloadAttachment(event.content, "image");
+            return {
+              ...base,
+              text: event.content.body ?? "[Photo]",
+              attachments: attachment ? [attachment] : void 0
+            };
+          }
+          case "m.audio": {
+            const attachment = await this.downloadAttachment(event.content, "audio");
+            return {
+              ...base,
+              text: event.content.body ?? "[Voice message]",
+              attachments: attachment ? [attachment] : void 0
+            };
+          }
+          case "m.video": {
+            const attachment = await this.downloadAttachment(event.content, "video");
+            return {
+              ...base,
+              text: event.content.body ?? "[Video]",
+              attachments: attachment ? [attachment] : void 0
+            };
+          }
+          case "m.file": {
+            const attachment = await this.downloadAttachment(event.content, "document");
+            return {
+              ...base,
+              text: event.content.body ?? "[Document]",
+              attachments: attachment ? [attachment] : void 0
+            };
+          }
+          default:
+            if (event.content.body) {
+              return { ...base, text: event.content.body };
+            }
+            return void 0;
+        }
+      }
+      /**
+       * Download a Matrix media file from an mxc:// URL.
+       * Uses the /_matrix/media/v3/download endpoint.
+       */
+      async downloadAttachment(content, type) {
+        const mxcUrl = content.url;
+        if (!mxcUrl || !mxcUrl.startsWith("mxc://"))
+          return void 0;
+        const info = content.info ?? {};
+        const mimeType = info.mimetype;
+        const size = info.size;
+        const fileName = content.filename ?? content.body ?? "file";
+        try {
+          const mxcParts = mxcUrl.slice(6);
+          const downloadUrl = `${this.homeserverUrl}/_matrix/media/v3/download/${mxcParts}`;
+          const res = await fetch(downloadUrl, {
+            headers: { Authorization: `Bearer ${this.accessToken}` }
+          });
+          if (!res.ok)
+            return void 0;
+          const arrayBuffer = await res.arrayBuffer();
+          const data = Buffer.from(arrayBuffer);
+          return {
+            type,
+            mimeType,
+            fileName,
+            size: size ?? data.length,
+            data
+          };
+        } catch {
+          return void 0;
+        }
+      }
+      guessMimeType(fileName) {
+        const ext = fileName.split(".").pop()?.toLowerCase();
+        const mimeMap = {
+          pdf: "application/pdf",
+          txt: "text/plain",
+          json: "application/json",
+          csv: "text/csv",
+          png: "image/png",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          gif: "image/gif",
+          mp3: "audio/mpeg",
+          ogg: "audio/ogg",
+          mp4: "video/mp4",
+          zip: "application/zip",
+          doc: "application/msword",
+          docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        };
+        return mimeMap[ext ?? ""] ?? "application/octet-stream";
+      }
     };
   }
 });
 
-// packages/messaging/dist/adapters/whatsapp.js
+// ../messaging/dist/adapters/whatsapp.js
 var WhatsAppAdapter;
 var init_whatsapp = __esm({
-  "packages/messaging/dist/adapters/whatsapp.js"() {
+  "../messaging/dist/adapters/whatsapp.js"() {
     "use strict";
     init_adapter();
     WhatsAppAdapter = class extends MessagingAdapter {
       platform = "whatsapp";
       socket;
+      downloadMedia;
       dataPath;
       constructor(dataPath) {
         super();
@@ -4417,7 +5682,9 @@ var init_whatsapp = __esm({
       async connect() {
         this.status = "connecting";
         const baileys = await import("@whiskeysockets/baileys");
-        const { makeWASocket, useMultiFileAuthState, DisconnectReason } = baileys.default ?? baileys;
+        const mod = baileys.default ?? baileys;
+        const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = mod;
+        this.downloadMedia = downloadMediaMessage;
         const { state, saveCreds } = await useMultiFileAuthState(this.dataPath);
         this.socket = makeWASocket({
           auth: state,
@@ -4447,21 +5714,9 @@ var init_whatsapp = __esm({
               continue;
             if (message.key.fromMe)
               continue;
-            const text = message.message.conversation ?? message.message.extendedTextMessage?.text;
-            if (!text)
-              continue;
-            const normalized = {
-              id: message.key.id ?? "",
-              platform: "whatsapp",
-              chatId: message.key.remoteJid ?? "",
-              chatType: message.key.remoteJid?.endsWith("@g.us") ? "group" : "dm",
-              userId: message.key.participant ?? message.key.remoteJid ?? "",
-              userName: message.pushName ?? message.key.participant ?? message.key.remoteJid ?? "",
-              text,
-              timestamp: new Date(message.messageTimestamp * 1e3),
-              replyToMessageId: message.message.extendedTextMessage?.contextInfo?.stanzaId ?? void 0
-            };
-            this.emit("message", normalized);
+            this.processMessage(message).catch((err) => {
+              this.emit("error", err instanceof Error ? err : new Error(String(err)));
+            });
           }
         });
       }
@@ -4499,14 +5754,136 @@ var init_whatsapp = __esm({
           }
         });
       }
+      async sendPhoto(chatId, photo, caption) {
+        const msg = await this.socket.sendMessage(chatId, {
+          image: photo,
+          caption
+        });
+        return msg?.key?.id;
+      }
+      async sendFile(chatId, file, fileName, caption) {
+        const msg = await this.socket.sendMessage(chatId, {
+          document: file,
+          fileName,
+          caption,
+          mimetype: this.guessMimeType(fileName)
+        });
+        return msg?.key?.id;
+      }
+      // ── Private helpers ──────────────────────────────────────────────
+      async processMessage(message) {
+        const msg = message.message;
+        const text = msg.conversation ?? msg.extendedTextMessage?.text ?? msg.imageMessage?.caption ?? msg.videoMessage?.caption ?? msg.documentMessage?.caption ?? "";
+        const attachments = [];
+        let fallbackText = text;
+        if (msg.imageMessage) {
+          const data = await this.downloadMediaSafe(message);
+          if (data) {
+            attachments.push({
+              type: "image",
+              mimeType: msg.imageMessage.mimetype ?? "image/jpeg",
+              size: msg.imageMessage.fileLength ?? data.length,
+              data
+            });
+          }
+          if (!fallbackText)
+            fallbackText = "[Photo]";
+        } else if (msg.audioMessage) {
+          const data = await this.downloadMediaSafe(message);
+          if (data) {
+            attachments.push({
+              type: "audio",
+              mimeType: msg.audioMessage.mimetype ?? "audio/ogg",
+              size: msg.audioMessage.fileLength ?? data.length,
+              data
+            });
+          }
+          if (!fallbackText)
+            fallbackText = "[Voice message]";
+        } else if (msg.videoMessage) {
+          const data = await this.downloadMediaSafe(message);
+          if (data) {
+            attachments.push({
+              type: "video",
+              mimeType: msg.videoMessage.mimetype ?? "video/mp4",
+              size: msg.videoMessage.fileLength ?? data.length,
+              data
+            });
+          }
+          if (!fallbackText)
+            fallbackText = "[Video]";
+        } else if (msg.documentMessage) {
+          const data = await this.downloadMediaSafe(message);
+          if (data) {
+            attachments.push({
+              type: "document",
+              mimeType: msg.documentMessage.mimetype ?? "application/octet-stream",
+              fileName: msg.documentMessage.fileName ?? "document",
+              size: msg.documentMessage.fileLength ?? data.length,
+              data
+            });
+          }
+          if (!fallbackText)
+            fallbackText = "[Document]";
+        } else if (msg.stickerMessage) {
+          if (!text)
+            return;
+        }
+        if (!fallbackText && attachments.length === 0)
+          return;
+        const normalized = {
+          id: message.key.id ?? "",
+          platform: "whatsapp",
+          chatId: message.key.remoteJid ?? "",
+          chatType: message.key.remoteJid?.endsWith("@g.us") ? "group" : "dm",
+          userId: message.key.participant ?? message.key.remoteJid ?? "",
+          userName: message.pushName ?? message.key.participant ?? message.key.remoteJid ?? "",
+          text: fallbackText,
+          timestamp: new Date(message.messageTimestamp * 1e3),
+          replyToMessageId: msg.extendedTextMessage?.contextInfo?.stanzaId ?? void 0,
+          attachments: attachments.length > 0 ? attachments : void 0
+        };
+        this.emit("message", normalized);
+      }
+      async downloadMediaSafe(message) {
+        try {
+          if (!this.downloadMedia)
+            return void 0;
+          const buffer = await this.downloadMedia(message, "buffer", {});
+          return Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+        } catch {
+          return void 0;
+        }
+      }
+      guessMimeType(fileName) {
+        const ext = fileName.split(".").pop()?.toLowerCase();
+        const mimeMap = {
+          pdf: "application/pdf",
+          txt: "text/plain",
+          json: "application/json",
+          csv: "text/csv",
+          png: "image/png",
+          jpg: "image/jpeg",
+          jpeg: "image/jpeg",
+          gif: "image/gif",
+          mp3: "audio/mpeg",
+          ogg: "audio/ogg",
+          mp4: "video/mp4",
+          zip: "application/zip",
+          doc: "application/msword",
+          docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        };
+        return mimeMap[ext ?? ""] ?? "application/octet-stream";
+      }
     };
   }
 });
 
-// packages/messaging/dist/adapters/signal.js
+// ../messaging/dist/adapters/signal.js
 var SignalAdapter;
 var init_signal = __esm({
-  "packages/messaging/dist/adapters/signal.js"() {
+  "../messaging/dist/adapters/signal.js"() {
     "use strict";
     init_adapter();
     SignalAdapter = class extends MessagingAdapter {
@@ -4593,10 +5970,24 @@ var init_signal = __esm({
         const messages = await res.json();
         for (const envelope of messages) {
           const dataMessage = envelope.envelope?.dataMessage;
-          if (!dataMessage?.message)
+          if (!dataMessage)
+            continue;
+          if (!dataMessage.message && (!dataMessage.attachments || dataMessage.attachments.length === 0))
             continue;
           const data = envelope.envelope;
           const chatId = dataMessage.groupInfo?.groupId ? `group.${dataMessage.groupInfo.groupId}` : data.sourceNumber ?? data.source ?? "";
+          const attachments = [];
+          if (dataMessage.attachments) {
+            for (const att of dataMessage.attachments) {
+              const downloaded = await this.downloadAttachment(att);
+              if (downloaded) {
+                attachments.push(downloaded);
+              }
+            }
+          }
+          const text = dataMessage.message || this.inferTextFromAttachments(attachments) || "";
+          if (!text && attachments.length === 0)
+            continue;
           const normalized = {
             id: String(dataMessage.timestamp ?? Date.now()),
             platform: "signal",
@@ -4605,17 +5996,64 @@ var init_signal = __esm({
             userId: data.sourceNumber ?? data.source ?? "",
             userName: data.sourceName ?? data.sourceNumber ?? data.source ?? "",
             displayName: data.sourceName,
-            text: dataMessage.message,
-            timestamp: new Date(dataMessage.timestamp ?? Date.now())
+            text,
+            timestamp: new Date(dataMessage.timestamp ?? Date.now()),
+            attachments: attachments.length > 0 ? attachments : void 0
           };
           this.emit("message", normalized);
         }
+      }
+      async downloadAttachment(att) {
+        if (!att.id)
+          return void 0;
+        try {
+          const res = await fetch(`${this.apiUrl}/v1/attachments/${att.id}`);
+          if (!res.ok)
+            return void 0;
+          const arrayBuffer = await res.arrayBuffer();
+          const data = Buffer.from(arrayBuffer);
+          const type = this.classifyContentType(att.contentType);
+          return {
+            type,
+            mimeType: att.contentType ?? void 0,
+            fileName: att.filename ?? void 0,
+            size: att.size ?? data.length,
+            data
+          };
+        } catch {
+          return void 0;
+        }
+      }
+      classifyContentType(contentType) {
+        if (!contentType)
+          return "other";
+        if (contentType.startsWith("image/"))
+          return "image";
+        if (contentType.startsWith("audio/"))
+          return "audio";
+        if (contentType.startsWith("video/"))
+          return "video";
+        return "document";
+      }
+      inferTextFromAttachments(attachments) {
+        if (attachments.length === 0)
+          return "";
+        const types = attachments.map((a) => a.type);
+        if (types.includes("image"))
+          return "[Photo]";
+        if (types.includes("audio"))
+          return "[Voice message]";
+        if (types.includes("video"))
+          return "[Video]";
+        if (types.includes("document"))
+          return "[Document]";
+        return "[File]";
       }
     };
   }
 });
 
-// packages/messaging/dist/index.js
+// ../messaging/dist/index.js
 var dist_exports = {};
 __export(dist_exports, {
   DiscordAdapter: () => DiscordAdapter,
@@ -4626,7 +6064,7 @@ __export(dist_exports, {
   WhatsAppAdapter: () => WhatsAppAdapter
 });
 var init_dist7 = __esm({
-  "packages/messaging/dist/index.js"() {
+  "../messaging/dist/index.js"() {
     "use strict";
     init_adapter();
     init_telegram();
@@ -4637,13 +6075,13 @@ var init_dist7 = __esm({
   }
 });
 
-// packages/core/dist/alfred.js
-import fs4 from "node:fs";
-import path4 from "node:path";
+// ../core/dist/alfred.js
+import fs6 from "node:fs";
+import path8 from "node:path";
 import yaml2 from "js-yaml";
 var Alfred;
 var init_alfred = __esm({
-  "packages/core/dist/alfred.js"() {
+  "../core/dist/alfred.js"() {
     "use strict";
     init_dist2();
     init_dist3();
@@ -4653,6 +6091,7 @@ var init_alfred = __esm({
     init_conversation_manager();
     init_message_pipeline();
     init_reminder_scheduler();
+    init_speech_transcriber();
     Alfred = class {
       config;
       logger;
@@ -4673,6 +6112,7 @@ var init_alfred = __esm({
         const auditRepo = new AuditRepository(db);
         const memoryRepo = new MemoryRepository(db);
         const reminderRepo = new ReminderRepository(db);
+        const noteRepo = new NoteRepository(db);
         this.logger.info("Storage initialized");
         const ruleEngine = new RuleEngine();
         const rules = this.loadSecurityRules();
@@ -4682,6 +6122,7 @@ var init_alfred = __esm({
         const llmProvider = createLLMProvider(this.config.llm);
         await llmProvider.initialize();
         this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, "LLM provider initialized");
+        const skillSandbox = new SkillSandbox(this.logger.child({ component: "sandbox" }));
         const skillRegistry = new SkillRegistry();
         skillRegistry.register(new CalculatorSkill());
         skillRegistry.register(new SystemInfoSkill());
@@ -4691,22 +6132,30 @@ var init_alfred = __esm({
           baseUrl: this.config.search.baseUrl
         } : void 0));
         skillRegistry.register(new ReminderSkill(reminderRepo));
-        skillRegistry.register(new NoteSkill());
-        skillRegistry.register(new SummarizeSkill());
-        skillRegistry.register(new TranslateSkill());
+        skillRegistry.register(new NoteSkill(noteRepo));
         skillRegistry.register(new WeatherSkill());
         skillRegistry.register(new ShellSkill());
         skillRegistry.register(new MemorySkill(memoryRepo));
-        skillRegistry.register(new DelegateSkill(llmProvider));
+        skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
         skillRegistry.register(new EmailSkill(this.config.email ? {
           imap: this.config.email.imap,
           smtp: this.config.email.smtp,
           auth: this.config.email.auth
         } : void 0));
+        skillRegistry.register(new HttpSkill());
+        skillRegistry.register(new FileSkill());
+        skillRegistry.register(new ClipboardSkill());
+        skillRegistry.register(new ScreenshotSkill());
+        skillRegistry.register(new BrowserSkill());
         this.logger.info({ skills: skillRegistry.getAll().map((s) => s.metadata.name) }, "Skills registered");
-        const skillSandbox = new SkillSandbox(this.logger.child({ component: "sandbox" }));
+        let speechTranscriber;
+        if (this.config.speech?.apiKey) {
+          speechTranscriber = new SpeechTranscriber(this.config.speech, this.logger.child({ component: "speech" }));
+          this.logger.info({ provider: this.config.speech.provider }, "Speech-to-text initialized");
+        }
         const conversationManager = new ConversationManager(conversationRepo);
-        this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger.child({ component: "pipeline" }), skillRegistry, skillSandbox, securityManager, memoryRepo);
+        const inboxPath = path8.resolve(path8.dirname(this.config.storage.path), "inbox");
+        this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger.child({ component: "pipeline" }), skillRegistry, skillSandbox, securityManager, memoryRepo, speechTranscriber, inboxPath);
         this.reminderScheduler = new ReminderScheduler(reminderRepo, async (platform, chatId, text) => {
           const adapter = this.adapters.get(platform);
           if (adapter) {
@@ -4821,22 +6270,22 @@ var init_alfred = __esm({
         });
       }
       loadSecurityRules() {
-        const rulesPath = path4.resolve(this.config.security.rulesPath);
+        const rulesPath = path8.resolve(this.config.security.rulesPath);
         const rules = [];
-        if (!fs4.existsSync(rulesPath)) {
+        if (!fs6.existsSync(rulesPath)) {
           this.logger.warn({ rulesPath }, "Security rules directory not found, using default deny");
           return rules;
         }
-        const stat = fs4.statSync(rulesPath);
+        const stat = fs6.statSync(rulesPath);
         if (!stat.isDirectory()) {
           this.logger.warn({ rulesPath }, "Security rules path is not a directory");
           return rules;
         }
-        const files = fs4.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+        const files = fs6.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
         for (const file of files) {
           try {
-            const filePath = path4.join(rulesPath, file);
-            const content = fs4.readFileSync(filePath, "utf-8");
+            const filePath = path8.join(rulesPath, file);
+            const content = fs6.readFileSync(filePath, "utf-8");
             const parsed = yaml2.load(content);
             if (parsed?.rules && Array.isArray(parsed.rules)) {
               rules.push(...parsed.rules);
@@ -4852,18 +6301,19 @@ var init_alfred = __esm({
   }
 });
 
-// packages/core/dist/index.js
+// ../core/dist/index.js
 var init_dist8 = __esm({
-  "packages/core/dist/index.js"() {
+  "../core/dist/index.js"() {
     "use strict";
     init_alfred();
     init_message_pipeline();
     init_conversation_manager();
     init_reminder_scheduler();
+    init_speech_transcriber();
   }
 });
 
-// packages/cli/dist/commands/start.js
+// dist/commands/start.js
 var start_exports = {};
 __export(start_exports, {
   startCommand: () => startCommand
@@ -4915,7 +6365,7 @@ async function startCommand() {
   }
 }
 var init_start = __esm({
-  "packages/cli/dist/commands/start.js"() {
+  "dist/commands/start.js"() {
     "use strict";
     init_dist();
     init_dist2();
@@ -4923,15 +6373,15 @@ var init_start = __esm({
   }
 });
 
-// packages/cli/dist/commands/setup.js
+// dist/commands/setup.js
 var setup_exports = {};
 __export(setup_exports, {
   setupCommand: () => setupCommand
 });
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import fs5 from "node:fs";
-import path5 from "node:path";
+import fs7 from "node:fs";
+import path9 from "node:path";
 import yaml3 from "js-yaml";
 function green(s) {
   return `${GREEN}${s}${RESET}`;
@@ -4962,20 +6412,20 @@ function loadExistingConfig(projectRoot) {
   let shellEnabled = false;
   let writeInGroups = false;
   let rateLimit = 30;
-  const configPath = path5.join(projectRoot, "config", "default.yml");
-  if (fs5.existsSync(configPath)) {
+  const configPath = path9.join(projectRoot, "config", "default.yml");
+  if (fs7.existsSync(configPath)) {
     try {
-      const parsed = yaml3.load(fs5.readFileSync(configPath, "utf-8"));
+      const parsed = yaml3.load(fs7.readFileSync(configPath, "utf-8"));
       if (parsed && typeof parsed === "object") {
         Object.assign(config, parsed);
       }
     } catch {
     }
   }
-  const envPath = path5.join(projectRoot, ".env");
-  if (fs5.existsSync(envPath)) {
+  const envPath = path9.join(projectRoot, ".env");
+  if (fs7.existsSync(envPath)) {
     try {
-      const lines = fs5.readFileSync(envPath, "utf-8").split("\n");
+      const lines = fs7.readFileSync(envPath, "utf-8").split("\n");
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#"))
@@ -4988,10 +6438,10 @@ function loadExistingConfig(projectRoot) {
     } catch {
     }
   }
-  const rulesPath = path5.join(projectRoot, "config", "rules", "default-rules.yml");
-  if (fs5.existsSync(rulesPath)) {
+  const rulesPath = path9.join(projectRoot, "config", "rules", "default-rules.yml");
+  if (fs7.existsSync(rulesPath)) {
     try {
-      const rulesContent = yaml3.load(fs5.readFileSync(rulesPath, "utf-8"));
+      const rulesContent = yaml3.load(fs7.readFileSync(rulesPath, "utf-8"));
       if (rulesContent?.rules) {
         shellEnabled = rulesContent.rules.some((r) => r.id === "allow-owner-admin" && r.effect === "allow");
         const writeDmRule = rulesContent.rules.find((r) => r.id === "allow-write-for-dm" || r.id === "allow-write-all");
@@ -5247,6 +6697,54 @@ ${bold("Email access (read & send emails via IMAP/SMTP)?")}`);
     } else {
       console.log(`  ${dim("Email disabled \u2014 you can configure it later.")}`);
     }
+    const speechProviders = ["openai", "groq"];
+    const existingSpeechProvider = existing.config.speech?.provider ?? existing.env["ALFRED_SPEECH_PROVIDER"] ?? "";
+    const existingSpeechIdx = speechProviders.indexOf(existingSpeechProvider);
+    const defaultSpeechChoice = existingSpeechIdx >= 0 ? existingSpeechIdx + 1 : 0;
+    console.log(`
+${bold("Voice message transcription (Speech-to-Text via Whisper)?")}`);
+    console.log(`${dim("Transcribes voice messages from Telegram, Discord, etc.")}`);
+    const speechLabels = [
+      "OpenAI Whisper \u2014 best quality",
+      "Groq Whisper \u2014 fast & free"
+    ];
+    console.log(`  ${cyan("0)")} None (disable voice transcription)${existingSpeechIdx === -1 ? ` ${dim("(current)")}` : ""}`);
+    for (let i = 0; i < speechLabels.length; i++) {
+      const cur = existingSpeechIdx === i ? ` ${dim("(current)")}` : "";
+      console.log(`  ${cyan(String(i + 1) + ")")} ${speechLabels[i]}${cur}`);
+    }
+    const speechChoice = await askNumber(rl, "> ", 0, speechProviders.length, defaultSpeechChoice);
+    let speechProvider;
+    let speechApiKey = "";
+    let speechBaseUrl = "";
+    if (speechChoice >= 1 && speechChoice <= speechProviders.length) {
+      speechProvider = speechProviders[speechChoice - 1];
+    }
+    if (speechProvider === "openai") {
+      const existingKey = existing.env["ALFRED_SPEECH_API_KEY"] ?? "";
+      if (existingKey) {
+        speechApiKey = await askWithDefault(rl, "  OpenAI API key (for Whisper)", existingKey);
+      } else {
+        console.log(`  ${dim("Uses your OpenAI API key for Whisper transcription.")}`);
+        speechApiKey = await askRequired(rl, "  OpenAI API key");
+      }
+      console.log(`  ${green(">")} OpenAI Whisper: ${dim(maskKey(speechApiKey))}`);
+    } else if (speechProvider === "groq") {
+      const existingKey = existing.env["ALFRED_SPEECH_API_KEY"] ?? "";
+      if (existingKey) {
+        speechApiKey = await askWithDefault(rl, "  Groq API key", existingKey);
+      } else {
+        console.log(`  ${dim("Get your free API key at: https://console.groq.com/")}`);
+        speechApiKey = await askRequired(rl, "  Groq API key");
+      }
+      const existingUrl = existing.env["ALFRED_SPEECH_BASE_URL"] ?? "";
+      if (existingUrl) {
+        speechBaseUrl = await askWithDefault(rl, "  Groq API URL", existingUrl);
+      }
+      console.log(`  ${green(">")} Groq Whisper: ${dim(maskKey(speechApiKey))}`);
+    } else {
+      console.log(`  ${dim("Voice transcription disabled \u2014 you can configure it later.")}`);
+    }
     console.log(`
 ${bold("Security configuration:")}`);
     const existingOwnerId = existing.config.security?.ownerUserId ?? existing.env["ALFRED_OWNER_USER_ID"] ?? "";
@@ -5342,6 +6840,17 @@ ${bold("Writing configuration files...")}`);
       envLines.push("# ALFRED_EMAIL_USER=");
       envLines.push("# ALFRED_EMAIL_PASS=");
     }
+    envLines.push("", "# === Speech-to-Text ===", "");
+    if (speechProvider) {
+      envLines.push(`ALFRED_SPEECH_PROVIDER=${speechProvider}`);
+      envLines.push(`ALFRED_SPEECH_API_KEY=${speechApiKey}`);
+      if (speechBaseUrl) {
+        envLines.push(`ALFRED_SPEECH_BASE_URL=${speechBaseUrl}`);
+      }
+    } else {
+      envLines.push("# ALFRED_SPEECH_PROVIDER=groq");
+      envLines.push("# ALFRED_SPEECH_API_KEY=");
+    }
     envLines.push("", "# === Security ===", "");
     if (ownerUserId) {
       envLines.push(`ALFRED_OWNER_USER_ID=${ownerUserId}`);
@@ -5349,12 +6858,12 @@ ${bold("Writing configuration files...")}`);
       envLines.push("# ALFRED_OWNER_USER_ID=");
     }
     envLines.push("");
-    const envPath = path5.join(projectRoot, ".env");
-    fs5.writeFileSync(envPath, envLines.join("\n"), "utf-8");
+    const envPath = path9.join(projectRoot, ".env");
+    fs7.writeFileSync(envPath, envLines.join("\n"), "utf-8");
     console.log(`  ${green("+")} ${dim(".env")} written`);
-    const configDir = path5.join(projectRoot, "config");
-    if (!fs5.existsSync(configDir)) {
-      fs5.mkdirSync(configDir, { recursive: true });
+    const configDir = path9.join(projectRoot, "config");
+    if (!fs7.existsSync(configDir)) {
+      fs7.mkdirSync(configDir, { recursive: true });
     }
     const config = {
       name: botName,
@@ -5402,6 +6911,13 @@ ${bold("Writing configuration files...")}`);
           auth: { user: emailUser, pass: emailPass }
         }
       } : {},
+      ...speechProvider ? {
+        speech: {
+          provider: speechProvider,
+          apiKey: speechApiKey,
+          ...speechBaseUrl ? { baseUrl: speechBaseUrl } : {}
+        }
+      } : {},
       storage: {
         path: "./data/alfred.db"
       },
@@ -5419,12 +6935,12 @@ ${bold("Writing configuration files...")}`);
       config.security.ownerUserId = ownerUserId;
     }
     const yamlStr = "# Alfred \u2014 Configuration\n# Generated by `alfred setup`\n# Edit manually or re-run `alfred setup` to reconfigure.\n\n" + yaml3.dump(config, { lineWidth: 120, noRefs: true, sortKeys: false });
-    const configPath = path5.join(configDir, "default.yml");
-    fs5.writeFileSync(configPath, yamlStr, "utf-8");
+    const configPath = path9.join(configDir, "default.yml");
+    fs7.writeFileSync(configPath, yamlStr, "utf-8");
     console.log(`  ${green("+")} ${dim("config/default.yml")} written`);
-    const rulesDir = path5.join(configDir, "rules");
-    if (!fs5.existsSync(rulesDir)) {
-      fs5.mkdirSync(rulesDir, { recursive: true });
+    const rulesDir = path9.join(configDir, "rules");
+    if (!fs7.existsSync(rulesDir)) {
+      fs7.mkdirSync(rulesDir, { recursive: true });
     }
     const ownerAdminRule = enableShell && ownerUserId ? `
   # Allow admin actions (shell, etc.) for the owner only
@@ -5505,12 +7021,12 @@ ${ownerAdminRule}
     actions: ["*"]
     riskLevels: [read, write, destructive, admin]
 `;
-    const rulesPath = path5.join(rulesDir, "default-rules.yml");
-    fs5.writeFileSync(rulesPath, rulesYaml, "utf-8");
+    const rulesPath = path9.join(rulesDir, "default-rules.yml");
+    fs7.writeFileSync(rulesPath, rulesYaml, "utf-8");
     console.log(`  ${green("+")} ${dim("config/rules/default-rules.yml")} written`);
-    const dataDir = path5.join(projectRoot, "data");
-    if (!fs5.existsSync(dataDir)) {
-      fs5.mkdirSync(dataDir, { recursive: true });
+    const dataDir = path9.join(projectRoot, "data");
+    if (!fs7.existsSync(dataDir)) {
+      fs7.mkdirSync(dataDir, { recursive: true });
       console.log(`  ${green("+")} ${dim("data/")} directory created`);
     }
     console.log("");
@@ -5543,6 +7059,15 @@ ${ownerAdminRule}
       console.log(`  ${bold("Email:")}          ${emailUser} (${emailImapHost})`);
     } else {
       console.log(`  ${bold("Email:")}          ${dim("disabled")}`);
+    }
+    if (speechProvider) {
+      const speechLabelMap = {
+        openai: "OpenAI Whisper",
+        groq: "Groq Whisper"
+      };
+      console.log(`  ${bold("Voice:")}          ${speechLabelMap[speechProvider]}`);
+    } else {
+      console.log(`  ${bold("Voice:")}          ${dim("disabled")}`);
     }
     if (ownerUserId) {
       console.log(`  ${bold("Owner ID:")}       ${ownerUserId}`);
@@ -5599,7 +7124,7 @@ ${DIM}  Personal AI Assistant \u2014 Setup Wizard${RESET}
 }
 var RESET, BOLD, DIM, GREEN, YELLOW, CYAN, RED, MAGENTA, PROVIDERS, PLATFORMS;
 var init_setup = __esm({
-  "packages/cli/dist/commands/setup.js"() {
+  "dist/commands/setup.js"() {
     "use strict";
     RESET = "\x1B[0m";
     BOLD = "\x1B[1m";
@@ -5724,7 +7249,7 @@ var init_setup = __esm({
   }
 });
 
-// packages/cli/dist/commands/config.js
+// dist/commands/config.js
 var config_exports = {};
 __export(config_exports, {
   configCommand: () => configCommand
@@ -5771,20 +7296,20 @@ async function configCommand() {
 }
 var SENSITIVE_KEYS;
 var init_config = __esm({
-  "packages/cli/dist/commands/config.js"() {
+  "dist/commands/config.js"() {
     "use strict";
     init_dist();
     SENSITIVE_KEYS = ["token", "apikey", "api_key", "accesstoken", "secret", "password"];
   }
 });
 
-// packages/cli/dist/commands/rules.js
+// dist/commands/rules.js
 var rules_exports = {};
 __export(rules_exports, {
   rulesCommand: () => rulesCommand
 });
-import fs6 from "node:fs";
-import path6 from "node:path";
+import fs8 from "node:fs";
+import path10 from "node:path";
 import yaml4 from "js-yaml";
 async function rulesCommand() {
   const configLoader = new ConfigLoader();
@@ -5795,18 +7320,18 @@ async function rulesCommand() {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const rulesPath = path6.resolve(config.security.rulesPath);
-  if (!fs6.existsSync(rulesPath)) {
+  const rulesPath = path10.resolve(config.security.rulesPath);
+  if (!fs8.existsSync(rulesPath)) {
     console.log(`Rules directory not found: ${rulesPath}`);
     console.log("No security rules loaded.");
     return;
   }
-  const stat = fs6.statSync(rulesPath);
+  const stat = fs8.statSync(rulesPath);
   if (!stat.isDirectory()) {
     console.error(`Rules path is not a directory: ${rulesPath}`);
     process.exit(1);
   }
-  const files = fs6.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  const files = fs8.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
   if (files.length === 0) {
     console.log(`No YAML rule files found in: ${rulesPath}`);
     return;
@@ -5815,9 +7340,9 @@ async function rulesCommand() {
   const allRules = [];
   const errors = [];
   for (const file of files) {
-    const filePath = path6.join(rulesPath, file);
+    const filePath = path10.join(rulesPath, file);
     try {
-      const raw = fs6.readFileSync(filePath, "utf-8");
+      const raw = fs8.readFileSync(filePath, "utf-8");
       const parsed = yaml4.load(raw);
       const rules = ruleLoader.loadFromObject(parsed);
       allRules.push(...rules);
@@ -5857,20 +7382,20 @@ async function rulesCommand() {
   }
 }
 var init_rules = __esm({
-  "packages/cli/dist/commands/rules.js"() {
+  "dist/commands/rules.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// packages/cli/dist/commands/status.js
+// dist/commands/status.js
 var status_exports = {};
 __export(status_exports, {
   statusCommand: () => statusCommand
 });
-import fs7 from "node:fs";
-import path7 from "node:path";
+import fs9 from "node:fs";
+import path11 from "node:path";
 import yaml5 from "js-yaml";
 async function statusCommand() {
   const configLoader = new ConfigLoader();
@@ -5927,22 +7452,22 @@ async function statusCommand() {
   }
   console.log("");
   console.log("Storage:");
-  const dbPath = path7.resolve(config.storage.path);
-  const dbExists = fs7.existsSync(dbPath);
+  const dbPath = path11.resolve(config.storage.path);
+  const dbExists = fs9.existsSync(dbPath);
   console.log(`  Database: ${dbPath}`);
   console.log(`  Status:   ${dbExists ? "exists" : "not yet created"}`);
   console.log("");
-  const rulesPath = path7.resolve(config.security.rulesPath);
+  const rulesPath = path11.resolve(config.security.rulesPath);
   let ruleCount = 0;
   let ruleFileCount = 0;
-  if (fs7.existsSync(rulesPath) && fs7.statSync(rulesPath).isDirectory()) {
-    const files = fs7.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  if (fs9.existsSync(rulesPath) && fs9.statSync(rulesPath).isDirectory()) {
+    const files = fs9.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
     ruleFileCount = files.length;
     const ruleLoader = new RuleLoader();
     for (const file of files) {
-      const filePath = path7.join(rulesPath, file);
+      const filePath = path11.join(rulesPath, file);
       try {
-        const raw = fs7.readFileSync(filePath, "utf-8");
+        const raw = fs9.readFileSync(filePath, "utf-8");
         const parsed = yaml5.load(raw);
         const rules = ruleLoader.loadFromObject(parsed);
         ruleCount += rules.length;
@@ -5964,20 +7489,20 @@ async function statusCommand() {
   console.log(`  Pretty: ${config.logger.pretty}`);
 }
 var init_status = __esm({
-  "packages/cli/dist/commands/status.js"() {
+  "dist/commands/status.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// packages/cli/dist/commands/logs.js
+// dist/commands/logs.js
 var logs_exports = {};
 __export(logs_exports, {
   logsCommand: () => logsCommand
 });
-import fs8 from "node:fs";
-import path8 from "node:path";
+import fs10 from "node:fs";
+import path12 from "node:path";
 async function logsCommand(tail) {
   const configLoader = new ConfigLoader();
   let config;
@@ -5987,8 +7512,8 @@ async function logsCommand(tail) {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const dbPath = path8.resolve(config.storage.path);
-  if (!fs8.existsSync(dbPath)) {
+  const dbPath = path12.resolve(config.storage.path);
+  if (!fs10.existsSync(dbPath)) {
     console.log(`Database not found at: ${dbPath}`);
     console.log("No audit log entries. Alfred has not been run yet, or the database path is incorrect.");
     return;
@@ -6034,14 +7559,14 @@ async function logsCommand(tail) {
   }
 }
 var init_logs = __esm({
-  "packages/cli/dist/commands/logs.js"() {
+  "dist/commands/logs.js"() {
     "use strict";
     init_dist();
     init_dist3();
   }
 });
 
-// packages/cli/dist/index.js
+// dist/index.js
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";

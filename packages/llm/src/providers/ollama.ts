@@ -311,25 +311,24 @@ export class OllamaProvider extends LLMProvider {
     role: string,
     blocks: LLMContentBlock[],
   ): OllamaMessage {
-    // Extract text content from blocks
     const textParts: string[] = [];
+    const images: string[] = [];
 
     for (const block of blocks) {
       switch (block.type) {
         case 'text':
           textParts.push(block.text);
           break;
+        case 'image':
+          // Ollama expects images as base64 strings in the images array
+          images.push(block.source.data);
+          break;
         case 'tool_use':
-          // Tool use blocks in a message indicate the assistant called a tool.
-          // Ollama handles this via tool_calls on the message, not inline content.
-          // We include a description of the tool call in the text for context.
           textParts.push(
             `[Tool call: ${block.name}(${JSON.stringify(block.input)})]`,
           );
           break;
         case 'tool_result':
-          // Tool results are sent as user messages in Ollama.
-          // Include them as text content.
           textParts.push(
             `[Tool result for ${block.tool_use_id}]: ${block.content}`,
           );
@@ -337,7 +336,11 @@ export class OllamaProvider extends LLMProvider {
       }
     }
 
-    return { role, content: textParts.join('\n') };
+    const msg: OllamaMessage = { role, content: textParts.join('\n') };
+    if (images.length > 0) {
+      msg.images = images;
+    }
+    return msg;
   }
 
   private mapTools(
@@ -385,6 +388,7 @@ export class OllamaProvider extends LLMProvider {
 interface OllamaMessage {
   role: string;
   content: string;
+  images?: string[];
 }
 
 interface OllamaTool {

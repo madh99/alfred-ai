@@ -564,7 +564,60 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Email disabled — you can configure it later.')}`);
     }
 
-    // ── 8. Security configuration ──────────────────────────────
+    // ── 8. Speech-to-text (voice messages) ──────────────────────
+    const speechProviders = ['openai', 'groq'] as const;
+    const existingSpeechProvider = (existing.config as Record<string, any>).speech?.provider ?? existing.env['ALFRED_SPEECH_PROVIDER'] ?? '';
+    const existingSpeechIdx = speechProviders.indexOf(existingSpeechProvider as typeof speechProviders[number]);
+    const defaultSpeechChoice = existingSpeechIdx >= 0 ? existingSpeechIdx + 1 : 0;
+
+    console.log(`\n${bold('Voice message transcription (Speech-to-Text via Whisper)?')}`);
+    console.log(`${dim('Transcribes voice messages from Telegram, Discord, etc.')}`);
+    const speechLabels = [
+      'OpenAI Whisper — best quality',
+      'Groq Whisper — fast & free',
+    ];
+    console.log(`  ${cyan('0)')} None (disable voice transcription)${existingSpeechIdx === -1 ? ` ${dim('(current)')}` : ''}`);
+    for (let i = 0; i < speechLabels.length; i++) {
+      const cur = existingSpeechIdx === i ? ` ${dim('(current)')}` : '';
+      console.log(`  ${cyan(String(i + 1) + ')')} ${speechLabels[i]}${cur}`);
+    }
+    const speechChoice = await askNumber(rl, '> ', 0, speechProviders.length, defaultSpeechChoice);
+
+    let speechProvider: typeof speechProviders[number] | undefined;
+    let speechApiKey = '';
+    let speechBaseUrl = '';
+
+    if (speechChoice >= 1 && speechChoice <= speechProviders.length) {
+      speechProvider = speechProviders[speechChoice - 1];
+    }
+
+    if (speechProvider === 'openai') {
+      const existingKey = existing.env['ALFRED_SPEECH_API_KEY'] ?? '';
+      if (existingKey) {
+        speechApiKey = await askWithDefault(rl, '  OpenAI API key (for Whisper)', existingKey);
+      } else {
+        console.log(`  ${dim('Uses your OpenAI API key for Whisper transcription.')}`);
+        speechApiKey = await askRequired(rl, '  OpenAI API key');
+      }
+      console.log(`  ${green('>')} OpenAI Whisper: ${dim(maskKey(speechApiKey))}`);
+    } else if (speechProvider === 'groq') {
+      const existingKey = existing.env['ALFRED_SPEECH_API_KEY'] ?? '';
+      if (existingKey) {
+        speechApiKey = await askWithDefault(rl, '  Groq API key', existingKey);
+      } else {
+        console.log(`  ${dim('Get your free API key at: https://console.groq.com/')}`);
+        speechApiKey = await askRequired(rl, '  Groq API key');
+      }
+      const existingUrl = existing.env['ALFRED_SPEECH_BASE_URL'] ?? '';
+      if (existingUrl) {
+        speechBaseUrl = await askWithDefault(rl, '  Groq API URL', existingUrl);
+      }
+      console.log(`  ${green('>')} Groq Whisper: ${dim(maskKey(speechApiKey))}`);
+    } else {
+      console.log(`  ${dim('Voice transcription disabled — you can configure it later.')}`);
+    }
+
+    // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
     // 7a. Owner user ID
@@ -686,6 +739,19 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_EMAIL_PASS=');
     }
 
+    envLines.push('', '# === Speech-to-Text ===', '');
+
+    if (speechProvider) {
+      envLines.push(`ALFRED_SPEECH_PROVIDER=${speechProvider}`);
+      envLines.push(`ALFRED_SPEECH_API_KEY=${speechApiKey}`);
+      if (speechBaseUrl) {
+        envLines.push(`ALFRED_SPEECH_BASE_URL=${speechBaseUrl}`);
+      }
+    } else {
+      envLines.push('# ALFRED_SPEECH_PROVIDER=groq');
+      envLines.push('# ALFRED_SPEECH_API_KEY=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -716,6 +782,7 @@ export async function setupCommand(): Promise<void> {
       llm: { provider: string; model: string; baseUrl?: string; temperature: number; maxTokens: number };
       search?: { provider: string; apiKey?: string; baseUrl?: string };
       email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
+      speech?: { provider: string; apiKey: string; baseUrl?: string };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -765,6 +832,13 @@ export async function setupCommand(): Promise<void> {
           imap: { host: emailImapHost, port: emailImapPort, secure: emailImapPort === 993 },
           smtp: { host: emailSmtpHost, port: emailSmtpPort, secure: emailSmtpPort === 465 },
           auth: { user: emailUser, pass: emailPass },
+        },
+      } : {}),
+      ...(speechProvider ? {
+        speech: {
+          provider: speechProvider,
+          apiKey: speechApiKey,
+          ...(speechBaseUrl ? { baseUrl: speechBaseUrl } : {}),
         },
       } : {}),
       storage: {
@@ -931,6 +1005,15 @@ ${ownerAdminRule}
       console.log(`  ${bold('Email:')}          ${emailUser} (${emailImapHost})`);
     } else {
       console.log(`  ${bold('Email:')}          ${dim('disabled')}`);
+    }
+    if (speechProvider) {
+      const speechLabelMap: Record<string, string> = {
+        openai: 'OpenAI Whisper',
+        groq: 'Groq Whisper',
+      };
+      console.log(`  ${bold('Voice:')}          ${speechLabelMap[speechProvider]}`);
+    } else {
+      console.log(`  ${bold('Voice:')}          ${dim('disabled')}`);
     }
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);

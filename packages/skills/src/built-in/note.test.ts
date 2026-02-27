@@ -9,11 +9,51 @@ const ctx: SkillContext = {
   conversationId: 'conv1',
 };
 
+/** In-memory mock that implements the NoteRepository interface */
+function createMockRepo() {
+  const notes = new Map<string, { id: string; userId: string; title: string; content: string; createdAt: string; updatedAt: string }>();
+  let counter = 0;
+
+  return {
+    save(userId: string, title: string, content: string) {
+      const id = `note-${++counter}`;
+      const now = new Date().toISOString();
+      const entry = { id, userId, title, content, createdAt: now, updatedAt: now };
+      notes.set(id, entry);
+      return entry;
+    },
+    getById(noteId: string) {
+      return notes.get(noteId);
+    },
+    list(userId: string) {
+      return [...notes.values()].filter(n => n.userId === userId);
+    },
+    search(userId: string, query: string) {
+      const q = query.toLowerCase();
+      return [...notes.values()].filter(
+        n => n.userId === userId && (n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q)),
+      );
+    },
+    update(noteId: string, title?: string, content?: string) {
+      const e = notes.get(noteId);
+      if (!e) return undefined;
+      if (title) e.title = title;
+      if (content) e.content = content;
+      e.updatedAt = new Date().toISOString();
+      return e;
+    },
+    delete(noteId: string) {
+      return notes.delete(noteId);
+    },
+  };
+}
+
 describe('NoteSkill', () => {
   let skill: NoteSkill;
 
   beforeEach(() => {
-    skill = new NoteSkill();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    skill = new NoteSkill(createMockRepo() as any);
   });
 
   it('should save a note', async () => {

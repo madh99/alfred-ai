@@ -31,6 +31,9 @@ export function estimateMessageTokens(msg: LLMMessage): number {
       case 'text':
         tokens += estimateTokens(block.text);
         break;
+      case 'image':
+        tokens += 1000; // Rough estimate for vision tokens
+        break;
       case 'tool_use':
         tokens += estimateTokens(block.name) + estimateTokens(JSON.stringify(block.input));
         break;

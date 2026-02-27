@@ -98,6 +98,15 @@ export class AnthropicProvider extends LLMProvider {
         switch (block.type) {
           case 'text':
             return { type: 'text' as const, text: block.text };
+          case 'image':
+            return {
+              type: 'image' as const,
+              source: {
+                type: 'base64' as const,
+                media_type: block.source.media_type as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+                data: block.source.data,
+              },
+            };
           case 'tool_use':
             return {
               type: 'tool_use' as const,

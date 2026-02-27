@@ -76,6 +76,12 @@ export const EmailConfigSchema = z.object({
   }),
 });
 
+export const SpeechConfigSchema = z.object({
+  provider: z.enum(['openai', 'groq']),
+  apiKey: z.string(),
+  baseUrl: z.string().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -89,4 +95,5 @@ export const AlfredConfigSchema = z.object({
   security: SecurityConfigSchema,
   search: SearchConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
+  speech: SpeechConfigSchema.optional(),
 });
