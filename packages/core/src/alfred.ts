@@ -6,7 +6,7 @@ import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository } from '@alfred/storage';
-import { createLLMProvider } from '@alfred/llm';
+import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
   SkillRegistry,
@@ -89,10 +89,10 @@ export class Alfred {
     );
     this.logger.info({ ruleCount: rules.length }, 'Security engine initialized');
 
-    // 3. Initialize LLM provider
-    const llmProvider = createLLMProvider(this.config.llm);
+    // 3. Initialize LLM provider (multi-model router)
+    const llmProvider = createModelRouter(this.config.llm);
     await llmProvider.initialize();
-    this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, 'LLM provider initialized');
+    this.logger.info({ provider: this.config.llm.default.provider, model: this.config.llm.default.model }, 'LLM provider initialized');
 
     // Create embedding service
     const embeddingService = new EmbeddingService(
@@ -303,6 +303,17 @@ export class Alfred {
     }
 
     this.logger.info(`Alfred is running with ${this.adapters.size} adapter(s)`);
+  }
+
+  async startWithCLI(): Promise<void> {
+    const { CLIAdapter } = await import('@alfred/messaging');
+    const cli = new CLIAdapter();
+    this.adapters.set('cli', cli);
+    this.setupAdapterHandlers('cli', cli);
+    cli.on('disconnected', () => {
+      this.stop().then(() => process.exit(0));
+    });
+    await this.start();
   }
 
   async stop(): Promise<void> {

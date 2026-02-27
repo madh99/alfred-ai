@@ -1,4 +1,4 @@
-import type { LLMProviderConfig } from './llm.js';
+import type { MultiModelConfig } from './llm.js';
 
 export interface TelegramConfig {
   token: string;
@@ -131,7 +131,7 @@ export interface AlfredConfig {
   whatsapp?: WhatsAppConfig;
   matrix?: MatrixConfig;
   signal?: SignalConfig;
-  llm: LLMProviderConfig;
+  llm: MultiModelConfig;
   storage: StorageConfig;
   logger: LoggerConfig;
   security: SecurityConfig;

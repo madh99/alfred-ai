@@ -1,10 +1,7 @@
-import type { AlfredConfig } from '@alfred/types';
-
-type DeepPartial<T> = {
-  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
-};
-
-export const DEFAULT_CONFIG: DeepPartial<AlfredConfig> = {
+// Use Record<string, unknown> rather than DeepPartial<AlfredConfig> because
+// the flat LLM format in defaults is only normalized to MultiModelConfig
+// after Zod validation in the loader.
+export const DEFAULT_CONFIG: Record<string, unknown> = {
   name: 'Alfred',
   telegram: {
     token: '',

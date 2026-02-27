@@ -4,6 +4,7 @@ import { AnthropicProvider } from './providers/anthropic.js';
 import { OpenAIProvider } from './providers/openai.js';
 import { OpenRouterProvider } from './providers/openrouter.js';
 import { OllamaProvider } from './providers/ollama.js';
+import { OpenWebUIProvider } from './providers/openwebui.js';
 
 export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
   switch (config.provider) {
@@ -15,6 +16,8 @@ export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
       return new OpenRouterProvider(config);
     case 'ollama':
       return new OllamaProvider(config);
+    case 'openwebui':
+      return new OpenWebUIProvider(config);
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);
   }

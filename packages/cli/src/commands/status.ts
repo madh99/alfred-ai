@@ -68,11 +68,18 @@ export async function statusCommand(): Promise<void> {
 
   // LLM Provider
   console.log('LLM Provider:');
-  console.log(`  Provider: ${config.llm.provider}`);
-  console.log(`  Model:    ${config.llm.model}`);
-  console.log(`  API Key:  ${config.llm.apiKey ? 'set' : 'not set'}`);
-  if (config.llm.baseUrl) {
-    console.log(`  Base URL: ${config.llm.baseUrl}`);
+  const defaultLlm = config.llm.default;
+  console.log(`  Provider: ${defaultLlm.provider}`);
+  console.log(`  Model:    ${defaultLlm.model}`);
+  console.log(`  API Key:  ${defaultLlm.apiKey ? 'set' : 'not set'}`);
+  if (defaultLlm.baseUrl) {
+    console.log(`  Base URL: ${defaultLlm.baseUrl}`);
+  }
+  for (const tier of ['strong', 'fast', 'embeddings', 'local'] as const) {
+    const tierConfig = config.llm[tier];
+    if (tierConfig) {
+      console.log(`  ${tier}: ${tierConfig.provider}/${tierConfig.model}`);
+    }
   }
   console.log('');
 

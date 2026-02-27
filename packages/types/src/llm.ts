@@ -1,11 +1,19 @@
 export interface LLMProviderConfig {
-  provider: 'anthropic' | 'openai' | 'openrouter' | 'ollama';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'openwebui';
   apiKey?: string;
   baseUrl?: string;
   model: string;
   temperature?: number;
   maxTokens?: number;
 }
+
+export type ModelTier = 'default' | 'strong' | 'fast' | 'embeddings' | 'local';
+
+export type MultiModelConfig = {
+  [K in ModelTier]?: LLMProviderConfig;
+} & {
+  default: LLMProviderConfig;
+};
 
 export interface LLMMessage {
   role: 'user' | 'assistant';
@@ -52,6 +60,7 @@ export interface LLMRequest {
   tools?: ToolDefinition[];
   maxTokens?: number;
   temperature?: number;
+  tier?: ModelTier;
 }
 
 export interface LLMResponse {

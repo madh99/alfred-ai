@@ -45,13 +45,23 @@ export const SecurityConfigSchema = z.object({
 });
 
 export const LLMProviderConfigSchema = z.object({
-  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama']),
+  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama', 'openwebui']),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   model: z.string(),
   temperature: z.number().optional(),
   maxTokens: z.number().optional(),
 });
+
+export const MultiModelConfigSchema = z.object({
+  default: LLMProviderConfigSchema,
+  strong: LLMProviderConfigSchema.optional(),
+  fast: LLMProviderConfigSchema.optional(),
+  embeddings: LLMProviderConfigSchema.optional(),
+  local: LLMProviderConfigSchema.optional(),
+});
+
+export const LLMConfigSchema = z.union([LLMProviderConfigSchema, MultiModelConfigSchema]);
 
 export const SearchConfigSchema = z.object({
   provider: z.enum(['brave', 'searxng', 'tavily', 'duckduckgo']),
@@ -134,7 +144,7 @@ export const AlfredConfigSchema = z.object({
   whatsapp: WhatsAppConfigSchema.optional(),
   matrix: MatrixConfigSchema.optional(),
   signal: SignalConfigSchema.optional(),
-  llm: LLMProviderConfigSchema,
+  llm: LLMConfigSchema,
   storage: StorageConfigSchema,
   logger: LoggerConfigSchema,
   security: SecurityConfigSchema,

@@ -144,6 +144,7 @@ export class DelegateSkill extends Skill {
           system: systemPrompt,
           tools: tools.length > 0 ? tools : undefined,
           maxTokens: 2048,
+          tier: 'strong',
         });
 
         totalInputTokens += response.usage.inputTokens;

@@ -59,6 +59,7 @@ export class ProactiveScheduler {
         const response = await this.llm.complete({
           messages: [{ role: 'user', content: action.promptTemplate }],
           maxTokens: 1024,
+          tier: 'fast',
         });
         resultText = response.content;
       } catch (err) {

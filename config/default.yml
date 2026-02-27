@@ -32,6 +32,24 @@ llm:
   temperature: 0.7
   maxTokens: 4096
 
+# Multi-model routing (uncomment to enable):
+# llm:
+#   default:
+#     provider: anthropic
+#     model: claude-sonnet-4-20250514
+#   strong:
+#     provider: anthropic
+#     model: claude-opus-4-20250514
+#   fast:
+#     provider: openai
+#     model: gpt-4o-mini
+#   embeddings:
+#     provider: openai
+#     model: text-embedding-3-small
+#   local:
+#     provider: ollama
+#     model: llama3.2
+
 storage:
   path: ./data/alfred.db
 

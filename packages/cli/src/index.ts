@@ -33,6 +33,7 @@ Usage:
 
 Commands:
   start          Start Alfred (load config, bootstrap, and run)
+  chat           Interactive terminal chat (--model, --tier)
   setup          Interactive setup wizard (configure LLM, platforms, API keys)
   config         Show current resolved configuration (API keys redacted)
   rules          List loaded security rules from the rules path
@@ -111,6 +112,15 @@ async function main(): Promise<void> {
     case 'start': {
       const { startCommand } = await import('./commands/start.js');
       await startCommand();
+      break;
+    }
+
+    case 'chat': {
+      const { chatCommand } = await import('./commands/chat.js');
+      await chatCommand({
+        model: typeof parsed.flags['model'] === 'string' ? parsed.flags['model'] : undefined,
+        tier: typeof parsed.flags['tier'] === 'string' ? parsed.flags['tier'] : undefined,
+      });
       break;
     }
 

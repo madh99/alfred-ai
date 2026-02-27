@@ -40,9 +40,22 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_ANTHROPIC_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENAI_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENROUTER_API_KEY: ['llm', 'apiKey'],
+  ALFRED_OPENWEBUI_API_KEY: ['llm', 'apiKey'],
   ALFRED_LLM_PROVIDER: ['llm', 'provider'],
   ALFRED_LLM_MODEL: ['llm', 'model'],
   ALFRED_LLM_BASE_URL: ['llm', 'baseUrl'],
+  ALFRED_LLM_STRONG_PROVIDER: ['llm', 'strong', 'provider'],
+  ALFRED_LLM_STRONG_MODEL: ['llm', 'strong', 'model'],
+  ALFRED_LLM_STRONG_API_KEY: ['llm', 'strong', 'apiKey'],
+  ALFRED_LLM_FAST_PROVIDER: ['llm', 'fast', 'provider'],
+  ALFRED_LLM_FAST_MODEL: ['llm', 'fast', 'model'],
+  ALFRED_LLM_FAST_API_KEY: ['llm', 'fast', 'apiKey'],
+  ALFRED_LLM_EMBEDDINGS_PROVIDER: ['llm', 'embeddings', 'provider'],
+  ALFRED_LLM_EMBEDDINGS_MODEL: ['llm', 'embeddings', 'model'],
+  ALFRED_LLM_EMBEDDINGS_API_KEY: ['llm', 'embeddings', 'apiKey'],
+  ALFRED_LLM_LOCAL_PROVIDER: ['llm', 'local', 'provider'],
+  ALFRED_LLM_LOCAL_MODEL: ['llm', 'local', 'model'],
+  ALFRED_LLM_LOCAL_BASE_URL: ['llm', 'local', 'baseUrl'],
   ALFRED_STORAGE_PATH: ['storage', 'path'],
   ALFRED_LOG_LEVEL: ['logger', 'level'],
   ALFRED_OWNER_USER_ID: ['security', 'ownerUserId'],
@@ -103,10 +116,16 @@ export class ConfigLoader {
       }
     }
 
-    const merged = deepMerge(DEFAULT_CONFIG as Record<string, unknown>, fileConfig);
+    const merged = deepMerge(DEFAULT_CONFIG, fileConfig);
     const withEnv = applyEnvOverrides(merged);
-    const validated = AlfredConfigSchema.parse(withEnv);
+    const validated = AlfredConfigSchema.parse(withEnv) as Record<string, unknown>;
 
-    return validated as AlfredConfig;
+    // Normalize flat LLM config → multi-model format
+    const llm = validated.llm as Record<string, unknown>;
+    if (llm && 'provider' in llm) {
+      validated.llm = { default: llm };
+    }
+
+    return validated as unknown as AlfredConfig;
   }
 }

@@ -49,7 +49,7 @@ describe('ConfigLoader', () => {
 
     const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
 
-    expect(config.llm.provider).toBe('openai');
+    expect(config.llm.default.provider).toBe('openai');
   });
 
   it('should validate config schema', () => {

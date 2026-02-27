@@ -5,3 +5,4 @@ export { DiscordAdapter } from './adapters/discord.js';
 export { MatrixAdapter } from './adapters/matrix.js';
 export { WhatsAppAdapter } from './adapters/whatsapp.js';
 export { SignalAdapter } from './adapters/signal.js';
+export { CLIAdapter } from './adapters/cli.js';
