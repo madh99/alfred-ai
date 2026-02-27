@@ -6,7 +6,7 @@ type SystemInfoCategory = 'general' | 'memory' | 'uptime' | 'datetime';
 export class SystemInfoSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'system_info',
-    description: 'Get system information about the Alfred bot',
+    description: 'Get system information: current date/time (datetime), system stats (general), memory usage (memory), or uptime (uptime). Use "datetime" when the user asks what day/time it is.',
     riskLevel: 'read',
     version: '1.0.0',
     inputSchema: {

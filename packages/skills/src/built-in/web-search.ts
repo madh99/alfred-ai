@@ -17,7 +17,7 @@ interface SearchResult {
 export class WebSearchSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'web_search',
-    description: 'Search the web for current information',
+    description: 'Search the internet for current information, news, facts, or anything the user asks about that you don\'t know. Use this whenever you need up-to-date information.',
     riskLevel: 'read',
     version: '1.1.0',
     inputSchema: {

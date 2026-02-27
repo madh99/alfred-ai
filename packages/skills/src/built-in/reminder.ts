@@ -7,7 +7,7 @@ type ReminderAction = 'set' | 'list' | 'cancel';
 export class ReminderSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'reminder',
-    description: 'Set, list, or cancel reminders',
+    description: 'Set timed reminders that notify the user later. Use when the user says "remind me", "erinnere mich", or asks to be notified about something at a specific time.',
     riskLevel: 'write',
     version: '2.0.0',
     inputSchema: {

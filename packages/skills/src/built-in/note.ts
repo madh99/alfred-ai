@@ -15,7 +15,7 @@ type NoteAction = 'save' | 'list' | 'search' | 'delete';
 export class NoteSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'note',
-    description: 'Save, list, search, or delete notes',
+    description: 'Save, list, search, or delete persistent notes. Use when the user wants to write down or retrieve text notes, lists, or ideas.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {

@@ -1671,34 +1671,14 @@ var init_prompt_builder = __esm({
 - ACT, don't just talk. When the user asks you to do something, USE YOUR TOOLS immediately. Never say "I could do X" \u2014 just do X.
 - Respond in the same language the user writes in.
 - Be concise. No filler text, no unnecessary explanations.
+- If a tool fails or is denied, explain why and try an alternative approach.
 
 ## Multi-step reasoning
-When a task requires multiple steps, work through them one at a time:
+For complex tasks, work through multiple steps:
 1. **Understand** what the user wants.
-2. **Plan** the steps needed (you can use multiple tools in sequence).
-3. **Execute** each step, using tool results to inform the next step.
+2. **Execute** using the right tools \u2014 chain multiple tool calls if needed.
+3. **Continue** after each tool result. If the task isn't done, use the next tool. Don't stop after one call.
 4. **Summarize** the final result clearly.
-
-Example: "What documents do I have?"
-\u2192 Step 1: Use shell to list ~/Documents
-\u2192 Step 2: If results are unclear, use shell to get more details (file types, sizes)
-\u2192 Step 3: Present a clear summary
-
-Example: "Search for X and save the result"
-\u2192 Step 1: Use web_search to find information
-\u2192 Step 2: Use memory to save the key findings
-
-You can call tools multiple times in a conversation. After getting a tool result, CONTINUE working if the task isn't complete yet. Don't stop after one tool call if more steps are needed.
-
-## When to use which tool
-- **Files, folders, system tasks** \u2192 shell (ls, cat, find, file, du, etc.)
-- **Internet/web lookups** \u2192 web_search
-- **Date, time** \u2192 system_info (category: datetime)
-- **Remember facts/preferences** \u2192 memory
-- **Calculations** \u2192 calculator
-- **Emails** \u2192 email
-- **Reminders** \u2192 reminder
-- If a tool fails or is denied, explain why and try an alternative approach.
 
 ## Environment
 - OS: ${os}
@@ -2211,7 +2191,7 @@ var init_calculator = __esm({
     CalculatorSkill = class extends Skill {
       metadata = {
         name: "calculator",
-        description: "Evaluate mathematical expressions safely",
+        description: "Evaluate mathematical expressions. Use for any calculation, unit conversion, or math question the user asks.",
         riskLevel: "read",
         version: "1.0.0",
         inputSchema: {
@@ -2280,7 +2260,7 @@ var init_system_info = __esm({
     SystemInfoSkill = class extends Skill {
       metadata = {
         name: "system_info",
-        description: "Get system information about the Alfred bot",
+        description: 'Get system information: current date/time (datetime), system stats (general), memory usage (memory), or uptime (uptime). Use "datetime" when the user asks what day/time it is.',
         riskLevel: "read",
         version: "1.0.0",
         inputSchema: {
@@ -2384,7 +2364,7 @@ var init_web_search = __esm({
       config;
       metadata = {
         name: "web_search",
-        description: "Search the web for current information",
+        description: "Search the internet for current information, news, facts, or anything the user asks about that you don't know. Use this whenever you need up-to-date information.",
         riskLevel: "read",
         version: "1.1.0",
         inputSchema: {
@@ -2602,7 +2582,7 @@ var init_reminder = __esm({
       reminderRepo;
       metadata = {
         name: "reminder",
-        description: "Set, list, or cancel reminders",
+        description: 'Set timed reminders that notify the user later. Use when the user says "remind me", "erinnere mich", or asks to be notified about something at a specific time.',
         riskLevel: "write",
         version: "2.0.0",
         inputSchema: {
@@ -2721,7 +2701,7 @@ var init_note = __esm({
     NoteSkill = class extends Skill {
       metadata = {
         name: "note",
-        description: "Save, list, search, or delete notes",
+        description: "Save, list, search, or delete persistent notes. Use when the user wants to write down or retrieve text notes, lists, or ideas.",
         riskLevel: "write",
         version: "1.0.0",
         inputSchema: {
@@ -3209,7 +3189,7 @@ var init_shell = __esm({
     ShellSkill = class extends Skill {
       metadata = {
         name: "shell",
-        description: "Execute shell commands on the host system and return stdout/stderr output. Use this tool to run CLI commands, scripts, or system utilities. Commands run in a child process with a configurable timeout and working directory.",
+        description: "Execute shell commands on the host system. Use this for ANY task involving files, folders, system operations, or running programs: ls, cat, find, file, du, mkdir, cp, mv, grep, etc. When the user asks about their documents, files, or anything on disk \u2014 use this tool.",
         riskLevel: "admin",
         version: "1.0.0",
         inputSchema: {
@@ -3526,7 +3506,7 @@ var init_email = __esm({
       config;
       metadata = {
         name: "email",
-        description: "Read, search, and send emails via IMAP/SMTP",
+        description: "Access the user's email: check inbox, read messages, search emails, or send new emails. Use when the user asks about their emails or wants to send one.",
         riskLevel: "write",
         version: "1.0.0",
         inputSchema: {

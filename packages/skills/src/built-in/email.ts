@@ -21,7 +21,7 @@ export interface EmailConfig {
 export class EmailSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'email',
-    description: 'Read, search, and send emails via IMAP/SMTP',
+    description: 'Access the user\'s email: check inbox, read messages, search emails, or send new emails. Use when the user asks about their emails or wants to send one.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {

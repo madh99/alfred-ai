@@ -16,9 +16,9 @@ export class ShellSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'shell',
     description:
-      'Execute shell commands on the host system and return stdout/stderr output. ' +
-      'Use this tool to run CLI commands, scripts, or system utilities. ' +
-      'Commands run in a child process with a configurable timeout and working directory.',
+      'Execute shell commands on the host system. Use this for ANY task involving files, folders, ' +
+      'system operations, or running programs: ls, cat, find, file, du, mkdir, cp, mv, grep, etc. ' +
+      'When the user asks about their documents, files, or anything on disk — use this tool.',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
