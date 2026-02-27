@@ -11,7 +11,7 @@ var __export = (target, all) => {
 
 // packages/config/dist/schema.js
 import { z } from "zod";
-var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, AlfredConfigSchema;
+var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
   "packages/config/dist/schema.js"() {
     "use strict";
@@ -59,6 +59,27 @@ var init_schema = __esm({
       temperature: z.number().optional(),
       maxTokens: z.number().optional()
     });
+    SearchConfigSchema = z.object({
+      provider: z.enum(["brave", "searxng", "tavily", "duckduckgo"]),
+      apiKey: z.string().optional(),
+      baseUrl: z.string().optional()
+    });
+    EmailConfigSchema = z.object({
+      imap: z.object({
+        host: z.string(),
+        port: z.number(),
+        secure: z.boolean()
+      }),
+      smtp: z.object({
+        host: z.string(),
+        port: z.number(),
+        secure: z.boolean()
+      }),
+      auth: z.object({
+        user: z.string(),
+        pass: z.string()
+      })
+    });
     AlfredConfigSchema = z.object({
       name: z.string(),
       telegram: TelegramConfigSchema,
@@ -69,7 +90,9 @@ var init_schema = __esm({
       llm: LLMProviderConfigSchema,
       storage: StorageConfigSchema,
       logger: LoggerConfigSchema,
-      security: SecurityConfigSchema
+      security: SecurityConfigSchema,
+      search: SearchConfigSchema.optional(),
+      email: EmailConfigSchema.optional()
     });
   }
 });
@@ -184,7 +207,12 @@ var init_loader = __esm({
       ALFRED_LLM_BASE_URL: ["llm", "baseUrl"],
       ALFRED_STORAGE_PATH: ["storage", "path"],
       ALFRED_LOG_LEVEL: ["logger", "level"],
-      ALFRED_OWNER_USER_ID: ["security", "ownerUserId"]
+      ALFRED_OWNER_USER_ID: ["security", "ownerUserId"],
+      ALFRED_SEARCH_PROVIDER: ["search", "provider"],
+      ALFRED_SEARCH_API_KEY: ["search", "apiKey"],
+      ALFRED_SEARCH_BASE_URL: ["search", "baseUrl"],
+      ALFRED_EMAIL_USER: ["email", "auth", "user"],
+      ALFRED_EMAIL_PASS: ["email", "auth", "pass"]
     };
     ConfigLoader = class {
       loadConfig(configPath) {
@@ -255,6 +283,131 @@ var init_dist2 = __esm({
   }
 });
 
+// packages/storage/dist/migrations/migrator.js
+var Migrator;
+var init_migrator = __esm({
+  "packages/storage/dist/migrations/migrator.js"() {
+    "use strict";
+    Migrator = class {
+      db;
+      constructor(db) {
+        this.db = db;
+        this.ensureMigrationsTable();
+      }
+      ensureMigrationsTable() {
+        this.db.exec(`
+      CREATE TABLE IF NOT EXISTS _migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT,
+        applied_at TEXT NOT NULL
+      )
+    `);
+      }
+      /** Get current schema version */
+      getCurrentVersion() {
+        const row = this.db.prepare("SELECT MAX(version) as version FROM _migrations").get();
+        return row?.version ?? 0;
+      }
+      /** Run all pending migrations */
+      migrate(migrations) {
+        const sorted = [...migrations].sort((a, b) => a.version - b.version);
+        const currentVersion = this.getCurrentVersion();
+        for (const migration of sorted) {
+          if (migration.version <= currentVersion) {
+            continue;
+          }
+          const run = this.db.transaction(() => {
+            migration.up(this.db);
+            this.db.prepare("INSERT INTO _migrations (version, description, applied_at) VALUES (?, ?, ?)").run(migration.version, migration.description, (/* @__PURE__ */ new Date()).toISOString());
+          });
+          run();
+        }
+      }
+      /** Get list of applied migrations */
+      getAppliedMigrations() {
+        const rows = this.db.prepare("SELECT version, applied_at FROM _migrations ORDER BY version ASC").all();
+        return rows.map((row) => ({
+          version: row.version,
+          appliedAt: row.applied_at
+        }));
+      }
+    };
+  }
+});
+
+// packages/storage/dist/migrations/index.js
+var MIGRATIONS;
+var init_migrations = __esm({
+  "packages/storage/dist/migrations/index.js"() {
+    "use strict";
+    init_migrator();
+    MIGRATIONS = [
+      {
+        version: 1,
+        description: "Initial schema \u2014 conversations, messages, users, audit_log",
+        up(_db) {
+        }
+      },
+      {
+        version: 2,
+        description: "Add plugin_skills table for tracking loaded external plugins",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS plugin_skills (
+          name TEXT PRIMARY KEY,
+          file_path TEXT NOT NULL,
+          version TEXT NOT NULL,
+          loaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+          enabled INTEGER NOT NULL DEFAULT 1
+        )
+      `);
+        }
+      },
+      {
+        version: 3,
+        description: "Add memories and reminders tables",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS memories (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          category TEXT NOT NULL DEFAULT 'general',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(user_id, key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memories_user
+          ON memories(user_id, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memories_user_category
+          ON memories(user_id, category);
+
+        CREATE TABLE IF NOT EXISTS reminders (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          trigger_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          fired INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_reminders_due
+          ON reminders(fired, trigger_at);
+
+        CREATE INDEX IF NOT EXISTS idx_reminders_user
+          ON reminders(user_id, fired);
+      `);
+        }
+      }
+    ];
+  }
+});
+
 // packages/storage/dist/database.js
 import BetterSqlite3 from "better-sqlite3";
 import fs2 from "node:fs";
@@ -263,6 +416,8 @@ var Database;
 var init_database = __esm({
   "packages/storage/dist/database.js"() {
     "use strict";
+    init_migrator();
+    init_migrations();
     Database = class {
       db;
       constructor(dbPath) {
@@ -271,6 +426,7 @@ var init_database = __esm({
         this.db = new BetterSqlite3(dbPath);
         this.db.pragma("journal_mode = WAL");
         this.initTables();
+        this.runMigrations();
       }
       initTables() {
         this.db.exec(`
@@ -324,6 +480,10 @@ var init_database = __esm({
       CREATE INDEX IF NOT EXISTS idx_users_platform
         ON users(platform, platform_user_id);
     `);
+      }
+      runMigrations() {
+        const migrator = new Migrator(this.db);
+        migrator.migrate(MIGRATIONS);
       }
       getDb() {
         return this.db;
@@ -630,21 +790,6 @@ var init_memory_repository = __esm({
   }
 });
 
-// packages/storage/dist/migrations/migrator.js
-var init_migrator = __esm({
-  "packages/storage/dist/migrations/migrator.js"() {
-    "use strict";
-  }
-});
-
-// packages/storage/dist/migrations/index.js
-var init_migrations = __esm({
-  "packages/storage/dist/migrations/index.js"() {
-    "use strict";
-    init_migrator();
-  }
-});
-
 // packages/storage/dist/repositories/reminder-repository.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 var ReminderRepository;
@@ -721,14 +866,55 @@ var init_dist3 = __esm({
 });
 
 // packages/llm/dist/provider.js
-var LLMProvider;
+function lookupContextWindow(model) {
+  if (KNOWN_CONTEXT_WINDOWS[model])
+    return KNOWN_CONTEXT_WINDOWS[model];
+  for (const [key, value] of Object.entries(KNOWN_CONTEXT_WINDOWS)) {
+    if (model.startsWith(key))
+      return value;
+  }
+  return void 0;
+}
+var KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, LLMProvider;
 var init_provider = __esm({
   "packages/llm/dist/provider.js"() {
     "use strict";
+    KNOWN_CONTEXT_WINDOWS = {
+      // Anthropic
+      "claude-opus-4-20250514": { maxInputTokens: 2e5, maxOutputTokens: 32e3 },
+      "claude-sonnet-4-20250514": { maxInputTokens: 2e5, maxOutputTokens: 16e3 },
+      "claude-haiku-3-5-20241022": { maxInputTokens: 2e5, maxOutputTokens: 8192 },
+      // OpenAI
+      "gpt-4o": { maxInputTokens: 128e3, maxOutputTokens: 16384 },
+      "gpt-4o-mini": { maxInputTokens: 128e3, maxOutputTokens: 16384 },
+      "gpt-4-turbo": { maxInputTokens: 128e3, maxOutputTokens: 4096 },
+      "gpt-4": { maxInputTokens: 8192, maxOutputTokens: 4096 },
+      "gpt-3.5-turbo": { maxInputTokens: 16384, maxOutputTokens: 4096 },
+      "o1": { maxInputTokens: 2e5, maxOutputTokens: 1e5 },
+      "o1-mini": { maxInputTokens: 128e3, maxOutputTokens: 65536 },
+      "o3-mini": { maxInputTokens: 2e5, maxOutputTokens: 1e5 },
+      // Common Ollama models
+      "llama3.2": { maxInputTokens: 128e3, maxOutputTokens: 4096 },
+      "llama3.1": { maxInputTokens: 128e3, maxOutputTokens: 4096 },
+      "llama3": { maxInputTokens: 8192, maxOutputTokens: 4096 },
+      "mistral": { maxInputTokens: 32e3, maxOutputTokens: 4096 },
+      "mistral-small": { maxInputTokens: 32e3, maxOutputTokens: 4096 },
+      "mixtral": { maxInputTokens: 32e3, maxOutputTokens: 4096 },
+      "gemma2": { maxInputTokens: 8192, maxOutputTokens: 4096 },
+      "qwen2.5": { maxInputTokens: 128e3, maxOutputTokens: 4096 },
+      "phi3": { maxInputTokens: 128e3, maxOutputTokens: 4096 },
+      "deepseek-r1": { maxInputTokens: 128e3, maxOutputTokens: 8192 },
+      "command-r": { maxInputTokens: 128e3, maxOutputTokens: 4096 }
+    };
+    DEFAULT_CONTEXT_WINDOW = { maxInputTokens: 8192, maxOutputTokens: 4096 };
     LLMProvider = class {
       config;
+      contextWindow = DEFAULT_CONTEXT_WINDOW;
       constructor(config) {
         this.config = config;
+      }
+      getContextWindow() {
+        return this.contextWindow;
       }
     };
   }
@@ -748,6 +934,9 @@ var init_anthropic = __esm({
       }
       async initialize() {
         this.client = new Anthropic({ apiKey: this.config.apiKey });
+        const cw = lookupContextWindow(this.config.model);
+        if (cw)
+          this.contextWindow = cw;
       }
       async complete(request) {
         const messages = this.mapMessages(request.messages);
@@ -886,6 +1075,9 @@ var init_openai = __esm({
           apiKey: this.config.apiKey,
           baseURL: this.config.baseUrl
         });
+        const cw = lookupContextWindow(this.config.model);
+        if (cw)
+          this.contextWindow = cw;
       }
       async complete(request) {
         const messages = this.mapMessages(request.messages, request.system);
@@ -1132,6 +1324,34 @@ var init_ollama = __esm({
         const raw = this.config.baseUrl ?? "http://localhost:11434";
         this.baseUrl = raw.replace(/\/v1\/?$/, "").replace(/\/+$/, "");
         this.apiKey = this.config.apiKey ?? "";
+        const cw = lookupContextWindow(this.config.model);
+        if (cw) {
+          this.contextWindow = cw;
+        } else {
+          await this.fetchModelContextWindow();
+        }
+      }
+      async fetchModelContextWindow() {
+        try {
+          const res = await fetch(`${this.baseUrl}/api/show`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({ name: this.config.model })
+          });
+          if (!res.ok)
+            return;
+          const data = await res.json();
+          const info = data.model_info ?? {};
+          const ctxKey = Object.keys(info).find((k) => k.includes("context_length") || k === "num_ctx");
+          const ctxLen = ctxKey ? Number(info[ctxKey]) : 0;
+          if (ctxLen > 0) {
+            this.contextWindow = {
+              maxInputTokens: ctxLen,
+              maxOutputTokens: Math.min(ctxLen, 4096)
+            };
+          }
+        } catch {
+        }
       }
       getHeaders() {
         const headers = { "Content-Type": "application/json" };
@@ -1414,6 +1634,29 @@ var init_provider_factory = __esm({
 });
 
 // packages/llm/dist/prompt-builder.js
+function estimateTokens(text) {
+  return Math.ceil(text.length / 3.5);
+}
+function estimateMessageTokens(msg) {
+  if (typeof msg.content === "string") {
+    return estimateTokens(msg.content) + 4;
+  }
+  let tokens = 4;
+  for (const block of msg.content) {
+    switch (block.type) {
+      case "text":
+        tokens += estimateTokens(block.text);
+        break;
+      case "tool_use":
+        tokens += estimateTokens(block.name) + estimateTokens(JSON.stringify(block.input));
+        break;
+      case "tool_result":
+        tokens += estimateTokens(block.content);
+        break;
+    }
+  }
+  return tokens;
+}
 var PromptBuilder;
 var init_prompt_builder = __esm({
   "packages/llm/dist/prompt-builder.js"() {
@@ -2072,31 +2315,212 @@ var init_web_search = __esm({
     "use strict";
     init_skill();
     WebSearchSkill = class extends Skill {
+      config;
       metadata = {
         name: "web_search",
-        description: "Search the web (placeholder \u2014 returns mock results)",
+        description: "Search the web for current information",
         riskLevel: "read",
-        version: "0.1.0",
+        version: "1.1.0",
         inputSchema: {
           type: "object",
           properties: {
             query: {
               type: "string",
-              description: "Search query"
+              description: "The search query"
+            },
+            count: {
+              type: "number",
+              description: "Number of results to return (default: 5, max: 10)"
             }
           },
           required: ["query"]
         }
       };
+      constructor(config) {
+        super();
+        this.config = config;
+      }
       async execute(input2, _context) {
         const query = input2.query;
-        return {
-          success: true,
-          data: {
-            note: "Web search is not yet connected to a search API"
-          },
-          display: `Web search for "${query}" is not yet implemented. This skill will be connected to a search API in a future update.`
-        };
+        const count = Math.min(Math.max(1, input2.count || 5), 10);
+        if (!query || typeof query !== "string") {
+          return { success: false, error: 'Invalid input: "query" must be a non-empty string' };
+        }
+        if (!this.config) {
+          return {
+            success: false,
+            error: "Web search is not configured. Run `alfred setup` to configure a search provider."
+          };
+        }
+        const needsKey = this.config.provider === "brave" || this.config.provider === "tavily";
+        if (needsKey && !this.config.apiKey) {
+          return {
+            success: false,
+            error: `Web search requires an API key for ${this.config.provider}. Run \`alfred setup\` to configure it.`
+          };
+        }
+        try {
+          let results;
+          switch (this.config.provider) {
+            case "brave":
+              results = await this.searchBrave(query, count);
+              break;
+            case "searxng":
+              results = await this.searchSearXNG(query, count);
+              break;
+            case "tavily":
+              results = await this.searchTavily(query, count);
+              break;
+            case "duckduckgo":
+              results = await this.searchDuckDuckGo(query, count);
+              break;
+            default:
+              return { success: false, error: `Unknown search provider: ${this.config.provider}` };
+          }
+          if (results.length === 0) {
+            return {
+              success: true,
+              data: { results: [] },
+              display: `No results found for "${query}".`
+            };
+          }
+          const display = results.map((r, i) => `${i + 1}. **${r.title}**
+   ${r.url}
+   ${r.snippet}`).join("\n\n");
+          return {
+            success: true,
+            data: { query, results },
+            display: `Search results for "${query}":
+
+${display}`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Search failed: ${msg}` };
+        }
+      }
+      // ── Brave Search ──────────────────────────────────────────────
+      async searchBrave(query, count) {
+        const url = new URL("https://api.search.brave.com/res/v1/web/search");
+        url.searchParams.set("q", query);
+        url.searchParams.set("count", String(count));
+        const response = await fetch(url.toString(), {
+          headers: {
+            "Accept": "application/json",
+            "Accept-Encoding": "gzip",
+            "X-Subscription-Token": this.config.apiKey
+          }
+        });
+        if (!response.ok) {
+          throw new Error(`Brave Search API returned ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return (data.web?.results ?? []).slice(0, count).map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.description
+        }));
+      }
+      // ── SearXNG ───────────────────────────────────────────────────
+      async searchSearXNG(query, count) {
+        const base = (this.config.baseUrl ?? "http://localhost:8080").replace(/\/+$/, "");
+        const url = new URL(`${base}/search`);
+        url.searchParams.set("q", query);
+        url.searchParams.set("format", "json");
+        url.searchParams.set("pageno", "1");
+        const response = await fetch(url.toString(), {
+          headers: { "Accept": "application/json" }
+        });
+        if (!response.ok) {
+          throw new Error(`SearXNG returned ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return (data.results ?? []).slice(0, count).map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.content
+        }));
+      }
+      // ── Tavily ────────────────────────────────────────────────────
+      async searchTavily(query, count) {
+        const response = await fetch("https://api.tavily.com/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            api_key: this.config.apiKey,
+            query,
+            max_results: count,
+            include_answer: false
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`Tavily API returned ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        return (data.results ?? []).slice(0, count).map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.content
+        }));
+      }
+      // ── DuckDuckGo (HTML scraping, no API key) ────────────────────
+      async searchDuckDuckGo(query, count) {
+        const url = new URL("https://html.duckduckgo.com/html/");
+        url.searchParams.set("q", query);
+        const response = await fetch(url.toString(), {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (compatible; Alfred/1.0)"
+          }
+        });
+        if (!response.ok) {
+          throw new Error(`DuckDuckGo returned ${response.status}: ${response.statusText}`);
+        }
+        const html = await response.text();
+        return this.parseDuckDuckGoHtml(html, count);
+      }
+      parseDuckDuckGoHtml(html, count) {
+        const results = [];
+        const linkRegex = /<a[^>]+class="result__a"[^>]+href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
+        const snippetRegex = /<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+        const links = [];
+        let match;
+        while ((match = linkRegex.exec(html)) !== null) {
+          const rawUrl = match[1];
+          const title = this.stripHtml(match[2]).trim();
+          const actualUrl = this.extractDdgUrl(rawUrl);
+          if (title && actualUrl) {
+            links.push({ url: actualUrl, title });
+          }
+        }
+        const snippets = [];
+        while ((match = snippetRegex.exec(html)) !== null) {
+          snippets.push(this.stripHtml(match[1]).trim());
+        }
+        for (let i = 0; i < Math.min(links.length, count); i++) {
+          results.push({
+            title: links[i].title,
+            url: links[i].url,
+            snippet: snippets[i] ?? ""
+          });
+        }
+        return results;
+      }
+      extractDdgUrl(rawUrl) {
+        try {
+          if (rawUrl.includes("uddg=")) {
+            const parsed = new URL(rawUrl, "https://duckduckgo.com");
+            const uddg = parsed.searchParams.get("uddg");
+            if (uddg)
+              return decodeURIComponent(uddg);
+          }
+        } catch {
+        }
+        if (rawUrl.startsWith("http"))
+          return rawUrl;
+        return "";
+      }
+      stripHtml(html) {
+        return html.replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&nbsp;/g, " ").replace(/\s+/g, " ");
       }
     };
   }
@@ -3026,6 +3450,328 @@ Additional context: ${additionalContext}`;
   }
 });
 
+// packages/skills/dist/built-in/email.js
+var EmailSkill;
+var init_email = __esm({
+  "packages/skills/dist/built-in/email.js"() {
+    "use strict";
+    init_skill();
+    EmailSkill = class extends Skill {
+      config;
+      metadata = {
+        name: "email",
+        description: "Read, search, and send emails via IMAP/SMTP",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["inbox", "read", "search", "send"],
+              description: "The email action to perform"
+            },
+            count: {
+              type: "number",
+              description: "Number of emails to fetch (for inbox, default: 10)"
+            },
+            messageId: {
+              type: "string",
+              description: "Message sequence number to read (for read action)"
+            },
+            query: {
+              type: "string",
+              description: "Search query (for search action)"
+            },
+            to: {
+              type: "string",
+              description: "Recipient email address (for send action)"
+            },
+            subject: {
+              type: "string",
+              description: "Email subject (for send action)"
+            },
+            body: {
+              type: "string",
+              description: "Email body text (for send action)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(config) {
+        super();
+        this.config = config;
+      }
+      async execute(input2, _context) {
+        if (!this.config) {
+          return {
+            success: false,
+            error: "Email is not configured. Run `alfred setup` to configure email access."
+          };
+        }
+        const action = input2.action;
+        try {
+          switch (action) {
+            case "inbox":
+              return await this.fetchInbox(input2.count);
+            case "read":
+              return await this.readMessage(input2.messageId);
+            case "search":
+              return await this.searchMessages(input2.query, input2.count);
+            case "send":
+              return await this.sendMessage(input2.to, input2.subject, input2.body);
+            default:
+              return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send` };
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Email error: ${msg}` };
+        }
+      }
+      // ── IMAP: Fetch inbox ──────────────────────────────────────────
+      async fetchInbox(count) {
+        const limit = Math.min(Math.max(1, count ?? 10), 50);
+        const { ImapFlow } = await import("imapflow");
+        const client = new ImapFlow({
+          host: this.config.imap.host,
+          port: this.config.imap.port,
+          secure: this.config.imap.secure,
+          auth: this.config.auth,
+          logger: false
+        });
+        try {
+          await client.connect();
+          const lock = await client.getMailboxLock("INBOX");
+          try {
+            const messages = [];
+            const mb = client.mailbox;
+            const totalMessages = mb && typeof mb === "object" ? mb.exists ?? 0 : 0;
+            if (totalMessages === 0) {
+              return { success: true, data: { messages: [] }, display: "Inbox is empty." };
+            }
+            const startSeq = Math.max(1, totalMessages - limit + 1);
+            const range = `${startSeq}:*`;
+            for await (const msg of client.fetch(range, {
+              envelope: true,
+              flags: true
+            })) {
+              const from = msg.envelope?.from?.[0];
+              const fromStr = from ? from.name ? `${from.name} <${from.address}>` : from.address ?? "unknown" : "unknown";
+              messages.push({
+                seq: msg.seq,
+                from: fromStr,
+                subject: msg.envelope?.subject ?? "(no subject)",
+                date: msg.envelope?.date?.toISOString() ?? "",
+                seen: msg.flags?.has("\\Seen") ?? false
+              });
+            }
+            messages.reverse();
+            const display = messages.length === 0 ? "No messages found." : messages.map((m, i) => {
+              const unread = m.seen ? "" : " [UNREAD]";
+              return `${i + 1}. [#${m.seq}]${unread} ${m.subject}
+   From: ${m.from}
+   Date: ${m.date}`;
+            }).join("\n\n");
+            const unreadCount = messages.filter((m) => !m.seen).length;
+            return {
+              success: true,
+              data: { messages, totalMessages, unreadCount },
+              display: `Inbox (${totalMessages} total, ${unreadCount} unread):
+
+${display}`
+            };
+          } finally {
+            lock.release();
+          }
+        } finally {
+          await client.logout();
+        }
+      }
+      // ── IMAP: Read single message ──────────────────────────────────
+      async readMessage(messageId) {
+        if (!messageId) {
+          return { success: false, error: "messageId is required. Use the sequence number from inbox." };
+        }
+        const seq = parseInt(messageId, 10);
+        if (isNaN(seq) || seq < 1) {
+          return { success: false, error: "messageId must be a positive number (sequence number)." };
+        }
+        const { ImapFlow } = await import("imapflow");
+        const client = new ImapFlow({
+          host: this.config.imap.host,
+          port: this.config.imap.port,
+          secure: this.config.imap.secure,
+          auth: this.config.auth,
+          logger: false
+        });
+        try {
+          await client.connect();
+          const lock = await client.getMailboxLock("INBOX");
+          try {
+            const msg = await client.fetchOne(String(seq), {
+              envelope: true,
+              source: true
+            });
+            if (!msg) {
+              return { success: false, error: `Message #${seq} not found.` };
+            }
+            const from = msg.envelope?.from?.[0];
+            const fromStr = from ? from.name ? `${from.name} <${from.address}>` : from.address ?? "unknown" : "unknown";
+            const to = msg.envelope?.to?.map((t) => t.name ? `${t.name} <${t.address}>` : t.address ?? "").join(", ") ?? "";
+            const rawSource = msg.source?.toString() ?? "";
+            const body = this.extractTextBody(rawSource);
+            return {
+              success: true,
+              data: {
+                seq,
+                from: fromStr,
+                to,
+                subject: msg.envelope?.subject ?? "(no subject)",
+                date: msg.envelope?.date?.toISOString() ?? "",
+                body
+              },
+              display: [
+                `From: ${fromStr}`,
+                `To: ${to}`,
+                `Subject: ${msg.envelope?.subject ?? "(no subject)"}`,
+                `Date: ${msg.envelope?.date?.toISOString() ?? ""}`,
+                "",
+                body.slice(0, 3e3) + (body.length > 3e3 ? "\n\n... (truncated)" : "")
+              ].join("\n")
+            };
+          } finally {
+            lock.release();
+          }
+        } finally {
+          await client.logout();
+        }
+      }
+      // ── IMAP: Search messages ──────────────────────────────────────
+      async searchMessages(query, count) {
+        if (!query) {
+          return { success: false, error: "query is required for search." };
+        }
+        const limit = Math.min(Math.max(1, count ?? 10), 50);
+        const { ImapFlow } = await import("imapflow");
+        const client = new ImapFlow({
+          host: this.config.imap.host,
+          port: this.config.imap.port,
+          secure: this.config.imap.secure,
+          auth: this.config.auth,
+          logger: false
+        });
+        try {
+          await client.connect();
+          const lock = await client.getMailboxLock("INBOX");
+          try {
+            const rawResult = await client.search({
+              or: [
+                { subject: query },
+                { from: query },
+                { body: query }
+              ]
+            });
+            const searchResult = Array.isArray(rawResult) ? rawResult : [];
+            if (searchResult.length === 0) {
+              return { success: true, data: { results: [] }, display: `No emails found for "${query}".` };
+            }
+            const seqNums = searchResult.slice(-limit);
+            const messages = [];
+            for await (const msg of client.fetch(seqNums, { envelope: true })) {
+              const from = msg.envelope?.from?.[0];
+              const fromStr = from ? from.name ? `${from.name} <${from.address}>` : from.address ?? "unknown" : "unknown";
+              messages.push({
+                seq: msg.seq,
+                from: fromStr,
+                subject: msg.envelope?.subject ?? "(no subject)",
+                date: msg.envelope?.date?.toISOString() ?? ""
+              });
+            }
+            messages.reverse();
+            const display = messages.map((m, i) => `${i + 1}. [#${m.seq}] ${m.subject}
+   From: ${m.from}
+   Date: ${m.date}`).join("\n\n");
+            return {
+              success: true,
+              data: { query, results: messages, totalMatches: seqNums.length },
+              display: `Search results for "${query}" (${seqNums.length} matches):
+
+${display}`
+            };
+          } finally {
+            lock.release();
+          }
+        } finally {
+          await client.logout();
+        }
+      }
+      // ── SMTP: Send message ─────────────────────────────────────────
+      async sendMessage(to, subject, body) {
+        if (!to)
+          return { success: false, error: '"to" (recipient email) is required.' };
+        if (!subject)
+          return { success: false, error: '"subject" is required.' };
+        if (!body)
+          return { success: false, error: '"body" is required.' };
+        const nodemailer = await import("nodemailer");
+        const transport = nodemailer.createTransport({
+          host: this.config.smtp.host,
+          port: this.config.smtp.port,
+          secure: this.config.smtp.secure,
+          auth: this.config.auth
+        });
+        const info = await transport.sendMail({
+          from: this.config.auth.user,
+          to,
+          subject,
+          text: body
+        });
+        return {
+          success: true,
+          data: { messageId: info.messageId, to, subject },
+          display: `Email sent to ${to}
+Subject: ${subject}
+Message ID: ${info.messageId}`
+        };
+      }
+      // ── Helper: extract text body from raw email source ────────────
+      extractTextBody(rawSource) {
+        const parts = rawSource.split(/\r?\n\r?\n/);
+        if (parts.length < 2)
+          return rawSource;
+        const headers = parts[0].toLowerCase();
+        if (!headers.includes("multipart")) {
+          return this.decodeBody(parts.slice(1).join("\n\n"));
+        }
+        const boundaryMatch = headers.match(/boundary="?([^"\s;]+)"?/i) ?? rawSource.match(/boundary="?([^"\s;]+)"?/i);
+        if (!boundaryMatch) {
+          return parts.slice(1).join("\n\n").slice(0, 5e3);
+        }
+        const boundary = boundaryMatch[1];
+        const sections = rawSource.split(`--${boundary}`);
+        for (const section of sections) {
+          const sectionLower = section.toLowerCase();
+          if (sectionLower.includes("content-type: text/plain") || sectionLower.includes("content-type:text/plain")) {
+            const bodyStart = section.indexOf("\n\n");
+            if (bodyStart >= 0) {
+              return this.decodeBody(section.slice(bodyStart + 2));
+            }
+            const bodyStartCr = section.indexOf("\r\n\r\n");
+            if (bodyStartCr >= 0) {
+              return this.decodeBody(section.slice(bodyStartCr + 4));
+            }
+          }
+        }
+        return this.decodeBody(parts.slice(1).join("\n\n").slice(0, 5e3));
+      }
+      decodeBody(body) {
+        return body.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))).trim();
+      }
+    };
+  }
+});
+
 // packages/skills/dist/index.js
 var init_dist6 = __esm({
   "packages/skills/dist/index.js"() {
@@ -3045,6 +3791,7 @@ var init_dist6 = __esm({
     init_shell();
     init_memory();
     init_delegate();
+    init_email();
   }
 });
 
@@ -3077,12 +3824,13 @@ var init_conversation_manager = __esm({
 });
 
 // packages/core/dist/message-pipeline.js
-var MAX_TOOL_ITERATIONS, MessagePipeline;
+var MAX_TOOL_ITERATIONS, TOKEN_BUDGET_RATIO, MessagePipeline;
 var init_message_pipeline = __esm({
   "packages/core/dist/message-pipeline.js"() {
     "use strict";
     init_dist4();
     MAX_TOOL_ITERATIONS = 10;
+    TOKEN_BUDGET_RATIO = 0.85;
     MessagePipeline = class {
       llm;
       conversationManager;
@@ -3110,7 +3858,7 @@ var init_message_pipeline = __esm({
         try {
           const user = this.users.findOrCreate(message.platform, message.userId, message.userName, message.displayName);
           const conversation = this.conversationManager.getOrCreateConversation(message.platform, message.chatId, user.id);
-          const history = this.conversationManager.getHistory(conversation.id);
+          const history = this.conversationManager.getHistory(conversation.id, 50);
           this.conversationManager.addMessage(conversation.id, "user", message.text);
           let memories;
           if (this.memoryRepo) {
@@ -3120,8 +3868,9 @@ var init_message_pipeline = __esm({
             }
           }
           const system = this.promptBuilder.buildSystemPrompt(memories);
-          const messages = this.promptBuilder.buildMessages(history);
-          messages.push({ role: "user", content: message.text });
+          const allMessages = this.promptBuilder.buildMessages(history);
+          allMessages.push({ role: "user", content: message.text });
+          const messages = this.trimToContextWindow(system, allMessages);
           const tools = this.skillRegistry ? this.promptBuilder.buildTools(this.skillRegistry.getAll().map((s) => s.metadata)) : void 0;
           let response;
           let iteration = 0;
@@ -3218,6 +3967,43 @@ var init_message_pipeline = __esm({
           const msg = error instanceof Error ? error.message : String(error);
           return { content: `Skill execution failed: ${msg}`, isError: true };
         }
+      }
+      /**
+       * Trim messages to fit within the LLM's context window.
+       * Keeps the system prompt, the latest user message, and as many
+       * recent history messages as possible. Drops oldest messages first.
+       * Injects a summary note when messages are trimmed.
+       */
+      trimToContextWindow(system, messages) {
+        const contextWindow = this.llm.getContextWindow();
+        const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
+        const systemTokens = estimateTokens(system);
+        const latestMsg = messages[messages.length - 1];
+        const latestTokens = estimateMessageTokens(latestMsg);
+        const reservedTokens = systemTokens + latestTokens + 200;
+        let availableTokens = maxInputTokens - reservedTokens;
+        if (availableTokens <= 0) {
+          this.logger.warn({ maxInputTokens, systemTokens, latestTokens }, "Context window very tight, sending only latest message");
+          return [latestMsg];
+        }
+        const keptMessages = [];
+        for (let i = messages.length - 2; i >= 0; i--) {
+          const msgTokens = estimateMessageTokens(messages[i]);
+          if (msgTokens > availableTokens)
+            break;
+          availableTokens -= msgTokens;
+          keptMessages.unshift(messages[i]);
+        }
+        const trimmedCount = messages.length - 1 - keptMessages.length;
+        if (trimmedCount > 0) {
+          this.logger.info({ trimmedCount, totalMessages: messages.length, maxInputTokens }, "Trimmed conversation history to fit context window");
+          keptMessages.unshift({
+            role: "user",
+            content: `[System note: ${trimmedCount} older message(s) were omitted to fit the context window. The conversation continues from the most recent messages.]`
+          });
+        }
+        keptMessages.push(latestMsg);
+        return keptMessages;
       }
     };
   }
@@ -3810,7 +4596,11 @@ var init_alfred = __esm({
         const skillRegistry = new SkillRegistry();
         skillRegistry.register(new CalculatorSkill());
         skillRegistry.register(new SystemInfoSkill());
-        skillRegistry.register(new WebSearchSkill());
+        skillRegistry.register(new WebSearchSkill(this.config.search ? {
+          provider: this.config.search.provider,
+          apiKey: this.config.search.apiKey,
+          baseUrl: this.config.search.baseUrl
+        } : void 0));
         skillRegistry.register(new ReminderSkill(reminderRepo));
         skillRegistry.register(new NoteSkill());
         skillRegistry.register(new SummarizeSkill());
@@ -3819,6 +4609,11 @@ var init_alfred = __esm({
         skillRegistry.register(new ShellSkill());
         skillRegistry.register(new MemorySkill(memoryRepo));
         skillRegistry.register(new DelegateSkill(llmProvider));
+        skillRegistry.register(new EmailSkill(this.config.email ? {
+          imap: this.config.email.imap,
+          smtp: this.config.email.smtp,
+          auth: this.config.email.auth
+        } : void 0));
         this.logger.info({ skills: skillRegistry.getAll().map((s) => s.metadata.name) }, "Skills registered");
         const skillSandbox = new SkillSandbox(this.logger.child({ component: "sandbox" }));
         const conversationManager = new ConversationManager(conversationRepo);
@@ -4024,6 +4819,9 @@ function maskKey(key) {
 function loadExistingConfig(projectRoot) {
   const config = {};
   const env = {};
+  let shellEnabled = false;
+  let writeInGroups = false;
+  let rateLimit = 30;
   const configPath = path4.join(projectRoot, "config", "default.yml");
   if (fs4.existsSync(configPath)) {
     try {
@@ -4050,7 +4848,25 @@ function loadExistingConfig(projectRoot) {
     } catch {
     }
   }
-  return { config, env };
+  const rulesPath = path4.join(projectRoot, "config", "rules", "default-rules.yml");
+  if (fs4.existsSync(rulesPath)) {
+    try {
+      const rulesContent = yaml2.load(fs4.readFileSync(rulesPath, "utf-8"));
+      if (rulesContent?.rules) {
+        shellEnabled = rulesContent.rules.some((r) => r.id === "allow-owner-admin" && r.effect === "allow");
+        const writeDmRule = rulesContent.rules.find((r) => r.id === "allow-write-for-dm" || r.id === "allow-write-all");
+        if (writeDmRule?.id === "allow-write-all") {
+          writeInGroups = true;
+        }
+        const rlRule = rulesContent.rules.find((r) => r.id === "rate-limit-write");
+        if (rlRule?.rateLimit?.maxInvocations) {
+          rateLimit = rlRule.rateLimit.maxInvocations;
+        }
+      }
+    } catch {
+    }
+  }
+  return { config, env, shellEnabled, writeInGroups, rateLimit };
 }
 async function setupCommand() {
   const rl = createInterface({ input, output });
@@ -4094,7 +4910,7 @@ ${bold("Which LLM provider would you like to use?")}`);
     }
     let baseUrl = provider.baseUrl ?? "";
     if (provider.name === "ollama") {
-      const existingUrl = existing.config.llm?.baseUrl ?? "http://localhost:11434";
+      const existingUrl = existing.config.llm?.baseUrl ?? existing.env["ALFRED_LLM_BASE_URL"] ?? "http://localhost:11434";
       console.log("");
       baseUrl = await askWithDefault(rl, "Ollama URL (use a remote address if Ollama runs on another machine)", existingUrl.replace(/\/v1\/?$/, "").replace(/\/+$/, ""));
       baseUrl = baseUrl.replace(/\/+$/, "");
@@ -4103,6 +4919,58 @@ ${bold("Which LLM provider would you like to use?")}`);
     const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log("");
     const model = await askWithDefault(rl, "Which model?", existingModel);
+    const searchProviders = ["brave", "tavily", "duckduckgo", "searxng"];
+    const existingSearchProvider = existing.config.search?.provider ?? existing.env["ALFRED_SEARCH_PROVIDER"] ?? "";
+    const existingSearchIdx = searchProviders.indexOf(existingSearchProvider);
+    const defaultSearchChoice = existingSearchIdx >= 0 ? existingSearchIdx + 1 : 0;
+    console.log(`
+${bold("Web Search provider (for searching the internet):")}`);
+    const searchLabels = [
+      "Brave Search \u2014 recommended, free tier (2,000/month)",
+      "Tavily \u2014 built for AI agents, free tier (1,000/month)",
+      "DuckDuckGo \u2014 free, no API key needed",
+      "SearXNG \u2014 self-hosted, no API key needed"
+    ];
+    const mark = (i) => existingSearchIdx === i ? ` ${dim("(current)")}` : "";
+    console.log(`  ${cyan("0)")} None (disable web search)${existingSearchIdx === -1 && existingSearchProvider === "" ? ` ${dim("(current)")}` : ""}`);
+    for (let i = 0; i < searchLabels.length; i++) {
+      console.log(`  ${cyan(String(i + 1) + ")")} ${searchLabels[i]}${mark(i)}`);
+    }
+    const searchChoice = await askNumber(rl, "> ", 0, searchProviders.length, defaultSearchChoice);
+    let searchProvider;
+    let searchApiKey = "";
+    let searchBaseUrl = "";
+    if (searchChoice >= 1 && searchChoice <= searchProviders.length) {
+      searchProvider = searchProviders[searchChoice - 1];
+    }
+    if (searchProvider === "brave") {
+      const existingKey = existing.env["ALFRED_SEARCH_API_KEY"] ?? "";
+      if (existingKey) {
+        searchApiKey = await askWithDefault(rl, "  Brave Search API key", existingKey);
+      } else {
+        console.log(`  ${dim("Get your free API key at: https://brave.com/search/api/")}`);
+        searchApiKey = await askRequired(rl, "  Brave Search API key");
+      }
+      console.log(`  ${green(">")} Brave Search: ${dim(maskKey(searchApiKey))}`);
+    } else if (searchProvider === "tavily") {
+      const existingKey = existing.env["ALFRED_SEARCH_API_KEY"] ?? "";
+      if (existingKey) {
+        searchApiKey = await askWithDefault(rl, "  Tavily API key", existingKey);
+      } else {
+        console.log(`  ${dim("Get your free API key at: https://tavily.com/")}`);
+        searchApiKey = await askRequired(rl, "  Tavily API key");
+      }
+      console.log(`  ${green(">")} Tavily: ${dim(maskKey(searchApiKey))}`);
+    } else if (searchProvider === "duckduckgo") {
+      console.log(`  ${green(">")} DuckDuckGo: ${dim("no API key needed")}`);
+    } else if (searchProvider === "searxng") {
+      const existingSearxUrl = existing.config.search?.baseUrl ?? existing.env["ALFRED_SEARCH_BASE_URL"] ?? "http://localhost:8080";
+      searchBaseUrl = await askWithDefault(rl, "  SearXNG URL", existingSearxUrl);
+      searchBaseUrl = searchBaseUrl.replace(/\/+$/, "");
+      console.log(`  ${green(">")} SearXNG: ${dim(searchBaseUrl)}`);
+    } else {
+      console.log(`  ${dim("Web search disabled \u2014 you can configure it later.")}`);
+    }
     const currentlyEnabled = [];
     for (let i = 0; i < PLATFORMS.length; i++) {
       const p = PLATFORMS[i];
@@ -4175,8 +5043,73 @@ ${bold(platform.label + " configuration:")}`);
       }
       platformCredentials[platform.configKey] = creds;
     }
+    const existingEmailUser = existing.config.email?.auth?.user ?? existing.env["ALFRED_EMAIL_USER"] ?? "";
+    const hasEmail = !!existingEmailUser;
+    const emailDefault = hasEmail ? "Y/n" : "y/N";
+    console.log(`
+${bold("Email access (read & send emails via IMAP/SMTP)?")}`);
+    console.log(`${dim("Works with Gmail, Outlook, or any IMAP/SMTP provider.")}`);
+    const emailAnswer = (await rl.question(`${YELLOW}> ${RESET}${dim(`[${emailDefault}] `)}`)).trim().toLowerCase();
+    const enableEmail = emailAnswer === "" ? hasEmail : emailAnswer === "y" || emailAnswer === "yes";
+    let emailUser = "";
+    let emailPass = "";
+    let emailImapHost = "";
+    let emailImapPort = 993;
+    let emailSmtpHost = "";
+    let emailSmtpPort = 587;
+    if (enableEmail) {
+      console.log("");
+      emailUser = await askWithDefault(rl, "  Email address", existingEmailUser || "");
+      if (!emailUser) {
+        emailUser = await askRequired(rl, "  Email address");
+      }
+      const existingPass = existing.env["ALFRED_EMAIL_PASS"] ?? "";
+      if (existingPass) {
+        emailPass = await askWithDefault(rl, "  Password / App password", existingPass);
+      } else {
+        console.log(`  ${dim("For Gmail: use an App Password (not your regular password)")}`);
+        console.log(`  ${dim("  \u2192 Google Account \u2192 Security \u2192 2-Step \u2192 App passwords")}`);
+        emailPass = await askRequired(rl, "  Password / App password");
+      }
+      const domain = emailUser.split("@")[1]?.toLowerCase() ?? "";
+      const presets = {
+        "gmail.com": { imap: "imap.gmail.com", smtp: "smtp.gmail.com" },
+        "googlemail.com": { imap: "imap.gmail.com", smtp: "smtp.gmail.com" },
+        "outlook.com": { imap: "outlook.office365.com", smtp: "smtp.office365.com" },
+        "hotmail.com": { imap: "outlook.office365.com", smtp: "smtp.office365.com" },
+        "live.com": { imap: "outlook.office365.com", smtp: "smtp.office365.com" },
+        "yahoo.com": { imap: "imap.mail.yahoo.com", smtp: "smtp.mail.yahoo.com" },
+        "icloud.com": { imap: "imap.mail.me.com", smtp: "smtp.mail.me.com" },
+        "me.com": { imap: "imap.mail.me.com", smtp: "smtp.mail.me.com" },
+        "gmx.de": { imap: "imap.gmx.net", smtp: "mail.gmx.net" },
+        "gmx.net": { imap: "imap.gmx.net", smtp: "mail.gmx.net" },
+        "web.de": { imap: "imap.web.de", smtp: "smtp.web.de" },
+        "posteo.de": { imap: "posteo.de", smtp: "posteo.de" },
+        "mailbox.org": { imap: "imap.mailbox.org", smtp: "smtp.mailbox.org" },
+        "protonmail.com": { imap: "127.0.0.1", smtp: "127.0.0.1" },
+        "proton.me": { imap: "127.0.0.1", smtp: "127.0.0.1" }
+      };
+      const preset = presets[domain];
+      const defaultImap = existing.config.email?.imap?.host ?? preset?.imap ?? `imap.${domain}`;
+      const defaultSmtp = existing.config.email?.smtp?.host ?? preset?.smtp ?? `smtp.${domain}`;
+      const defaultImapPort = existing.config.email?.imap?.port ?? 993;
+      const defaultSmtpPort = existing.config.email?.smtp?.port ?? 587;
+      if (preset) {
+        console.log(`  ${green(">")} Detected ${domain} \u2014 using preset server settings`);
+      }
+      emailImapHost = await askWithDefault(rl, "  IMAP server", defaultImap);
+      const imapPortStr = await askWithDefault(rl, "  IMAP port", String(defaultImapPort));
+      emailImapPort = parseInt(imapPortStr, 10) || 993;
+      emailSmtpHost = await askWithDefault(rl, "  SMTP server", defaultSmtp);
+      const smtpPortStr = await askWithDefault(rl, "  SMTP port", String(defaultSmtpPort));
+      emailSmtpPort = parseInt(smtpPortStr, 10) || 587;
+      console.log(`  ${green(">")} Email: ${dim(emailUser)} via ${dim(emailImapHost)}`);
+    } else {
+      console.log(`  ${dim("Email disabled \u2014 you can configure it later.")}`);
+    }
+    console.log(`
+${bold("Security configuration:")}`);
     const existingOwnerId = existing.config.security?.ownerUserId ?? existing.env["ALFRED_OWNER_USER_ID"] ?? "";
-    console.log("");
     let ownerUserId;
     if (existingOwnerId) {
       ownerUserId = await askWithDefault(rl, "Owner user ID (for elevated permissions)", existingOwnerId);
@@ -4185,6 +5118,45 @@ ${bold(platform.label + " configuration:")}`);
       process.stdout.write(RESET);
       ownerUserId = input2;
     }
+    let enableShell = false;
+    if (ownerUserId) {
+      const shellDefault = existing.shellEnabled ? "Y/n" : "y/N";
+      console.log("");
+      console.log(`  ${bold("Enable shell access (admin commands) for the owner?")}`);
+      console.log(`  ${dim("Allows Alfred to execute shell commands. Only for the owner.")}`);
+      const shellAnswer = (await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${shellDefault}] `)}`)).trim().toLowerCase();
+      if (shellAnswer === "") {
+        enableShell = existing.shellEnabled;
+      } else {
+        enableShell = shellAnswer === "y" || shellAnswer === "yes";
+      }
+      if (enableShell) {
+        console.log(`    ${green(">")} Shell access ${bold("enabled")} for owner ${dim(ownerUserId)}`);
+      } else {
+        console.log(`    ${dim("Shell access disabled.")}`);
+      }
+    }
+    const writeGroupsDefault = existing.writeInGroups ? "Y/n" : "y/N";
+    console.log("");
+    console.log(`  ${bold("Allow write actions (notes, reminders, memory) in group chats?")}`);
+    console.log(`  ${dim("By default, write actions are only allowed in DMs.")}`);
+    const writeGroupsAnswer = (await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${writeGroupsDefault}] `)}`)).trim().toLowerCase();
+    let writeInGroups;
+    if (writeGroupsAnswer === "") {
+      writeInGroups = existing.writeInGroups;
+    } else {
+      writeInGroups = writeGroupsAnswer === "y" || writeGroupsAnswer === "yes";
+    }
+    if (writeInGroups) {
+      console.log(`    ${green(">")} Write actions ${bold("enabled")} in groups`);
+    } else {
+      console.log(`    ${dim("Write actions only in DMs (default).")}`);
+    }
+    const existingRateLimit = existing.rateLimit ?? 30;
+    console.log("");
+    const rateLimitStr = await askWithDefault(rl, "  Rate limit (max write actions per hour per user)", String(existingRateLimit));
+    const rateLimit = Math.max(1, parseInt(rateLimitStr, 10) || 30);
+    console.log(`    ${green(">")} Rate limit: ${bold(String(rateLimit))} per hour`);
     console.log(`
 ${bold("Writing configuration files...")}`);
     const envLines = [
@@ -4208,6 +5180,27 @@ ${bold("Writing configuration files...")}`);
     envLines.push("", "# === Messaging Platforms ===", "");
     for (const [envKey, envVal] of Object.entries(envOverrides)) {
       envLines.push(`${envKey}=${envVal}`);
+    }
+    envLines.push("", "# === Web Search ===", "");
+    if (searchProvider) {
+      envLines.push(`ALFRED_SEARCH_PROVIDER=${searchProvider}`);
+      if (searchApiKey) {
+        envLines.push(`ALFRED_SEARCH_API_KEY=${searchApiKey}`);
+      }
+      if (searchBaseUrl) {
+        envLines.push(`ALFRED_SEARCH_BASE_URL=${searchBaseUrl}`);
+      }
+    } else {
+      envLines.push("# ALFRED_SEARCH_PROVIDER=brave");
+      envLines.push("# ALFRED_SEARCH_API_KEY=");
+    }
+    envLines.push("", "# === Email ===", "");
+    if (enableEmail) {
+      envLines.push(`ALFRED_EMAIL_USER=${emailUser}`);
+      envLines.push(`ALFRED_EMAIL_PASS=${emailPass}`);
+    } else {
+      envLines.push("# ALFRED_EMAIL_USER=");
+      envLines.push("# ALFRED_EMAIL_PASS=");
     }
     envLines.push("", "# === Security ===", "");
     if (ownerUserId) {
@@ -4251,9 +5244,24 @@ ${bold("Writing configuration files...")}`);
       llm: {
         provider: provider.name,
         model,
+        ...baseUrl ? { baseUrl } : {},
         temperature: 0.7,
         maxTokens: 4096
       },
+      ...searchProvider ? {
+        search: {
+          provider: searchProvider,
+          ...searchApiKey ? { apiKey: searchApiKey } : {},
+          ...searchBaseUrl ? { baseUrl: searchBaseUrl } : {}
+        }
+      } : {},
+      ...enableEmail ? {
+        email: {
+          imap: { host: emailImapHost, port: emailImapPort, secure: emailImapPort === 993 },
+          smtp: { host: emailSmtpHost, port: emailSmtpPort, secure: emailSmtpPort === 465 },
+          auth: { user: emailUser, pass: emailPass }
+        }
+      } : {},
       storage: {
         path: "./data/alfred.db"
       },
@@ -4274,6 +5282,92 @@ ${bold("Writing configuration files...")}`);
     const configPath = path4.join(configDir, "default.yml");
     fs4.writeFileSync(configPath, yamlStr, "utf-8");
     console.log(`  ${green("+")} ${dim("config/default.yml")} written`);
+    const rulesDir = path4.join(configDir, "rules");
+    if (!fs4.existsSync(rulesDir)) {
+      fs4.mkdirSync(rulesDir, { recursive: true });
+    }
+    const ownerAdminRule = enableShell && ownerUserId ? `
+  # Allow admin actions (shell, etc.) for the owner only
+  - id: allow-owner-admin
+    effect: allow
+    priority: 50
+    scope: global
+    actions: ["*"]
+    riskLevels: [admin, destructive]
+    conditions:
+      users: ["${ownerUserId}"]
+` : `
+  # Allow admin actions (shell, etc.) for the owner only
+  # Uncomment and set your user ID to enable:
+  # - id: allow-owner-admin
+  #   effect: allow
+  #   priority: 50
+  #   scope: global
+  #   actions: ["*"]
+  #   riskLevels: [admin, destructive]
+  #   conditions:
+  #     users: ["${ownerUserId || "YOUR_USER_ID_HERE"}"]
+`;
+    const writeRule = writeInGroups ? `  # Allow write-level skills everywhere (DMs and groups)
+  - id: allow-write-all
+    effect: allow
+    priority: 200
+    scope: global
+    actions: ["*"]
+    riskLevels: [write]` : `  # Allow write-level skills in DMs only
+  - id: allow-write-for-dm
+    effect: allow
+    priority: 200
+    scope: global
+    actions: ["*"]
+    riskLevels: [write]
+    conditions:
+      chatType: dm`;
+    const rulesYaml = `# Alfred \u2014 Default Security Rules
+# Rules are evaluated in priority order (lower number = higher priority).
+# First matching rule wins.
+
+rules:
+  # Allow all read-level skills (calculator, system_info, web_search) for everyone
+  - id: allow-all-read
+    effect: allow
+    priority: 100
+    scope: global
+    actions: ["*"]
+    riskLevels: [read]
+
+${writeRule}
+
+  # Rate-limit write actions: max ${rateLimit} per hour per user
+  - id: rate-limit-write
+    effect: allow
+    priority: 250
+    scope: user
+    actions: ["*"]
+    riskLevels: [write]
+    rateLimit:
+      maxInvocations: ${rateLimit}
+      windowSeconds: 3600
+${ownerAdminRule}
+  # Deny destructive and admin actions by default
+  - id: deny-destructive
+    effect: deny
+    priority: 500
+    scope: global
+    actions: ["*"]
+    riskLevels: [destructive, admin]
+
+  # Catch-all deny
+  - id: deny-default
+    effect: deny
+    priority: 9999
+    scope: global
+    actions: ["*"]
+    riskLevels: [read, write, destructive, admin]
+`;
+    const rulesPath = path4.join(rulesDir, "default-rules.yml");
+    fs4.writeFileSync(rulesPath, rulesYaml, "utf-8");
+    console.log(`  ${green("+")} ${dim("config/rules/default-rules.yml")} written`);
     const dataDir = path4.join(projectRoot, "data");
     if (!fs4.existsSync(dataDir)) {
       fs4.mkdirSync(dataDir, { recursive: true });
@@ -4294,9 +5388,28 @@ ${bold("Writing configuration files...")}`);
     } else {
       console.log(`  ${bold("Platforms:")}      none (configure later)`);
     }
+    if (searchProvider) {
+      const searchLabelMap = {
+        brave: "Brave Search",
+        tavily: "Tavily",
+        duckduckgo: "DuckDuckGo",
+        searxng: `SearXNG (${searchBaseUrl})`
+      };
+      console.log(`  ${bold("Web search:")}     ${searchLabelMap[searchProvider]}`);
+    } else {
+      console.log(`  ${bold("Web search:")}     ${dim("disabled")}`);
+    }
+    if (enableEmail) {
+      console.log(`  ${bold("Email:")}          ${emailUser} (${emailImapHost})`);
+    } else {
+      console.log(`  ${bold("Email:")}          ${dim("disabled")}`);
+    }
     if (ownerUserId) {
       console.log(`  ${bold("Owner ID:")}       ${ownerUserId}`);
+      console.log(`  ${bold("Shell access:")}   ${enableShell ? green("enabled") : dim("disabled")}`);
     }
+    console.log(`  ${bold("Write scope:")}    ${writeInGroups ? "DMs + Groups" : "DMs only"}`);
+    console.log(`  ${bold("Rate limit:")}     ${rateLimit}/hour per user`);
     console.log("");
     console.log(`${CYAN}Next steps:${RESET}`);
     console.log(`  ${bold("alfred start")}     Start Alfred`);
@@ -4385,7 +5498,7 @@ var init_setup = __esm({
         defaultModel: "llama3.2",
         envKeyName: "",
         needsApiKey: false,
-        baseUrl: "http://localhost:11434/v1"
+        baseUrl: "http://localhost:11434"
       }
     ];
     PLATFORMS = [

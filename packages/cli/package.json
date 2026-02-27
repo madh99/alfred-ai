@@ -30,28 +30,30 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.8.0",
+    "discord.js": "^14.18.0",
     "dotenv": "^16.4.0",
+    "grammy": "^1.35.0",
+    "imapflow": "^1.2.10",
     "js-yaml": "^4.1.0",
-    "zod": "^3.24.0",
+    "nodemailer": "^8.0.1",
+    "openai": "^4.80.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
-    "better-sqlite3": "^11.8.0",
-    "@anthropic-ai/sdk": "^0.39.0",
-    "openai": "^4.80.0",
-    "grammy": "^1.35.0",
-    "discord.js": "^14.18.0"
+    "zod": "^3.24.0"
   },
   "optionalDependencies": {
-    "matrix-bot-sdk": "^0.7.0",
-    "@whiskeysockets/baileys": "^6.7.0"
+    "@whiskeysockets/baileys": "^6.7.0",
+    "matrix-bot-sdk": "^0.7.0"
   },
   "devDependencies": {
-    "@alfred/types": "workspace:*",
     "@alfred/config": "workspace:*",
-    "@alfred/logger": "workspace:*",
     "@alfred/core": "workspace:*",
-    "@alfred/storage": "workspace:*",
+    "@alfred/logger": "workspace:*",
     "@alfred/security": "workspace:*",
+    "@alfred/storage": "workspace:*",
+    "@alfred/types": "workspace:*",
     "@types/js-yaml": "^4.0.9"
   },
   "publishConfig": {

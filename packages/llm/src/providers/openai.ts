@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
-import { LLMProvider } from '../provider.js';
+import { LLMProvider, lookupContextWindow } from '../provider.js';
 
 export class OpenAIProvider extends LLMProvider {
   private client!: OpenAI;
@@ -22,6 +22,8 @@ export class OpenAIProvider extends LLMProvider {
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl,
     });
+    const cw = lookupContextWindow(this.config.model);
+    if (cw) this.contextWindow = cw;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

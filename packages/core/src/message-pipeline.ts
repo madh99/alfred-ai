@@ -8,13 +8,14 @@ import type {
 } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
-import { PromptBuilder } from '@alfred/llm';
+import { PromptBuilder, estimateTokens, estimateMessageTokens } from '@alfred/llm';
 import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 
 const MAX_TOOL_ITERATIONS = 10;
+const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
 export class MessagePipeline {
   private readonly promptBuilder: PromptBuilder;
@@ -52,8 +53,8 @@ export class MessagePipeline {
         user.id,
       );
 
-      // 3. Load conversation history
-      const history = this.conversationManager.getHistory(conversation.id);
+      // 3. Load conversation history (fetch more than needed, we'll trim by tokens)
+      const history = this.conversationManager.getHistory(conversation.id, 50);
 
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
@@ -68,10 +69,12 @@ export class MessagePipeline {
         }
       }
 
-      // 6. Build LLM request
+      // 6. Build LLM request with token-aware context trimming
       const system = this.promptBuilder.buildSystemPrompt(memories);
-      const messages: LLMMessage[] = this.promptBuilder.buildMessages(history);
-      messages.push({ role: 'user', content: message.text });
+      const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
+      allMessages.push({ role: 'user', content: message.text });
+
+      const messages = this.trimToContextWindow(system, allMessages);
 
       // 6. Build tools from registered skills
       const tools = this.skillRegistry
@@ -211,5 +214,56 @@ export class MessagePipeline {
       const msg = error instanceof Error ? error.message : String(error);
       return { content: `Skill execution failed: ${msg}`, isError: true };
     }
+  }
+
+  /**
+   * Trim messages to fit within the LLM's context window.
+   * Keeps the system prompt, the latest user message, and as many
+   * recent history messages as possible. Drops oldest messages first.
+   * Injects a summary note when messages are trimmed.
+   */
+  private trimToContextWindow(system: string, messages: LLMMessage[]): LLMMessage[] {
+    const contextWindow = this.llm.getContextWindow();
+    const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
+
+    const systemTokens = estimateTokens(system);
+    // Always keep the latest message (current user input)
+    const latestMsg = messages[messages.length - 1];
+    const latestTokens = estimateMessageTokens(latestMsg);
+
+    // Reserve tokens for system + latest message + output buffer
+    const reservedTokens = systemTokens + latestTokens + 200; // 200 for overhead
+    let availableTokens = maxInputTokens - reservedTokens;
+
+    if (availableTokens <= 0) {
+      // Even a single message barely fits — just send the latest
+      this.logger.warn({ maxInputTokens, systemTokens, latestTokens }, 'Context window very tight, sending only latest message');
+      return [latestMsg];
+    }
+
+    // Walk backwards from the second-to-last message, keeping as many as fit
+    const keptMessages: LLMMessage[] = [];
+    for (let i = messages.length - 2; i >= 0; i--) {
+      const msgTokens = estimateMessageTokens(messages[i]);
+      if (msgTokens > availableTokens) break;
+      availableTokens -= msgTokens;
+      keptMessages.unshift(messages[i]);
+    }
+
+    const trimmedCount = messages.length - 1 - keptMessages.length;
+    if (trimmedCount > 0) {
+      this.logger.info(
+        { trimmedCount, totalMessages: messages.length, maxInputTokens },
+        'Trimmed conversation history to fit context window',
+      );
+      // Prepend a context note so the LLM knows history was trimmed
+      keptMessages.unshift({
+        role: 'user',
+        content: `[System note: ${trimmedCount} older message(s) were omitted to fit the context window. The conversation continues from the most recent messages.]`,
+      });
+    }
+
+    keptMessages.push(latestMsg);
+    return keptMessages;
   }
 }

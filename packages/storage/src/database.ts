@@ -1,6 +1,8 @@
 import BetterSqlite3 from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Migrator } from './migrations/migrator.js';
+import { MIGRATIONS } from './migrations/index.js';
 
 export class Database {
   private db: BetterSqlite3.Database;
@@ -12,6 +14,7 @@ export class Database {
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.initTables();
+    this.runMigrations();
   }
 
   private initTables(): void {
@@ -66,6 +69,11 @@ export class Database {
       CREATE INDEX IF NOT EXISTS idx_users_platform
         ON users(platform, platform_user_id);
     `);
+  }
+
+  private runMigrations(): void {
+    const migrator = new Migrator(this.db);
+    migrator.migrate(MIGRATIONS);
   }
 
   getDb(): BetterSqlite3.Database {

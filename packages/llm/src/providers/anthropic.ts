@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
-import { LLMProvider } from '../provider.js';
+import { LLMProvider, lookupContextWindow } from '../provider.js';
 
 export class AnthropicProvider extends LLMProvider {
   private client!: Anthropic;
@@ -19,6 +19,8 @@ export class AnthropicProvider extends LLMProvider {
 
   async initialize(): Promise<void> {
     this.client = new Anthropic({ apiKey: this.config.apiKey });
+    const cw = lookupContextWindow(this.config.model);
+    if (cw) this.contextWindow = cw;
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

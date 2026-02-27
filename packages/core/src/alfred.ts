@@ -19,6 +19,7 @@ import {
   ShellSkill,
   MemorySkill,
   DelegateSkill,
+  EmailSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -66,7 +67,11 @@ export class Alfred {
     const skillRegistry = new SkillRegistry();
     skillRegistry.register(new CalculatorSkill());
     skillRegistry.register(new SystemInfoSkill());
-    skillRegistry.register(new WebSearchSkill());
+    skillRegistry.register(new WebSearchSkill(this.config.search ? {
+      provider: this.config.search.provider,
+      apiKey: this.config.search.apiKey,
+      baseUrl: this.config.search.baseUrl,
+    } : undefined));
     skillRegistry.register(new ReminderSkill(reminderRepo));
     skillRegistry.register(new NoteSkill());
     skillRegistry.register(new SummarizeSkill());
@@ -75,6 +80,11 @@ export class Alfred {
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo));
     skillRegistry.register(new DelegateSkill(llmProvider));
+    skillRegistry.register(new EmailSkill(this.config.email ? {
+      imap: this.config.email.imap,
+      smtp: this.config.email.smtp,
+      auth: this.config.email.auth,
+    } : undefined));
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     const skillSandbox = new SkillSandbox(

@@ -44,6 +44,35 @@ export interface SecurityConfig {
   ownerUserId?: string;
 }
 
+export interface SearchConfig {
+  provider: 'brave' | 'searxng' | 'tavily' | 'duckduckgo';
+  apiKey?: string;
+  baseUrl?: string;
+}
+
+export interface EmailImapConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+}
+
+export interface EmailSmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+}
+
+export interface EmailAuthConfig {
+  user: string;
+  pass: string;
+}
+
+export interface EmailConfig {
+  imap: EmailImapConfig;
+  smtp: EmailSmtpConfig;
+  auth: EmailAuthConfig;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -55,4 +84,6 @@ export interface AlfredConfig {
   storage: StorageConfig;
   logger: LoggerConfig;
   security: SecurityConfig;
+  search?: SearchConfig;
+  email?: EmailConfig;
 }

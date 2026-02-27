@@ -8,7 +8,7 @@ import type {
   ToolCall,
   ToolDefinition,
 } from '@alfred/types';
-import { LLMProvider } from '../provider.js';
+import { LLMProvider, lookupContextWindow } from '../provider.js';
 
 export class OllamaProvider extends LLMProvider {
   private baseUrl: string = '';
@@ -24,6 +24,43 @@ export class OllamaProvider extends LLMProvider {
     const raw = this.config.baseUrl ?? 'http://localhost:11434';
     this.baseUrl = raw.replace(/\/v1\/?$/, '').replace(/\/+$/, '');
     this.apiKey = this.config.apiKey ?? '';
+
+    // Try known context windows first, then query Ollama's /api/show
+    const cw = lookupContextWindow(this.config.model);
+    if (cw) {
+      this.contextWindow = cw;
+    } else {
+      await this.fetchModelContextWindow();
+    }
+  }
+
+  private async fetchModelContextWindow(): Promise<void> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/show`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({ name: this.config.model }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        model_info?: Record<string, unknown>;
+        parameters?: string;
+      };
+      // model_info often contains context_length or num_ctx
+      const info = data.model_info ?? {};
+      const ctxKey = Object.keys(info).find(k =>
+        k.includes('context_length') || k === 'num_ctx',
+      );
+      const ctxLen = ctxKey ? Number(info[ctxKey]) : 0;
+      if (ctxLen > 0) {
+        this.contextWindow = {
+          maxInputTokens: ctxLen,
+          maxOutputTokens: Math.min(ctxLen, 4096),
+        };
+      }
+    } catch {
+      // Non-critical — keep default
+    }
   }
 
   private getHeaders(): Record<string, string> {

@@ -53,6 +53,29 @@ export const LLMProviderConfigSchema = z.object({
   maxTokens: z.number().optional(),
 });
 
+export const SearchConfigSchema = z.object({
+  provider: z.enum(['brave', 'searxng', 'tavily', 'duckduckgo']),
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+});
+
+export const EmailConfigSchema = z.object({
+  imap: z.object({
+    host: z.string(),
+    port: z.number(),
+    secure: z.boolean(),
+  }),
+  smtp: z.object({
+    host: z.string(),
+    port: z.number(),
+    secure: z.boolean(),
+  }),
+  auth: z.object({
+    user: z.string(),
+    pass: z.string(),
+  }),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -64,4 +87,6 @@ export const AlfredConfigSchema = z.object({
   storage: StorageConfigSchema,
   logger: LoggerConfigSchema,
   security: SecurityConfigSchema,
+  search: SearchConfigSchema.optional(),
+  email: EmailConfigSchema.optional(),
 });

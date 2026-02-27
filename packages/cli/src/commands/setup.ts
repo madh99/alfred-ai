@@ -65,7 +65,7 @@ const PROVIDERS: ProviderDef[] = [
     defaultModel: 'llama3.2',
     envKeyName: '',
     needsApiKey: false,
-    baseUrl: 'http://localhost:11434/v1',
+    baseUrl: 'http://localhost:11434',
   },
 ];
 
@@ -177,11 +177,22 @@ interface ExistingConfig {
   matrix?: { homeserverUrl?: string; accessToken?: string; userId?: string; enabled?: boolean };
   signal?: { apiUrl?: string; phoneNumber?: string; enabled?: boolean };
   security?: { ownerUserId?: string };
+  search?: { provider?: string; apiKey?: string; baseUrl?: string };
+  email?: { imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string } };
 }
 
-function loadExistingConfig(projectRoot: string): { config: ExistingConfig; env: Record<string, string> } {
+function loadExistingConfig(projectRoot: string): {
+  config: ExistingConfig;
+  env: Record<string, string>;
+  shellEnabled: boolean;
+  writeInGroups: boolean;
+  rateLimit: number;
+} {
   const config: ExistingConfig = {};
   const env: Record<string, string> = {};
+  let shellEnabled = false;
+  let writeInGroups = false;
+  let rateLimit = 30;
 
   // Load config/default.yml
   const configPath = path.join(projectRoot, 'config', 'default.yml');
@@ -210,7 +221,34 @@ function loadExistingConfig(projectRoot: string): { config: ExistingConfig; env:
     } catch { /* ignore */ }
   }
 
-  return { config, env };
+  // Check security settings from rules
+  const rulesPath = path.join(projectRoot, 'config', 'rules', 'default-rules.yml');
+  if (fs.existsSync(rulesPath)) {
+    try {
+      const rulesContent = yaml.load(fs.readFileSync(rulesPath, 'utf-8')) as any;
+      if (rulesContent?.rules) {
+        shellEnabled = rulesContent.rules.some(
+          (r: any) => r.id === 'allow-owner-admin' && r.effect === 'allow',
+        );
+        // Check if write-in-DM rule has been removed (= write everywhere)
+        const writeDmRule = rulesContent.rules.find(
+          (r: any) => r.id === 'allow-write-for-dm' || r.id === 'allow-write-all',
+        );
+        if (writeDmRule?.id === 'allow-write-all') {
+          writeInGroups = true;
+        }
+        // Check rate limit
+        const rlRule = rulesContent.rules.find(
+          (r: any) => r.id === 'rate-limit-write',
+        );
+        if (rlRule?.rateLimit?.maxInvocations) {
+          rateLimit = rlRule.rateLimit.maxInvocations;
+        }
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { config, env, shellEnabled, writeInGroups, rateLimit };
 }
 
 // ── Main setup command ────────────────────────────────────────────────
@@ -282,7 +320,7 @@ export async function setupCommand(): Promise<void> {
     // ── 3b. Base URL (for Ollama / OpenRouter / custom endpoints) ──
     let baseUrl = provider.baseUrl ?? '';
     if (provider.name === 'ollama') {
-      const existingUrl = existing.config.llm?.baseUrl ?? 'http://localhost:11434';
+      const existingUrl = existing.config.llm?.baseUrl ?? existing.env['ALFRED_LLM_BASE_URL'] ?? 'http://localhost:11434';
       console.log('');
       baseUrl = await askWithDefault(
         rl,
@@ -298,7 +336,64 @@ export async function setupCommand(): Promise<void> {
     console.log('');
     const model = await askWithDefault(rl, 'Which model?', existingModel);
 
-    // ── 5. Platforms ─────────────────────────────────────────────
+    // ── 5. Web Search ──────────────────────────────────────────
+    const searchProviders = ['brave', 'tavily', 'duckduckgo', 'searxng'] as const;
+    const existingSearchProvider = existing.config.search?.provider ?? existing.env['ALFRED_SEARCH_PROVIDER'] ?? '';
+    const existingSearchIdx = searchProviders.indexOf(existingSearchProvider as typeof searchProviders[number]);
+    const defaultSearchChoice = existingSearchIdx >= 0 ? existingSearchIdx + 1 : 0;
+
+    console.log(`\n${bold('Web Search provider (for searching the internet):')}`);
+    const searchLabels = [
+      'Brave Search — recommended, free tier (2,000/month)',
+      'Tavily — built for AI agents, free tier (1,000/month)',
+      'DuckDuckGo — free, no API key needed',
+      'SearXNG — self-hosted, no API key needed',
+    ];
+    const mark = (i: number) => existingSearchIdx === i ? ` ${dim('(current)')}` : '';
+    console.log(`  ${cyan('0)')} None (disable web search)${existingSearchIdx === -1 && existingSearchProvider === '' ? ` ${dim('(current)')}` : ''}`);
+    for (let i = 0; i < searchLabels.length; i++) {
+      console.log(`  ${cyan(String(i + 1) + ')')} ${searchLabels[i]}${mark(i)}`);
+    }
+    const searchChoice = await askNumber(rl, '> ', 0, searchProviders.length, defaultSearchChoice);
+
+    let searchProvider: typeof searchProviders[number] | undefined;
+    let searchApiKey = '';
+    let searchBaseUrl = '';
+
+    if (searchChoice >= 1 && searchChoice <= searchProviders.length) {
+      searchProvider = searchProviders[searchChoice - 1];
+    }
+
+    if (searchProvider === 'brave') {
+      const existingKey = existing.env['ALFRED_SEARCH_API_KEY'] ?? '';
+      if (existingKey) {
+        searchApiKey = await askWithDefault(rl, '  Brave Search API key', existingKey);
+      } else {
+        console.log(`  ${dim('Get your free API key at: https://brave.com/search/api/')}`);
+        searchApiKey = await askRequired(rl, '  Brave Search API key');
+      }
+      console.log(`  ${green('>')} Brave Search: ${dim(maskKey(searchApiKey))}`);
+    } else if (searchProvider === 'tavily') {
+      const existingKey = existing.env['ALFRED_SEARCH_API_KEY'] ?? '';
+      if (existingKey) {
+        searchApiKey = await askWithDefault(rl, '  Tavily API key', existingKey);
+      } else {
+        console.log(`  ${dim('Get your free API key at: https://tavily.com/')}`);
+        searchApiKey = await askRequired(rl, '  Tavily API key');
+      }
+      console.log(`  ${green('>')} Tavily: ${dim(maskKey(searchApiKey))}`);
+    } else if (searchProvider === 'duckduckgo') {
+      console.log(`  ${green('>')} DuckDuckGo: ${dim('no API key needed')}`);
+    } else if (searchProvider === 'searxng') {
+      const existingSearxUrl = existing.config.search?.baseUrl ?? existing.env['ALFRED_SEARCH_BASE_URL'] ?? 'http://localhost:8080';
+      searchBaseUrl = await askWithDefault(rl, '  SearXNG URL', existingSearxUrl);
+      searchBaseUrl = searchBaseUrl.replace(/\/+$/, '');
+      console.log(`  ${green('>')} SearXNG: ${dim(searchBaseUrl)}`);
+    } else {
+      console.log(`  ${dim('Web search disabled — you can configure it later.')}`);
+    }
+
+    // ── 6. Platforms ─────────────────────────────────────────────
     // Determine which platforms are currently enabled
     const currentlyEnabled: number[] = [];
     for (let i = 0; i < PLATFORMS.length; i++) {
@@ -392,9 +487,88 @@ export async function setupCommand(): Promise<void> {
       platformCredentials[platform.configKey] = creds;
     }
 
-    // ── 7. Owner user ID ─────────────────────────────────────────
+    // ── 7. Email configuration ──────────────────────────────────
+    const existingEmailUser = existing.config.email?.auth?.user ?? existing.env['ALFRED_EMAIL_USER'] ?? '';
+    const hasEmail = !!existingEmailUser;
+    const emailDefault = hasEmail ? 'Y/n' : 'y/N';
+    console.log(`\n${bold('Email access (read & send emails via IMAP/SMTP)?')}`);
+    console.log(`${dim('Works with Gmail, Outlook, or any IMAP/SMTP provider.')}`);
+    const emailAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim(`[${emailDefault}] `)}`)
+    ).trim().toLowerCase();
+    const enableEmail = emailAnswer === '' ? hasEmail : (emailAnswer === 'y' || emailAnswer === 'yes');
+
+    let emailUser = '';
+    let emailPass = '';
+    let emailImapHost = '';
+    let emailImapPort = 993;
+    let emailSmtpHost = '';
+    let emailSmtpPort = 587;
+
+    if (enableEmail) {
+      console.log('');
+      emailUser = await askWithDefault(rl, '  Email address', existingEmailUser || '');
+      if (!emailUser) {
+        emailUser = await askRequired(rl, '  Email address');
+      }
+
+      const existingPass = existing.env['ALFRED_EMAIL_PASS'] ?? '';
+      if (existingPass) {
+        emailPass = await askWithDefault(rl, '  Password / App password', existingPass);
+      } else {
+        console.log(`  ${dim('For Gmail: use an App Password (not your regular password)')}`);
+        console.log(`  ${dim('  → Google Account → Security → 2-Step → App passwords')}`);
+        emailPass = await askRequired(rl, '  Password / App password');
+      }
+
+      // Auto-detect IMAP/SMTP settings based on email domain
+      const domain = emailUser.split('@')[1]?.toLowerCase() ?? '';
+      const presets: Record<string, { imap: string; smtp: string }> = {
+        'gmail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
+        'googlemail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
+        'outlook.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+        'hotmail.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+        'live.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+        'yahoo.com': { imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com' },
+        'icloud.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
+        'me.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
+        'gmx.de': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
+        'gmx.net': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
+        'web.de': { imap: 'imap.web.de', smtp: 'smtp.web.de' },
+        'posteo.de': { imap: 'posteo.de', smtp: 'posteo.de' },
+        'mailbox.org': { imap: 'imap.mailbox.org', smtp: 'smtp.mailbox.org' },
+        'protonmail.com': { imap: '127.0.0.1', smtp: '127.0.0.1' },
+        'proton.me': { imap: '127.0.0.1', smtp: '127.0.0.1' },
+      };
+
+      const preset = presets[domain];
+      const defaultImap = existing.config.email?.imap?.host ?? preset?.imap ?? `imap.${domain}`;
+      const defaultSmtp = existing.config.email?.smtp?.host ?? preset?.smtp ?? `smtp.${domain}`;
+      const defaultImapPort = existing.config.email?.imap?.port ?? 993;
+      const defaultSmtpPort = existing.config.email?.smtp?.port ?? 587;
+
+      if (preset) {
+        console.log(`  ${green('>')} Detected ${domain} — using preset server settings`);
+      }
+
+      emailImapHost = await askWithDefault(rl, '  IMAP server', defaultImap);
+      const imapPortStr = await askWithDefault(rl, '  IMAP port', String(defaultImapPort));
+      emailImapPort = parseInt(imapPortStr, 10) || 993;
+
+      emailSmtpHost = await askWithDefault(rl, '  SMTP server', defaultSmtp);
+      const smtpPortStr = await askWithDefault(rl, '  SMTP port', String(defaultSmtpPort));
+      emailSmtpPort = parseInt(smtpPortStr, 10) || 587;
+
+      console.log(`  ${green('>')} Email: ${dim(emailUser)} via ${dim(emailImapHost)}`);
+    } else {
+      console.log(`  ${dim('Email disabled — you can configure it later.')}`);
+    }
+
+    // ── 8. Security configuration ──────────────────────────────
+    console.log(`\n${bold('Security configuration:')}`);
+
+    // 7a. Owner user ID
     const existingOwnerId = existing.config.security?.ownerUserId ?? existing.env['ALFRED_OWNER_USER_ID'] ?? '';
-    console.log('');
     let ownerUserId: string;
     if (existingOwnerId) {
       ownerUserId = await askWithDefault(rl, 'Owner user ID (for elevated permissions)', existingOwnerId);
@@ -406,7 +580,57 @@ export async function setupCommand(): Promise<void> {
       ownerUserId = input;
     }
 
-    // ── 8. Generate .env ─────────────────────────────────────────
+    // 7b. Shell access (only if owner is set)
+    let enableShell = false;
+    if (ownerUserId) {
+      const shellDefault = existing.shellEnabled ? 'Y/n' : 'y/N';
+      console.log('');
+      console.log(`  ${bold('Enable shell access (admin commands) for the owner?')}`);
+      console.log(`  ${dim('Allows Alfred to execute shell commands. Only for the owner.')}`);
+      const shellAnswer = (
+        await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${shellDefault}] `)}`)
+      ).trim().toLowerCase();
+      if (shellAnswer === '') {
+        enableShell = existing.shellEnabled;
+      } else {
+        enableShell = shellAnswer === 'y' || shellAnswer === 'yes';
+      }
+      if (enableShell) {
+        console.log(`    ${green('>')} Shell access ${bold('enabled')} for owner ${dim(ownerUserId)}`);
+      } else {
+        console.log(`    ${dim('Shell access disabled.')}`);
+      }
+    }
+
+    // 7c. Write access in groups
+    const writeGroupsDefault = existing.writeInGroups ? 'Y/n' : 'y/N';
+    console.log('');
+    console.log(`  ${bold('Allow write actions (notes, reminders, memory) in group chats?')}`);
+    console.log(`  ${dim('By default, write actions are only allowed in DMs.')}`);
+    const writeGroupsAnswer = (
+      await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${writeGroupsDefault}] `)}`)
+    ).trim().toLowerCase();
+    let writeInGroups: boolean;
+    if (writeGroupsAnswer === '') {
+      writeInGroups = existing.writeInGroups;
+    } else {
+      writeInGroups = writeGroupsAnswer === 'y' || writeGroupsAnswer === 'yes';
+    }
+    if (writeInGroups) {
+      console.log(`    ${green('>')} Write actions ${bold('enabled')} in groups`);
+    } else {
+      console.log(`    ${dim('Write actions only in DMs (default).')}`);
+    }
+
+    // 7d. Rate limit
+    const existingRateLimit = existing.rateLimit ?? 30;
+    console.log('');
+    const rateLimitStr = await askWithDefault(rl, '  Rate limit (max write actions per hour per user)', String(existingRateLimit));
+    const rateLimit = Math.max(1, parseInt(rateLimitStr, 10) || 30);
+    console.log(`    ${green('>')} Rate limit: ${bold(String(rateLimit))} per hour`);
+
+
+    // ── 9. Generate .env ─────────────────────────────────────────
     console.log(`\n${bold('Writing configuration files...')}`);
 
     const envLines: string[] = [
@@ -437,6 +661,31 @@ export async function setupCommand(): Promise<void> {
       envLines.push(`${envKey}=${envVal}`);
     }
 
+    envLines.push('', '# === Web Search ===', '');
+
+    if (searchProvider) {
+      envLines.push(`ALFRED_SEARCH_PROVIDER=${searchProvider}`);
+      if (searchApiKey) {
+        envLines.push(`ALFRED_SEARCH_API_KEY=${searchApiKey}`);
+      }
+      if (searchBaseUrl) {
+        envLines.push(`ALFRED_SEARCH_BASE_URL=${searchBaseUrl}`);
+      }
+    } else {
+      envLines.push('# ALFRED_SEARCH_PROVIDER=brave');
+      envLines.push('# ALFRED_SEARCH_API_KEY=');
+    }
+
+    envLines.push('', '# === Email ===', '');
+
+    if (enableEmail) {
+      envLines.push(`ALFRED_EMAIL_USER=${emailUser}`);
+      envLines.push(`ALFRED_EMAIL_PASS=${emailPass}`);
+    } else {
+      envLines.push('# ALFRED_EMAIL_USER=');
+      envLines.push('# ALFRED_EMAIL_PASS=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -464,7 +713,9 @@ export async function setupCommand(): Promise<void> {
       whatsapp: { enabled: boolean; dataPath: string };
       matrix: { homeserverUrl: string; accessToken: string; userId: string; enabled: boolean };
       signal: { apiUrl: string; phoneNumber: string; enabled: boolean };
-      llm: { provider: string; model: string; temperature: number; maxTokens: number };
+      llm: { provider: string; model: string; baseUrl?: string; temperature: number; maxTokens: number };
+      search?: { provider: string; apiKey?: string; baseUrl?: string };
+      email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -498,9 +749,24 @@ export async function setupCommand(): Promise<void> {
       llm: {
         provider: provider.name,
         model,
+        ...(baseUrl ? { baseUrl } : {}),
         temperature: 0.7,
         maxTokens: 4096,
       },
+      ...(searchProvider ? {
+        search: {
+          provider: searchProvider,
+          ...(searchApiKey ? { apiKey: searchApiKey } : {}),
+          ...(searchBaseUrl ? { baseUrl: searchBaseUrl } : {}),
+        },
+      } : {}),
+      ...(enableEmail ? {
+        email: {
+          imap: { host: emailImapHost, port: emailImapPort, secure: emailImapPort === 993 },
+          smtp: { host: emailSmtpHost, port: emailSmtpPort, secure: emailSmtpPort === 465 },
+          auth: { user: emailUser, pass: emailPass },
+        },
+      } : {}),
       storage: {
         path: './data/alfred.db',
       },
@@ -529,7 +795,103 @@ export async function setupCommand(): Promise<void> {
     fs.writeFileSync(configPath, yamlStr, 'utf-8');
     console.log(`  ${green('+')} ${dim('config/default.yml')} written`);
 
-    // ── 10. Ensure data/ directory exists ─────────────────────────
+    // ── 10b. Generate config/rules/default-rules.yml ──────────────
+    const rulesDir = path.join(configDir, 'rules');
+    if (!fs.existsSync(rulesDir)) {
+      fs.mkdirSync(rulesDir, { recursive: true });
+    }
+
+    const ownerAdminRule = enableShell && ownerUserId
+      ? `
+  # Allow admin actions (shell, etc.) for the owner only
+  - id: allow-owner-admin
+    effect: allow
+    priority: 50
+    scope: global
+    actions: ["*"]
+    riskLevels: [admin, destructive]
+    conditions:
+      users: ["${ownerUserId}"]
+`
+      : `
+  # Allow admin actions (shell, etc.) for the owner only
+  # Uncomment and set your user ID to enable:
+  # - id: allow-owner-admin
+  #   effect: allow
+  #   priority: 50
+  #   scope: global
+  #   actions: ["*"]
+  #   riskLevels: [admin, destructive]
+  #   conditions:
+  #     users: ["${ownerUserId || 'YOUR_USER_ID_HERE'}"]
+`;
+
+    const writeRule = writeInGroups
+      ? `  # Allow write-level skills everywhere (DMs and groups)
+  - id: allow-write-all
+    effect: allow
+    priority: 200
+    scope: global
+    actions: ["*"]
+    riskLevels: [write]`
+      : `  # Allow write-level skills in DMs only
+  - id: allow-write-for-dm
+    effect: allow
+    priority: 200
+    scope: global
+    actions: ["*"]
+    riskLevels: [write]
+    conditions:
+      chatType: dm`;
+
+    const rulesYaml = `# Alfred — Default Security Rules
+# Rules are evaluated in priority order (lower number = higher priority).
+# First matching rule wins.
+
+rules:
+  # Allow all read-level skills (calculator, system_info, web_search) for everyone
+  - id: allow-all-read
+    effect: allow
+    priority: 100
+    scope: global
+    actions: ["*"]
+    riskLevels: [read]
+
+${writeRule}
+
+  # Rate-limit write actions: max ${rateLimit} per hour per user
+  - id: rate-limit-write
+    effect: allow
+    priority: 250
+    scope: user
+    actions: ["*"]
+    riskLevels: [write]
+    rateLimit:
+      maxInvocations: ${rateLimit}
+      windowSeconds: 3600
+${ownerAdminRule}
+  # Deny destructive and admin actions by default
+  - id: deny-destructive
+    effect: deny
+    priority: 500
+    scope: global
+    actions: ["*"]
+    riskLevels: [destructive, admin]
+
+  # Catch-all deny
+  - id: deny-default
+    effect: deny
+    priority: 9999
+    scope: global
+    actions: ["*"]
+    riskLevels: [read, write, destructive, admin]
+`;
+
+    const rulesPath = path.join(rulesDir, 'default-rules.yml');
+    fs.writeFileSync(rulesPath, rulesYaml, 'utf-8');
+    console.log(`  ${green('+')} ${dim('config/rules/default-rules.yml')} written`);
+
+    // ── 11. Ensure data/ directory exists ─────────────────────────
     const dataDir = path.join(projectRoot, 'data');
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
@@ -554,9 +916,28 @@ export async function setupCommand(): Promise<void> {
     } else {
       console.log(`  ${bold('Platforms:')}      none (configure later)`);
     }
+    if (searchProvider) {
+      const searchLabelMap: Record<string, string> = {
+        brave: 'Brave Search',
+        tavily: 'Tavily',
+        duckduckgo: 'DuckDuckGo',
+        searxng: `SearXNG (${searchBaseUrl})`,
+      };
+      console.log(`  ${bold('Web search:')}     ${searchLabelMap[searchProvider]}`);
+    } else {
+      console.log(`  ${bold('Web search:')}     ${dim('disabled')}`);
+    }
+    if (enableEmail) {
+      console.log(`  ${bold('Email:')}          ${emailUser} (${emailImapHost})`);
+    } else {
+      console.log(`  ${bold('Email:')}          ${dim('disabled')}`);
+    }
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
+      console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);
     }
+    console.log(`  ${bold('Write scope:')}    ${writeInGroups ? 'DMs + Groups' : 'DMs only'}`);
+    console.log(`  ${bold('Rate limit:')}     ${rateLimit}/hour per user`);
     console.log('');
     console.log(`${CYAN}Next steps:${RESET}`);
     console.log(`  ${bold('alfred start')}     Start Alfred`);

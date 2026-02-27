@@ -46,6 +46,11 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_STORAGE_PATH: ['storage', 'path'],
   ALFRED_LOG_LEVEL: ['logger', 'level'],
   ALFRED_OWNER_USER_ID: ['security', 'ownerUserId'],
+  ALFRED_SEARCH_PROVIDER: ['search', 'provider'],
+  ALFRED_SEARCH_API_KEY: ['search', 'apiKey'],
+  ALFRED_SEARCH_BASE_URL: ['search', 'baseUrl'],
+  ALFRED_EMAIL_USER: ['email', 'auth', 'user'],
+  ALFRED_EMAIL_PASS: ['email', 'auth', 'pass'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {
