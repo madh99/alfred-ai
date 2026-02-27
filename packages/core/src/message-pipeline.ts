@@ -39,6 +39,14 @@ export interface PipelineOptions {
   embeddingService?: EmbeddingService;
 }
 
+/** Tracks a running delegate agent so other messages can query its status. */
+interface ActiveAgent {
+  chatId: string;
+  task: string;
+  tracker: import('@alfred/skills').ActivityTracker;
+  startedAt: number;
+}
+
 export class MessagePipeline {
   private readonly promptBuilder: PromptBuilder;
   private readonly llm: LLMProvider;
@@ -52,6 +60,10 @@ export class MessagePipeline {
   private readonly speechTranscriber?: SpeechTranscriber;
   private readonly inboxPath?: string;
   private readonly embeddingService?: EmbeddingService;
+
+  /** Registry of currently running delegate agents, keyed by a unique agent ID. */
+  private readonly activeAgents = new Map<string, ActiveAgent>();
+  private agentIdCounter = 0;
 
   constructor(options: PipelineOptions) {
     this.llm = options.llm;
@@ -145,11 +157,17 @@ export class MessagePipeline {
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
-      const system = this.promptBuilder.buildSystemPrompt({
+      let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
         userProfile,
       });
+
+      // Inject active agent status so the LLM can answer "what is the agent doing?"
+      const agentStatusBlock = this.buildActiveAgentStatus();
+      if (agentStatusBlock) {
+        system += '\n\n' + agentStatusBlock;
+      }
       const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
 
       // Build user message with attachments (images, transcribed audio)
@@ -207,7 +225,7 @@ export class MessagePipeline {
             chatType: message.chatType,
             platform: message.platform,
             conversationId: conversation.id,
-          });
+          }, onProgress);
           toolResultBlocks.push({
             type: 'tool_result',
             tool_use_id: toolCall.id,
@@ -268,6 +286,7 @@ export class MessagePipeline {
   private async executeToolCall(
     toolCall: ToolCall,
     context: SkillContext,
+    onProgress?: ProgressCallback,
   ): Promise<{ content: string; isError?: boolean }> {
     const skill = this.skillRegistry?.get(toolCall.name);
     if (!skill) {
@@ -300,11 +319,37 @@ export class MessagePipeline {
 
     // Execute via sandbox
     if (this.skillSandbox) {
-      const result = await this.skillSandbox.execute(skill, toolCall.input, context);
-      return {
-        content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
-        isError: !result.success,
-      };
+      // For delegate skill: wire up progress callback + activity tracker
+      let tracker: import('@alfred/skills').ActivityTracker | undefined;
+      let agentId: string | undefined;
+      if (toolCall.name === 'delegate' && 'setProgressCallback' in skill && 'createTracker' in skill) {
+        const delegateSkill = skill as import('@alfred/skills').DelegateSkill;
+        if (onProgress) {
+          delegateSkill.setProgressCallback(onProgress);
+        }
+        tracker = delegateSkill.createTracker();
+
+        // Register so other messages can query the agent's status
+        agentId = `agent-${++this.agentIdCounter}`;
+        this.activeAgents.set(agentId, {
+          chatId: context.chatId,
+          task: String(toolCall.input.task ?? '').slice(0, 200),
+          tracker,
+          startedAt: Date.now(),
+        });
+      }
+
+      try {
+        const result = await this.skillSandbox.execute(skill, toolCall.input, context, undefined, tracker);
+        return {
+          content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
+          isError: !result.success,
+        };
+      } finally {
+        if (agentId) {
+          this.activeAgents.delete(agentId);
+        }
+      }
     }
 
     // Fallback: direct execution without sandbox
@@ -341,6 +386,30 @@ export class MessagePipeline {
       case 'calendar': return `Calendar: ${String(input.action ?? '')}`;
       default: return `Using ${toolName}...`;
     }
+  }
+
+  /**
+   * Build a status block describing currently running delegate agents.
+   * Injected into the system prompt so the LLM can answer user questions
+   * like "What is the agent doing right now?".
+   */
+  private buildActiveAgentStatus(): string | undefined {
+    if (this.activeAgents.size === 0) return undefined;
+
+    const lines: string[] = ['## Currently running sub-agents'];
+    for (const [id, agent] of this.activeAgents) {
+      const snapshot = agent.tracker.getSnapshot();
+      const elapsedSec = Math.round(snapshot.totalElapsedMs / 1000);
+      lines.push(
+        `- **${id}**: "${agent.task}"`,
+        `  Status: ${agent.tracker.formatStatus()}`,
+        `  Running for ${elapsedSec}s | Last activity ${Math.round(snapshot.idleMs / 1000)}s ago`,
+      );
+    }
+    lines.push('');
+    lines.push('If the user asks what you or the agent is doing, describe the above status in natural language.');
+
+    return lines.join('\n');
   }
 
   /**

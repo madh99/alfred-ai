@@ -11,7 +11,7 @@ var __export = (target, all) => {
 
 // ../config/dist/schema.js
 import { z } from "zod";
-var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, SpeechConfigSchema, AlfredConfigSchema;
+var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, SpeechConfigSchema, CalDAVConfigSchema, GoogleCalendarConfigSchema, MicrosoftCalendarConfigSchema, CalendarConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
   "../config/dist/schema.js"() {
     "use strict";
@@ -85,6 +85,28 @@ var init_schema = __esm({
       apiKey: z.string(),
       baseUrl: z.string().optional()
     });
+    CalDAVConfigSchema = z.object({
+      serverUrl: z.string(),
+      username: z.string(),
+      password: z.string()
+    });
+    GoogleCalendarConfigSchema = z.object({
+      clientId: z.string(),
+      clientSecret: z.string(),
+      refreshToken: z.string()
+    });
+    MicrosoftCalendarConfigSchema = z.object({
+      clientId: z.string(),
+      clientSecret: z.string(),
+      tenantId: z.string(),
+      refreshToken: z.string()
+    });
+    CalendarConfigSchema = z.object({
+      provider: z.enum(["caldav", "google", "microsoft"]),
+      caldav: CalDAVConfigSchema.optional(),
+      google: GoogleCalendarConfigSchema.optional(),
+      microsoft: MicrosoftCalendarConfigSchema.optional()
+    });
     AlfredConfigSchema = z.object({
       name: z.string(),
       telegram: TelegramConfigSchema,
@@ -98,7 +120,8 @@ var init_schema = __esm({
       security: SecurityConfigSchema,
       search: SearchConfigSchema.optional(),
       email: EmailConfigSchema.optional(),
-      speech: SpeechConfigSchema.optional()
+      speech: SpeechConfigSchema.optional(),
+      calendar: CalendarConfigSchema.optional()
     });
   }
 });
@@ -221,7 +244,18 @@ var init_loader = __esm({
       ALFRED_EMAIL_PASS: ["email", "auth", "pass"],
       ALFRED_SPEECH_PROVIDER: ["speech", "provider"],
       ALFRED_SPEECH_API_KEY: ["speech", "apiKey"],
-      ALFRED_SPEECH_BASE_URL: ["speech", "baseUrl"]
+      ALFRED_SPEECH_BASE_URL: ["speech", "baseUrl"],
+      ALFRED_CALENDAR_PROVIDER: ["calendar", "provider"],
+      ALFRED_CALDAV_SERVER_URL: ["calendar", "caldav", "serverUrl"],
+      ALFRED_CALDAV_USERNAME: ["calendar", "caldav", "username"],
+      ALFRED_CALDAV_PASSWORD: ["calendar", "caldav", "password"],
+      ALFRED_GOOGLE_CALENDAR_CLIENT_ID: ["calendar", "google", "clientId"],
+      ALFRED_GOOGLE_CALENDAR_CLIENT_SECRET: ["calendar", "google", "clientSecret"],
+      ALFRED_GOOGLE_CALENDAR_REFRESH_TOKEN: ["calendar", "google", "refreshToken"],
+      ALFRED_MICROSOFT_CALENDAR_CLIENT_ID: ["calendar", "microsoft", "clientId"],
+      ALFRED_MICROSOFT_CALENDAR_CLIENT_SECRET: ["calendar", "microsoft", "clientSecret"],
+      ALFRED_MICROSOFT_CALENDAR_TENANT_ID: ["calendar", "microsoft", "tenantId"],
+      ALFRED_MICROSOFT_CALENDAR_REFRESH_TOKEN: ["calendar", "microsoft", "refreshToken"]
     };
     ConfigLoader = class {
       loadConfig(configPath) {
@@ -429,6 +463,43 @@ var init_migrations = __esm({
 
         CREATE INDEX IF NOT EXISTS idx_notes_user
           ON notes(user_id, updated_at DESC);
+      `);
+        }
+      },
+      {
+        version: 5,
+        description: "Add user profile fields (timezone, language, bio, preferences)",
+        up(db) {
+          db.exec(`
+        ALTER TABLE users ADD COLUMN timezone TEXT;
+        ALTER TABLE users ADD COLUMN language TEXT;
+        ALTER TABLE users ADD COLUMN bio TEXT;
+        ALTER TABLE users ADD COLUMN preferences TEXT;
+      `);
+        }
+      },
+      {
+        version: 6,
+        description: "Add embeddings table for semantic search",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS embeddings (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          embedding BLOB NOT NULL,
+          model TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_embeddings_user
+          ON embeddings(user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_embeddings_source
+          ON embeddings(source_type, source_id);
       `);
         }
       }
@@ -661,6 +732,44 @@ var init_user_repository = __esm({
         values.push(id);
         this.db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
       }
+      updateProfile(id, data) {
+        const fields = [];
+        const values = [];
+        if (data.timezone !== void 0) {
+          fields.push("timezone = ?");
+          values.push(data.timezone ?? null);
+        }
+        if (data.language !== void 0) {
+          fields.push("language = ?");
+          values.push(data.language ?? null);
+        }
+        if (data.bio !== void 0) {
+          fields.push("bio = ?");
+          values.push(data.bio ?? null);
+        }
+        if (data.preferences !== void 0) {
+          fields.push("preferences = ?");
+          values.push(data.preferences ? JSON.stringify(data.preferences) : null);
+        }
+        if (fields.length === 0)
+          return;
+        fields.push("updated_at = ?");
+        values.push((/* @__PURE__ */ new Date()).toISOString());
+        values.push(id);
+        this.db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+      }
+      getProfile(id) {
+        const row = this.db.prepare("SELECT display_name, timezone, language, bio, preferences FROM users WHERE id = ?").get(id);
+        if (!row)
+          return void 0;
+        return {
+          displayName: row.display_name ?? void 0,
+          timezone: row.timezone ?? void 0,
+          language: row.language ?? void 0,
+          bio: row.bio ?? void 0,
+          preferences: row.preferences ? JSON.parse(row.preferences) : void 0
+        };
+      }
       mapRow(row) {
         return {
           id: row.id,
@@ -668,6 +777,10 @@ var init_user_repository = __esm({
           platformUserId: row.platform_user_id,
           username: row.username ?? void 0,
           displayName: row.display_name ?? void 0,
+          timezone: row.timezone ?? void 0,
+          language: row.language ?? void 0,
+          bio: row.bio ?? void 0,
+          preferences: row.preferences ? JSON.parse(row.preferences) : void 0,
           createdAt: row.created_at,
           updatedAt: row.updated_at
         };
@@ -936,6 +1049,69 @@ var init_note_repository = __esm({
   }
 });
 
+// ../storage/dist/repositories/embedding-repository.js
+import { randomUUID as randomUUID4 } from "node:crypto";
+var EmbeddingRepository;
+var init_embedding_repository = __esm({
+  "../storage/dist/repositories/embedding-repository.js"() {
+    "use strict";
+    EmbeddingRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      store(input2) {
+        const id = randomUUID4();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.prepare("DELETE FROM embeddings WHERE user_id = ? AND source_type = ? AND source_id = ?").run(input2.userId, input2.sourceType, input2.sourceId);
+        const buffer = Buffer.from(new Float32Array(input2.embedding).buffer);
+        this.db.prepare("INSERT INTO embeddings (id, user_id, source_type, source_id, content, embedding, model, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, input2.userId, input2.sourceType, input2.sourceId, input2.content, buffer, input2.model, input2.dimensions, now);
+        return {
+          id,
+          userId: input2.userId,
+          sourceType: input2.sourceType,
+          sourceId: input2.sourceId,
+          content: input2.content,
+          embedding: input2.embedding,
+          model: input2.model,
+          dimensions: input2.dimensions,
+          createdAt: now
+        };
+      }
+      findByUser(userId) {
+        const rows = this.db.prepare("SELECT * FROM embeddings WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+        return rows.map((row) => this.mapRow(row));
+      }
+      findBySource(sourceType, sourceId) {
+        const row = this.db.prepare("SELECT * FROM embeddings WHERE source_type = ? AND source_id = ?").get(sourceType, sourceId);
+        if (!row)
+          return void 0;
+        return this.mapRow(row);
+      }
+      delete(sourceType, sourceId) {
+        const result = this.db.prepare("DELETE FROM embeddings WHERE source_type = ? AND source_id = ?").run(sourceType, sourceId);
+        return result.changes > 0;
+      }
+      mapRow(row) {
+        const blob = row.embedding;
+        const float32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);
+        const embedding = Array.from(float32);
+        return {
+          id: row.id,
+          userId: row.user_id,
+          sourceType: row.source_type,
+          sourceId: row.source_id,
+          content: row.content,
+          embedding,
+          model: row.model,
+          dimensions: row.dimensions,
+          createdAt: row.created_at
+        };
+      }
+    };
+  }
+});
+
 // ../storage/dist/index.js
 var init_dist3 = __esm({
   "../storage/dist/index.js"() {
@@ -949,6 +1125,7 @@ var init_dist3 = __esm({
     init_migrations();
     init_reminder_repository();
     init_note_repository();
+    init_embedding_repository();
   }
 });
 
@@ -1002,6 +1179,12 @@ var init_provider = __esm({
       }
       getContextWindow() {
         return this.contextWindow;
+      }
+      async embed(_text) {
+        return void 0;
+      }
+      supportsEmbeddings() {
+        return false;
       }
     };
   }
@@ -1278,6 +1461,25 @@ var init_openai = __esm({
       isAvailable() {
         return !!this.config.apiKey;
       }
+      async embed(text) {
+        try {
+          const response = await this.client.embeddings.create({
+            model: "text-embedding-3-small",
+            input: text
+          });
+          const data = response.data[0];
+          return {
+            embedding: data.embedding,
+            model: "text-embedding-3-small",
+            dimensions: data.embedding.length
+          };
+        } catch {
+          return void 0;
+        }
+      }
+      supportsEmbeddings() {
+        return true;
+      }
       mapMessages(messages, system) {
         const mapped = [];
         if (system) {
@@ -1407,6 +1609,9 @@ var init_openrouter = __esm({
       }
       isAvailable() {
         return !!this.config.apiKey;
+      }
+      supportsEmbeddings() {
+        return false;
       }
     };
   }
@@ -1634,6 +1839,34 @@ var init_ollama = __esm({
           return false;
         }
       }
+      async embed(text) {
+        try {
+          const res = await fetch(`${this.baseUrl}/api/embed`, {
+            method: "POST",
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+              model: "nomic-embed-text",
+              input: text
+            })
+          });
+          if (!res.ok)
+            return void 0;
+          const data = await res.json();
+          if (!data.embeddings || data.embeddings.length === 0)
+            return void 0;
+          const embedding = data.embeddings[0];
+          return {
+            embedding,
+            model: "nomic-embed-text",
+            dimensions: embedding.length
+          };
+        } catch {
+          return void 0;
+        }
+      }
+      supportsEmbeddings() {
+        return true;
+      }
       buildOptions(request) {
         const options = {};
         const temperature = request.temperature ?? this.config.temperature;
@@ -1777,7 +2010,8 @@ var init_prompt_builder = __esm({
   "../llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
-      buildSystemPrompt(memories, skills) {
+      buildSystemPrompt(context = {}) {
+        const { memories, skills, userProfile, todayEvents } = context;
         const os3 = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
         const homeDir = process.env["HOME"] || process.env["USERPROFILE"] || "~";
         let prompt = `You are Alfred, a personal AI assistant. You run on ${os3} (home: ${homeDir}).
@@ -1806,6 +2040,48 @@ For complex tasks, work through multiple steps:
           for (const s of skills) {
             prompt += `- **${s.name}** (${s.riskLevel}): ${s.description}
 `;
+          }
+        }
+        if (userProfile) {
+          prompt += "\n\n## User profile";
+          if (userProfile.displayName) {
+            prompt += `
+- Name: ${userProfile.displayName}`;
+          }
+          if (userProfile.timezone) {
+            const now = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-GB", {
+              timeZone: userProfile.timezone,
+              hour: "2-digit",
+              minute: "2-digit"
+            });
+            prompt += `
+- Timezone: ${userProfile.timezone} (Current local time: ${now})`;
+          }
+          if (userProfile.language) {
+            prompt += `
+- Language: ${userProfile.language}`;
+          }
+          if (userProfile.bio) {
+            prompt += `
+- Bio: ${userProfile.bio}`;
+          }
+        }
+        if (todayEvents && todayEvents.length > 0) {
+          prompt += "\n\n## Today's events";
+          for (const event of todayEvents) {
+            const startTime = event.allDay ? "All day" : event.start.toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+              ...userProfile?.timezone ? { timeZone: userProfile.timezone } : {}
+            });
+            const endTime = event.allDay ? "" : `-${event.end.toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+              ...userProfile?.timezone ? { timeZone: userProfile.timezone } : {}
+            })}`;
+            const location = event.location ? ` @ ${event.location}` : "";
+            prompt += `
+- ${startTime}${endTime}: ${event.title}${location}`;
           }
         }
         if (memories && memories.length > 0) {
@@ -2260,7 +2536,8 @@ var init_skill_sandbox = __esm({
       constructor(logger) {
         this.logger = logger;
       }
-      async execute(skill, input2, context, timeoutMs = DEFAULT_TIMEOUT_MS) {
+      async execute(skill, input2, context, timeoutMs) {
+        timeoutMs = timeoutMs ?? skill.metadata.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const { name } = skill.metadata;
         this.logger.info({ skill: name, input: input2 }, "Skill execution started");
         try {
@@ -3123,6 +3400,7 @@ var init_memory = __esm({
     init_skill();
     MemorySkill = class extends Skill {
       memoryRepo;
+      embeddingService;
       metadata = {
         name: "memory",
         description: "Store and retrieve persistent memories. Use this to remember user preferences, facts, and important information across conversations.",
@@ -3133,7 +3411,7 @@ var init_memory = __esm({
           properties: {
             action: {
               type: "string",
-              enum: ["save", "recall", "search", "list", "delete"],
+              enum: ["save", "recall", "search", "list", "delete", "semantic_search"],
               description: "The memory action to perform"
             },
             key: {
@@ -3156,9 +3434,10 @@ var init_memory = __esm({
           required: ["action"]
         }
       };
-      constructor(memoryRepo) {
+      constructor(memoryRepo, embeddingService) {
         super();
         this.memoryRepo = memoryRepo;
+        this.embeddingService = embeddingService;
       }
       async execute(input2, context) {
         const action = input2.action;
@@ -3173,10 +3452,12 @@ var init_memory = __esm({
             return this.listMemories(input2, context);
           case "delete":
             return this.deleteMemory(input2, context);
+          case "semantic_search":
+            return this.semanticSearchMemories(input2, context);
           default:
             return {
               success: false,
-              error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete`
+              error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete, semantic_search`
             };
         }
       }
@@ -3197,6 +3478,10 @@ var init_memory = __esm({
           };
         }
         const entry = this.memoryRepo.save(context.userId, key, value, category ?? "general");
+        if (this.embeddingService) {
+          this.embeddingService.embedAndStore(context.userId, `${key}: ${value}`, "memory", key).catch(() => {
+          });
+        }
         return {
           success: true,
           data: entry,
@@ -3267,6 +3552,25 @@ ${entries.map((e) => `- [${e.category}] ${e.key}: "${e.value}"`).join("\n")}`
           display: deleted ? `Memory "${key}" deleted.` : `No memory found for key "${key}".`
         };
       }
+      async semanticSearchMemories(input2, context) {
+        const query = input2.query;
+        if (!query || typeof query !== "string") {
+          return { success: false, error: 'Missing required field "query" for semantic_search action' };
+        }
+        if (!this.embeddingService) {
+          return this.searchMemories(input2, context);
+        }
+        const results = await this.embeddingService.semanticSearch(context.userId, query, 10);
+        if (results.length === 0) {
+          return this.searchMemories(input2, context);
+        }
+        return {
+          success: true,
+          data: results,
+          display: `Found ${results.length} semantically related memory(ies):
+${results.map((r) => `- ${r.key}: "${r.value}" (score: ${r.score.toFixed(2)})`).join("\n")}`
+        };
+      }
     };
   }
 });
@@ -3288,6 +3592,8 @@ var init_delegate = __esm({
         description: 'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. The sub-agent can use shell, web search, calculator, memory, email, and all other tools. Use when a task is independent enough to run in parallel or when it requires a focused, multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", "check the weather and draft a packing list"). The sub-agent runs up to 5 tool iterations autonomously.',
         riskLevel: "write",
         version: "2.0.0",
+        timeoutMs: 12e4,
+        // 2 minutes — delegate chains multiple LLM calls + tool executions
         inputSchema: {
           type: "object",
           properties: {
@@ -4558,6 +4864,808 @@ ${cleaned}`
   }
 });
 
+// ../skills/dist/built-in/profile.js
+var ProfileSkill;
+var init_profile = __esm({
+  "../skills/dist/built-in/profile.js"() {
+    "use strict";
+    init_skill();
+    ProfileSkill = class extends Skill {
+      userRepo;
+      metadata = {
+        name: "profile",
+        description: "Manage user profile settings including timezone, language, and bio. Use this to personalize Alfred for each user.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["get", "set_timezone", "set_language", "set_bio", "set_preference"],
+              description: "The profile action to perform"
+            },
+            value: {
+              type: "string",
+              description: "The value to set (for set_* actions)"
+            },
+            preference_key: {
+              type: "string",
+              description: "The preference key (for set_preference)"
+            },
+            preference_value: {
+              type: "string",
+              description: "The preference value (for set_preference)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(userRepo) {
+        super();
+        this.userRepo = userRepo;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        const user = this.userRepo.findOrCreate(context.platform, context.userId);
+        switch (action) {
+          case "get":
+            return this.getProfile(user.id);
+          case "set_timezone":
+            return this.setField(user.id, "timezone", input2.value);
+          case "set_language":
+            return this.setField(user.id, "language", input2.value);
+          case "set_bio":
+            return this.setField(user.id, "bio", input2.value);
+          case "set_preference":
+            return this.setPreference(user.id, input2.preference_key, input2.preference_value);
+          default:
+            return { success: false, error: `Unknown action: "${String(action)}"` };
+        }
+      }
+      getProfile(userId) {
+        const profile = this.userRepo.getProfile(userId);
+        if (!profile) {
+          return { success: true, data: null, display: "No profile found. Set your timezone, language, or bio to create one." };
+        }
+        const parts = [];
+        if (profile.displayName)
+          parts.push(`Name: ${profile.displayName}`);
+        if (profile.timezone)
+          parts.push(`Timezone: ${profile.timezone}`);
+        if (profile.language)
+          parts.push(`Language: ${profile.language}`);
+        if (profile.bio)
+          parts.push(`Bio: ${profile.bio}`);
+        if (profile.preferences) {
+          for (const [key, value] of Object.entries(profile.preferences)) {
+            parts.push(`${key}: ${String(value)}`);
+          }
+        }
+        return {
+          success: true,
+          data: profile,
+          display: parts.length > 0 ? `Profile:
+${parts.map((p) => `- ${p}`).join("\n")}` : "Profile is empty."
+        };
+      }
+      setField(userId, field, value) {
+        if (!value || typeof value !== "string") {
+          return { success: false, error: `Missing required "value" for ${field}` };
+        }
+        this.userRepo.updateProfile(userId, { [field]: value });
+        return { success: true, data: { [field]: value }, display: `${field} set to "${value}"` };
+      }
+      setPreference(userId, key, value) {
+        if (!key || typeof key !== "string") {
+          return { success: false, error: 'Missing required "preference_key"' };
+        }
+        const profile = this.userRepo.getProfile(userId);
+        const prefs = profile?.preferences ?? {};
+        prefs[key] = value;
+        this.userRepo.updateProfile(userId, { preferences: prefs });
+        return { success: true, data: { key, value }, display: `Preference "${key}" set to "${value}"` };
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/calendar-provider.js
+var CalendarProvider;
+var init_calendar_provider = __esm({
+  "../skills/dist/built-in/calendar/calendar-provider.js"() {
+    "use strict";
+    CalendarProvider = class {
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/caldav-provider.js
+var caldav_provider_exports = {};
+__export(caldav_provider_exports, {
+  CalDAVProvider: () => CalDAVProvider
+});
+var CalDAVProvider;
+var init_caldav_provider = __esm({
+  "../skills/dist/built-in/calendar/caldav-provider.js"() {
+    "use strict";
+    init_calendar_provider();
+    CalDAVProvider = class extends CalendarProvider {
+      config;
+      client;
+      constructor(config) {
+        super();
+        this.config = config;
+      }
+      async initialize() {
+        try {
+          const tsdav = await import("tsdav");
+          const { createDAVClient } = tsdav;
+          this.client = await createDAVClient({
+            serverUrl: this.config.serverUrl,
+            credentials: {
+              username: this.config.username,
+              password: this.config.password
+            },
+            authMethod: "Basic",
+            defaultAccountType: "caldav"
+          });
+        } catch (err) {
+          throw new Error(`CalDAV initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      async listEvents(start, end) {
+        const calendars = await this.client.fetchCalendars();
+        if (!calendars || calendars.length === 0)
+          return [];
+        const events = [];
+        for (const calendar of calendars) {
+          const objects = await this.client.fetchCalendarObjects({
+            calendar,
+            timeRange: {
+              start: start.toISOString(),
+              end: end.toISOString()
+            }
+          });
+          for (const obj of objects) {
+            const parsed = this.parseICalEvent(obj.data, obj.url);
+            if (parsed)
+              events.push(parsed);
+          }
+        }
+        return events.sort((a, b) => a.start.getTime() - b.start.getTime());
+      }
+      async createEvent(input2) {
+        const calendars = await this.client.fetchCalendars();
+        if (!calendars || calendars.length === 0) {
+          throw new Error("No calendars found");
+        }
+        const uid = `alfred-${Date.now()}@alfred`;
+        const ical = this.buildICalEvent(uid, input2);
+        await this.client.createCalendarObject({
+          calendar: calendars[0],
+          filename: `${uid}.ics`,
+          iCalString: ical
+        });
+        return {
+          id: uid,
+          title: input2.title,
+          start: input2.start,
+          end: input2.end,
+          location: input2.location,
+          description: input2.description,
+          allDay: input2.allDay
+        };
+      }
+      async updateEvent(id, input2) {
+        const calendars = await this.client.fetchCalendars();
+        for (const calendar of calendars) {
+          const objects = await this.client.fetchCalendarObjects({ calendar });
+          for (const obj of objects) {
+            if (obj.url?.includes(id) || obj.data?.includes(id)) {
+              const existing = this.parseICalEvent(obj.data, obj.url);
+              if (!existing)
+                continue;
+              const updated = {
+                title: input2.title ?? existing.title,
+                start: input2.start ?? existing.start,
+                end: input2.end ?? existing.end,
+                location: input2.location ?? existing.location,
+                description: input2.description ?? existing.description,
+                allDay: input2.allDay ?? existing.allDay
+              };
+              const ical = this.buildICalEvent(id, updated);
+              await this.client.updateCalendarObject({
+                calendarObject: { ...obj, data: ical }
+              });
+              return { id, ...updated };
+            }
+          }
+        }
+        throw new Error(`Event ${id} not found`);
+      }
+      async deleteEvent(id) {
+        const calendars = await this.client.fetchCalendars();
+        for (const calendar of calendars) {
+          const objects = await this.client.fetchCalendarObjects({ calendar });
+          for (const obj of objects) {
+            if (obj.url?.includes(id) || obj.data?.includes(id)) {
+              await this.client.deleteCalendarObject({ calendarObject: obj });
+              return;
+            }
+          }
+        }
+        throw new Error(`Event ${id} not found`);
+      }
+      async checkAvailability(start, end) {
+        const events = await this.listEvents(start, end);
+        const conflicts = events.filter((e) => !e.allDay && e.start < end && e.end > start);
+        return { available: conflicts.length === 0, conflicts };
+      }
+      parseICalEvent(data, url) {
+        try {
+          const lines = data.split("\n").map((l) => l.trim());
+          const get = (key) => lines.find((l) => l.startsWith(key + ":"))?.slice(key.length + 1);
+          const summary = get("SUMMARY");
+          const dtstart = get("DTSTART") ?? get("DTSTART;VALUE=DATE");
+          const dtend = get("DTEND") ?? get("DTEND;VALUE=DATE");
+          const location = get("LOCATION");
+          const description = get("DESCRIPTION");
+          const uid = get("UID") ?? url;
+          if (!summary || !dtstart)
+            return void 0;
+          const allDay = dtstart.length === 8;
+          return {
+            id: uid,
+            title: summary,
+            start: this.parseICalDate(dtstart),
+            end: dtend ? this.parseICalDate(dtend) : this.parseICalDate(dtstart),
+            location: location || void 0,
+            description: description || void 0,
+            allDay
+          };
+        } catch {
+          return void 0;
+        }
+      }
+      parseICalDate(str) {
+        if (str.length === 8) {
+          return /* @__PURE__ */ new Date(`${str.slice(0, 4)}-${str.slice(4, 6)}-${str.slice(6, 8)}`);
+        }
+        const clean = str.replace(/[^0-9TZ]/g, "");
+        if (clean.length >= 15) {
+          return /* @__PURE__ */ new Date(`${clean.slice(0, 4)}-${clean.slice(4, 6)}-${clean.slice(6, 8)}T${clean.slice(9, 11)}:${clean.slice(11, 13)}:${clean.slice(13, 15)}Z`);
+        }
+        return new Date(str);
+      }
+      buildICalEvent(uid, input2) {
+        const formatDate = (d, allDay) => {
+          if (allDay) {
+            return d.toISOString().slice(0, 10).replace(/-/g, "");
+          }
+          return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+        };
+        let ical = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Alfred//EN\r\nBEGIN:VEVENT\r\n";
+        ical += `UID:${uid}\r
+`;
+        ical += `SUMMARY:${input2.title}\r
+`;
+        if (input2.allDay) {
+          ical += `DTSTART;VALUE=DATE:${formatDate(input2.start, true)}\r
+`;
+          ical += `DTEND;VALUE=DATE:${formatDate(input2.end, true)}\r
+`;
+        } else {
+          ical += `DTSTART:${formatDate(input2.start)}\r
+`;
+          ical += `DTEND:${formatDate(input2.end)}\r
+`;
+        }
+        if (input2.location)
+          ical += `LOCATION:${input2.location}\r
+`;
+        if (input2.description)
+          ical += `DESCRIPTION:${input2.description}\r
+`;
+        ical += `DTSTAMP:${formatDate(/* @__PURE__ */ new Date())}\r
+`;
+        ical += "END:VEVENT\r\nEND:VCALENDAR\r\n";
+        return ical;
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/google-provider.js
+var google_provider_exports = {};
+__export(google_provider_exports, {
+  GoogleCalendarProvider: () => GoogleCalendarProvider
+});
+var GoogleCalendarProvider;
+var init_google_provider = __esm({
+  "../skills/dist/built-in/calendar/google-provider.js"() {
+    "use strict";
+    init_calendar_provider();
+    GoogleCalendarProvider = class extends CalendarProvider {
+      config;
+      calendar;
+      constructor(config) {
+        super();
+        this.config = config;
+      }
+      async initialize() {
+        try {
+          const { google } = await import("googleapis");
+          const auth = new google.auth.OAuth2(this.config.clientId, this.config.clientSecret);
+          auth.setCredentials({ refresh_token: this.config.refreshToken });
+          this.calendar = google.calendar({ version: "v3", auth });
+        } catch (err) {
+          throw new Error(`Google Calendar initialization failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      async listEvents(start, end) {
+        const response = await this.calendar.events.list({
+          calendarId: "primary",
+          timeMin: start.toISOString(),
+          timeMax: end.toISOString(),
+          singleEvents: true,
+          orderBy: "startTime"
+        });
+        return (response.data.items ?? []).map((item) => this.mapEvent(item));
+      }
+      async createEvent(input2) {
+        const event = {
+          summary: input2.title,
+          location: input2.location,
+          description: input2.description
+        };
+        if (input2.allDay) {
+          event.start = { date: input2.start.toISOString().slice(0, 10) };
+          event.end = { date: input2.end.toISOString().slice(0, 10) };
+        } else {
+          event.start = { dateTime: input2.start.toISOString() };
+          event.end = { dateTime: input2.end.toISOString() };
+        }
+        const response = await this.calendar.events.insert({
+          calendarId: "primary",
+          requestBody: event
+        });
+        return this.mapEvent(response.data);
+      }
+      async updateEvent(id, input2) {
+        const patch = {};
+        if (input2.title)
+          patch.summary = input2.title;
+        if (input2.location)
+          patch.location = input2.location;
+        if (input2.description)
+          patch.description = input2.description;
+        if (input2.start) {
+          patch.start = input2.allDay ? { date: input2.start.toISOString().slice(0, 10) } : { dateTime: input2.start.toISOString() };
+        }
+        if (input2.end) {
+          patch.end = input2.allDay ? { date: input2.end.toISOString().slice(0, 10) } : { dateTime: input2.end.toISOString() };
+        }
+        const response = await this.calendar.events.patch({
+          calendarId: "primary",
+          eventId: id,
+          requestBody: patch
+        });
+        return this.mapEvent(response.data);
+      }
+      async deleteEvent(id) {
+        await this.calendar.events.delete({
+          calendarId: "primary",
+          eventId: id
+        });
+      }
+      async checkAvailability(start, end) {
+        const events = await this.listEvents(start, end);
+        const conflicts = events.filter((e) => !e.allDay && e.start < end && e.end > start);
+        return { available: conflicts.length === 0, conflicts };
+      }
+      mapEvent(item) {
+        const allDay = !!item.start?.date;
+        return {
+          id: item.id,
+          title: item.summary ?? "(No title)",
+          start: new Date(item.start?.dateTime ?? item.start?.date),
+          end: new Date(item.end?.dateTime ?? item.end?.date),
+          location: item.location ?? void 0,
+          description: item.description ?? void 0,
+          allDay
+        };
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/microsoft-provider.js
+var microsoft_provider_exports = {};
+__export(microsoft_provider_exports, {
+  MicrosoftCalendarProvider: () => MicrosoftCalendarProvider
+});
+var MicrosoftCalendarProvider;
+var init_microsoft_provider = __esm({
+  "../skills/dist/built-in/calendar/microsoft-provider.js"() {
+    "use strict";
+    init_calendar_provider();
+    MicrosoftCalendarProvider = class extends CalendarProvider {
+      config;
+      client;
+      accessToken = "";
+      constructor(config) {
+        super();
+        this.config = config;
+      }
+      async initialize() {
+        await this.refreshAccessToken();
+      }
+      async refreshAccessToken() {
+        const tokenUrl = `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
+        const body = new URLSearchParams({
+          client_id: this.config.clientId,
+          client_secret: this.config.clientSecret,
+          refresh_token: this.config.refreshToken,
+          grant_type: "refresh_token",
+          scope: "https://graph.microsoft.com/Calendars.ReadWrite offline_access"
+        });
+        const res = await fetch(tokenUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: body.toString()
+        });
+        if (!res.ok) {
+          throw new Error(`Microsoft token refresh failed: ${res.status}`);
+        }
+        const data = await res.json();
+        this.accessToken = data.access_token;
+      }
+      async graphRequest(path13, options = {}) {
+        const res = await fetch(`https://graph.microsoft.com/v1.0${path13}`, {
+          ...options,
+          headers: {
+            Authorization: `Bearer ${this.accessToken}`,
+            "Content-Type": "application/json",
+            ...options.headers
+          }
+        });
+        if (res.status === 401) {
+          await this.refreshAccessToken();
+          const retry = await fetch(`https://graph.microsoft.com/v1.0${path13}`, {
+            ...options,
+            headers: {
+              Authorization: `Bearer ${this.accessToken}`,
+              "Content-Type": "application/json",
+              ...options.headers
+            }
+          });
+          if (!retry.ok)
+            throw new Error(`Graph API error: ${retry.status}`);
+          return retry.json();
+        }
+        if (!res.ok)
+          throw new Error(`Graph API error: ${res.status}`);
+        if (res.status === 204)
+          return void 0;
+        return res.json();
+      }
+      async listEvents(start, end) {
+        const params = new URLSearchParams({
+          startDateTime: start.toISOString(),
+          endDateTime: end.toISOString(),
+          $orderby: "start/dateTime",
+          $top: "50"
+        });
+        const data = await this.graphRequest(`/me/calendarView?${params}`);
+        return (data.value ?? []).map((item) => this.mapEvent(item));
+      }
+      async createEvent(input2) {
+        const event = {
+          subject: input2.title,
+          body: input2.description ? { contentType: "text", content: input2.description } : void 0,
+          location: input2.location ? { displayName: input2.location } : void 0,
+          isAllDay: input2.allDay ?? false
+        };
+        if (input2.allDay) {
+          event.start = { dateTime: input2.start.toISOString().slice(0, 10) + "T00:00:00", timeZone: "UTC" };
+          event.end = { dateTime: input2.end.toISOString().slice(0, 10) + "T00:00:00", timeZone: "UTC" };
+        } else {
+          event.start = { dateTime: input2.start.toISOString(), timeZone: "UTC" };
+          event.end = { dateTime: input2.end.toISOString(), timeZone: "UTC" };
+        }
+        const data = await this.graphRequest("/me/events", {
+          method: "POST",
+          body: JSON.stringify(event)
+        });
+        return this.mapEvent(data);
+      }
+      async updateEvent(id, input2) {
+        const patch = {};
+        if (input2.title)
+          patch.subject = input2.title;
+        if (input2.description)
+          patch.body = { contentType: "text", content: input2.description };
+        if (input2.location)
+          patch.location = { displayName: input2.location };
+        if (input2.start) {
+          patch.start = { dateTime: input2.start.toISOString(), timeZone: "UTC" };
+        }
+        if (input2.end) {
+          patch.end = { dateTime: input2.end.toISOString(), timeZone: "UTC" };
+        }
+        const data = await this.graphRequest(`/me/events/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify(patch)
+        });
+        return this.mapEvent(data);
+      }
+      async deleteEvent(id) {
+        await this.graphRequest(`/me/events/${id}`, { method: "DELETE" });
+      }
+      async checkAvailability(start, end) {
+        const events = await this.listEvents(start, end);
+        const conflicts = events.filter((e) => !e.allDay && e.start < end && e.end > start);
+        return { available: conflicts.length === 0, conflicts };
+      }
+      mapEvent(item) {
+        return {
+          id: item.id,
+          title: item.subject ?? "(No title)",
+          start: new Date(item.start?.dateTime),
+          end: new Date(item.end?.dateTime),
+          location: item.location?.displayName ?? void 0,
+          description: item.body?.content ?? void 0,
+          allDay: item.isAllDay ?? false
+        };
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/factory.js
+async function createCalendarProvider(config) {
+  switch (config.provider) {
+    case "caldav": {
+      if (!config.caldav)
+        throw new Error("CalDAV config missing");
+      const { CalDAVProvider: CalDAVProvider2 } = await Promise.resolve().then(() => (init_caldav_provider(), caldav_provider_exports));
+      const provider = new CalDAVProvider2(config.caldav);
+      await provider.initialize();
+      return provider;
+    }
+    case "google": {
+      if (!config.google)
+        throw new Error("Google Calendar config missing");
+      const { GoogleCalendarProvider: GoogleCalendarProvider2 } = await Promise.resolve().then(() => (init_google_provider(), google_provider_exports));
+      const provider = new GoogleCalendarProvider2(config.google);
+      await provider.initialize();
+      return provider;
+    }
+    case "microsoft": {
+      if (!config.microsoft)
+        throw new Error("Microsoft Calendar config missing");
+      const { MicrosoftCalendarProvider: MicrosoftCalendarProvider2 } = await Promise.resolve().then(() => (init_microsoft_provider(), microsoft_provider_exports));
+      const provider = new MicrosoftCalendarProvider2(config.microsoft);
+      await provider.initialize();
+      return provider;
+    }
+    default:
+      throw new Error(`Unknown calendar provider: ${config.provider}`);
+  }
+}
+var init_factory = __esm({
+  "../skills/dist/built-in/calendar/factory.js"() {
+    "use strict";
+  }
+});
+
+// ../skills/dist/built-in/calendar/calendar-skill.js
+var CalendarSkill;
+var init_calendar_skill = __esm({
+  "../skills/dist/built-in/calendar/calendar-skill.js"() {
+    "use strict";
+    init_skill();
+    CalendarSkill = class extends Skill {
+      calendarProvider;
+      timezone;
+      metadata = {
+        name: "calendar",
+        description: "Manage calendar events. List upcoming events, create new events, update or delete existing ones, and check availability.",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["list_events", "create_event", "update_event", "delete_event", "check_availability"],
+              description: "The calendar action to perform"
+            },
+            start: {
+              type: "string",
+              description: "Start date/time in ISO 8601 format"
+            },
+            end: {
+              type: "string",
+              description: "End date/time in ISO 8601 format"
+            },
+            title: {
+              type: "string",
+              description: "Event title (for create/update)"
+            },
+            location: {
+              type: "string",
+              description: "Event location (for create/update)"
+            },
+            description: {
+              type: "string",
+              description: "Event description (for create/update)"
+            },
+            event_id: {
+              type: "string",
+              description: "Event ID (for update/delete)"
+            },
+            all_day: {
+              type: "boolean",
+              description: "Whether this is an all-day event"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(calendarProvider, timezone) {
+        super();
+        this.calendarProvider = calendarProvider;
+        this.timezone = timezone;
+      }
+      async execute(input2, _context) {
+        const action = input2.action;
+        switch (action) {
+          case "list_events":
+            return this.listEvents(input2);
+          case "create_event":
+            return this.createEvent(input2);
+          case "update_event":
+            return this.updateEvent(input2);
+          case "delete_event":
+            return this.deleteEvent(input2);
+          case "check_availability":
+            return this.checkAvailability(input2);
+          default:
+            return { success: false, error: `Unknown action: "${String(action)}"` };
+        }
+      }
+      async getTodayEvents() {
+        const now = /* @__PURE__ */ new Date();
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+        try {
+          return await this.calendarProvider.listEvents(startOfDay, endOfDay);
+        } catch {
+          return [];
+        }
+      }
+      async listEvents(input2) {
+        const start = input2.start ? new Date(input2.start) : /* @__PURE__ */ new Date();
+        const end = input2.end ? new Date(input2.end) : new Date(start.getTime() + 7 * 24 * 60 * 60 * 1e3);
+        try {
+          const events = await this.calendarProvider.listEvents(start, end);
+          if (events.length === 0) {
+            return { success: true, data: [], display: "No events found in this time range." };
+          }
+          const display = events.map((e) => this.formatEvent(e)).join("\n");
+          return { success: true, data: events, display: `${events.length} event(s):
+${display}` };
+        } catch (err) {
+          return { success: false, error: `Failed to list events: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      async createEvent(input2) {
+        const title = input2.title;
+        const start = input2.start;
+        const end = input2.end;
+        if (!title)
+          return { success: false, error: 'Missing required field "title"' };
+        if (!start)
+          return { success: false, error: 'Missing required field "start"' };
+        if (!end)
+          return { success: false, error: 'Missing required field "end"' };
+        try {
+          const event = await this.calendarProvider.createEvent({
+            title,
+            start: new Date(start),
+            end: new Date(end),
+            location: input2.location,
+            description: input2.description,
+            allDay: input2.all_day
+          });
+          return {
+            success: true,
+            data: event,
+            display: `Event created: ${this.formatEvent(event)}`
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to create event: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      async updateEvent(input2) {
+        const eventId = input2.event_id;
+        if (!eventId)
+          return { success: false, error: 'Missing required field "event_id"' };
+        try {
+          const event = await this.calendarProvider.updateEvent(eventId, {
+            title: input2.title,
+            start: input2.start ? new Date(input2.start) : void 0,
+            end: input2.end ? new Date(input2.end) : void 0,
+            location: input2.location,
+            description: input2.description,
+            allDay: input2.all_day
+          });
+          return {
+            success: true,
+            data: event,
+            display: `Event updated: ${this.formatEvent(event)}`
+          };
+        } catch (err) {
+          return { success: false, error: `Failed to update event: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      async deleteEvent(input2) {
+        const eventId = input2.event_id;
+        if (!eventId)
+          return { success: false, error: 'Missing required field "event_id"' };
+        try {
+          await this.calendarProvider.deleteEvent(eventId);
+          return { success: true, data: { deleted: eventId }, display: `Event "${eventId}" deleted.` };
+        } catch (err) {
+          return { success: false, error: `Failed to delete event: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      async checkAvailability(input2) {
+        const start = input2.start;
+        const end = input2.end;
+        if (!start || !end)
+          return { success: false, error: 'Missing required fields "start" and "end"' };
+        try {
+          const result = await this.calendarProvider.checkAvailability(new Date(start), new Date(end));
+          const display = result.available ? "Time slot is available." : `Time slot has ${result.conflicts.length} conflict(s):
+${result.conflicts.map((e) => this.formatEvent(e)).join("\n")}`;
+          return { success: true, data: result, display };
+        } catch (err) {
+          return { success: false, error: `Failed to check availability: ${err instanceof Error ? err.message : String(err)}` };
+        }
+      }
+      formatEvent(event) {
+        const opts = {
+          hour: "2-digit",
+          minute: "2-digit",
+          ...this.timezone ? { timeZone: this.timezone } : {}
+        };
+        if (event.allDay) {
+          return `- All day: ${event.title}${event.location ? ` @ ${event.location}` : ""}`;
+        }
+        const startTime = event.start.toLocaleTimeString("en-GB", opts);
+        const endTime = event.end.toLocaleTimeString("en-GB", opts);
+        return `- ${startTime}-${endTime}: ${event.title}${event.location ? ` @ ${event.location}` : ""}`;
+      }
+    };
+  }
+});
+
+// ../skills/dist/built-in/calendar/index.js
+var init_calendar = __esm({
+  "../skills/dist/built-in/calendar/index.js"() {
+    "use strict";
+    init_calendar_provider();
+    init_caldav_provider();
+    init_google_provider();
+    init_microsoft_provider();
+    init_factory();
+    init_calendar_skill();
+  }
+});
+
 // ../skills/dist/index.js
 var init_dist6 = __esm({
   "../skills/dist/index.js"() {
@@ -4581,6 +5689,8 @@ var init_dist6 = __esm({
     init_clipboard();
     init_screenshot();
     init_browser();
+    init_profile();
+    init_calendar();
   }
 });
 
@@ -4624,6 +5734,7 @@ var init_message_pipeline = __esm({
     TOKEN_BUDGET_RATIO = 0.85;
     MAX_INLINE_FILE_SIZE = 1e5;
     MessagePipeline = class {
+      promptBuilder;
       llm;
       conversationManager;
       users;
@@ -4634,18 +5745,19 @@ var init_message_pipeline = __esm({
       memoryRepo;
       speechTranscriber;
       inboxPath;
-      promptBuilder;
-      constructor(llm, conversationManager, users, logger, skillRegistry, skillSandbox, securityManager, memoryRepo, speechTranscriber, inboxPath) {
-        this.llm = llm;
-        this.conversationManager = conversationManager;
-        this.users = users;
-        this.logger = logger;
-        this.skillRegistry = skillRegistry;
-        this.skillSandbox = skillSandbox;
-        this.securityManager = securityManager;
-        this.memoryRepo = memoryRepo;
-        this.speechTranscriber = speechTranscriber;
-        this.inboxPath = inboxPath;
+      embeddingService;
+      constructor(options) {
+        this.llm = options.llm;
+        this.conversationManager = options.conversationManager;
+        this.users = options.users;
+        this.logger = options.logger;
+        this.skillRegistry = options.skillRegistry;
+        this.skillSandbox = options.skillSandbox;
+        this.securityManager = options.securityManager;
+        this.memoryRepo = options.memoryRepo;
+        this.speechTranscriber = options.speechTranscriber;
+        this.inboxPath = options.inboxPath;
+        this.embeddingService = options.embeddingService;
         this.promptBuilder = new PromptBuilder();
       }
       async process(message, onProgress) {
@@ -4659,13 +5771,46 @@ var init_message_pipeline = __esm({
           let memories;
           if (this.memoryRepo) {
             try {
-              memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+              if (this.embeddingService && message.text) {
+                const semanticResults = await this.embeddingService.semanticSearch(user.id, message.text, 10);
+                const recentResults = this.memoryRepo.getRecentForPrompt(user.id, 5);
+                const seen = /* @__PURE__ */ new Set();
+                memories = [];
+                for (const m of semanticResults) {
+                  if (!seen.has(m.key)) {
+                    seen.add(m.key);
+                    memories.push(m);
+                  }
+                }
+                for (const m of recentResults) {
+                  if (!seen.has(m.key)) {
+                    seen.add(m.key);
+                    memories.push(m);
+                  }
+                }
+              } else {
+                memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+              }
             } catch {
             }
           }
+          let userProfile;
+          try {
+            if ("getProfile" in this.users) {
+              userProfile = this.users.getProfile(user.id);
+              if (userProfile && !userProfile.displayName) {
+                userProfile.displayName = user.displayName ?? user.username;
+              }
+            }
+          } catch {
+          }
           const skillMetas = this.skillRegistry ? this.skillRegistry.getAll().map((s) => s.metadata) : void 0;
           const tools = skillMetas ? this.promptBuilder.buildTools(skillMetas) : void 0;
-          const system = this.promptBuilder.buildSystemPrompt(memories, skillMetas);
+          const system = this.promptBuilder.buildSystemPrompt({
+            memories,
+            skills: skillMetas,
+            userProfile
+          });
           const allMessages = this.promptBuilder.buildMessages(history);
           const userContent = await this.buildUserContent(message, onProgress);
           allMessages.push({ role: "user", content: userContent });
@@ -4813,6 +5958,10 @@ var init_message_pipeline = __esm({
             return `Weather: ${String(input2.location ?? "")}`;
           case "note":
             return `Note: ${String(input2.action ?? "")}`;
+          case "profile":
+            return `Profile: ${String(input2.action ?? "")}`;
+          case "calendar":
+            return `Calendar: ${String(input2.action ?? "")}`;
           default:
             return `Using ${toolName}...`;
         }
@@ -5094,6 +6243,152 @@ var init_speech_transcriber = __esm({
   }
 });
 
+// ../core/dist/response-formatter.js
+var ResponseFormatter;
+var init_response_formatter = __esm({
+  "../core/dist/response-formatter.js"() {
+    "use strict";
+    ResponseFormatter = class {
+      format(text, platform) {
+        switch (platform) {
+          case "telegram":
+            return { text: this.toTelegramHTML(text), parseMode: "html" };
+          case "discord":
+            return { text, parseMode: "markdown" };
+          case "matrix":
+            return { text: this.toMatrixHTML(text), parseMode: "html" };
+          case "whatsapp":
+            return { text: this.toWhatsApp(text), parseMode: "text" };
+          case "signal":
+            return { text: this.stripFormatting(text), parseMode: "text" };
+          default:
+            return { text, parseMode: "text" };
+        }
+      }
+      toTelegramHTML(md) {
+        let html = md;
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
+          return `<pre>${this.escapeHTML(code.trimEnd())}</pre>`;
+        });
+        html = html.replace(/`([^`]+)`/g, (_match, code) => {
+          return `<code>${this.escapeHTML(code)}</code>`;
+        });
+        html = html.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+        html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<i>$1</i>");
+        html = html.replace(/~~(.+?)~~/g, "<s>$1</s>");
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+        return html;
+      }
+      toMatrixHTML(md) {
+        return this.toTelegramHTML(md);
+      }
+      toWhatsApp(md) {
+        let text = md;
+        text = text.replace(/\*\*(.+?)\*\*/g, "*$1*");
+        text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "_$1_");
+        text = text.replace(/~~(.+?)~~/g, "~$1~");
+        text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
+        return text;
+      }
+      stripFormatting(md) {
+        let text = md;
+        text = text.replace(/```\w*\n?/g, "");
+        text = text.replace(/`([^`]+)`/g, "$1");
+        text = text.replace(/\*\*(.+?)\*\*/g, "$1");
+        text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1");
+        text = text.replace(/~~(.+?)~~/g, "$1");
+        text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)");
+        return text;
+      }
+      escapeHTML(text) {
+        return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+    };
+  }
+});
+
+// ../core/dist/embedding-service.js
+var EmbeddingService;
+var init_embedding_service = __esm({
+  "../core/dist/embedding-service.js"() {
+    "use strict";
+    EmbeddingService = class {
+      llm;
+      embeddingRepo;
+      logger;
+      constructor(llm, embeddingRepo, logger) {
+        this.llm = llm;
+        this.embeddingRepo = embeddingRepo;
+        this.logger = logger;
+      }
+      async embedAndStore(userId, content, sourceType, sourceId) {
+        if (!this.llm.supportsEmbeddings()) {
+          return;
+        }
+        try {
+          const result = await this.llm.embed(content);
+          if (!result)
+            return;
+          this.embeddingRepo.store({
+            userId,
+            sourceType,
+            sourceId,
+            content,
+            embedding: result.embedding,
+            model: result.model,
+            dimensions: result.dimensions
+          });
+          this.logger.debug({ userId, sourceType, sourceId }, "Embedding stored");
+        } catch (err) {
+          this.logger.error({ err, userId, sourceType, sourceId }, "Failed to embed content");
+        }
+      }
+      async semanticSearch(userId, query, limit = 10) {
+        if (!this.llm.supportsEmbeddings()) {
+          return [];
+        }
+        try {
+          const queryResult = await this.llm.embed(query);
+          if (!queryResult)
+            return [];
+          const embeddings = this.embeddingRepo.findByUser(userId);
+          if (embeddings.length === 0)
+            return [];
+          const scored = embeddings.map((entry) => {
+            const score = this.cosineSimilarity(queryResult.embedding, entry.embedding);
+            return { ...entry, score };
+          });
+          scored.sort((a, b) => b.score - a.score);
+          const topResults = scored.slice(0, limit);
+          return topResults.map((r) => ({
+            key: r.sourceId,
+            value: r.content,
+            category: r.sourceType,
+            score: r.score
+          }));
+        } catch (err) {
+          this.logger.error({ err }, "Semantic search failed");
+          return [];
+        }
+      }
+      cosineSimilarity(a, b) {
+        if (a.length !== b.length)
+          return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < a.length; i++) {
+          dotProduct += a[i] * b[i];
+          normA += a[i] * a[i];
+          normB += b[i] * b[i];
+        }
+        const denominator = Math.sqrt(normA) * Math.sqrt(normB);
+        return denominator === 0 ? 0 : dotProduct / denominator;
+      }
+    };
+  }
+});
+
 // ../messaging/dist/adapter.js
 import { EventEmitter } from "node:events";
 var MessagingAdapter;
@@ -5220,8 +6515,10 @@ var init_telegram = __esm({
         });
         return String(result.message_id);
       }
-      async editMessage(chatId, messageId, text) {
-        await this.bot.api.editMessageText(Number(chatId), Number(messageId), text);
+      async editMessage(chatId, messageId, text, options) {
+        await this.bot.api.editMessageText(Number(chatId), Number(messageId), text, {
+          parse_mode: mapParseMode(options?.parseMode)
+        });
       }
       async deleteMessage(chatId, messageId) {
         await this.bot.api.deleteMessage(Number(chatId), Number(messageId));
@@ -5353,7 +6650,7 @@ var init_discord = __esm({
         const message = await channel.send(text);
         return message.id;
       }
-      async editMessage(chatId, messageId, text) {
+      async editMessage(chatId, messageId, text, _options) {
         if (!this.client)
           throw new Error("Client is not connected");
         const channel = await this.client.channels.fetch(chatId);
@@ -5501,23 +6798,35 @@ var init_matrix = __esm({
         this.status = "disconnected";
         this.emit("disconnected");
       }
-      async sendMessage(chatId, text, _options) {
+      async sendMessage(chatId, text, options) {
+        if (options?.parseMode === "html") {
+          const eventId2 = await this.client.sendEvent(chatId, "m.room.message", {
+            msgtype: "m.text",
+            body: text.replace(/<[^>]*>/g, ""),
+            format: "org.matrix.custom.html",
+            formatted_body: text
+          });
+          return eventId2;
+        }
         const eventId = await this.client.sendText(chatId, text);
         return eventId;
       }
-      async editMessage(chatId, messageId, text) {
-        await this.client.sendEvent(chatId, "m.room.message", {
+      async editMessage(chatId, messageId, text, options) {
+        const isHtml = options?.parseMode === "html";
+        const content = {
           "msgtype": "m.text",
-          "body": "* " + text,
+          "body": "* " + (isHtml ? text.replace(/<[^>]*>/g, "") : text),
           "m.new_content": {
             msgtype: "m.text",
-            body: text
+            body: isHtml ? text.replace(/<[^>]*>/g, "") : text,
+            ...isHtml ? { format: "org.matrix.custom.html", formatted_body: text } : {}
           },
           "m.relates_to": {
             rel_type: "m.replace",
             event_id: messageId
           }
-        });
+        };
+        await this.client.sendEvent(chatId, "m.room.message", content);
       }
       async deleteMessage(chatId, messageId) {
         await this.client.redactEvent(chatId, messageId);
@@ -5735,7 +7044,7 @@ var init_whatsapp = __esm({
         } : void 0);
         return msg?.key?.id ?? "";
       }
-      async editMessage(chatId, messageId, text) {
+      async editMessage(chatId, messageId, text, _options) {
         await this.socket.sendMessage(chatId, {
           text,
           edit: {
@@ -5945,7 +7254,7 @@ var init_signal = __esm({
         const result = await res.json();
         return String(result.timestamp ?? Date.now());
       }
-      async editMessage(_chatId, _messageId, _text) {
+      async editMessage(_chatId, _messageId, _text, _options) {
         throw new Error("Signal does not support message editing");
       }
       async deleteMessage(chatId, messageId) {
@@ -6092,6 +7401,8 @@ var init_alfred = __esm({
     init_message_pipeline();
     init_reminder_scheduler();
     init_speech_transcriber();
+    init_response_formatter();
+    init_embedding_service();
     Alfred = class {
       config;
       logger;
@@ -6099,6 +7410,9 @@ var init_alfred = __esm({
       pipeline;
       reminderScheduler;
       adapters = /* @__PURE__ */ new Map();
+      formatter = new ResponseFormatter();
+      calendarSkill;
+      // CalendarSkill instance for today's events
       constructor(config) {
         this.config = config;
         this.logger = createLogger("alfred", config.logger.level);
@@ -6113,6 +7427,7 @@ var init_alfred = __esm({
         const memoryRepo = new MemoryRepository(db);
         const reminderRepo = new ReminderRepository(db);
         const noteRepo = new NoteRepository(db);
+        const embeddingRepo = new EmbeddingRepository(db);
         this.logger.info("Storage initialized");
         const ruleEngine = new RuleEngine();
         const rules = this.loadSecurityRules();
@@ -6122,6 +7437,7 @@ var init_alfred = __esm({
         const llmProvider = createLLMProvider(this.config.llm);
         await llmProvider.initialize();
         this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, "LLM provider initialized");
+        const embeddingService = new EmbeddingService(llmProvider, embeddingRepo, this.logger.child({ component: "embeddings" }));
         const skillSandbox = new SkillSandbox(this.logger.child({ component: "sandbox" }));
         const skillRegistry = new SkillRegistry();
         skillRegistry.register(new CalculatorSkill());
@@ -6135,7 +7451,7 @@ var init_alfred = __esm({
         skillRegistry.register(new NoteSkill(noteRepo));
         skillRegistry.register(new WeatherSkill());
         skillRegistry.register(new ShellSkill());
-        skillRegistry.register(new MemorySkill(memoryRepo));
+        skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
         skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
         skillRegistry.register(new EmailSkill(this.config.email ? {
           imap: this.config.email.imap,
@@ -6147,6 +7463,19 @@ var init_alfred = __esm({
         skillRegistry.register(new ClipboardSkill());
         skillRegistry.register(new ScreenshotSkill());
         skillRegistry.register(new BrowserSkill());
+        skillRegistry.register(new ProfileSkill(userRepo));
+        let calendarSkill;
+        if (this.config.calendar) {
+          try {
+            const calendarProvider = await createCalendarProvider(this.config.calendar);
+            calendarSkill = new CalendarSkill(calendarProvider);
+            skillRegistry.register(calendarSkill);
+            this.logger.info({ provider: this.config.calendar.provider }, "Calendar initialized");
+          } catch (err) {
+            this.logger.warn({ err }, "Calendar initialization failed, continuing without calendar");
+          }
+        }
+        this.calendarSkill = calendarSkill;
         this.logger.info({ skills: skillRegistry.getAll().map((s) => s.metadata.name) }, "Skills registered");
         let speechTranscriber;
         if (this.config.speech?.apiKey) {
@@ -6155,7 +7484,19 @@ var init_alfred = __esm({
         }
         const conversationManager = new ConversationManager(conversationRepo);
         const inboxPath = path8.resolve(path8.dirname(this.config.storage.path), "inbox");
-        this.pipeline = new MessagePipeline(llmProvider, conversationManager, userRepo, this.logger.child({ component: "pipeline" }), skillRegistry, skillSandbox, securityManager, memoryRepo, speechTranscriber, inboxPath);
+        this.pipeline = new MessagePipeline({
+          llm: llmProvider,
+          conversationManager,
+          users: userRepo,
+          logger: this.logger.child({ component: "pipeline" }),
+          skillRegistry,
+          skillSandbox,
+          securityManager,
+          memoryRepo,
+          speechTranscriber,
+          inboxPath,
+          embeddingService
+        });
         this.reminderScheduler = new ReminderScheduler(reminderRepo, async (platform, chatId, text) => {
           const adapter = this.adapters.get(platform);
           if (adapter) {
@@ -6241,14 +7582,16 @@ var init_alfred = __esm({
               }
             };
             const response = await this.pipeline.process(message, onProgress);
+            const formatted = this.formatter.format(response, message.platform);
+            const sendOpts = formatted.parseMode !== "text" ? { parseMode: formatted.parseMode } : void 0;
             if (statusMessageId) {
               try {
-                await adapter.editMessage(message.chatId, statusMessageId, response);
+                await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
               } catch {
-                await adapter.sendMessage(message.chatId, response);
+                await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
               }
             } else {
-              await adapter.sendMessage(message.chatId, response);
+              await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
             }
           } catch (error) {
             this.logger.error({ platform, err: error, chatId: message.chatId }, "Failed to handle message");
@@ -6310,6 +7653,8 @@ var init_dist8 = __esm({
     init_conversation_manager();
     init_reminder_scheduler();
     init_speech_transcriber();
+    init_response_formatter();
+    init_embedding_service();
   }
 });
 

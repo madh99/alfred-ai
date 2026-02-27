@@ -1,6 +1,8 @@
 export { Skill } from './skill.js';
 export { SkillRegistry } from './skill-registry.js';
 export { SkillSandbox } from './skill-sandbox.js';
+export { ActivityTracker } from './activity-tracker.js';
+export type { AgentState, ActivitySnapshot, ActivityEntry, ProgressCallback } from './activity-tracker.js';
 export { PluginLoader } from './plugin-loader.js';
 export { CalculatorSkill } from './built-in/calculator.js';
 export { SystemInfoSkill } from './built-in/system-info.js';

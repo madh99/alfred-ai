@@ -12,9 +12,18 @@ import type { LLMProvider } from '@alfred/llm';
 import type { SkillRegistry } from '../skill-registry.js';
 import type { SkillSandbox } from '../skill-sandbox.js';
 import type { SecurityManager } from '@alfred/security';
+import { ActivityTracker } from '../activity-tracker.js';
+import type { ProgressCallback } from '../activity-tracker.js';
 
 const DEFAULT_MAX_ITERATIONS = 5;
 const MAX_ALLOWED_ITERATIONS = 15;
+
+/**
+ * The initial timeout before inactivity-polling kicks in.
+ * On fast hardware this is plenty; on slow hardware the
+ * ActivityTracker will keep extending as long as there's progress.
+ */
+const INITIAL_TIMEOUT_MS = 120_000; // 2 minutes
 
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -27,8 +36,8 @@ export class DelegateSkill extends Skill {
       '"check the weather and draft a packing list"). ' +
       'Control depth with max_iterations (default 5, max 15).',
     riskLevel: 'write',
-    version: '2.1.0',
-    timeoutMs: MAX_ALLOWED_ITERATIONS * 35_000, // ~35s per iteration worst-case
+    version: '3.0.0',
+    timeoutMs: INITIAL_TIMEOUT_MS,
     inputSchema: {
       type: 'object',
       properties: {
@@ -49,6 +58,8 @@ export class DelegateSkill extends Skill {
     },
   };
 
+  private onProgress?: ProgressCallback;
+
   constructor(
     private readonly llm: LLMProvider,
     private readonly skillRegistry?: SkillRegistry,
@@ -56,6 +67,23 @@ export class DelegateSkill extends Skill {
     private readonly securityManager?: SecurityManager,
   ) {
     super();
+  }
+
+  /**
+   * Set a progress callback before execution.
+   * The pipeline calls this so the user sees live status updates
+   * like "Sub-agent using web_search (2/5)".
+   */
+  setProgressCallback(cb: ProgressCallback): void {
+    this.onProgress = cb;
+  }
+
+  /**
+   * Create an ActivityTracker for this execution.
+   * The sandbox uses this to decide whether to extend or kill.
+   */
+  createTracker(): ActivityTracker {
+    return new ActivityTracker(this.onProgress);
   }
 
   async execute(
@@ -77,6 +105,12 @@ export class DelegateSkill extends Skill {
     const maxIterations = requestedIterations
       ? Math.max(1, Math.min(MAX_ALLOWED_ITERATIONS, Math.round(requestedIterations)))
       : DEFAULT_MAX_ITERATIONS;
+
+    // Create tracker for this execution
+    // (If called via sandbox, the sandbox passes its own tracker.
+    //  This internal tracker is for direct execute() calls.)
+    const tracker = new ActivityTracker(this.onProgress);
+    tracker.ping('starting', { maxIterations });
 
     // Build tools list — exclude 'delegate' to prevent recursion
     const tools = this.buildSubAgentTools();
@@ -102,6 +136,8 @@ export class DelegateSkill extends Skill {
       let totalOutputTokens = 0;
 
       while (true) {
+        tracker.ping('llm_call', { iteration, maxIterations });
+
         const response = await this.llm.complete({
           messages,
           system: systemPrompt,
@@ -112,12 +148,15 @@ export class DelegateSkill extends Skill {
         totalInputTokens += response.usage.inputTokens;
         totalOutputTokens += response.usage.outputTokens;
 
+        tracker.ping('processing', { iteration, maxIterations });
+
         // No tool calls or max iterations — we're done
         if (
           !response.toolCalls ||
           response.toolCalls.length === 0 ||
           iteration >= maxIterations
         ) {
+          tracker.ping('done', { iteration, maxIterations });
           return {
             success: true,
             data: {
@@ -149,6 +188,8 @@ export class DelegateSkill extends Skill {
         // Execute each tool call
         const toolResultBlocks: LLMContentBlock[] = [];
         for (const toolCall of response.toolCalls) {
+          tracker.ping('tool_call', { iteration, maxIterations, tool: toolCall.name });
+
           const result = await this.executeSubAgentTool(toolCall, context);
           toolResultBlocks.push({
             type: 'tool_result',
