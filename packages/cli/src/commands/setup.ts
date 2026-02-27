@@ -67,6 +67,14 @@ const PROVIDERS: ProviderDef[] = [
     needsApiKey: false,
     baseUrl: 'http://localhost:11434',
   },
+  {
+    name: 'openwebui',
+    label: 'OpenWebUI (local OpenAI-compatible UI)',
+    defaultModel: 'llama3.2',
+    envKeyName: 'ALFRED_OPENWEBUI_API_KEY',
+    needsApiKey: false,
+    baseUrl: 'http://localhost:3000/api/v1',
+  },
 ];
 
 // ── Platform definitions ──────────────────────────────────────────────
@@ -317,18 +325,28 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${green('>')} API key set: ${dim(maskKey(apiKey))}`);
     }
 
-    // ── 3b. Base URL (for Ollama / OpenRouter / custom endpoints) ──
+    // ── 3b. Base URL (for providers with configurable endpoints) ──
     let baseUrl = provider.baseUrl ?? '';
-    if (provider.name === 'ollama') {
-      const existingUrl = existing.config.llm?.baseUrl ?? existing.env['ALFRED_LLM_BASE_URL'] ?? 'http://localhost:11434';
-      console.log('');
-      baseUrl = await askWithDefault(
-        rl,
-        'Ollama URL (use a remote address if Ollama runs on another machine)',
-        existingUrl.replace(/\/v1\/?$/, '').replace(/\/+$/, ''),
-      );
-      baseUrl = baseUrl.replace(/\/+$/, '');
-      console.log(`  ${green('>')} Ollama URL: ${dim(baseUrl)}`);
+    const providersWithBaseUrl = ['ollama', 'openwebui', 'openai', 'openrouter'];
+    if (providersWithBaseUrl.includes(provider.name)) {
+      const existingUrl = existing.config.llm?.baseUrl ?? existing.env['ALFRED_LLM_BASE_URL'] ?? '';
+      const defaultUrl = existingUrl || provider.baseUrl || '';
+      if (defaultUrl) {
+        const urlPromptLabels: Record<string, string> = {
+          ollama: 'Ollama URL (use a remote address if Ollama runs on another machine)',
+          openwebui: 'OpenWebUI URL',
+          openai: 'OpenAI-compatible API URL (leave default for official API)',
+          openrouter: 'OpenRouter API URL',
+        };
+        console.log('');
+        baseUrl = await askWithDefault(
+          rl,
+          urlPromptLabels[provider.name] ?? 'API Base URL',
+          defaultUrl.replace(/\/+$/, ''),
+        );
+        baseUrl = baseUrl.replace(/\/+$/, '');
+        console.log(`  ${green('>')} URL: ${dim(baseUrl)}`);
+      }
     }
 
     // ── 4. Model ─────────────────────────────────────────────────
