@@ -181,25 +181,42 @@ For complex tasks, work through multiple steps:
       .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
       .map((msg): LLMMessage => {
         if (msg.toolCalls) {
-          let toolCalls: ToolCall[];
-          try { toolCalls = JSON.parse(msg.toolCalls) as ToolCall[]; }
-          catch { toolCalls = []; }
+          let parsed: unknown[];
+          try { parsed = JSON.parse(msg.toolCalls) as unknown[]; }
+          catch { parsed = []; }
+
+          // Determine if this is tool_use (assistant) or tool_result (user) data
+          if (msg.role === 'assistant') {
+            // Assistant: tool_use blocks
+            const toolCalls = parsed as ToolCall[];
+            const content: LLMContentBlock[] = [];
+            if (msg.content) {
+              content.push({ type: 'text', text: msg.content });
+            }
+            for (const tc of toolCalls) {
+              content.push({
+                type: 'tool_use',
+                id: tc.id,
+                name: tc.name,
+                input: tc.input,
+              });
+            }
+            return { role: 'assistant', content };
+          }
+
+          // User: tool_result blocks
+          const blocks = parsed as LLMContentBlock[];
           const content: LLMContentBlock[] = [];
-
-          if (msg.content) {
-            content.push({ type: 'text', text: msg.content });
+          for (const block of blocks) {
+            if (block.type === 'tool_result') {
+              content.push(block);
+            }
           }
-
-          for (const tc of toolCalls) {
-            content.push({
-              type: 'tool_use',
-              id: tc.id,
-              name: tc.name,
-              input: tc.input,
-            });
+          if (content.length > 0) {
+            return { role: 'user', content };
           }
-
-          return { role: msg.role as 'user' | 'assistant', content };
+          // Fallback for legacy format: treat as plain text
+          return { role: 'user', content: msg.content || '' };
         }
 
         return { role: msg.role as 'user' | 'assistant', content: msg.content };

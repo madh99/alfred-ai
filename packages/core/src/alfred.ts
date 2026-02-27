@@ -306,6 +306,11 @@ export class Alfred {
   }
 
   async startWithCLI(): Promise<void> {
+    // Clear any adapters registered during initialize() — CLI mode
+    // should NOT start Telegram/Discord/etc. to avoid conflicts
+    // with a running `alfred start` instance.
+    this.adapters.clear();
+
     const { CLIAdapter } = await import('@alfred/messaging');
     const cli = new CLIAdapter();
     this.adapters.set('cli', cli);

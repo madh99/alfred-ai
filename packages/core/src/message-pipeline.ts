@@ -116,7 +116,7 @@ export class MessagePipeline {
       let memories: { key: string; value: string; category: string }[] | undefined;
       if (this.memoryRepo) {
         try {
-          if (this.embeddingService && message.text) {
+          if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
             // Use semantic search: top-10 relevant + 5 newest
             const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
             const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
@@ -233,24 +233,23 @@ export class MessagePipeline {
           onProgress,
         );
 
-        // Save intermediate tool interaction to DB so follow-up questions have context
-        const toolCallSummary = response.toolCalls.map(tc =>
-          `[Used ${tc.name}: ${JSON.stringify(tc.input)}]`
-        ).join('\n');
-        const toolResultSummary = toolResultBlocks.map(tr => {
-          const output = tr.type === 'tool_result' ? String(tr.content).slice(0, 1000) : '';
-          return `[Result: ${output}]`;
-        }).join('\n');
+        // Save intermediate tool interaction to DB so follow-up questions have context.
+        // Store assistant content WITHOUT tool-call text summary (the tool_use blocks
+        // are already captured in the toolCalls JSON column and will be replayed
+        // structurally by buildMessages()).
         this.conversationManager.addMessage(
           conversation.id,
           'assistant',
-          `${response.content ? response.content + '\n' : ''}${toolCallSummary}`,
+          response.content ?? '',
           JSON.stringify(response.toolCalls),
         );
+        // Store tool results as structured JSON so buildMessages() can replay them
+        // as proper tool_result blocks (required by the Anthropic API protocol).
         this.conversationManager.addMessage(
           conversation.id,
           'user',
-          toolResultSummary,
+          '',
+          JSON.stringify(toolResultBlocks),
         );
 
         // Add tool results as user message
