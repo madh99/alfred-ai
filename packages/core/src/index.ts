@@ -7,3 +7,6 @@ export { SpeechTranscriber } from './speech-transcriber.js';
 export { ResponseFormatter } from './response-formatter.js';
 export type { FormattedResponse } from './response-formatter.js';
 export { EmbeddingService } from './embedding-service.js';
+export { BackgroundTaskRunner } from './background-task-runner.js';
+export { ProactiveScheduler } from './proactive-scheduler.js';
+export { DocumentProcessor } from './document-processor.js';

@@ -126,4 +126,98 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 7,
+    description: 'Background tasks table',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS background_tasks (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          description TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_input TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          result TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+      `);
+    },
+  },
+  {
+    version: 8,
+    description: 'Scheduled actions for proactive behavior',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_actions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          schedule_type TEXT NOT NULL,
+          schedule_value TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_input TEXT NOT NULL,
+          prompt_template TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_run_at TEXT,
+          next_run_at TEXT,
+          created_at TEXT NOT NULL
+        );
+      `);
+    },
+  },
+  {
+    version: 9,
+    description: 'Cross-platform user linking',
+    up(db) {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN master_user_id TEXT REFERENCES users(id);
+
+        CREATE TABLE IF NOT EXISTS link_tokens (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_link_tokens_code ON link_tokens(code);
+      `);
+    },
+  },
+  {
+    version: 10,
+    description: 'Document intelligence tables',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          chunk_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS document_chunks (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES documents(id),
+          chunk_index INTEGER NOT NULL,
+          content TEXT NOT NULL,
+          embedding_id TEXT REFERENCES embeddings(id),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
+      `);
+    },
+  },
 ];

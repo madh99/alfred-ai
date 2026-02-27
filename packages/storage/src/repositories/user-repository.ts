@@ -107,6 +107,23 @@ export class UserRepository {
     };
   }
 
+  setMasterUser(userId: string, masterUserId: string): void {
+    this.db.prepare('UPDATE users SET master_user_id = ?, updated_at = ? WHERE id = ?')
+      .run(masterUserId, new Date().toISOString(), userId);
+  }
+
+  getLinkedUsers(masterUserId: string): User[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM users WHERE master_user_id = ? OR id = ?'
+    ).all(masterUserId, masterUserId) as Record<string, string>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
+  getMasterUserId(userId: string): string {
+    const row = this.db.prepare('SELECT master_user_id FROM users WHERE id = ?').get(userId) as { master_user_id: string | null } | undefined;
+    return row?.master_user_id ?? userId;
+  }
+
   private mapRow(row: Record<string, string>): User {
     return {
       id: row.id,
@@ -118,6 +135,7 @@ export class UserRepository {
       language: row.language ?? undefined,
       bio: row.bio ?? undefined,
       preferences: row.preferences ? JSON.parse(row.preferences) : undefined,
+      masterUserId: row.master_user_id ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

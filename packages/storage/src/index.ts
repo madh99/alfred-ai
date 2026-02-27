@@ -13,3 +13,7 @@ export { NoteRepository } from './repositories/note-repository.js';
 export type { NoteEntry } from './repositories/note-repository.js';
 export { EmbeddingRepository } from './repositories/embedding-repository.js';
 export type { EmbeddingEntry, StoreEmbeddingInput } from './repositories/embedding-repository.js';
+export { LinkTokenRepository } from './repositories/link-token-repository.js';
+export { BackgroundTaskRepository } from './repositories/background-task-repository.js';
+export { ScheduledActionRepository } from './repositories/scheduled-action-repository.js';
+export { DocumentRepository } from './repositories/document-repository.js';

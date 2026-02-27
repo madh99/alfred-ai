@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository } from '@alfred/storage';
 import { createLLMProvider } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
@@ -29,6 +29,10 @@ import {
   ProfileSkill,
   CalendarSkill,
   createCalendarProvider,
+  CrossPlatformSkill,
+  BackgroundTaskSkill,
+  ScheduledTaskSkill,
+  DocumentSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -36,14 +40,20 @@ import { ReminderScheduler } from './reminder-scheduler.js';
 import { SpeechTranscriber } from './speech-transcriber.js';
 import { ResponseFormatter } from './response-formatter.js';
 import { EmbeddingService } from './embedding-service.js';
+import { DocumentProcessor } from './document-processor.js';
+import { BackgroundTaskRunner } from './background-task-runner.js';
+import { ProactiveScheduler } from './proactive-scheduler.js';
 
 export class Alfred {
   private readonly logger: Logger;
   private database!: Database;
   private pipeline!: MessagePipeline;
   private reminderScheduler?: ReminderScheduler;
+  private backgroundTaskRunner?: BackgroundTaskRunner;
+  private proactiveScheduler?: ProactiveScheduler;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
+  private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
 
   constructor(private readonly config: AlfredConfig) {
@@ -63,6 +73,9 @@ export class Alfred {
     const reminderRepo = new ReminderRepository(db);
     const noteRepo = new NoteRepository(db);
     const embeddingRepo = new EmbeddingRepository(db);
+    const linkTokenRepo = new LinkTokenRepository(db);
+    const backgroundTaskRepo = new BackgroundTaskRepository(db);
+    const scheduledActionRepo = new ScheduledActionRepository(db);
     this.logger.info('Storage initialized');
 
     // 2. Initialize security — load rules from YAML files
@@ -117,6 +130,14 @@ export class Alfred {
     skillRegistry.register(new ScreenshotSkill());
     skillRegistry.register(new BrowserSkill());
     skillRegistry.register(new ProfileSkill(userRepo));
+    skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters));
+    skillRegistry.register(new BackgroundTaskSkill(backgroundTaskRepo));
+    skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
+
+    // 4a. Document intelligence
+    const documentRepo = new DocumentRepository(db);
+    const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: 'documents' }));
+    skillRegistry.register(new DocumentSkill(documentRepo, documentProcessor, embeddingService));
 
     // 4b. Initialize calendar (optional)
     let calendarSkill: CalendarSkill | undefined;
@@ -131,6 +152,27 @@ export class Alfred {
       }
     }
     this.calendarSkill = calendarSkill;
+
+    // 4c. Initialize MCP servers (optional)
+    if (this.config.mcp?.servers?.length) {
+      const { MCPManager } = await import('@alfred/skills');
+      this.mcpManager = new MCPManager(this.logger.child({ component: 'mcp' }));
+      await this.mcpManager.initialize(this.config.mcp);
+      for (const skill of this.mcpManager.getSkills()) {
+        skillRegistry.register(skill);
+      }
+      this.logger.info({ mcpSkills: this.mcpManager.getSkills().length }, 'MCP skills registered');
+    }
+
+    // 4d. Code sandbox (optional, requires explicit enable)
+    if (this.config.codeSandbox?.enabled) {
+      const { CodeExecutionSkill } = await import('@alfred/skills');
+      skillRegistry.register(new CodeExecutionSkill({
+        allowedLanguages: this.config.codeSandbox.allowedLanguages,
+        maxTimeoutMs: this.config.codeSandbox.maxTimeoutMs,
+      }));
+      this.logger.info('Code sandbox enabled');
+    }
 
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
@@ -176,7 +218,26 @@ export class Alfred {
       this.logger.child({ component: 'reminders' }),
     );
 
-    // 7. Initialize messaging adapters
+    // 7b. Initialize background task runner
+    this.backgroundTaskRunner = new BackgroundTaskRunner(
+      skillRegistry,
+      skillSandbox,
+      backgroundTaskRepo,
+      this.adapters,
+      this.logger.child({ component: 'background-tasks' }),
+    );
+
+    // 7c. Initialize proactive scheduler
+    this.proactiveScheduler = new ProactiveScheduler(
+      scheduledActionRepo,
+      skillRegistry,
+      skillSandbox,
+      llmProvider,
+      this.adapters,
+      this.logger.child({ component: 'proactive-scheduler' }),
+    );
+
+    // 8. Initialize messaging adapters
     await this.initializeAdapters();
 
     this.logger.info('Alfred initialized');
@@ -232,8 +293,10 @@ export class Alfred {
       this.logger.info({ platform }, 'Adapter connected');
     }
 
-    // Start reminder scheduler
+    // Start schedulers
     this.reminderScheduler?.start();
+    this.backgroundTaskRunner?.start();
+    this.proactiveScheduler?.start();
 
     if (this.adapters.size === 0) {
       this.logger.warn('No messaging adapters enabled. Configure at least one platform.');
@@ -245,8 +308,15 @@ export class Alfred {
   async stop(): Promise<void> {
     this.logger.info('Stopping Alfred...');
 
-    // Stop reminder scheduler
+    // Stop schedulers
     this.reminderScheduler?.stop();
+    this.backgroundTaskRunner?.stop();
+    this.proactiveScheduler?.stop();
+
+    // Shutdown MCP servers
+    if (this.mcpManager) {
+      await this.mcpManager.shutdown();
+    }
 
     for (const [platform, adapter] of this.adapters) {
       try {

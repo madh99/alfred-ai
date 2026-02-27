@@ -93,6 +93,9 @@ export class MessagePipeline {
         message.displayName,
       );
 
+      // Resolve master user for cross-platform shared context
+      const masterUserId = (this.users as any).getMasterUserId?.(user.id) ?? user.id;
+
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
         message.platform,
@@ -107,13 +110,14 @@ export class MessagePipeline {
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
 
       // 5. Load user memories for prompt injection (semantic search if available)
+      //    Uses masterUserId so linked cross-platform accounts share memories.
       let memories: { key: string; value: string; category: string }[] | undefined;
       if (this.memoryRepo) {
         try {
           if (this.embeddingService && message.text) {
             // Use semantic search: top-10 relevant + 5 newest
-            const semanticResults = await this.embeddingService.semanticSearch(user.id, message.text, 10);
-            const recentResults = this.memoryRepo.getRecentForPrompt(user.id, 5);
+            const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
+            const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
             // Merge and deduplicate by key
             const seen = new Set<string>();
             memories = [];
@@ -130,7 +134,7 @@ export class MessagePipeline {
               }
             }
           } else {
-            memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+            memories = this.memoryRepo.getRecentForPrompt(masterUserId, 20);
           }
         } catch {
           // Memory loading is non-critical
@@ -217,26 +221,19 @@ export class MessagePipeline {
         }
         messages.push({ role: 'assistant', content: assistantContent });
 
-        // Execute each tool call
-        const toolResultBlocks: LLMContentBlock[] = [];
-        for (const toolCall of response.toolCalls) {
-          const toolLabel = this.getToolLabel(toolCall.name, toolCall.input);
-          onProgress?.(toolLabel);
-          const result = await this.executeToolCall(toolCall, {
+        // Execute tool calls in parallel
+        const toolResultBlocks: LLMContentBlock[] = await this.executeToolCallsParallel(
+          response.toolCalls,
+          {
             userId: message.userId,
             chatId: message.chatId,
             chatType: message.chatType,
             platform: message.platform,
             conversationId: conversation.id,
             timezone: resolvedTimezone,
-          }, onProgress);
-          toolResultBlocks.push({
-            type: 'tool_result',
-            tool_use_id: toolCall.id,
-            content: result.content,
-            is_error: result.isError,
-          });
-        }
+          },
+          onProgress,
+        );
 
         // Save intermediate tool interaction to DB so follow-up questions have context
         const toolCallSummary = response.toolCalls.map(tc =>
@@ -287,6 +284,52 @@ export class MessagePipeline {
     }
   }
 
+  private async executeToolCallsParallel(
+    toolCalls: ToolCall[],
+    context: SkillContext,
+    onProgress?: ProgressCallback,
+  ): Promise<LLMContentBlock[]> {
+    // For single tool call, run directly (no overhead)
+    if (toolCalls.length === 1) {
+      const tc = toolCalls[0];
+      const toolLabel = this.getToolLabel(tc.name, tc.input);
+      onProgress?.(toolLabel);
+      const result = await this.executeToolCall(tc, context, onProgress);
+      return [{
+        type: 'tool_result' as const,
+        tool_use_id: tc.id,
+        content: result.content,
+        is_error: result.isError,
+      }];
+    }
+
+    // Multiple tool calls: execute in parallel
+    onProgress?.(`Running ${toolCalls.length} tools in parallel...`);
+
+    const results = await Promise.allSettled(
+      toolCalls.map(tc => this.executeToolCall(tc, context, onProgress))
+    );
+
+    return toolCalls.map((tc, i) => {
+      const settled = results[i];
+      if (settled.status === 'fulfilled') {
+        return {
+          type: 'tool_result' as const,
+          tool_use_id: tc.id,
+          content: settled.value.content,
+          is_error: settled.value.isError,
+        };
+      } else {
+        return {
+          type: 'tool_result' as const,
+          tool_use_id: tc.id,
+          content: `Tool execution failed: ${settled.reason}`,
+          is_error: true,
+        };
+      }
+    });
+  }
+
   private async executeToolCall(
     toolCall: ToolCall,
     context: SkillContext,
@@ -323,15 +366,12 @@ export class MessagePipeline {
 
     // Execute via sandbox
     if (this.skillSandbox) {
-      // For delegate skill: wire up progress callback + activity tracker
+      // For delegate skill: create per-invocation tracker and pass via context
       let tracker: import('@alfred/skills').ActivityTracker | undefined;
       let agentId: string | undefined;
-      if (toolCall.name === 'delegate' && 'setProgressCallback' in skill && 'createTracker' in skill) {
-        const delegateSkill = skill as import('@alfred/skills').DelegateSkill;
-        if (onProgress) {
-          delegateSkill.setProgressCallback(onProgress);
-        }
-        tracker = delegateSkill.createTracker();
+      if (toolCall.name === 'delegate') {
+        const { ActivityTracker } = await import('@alfred/skills');
+        tracker = new ActivityTracker(onProgress);
 
         // Register so other messages can query the agent's status
         agentId = `agent-${++this.agentIdCounter}`;
@@ -343,8 +383,13 @@ export class MessagePipeline {
         });
       }
 
+      // Pass tracker and onProgress via context for delegate skill
+      const execContext = toolCall.name === 'delegate'
+        ? { ...context, tracker, onProgress }
+        : context;
+
       try {
-        const result = await this.skillSandbox.execute(skill, toolCall.input, context, undefined, tracker);
+        const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, undefined, tracker);
         return {
           content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
           isError: !result.success,
@@ -388,6 +433,11 @@ export class MessagePipeline {
       case 'note': return `Note: ${String(input.action ?? '')}`;
       case 'profile': return `Profile: ${String(input.action ?? '')}`;
       case 'calendar': return `Calendar: ${String(input.action ?? '')}`;
+      case 'background_task': return `Background task: ${String(input.action ?? '')}`;
+      case 'scheduled_task': return `Scheduled task: ${String(input.action ?? '')}`;
+      case 'cross_platform': return `Cross-platform: ${String(input.action ?? '')}`;
+      case 'code_sandbox': return `Running code...`;
+      case 'document': return `Document: ${String(input.action ?? '')}`;
       default: return `Using ${toolName}...`;
     }
   }

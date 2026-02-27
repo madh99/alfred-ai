@@ -1,6 +1,6 @@
 {
   "name": "@alfred/app",
-  "version": "0.1.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -18,6 +18,9 @@
     "@alfred/messaging": "workspace:*",
     "@alfred/security": "workspace:*",
     "@alfred/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
     "pino": "^9.6.0"
   }
 }

@@ -28,6 +28,69 @@ export interface User {
   language?: string;
   bio?: string;
   preferences?: Record<string, unknown>;
+  masterUserId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LinkToken {
+  id: string;
+  code: string;
+  userId: string;
+  platform: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface BackgroundTask {
+  id: string;
+  userId: string;
+  platform: string;
+  chatId: string;
+  description: string;
+  skillName: string;
+  skillInput: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: string;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface ScheduledAction {
+  id: string;
+  userId: string;
+  platform: string;
+  chatId: string;
+  name: string;
+  description: string;
+  scheduleType: 'cron' | 'interval' | 'once';
+  scheduleValue: string;
+  skillName: string;
+  skillInput: string;
+  promptTemplate?: string;
+  enabled: boolean;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  createdAt: string;
+}
+
+export interface Document {
+  id: string;
+  userId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  chunkCount: number;
+  createdAt: string;
+}
+
+export interface DocumentChunk {
+  id: string;
+  documentId: string;
+  chunkIndex: number;
+  content: string;
+  embeddingId?: string;
+  createdAt: string;
 }

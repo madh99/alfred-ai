@@ -18,6 +18,10 @@ export interface SkillContext {
   conversationId: string;
   /** User timezone (from profile) or server timezone as fallback. */
   timezone?: string;
+  /** ActivityTracker instance (avoid circular dep with skills package). */
+  tracker?: unknown;
+  /** Progress callback for reporting status updates. */
+  onProgress?: (status: string) => void;
 }
 
 export interface SkillResult {

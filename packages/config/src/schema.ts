@@ -108,6 +108,25 @@ export const CalendarConfigSchema = z.object({
   microsoft: MicrosoftCalendarConfigSchema.optional(),
 });
 
+export const MCPServerConfigSchema = z.object({
+  name: z.string(),
+  command: z.string().optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string()).optional(),
+  url: z.string().optional(),
+});
+
+export const MCPConfigSchema = z.object({
+  servers: z.array(MCPServerConfigSchema),
+});
+
+export const CodeSandboxConfigSchema = z.object({
+  enabled: z.boolean(),
+  allowedLanguages: z.array(z.enum(['javascript', 'python'])).optional(),
+  maxTimeoutMs: z.number().optional(),
+  allowNetwork: z.boolean().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -123,4 +142,6 @@ export const AlfredConfigSchema = z.object({
   email: EmailConfigSchema.optional(),
   speech: SpeechConfigSchema.optional(),
   calendar: CalendarConfigSchema.optional(),
+  mcp: MCPConfigSchema.optional(),
+  codeSandbox: CodeSandboxConfigSchema.optional(),
 });

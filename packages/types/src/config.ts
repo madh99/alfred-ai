@@ -105,6 +105,25 @@ export interface CalendarConfig {
   microsoft?: MicrosoftCalendarConfig;
 }
 
+export interface MCPServerConfig {
+  name: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+}
+
+export interface MCPConfig {
+  servers: MCPServerConfig[];
+}
+
+export interface CodeSandboxConfig {
+  enabled: boolean;
+  allowedLanguages?: ('javascript' | 'python')[];
+  maxTimeoutMs?: number;
+  allowNetwork?: boolean;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -120,4 +139,6 @@ export interface AlfredConfig {
   email?: EmailConfig;
   speech?: SpeechConfig;
   calendar?: CalendarConfig;
+  mcp?: MCPConfig;
+  codeSandbox?: CodeSandboxConfig;
 }

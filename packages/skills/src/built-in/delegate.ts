@@ -106,10 +106,11 @@ export class DelegateSkill extends Skill {
       ? Math.max(1, Math.min(MAX_ALLOWED_ITERATIONS, Math.round(requestedIterations)))
       : DEFAULT_MAX_ITERATIONS;
 
-    // Create tracker for this execution
-    // (If called via sandbox, the sandbox passes its own tracker.
-    //  This internal tracker is for direct execute() calls.)
-    const tracker = new ActivityTracker(this.onProgress);
+    // Use context-level progress callback if available, fall back to instance-level
+    const progressCb = context.onProgress ?? this.onProgress;
+    const tracker = context.tracker
+      ? context.tracker as ActivityTracker
+      : new ActivityTracker(progressCb);
     tracker.ping('starting', { maxIterations });
 
     // Build tools list — exclude 'delegate' to prevent recursion

@@ -9,11 +9,11 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// ../config/dist/schema.js
+// packages/config/dist/schema.js
 import { z } from "zod";
-var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, SpeechConfigSchema, CalDAVConfigSchema, GoogleCalendarConfigSchema, MicrosoftCalendarConfigSchema, CalendarConfigSchema, AlfredConfigSchema;
+var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, SpeechConfigSchema, CalDAVConfigSchema, GoogleCalendarConfigSchema, MicrosoftCalendarConfigSchema, CalendarConfigSchema, MCPServerConfigSchema, MCPConfigSchema, CodeSandboxConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
-  "../config/dist/schema.js"() {
+  "packages/config/dist/schema.js"() {
     "use strict";
     TelegramConfigSchema = z.object({
       token: z.string().default(""),
@@ -107,6 +107,22 @@ var init_schema = __esm({
       google: GoogleCalendarConfigSchema.optional(),
       microsoft: MicrosoftCalendarConfigSchema.optional()
     });
+    MCPServerConfigSchema = z.object({
+      name: z.string(),
+      command: z.string().optional(),
+      args: z.array(z.string()).optional(),
+      env: z.record(z.string()).optional(),
+      url: z.string().optional()
+    });
+    MCPConfigSchema = z.object({
+      servers: z.array(MCPServerConfigSchema)
+    });
+    CodeSandboxConfigSchema = z.object({
+      enabled: z.boolean(),
+      allowedLanguages: z.array(z.enum(["javascript", "python"])).optional(),
+      maxTimeoutMs: z.number().optional(),
+      allowNetwork: z.boolean().optional()
+    });
     AlfredConfigSchema = z.object({
       name: z.string(),
       telegram: TelegramConfigSchema,
@@ -121,15 +137,17 @@ var init_schema = __esm({
       search: SearchConfigSchema.optional(),
       email: EmailConfigSchema.optional(),
       speech: SpeechConfigSchema.optional(),
-      calendar: CalendarConfigSchema.optional()
+      calendar: CalendarConfigSchema.optional(),
+      mcp: MCPConfigSchema.optional(),
+      codeSandbox: CodeSandboxConfigSchema.optional()
     });
   }
 });
 
-// ../config/dist/defaults.js
+// packages/config/dist/defaults.js
 var DEFAULT_CONFIG;
 var init_defaults = __esm({
-  "../config/dist/defaults.js"() {
+  "packages/config/dist/defaults.js"() {
     "use strict";
     DEFAULT_CONFIG = {
       name: "Alfred",
@@ -177,7 +195,7 @@ var init_defaults = __esm({
   }
 });
 
-// ../config/dist/loader.js
+// packages/config/dist/loader.js
 import fs from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -216,7 +234,7 @@ function applyEnvOverrides(config) {
 }
 var ENV_MAP, ConfigLoader;
 var init_loader = __esm({
-  "../config/dist/loader.js"() {
+  "packages/config/dist/loader.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -279,9 +297,9 @@ var init_loader = __esm({
   }
 });
 
-// ../config/dist/index.js
+// packages/config/dist/index.js
 var init_dist = __esm({
-  "../config/dist/index.js"() {
+  "packages/config/dist/index.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -289,7 +307,7 @@ var init_dist = __esm({
   }
 });
 
-// ../logger/dist/logger.js
+// packages/logger/dist/logger.js
 import pino from "pino";
 function createLogger(name, level) {
   const logLevel = level ?? process.env.LOG_LEVEL ?? "info";
@@ -304,32 +322,32 @@ function createLogger(name, level) {
   return pino({ name, level: logLevel });
 }
 var init_logger = __esm({
-  "../logger/dist/logger.js"() {
+  "packages/logger/dist/logger.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/audit.js
+// packages/logger/dist/audit.js
 import pino2 from "pino";
 var init_audit = __esm({
-  "../logger/dist/audit.js"() {
+  "packages/logger/dist/audit.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/index.js
+// packages/logger/dist/index.js
 var init_dist2 = __esm({
-  "../logger/dist/index.js"() {
+  "packages/logger/dist/index.js"() {
     "use strict";
     init_logger();
     init_audit();
   }
 });
 
-// ../storage/dist/migrations/migrator.js
+// packages/storage/dist/migrations/migrator.js
 var Migrator;
 var init_migrator = __esm({
-  "../storage/dist/migrations/migrator.js"() {
+  "packages/storage/dist/migrations/migrator.js"() {
     "use strict";
     Migrator = class {
       db;
@@ -378,10 +396,10 @@ var init_migrator = __esm({
   }
 });
 
-// ../storage/dist/migrations/index.js
+// packages/storage/dist/migrations/index.js
 var MIGRATIONS;
 var init_migrations = __esm({
-  "../storage/dist/migrations/index.js"() {
+  "packages/storage/dist/migrations/index.js"() {
     "use strict";
     init_migrator();
     MIGRATIONS = [
@@ -502,18 +520,112 @@ var init_migrations = __esm({
           ON embeddings(source_type, source_id);
       `);
         }
+      },
+      {
+        version: 7,
+        description: "Background tasks table",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS background_tasks (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          description TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_input TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          result TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          completed_at TEXT
+        );
+      `);
+        }
+      },
+      {
+        version: 8,
+        description: "Scheduled actions for proactive behavior",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS scheduled_actions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT NOT NULL,
+          schedule_type TEXT NOT NULL,
+          schedule_value TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_input TEXT NOT NULL,
+          prompt_template TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_run_at TEXT,
+          next_run_at TEXT,
+          created_at TEXT NOT NULL
+        );
+      `);
+        }
+      },
+      {
+        version: 9,
+        description: "Cross-platform user linking",
+        up(db) {
+          db.exec(`
+        ALTER TABLE users ADD COLUMN master_user_id TEXT REFERENCES users(id);
+
+        CREATE TABLE IF NOT EXISTS link_tokens (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_link_tokens_code ON link_tokens(code);
+      `);
+        }
+      },
+      {
+        version: 10,
+        description: "Document intelligence tables",
+        up(db) {
+          db.exec(`
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          chunk_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS document_chunks (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES documents(id),
+          chunk_index INTEGER NOT NULL,
+          content TEXT NOT NULL,
+          embedding_id TEXT REFERENCES embeddings(id),
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
+      `);
+        }
       }
     ];
   }
 });
 
-// ../storage/dist/database.js
+// packages/storage/dist/database.js
 import BetterSqlite3 from "better-sqlite3";
 import fs2 from "node:fs";
 import path2 from "node:path";
 var Database;
 var init_database = __esm({
-  "../storage/dist/database.js"() {
+  "packages/storage/dist/database.js"() {
     "use strict";
     init_migrator();
     init_migrations();
@@ -594,11 +706,11 @@ var init_database = __esm({
   }
 });
 
-// ../storage/dist/repositories/conversation-repository.js
+// packages/storage/dist/repositories/conversation-repository.js
 import crypto from "node:crypto";
 var ConversationRepository;
 var init_conversation_repository = __esm({
-  "../storage/dist/repositories/conversation-repository.js"() {
+  "packages/storage/dist/repositories/conversation-repository.js"() {
     "use strict";
     ConversationRepository = class {
       db;
@@ -676,11 +788,11 @@ var init_conversation_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/user-repository.js
+// packages/storage/dist/repositories/user-repository.js
 import crypto2 from "node:crypto";
 var UserRepository;
 var init_user_repository = __esm({
-  "../storage/dist/repositories/user-repository.js"() {
+  "packages/storage/dist/repositories/user-repository.js"() {
     "use strict";
     UserRepository = class {
       db;
@@ -770,6 +882,17 @@ var init_user_repository = __esm({
           preferences: row.preferences ? JSON.parse(row.preferences) : void 0
         };
       }
+      setMasterUser(userId, masterUserId) {
+        this.db.prepare("UPDATE users SET master_user_id = ?, updated_at = ? WHERE id = ?").run(masterUserId, (/* @__PURE__ */ new Date()).toISOString(), userId);
+      }
+      getLinkedUsers(masterUserId) {
+        const rows = this.db.prepare("SELECT * FROM users WHERE master_user_id = ? OR id = ?").all(masterUserId, masterUserId);
+        return rows.map((r) => this.mapRow(r));
+      }
+      getMasterUserId(userId) {
+        const row = this.db.prepare("SELECT master_user_id FROM users WHERE id = ?").get(userId);
+        return row?.master_user_id ?? userId;
+      }
       mapRow(row) {
         return {
           id: row.id,
@@ -781,6 +904,7 @@ var init_user_repository = __esm({
           language: row.language ?? void 0,
           bio: row.bio ?? void 0,
           preferences: row.preferences ? JSON.parse(row.preferences) : void 0,
+          masterUserId: row.master_user_id ?? void 0,
           createdAt: row.created_at,
           updatedAt: row.updated_at
         };
@@ -789,10 +913,10 @@ var init_user_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/audit-repository.js
+// packages/storage/dist/repositories/audit-repository.js
 var AuditRepository;
 var init_audit_repository = __esm({
-  "../storage/dist/repositories/audit-repository.js"() {
+  "packages/storage/dist/repositories/audit-repository.js"() {
     "use strict";
     AuditRepository = class {
       db;
@@ -859,11 +983,11 @@ var init_audit_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/memory-repository.js
+// packages/storage/dist/repositories/memory-repository.js
 import { randomUUID } from "node:crypto";
 var MemoryRepository;
 var init_memory_repository = __esm({
-  "../storage/dist/repositories/memory-repository.js"() {
+  "packages/storage/dist/repositories/memory-repository.js"() {
     "use strict";
     MemoryRepository = class {
       db;
@@ -931,11 +1055,11 @@ var init_memory_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/reminder-repository.js
+// packages/storage/dist/repositories/reminder-repository.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 var ReminderRepository;
 var init_reminder_repository = __esm({
-  "../storage/dist/repositories/reminder-repository.js"() {
+  "packages/storage/dist/repositories/reminder-repository.js"() {
     "use strict";
     ReminderRepository = class {
       db;
@@ -991,11 +1115,11 @@ var init_reminder_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/note-repository.js
+// packages/storage/dist/repositories/note-repository.js
 import { randomUUID as randomUUID3 } from "node:crypto";
 var NoteRepository;
 var init_note_repository = __esm({
-  "../storage/dist/repositories/note-repository.js"() {
+  "packages/storage/dist/repositories/note-repository.js"() {
     "use strict";
     NoteRepository = class {
       db;
@@ -1049,11 +1173,11 @@ var init_note_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/embedding-repository.js
+// packages/storage/dist/repositories/embedding-repository.js
 import { randomUUID as randomUUID4 } from "node:crypto";
 var EmbeddingRepository;
 var init_embedding_repository = __esm({
-  "../storage/dist/repositories/embedding-repository.js"() {
+  "packages/storage/dist/repositories/embedding-repository.js"() {
     "use strict";
     EmbeddingRepository = class {
       db;
@@ -1112,9 +1236,370 @@ var init_embedding_repository = __esm({
   }
 });
 
-// ../storage/dist/index.js
+// packages/storage/dist/repositories/link-token-repository.js
+import crypto3 from "node:crypto";
+var LinkTokenRepository;
+var init_link_token_repository = __esm({
+  "packages/storage/dist/repositories/link-token-repository.js"() {
+    "use strict";
+    LinkTokenRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      create(userId, platform) {
+        const token = {
+          id: crypto3.randomUUID(),
+          code: String(Math.floor(1e5 + Math.random() * 9e5)),
+          // 6-digit
+          userId,
+          platform,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          expiresAt: new Date(Date.now() + 10 * 60 * 1e3).toISOString()
+          // 10 min
+        };
+        this.db.prepare(`
+      INSERT INTO link_tokens (id, code, user_id, platform, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(token.id, token.code, token.userId, token.platform, token.createdAt, token.expiresAt);
+        return token;
+      }
+      findByCode(code) {
+        const row = this.db.prepare("SELECT * FROM link_tokens WHERE code = ? AND expires_at > ?").get(code, (/* @__PURE__ */ new Date()).toISOString());
+        if (!row)
+          return void 0;
+        return {
+          id: row.id,
+          code: row.code,
+          userId: row.user_id,
+          platform: row.platform,
+          createdAt: row.created_at,
+          expiresAt: row.expires_at
+        };
+      }
+      consume(id) {
+        this.db.prepare("DELETE FROM link_tokens WHERE id = ?").run(id);
+      }
+      cleanup() {
+        this.db.prepare("DELETE FROM link_tokens WHERE expires_at <= ?").run((/* @__PURE__ */ new Date()).toISOString());
+      }
+    };
+  }
+});
+
+// packages/storage/dist/repositories/background-task-repository.js
+import { randomUUID as randomUUID5 } from "node:crypto";
+var BackgroundTaskRepository;
+var init_background_task_repository = __esm({
+  "packages/storage/dist/repositories/background-task-repository.js"() {
+    "use strict";
+    BackgroundTaskRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      create(userId, platform, chatId, description, skillName, skillInput) {
+        const task = {
+          id: randomUUID5(),
+          userId,
+          platform,
+          chatId,
+          description,
+          skillName,
+          skillInput,
+          status: "pending",
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        this.db.prepare(`
+      INSERT INTO background_tasks (id, user_id, platform, chat_id, description, skill_name, skill_input, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(task.id, task.userId, task.platform, task.chatId, task.description, task.skillName, task.skillInput, task.status, task.createdAt);
+        return task;
+      }
+      updateStatus(id, status, result, error) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let startedAt = null;
+        let completedAt = null;
+        if (status === "running") {
+          startedAt = now;
+        }
+        if (status === "completed" || status === "failed") {
+          completedAt = now;
+        }
+        this.db.prepare(`
+      UPDATE background_tasks
+      SET status = ?,
+          result = COALESCE(?, result),
+          error = COALESCE(?, error),
+          started_at = COALESCE(?, started_at),
+          completed_at = COALESCE(?, completed_at)
+      WHERE id = ?
+    `).run(status, result ?? null, error ?? null, startedAt, completedAt, id);
+      }
+      getPending(limit = 10) {
+        const rows = this.db.prepare(`SELECT * FROM background_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`).all(limit);
+        return rows.map((row) => this.mapRow(row));
+      }
+      getByUser(userId) {
+        const rows = this.db.prepare(`SELECT * FROM background_tasks
+       WHERE user_id = ?
+         AND (status IN ('pending', 'running') OR completed_at > datetime('now', '-1 day'))
+       ORDER BY created_at DESC`).all(userId);
+        return rows.map((row) => this.mapRow(row));
+      }
+      cancel(id) {
+        const result = this.db.prepare(`DELETE FROM background_tasks WHERE id = ? AND status IN ('pending', 'running')`).run(id);
+        return result.changes > 0;
+      }
+      cleanup(olderThanDays = 7) {
+        const result = this.db.prepare(`DELETE FROM background_tasks
+       WHERE status IN ('completed', 'failed')
+         AND completed_at < datetime('now', '-' || ? || ' days')`).run(olderThanDays);
+        return result.changes;
+      }
+      mapRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          platform: row.platform,
+          chatId: row.chat_id,
+          description: row.description,
+          skillName: row.skill_name,
+          skillInput: row.skill_input,
+          status: row.status,
+          result: row.result,
+          error: row.error,
+          createdAt: row.created_at,
+          startedAt: row.started_at,
+          completedAt: row.completed_at
+        };
+      }
+    };
+  }
+});
+
+// packages/storage/dist/repositories/scheduled-action-repository.js
+import { randomUUID as randomUUID6 } from "node:crypto";
+var ScheduledActionRepository;
+var init_scheduled_action_repository = __esm({
+  "packages/storage/dist/repositories/scheduled-action-repository.js"() {
+    "use strict";
+    ScheduledActionRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      create(data) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const id = randomUUID6();
+        const nextRunAt = this.calculateInitialNextRun(data.scheduleType, data.scheduleValue);
+        this.db.prepare(`
+      INSERT INTO scheduled_actions
+        (id, user_id, platform, chat_id, name, description, schedule_type, schedule_value,
+         skill_name, skill_input, prompt_template, enabled, next_run_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `).run(id, data.userId, data.platform, data.chatId, data.name, data.description, data.scheduleType, data.scheduleValue, data.skillName, data.skillInput, data.promptTemplate ?? null, nextRunAt, now);
+        return {
+          id,
+          userId: data.userId,
+          platform: data.platform,
+          chatId: data.chatId,
+          name: data.name,
+          description: data.description,
+          scheduleType: data.scheduleType,
+          scheduleValue: data.scheduleValue,
+          skillName: data.skillName,
+          skillInput: data.skillInput,
+          promptTemplate: data.promptTemplate,
+          enabled: true,
+          nextRunAt: nextRunAt ?? void 0,
+          createdAt: now
+        };
+      }
+      findById(id) {
+        const row = this.db.prepare(`SELECT * FROM scheduled_actions WHERE id = ?`).get(id);
+        return row ? this.mapRow(row) : void 0;
+      }
+      getByUser(userId) {
+        const rows = this.db.prepare(`SELECT * FROM scheduled_actions WHERE user_id = ? ORDER BY created_at DESC`).all(userId);
+        return rows.map((row) => this.mapRow(row));
+      }
+      getDue() {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const rows = this.db.prepare(`SELECT * FROM scheduled_actions
+       WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+       ORDER BY next_run_at ASC`).all(now);
+        return rows.map((row) => this.mapRow(row));
+      }
+      updateLastRun(id, lastRunAt, nextRunAt) {
+        this.db.prepare(`
+      UPDATE scheduled_actions
+      SET last_run_at = ?, next_run_at = ?
+      WHERE id = ?
+    `).run(lastRunAt, nextRunAt, id);
+      }
+      setEnabled(id, enabled) {
+        const result = this.db.prepare(`UPDATE scheduled_actions SET enabled = ? WHERE id = ?`).run(enabled ? 1 : 0, id);
+        return result.changes > 0;
+      }
+      delete(id) {
+        const result = this.db.prepare(`DELETE FROM scheduled_actions WHERE id = ?`).run(id);
+        return result.changes > 0;
+      }
+      calculateInitialNextRun(scheduleType, scheduleValue) {
+        const now = /* @__PURE__ */ new Date();
+        switch (scheduleType) {
+          case "interval": {
+            const minutes = parseInt(scheduleValue, 10);
+            if (isNaN(minutes) || minutes <= 0)
+              return null;
+            return new Date(now.getTime() + minutes * 6e4).toISOString();
+          }
+          case "once": {
+            return new Date(scheduleValue).toISOString();
+          }
+          case "cron": {
+            return this.getNextCronDate(scheduleValue, now)?.toISOString() ?? null;
+          }
+          default:
+            return null;
+        }
+      }
+      getNextCronDate(cronExpr, after) {
+        const parts = cronExpr.trim().split(/\s+/);
+        if (parts.length !== 5)
+          return null;
+        const candidate = new Date(after.getTime() + 6e4);
+        candidate.setSeconds(0, 0);
+        for (let i = 0; i < 1440; i++) {
+          if (this.matchesCron(parts, candidate)) {
+            return candidate;
+          }
+          candidate.setTime(candidate.getTime() + 6e4);
+        }
+        return null;
+      }
+      matchesCron(parts, date) {
+        const minute = date.getMinutes();
+        const hour = date.getHours();
+        const dayOfMonth = date.getDate();
+        const month = date.getMonth() + 1;
+        const dayOfWeek = date.getDay();
+        return this.matchCronField(parts[0], minute) && this.matchCronField(parts[1], hour) && this.matchCronField(parts[2], dayOfMonth) && this.matchCronField(parts[3], month) && this.matchCronField(parts[4], dayOfWeek);
+      }
+      matchCronField(field, value) {
+        if (field === "*")
+          return true;
+        const stepMatch = /^\*\/(\d+)$/.exec(field);
+        if (stepMatch) {
+          const step = parseInt(stepMatch[1], 10);
+          return value % step === 0;
+        }
+        const num = parseInt(field, 10);
+        if (!isNaN(num))
+          return value === num;
+        return false;
+      }
+      mapRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          platform: row.platform,
+          chatId: row.chat_id,
+          name: row.name,
+          description: row.description,
+          scheduleType: row.schedule_type,
+          scheduleValue: row.schedule_value,
+          skillName: row.skill_name,
+          skillInput: row.skill_input,
+          promptTemplate: row.prompt_template,
+          enabled: row.enabled === 1,
+          lastRunAt: row.last_run_at,
+          nextRunAt: row.next_run_at,
+          createdAt: row.created_at
+        };
+      }
+    };
+  }
+});
+
+// packages/storage/dist/repositories/document-repository.js
+import { randomUUID as randomUUID7 } from "node:crypto";
+var DocumentRepository;
+var init_document_repository = __esm({
+  "packages/storage/dist/repositories/document-repository.js"() {
+    "use strict";
+    DocumentRepository = class {
+      db;
+      constructor(db) {
+        this.db = db;
+      }
+      createDocument(userId, filename, mimeType, sizeBytes) {
+        const id = randomUUID7();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.prepare("INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)").run(id, userId, filename, mimeType, sizeBytes, now);
+        return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, createdAt: now };
+      }
+      updateChunkCount(documentId, count) {
+        this.db.prepare("UPDATE documents SET chunk_count = ? WHERE id = ?").run(count, documentId);
+      }
+      addChunk(documentId, chunkIndex, content, embeddingId) {
+        const id = randomUUID7();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.db.prepare("INSERT INTO document_chunks (id, document_id, chunk_index, content, embedding_id, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(id, documentId, chunkIndex, content, embeddingId ?? null, now);
+        return { id, documentId, chunkIndex, content, embeddingId, createdAt: now };
+      }
+      getDocument(id) {
+        const row = this.db.prepare("SELECT * FROM documents WHERE id = ?").get(id);
+        return row ? this.mapDocumentRow(row) : void 0;
+      }
+      getChunks(documentId) {
+        const rows = this.db.prepare("SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index ASC").all(documentId);
+        return rows.map((r) => this.mapChunkRow(r));
+      }
+      listByUser(userId) {
+        const rows = this.db.prepare("SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC").all(userId);
+        return rows.map((r) => this.mapDocumentRow(r));
+      }
+      deleteDocument(id) {
+        this.db.prepare("DELETE FROM document_chunks WHERE document_id = ?").run(id);
+        this.db.prepare("DELETE FROM documents WHERE id = ?").run(id);
+      }
+      getChunksByEmbeddingIds(embeddingIds) {
+        if (embeddingIds.length === 0)
+          return [];
+        const placeholders = embeddingIds.map(() => "?").join(", ");
+        const rows = this.db.prepare(`SELECT * FROM document_chunks WHERE embedding_id IN (${placeholders}) ORDER BY chunk_index ASC`).all(...embeddingIds);
+        return rows.map((r) => this.mapChunkRow(r));
+      }
+      mapDocumentRow(row) {
+        return {
+          id: row.id,
+          userId: row.user_id,
+          filename: row.filename,
+          mimeType: row.mime_type,
+          sizeBytes: row.size_bytes,
+          chunkCount: row.chunk_count,
+          createdAt: row.created_at
+        };
+      }
+      mapChunkRow(row) {
+        return {
+          id: row.id,
+          documentId: row.document_id,
+          chunkIndex: row.chunk_index,
+          content: row.content,
+          embeddingId: row.embedding_id || void 0,
+          createdAt: row.created_at
+        };
+      }
+    };
+  }
+});
+
+// packages/storage/dist/index.js
 var init_dist3 = __esm({
-  "../storage/dist/index.js"() {
+  "packages/storage/dist/index.js"() {
     "use strict";
     init_database();
     init_conversation_repository();
@@ -1126,10 +1611,14 @@ var init_dist3 = __esm({
     init_reminder_repository();
     init_note_repository();
     init_embedding_repository();
+    init_link_token_repository();
+    init_background_task_repository();
+    init_scheduled_action_repository();
+    init_document_repository();
   }
 });
 
-// ../llm/dist/provider.js
+// packages/llm/dist/provider.js
 function lookupContextWindow(model) {
   if (KNOWN_CONTEXT_WINDOWS[model])
     return KNOWN_CONTEXT_WINDOWS[model];
@@ -1141,7 +1630,7 @@ function lookupContextWindow(model) {
 }
 var KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, LLMProvider;
 var init_provider = __esm({
-  "../llm/dist/provider.js"() {
+  "packages/llm/dist/provider.js"() {
     "use strict";
     KNOWN_CONTEXT_WINDOWS = {
       // Anthropic
@@ -1190,11 +1679,11 @@ var init_provider = __esm({
   }
 });
 
-// ../llm/dist/providers/anthropic.js
+// packages/llm/dist/providers/anthropic.js
 import Anthropic from "@anthropic-ai/sdk";
 var AnthropicProvider;
 var init_anthropic = __esm({
-  "../llm/dist/providers/anthropic.js"() {
+  "packages/llm/dist/providers/anthropic.js"() {
     "use strict";
     init_provider();
     AnthropicProvider = class extends LLMProvider {
@@ -1337,11 +1826,11 @@ var init_anthropic = __esm({
   }
 });
 
-// ../llm/dist/providers/openai.js
+// packages/llm/dist/providers/openai.js
 import OpenAI from "openai";
 var OpenAIProvider;
 var init_openai = __esm({
-  "../llm/dist/providers/openai.js"() {
+  "packages/llm/dist/providers/openai.js"() {
     "use strict";
     init_provider();
     OpenAIProvider = class extends LLMProvider {
@@ -1594,10 +2083,10 @@ var init_openai = __esm({
   }
 });
 
-// ../llm/dist/providers/openrouter.js
+// packages/llm/dist/providers/openrouter.js
 var OpenRouterProvider;
 var init_openrouter = __esm({
-  "../llm/dist/providers/openrouter.js"() {
+  "packages/llm/dist/providers/openrouter.js"() {
     "use strict";
     init_openai();
     OpenRouterProvider = class extends OpenAIProvider {
@@ -1617,10 +2106,10 @@ var init_openrouter = __esm({
   }
 });
 
-// ../llm/dist/providers/ollama.js
+// packages/llm/dist/providers/ollama.js
 var OllamaProvider;
 var init_ollama = __esm({
-  "../llm/dist/providers/ollama.js"() {
+  "packages/llm/dist/providers/ollama.js"() {
     "use strict";
     init_provider();
     OllamaProvider = class extends LLMProvider {
@@ -1953,7 +2442,7 @@ var init_ollama = __esm({
   }
 });
 
-// ../llm/dist/provider-factory.js
+// packages/llm/dist/provider-factory.js
 function createLLMProvider(config) {
   switch (config.provider) {
     case "anthropic":
@@ -1969,7 +2458,7 @@ function createLLMProvider(config) {
   }
 }
 var init_provider_factory = __esm({
-  "../llm/dist/provider-factory.js"() {
+  "packages/llm/dist/provider-factory.js"() {
     "use strict";
     init_anthropic();
     init_openai();
@@ -1978,7 +2467,7 @@ var init_provider_factory = __esm({
   }
 });
 
-// ../llm/dist/prompt-builder.js
+// packages/llm/dist/prompt-builder.js
 function estimateTokens(text) {
   return Math.ceil(text.length / 3.5);
 }
@@ -2007,14 +2496,14 @@ function estimateMessageTokens(msg) {
 }
 var PromptBuilder;
 var init_prompt_builder = __esm({
-  "../llm/dist/prompt-builder.js"() {
+  "packages/llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
       buildSystemPrompt(context = {}) {
         const { memories, skills, userProfile, todayEvents } = context;
-        const os3 = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
+        const os4 = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
         const homeDir = process.env["HOME"] || process.env["USERPROFILE"] || "~";
-        let prompt = `You are Alfred, a personal AI assistant. You run on ${os3} (home: ${homeDir}).
+        let prompt = `You are Alfred, a personal AI assistant. You run on ${os4} (home: ${homeDir}).
 
 ## Core principles
 - ACT, don't just talk. When the user asks you to do something, USE YOUR TOOLS immediately. Never say "I could do X" \u2014 just do X.
@@ -2030,11 +2519,34 @@ For complex tasks, work through multiple steps:
 4. **Summarize** the final result clearly.
 
 ## Environment
-- OS: ${os3}
+- OS: ${os4}
 - Home: ${homeDir}
 - Documents: ${homeDir}/Documents
 - Desktop: ${homeDir}/Desktop
 - Downloads: ${homeDir}/Downloads`;
+        const serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const effectiveTimezone = userProfile?.timezone || serverTimezone;
+        const now = /* @__PURE__ */ new Date();
+        const timeStr = now.toLocaleTimeString("en-GB", {
+          timeZone: effectiveTimezone,
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+        const dateStr = now.toLocaleDateString("en-CA", { timeZone: effectiveTimezone });
+        const dayStr = now.toLocaleDateString("en-US", { timeZone: effectiveTimezone, weekday: "long" });
+        prompt += `
+
+## Current date & time`;
+        prompt += `
+- Timezone: ${effectiveTimezone}`;
+        prompt += `
+- Date: ${dateStr} (${dayStr})`;
+        prompt += `
+- Time: ${timeStr}`;
+        if (userProfile?.timezone && userProfile.timezone !== serverTimezone) {
+          prompt += `
+- Server timezone: ${serverTimezone}`;
+        }
         if (skills && skills.length > 0) {
           prompt += "\n\n## Available tools\n";
           for (const s of skills) {
@@ -2049,13 +2561,8 @@ For complex tasks, work through multiple steps:
 - Name: ${userProfile.displayName}`;
           }
           if (userProfile.timezone) {
-            const now = (/* @__PURE__ */ new Date()).toLocaleTimeString("en-GB", {
-              timeZone: userProfile.timezone,
-              hour: "2-digit",
-              minute: "2-digit"
-            });
             prompt += `
-- Timezone: ${userProfile.timezone} (Current local time: ${now})`;
+- Timezone: ${userProfile.timezone}`;
           }
           if (userProfile.language) {
             prompt += `
@@ -2128,9 +2635,9 @@ For complex tasks, work through multiple steps:
   }
 });
 
-// ../llm/dist/index.js
+// packages/llm/dist/index.js
 var init_dist4 = __esm({
-  "../llm/dist/index.js"() {
+  "packages/llm/dist/index.js"() {
     "use strict";
     init_provider();
     init_anthropic();
@@ -2142,10 +2649,10 @@ var init_dist4 = __esm({
   }
 });
 
-// ../security/dist/rate-limiter.js
+// packages/security/dist/rate-limiter.js
 var RateLimiter;
 var init_rate_limiter = __esm({
-  "../security/dist/rate-limiter.js"() {
+  "packages/security/dist/rate-limiter.js"() {
     "use strict";
     RateLimiter = class {
       buckets = /* @__PURE__ */ new Map();
@@ -2191,10 +2698,10 @@ var init_rate_limiter = __esm({
   }
 });
 
-// ../security/dist/rule-engine.js
+// packages/security/dist/rule-engine.js
 var RuleEngine;
 var init_rule_engine = __esm({
-  "../security/dist/rule-engine.js"() {
+  "packages/security/dist/rule-engine.js"() {
     "use strict";
     init_rate_limiter();
     RuleEngine = class {
@@ -2337,10 +2844,10 @@ var init_rule_engine = __esm({
   }
 });
 
-// ../security/dist/rule-loader.js
+// packages/security/dist/rule-loader.js
 var VALID_EFFECTS, VALID_SCOPES, VALID_RISK_LEVELS, RuleLoader;
 var init_rule_loader = __esm({
-  "../security/dist/rule-loader.js"() {
+  "packages/security/dist/rule-loader.js"() {
     "use strict";
     VALID_EFFECTS = ["allow", "deny"];
     VALID_SCOPES = ["global", "user", "conversation", "platform"];
@@ -2420,11 +2927,11 @@ var init_rule_loader = __esm({
   }
 });
 
-// ../security/dist/security-manager.js
-import crypto3 from "node:crypto";
+// packages/security/dist/security-manager.js
+import crypto4 from "node:crypto";
 var SecurityManager;
 var init_security_manager = __esm({
-  "../security/dist/security-manager.js"() {
+  "packages/security/dist/security-manager.js"() {
     "use strict";
     SecurityManager = class {
       ruleEngine;
@@ -2438,7 +2945,7 @@ var init_security_manager = __esm({
       evaluate(context) {
         const evaluation = this.ruleEngine.evaluate(context);
         const auditEntry = {
-          id: crypto3.randomUUID(),
+          id: crypto4.randomUUID(),
           timestamp: evaluation.timestamp,
           userId: context.userId,
           action: context.action,
@@ -2470,9 +2977,9 @@ var init_security_manager = __esm({
   }
 });
 
-// ../security/dist/index.js
+// packages/security/dist/index.js
 var init_dist5 = __esm({
-  "../security/dist/index.js"() {
+  "packages/security/dist/index.js"() {
     "use strict";
     init_rule_engine();
     init_rate_limiter();
@@ -2481,20 +2988,20 @@ var init_dist5 = __esm({
   }
 });
 
-// ../skills/dist/skill.js
+// packages/skills/dist/skill.js
 var Skill;
 var init_skill = __esm({
-  "../skills/dist/skill.js"() {
+  "packages/skills/dist/skill.js"() {
     "use strict";
     Skill = class {
     };
   }
 });
 
-// ../skills/dist/skill-registry.js
+// packages/skills/dist/skill-registry.js
 var SkillRegistry;
 var init_skill_registry = __esm({
-  "../skills/dist/skill-registry.js"() {
+  "packages/skills/dist/skill-registry.js"() {
     "use strict";
     SkillRegistry = class {
       skills = /* @__PURE__ */ new Map();
@@ -2525,10 +3032,10 @@ var init_skill_registry = __esm({
   }
 });
 
-// ../skills/dist/skill-sandbox.js
+// packages/skills/dist/skill-sandbox.js
 var DEFAULT_TIMEOUT_MS, INACTIVITY_THRESHOLD_MS, POLL_INTERVAL_MS, MAX_TOTAL_TIME_MS, SkillSandbox;
 var init_skill_sandbox = __esm({
-  "../skills/dist/skill-sandbox.js"() {
+  "packages/skills/dist/skill-sandbox.js"() {
     "use strict";
     DEFAULT_TIMEOUT_MS = 3e4;
     INACTIVITY_THRESHOLD_MS = 12e4;
@@ -2662,10 +3169,10 @@ var init_skill_sandbox = __esm({
   }
 });
 
-// ../skills/dist/activity-tracker.js
+// packages/skills/dist/activity-tracker.js
 var ActivityTracker;
 var init_activity_tracker = __esm({
-  "../skills/dist/activity-tracker.js"() {
+  "packages/skills/dist/activity-tracker.js"() {
     "use strict";
     ActivityTracker = class {
       state = "starting";
@@ -2746,20 +3253,90 @@ var init_activity_tracker = __esm({
   }
 });
 
-// ../skills/dist/plugin-loader.js
+// packages/skills/dist/plugin-loader.js
 import fs3 from "node:fs";
 import path3 from "node:path";
+var PluginLoader;
 var init_plugin_loader = __esm({
-  "../skills/dist/plugin-loader.js"() {
+  "packages/skills/dist/plugin-loader.js"() {
     "use strict";
     init_skill();
+    PluginLoader = class {
+      /**
+       * Load all plugin skills from .js files in the given directory.
+       * Each file must default-export a class that extends Skill.
+       * Files that fail to load are skipped with a warning logged to console.
+       */
+      async loadFromDirectory(dirPath) {
+        const resolvedDir = path3.resolve(dirPath);
+        let entries;
+        try {
+          entries = await fs3.promises.readdir(resolvedDir);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.warn(`PluginLoader: failed to read directory "${resolvedDir}": ${message}`);
+          return [];
+        }
+        const jsFiles = entries.filter((entry) => entry.endsWith(".js"));
+        const skills = [];
+        for (const file of jsFiles) {
+          const filePath = path3.join(resolvedDir, file);
+          try {
+            const skill = await this.loadFromFile(filePath);
+            skills.push(skill);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn(`PluginLoader: skipping "${filePath}": ${message}`);
+          }
+        }
+        return skills;
+      }
+      /**
+       * Load a single plugin skill from a .js file.
+       * The module must default-export a class that extends Skill.
+       */
+      async loadFromFile(filePath) {
+        const resolvedPath = path3.resolve(filePath);
+        const fileUrl = `file:///${resolvedPath.replace(/\\/g, "/")}`;
+        const mod = await import(fileUrl);
+        const ExportedClass = mod.default;
+        if (typeof ExportedClass !== "function") {
+          throw new Error(`Module "${resolvedPath}" does not have a default export that is a class`);
+        }
+        const instance = new ExportedClass();
+        if (!(instance instanceof Skill)) {
+          throw new Error(`Default export of "${resolvedPath}" does not extend Skill`);
+        }
+        this.validateMetadata(instance, resolvedPath);
+        return instance;
+      }
+      validateMetadata(skill, filePath) {
+        const { metadata } = skill;
+        if (!metadata) {
+          throw new Error(`Plugin "${filePath}" is missing metadata`);
+        }
+        if (!metadata.name || typeof metadata.name !== "string") {
+          throw new Error(`Plugin "${filePath}" has invalid or missing metadata.name`);
+        }
+        if (!metadata.description || typeof metadata.description !== "string") {
+          throw new Error(`Plugin "${filePath}" has invalid or missing metadata.description`);
+        }
+        const validRiskLevels = ["read", "write", "destructive", "admin"];
+        if (!validRiskLevels.includes(metadata.riskLevel)) {
+          throw new Error(`Plugin "${filePath}" has invalid metadata.riskLevel: "${String(metadata.riskLevel)}"`);
+        }
+        if (!metadata.version || typeof metadata.version !== "string") {
+          throw new Error(`Plugin "${filePath}" has invalid or missing metadata.version`);
+        }
+      }
+    };
   }
 });
 
-// ../skills/dist/built-in/calculator.js
+// packages/skills/dist/built-in/calculator.js
 var ALLOWED_PATTERN, SAFE_EXPRESSION_PATTERN, CalculatorSkill;
 var init_calculator = __esm({
-  "../skills/dist/built-in/calculator.js"() {
+  "packages/skills/dist/built-in/calculator.js"() {
     "use strict";
     init_skill();
     ALLOWED_PATTERN = /^[\d+\-*/().,%\s]|Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/;
@@ -2827,10 +3404,10 @@ var init_calculator = __esm({
   }
 });
 
-// ../skills/dist/built-in/system-info.js
+// packages/skills/dist/built-in/system-info.js
 var SystemInfoSkill;
 var init_system_info = __esm({
-  "../skills/dist/built-in/system-info.js"() {
+  "packages/skills/dist/built-in/system-info.js"() {
     "use strict";
     init_skill();
     SystemInfoSkill = class extends Skill {
@@ -2930,10 +3507,10 @@ var init_system_info = __esm({
   }
 });
 
-// ../skills/dist/built-in/web-search.js
+// packages/skills/dist/built-in/web-search.js
 var WebSearchSkill;
 var init_web_search = __esm({
-  "../skills/dist/built-in/web-search.js"() {
+  "packages/skills/dist/built-in/web-search.js"() {
     "use strict";
     init_skill();
     WebSearchSkill = class extends Skill {
@@ -3148,19 +3725,19 @@ ${display}`
   }
 });
 
-// ../skills/dist/built-in/reminder.js
+// packages/skills/dist/built-in/reminder.js
 var ReminderSkill;
 var init_reminder = __esm({
-  "../skills/dist/built-in/reminder.js"() {
+  "packages/skills/dist/built-in/reminder.js"() {
     "use strict";
     init_skill();
     ReminderSkill = class extends Skill {
       reminderRepo;
       metadata = {
         name: "reminder",
-        description: 'Set timed reminders that notify the user later. Use when the user says "remind me", "erinnere mich", or asks to be notified about something at a specific time.',
+        description: 'Set timed reminders that notify the user later. Use when the user says "remind me", "erinnere mich", or asks to be notified about something at a specific time. Prefer triggerAt (absolute time like "14:30" or "2026-02-28 09:00") over delayMinutes \u2014 it is more precise and avoids calculation errors.',
         riskLevel: "write",
-        version: "2.0.0",
+        version: "3.0.0",
         inputSchema: {
           type: "object",
           properties: {
@@ -3173,9 +3750,13 @@ var init_reminder = __esm({
               type: "string",
               description: "The reminder message (required for set)"
             },
+            triggerAt: {
+              type: "string",
+              description: 'Absolute time for the reminder. Accepts "HH:MM" for today or "YYYY-MM-DD HH:MM" for a specific date. Preferred over delayMinutes for time-specific reminders.'
+            },
             delayMinutes: {
               type: "number",
-              description: "Minutes until the reminder triggers (required for set)"
+              description: "Minutes until the reminder triggers. Use triggerAt instead when the user specifies a clock time."
             },
             reminderId: {
               type: "string",
@@ -3207,6 +3788,7 @@ var init_reminder = __esm({
       }
       setReminder(input2, context) {
         const message = input2.message;
+        const triggerAtStr = input2.triggerAt;
         const delayMinutes = input2.delayMinutes;
         if (!message || typeof message !== "string") {
           return {
@@ -3214,19 +3796,118 @@ var init_reminder = __esm({
             error: 'Missing required field "message" for set action'
           };
         }
-        if (delayMinutes === void 0 || typeof delayMinutes !== "number" || delayMinutes <= 0) {
+        let triggerAt;
+        if (triggerAtStr && typeof triggerAtStr === "string") {
+          const parsed = this.parseTriggerAt(triggerAtStr, context.timezone);
+          if (!parsed) {
+            return {
+              success: false,
+              error: `Could not parse triggerAt "${triggerAtStr}". Use "HH:MM" for today or "YYYY-MM-DD HH:MM" for a specific date.`
+            };
+          }
+          if (parsed.getTime() <= Date.now()) {
+            return {
+              success: false,
+              error: `The time "${triggerAtStr}" is in the past. Please specify a future time.`
+            };
+          }
+          triggerAt = parsed;
+        } else if (delayMinutes !== void 0 && typeof delayMinutes === "number" && delayMinutes > 0) {
+          triggerAt = new Date(Date.now() + delayMinutes * 60 * 1e3);
+        } else {
           return {
             success: false,
-            error: 'Missing or invalid "delayMinutes" for set action (must be a positive number)'
+            error: 'Provide either "triggerAt" (e.g. "14:30") or "delayMinutes" (positive number) for set action.'
           };
         }
-        const triggerAt = new Date(Date.now() + delayMinutes * 60 * 1e3);
         const entry = this.reminderRepo.create(context.userId, context.platform, context.chatId, message, triggerAt);
+        const delayMs = triggerAt.getTime() - Date.now();
+        const mins = Math.round(delayMs / 6e4);
+        const timeLabel = triggerAt.toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+          ...context.timezone ? { timeZone: context.timezone } : {}
+        });
         return {
           success: true,
           data: { reminderId: entry.id, message, triggerAt: entry.triggerAt },
-          display: `Reminder set (${entry.id}): "${message}" in ${delayMinutes} minute(s)`
+          display: `Reminder set (${entry.id}): "${message}" at ${timeLabel} (in ${mins} min)`
         };
+      }
+      /**
+       * Parse a trigger time string into a Date.
+       *
+       * Supported formats:
+       * - "HH:MM"            → today at that time in the given timezone
+       * - "YYYY-MM-DD HH:MM" → specific date+time
+       */
+      parseTriggerAt(str, timezone) {
+        const trimmed = str.trim();
+        const timeOnly = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+        if (timeOnly) {
+          const hours = parseInt(timeOnly[1], 10);
+          const minutes = parseInt(timeOnly[2], 10);
+          if (hours > 23 || minutes > 59)
+            return void 0;
+          return this.buildDateInTimezone(hours, minutes, void 0, timezone);
+        }
+        const dateTime = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/.exec(trimmed);
+        if (dateTime) {
+          const year = parseInt(dateTime[1], 10);
+          const month = parseInt(dateTime[2], 10) - 1;
+          const day = parseInt(dateTime[3], 10);
+          const hours = parseInt(dateTime[4], 10);
+          const minutes = parseInt(dateTime[5], 10);
+          if (hours > 23 || minutes > 59 || month > 11 || day > 31)
+            return void 0;
+          return this.buildDateInTimezone(hours, minutes, { year, month, day }, timezone);
+        }
+        return void 0;
+      }
+      /**
+       * Build a Date object for a given time in the user's timezone.
+       * Uses iterative offset correction to handle DST edge cases.
+       */
+      buildDateInTimezone(hours, minutes, date, timezone) {
+        if (!timezone) {
+          const d = date ? new Date(date.year, date.month, date.day, hours, minutes, 0, 0) : /* @__PURE__ */ new Date();
+          if (!date) {
+            d.setHours(hours, minutes, 0, 0);
+          }
+          return d;
+        }
+        const now = /* @__PURE__ */ new Date();
+        const refDate = date ? new Date(Date.UTC(date.year, date.month, date.day, hours, minutes, 0)) : new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0));
+        const formatter = new Intl.DateTimeFormat("en-CA", {
+          timeZone: timezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        });
+        if (!date) {
+          const parts = formatter.formatToParts(now);
+          const tzYear = parseInt(parts.find((p) => p.type === "year").value, 10);
+          const tzMonth = parseInt(parts.find((p) => p.type === "month").value, 10) - 1;
+          const tzDay = parseInt(parts.find((p) => p.type === "day").value, 10);
+          let guess2 = new Date(Date.UTC(tzYear, tzMonth, tzDay, hours, minutes, 0));
+          const guessParts2 = formatter.formatToParts(guess2);
+          const guessHour2 = parseInt(guessParts2.find((p) => p.type === "hour").value, 10);
+          const guessMinute2 = parseInt(guessParts2.find((p) => p.type === "minute").value, 10);
+          const diffMinutes2 = (hours - guessHour2) * 60 + (minutes - guessMinute2);
+          guess2 = new Date(guess2.getTime() + diffMinutes2 * 6e4);
+          return guess2;
+        }
+        let guess = refDate;
+        const guessParts = formatter.formatToParts(guess);
+        const guessHour = parseInt(guessParts.find((p) => p.type === "hour").value, 10);
+        const guessMinute = parseInt(guessParts.find((p) => p.type === "minute").value, 10);
+        const diffMinutes = (hours - guessHour) * 60 + (minutes - guessMinute);
+        guess = new Date(guess.getTime() + diffMinutes * 6e4);
+        return guess;
       }
       listReminders(context) {
         const reminders = this.reminderRepo.getByUser(context.userId);
@@ -3267,10 +3948,10 @@ ${reminderList.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${r.tr
   }
 });
 
-// ../skills/dist/built-in/note.js
+// packages/skills/dist/built-in/note.js
 var NoteSkill;
 var init_note = __esm({
-  "../skills/dist/built-in/note.js"() {
+  "packages/skills/dist/built-in/note.js"() {
     "use strict";
     init_skill();
     NoteSkill = class extends Skill {
@@ -3385,10 +4066,10 @@ ${display}` };
   }
 });
 
-// ../skills/dist/built-in/weather.js
+// packages/skills/dist/built-in/weather.js
 var WEATHER_CODES, WeatherSkill;
 var init_weather = __esm({
-  "../skills/dist/built-in/weather.js"() {
+  "packages/skills/dist/built-in/weather.js"() {
     "use strict";
     init_skill();
     WEATHER_CODES = {
@@ -3484,7 +4165,7 @@ Wind: ${weather.windspeed} km/h`;
   }
 });
 
-// ../skills/dist/built-in/shell.js
+// packages/skills/dist/built-in/shell.js
 import { exec } from "node:child_process";
 function truncate(text) {
   if (text.length > MAX_OUTPUT_SIZE) {
@@ -3494,7 +4175,7 @@ function truncate(text) {
 }
 var DEFAULT_TIMEOUT, MAX_OUTPUT_SIZE, ShellSkill;
 var init_shell = __esm({
-  "../skills/dist/built-in/shell.js"() {
+  "packages/skills/dist/built-in/shell.js"() {
     "use strict";
     init_skill();
     DEFAULT_TIMEOUT = 3e4;
@@ -3576,10 +4257,10 @@ ${truncate(stderr)}`);
   }
 });
 
-// ../skills/dist/built-in/memory.js
+// packages/skills/dist/built-in/memory.js
 var MemorySkill;
 var init_memory = __esm({
-  "../skills/dist/built-in/memory.js"() {
+  "packages/skills/dist/built-in/memory.js"() {
     "use strict";
     init_skill();
     MemorySkill = class extends Skill {
@@ -3759,10 +4440,10 @@ ${results.map((r) => `- ${r.key}: "${r.value}" (score: ${r.score.toFixed(2)})`).
   }
 });
 
-// ../skills/dist/built-in/delegate.js
+// packages/skills/dist/built-in/delegate.js
 var DEFAULT_MAX_ITERATIONS, MAX_ALLOWED_ITERATIONS, INITIAL_TIMEOUT_MS, DelegateSkill;
 var init_delegate = __esm({
-  "../skills/dist/built-in/delegate.js"() {
+  "packages/skills/dist/built-in/delegate.js"() {
     "use strict";
     init_skill();
     init_activity_tracker();
@@ -3833,7 +4514,8 @@ var init_delegate = __esm({
         }
         const requestedIterations = input2.max_iterations;
         const maxIterations = requestedIterations ? Math.max(1, Math.min(MAX_ALLOWED_ITERATIONS, Math.round(requestedIterations))) : DEFAULT_MAX_ITERATIONS;
-        const tracker = new ActivityTracker(this.onProgress);
+        const progressCb = context.onProgress ?? this.onProgress;
+        const tracker = context.tracker ? context.tracker : new ActivityTracker(progressCb);
         tracker.ping("starting", { maxIterations });
         const tools = this.buildSubAgentTools();
         const systemPrompt = "You are a sub-agent of Alfred, a personal AI assistant. Complete the assigned task using the tools available to you. Work step by step: use tools to gather information, then synthesize a clear result. Be concise and return only the final answer when done.";
@@ -3960,10 +4642,10 @@ Additional context: ${additionalContext}`;
   }
 });
 
-// ../skills/dist/built-in/email.js
+// packages/skills/dist/built-in/email.js
 var EmailSkill;
 var init_email = __esm({
-  "../skills/dist/built-in/email.js"() {
+  "packages/skills/dist/built-in/email.js"() {
     "use strict";
     init_skill();
     EmailSkill = class extends Skill {
@@ -4282,10 +4964,10 @@ Message ID: ${info.messageId}`
   }
 });
 
-// ../skills/dist/built-in/http.js
+// packages/skills/dist/built-in/http.js
 var MAX_RESPONSE_SIZE, HttpSkill;
 var init_http = __esm({
-  "../skills/dist/built-in/http.js"() {
+  "packages/skills/dist/built-in/http.js"() {
     "use strict";
     init_skill();
     MAX_RESPONSE_SIZE = 1e5;
@@ -4392,12 +5074,12 @@ ${display.slice(0, 5e3)}`
   }
 });
 
-// ../skills/dist/built-in/file.js
+// packages/skills/dist/built-in/file.js
 import fs4 from "node:fs";
 import path4 from "node:path";
 var MAX_READ_SIZE, FileSkill;
 var init_file = __esm({
-  "../skills/dist/built-in/file.js"() {
+  "packages/skills/dist/built-in/file.js"() {
     "use strict";
     init_skill();
     MAX_READ_SIZE = 5e5;
@@ -4658,11 +5340,11 @@ Modified: ${info.modified}`
   }
 });
 
-// ../skills/dist/built-in/clipboard.js
+// packages/skills/dist/built-in/clipboard.js
 import { execSync } from "node:child_process";
 var ClipboardSkill;
 var init_clipboard = __esm({
-  "../skills/dist/built-in/clipboard.js"() {
+  "packages/skills/dist/built-in/clipboard.js"() {
     "use strict";
     init_skill();
     ClipboardSkill = class extends Skill {
@@ -4765,13 +5447,13 @@ var init_clipboard = __esm({
   }
 });
 
-// ../skills/dist/built-in/screenshot.js
+// packages/skills/dist/built-in/screenshot.js
 import { execSync as execSync2 } from "node:child_process";
 import path5 from "node:path";
 import os from "node:os";
 var ScreenshotSkill;
 var init_screenshot = __esm({
-  "../skills/dist/built-in/screenshot.js"() {
+  "packages/skills/dist/built-in/screenshot.js"() {
     "use strict";
     init_skill();
     ScreenshotSkill = class extends Skill {
@@ -4827,12 +5509,12 @@ var init_screenshot = __esm({
   }
 });
 
-// ../skills/dist/built-in/browser.js
+// packages/skills/dist/built-in/browser.js
 import path6 from "node:path";
 import os2 from "node:os";
 var MAX_TEXT_LENGTH, BrowserSkill;
 var init_browser = __esm({
-  "../skills/dist/built-in/browser.js"() {
+  "packages/skills/dist/built-in/browser.js"() {
     "use strict";
     init_skill();
     MAX_TEXT_LENGTH = 5e4;
@@ -5078,10 +5760,10 @@ ${cleaned}`
   }
 });
 
-// ../skills/dist/built-in/profile.js
+// packages/skills/dist/built-in/profile.js
 var ProfileSkill;
 var init_profile = __esm({
-  "../skills/dist/built-in/profile.js"() {
+  "packages/skills/dist/built-in/profile.js"() {
     "use strict";
     init_skill();
     ProfileSkill = class extends Skill {
@@ -5184,24 +5866,24 @@ ${parts.map((p) => `- ${p}`).join("\n")}` : "Profile is empty."
   }
 });
 
-// ../skills/dist/built-in/calendar/calendar-provider.js
+// packages/skills/dist/built-in/calendar/calendar-provider.js
 var CalendarProvider;
 var init_calendar_provider = __esm({
-  "../skills/dist/built-in/calendar/calendar-provider.js"() {
+  "packages/skills/dist/built-in/calendar/calendar-provider.js"() {
     "use strict";
     CalendarProvider = class {
     };
   }
 });
 
-// ../skills/dist/built-in/calendar/caldav-provider.js
+// packages/skills/dist/built-in/calendar/caldav-provider.js
 var caldav_provider_exports = {};
 __export(caldav_provider_exports, {
   CalDAVProvider: () => CalDAVProvider
 });
 var CalDAVProvider;
 var init_caldav_provider = __esm({
-  "../skills/dist/built-in/calendar/caldav-provider.js"() {
+  "packages/skills/dist/built-in/calendar/caldav-provider.js"() {
     "use strict";
     init_calendar_provider();
     CalDAVProvider = class extends CalendarProvider {
@@ -5390,14 +6072,14 @@ var init_caldav_provider = __esm({
   }
 });
 
-// ../skills/dist/built-in/calendar/google-provider.js
+// packages/skills/dist/built-in/calendar/google-provider.js
 var google_provider_exports = {};
 __export(google_provider_exports, {
   GoogleCalendarProvider: () => GoogleCalendarProvider
 });
 var GoogleCalendarProvider;
 var init_google_provider = __esm({
-  "../skills/dist/built-in/calendar/google-provider.js"() {
+  "packages/skills/dist/built-in/calendar/google-provider.js"() {
     "use strict";
     init_calendar_provider();
     GoogleCalendarProvider = class extends CalendarProvider {
@@ -5494,14 +6176,14 @@ var init_google_provider = __esm({
   }
 });
 
-// ../skills/dist/built-in/calendar/microsoft-provider.js
+// packages/skills/dist/built-in/calendar/microsoft-provider.js
 var microsoft_provider_exports = {};
 __export(microsoft_provider_exports, {
   MicrosoftCalendarProvider: () => MicrosoftCalendarProvider
 });
 var MicrosoftCalendarProvider;
 var init_microsoft_provider = __esm({
-  "../skills/dist/built-in/calendar/microsoft-provider.js"() {
+  "packages/skills/dist/built-in/calendar/microsoft-provider.js"() {
     "use strict";
     init_calendar_provider();
     MicrosoftCalendarProvider = class extends CalendarProvider {
@@ -5535,8 +6217,8 @@ var init_microsoft_provider = __esm({
         const data = await res.json();
         this.accessToken = data.access_token;
       }
-      async graphRequest(path13, options = {}) {
-        const res = await fetch(`https://graph.microsoft.com/v1.0${path13}`, {
+      async graphRequest(path14, options = {}) {
+        const res = await fetch(`https://graph.microsoft.com/v1.0${path14}`, {
           ...options,
           headers: {
             Authorization: `Bearer ${this.accessToken}`,
@@ -5546,7 +6228,7 @@ var init_microsoft_provider = __esm({
         });
         if (res.status === 401) {
           await this.refreshAccessToken();
-          const retry = await fetch(`https://graph.microsoft.com/v1.0${path13}`, {
+          const retry = await fetch(`https://graph.microsoft.com/v1.0${path14}`, {
             ...options,
             headers: {
               Authorization: `Bearer ${this.accessToken}`,
@@ -5637,7 +6319,7 @@ var init_microsoft_provider = __esm({
   }
 });
 
-// ../skills/dist/built-in/calendar/factory.js
+// packages/skills/dist/built-in/calendar/factory.js
 async function createCalendarProvider(config) {
   switch (config.provider) {
     case "caldav": {
@@ -5669,15 +6351,15 @@ async function createCalendarProvider(config) {
   }
 }
 var init_factory = __esm({
-  "../skills/dist/built-in/calendar/factory.js"() {
+  "packages/skills/dist/built-in/calendar/factory.js"() {
     "use strict";
   }
 });
 
-// ../skills/dist/built-in/calendar/calendar-skill.js
+// packages/skills/dist/built-in/calendar/calendar-skill.js
 var CalendarSkill;
 var init_calendar_skill = __esm({
-  "../skills/dist/built-in/calendar/calendar-skill.js"() {
+  "packages/skills/dist/built-in/calendar/calendar-skill.js"() {
     "use strict";
     init_skill();
     CalendarSkill = class extends Skill {
@@ -5867,9 +6549,9 @@ ${result.conflicts.map((e) => this.formatEvent(e)).join("\n")}`;
   }
 });
 
-// ../skills/dist/built-in/calendar/index.js
+// packages/skills/dist/built-in/calendar/index.js
 var init_calendar = __esm({
-  "../skills/dist/built-in/calendar/index.js"() {
+  "packages/skills/dist/built-in/calendar/index.js"() {
     "use strict";
     init_calendar_provider();
     init_caldav_provider();
@@ -5880,9 +6562,1119 @@ var init_calendar = __esm({
   }
 });
 
-// ../skills/dist/index.js
+// packages/skills/dist/built-in/cross-platform.js
+var CrossPlatformSkill;
+var init_cross_platform = __esm({
+  "packages/skills/dist/built-in/cross-platform.js"() {
+    "use strict";
+    init_skill();
+    CrossPlatformSkill = class extends Skill {
+      users;
+      linkTokens;
+      adapters;
+      metadata = {
+        name: "cross_platform",
+        description: "Manage cross-platform identity linking and messaging. Actions: link_start (generate a linking code on current platform), link_confirm (enter a code from another platform to link accounts), send_message (send a message to a linked platform), list_identities (show all linked platforms), unlink (remove a platform link).",
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["link_start", "link_confirm", "send_message", "list_identities", "unlink"],
+              description: "The action to perform"
+            },
+            code: {
+              type: "string",
+              description: "The 6-digit linking code (for link_confirm)"
+            },
+            platform: {
+              type: "string",
+              description: "Target platform (for send_message or unlink)"
+            },
+            chat_id: {
+              type: "string",
+              description: "Target chat ID (for send_message)"
+            },
+            message: {
+              type: "string",
+              description: "Message text to send (for send_message)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(users, linkTokens, adapters) {
+        super();
+        this.users = users;
+        this.linkTokens = linkTokens;
+        this.adapters = adapters;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        switch (action) {
+          case "link_start":
+            return this.linkStart(context);
+          case "link_confirm":
+            return this.linkConfirm(input2, context);
+          case "send_message":
+            return this.sendMessage(input2);
+          case "list_identities":
+            return this.listIdentities(context);
+          case "unlink":
+            return this.unlink(input2, context);
+          default:
+            return { success: false, error: `Unknown action: ${action}` };
+        }
+      }
+      async linkStart(context) {
+        this.linkTokens.cleanup();
+        const token = this.linkTokens.create(context.userId, context.platform);
+        return {
+          success: true,
+          data: { code: token.code, expiresAt: token.expiresAt },
+          display: `Your linking code is: **${token.code}**
+
+Enter this code on your other platform within 10 minutes using:
+"Link my account with code ${token.code}"`
+        };
+      }
+      async linkConfirm(input2, context) {
+        const code = input2.code;
+        if (!code) {
+          return { success: false, error: 'Missing required field "code"' };
+        }
+        const token = this.linkTokens.findByCode(code.trim());
+        if (!token) {
+          return {
+            success: false,
+            error: "Invalid or expired linking code. Please generate a new one."
+          };
+        }
+        if (token.userId === context.userId) {
+          return {
+            success: false,
+            error: "Cannot link an account to itself. Use the code on a different platform."
+          };
+        }
+        const existingMaster1 = this.users.getMasterUserId(token.userId);
+        const existingMaster2 = this.users.getMasterUserId(context.userId);
+        let masterUserId;
+        if (existingMaster1 !== token.userId) {
+          masterUserId = existingMaster1;
+        } else if (existingMaster2 !== context.userId) {
+          masterUserId = existingMaster2;
+        } else {
+          masterUserId = token.userId;
+        }
+        if (token.userId !== masterUserId) {
+          this.users.setMasterUser(token.userId, masterUserId);
+        }
+        if (context.userId !== masterUserId) {
+          this.users.setMasterUser(context.userId, masterUserId);
+        }
+        this.linkTokens.consume(token.id);
+        const tokenUser = this.users.findById(token.userId);
+        const platformName = token.platform;
+        return {
+          success: true,
+          data: { masterUserId, linkedPlatform: platformName },
+          display: `Account linked successfully! Your ${platformName} account (${tokenUser?.displayName ?? tokenUser?.username ?? "unknown"}) is now linked to this ${context.platform} account.
+
+Your memories, preferences, and context are now shared across platforms.`
+        };
+      }
+      async sendMessage(input2) {
+        const platform = input2.platform;
+        const chatId = input2.chat_id;
+        const message = input2.message;
+        if (!platform) {
+          return { success: false, error: 'Missing required field "platform"' };
+        }
+        if (!chatId) {
+          return { success: false, error: 'Missing required field "chat_id"' };
+        }
+        if (!message) {
+          return { success: false, error: 'Missing required field "message"' };
+        }
+        const adapter = this.adapters.get(platform);
+        if (!adapter) {
+          return {
+            success: false,
+            error: `Platform "${platform}" is not connected. Available: ${[...this.adapters.keys()].join(", ")}`
+          };
+        }
+        try {
+          const messageId = await adapter.sendMessage(chatId, message);
+          return {
+            success: true,
+            data: { messageId, platform, chatId },
+            display: `Message sent to ${platform} (chat ${chatId}).`
+          };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { success: false, error: `Failed to send message: ${msg}` };
+        }
+      }
+      async listIdentities(context) {
+        const masterUserId = this.users.getMasterUserId(context.userId);
+        const linkedUsers = this.users.getLinkedUsers(masterUserId);
+        if (linkedUsers.length <= 1) {
+          return {
+            success: true,
+            data: { identities: linkedUsers },
+            display: 'No linked accounts found. To link another platform, use:\n"Start linking my account" on the platform you want to link from, then enter the code on the other platform.'
+          };
+        }
+        const lines = linkedUsers.map((u) => {
+          const isCurrent = u.id === context.userId ? " (current)" : "";
+          const name = u.displayName ?? u.username ?? u.platformUserId;
+          return `- **${u.platform}**: ${name}${isCurrent}`;
+        });
+        return {
+          success: true,
+          data: { identities: linkedUsers.map((u) => ({ platform: u.platform, username: u.username, displayName: u.displayName })) },
+          display: `Linked accounts:
+${lines.join("\n")}`
+        };
+      }
+      async unlink(input2, context) {
+        const platform = input2.platform;
+        if (!platform) {
+          return { success: false, error: 'Missing required field "platform"' };
+        }
+        const masterUserId = this.users.getMasterUserId(context.userId);
+        const linkedUsers = this.users.getLinkedUsers(masterUserId);
+        const targetUser = linkedUsers.find((u) => u.platform === platform && u.id !== context.userId);
+        if (!targetUser) {
+          return {
+            success: false,
+            error: `No linked account found on platform "${platform}".`
+          };
+        }
+        this.users.setMasterUser(targetUser.id, targetUser.id);
+        return {
+          success: true,
+          data: { unlinkedPlatform: platform, unlinkedUserId: targetUser.id },
+          display: `Unlinked ${platform} account (${targetUser.displayName ?? targetUser.username ?? targetUser.platformUserId}).`
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/background-task.js
+var BackgroundTaskSkill;
+var init_background_task = __esm({
+  "packages/skills/dist/built-in/background-task.js"() {
+    "use strict";
+    init_skill();
+    BackgroundTaskSkill = class extends Skill {
+      taskRepo;
+      metadata = {
+        name: "background_task",
+        description: 'Schedule, list, or cancel background tasks that run independently. Use "schedule" to queue a skill to execute in the background (user will be notified when done). Use "list" to see active/recent tasks. Use "cancel" to stop a pending or running task.',
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["schedule", "list", "cancel"],
+              description: "The background task action to perform"
+            },
+            description: {
+              type: "string",
+              description: "Human-readable description of what the task does (for schedule)"
+            },
+            skill_name: {
+              type: "string",
+              description: "The skill to run in the background (for schedule)"
+            },
+            skill_input: {
+              type: "object",
+              description: "Input to pass to the skill (for schedule)"
+            },
+            task_id: {
+              type: "string",
+              description: "Task ID (for cancel)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(taskRepo) {
+        super();
+        this.taskRepo = taskRepo;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        switch (action) {
+          case "schedule":
+            return this.scheduleTask(input2, context);
+          case "list":
+            return this.listTasks(context);
+          case "cancel":
+            return this.cancelTask(input2);
+          default:
+            return {
+              success: false,
+              error: `Unknown action: "${String(action)}". Valid actions: schedule, list, cancel`
+            };
+        }
+      }
+      scheduleTask(input2, context) {
+        const description = input2.description;
+        const skillName = input2.skill_name;
+        const skillInput = input2.skill_input;
+        if (!description || typeof description !== "string") {
+          return { success: false, error: 'Missing required field "description" for schedule action' };
+        }
+        if (!skillName || typeof skillName !== "string") {
+          return { success: false, error: 'Missing required field "skill_name" for schedule action' };
+        }
+        const task = this.taskRepo.create(context.userId, context.platform, context.chatId, description, skillName, JSON.stringify(skillInput ?? {}));
+        return {
+          success: true,
+          data: { taskId: task.id, description, skillName, status: task.status },
+          display: `Background task scheduled (${task.id}): "${description}" using skill "${skillName}". You'll be notified when it completes.`
+        };
+      }
+      listTasks(context) {
+        const tasks = this.taskRepo.getByUser(context.userId);
+        if (tasks.length === 0) {
+          return {
+            success: true,
+            data: [],
+            display: "No active or recent background tasks."
+          };
+        }
+        const statusIcon = {
+          pending: "\u23F3",
+          running: "\u25B6\uFE0F",
+          completed: "\u2705",
+          failed: "\u274C"
+        };
+        const lines = tasks.map((t) => `- ${statusIcon[t.status] ?? "?"} ${t.id}: "${t.description}" [${t.status}] (${t.skillName})`);
+        return {
+          success: true,
+          data: tasks.map((t) => ({
+            taskId: t.id,
+            description: t.description,
+            status: t.status,
+            skillName: t.skillName,
+            createdAt: t.createdAt,
+            completedAt: t.completedAt
+          })),
+          display: `Background tasks:
+${lines.join("\n")}`
+        };
+      }
+      cancelTask(input2) {
+        const taskId = input2.task_id;
+        if (!taskId || typeof taskId !== "string") {
+          return { success: false, error: 'Missing required field "task_id" for cancel action' };
+        }
+        const cancelled = this.taskRepo.cancel(taskId);
+        if (!cancelled) {
+          return {
+            success: false,
+            error: `Task "${taskId}" not found or already completed`
+          };
+        }
+        return {
+          success: true,
+          data: { taskId },
+          display: `Background task "${taskId}" cancelled.`
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/scheduled-task.js
+var ScheduledTaskSkill;
+var init_scheduled_task = __esm({
+  "packages/skills/dist/built-in/scheduled-task.js"() {
+    "use strict";
+    init_skill();
+    ScheduledTaskSkill = class extends Skill {
+      actionRepo;
+      metadata = {
+        name: "scheduled_task",
+        description: 'Create, list, enable, disable, or delete scheduled actions that run automatically on a recurring basis. Supports cron expressions (e.g. "0 9 * * *" for daily at 9 AM), intervals (in minutes), and one-time schedules. Each scheduled action executes a skill or sends a prompt to the LLM at the configured time.',
+        riskLevel: "write",
+        version: "1.0.0",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["create", "list", "enable", "disable", "delete"],
+              description: "The scheduled task action to perform"
+            },
+            name: {
+              type: "string",
+              description: "Name for the scheduled action (for create)"
+            },
+            description: {
+              type: "string",
+              description: "What the scheduled action does (for create)"
+            },
+            schedule_type: {
+              type: "string",
+              enum: ["cron", "interval", "once"],
+              description: "Type of schedule: cron expression, interval in minutes, or one-time ISO date (for create)"
+            },
+            schedule_value: {
+              type: "string",
+              description: "Schedule value: cron expression, minutes as string, or ISO date (for create)"
+            },
+            skill_name: {
+              type: "string",
+              description: "The skill to execute on schedule (for create)"
+            },
+            skill_input: {
+              type: "object",
+              description: "Input to pass to the skill (for create)"
+            },
+            prompt_template: {
+              type: "string",
+              description: "Optional LLM prompt to run instead of a skill (for create)"
+            },
+            action_id: {
+              type: "string",
+              description: "Scheduled action ID (for enable, disable, delete)"
+            }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(actionRepo) {
+        super();
+        this.actionRepo = actionRepo;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        switch (action) {
+          case "create":
+            return this.createAction(input2, context);
+          case "list":
+            return this.listActions(context);
+          case "enable":
+            return this.toggleAction(input2, true);
+          case "disable":
+            return this.toggleAction(input2, false);
+          case "delete":
+            return this.deleteAction(input2);
+          default:
+            return {
+              success: false,
+              error: `Unknown action: "${String(action)}". Valid actions: create, list, enable, disable, delete`
+            };
+        }
+      }
+      createAction(input2, context) {
+        const name = input2.name;
+        const description = input2.description;
+        const scheduleType = input2.schedule_type;
+        const scheduleValue = input2.schedule_value;
+        const skillName = input2.skill_name;
+        const skillInput = input2.skill_input;
+        const promptTemplate = input2.prompt_template;
+        if (!name || typeof name !== "string") {
+          return { success: false, error: 'Missing required field "name" for create action' };
+        }
+        if (!description || typeof description !== "string") {
+          return { success: false, error: 'Missing required field "description" for create action' };
+        }
+        if (!scheduleType || !["cron", "interval", "once"].includes(scheduleType)) {
+          return { success: false, error: 'Missing or invalid "schedule_type". Must be "cron", "interval", or "once"' };
+        }
+        if (!scheduleValue || typeof scheduleValue !== "string") {
+          return { success: false, error: 'Missing required field "schedule_value" for create action' };
+        }
+        if (!skillName || typeof skillName !== "string") {
+          return { success: false, error: 'Missing required field "skill_name" for create action' };
+        }
+        if (scheduleType === "interval") {
+          const minutes = parseInt(scheduleValue, 10);
+          if (isNaN(minutes) || minutes <= 0) {
+            return { success: false, error: "For interval schedule, value must be a positive number of minutes" };
+          }
+        }
+        if (scheduleType === "cron") {
+          const parts = scheduleValue.trim().split(/\s+/);
+          if (parts.length !== 5) {
+            return { success: false, error: "Cron expression must have 5 fields: minute hour dayOfMonth month dayOfWeek" };
+          }
+        }
+        if (scheduleType === "once") {
+          const date = new Date(scheduleValue);
+          if (isNaN(date.getTime())) {
+            return { success: false, error: "For once schedule, value must be a valid ISO date string" };
+          }
+          if (date.getTime() <= Date.now()) {
+            return { success: false, error: "The scheduled time is in the past. Please specify a future time." };
+          }
+        }
+        const entry = this.actionRepo.create({
+          userId: context.userId,
+          platform: context.platform,
+          chatId: context.chatId,
+          name,
+          description,
+          scheduleType,
+          scheduleValue,
+          skillName,
+          skillInput: JSON.stringify(skillInput ?? {}),
+          promptTemplate
+        });
+        const scheduleLabel = scheduleType === "cron" ? `cron: ${scheduleValue}` : scheduleType === "interval" ? `every ${scheduleValue} minutes` : `once at ${scheduleValue}`;
+        return {
+          success: true,
+          data: { actionId: entry.id, name, scheduleType, scheduleValue, skillName },
+          display: `Scheduled action created (${entry.id}): "${name}" \u2014 ${scheduleLabel}, running "${skillName}"${entry.nextRunAt ? `. Next run: ${entry.nextRunAt}` : ""}`
+        };
+      }
+      listActions(context) {
+        const actions = this.actionRepo.getByUser(context.userId);
+        if (actions.length === 0) {
+          return {
+            success: true,
+            data: [],
+            display: "No scheduled actions."
+          };
+        }
+        const lines = actions.map((a) => {
+          const status = a.enabled ? "\u2705" : "\u23F8\uFE0F";
+          const scheduleLabel = a.scheduleType === "cron" ? `cron: ${a.scheduleValue}` : a.scheduleType === "interval" ? `every ${a.scheduleValue} min` : `once: ${a.scheduleValue}`;
+          const nextRun = a.nextRunAt ? ` | next: ${a.nextRunAt}` : "";
+          return `- ${status} ${a.id}: "${a.name}" [${scheduleLabel}] \u2192 ${a.skillName}${nextRun}`;
+        });
+        return {
+          success: true,
+          data: actions.map((a) => ({
+            actionId: a.id,
+            name: a.name,
+            scheduleType: a.scheduleType,
+            scheduleValue: a.scheduleValue,
+            skillName: a.skillName,
+            enabled: a.enabled,
+            nextRunAt: a.nextRunAt,
+            lastRunAt: a.lastRunAt
+          })),
+          display: `Scheduled actions:
+${lines.join("\n")}`
+        };
+      }
+      toggleAction(input2, enabled) {
+        const actionId = input2.action_id;
+        if (!actionId || typeof actionId !== "string") {
+          return { success: false, error: `Missing required field "action_id" for ${enabled ? "enable" : "disable"} action` };
+        }
+        const updated = this.actionRepo.setEnabled(actionId, enabled);
+        if (!updated) {
+          return { success: false, error: `Scheduled action "${actionId}" not found` };
+        }
+        return {
+          success: true,
+          data: { actionId, enabled },
+          display: `Scheduled action "${actionId}" ${enabled ? "enabled" : "disabled"}.`
+        };
+      }
+      deleteAction(input2) {
+        const actionId = input2.action_id;
+        if (!actionId || typeof actionId !== "string") {
+          return { success: false, error: 'Missing required field "action_id" for delete action' };
+        }
+        const deleted = this.actionRepo.delete(actionId);
+        if (!deleted) {
+          return { success: false, error: `Scheduled action "${actionId}" not found` };
+        }
+        return {
+          success: true,
+          data: { actionId },
+          display: `Scheduled action "${actionId}" deleted.`
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/mcp/mcp-client.js
+var MCPClient;
+var init_mcp_client = __esm({
+  "packages/skills/dist/mcp/mcp-client.js"() {
+    "use strict";
+    MCPClient = class {
+      serverName;
+      config;
+      logger;
+      client;
+      transport;
+      connected = false;
+      constructor(serverName, config, logger) {
+        this.serverName = serverName;
+        this.config = config;
+        this.logger = logger;
+      }
+      async connect() {
+        try {
+          const { Client: Client2 } = await import("@modelcontextprotocol/sdk/client/index.js");
+          this.client = new Client2({ name: `alfred-${this.serverName}`, version: "1.0.0" }, { capabilities: {} });
+          if (this.config.command) {
+            const { StdioClientTransport } = await import("@modelcontextprotocol/sdk/client/stdio.js");
+            const env = { ...process.env };
+            if (this.config.env) {
+              for (const [key, value] of Object.entries(this.config.env)) {
+                env[key] = value.replace(/\$\{(\w+)\}/g, (_, name) => process.env[name] ?? "");
+              }
+            }
+            this.transport = new StdioClientTransport({
+              command: this.config.command,
+              args: this.config.args ?? [],
+              env
+            });
+          } else if (this.config.url) {
+            const { SSEClientTransport } = await import("@modelcontextprotocol/sdk/client/sse.js");
+            this.transport = new SSEClientTransport(new URL(this.config.url));
+          } else {
+            throw new Error(`MCP server "${this.serverName}": must specify either command or url`);
+          }
+          await this.client.connect(this.transport);
+          this.connected = true;
+          this.logger.info({ server: this.serverName }, "MCP server connected");
+        } catch (err) {
+          this.logger.error({ server: this.serverName, err }, "Failed to connect MCP server");
+          throw err;
+        }
+      }
+      async listTools() {
+        if (!this.connected || !this.client)
+          return [];
+        try {
+          const result = await this.client.listTools();
+          return (result.tools ?? []).map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema ?? { type: "object", properties: {} }
+          }));
+        } catch (err) {
+          this.logger.error({ server: this.serverName, err }, "Failed to list MCP tools");
+          return [];
+        }
+      }
+      async callTool(name, input2) {
+        if (!this.connected || !this.client) {
+          return { content: "MCP server not connected", isError: true };
+        }
+        try {
+          const result = await this.client.callTool({ name, arguments: input2 });
+          const content = (result.content ?? []).map((c) => c.text ?? JSON.stringify(c)).join("\n");
+          return { content, isError: result.isError };
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { content: `MCP tool error: ${msg}`, isError: true };
+        }
+      }
+      async disconnect() {
+        if (this.transport) {
+          try {
+            await this.transport.close?.();
+          } catch {
+          }
+        }
+        this.connected = false;
+        this.logger.info({ server: this.serverName }, "MCP server disconnected");
+      }
+    };
+  }
+});
+
+// packages/skills/dist/mcp/mcp-skill-adapter.js
+var MCPSkillAdapter;
+var init_mcp_skill_adapter = __esm({
+  "packages/skills/dist/mcp/mcp-skill-adapter.js"() {
+    "use strict";
+    init_skill();
+    MCPSkillAdapter = class extends Skill {
+      client;
+      serverName;
+      toolName;
+      metadata;
+      constructor(client, serverName, toolName, description, inputSchema) {
+        super();
+        this.client = client;
+        this.serverName = serverName;
+        this.toolName = toolName;
+        this.metadata = {
+          name: `mcp__${serverName}__${toolName}`,
+          description: `[MCP/${serverName}] ${description || toolName}`,
+          riskLevel: "write",
+          version: "1.0.0",
+          inputSchema
+        };
+      }
+      async execute(input2, _context) {
+        const result = await this.client.callTool(this.toolName, input2);
+        return {
+          success: !result.isError,
+          data: result.content,
+          display: result.content,
+          error: result.isError ? result.content : void 0
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/mcp/mcp-manager.js
+var MCPManager;
+var init_mcp_manager = __esm({
+  "packages/skills/dist/mcp/mcp-manager.js"() {
+    "use strict";
+    init_mcp_client();
+    init_mcp_skill_adapter();
+    MCPManager = class {
+      logger;
+      clients = [];
+      skills = [];
+      constructor(logger) {
+        this.logger = logger;
+      }
+      async initialize(config) {
+        for (const serverConfig of config.servers) {
+          try {
+            const client = new MCPClient(serverConfig.name, serverConfig, this.logger.child({ mcp: serverConfig.name }));
+            await client.connect();
+            this.clients.push(client);
+            const tools = await client.listTools();
+            for (const tool of tools) {
+              const adapted = new MCPSkillAdapter(client, serverConfig.name, tool.name, tool.description ?? "", tool.inputSchema);
+              this.skills.push(adapted);
+            }
+            this.logger.info({ server: serverConfig.name, tools: tools.length }, "MCP server initialized");
+          } catch (err) {
+            this.logger.error({ server: serverConfig.name, err }, "Failed to initialize MCP server");
+          }
+        }
+      }
+      getSkills() {
+        return this.skills;
+      }
+      async shutdown() {
+        for (const client of this.clients) {
+          await client.disconnect();
+        }
+        this.clients.length = 0;
+        this.skills.length = 0;
+      }
+    };
+  }
+});
+
+// packages/skills/dist/mcp/index.js
+var init_mcp = __esm({
+  "packages/skills/dist/mcp/index.js"() {
+    "use strict";
+    init_mcp_client();
+    init_mcp_skill_adapter();
+    init_mcp_manager();
+  }
+});
+
+// packages/skills/dist/built-in/code-sandbox/code-executor.js
+import { spawn } from "node:child_process";
+import fs5 from "node:fs";
+import path7 from "node:path";
+import os3 from "node:os";
+import crypto5 from "node:crypto";
+var CodeExecutor;
+var init_code_executor = __esm({
+  "packages/skills/dist/built-in/code-sandbox/code-executor.js"() {
+    "use strict";
+    CodeExecutor = class {
+      async execute(code, language, options) {
+        const timeout = Math.min(options?.timeout ?? 3e4, 12e4);
+        const tmpDir = path7.join(os3.tmpdir(), `alfred-sandbox-${crypto5.randomUUID()}`);
+        fs5.mkdirSync(tmpDir, { recursive: true });
+        try {
+          const ext = language === "javascript" ? "js" : "py";
+          const scriptPath = path7.join(tmpDir, `script.${ext}`);
+          fs5.writeFileSync(scriptPath, code);
+          const cmd = language === "javascript" ? "node" : process.platform === "win32" ? "python" : "python3";
+          const args = [scriptPath];
+          const startTime = Date.now();
+          return await new Promise((resolve) => {
+            const proc = spawn(cmd, args, {
+              cwd: tmpDir,
+              timeout,
+              env: { ...process.env, ...options?.env, TMPDIR: tmpDir, TEMP: tmpDir },
+              stdio: ["pipe", "pipe", "pipe"]
+            });
+            let stdout = "";
+            let stderr = "";
+            proc.stdout.on("data", (data) => {
+              stdout += data.toString();
+            });
+            proc.stderr.on("data", (data) => {
+              stderr += data.toString();
+            });
+            proc.on("close", (exitCode) => {
+              const durationMs = Date.now() - startTime;
+              const files = [];
+              try {
+                const outputFiles = fs5.readdirSync(tmpDir).filter((f) => !f.startsWith("script."));
+                for (const f of outputFiles) {
+                  const filePath = path7.join(tmpDir, f);
+                  const stat = fs5.statSync(filePath);
+                  if (stat.isFile() && stat.size < 1e7) {
+                    const data = fs5.readFileSync(filePath);
+                    const mimeType = f.endsWith(".png") ? "image/png" : f.endsWith(".jpg") || f.endsWith(".jpeg") ? "image/jpeg" : f.endsWith(".svg") ? "image/svg+xml" : f.endsWith(".csv") ? "text/csv" : f.endsWith(".json") ? "application/json" : "application/octet-stream";
+                    files.push({ name: f, data, mimeType });
+                  }
+                }
+              } catch {
+              }
+              resolve({
+                stdout: stdout.slice(0, 5e4),
+                // Cap output
+                stderr: stderr.slice(0, 1e4),
+                exitCode: exitCode ?? 1,
+                files: files.length > 0 ? files : void 0,
+                durationMs
+              });
+            });
+            proc.on("error", (err) => {
+              resolve({
+                stdout: "",
+                stderr: err.message,
+                exitCode: 1,
+                durationMs: Date.now() - startTime
+              });
+            });
+            proc.stdin.end();
+          });
+        } finally {
+          try {
+            fs5.rmSync(tmpDir, { recursive: true, force: true });
+          } catch {
+          }
+        }
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/code-sandbox/code-skill.js
+var CodeExecutionSkill;
+var init_code_skill = __esm({
+  "packages/skills/dist/built-in/code-sandbox/code-skill.js"() {
+    "use strict";
+    init_skill();
+    init_code_executor();
+    CodeExecutionSkill = class extends Skill {
+      metadata = {
+        name: "code_sandbox",
+        description: "Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating charts, or testing code snippets. Code runs in an isolated temp directory with a timeout.",
+        riskLevel: "destructive",
+        version: "1.0.0",
+        timeoutMs: 12e4,
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["run", "run_with_data"], description: "Action to perform" },
+            code: { type: "string", description: "Code to execute" },
+            language: { type: "string", enum: ["javascript", "python"], description: "Programming language" },
+            data: { type: "string", description: "Input data to pass (available as DATA env var or stdin)" },
+            timeout: { type: "number", description: "Timeout in ms (max 120000)" }
+          },
+          required: ["action", "code", "language"]
+        }
+      };
+      executor = new CodeExecutor();
+      allowedLanguages;
+      maxTimeout;
+      constructor(config) {
+        super();
+        this.allowedLanguages = new Set(config?.allowedLanguages ?? ["javascript", "python"]);
+        this.maxTimeout = config?.maxTimeoutMs ?? 12e4;
+      }
+      async execute(input2, _context) {
+        const action = input2.action;
+        const code = input2.code;
+        const language = input2.language;
+        const data = input2.data;
+        const timeout = Math.min(input2.timeout ?? 3e4, this.maxTimeout);
+        if (!code)
+          return { success: false, error: 'Missing required field "code"' };
+        if (!language)
+          return { success: false, error: 'Missing required field "language"' };
+        if (!this.allowedLanguages.has(language)) {
+          return { success: false, error: `Language "${language}" is not allowed. Allowed: ${[...this.allowedLanguages].join(", ")}` };
+        }
+        let finalCode = code;
+        if (action === "run_with_data" && data) {
+          if (language === "javascript") {
+            finalCode = `const INPUT_DATA = ${JSON.stringify(data)};
+${code}`;
+          } else {
+            finalCode = `INPUT_DATA = ${JSON.stringify(data)}
+${code}`;
+          }
+        }
+        const result = await this.executor.execute(finalCode, language, { timeout });
+        const output2 = [
+          result.stdout ? `Output:
+${result.stdout}` : "",
+          result.stderr ? `Errors:
+${result.stderr}` : "",
+          `Exit code: ${result.exitCode}`,
+          `Duration: ${result.durationMs}ms`
+        ].filter(Boolean).join("\n\n");
+        return {
+          success: result.exitCode === 0,
+          data: {
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+            durationMs: result.durationMs,
+            fileCount: result.files?.length ?? 0
+          },
+          display: output2,
+          error: result.exitCode !== 0 ? `Code execution failed with exit code ${result.exitCode}` : void 0
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/built-in/code-sandbox/index.js
+var init_code_sandbox = __esm({
+  "packages/skills/dist/built-in/code-sandbox/index.js"() {
+    "use strict";
+    init_code_executor();
+    init_code_skill();
+  }
+});
+
+// packages/skills/dist/built-in/document.js
+var DocumentSkill;
+var init_document = __esm({
+  "packages/skills/dist/built-in/document.js"() {
+    "use strict";
+    init_skill();
+    DocumentSkill = class extends Skill {
+      docRepo;
+      processor;
+      embeddingService;
+      metadata = {
+        name: "document",
+        description: "Ingest, search, summarize, list, or delete documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. Documents are chunked and embedded for semantic search.",
+        riskLevel: "write",
+        version: "1.0.0",
+        timeoutMs: 12e4,
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["ingest", "search", "summarize", "list", "delete"],
+              description: "Action to perform"
+            },
+            file_path: { type: "string", description: "Path to the file (for ingest)" },
+            filename: { type: "string", description: "Original filename (for ingest)" },
+            mime_type: { type: "string", description: "MIME type of the file (for ingest)" },
+            query: { type: "string", description: "Search query (for search)" },
+            document_id: { type: "string", description: "Document ID (for summarize, delete)" },
+            limit: { type: "number", description: "Max results (for search, list)" }
+          },
+          required: ["action"]
+        }
+      };
+      constructor(docRepo, processor, embeddingService) {
+        super();
+        this.docRepo = docRepo;
+        this.processor = processor;
+        this.embeddingService = embeddingService;
+      }
+      async execute(input2, context) {
+        const action = input2.action;
+        switch (action) {
+          case "ingest":
+            return this.ingest(input2, context);
+          case "search":
+            return this.search(input2, context);
+          case "summarize":
+            return this.summarize(input2);
+          case "list":
+            return this.list(input2, context);
+          case "delete":
+            return this.deleteDoc(input2);
+          default:
+            return {
+              success: false,
+              error: `Unknown action: "${String(action)}". Valid actions: ingest, search, summarize, list, delete`
+            };
+        }
+      }
+      async ingest(input2, context) {
+        const filePath = input2.file_path;
+        const filename = input2.filename;
+        const mimeType = input2.mime_type;
+        if (!filePath || typeof filePath !== "string") {
+          return { success: false, error: 'Missing required field "file_path" for ingest action' };
+        }
+        if (!filename || typeof filename !== "string") {
+          return { success: false, error: 'Missing required field "filename" for ingest action' };
+        }
+        if (!mimeType || typeof mimeType !== "string") {
+          return { success: false, error: 'Missing required field "mime_type" for ingest action' };
+        }
+        try {
+          const result = await this.processor.ingest(context.userId, filePath, filename, mimeType);
+          return {
+            success: true,
+            data: result,
+            display: `Document "${filename}" ingested successfully (${result.chunkCount} chunks). ID: ${result.documentId.slice(0, 8)}...`
+          };
+        } catch (err) {
+          return {
+            success: false,
+            error: `Failed to ingest document: ${err instanceof Error ? err.message : String(err)}`
+          };
+        }
+      }
+      async search(input2, context) {
+        const query = input2.query;
+        const limit = input2.limit || 5;
+        if (!query || typeof query !== "string") {
+          return { success: false, error: 'Missing required field "query" for search action' };
+        }
+        if (!this.embeddingService) {
+          return { success: false, error: "Embedding service not available for document search" };
+        }
+        const results = await this.embeddingService.semanticSearch(context.userId, query, limit);
+        const docResults = results.filter((r) => r.category === "document");
+        if (docResults.length === 0) {
+          return { success: true, data: [], display: `No document matches found for "${query}".` };
+        }
+        const display = docResults.map((r, i) => `${i + 1}. (score: ${r.score.toFixed(3)}) ${r.value.slice(0, 200)}${r.value.length > 200 ? "..." : ""}`).join("\n\n");
+        return {
+          success: true,
+          data: docResults,
+          display: `Found ${docResults.length} relevant chunk(s):
+
+${display}`
+        };
+      }
+      summarize(input2) {
+        const documentId = input2.document_id;
+        if (!documentId || typeof documentId !== "string") {
+          return { success: false, error: 'Missing required field "document_id" for summarize action' };
+        }
+        const doc = this.docRepo.getDocument(documentId);
+        if (!doc) {
+          return { success: false, error: `Document "${documentId}" not found` };
+        }
+        const chunks = this.docRepo.getChunks(documentId);
+        if (chunks.length === 0) {
+          return { success: true, data: { document: doc, content: "" }, display: `Document "${doc.filename}" has no content chunks.` };
+        }
+        const fullContent = chunks.map((c) => c.content).join("\n\n");
+        const maxChars = 8e3;
+        const truncated = fullContent.length > maxChars;
+        const content = truncated ? fullContent.slice(0, maxChars) + "\n\n[... truncated]" : fullContent;
+        return {
+          success: true,
+          data: {
+            document: doc,
+            content,
+            totalChunks: chunks.length,
+            truncated
+          },
+          display: `Document: **${doc.filename}** (${chunks.length} chunks, ${doc.sizeBytes} bytes)
+
+${content}`
+        };
+      }
+      list(input2, context) {
+        const limit = input2.limit || 50;
+        const docs = this.docRepo.listByUser(context.userId);
+        const limited = docs.slice(0, limit);
+        if (limited.length === 0) {
+          return { success: true, data: [], display: "No documents found." };
+        }
+        const display = limited.map((d) => `- **${d.filename}** (${d.id.slice(0, 8)}...) \u2014 ${d.mimeType}, ${d.chunkCount} chunks, ${d.sizeBytes} bytes`).join("\n");
+        return {
+          success: true,
+          data: limited,
+          display: `${limited.length} document(s):
+${display}`
+        };
+      }
+      deleteDoc(input2) {
+        const documentId = input2.document_id;
+        if (!documentId || typeof documentId !== "string") {
+          return { success: false, error: 'Missing required field "document_id" for delete action' };
+        }
+        const doc = this.docRepo.getDocument(documentId);
+        if (!doc) {
+          return { success: false, error: `Document "${documentId}" not found` };
+        }
+        this.docRepo.deleteDocument(documentId);
+        return {
+          success: true,
+          data: { documentId },
+          display: `Document "${doc.filename}" deleted.`
+        };
+      }
+    };
+  }
+});
+
+// packages/skills/dist/index.js
+var dist_exports = {};
+__export(dist_exports, {
+  ActivityTracker: () => ActivityTracker,
+  BackgroundTaskSkill: () => BackgroundTaskSkill,
+  BrowserSkill: () => BrowserSkill,
+  CalculatorSkill: () => CalculatorSkill,
+  CalendarProvider: () => CalendarProvider,
+  CalendarSkill: () => CalendarSkill,
+  ClipboardSkill: () => ClipboardSkill,
+  CodeExecutionSkill: () => CodeExecutionSkill,
+  CodeExecutor: () => CodeExecutor,
+  CrossPlatformSkill: () => CrossPlatformSkill,
+  DelegateSkill: () => DelegateSkill,
+  DocumentSkill: () => DocumentSkill,
+  EmailSkill: () => EmailSkill,
+  FileSkill: () => FileSkill,
+  HttpSkill: () => HttpSkill,
+  MCPClient: () => MCPClient,
+  MCPManager: () => MCPManager,
+  MCPSkillAdapter: () => MCPSkillAdapter,
+  MemorySkill: () => MemorySkill,
+  NoteSkill: () => NoteSkill,
+  PluginLoader: () => PluginLoader,
+  ProfileSkill: () => ProfileSkill,
+  ReminderSkill: () => ReminderSkill,
+  ScheduledTaskSkill: () => ScheduledTaskSkill,
+  ScreenshotSkill: () => ScreenshotSkill,
+  ShellSkill: () => ShellSkill,
+  Skill: () => Skill,
+  SkillRegistry: () => SkillRegistry,
+  SkillSandbox: () => SkillSandbox,
+  SystemInfoSkill: () => SystemInfoSkill,
+  WeatherSkill: () => WeatherSkill,
+  WebSearchSkill: () => WebSearchSkill,
+  createCalendarProvider: () => createCalendarProvider
+});
 var init_dist6 = __esm({
-  "../skills/dist/index.js"() {
+  "packages/skills/dist/index.js"() {
     "use strict";
     init_skill();
     init_skill_registry();
@@ -5906,13 +7698,19 @@ var init_dist6 = __esm({
     init_browser();
     init_profile();
     init_calendar();
+    init_cross_platform();
+    init_background_task();
+    init_scheduled_task();
+    init_mcp();
+    init_code_sandbox();
+    init_document();
   }
 });
 
-// ../core/dist/conversation-manager.js
+// packages/core/dist/conversation-manager.js
 var ConversationManager;
 var init_conversation_manager = __esm({
-  "../core/dist/conversation-manager.js"() {
+  "packages/core/dist/conversation-manager.js"() {
     "use strict";
     ConversationManager = class {
       conversations;
@@ -5937,12 +7735,12 @@ var init_conversation_manager = __esm({
   }
 });
 
-// ../core/dist/message-pipeline.js
-import fs5 from "node:fs";
-import path7 from "node:path";
+// packages/core/dist/message-pipeline.js
+import fs6 from "node:fs";
+import path8 from "node:path";
 var MAX_TOOL_ITERATIONS, TOKEN_BUDGET_RATIO, MAX_INLINE_FILE_SIZE, MessagePipeline;
 var init_message_pipeline = __esm({
-  "../core/dist/message-pipeline.js"() {
+  "packages/core/dist/message-pipeline.js"() {
     "use strict";
     init_dist4();
     MAX_TOOL_ITERATIONS = 10;
@@ -5983,6 +7781,7 @@ var init_message_pipeline = __esm({
         this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, "Processing message");
         try {
           const user = this.users.findOrCreate(message.platform, message.userId, message.userName, message.displayName);
+          const masterUserId = this.users.getMasterUserId?.(user.id) ?? user.id;
           const conversation = this.conversationManager.getOrCreateConversation(message.platform, message.chatId, user.id);
           const history = this.conversationManager.getHistory(conversation.id, 50);
           this.conversationManager.addMessage(conversation.id, "user", message.text);
@@ -5990,8 +7789,8 @@ var init_message_pipeline = __esm({
           if (this.memoryRepo) {
             try {
               if (this.embeddingService && message.text) {
-                const semanticResults = await this.embeddingService.semanticSearch(user.id, message.text, 10);
-                const recentResults = this.memoryRepo.getRecentForPrompt(user.id, 5);
+                const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
+                const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
                 const seen = /* @__PURE__ */ new Set();
                 memories = [];
                 for (const m of semanticResults) {
@@ -6007,7 +7806,7 @@ var init_message_pipeline = __esm({
                   }
                 }
               } else {
-                memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+                memories = this.memoryRepo.getRecentForPrompt(masterUserId, 20);
               }
             } catch {
             }
@@ -6022,6 +7821,7 @@ var init_message_pipeline = __esm({
             }
           } catch {
           }
+          const resolvedTimezone = userProfile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
           const skillMetas = this.skillRegistry ? this.skillRegistry.getAll().map((s) => s.metadata) : void 0;
           const tools = skillMetas ? this.promptBuilder.buildTools(skillMetas) : void 0;
           let system = this.promptBuilder.buildSystemPrompt({
@@ -6067,24 +7867,14 @@ var init_message_pipeline = __esm({
               });
             }
             messages.push({ role: "assistant", content: assistantContent });
-            const toolResultBlocks = [];
-            for (const toolCall of response.toolCalls) {
-              const toolLabel = this.getToolLabel(toolCall.name, toolCall.input);
-              onProgress?.(toolLabel);
-              const result = await this.executeToolCall(toolCall, {
-                userId: message.userId,
-                chatId: message.chatId,
-                chatType: message.chatType,
-                platform: message.platform,
-                conversationId: conversation.id
-              }, onProgress);
-              toolResultBlocks.push({
-                type: "tool_result",
-                tool_use_id: toolCall.id,
-                content: result.content,
-                is_error: result.isError
-              });
-            }
+            const toolResultBlocks = await this.executeToolCallsParallel(response.toolCalls, {
+              userId: message.userId,
+              chatId: message.chatId,
+              chatType: message.chatType,
+              platform: message.platform,
+              conversationId: conversation.id,
+              timezone: resolvedTimezone
+            }, onProgress);
             const toolCallSummary = response.toolCalls.map((tc) => `[Used ${tc.name}: ${JSON.stringify(tc.input)}]`).join("\n");
             const toolResultSummary = toolResultBlocks.map((tr) => {
               const output2 = tr.type === "tool_result" ? String(tr.content).slice(0, 1e3) : "";
@@ -6106,6 +7896,40 @@ var init_message_pipeline = __esm({
           this.logger.error({ err: error }, "Failed to process message");
           throw error;
         }
+      }
+      async executeToolCallsParallel(toolCalls, context, onProgress) {
+        if (toolCalls.length === 1) {
+          const tc = toolCalls[0];
+          const toolLabel = this.getToolLabel(tc.name, tc.input);
+          onProgress?.(toolLabel);
+          const result = await this.executeToolCall(tc, context, onProgress);
+          return [{
+            type: "tool_result",
+            tool_use_id: tc.id,
+            content: result.content,
+            is_error: result.isError
+          }];
+        }
+        onProgress?.(`Running ${toolCalls.length} tools in parallel...`);
+        const results = await Promise.allSettled(toolCalls.map((tc) => this.executeToolCall(tc, context, onProgress)));
+        return toolCalls.map((tc, i) => {
+          const settled = results[i];
+          if (settled.status === "fulfilled") {
+            return {
+              type: "tool_result",
+              tool_use_id: tc.id,
+              content: settled.value.content,
+              is_error: settled.value.isError
+            };
+          } else {
+            return {
+              type: "tool_result",
+              tool_use_id: tc.id,
+              content: `Tool execution failed: ${settled.reason}`,
+              is_error: true
+            };
+          }
+        });
       }
       async executeToolCall(toolCall, context, onProgress) {
         const skill = this.skillRegistry?.get(toolCall.name);
@@ -6133,12 +7957,9 @@ var init_message_pipeline = __esm({
         if (this.skillSandbox) {
           let tracker;
           let agentId;
-          if (toolCall.name === "delegate" && "setProgressCallback" in skill && "createTracker" in skill) {
-            const delegateSkill = skill;
-            if (onProgress) {
-              delegateSkill.setProgressCallback(onProgress);
-            }
-            tracker = delegateSkill.createTracker();
+          if (toolCall.name === "delegate") {
+            const { ActivityTracker: ActivityTracker2 } = await Promise.resolve().then(() => (init_dist6(), dist_exports));
+            tracker = new ActivityTracker2(onProgress);
             agentId = `agent-${++this.agentIdCounter}`;
             this.activeAgents.set(agentId, {
               chatId: context.chatId,
@@ -6147,8 +7968,9 @@ var init_message_pipeline = __esm({
               startedAt: Date.now()
             });
           }
+          const execContext = toolCall.name === "delegate" ? { ...context, tracker, onProgress } : context;
           try {
-            const result = await this.skillSandbox.execute(skill, toolCall.input, context, void 0, tracker);
+            const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, void 0, tracker);
             return {
               content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? "Unknown error"),
               isError: !result.success
@@ -6206,6 +8028,16 @@ var init_message_pipeline = __esm({
             return `Profile: ${String(input2.action ?? "")}`;
           case "calendar":
             return `Calendar: ${String(input2.action ?? "")}`;
+          case "background_task":
+            return `Background task: ${String(input2.action ?? "")}`;
+          case "scheduled_task":
+            return `Scheduled task: ${String(input2.action ?? "")}`;
+          case "cross_platform":
+            return `Cross-platform: ${String(input2.action ?? "")}`;
+          case "code_sandbox":
+            return `Running code...`;
+          case "document":
+            return `Document: ${String(input2.action ?? "")}`;
           default:
             return `Using ${toolName}...`;
         }
@@ -6348,9 +8180,9 @@ ${textContent}`;
       saveToInbox(attachment) {
         if (!attachment.data)
           return void 0;
-        const inboxDir = this.inboxPath ?? path7.resolve("./data/inbox");
+        const inboxDir = this.inboxPath ?? path8.resolve("./data/inbox");
         try {
-          fs5.mkdirSync(inboxDir, { recursive: true });
+          fs6.mkdirSync(inboxDir, { recursive: true });
         } catch {
           this.logger.error({ inboxDir }, "Cannot create inbox directory");
           return void 0;
@@ -6359,9 +8191,9 @@ ${textContent}`;
         const originalName = attachment.fileName ?? `file_${timestamp}`;
         const safeName = originalName.replace(/[<>:"/\\|?*]/g, "_");
         const fileName = `${timestamp}_${safeName}`;
-        const filePath = path7.join(inboxDir, fileName);
+        const filePath = path8.join(inboxDir, fileName);
         try {
-          fs5.writeFileSync(filePath, attachment.data);
+          fs6.writeFileSync(filePath, attachment.data);
           return filePath;
         } catch (err) {
           this.logger.error({ err, filePath }, "Failed to save file to inbox");
@@ -6398,10 +8230,10 @@ ${textContent}`;
   }
 });
 
-// ../core/dist/reminder-scheduler.js
+// packages/core/dist/reminder-scheduler.js
 var ReminderScheduler;
 var init_reminder_scheduler = __esm({
-  "../core/dist/reminder-scheduler.js"() {
+  "packages/core/dist/reminder-scheduler.js"() {
     "use strict";
     ReminderScheduler = class {
       reminderRepo;
@@ -6447,10 +8279,10 @@ var init_reminder_scheduler = __esm({
   }
 });
 
-// ../core/dist/speech-transcriber.js
+// packages/core/dist/speech-transcriber.js
 var SpeechTranscriber;
 var init_speech_transcriber = __esm({
-  "../core/dist/speech-transcriber.js"() {
+  "packages/core/dist/speech-transcriber.js"() {
     "use strict";
     SpeechTranscriber = class {
       logger;
@@ -6505,10 +8337,10 @@ var init_speech_transcriber = __esm({
   }
 });
 
-// ../core/dist/response-formatter.js
+// packages/core/dist/response-formatter.js
 var ResponseFormatter;
 var init_response_formatter = __esm({
-  "../core/dist/response-formatter.js"() {
+  "packages/core/dist/response-formatter.js"() {
     "use strict";
     ResponseFormatter = class {
       format(text, platform) {
@@ -6569,10 +8401,10 @@ var init_response_formatter = __esm({
   }
 });
 
-// ../core/dist/embedding-service.js
+// packages/core/dist/embedding-service.js
 var EmbeddingService;
 var init_embedding_service = __esm({
-  "../core/dist/embedding-service.js"() {
+  "packages/core/dist/embedding-service.js"() {
     "use strict";
     EmbeddingService = class {
       llm;
@@ -6651,11 +8483,359 @@ var init_embedding_service = __esm({
   }
 });
 
-// ../messaging/dist/adapter.js
+// packages/core/dist/document-processor.js
+var DocumentProcessor;
+var init_document_processor = __esm({
+  "packages/core/dist/document-processor.js"() {
+    "use strict";
+    DocumentProcessor = class {
+      docRepo;
+      embeddingService;
+      logger;
+      constructor(docRepo, embeddingService, logger) {
+        this.docRepo = docRepo;
+        this.embeddingService = embeddingService;
+        this.logger = logger;
+      }
+      async ingest(userId, filePath, filename, mimeType) {
+        const content = await this.extractText(filePath, mimeType);
+        const fs12 = await import("node:fs");
+        const stat = fs12.statSync(filePath);
+        const doc = this.docRepo.createDocument(userId, filename, mimeType, stat.size);
+        const chunks = this.chunkText(content, 500, 50);
+        for (let i = 0; i < chunks.length; i++) {
+          let embeddingId;
+          try {
+            await this.embeddingService.embedAndStore(userId, chunks[i], "document", `${doc.id}:${i}`);
+            embeddingId = `${doc.id}:${i}`;
+          } catch {
+            this.logger.warn({ documentId: doc.id, chunkIndex: i }, "Embedding failed for chunk, continuing");
+          }
+          this.docRepo.addChunk(doc.id, i, chunks[i], embeddingId);
+        }
+        this.docRepo.updateChunkCount(doc.id, chunks.length);
+        this.logger.info({ documentId: doc.id, filename, chunkCount: chunks.length }, "Document ingested");
+        return { documentId: doc.id, chunkCount: chunks.length };
+      }
+      async extractText(filePath, mimeType) {
+        const fs12 = await import("node:fs");
+        if (mimeType === "application/pdf") {
+          try {
+            const pdfParse = (await import("pdf-parse")).default;
+            const buffer = fs12.readFileSync(filePath);
+            const data = await pdfParse(buffer);
+            return data.text;
+          } catch (err) {
+            this.logger.error({ err }, "PDF parsing failed");
+            throw new Error("Failed to parse PDF");
+          }
+        }
+        if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || mimeType === "application/msword") {
+          try {
+            const mammoth = await import("mammoth");
+            const result = await mammoth.extractRawText({ path: filePath });
+            return result.value;
+          } catch (err) {
+            this.logger.error({ err }, "DOCX parsing failed");
+            throw new Error("Failed to parse DOCX");
+          }
+        }
+        return fs12.readFileSync(filePath, "utf-8");
+      }
+      chunkText(text, targetTokens, overlapTokens) {
+        const charsPerToken = 3.5;
+        const targetChars = Math.round(targetTokens * charsPerToken);
+        const overlapChars = Math.round(overlapTokens * charsPerToken);
+        const chunks = [];
+        let start = 0;
+        while (start < text.length) {
+          let end = start + targetChars;
+          if (end >= text.length) {
+            chunks.push(text.slice(start).trim());
+            break;
+          }
+          const searchStart = Math.max(end - 200, start);
+          const searchRegion = text.slice(searchStart, end + 200);
+          const paragraphBreak = searchRegion.lastIndexOf("\n\n");
+          if (paragraphBreak > 0) {
+            end = searchStart + paragraphBreak;
+          } else {
+            const sentenceBreak = searchRegion.lastIndexOf(". ");
+            if (sentenceBreak > 0) {
+              end = searchStart + sentenceBreak + 1;
+            }
+          }
+          const chunk = text.slice(start, end).trim();
+          if (chunk)
+            chunks.push(chunk);
+          start = end - overlapChars;
+        }
+        return chunks.filter((c) => c.length > 0);
+      }
+    };
+  }
+});
+
+// packages/core/dist/background-task-runner.js
+var BackgroundTaskRunner;
+var init_background_task_runner = __esm({
+  "packages/core/dist/background-task-runner.js"() {
+    "use strict";
+    BackgroundTaskRunner = class {
+      skillRegistry;
+      skillSandbox;
+      taskRepo;
+      adapters;
+      logger;
+      pollTimer;
+      running = 0;
+      maxConcurrent = 3;
+      pollIntervalMs = 5e3;
+      constructor(skillRegistry, skillSandbox, taskRepo, adapters, logger) {
+        this.skillRegistry = skillRegistry;
+        this.skillSandbox = skillSandbox;
+        this.taskRepo = taskRepo;
+        this.adapters = adapters;
+        this.logger = logger;
+      }
+      start() {
+        this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
+        this.logger.info("Background task runner started");
+      }
+      stop() {
+        if (this.pollTimer) {
+          clearInterval(this.pollTimer);
+          this.pollTimer = void 0;
+        }
+        this.logger.info("Background task runner stopped");
+      }
+      async poll() {
+        if (this.running >= this.maxConcurrent)
+          return;
+        try {
+          const available = this.maxConcurrent - this.running;
+          const tasks = this.taskRepo.getPending(available);
+          for (const task of tasks) {
+            this.running++;
+            this.runTask(task).finally(() => {
+              this.running--;
+            });
+          }
+        } catch (err) {
+          this.logger.error({ err }, "Error polling for background tasks");
+        }
+      }
+      async runTask(task) {
+        this.taskRepo.updateStatus(task.id, "running");
+        try {
+          const skill = this.skillRegistry.get(task.skillName);
+          if (!skill) {
+            this.taskRepo.updateStatus(task.id, "failed", void 0, `Unknown skill: ${task.skillName}`);
+            return;
+          }
+          const input2 = JSON.parse(task.skillInput);
+          const context = {
+            userId: task.userId,
+            chatId: task.chatId,
+            platform: task.platform,
+            conversationId: "",
+            chatType: "dm"
+          };
+          const result = await this.skillSandbox.execute(skill, input2, context);
+          const resultJson = JSON.stringify(result.data ?? result.display ?? result.error);
+          this.taskRepo.updateStatus(task.id, result.success ? "completed" : "failed", resultJson, result.error);
+          const adapter = this.adapters.get(task.platform);
+          if (adapter) {
+            const message = result.success ? `\u2705 Background task completed: ${task.description}
+
+Result: ${result.display ?? JSON.stringify(result.data)}` : `\u274C Background task failed: ${task.description}
+
+Error: ${result.error}`;
+            await adapter.sendMessage(task.chatId, message);
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          this.taskRepo.updateStatus(task.id, "failed", void 0, errorMsg);
+          this.logger.error({ taskId: task.id, err }, "Background task failed");
+          const adapter = this.adapters.get(task.platform);
+          if (adapter) {
+            await adapter.sendMessage(task.chatId, `\u274C Background task failed: ${task.description}
+
+Error: ${errorMsg}`);
+          }
+        }
+      }
+    };
+  }
+});
+
+// packages/core/dist/proactive-scheduler.js
+var ProactiveScheduler;
+var init_proactive_scheduler = __esm({
+  "packages/core/dist/proactive-scheduler.js"() {
+    "use strict";
+    ProactiveScheduler = class {
+      actionRepo;
+      skillRegistry;
+      skillSandbox;
+      llm;
+      adapters;
+      logger;
+      tickTimer;
+      tickIntervalMs = 6e4;
+      constructor(actionRepo, skillRegistry, skillSandbox, llm, adapters, logger) {
+        this.actionRepo = actionRepo;
+        this.skillRegistry = skillRegistry;
+        this.skillSandbox = skillSandbox;
+        this.llm = llm;
+        this.adapters = adapters;
+        this.logger = logger;
+      }
+      start() {
+        this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
+        this.logger.info("Proactive scheduler started");
+      }
+      stop() {
+        if (this.tickTimer) {
+          clearInterval(this.tickTimer);
+          this.tickTimer = void 0;
+        }
+        this.logger.info("Proactive scheduler stopped");
+      }
+      async tick() {
+        try {
+          const dueActions = this.actionRepo.getDue();
+          for (const action of dueActions) {
+            try {
+              await this.executeAction(action);
+            } catch (err) {
+              this.logger.error({ err, actionId: action.id }, "Failed to execute scheduled action");
+            }
+          }
+        } catch (err) {
+          this.logger.error({ err }, "Error during proactive scheduler tick");
+        }
+      }
+      async executeAction(action) {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        this.logger.info({ actionId: action.id, name: action.name }, "Executing scheduled action");
+        let resultText;
+        if (action.promptTemplate) {
+          try {
+            const response = await this.llm.complete({
+              messages: [{ role: "user", content: action.promptTemplate }],
+              maxTokens: 1024
+            });
+            resultText = response.content;
+          } catch (err) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            this.logger.error({ actionId: action.id, err }, "LLM call failed for scheduled action");
+            resultText = `Scheduled action "${action.name}" failed: ${errorMsg}`;
+          }
+        } else {
+          const skill = this.skillRegistry.get(action.skillName);
+          if (!skill) {
+            this.logger.warn({ actionId: action.id, skillName: action.skillName }, "Unknown skill for scheduled action");
+            resultText = `Scheduled action "${action.name}" failed: unknown skill "${action.skillName}"`;
+          } else {
+            try {
+              const input2 = JSON.parse(action.skillInput);
+              const context = {
+                userId: action.userId,
+                chatId: action.chatId,
+                platform: action.platform,
+                conversationId: "",
+                chatType: "dm"
+              };
+              const result = await this.skillSandbox.execute(skill, input2, context);
+              resultText = result.success ? `\u{1F514} Scheduled: ${action.name}
+
+${result.display ?? JSON.stringify(result.data)}` : `\u274C Scheduled action "${action.name}" failed: ${result.error}`;
+            } catch (err) {
+              const errorMsg = err instanceof Error ? err.message : String(err);
+              resultText = `\u274C Scheduled action "${action.name}" failed: ${errorMsg}`;
+            }
+          }
+        }
+        const adapter = this.adapters.get(action.platform);
+        if (adapter) {
+          try {
+            await adapter.sendMessage(action.chatId, resultText);
+          } catch (err) {
+            this.logger.error({ err, actionId: action.id }, "Failed to send scheduled action result");
+          }
+        }
+        const nextRunAt = this.calculateNextRun(action);
+        if (nextRunAt) {
+          this.actionRepo.updateLastRun(action.id, now, nextRunAt);
+        } else {
+          this.actionRepo.updateLastRun(action.id, now, null);
+          this.actionRepo.setEnabled(action.id, false);
+        }
+      }
+      calculateNextRun(action) {
+        const now = /* @__PURE__ */ new Date();
+        switch (action.scheduleType) {
+          case "interval": {
+            const minutes = parseInt(action.scheduleValue, 10);
+            if (isNaN(minutes) || minutes <= 0)
+              return null;
+            return new Date(now.getTime() + minutes * 6e4).toISOString();
+          }
+          case "once": {
+            return null;
+          }
+          case "cron": {
+            return this.getNextCronDate(action.scheduleValue, now)?.toISOString() ?? null;
+          }
+          default:
+            return null;
+        }
+      }
+      getNextCronDate(cronExpr, after) {
+        const parts = cronExpr.trim().split(/\s+/);
+        if (parts.length !== 5)
+          return null;
+        const candidate = new Date(after.getTime() + 6e4);
+        candidate.setSeconds(0, 0);
+        for (let i = 0; i < 1440; i++) {
+          if (this.matchesCron(parts, candidate)) {
+            return candidate;
+          }
+          candidate.setTime(candidate.getTime() + 6e4);
+        }
+        return null;
+      }
+      matchesCron(parts, date) {
+        const minute = date.getMinutes();
+        const hour = date.getHours();
+        const dayOfMonth = date.getDate();
+        const month = date.getMonth() + 1;
+        const dayOfWeek = date.getDay();
+        return this.matchCronField(parts[0], minute) && this.matchCronField(parts[1], hour) && this.matchCronField(parts[2], dayOfMonth) && this.matchCronField(parts[3], month) && this.matchCronField(parts[4], dayOfWeek);
+      }
+      matchCronField(field, value) {
+        if (field === "*")
+          return true;
+        const stepMatch = /^\*\/(\d+)$/.exec(field);
+        if (stepMatch) {
+          const step = parseInt(stepMatch[1], 10);
+          return value % step === 0;
+        }
+        const num = parseInt(field, 10);
+        if (!isNaN(num))
+          return value === num;
+        return false;
+      }
+    };
+  }
+});
+
+// packages/messaging/dist/adapter.js
 import { EventEmitter } from "node:events";
 var MessagingAdapter;
 var init_adapter = __esm({
-  "../messaging/dist/adapter.js"() {
+  "packages/messaging/dist/adapter.js"() {
     "use strict";
     MessagingAdapter = class extends EventEmitter {
       status = "disconnected";
@@ -6672,7 +8852,7 @@ var init_adapter = __esm({
   }
 });
 
-// ../messaging/dist/adapters/telegram.js
+// packages/messaging/dist/adapters/telegram.js
 import { Bot, InputFile } from "grammy";
 function mapParseMode(mode) {
   if (mode === "markdown")
@@ -6683,7 +8863,7 @@ function mapParseMode(mode) {
 }
 var TelegramAdapter;
 var init_telegram = __esm({
-  "../messaging/dist/adapters/telegram.js"() {
+  "packages/messaging/dist/adapters/telegram.js"() {
     "use strict";
     init_adapter();
     TelegramAdapter = class extends MessagingAdapter {
@@ -6833,11 +9013,11 @@ var init_telegram = __esm({
   }
 });
 
-// ../messaging/dist/adapters/discord.js
+// packages/messaging/dist/adapters/discord.js
 import { Client, GatewayIntentBits, Events } from "discord.js";
 var DiscordAdapter;
 var init_discord = __esm({
-  "../messaging/dist/adapters/discord.js"() {
+  "packages/messaging/dist/adapters/discord.js"() {
     "use strict";
     init_adapter();
     DiscordAdapter = class extends MessagingAdapter {
@@ -7012,10 +9192,10 @@ var init_discord = __esm({
   }
 });
 
-// ../messaging/dist/adapters/matrix.js
+// packages/messaging/dist/adapters/matrix.js
 var MatrixAdapter;
 var init_matrix = __esm({
-  "../messaging/dist/adapters/matrix.js"() {
+  "packages/messaging/dist/adapters/matrix.js"() {
     "use strict";
     init_adapter();
     MatrixAdapter = class extends MessagingAdapter {
@@ -7235,10 +9415,10 @@ var init_matrix = __esm({
   }
 });
 
-// ../messaging/dist/adapters/whatsapp.js
+// packages/messaging/dist/adapters/whatsapp.js
 var WhatsAppAdapter;
 var init_whatsapp = __esm({
-  "../messaging/dist/adapters/whatsapp.js"() {
+  "packages/messaging/dist/adapters/whatsapp.js"() {
     "use strict";
     init_adapter();
     WhatsAppAdapter = class extends MessagingAdapter {
@@ -7451,10 +9631,10 @@ var init_whatsapp = __esm({
   }
 });
 
-// ../messaging/dist/adapters/signal.js
+// packages/messaging/dist/adapters/signal.js
 var SignalAdapter;
 var init_signal = __esm({
-  "../messaging/dist/adapters/signal.js"() {
+  "packages/messaging/dist/adapters/signal.js"() {
     "use strict";
     init_adapter();
     SignalAdapter = class extends MessagingAdapter {
@@ -7624,9 +9804,9 @@ var init_signal = __esm({
   }
 });
 
-// ../messaging/dist/index.js
-var dist_exports = {};
-__export(dist_exports, {
+// packages/messaging/dist/index.js
+var dist_exports2 = {};
+__export(dist_exports2, {
   DiscordAdapter: () => DiscordAdapter,
   MatrixAdapter: () => MatrixAdapter,
   MessagingAdapter: () => MessagingAdapter,
@@ -7635,7 +9815,7 @@ __export(dist_exports, {
   WhatsAppAdapter: () => WhatsAppAdapter
 });
 var init_dist7 = __esm({
-  "../messaging/dist/index.js"() {
+  "packages/messaging/dist/index.js"() {
     "use strict";
     init_adapter();
     init_telegram();
@@ -7646,13 +9826,13 @@ var init_dist7 = __esm({
   }
 });
 
-// ../core/dist/alfred.js
-import fs6 from "node:fs";
-import path8 from "node:path";
+// packages/core/dist/alfred.js
+import fs7 from "node:fs";
+import path9 from "node:path";
 import yaml2 from "js-yaml";
 var Alfred;
 var init_alfred = __esm({
-  "../core/dist/alfred.js"() {
+  "packages/core/dist/alfred.js"() {
     "use strict";
     init_dist2();
     init_dist3();
@@ -7665,14 +9845,20 @@ var init_alfred = __esm({
     init_speech_transcriber();
     init_response_formatter();
     init_embedding_service();
+    init_document_processor();
+    init_background_task_runner();
+    init_proactive_scheduler();
     Alfred = class {
       config;
       logger;
       database;
       pipeline;
       reminderScheduler;
+      backgroundTaskRunner;
+      proactiveScheduler;
       adapters = /* @__PURE__ */ new Map();
       formatter = new ResponseFormatter();
+      mcpManager;
       calendarSkill;
       // CalendarSkill instance for today's events
       constructor(config) {
@@ -7690,6 +9876,9 @@ var init_alfred = __esm({
         const reminderRepo = new ReminderRepository(db);
         const noteRepo = new NoteRepository(db);
         const embeddingRepo = new EmbeddingRepository(db);
+        const linkTokenRepo = new LinkTokenRepository(db);
+        const backgroundTaskRepo = new BackgroundTaskRepository(db);
+        const scheduledActionRepo = new ScheduledActionRepository(db);
         this.logger.info("Storage initialized");
         const ruleEngine = new RuleEngine();
         const rules = this.loadSecurityRules();
@@ -7726,6 +9915,12 @@ var init_alfred = __esm({
         skillRegistry.register(new ScreenshotSkill());
         skillRegistry.register(new BrowserSkill());
         skillRegistry.register(new ProfileSkill(userRepo));
+        skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters));
+        skillRegistry.register(new BackgroundTaskSkill(backgroundTaskRepo));
+        skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
+        const documentRepo = new DocumentRepository(db);
+        const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: "documents" }));
+        skillRegistry.register(new DocumentSkill(documentRepo, documentProcessor, embeddingService));
         let calendarSkill;
         if (this.config.calendar) {
           try {
@@ -7738,6 +9933,23 @@ var init_alfred = __esm({
           }
         }
         this.calendarSkill = calendarSkill;
+        if (this.config.mcp?.servers?.length) {
+          const { MCPManager: MCPManager2 } = await Promise.resolve().then(() => (init_dist6(), dist_exports));
+          this.mcpManager = new MCPManager2(this.logger.child({ component: "mcp" }));
+          await this.mcpManager.initialize(this.config.mcp);
+          for (const skill of this.mcpManager.getSkills()) {
+            skillRegistry.register(skill);
+          }
+          this.logger.info({ mcpSkills: this.mcpManager.getSkills().length }, "MCP skills registered");
+        }
+        if (this.config.codeSandbox?.enabled) {
+          const { CodeExecutionSkill: CodeExecutionSkill2 } = await Promise.resolve().then(() => (init_dist6(), dist_exports));
+          skillRegistry.register(new CodeExecutionSkill2({
+            allowedLanguages: this.config.codeSandbox.allowedLanguages,
+            maxTimeoutMs: this.config.codeSandbox.maxTimeoutMs
+          }));
+          this.logger.info("Code sandbox enabled");
+        }
         this.logger.info({ skills: skillRegistry.getAll().map((s) => s.metadata.name) }, "Skills registered");
         let speechTranscriber;
         if (this.config.speech?.apiKey) {
@@ -7745,7 +9957,7 @@ var init_alfred = __esm({
           this.logger.info({ provider: this.config.speech.provider }, "Speech-to-text initialized");
         }
         const conversationManager = new ConversationManager(conversationRepo);
-        const inboxPath = path8.resolve(path8.dirname(this.config.storage.path), "inbox");
+        const inboxPath = path9.resolve(path9.dirname(this.config.storage.path), "inbox");
         this.pipeline = new MessagePipeline({
           llm: llmProvider,
           conversationManager,
@@ -7767,33 +9979,35 @@ var init_alfred = __esm({
             this.logger.warn({ platform, chatId }, "No adapter for reminder platform");
           }
         }, this.logger.child({ component: "reminders" }));
+        this.backgroundTaskRunner = new BackgroundTaskRunner(skillRegistry, skillSandbox, backgroundTaskRepo, this.adapters, this.logger.child({ component: "background-tasks" }));
+        this.proactiveScheduler = new ProactiveScheduler(scheduledActionRepo, skillRegistry, skillSandbox, llmProvider, this.adapters, this.logger.child({ component: "proactive-scheduler" }));
         await this.initializeAdapters();
         this.logger.info("Alfred initialized");
       }
       async initializeAdapters() {
         const { config } = this;
         if (config.telegram.enabled && config.telegram.token) {
-          const { TelegramAdapter: TelegramAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports));
+          const { TelegramAdapter: TelegramAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports2));
           this.adapters.set("telegram", new TelegramAdapter2(config.telegram.token));
           this.logger.info("Telegram adapter registered");
         }
         if (config.discord?.enabled && config.discord.token) {
-          const { DiscordAdapter: DiscordAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports));
+          const { DiscordAdapter: DiscordAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports2));
           this.adapters.set("discord", new DiscordAdapter2(config.discord.token));
           this.logger.info("Discord adapter registered");
         }
         if (config.whatsapp?.enabled) {
-          const { WhatsAppAdapter: WhatsAppAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports));
+          const { WhatsAppAdapter: WhatsAppAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports2));
           this.adapters.set("whatsapp", new WhatsAppAdapter2(config.whatsapp.dataPath));
           this.logger.info("WhatsApp adapter registered");
         }
         if (config.matrix?.enabled && config.matrix.accessToken) {
-          const { MatrixAdapter: MatrixAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports));
+          const { MatrixAdapter: MatrixAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports2));
           this.adapters.set("matrix", new MatrixAdapter2(config.matrix.homeserverUrl, config.matrix.accessToken, config.matrix.userId));
           this.logger.info("Matrix adapter registered");
         }
         if (config.signal?.enabled && config.signal.phoneNumber) {
-          const { SignalAdapter: SignalAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports));
+          const { SignalAdapter: SignalAdapter2 } = await Promise.resolve().then(() => (init_dist7(), dist_exports2));
           this.adapters.set("signal", new SignalAdapter2(config.signal.apiUrl, config.signal.phoneNumber));
           this.logger.info("Signal adapter registered");
         }
@@ -7806,6 +10020,8 @@ var init_alfred = __esm({
           this.logger.info({ platform }, "Adapter connected");
         }
         this.reminderScheduler?.start();
+        this.backgroundTaskRunner?.start();
+        this.proactiveScheduler?.start();
         if (this.adapters.size === 0) {
           this.logger.warn("No messaging adapters enabled. Configure at least one platform.");
         }
@@ -7814,6 +10030,11 @@ var init_alfred = __esm({
       async stop() {
         this.logger.info("Stopping Alfred...");
         this.reminderScheduler?.stop();
+        this.backgroundTaskRunner?.stop();
+        this.proactiveScheduler?.stop();
+        if (this.mcpManager) {
+          await this.mcpManager.shutdown();
+        }
         for (const [platform, adapter] of this.adapters) {
           try {
             await adapter.disconnect();
@@ -7875,22 +10096,22 @@ var init_alfred = __esm({
         });
       }
       loadSecurityRules() {
-        const rulesPath = path8.resolve(this.config.security.rulesPath);
+        const rulesPath = path9.resolve(this.config.security.rulesPath);
         const rules = [];
-        if (!fs6.existsSync(rulesPath)) {
+        if (!fs7.existsSync(rulesPath)) {
           this.logger.warn({ rulesPath }, "Security rules directory not found, using default deny");
           return rules;
         }
-        const stat = fs6.statSync(rulesPath);
+        const stat = fs7.statSync(rulesPath);
         if (!stat.isDirectory()) {
           this.logger.warn({ rulesPath }, "Security rules path is not a directory");
           return rules;
         }
-        const files = fs6.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+        const files = fs7.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
         for (const file of files) {
           try {
-            const filePath = path8.join(rulesPath, file);
-            const content = fs6.readFileSync(filePath, "utf-8");
+            const filePath = path9.join(rulesPath, file);
+            const content = fs7.readFileSync(filePath, "utf-8");
             const parsed = yaml2.load(content);
             if (parsed?.rules && Array.isArray(parsed.rules)) {
               rules.push(...parsed.rules);
@@ -7906,9 +10127,9 @@ var init_alfred = __esm({
   }
 });
 
-// ../core/dist/index.js
+// packages/core/dist/index.js
 var init_dist8 = __esm({
-  "../core/dist/index.js"() {
+  "packages/core/dist/index.js"() {
     "use strict";
     init_alfred();
     init_message_pipeline();
@@ -7917,10 +10138,13 @@ var init_dist8 = __esm({
     init_speech_transcriber();
     init_response_formatter();
     init_embedding_service();
+    init_background_task_runner();
+    init_proactive_scheduler();
+    init_document_processor();
   }
 });
 
-// dist/commands/start.js
+// packages/cli/dist/commands/start.js
 var start_exports = {};
 __export(start_exports, {
   startCommand: () => startCommand
@@ -7972,7 +10196,7 @@ async function startCommand() {
   }
 }
 var init_start = __esm({
-  "dist/commands/start.js"() {
+  "packages/cli/dist/commands/start.js"() {
     "use strict";
     init_dist();
     init_dist2();
@@ -7980,15 +10204,15 @@ var init_start = __esm({
   }
 });
 
-// dist/commands/setup.js
+// packages/cli/dist/commands/setup.js
 var setup_exports = {};
 __export(setup_exports, {
   setupCommand: () => setupCommand
 });
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import fs7 from "node:fs";
-import path9 from "node:path";
+import fs8 from "node:fs";
+import path10 from "node:path";
 import yaml3 from "js-yaml";
 function green(s) {
   return `${GREEN}${s}${RESET}`;
@@ -8019,20 +10243,20 @@ function loadExistingConfig(projectRoot) {
   let shellEnabled = false;
   let writeInGroups = false;
   let rateLimit = 30;
-  const configPath = path9.join(projectRoot, "config", "default.yml");
-  if (fs7.existsSync(configPath)) {
+  const configPath = path10.join(projectRoot, "config", "default.yml");
+  if (fs8.existsSync(configPath)) {
     try {
-      const parsed = yaml3.load(fs7.readFileSync(configPath, "utf-8"));
+      const parsed = yaml3.load(fs8.readFileSync(configPath, "utf-8"));
       if (parsed && typeof parsed === "object") {
         Object.assign(config, parsed);
       }
     } catch {
     }
   }
-  const envPath = path9.join(projectRoot, ".env");
-  if (fs7.existsSync(envPath)) {
+  const envPath = path10.join(projectRoot, ".env");
+  if (fs8.existsSync(envPath)) {
     try {
-      const lines = fs7.readFileSync(envPath, "utf-8").split("\n");
+      const lines = fs8.readFileSync(envPath, "utf-8").split("\n");
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#"))
@@ -8045,10 +10269,10 @@ function loadExistingConfig(projectRoot) {
     } catch {
     }
   }
-  const rulesPath = path9.join(projectRoot, "config", "rules", "default-rules.yml");
-  if (fs7.existsSync(rulesPath)) {
+  const rulesPath = path10.join(projectRoot, "config", "rules", "default-rules.yml");
+  if (fs8.existsSync(rulesPath)) {
     try {
-      const rulesContent = yaml3.load(fs7.readFileSync(rulesPath, "utf-8"));
+      const rulesContent = yaml3.load(fs8.readFileSync(rulesPath, "utf-8"));
       if (rulesContent?.rules) {
         shellEnabled = rulesContent.rules.some((r) => r.id === "allow-owner-admin" && r.effect === "allow");
         const writeDmRule = rulesContent.rules.find((r) => r.id === "allow-write-for-dm" || r.id === "allow-write-all");
@@ -8465,12 +10689,12 @@ ${bold("Writing configuration files...")}`);
       envLines.push("# ALFRED_OWNER_USER_ID=");
     }
     envLines.push("");
-    const envPath = path9.join(projectRoot, ".env");
-    fs7.writeFileSync(envPath, envLines.join("\n"), "utf-8");
+    const envPath = path10.join(projectRoot, ".env");
+    fs8.writeFileSync(envPath, envLines.join("\n"), "utf-8");
     console.log(`  ${green("+")} ${dim(".env")} written`);
-    const configDir = path9.join(projectRoot, "config");
-    if (!fs7.existsSync(configDir)) {
-      fs7.mkdirSync(configDir, { recursive: true });
+    const configDir = path10.join(projectRoot, "config");
+    if (!fs8.existsSync(configDir)) {
+      fs8.mkdirSync(configDir, { recursive: true });
     }
     const config = {
       name: botName,
@@ -8542,12 +10766,12 @@ ${bold("Writing configuration files...")}`);
       config.security.ownerUserId = ownerUserId;
     }
     const yamlStr = "# Alfred \u2014 Configuration\n# Generated by `alfred setup`\n# Edit manually or re-run `alfred setup` to reconfigure.\n\n" + yaml3.dump(config, { lineWidth: 120, noRefs: true, sortKeys: false });
-    const configPath = path9.join(configDir, "default.yml");
-    fs7.writeFileSync(configPath, yamlStr, "utf-8");
+    const configPath = path10.join(configDir, "default.yml");
+    fs8.writeFileSync(configPath, yamlStr, "utf-8");
     console.log(`  ${green("+")} ${dim("config/default.yml")} written`);
-    const rulesDir = path9.join(configDir, "rules");
-    if (!fs7.existsSync(rulesDir)) {
-      fs7.mkdirSync(rulesDir, { recursive: true });
+    const rulesDir = path10.join(configDir, "rules");
+    if (!fs8.existsSync(rulesDir)) {
+      fs8.mkdirSync(rulesDir, { recursive: true });
     }
     const ownerAdminRule = enableShell && ownerUserId ? `
   # Allow admin actions (shell, etc.) for the owner only
@@ -8628,12 +10852,12 @@ ${ownerAdminRule}
     actions: ["*"]
     riskLevels: [read, write, destructive, admin]
 `;
-    const rulesPath = path9.join(rulesDir, "default-rules.yml");
-    fs7.writeFileSync(rulesPath, rulesYaml, "utf-8");
+    const rulesPath = path10.join(rulesDir, "default-rules.yml");
+    fs8.writeFileSync(rulesPath, rulesYaml, "utf-8");
     console.log(`  ${green("+")} ${dim("config/rules/default-rules.yml")} written`);
-    const dataDir = path9.join(projectRoot, "data");
-    if (!fs7.existsSync(dataDir)) {
-      fs7.mkdirSync(dataDir, { recursive: true });
+    const dataDir = path10.join(projectRoot, "data");
+    if (!fs8.existsSync(dataDir)) {
+      fs8.mkdirSync(dataDir, { recursive: true });
       console.log(`  ${green("+")} ${dim("data/")} directory created`);
     }
     console.log("");
@@ -8731,7 +10955,7 @@ ${DIM}  Personal AI Assistant \u2014 Setup Wizard${RESET}
 }
 var RESET, BOLD, DIM, GREEN, YELLOW, CYAN, RED, MAGENTA, PROVIDERS, PLATFORMS;
 var init_setup = __esm({
-  "dist/commands/setup.js"() {
+  "packages/cli/dist/commands/setup.js"() {
     "use strict";
     RESET = "\x1B[0m";
     BOLD = "\x1B[1m";
@@ -8856,7 +11080,7 @@ var init_setup = __esm({
   }
 });
 
-// dist/commands/config.js
+// packages/cli/dist/commands/config.js
 var config_exports = {};
 __export(config_exports, {
   configCommand: () => configCommand
@@ -8903,20 +11127,20 @@ async function configCommand() {
 }
 var SENSITIVE_KEYS;
 var init_config = __esm({
-  "dist/commands/config.js"() {
+  "packages/cli/dist/commands/config.js"() {
     "use strict";
     init_dist();
     SENSITIVE_KEYS = ["token", "apikey", "api_key", "accesstoken", "secret", "password"];
   }
 });
 
-// dist/commands/rules.js
+// packages/cli/dist/commands/rules.js
 var rules_exports = {};
 __export(rules_exports, {
   rulesCommand: () => rulesCommand
 });
-import fs8 from "node:fs";
-import path10 from "node:path";
+import fs9 from "node:fs";
+import path11 from "node:path";
 import yaml4 from "js-yaml";
 async function rulesCommand() {
   const configLoader = new ConfigLoader();
@@ -8927,18 +11151,18 @@ async function rulesCommand() {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const rulesPath = path10.resolve(config.security.rulesPath);
-  if (!fs8.existsSync(rulesPath)) {
+  const rulesPath = path11.resolve(config.security.rulesPath);
+  if (!fs9.existsSync(rulesPath)) {
     console.log(`Rules directory not found: ${rulesPath}`);
     console.log("No security rules loaded.");
     return;
   }
-  const stat = fs8.statSync(rulesPath);
+  const stat = fs9.statSync(rulesPath);
   if (!stat.isDirectory()) {
     console.error(`Rules path is not a directory: ${rulesPath}`);
     process.exit(1);
   }
-  const files = fs8.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  const files = fs9.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
   if (files.length === 0) {
     console.log(`No YAML rule files found in: ${rulesPath}`);
     return;
@@ -8947,9 +11171,9 @@ async function rulesCommand() {
   const allRules = [];
   const errors = [];
   for (const file of files) {
-    const filePath = path10.join(rulesPath, file);
+    const filePath = path11.join(rulesPath, file);
     try {
-      const raw = fs8.readFileSync(filePath, "utf-8");
+      const raw = fs9.readFileSync(filePath, "utf-8");
       const parsed = yaml4.load(raw);
       const rules = ruleLoader.loadFromObject(parsed);
       allRules.push(...rules);
@@ -8989,20 +11213,20 @@ async function rulesCommand() {
   }
 }
 var init_rules = __esm({
-  "dist/commands/rules.js"() {
+  "packages/cli/dist/commands/rules.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/status.js
+// packages/cli/dist/commands/status.js
 var status_exports = {};
 __export(status_exports, {
   statusCommand: () => statusCommand
 });
-import fs9 from "node:fs";
-import path11 from "node:path";
+import fs10 from "node:fs";
+import path12 from "node:path";
 import yaml5 from "js-yaml";
 async function statusCommand() {
   const configLoader = new ConfigLoader();
@@ -9059,22 +11283,22 @@ async function statusCommand() {
   }
   console.log("");
   console.log("Storage:");
-  const dbPath = path11.resolve(config.storage.path);
-  const dbExists = fs9.existsSync(dbPath);
+  const dbPath = path12.resolve(config.storage.path);
+  const dbExists = fs10.existsSync(dbPath);
   console.log(`  Database: ${dbPath}`);
   console.log(`  Status:   ${dbExists ? "exists" : "not yet created"}`);
   console.log("");
-  const rulesPath = path11.resolve(config.security.rulesPath);
+  const rulesPath = path12.resolve(config.security.rulesPath);
   let ruleCount = 0;
   let ruleFileCount = 0;
-  if (fs9.existsSync(rulesPath) && fs9.statSync(rulesPath).isDirectory()) {
-    const files = fs9.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  if (fs10.existsSync(rulesPath) && fs10.statSync(rulesPath).isDirectory()) {
+    const files = fs10.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
     ruleFileCount = files.length;
     const ruleLoader = new RuleLoader();
     for (const file of files) {
-      const filePath = path11.join(rulesPath, file);
+      const filePath = path12.join(rulesPath, file);
       try {
-        const raw = fs9.readFileSync(filePath, "utf-8");
+        const raw = fs10.readFileSync(filePath, "utf-8");
         const parsed = yaml5.load(raw);
         const rules = ruleLoader.loadFromObject(parsed);
         ruleCount += rules.length;
@@ -9096,20 +11320,20 @@ async function statusCommand() {
   console.log(`  Pretty: ${config.logger.pretty}`);
 }
 var init_status = __esm({
-  "dist/commands/status.js"() {
+  "packages/cli/dist/commands/status.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/logs.js
+// packages/cli/dist/commands/logs.js
 var logs_exports = {};
 __export(logs_exports, {
   logsCommand: () => logsCommand
 });
-import fs10 from "node:fs";
-import path12 from "node:path";
+import fs11 from "node:fs";
+import path13 from "node:path";
 async function logsCommand(tail) {
   const configLoader = new ConfigLoader();
   let config;
@@ -9119,8 +11343,8 @@ async function logsCommand(tail) {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const dbPath = path12.resolve(config.storage.path);
-  if (!fs10.existsSync(dbPath)) {
+  const dbPath = path13.resolve(config.storage.path);
+  if (!fs11.existsSync(dbPath)) {
     console.log(`Database not found at: ${dbPath}`);
     console.log("No audit log entries. Alfred has not been run yet, or the database path is incorrect.");
     return;
@@ -9166,14 +11390,14 @@ async function logsCommand(tail) {
   }
 }
 var init_logs = __esm({
-  "dist/commands/logs.js"() {
+  "packages/cli/dist/commands/logs.js"() {
     "use strict";
     init_dist();
     init_dist3();
   }
 });
 
-// dist/index.js
+// packages/cli/dist/index.js
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
