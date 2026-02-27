@@ -3914,6 +3914,7 @@ var init_message_pipeline = __esm({
           const messages = this.trimToContextWindow(system, allMessages);
           let response;
           let iteration = 0;
+          const toolLog = [];
           while (true) {
             response = await this.llm.complete({
               messages,
@@ -3956,11 +3957,28 @@ var init_message_pipeline = __esm({
                 content: result.content,
                 is_error: result.isError
               });
+              toolLog.push({
+                tool: toolCall.name,
+                input: toolCall.input,
+                output: result.content,
+                isError: result.isError
+              });
             }
             messages.push({ role: "user", content: toolResultBlocks });
           }
           const responseText = response.content || "(no response)";
-          this.conversationManager.addMessage(conversation.id, "assistant", responseText, response.toolCalls ? JSON.stringify(response.toolCalls) : void 0);
+          let savedContent = responseText;
+          if (toolLog.length > 0) {
+            const toolSummary = toolLog.map((t) => {
+              const inputStr = Object.entries(t.input).map(([k, v]) => `${k}=${v}`).join(", ");
+              const outputPreview = String(t.output).slice(0, 500);
+              return `[${t.tool}(${inputStr}) \u2192 ${outputPreview}]`;
+            }).join("\n");
+            savedContent = `${toolSummary}
+
+${responseText}`;
+          }
+          this.conversationManager.addMessage(conversation.id, "assistant", savedContent);
           const duration = Date.now() - startTime;
           this.logger.info({ duration, tokens: response.usage, stopReason: response.stopReason, toolIterations: iteration }, "Message processed");
           return responseText;

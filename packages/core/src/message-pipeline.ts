@@ -85,6 +85,7 @@ export class MessagePipeline {
       // 7. Agentic tool-use loop
       let response: LLMResponse;
       let iteration = 0;
+      const toolLog: Array<{ tool: string; input: Record<string, unknown>; output: string; isError?: boolean }> = [];
 
       while (true) {
         response = await this.llm.complete({
@@ -135,6 +136,14 @@ export class MessagePipeline {
             content: result.content,
             is_error: result.isError,
           });
+
+          // Track tool interactions for conversation history
+          toolLog.push({
+            tool: toolCall.name,
+            input: toolCall.input,
+            output: result.content,
+            isError: result.isError,
+          });
         }
 
         // Add tool results as user message
@@ -143,12 +152,22 @@ export class MessagePipeline {
 
       const responseText = response.content || '(no response)';
 
-      // 8. Save assistant response
+      // 8. Save assistant response with tool context
+      // Include tool interaction summaries so follow-up questions have context
+      let savedContent = responseText;
+      if (toolLog.length > 0) {
+        const toolSummary = toolLog.map(t => {
+          const inputStr = Object.entries(t.input).map(([k, v]) => `${k}=${v}`).join(', ');
+          const outputPreview = String(t.output).slice(0, 500);
+          return `[${t.tool}(${inputStr}) → ${outputPreview}]`;
+        }).join('\n');
+        savedContent = `${toolSummary}\n\n${responseText}`;
+      }
+
       this.conversationManager.addMessage(
         conversation.id,
         'assistant',
-        responseText,
-        response.toolCalls ? JSON.stringify(response.toolCalls) : undefined,
+        savedContent,
       );
 
       const duration = Date.now() - startTime;
