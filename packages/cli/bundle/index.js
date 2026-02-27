@@ -3429,7 +3429,7 @@ var init_delegate = __esm({
       llm;
       metadata = {
         name: "delegate",
-        description: "Delegate a complex sub-task to a separate AI agent. The sub-agent will process the task independently and return a result. Use this for tasks that require focused attention or multiple steps.",
+        description: "Delegate a text-processing sub-task to a separate AI agent (no tool access). Use for: summarizing long text, translating content, rewriting/reformatting text, analyzing or comparing information, drafting emails or messages. Do NOT use for tasks that require tools (files, web search, shell) \u2014 do those yourself.",
         riskLevel: "write",
         version: "1.0.0",
         inputSchema: {
