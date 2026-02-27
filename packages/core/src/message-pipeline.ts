@@ -69,17 +69,18 @@ export class MessagePipeline {
         }
       }
 
-      // 6. Build LLM request with token-aware context trimming
-      const system = this.promptBuilder.buildSystemPrompt(memories);
+      // 6. Build tools and LLM request with token-aware context trimming
+      const skillMetas = this.skillRegistry
+        ? this.skillRegistry.getAll().map(s => s.metadata)
+        : undefined;
+      const tools = skillMetas
+        ? this.promptBuilder.buildTools(skillMetas)
+        : undefined;
+      const system = this.promptBuilder.buildSystemPrompt(memories, skillMetas);
       const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
       allMessages.push({ role: 'user', content: message.text });
 
       const messages = this.trimToContextWindow(system, allMessages);
-
-      // 6. Build tools from registered skills
-      const tools = this.skillRegistry
-        ? this.promptBuilder.buildTools(this.skillRegistry.getAll().map(s => s.metadata))
-        : undefined;
 
       // 7. Agentic tool-use loop
       let response: LLMResponse;

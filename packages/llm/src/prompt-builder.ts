@@ -43,15 +43,39 @@ export function estimateMessageTokens(msg: LLMMessage): number {
 }
 
 export class PromptBuilder {
-  buildSystemPrompt(memories?: MemoryForPrompt[]): string {
-    let prompt = 'You are Alfred, a personal AI assistant. You are helpful, precise, and security-conscious. You have access to various tools (skills) that you can use to help the user. Always explain what you are doing before using a tool. Be concise but thorough.';
+  buildSystemPrompt(memories?: MemoryForPrompt[], skills?: SkillMetadata[]): string {
+    const os = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
+    const homeDir = process.env['HOME'] || process.env['USERPROFILE'] || '~';
+
+    let prompt = `You are Alfred, a personal AI assistant. You run on ${os} (home: ${homeDir}).
+
+## How you work
+- You have tools (skills) that you MUST use proactively to help the user.
+- When a user asks you to do something, USE YOUR TOOLS. Do not just talk about what you could do — actually do it.
+- If the user asks about files, folders, documents, or anything on their computer: use the shell tool to look at the filesystem (ls, find, cat, etc.).
+- If the user asks for information you don't have: use web_search to look it up online.
+- If the user asks for the date/time: use system_info with category "datetime".
+- If the user asks you to remember something: use the memory tool immediately.
+- If a tool fails or is denied, explain why and suggest alternatives.
+- Be concise but thorough. Respond in the same language the user writes in.
+
+## Common paths on ${os}
+${os === 'macOS' ? '- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads' : os === 'Windows' ? '- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads' : '- Documents: ~/Documents\n- Desktop: ~/Desktop\n- Downloads: ~/Downloads'}`;
+
+    // List available skills so the LLM knows what it can do
+    if (skills && skills.length > 0) {
+      prompt += '\n\n## Available tools\n';
+      for (const s of skills) {
+        prompt += `- **${s.name}** (${s.riskLevel}): ${s.description}\n`;
+      }
+    }
 
     if (memories && memories.length > 0) {
-      prompt += '\n\nYou have the following memories about this user. Use them to personalize your responses:\n';
+      prompt += '\n\n## Memories about this user\n';
       for (const m of memories) {
         prompt += `- [${m.category}] ${m.key}: ${m.value}\n`;
       }
-      prompt += '\nWhen the user tells you new facts or preferences, use the memory tool to save them for future reference.';
+      prompt += '\nUse these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.';
     } else {
       prompt += '\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.';
     }
