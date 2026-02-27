@@ -9,6 +9,8 @@ export class OpenWebUIProvider extends OpenAIProvider {
   constructor(config: LLMProviderConfig) {
     super({
       ...config,
+      // OpenAI SDK requires a non-empty apiKey — use a placeholder for local instances
+      apiKey: config.apiKey || 'openwebui',
       baseUrl: config.baseUrl ?? 'http://localhost:3000/api/v1',
     });
   }
