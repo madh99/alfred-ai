@@ -4,7 +4,25 @@
 // dependencies (core → messaging → native modules) at startup. This keeps
 // lightweight commands like --help, setup, config, status instant.
 
-const VERSION = '0.1.0';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+function getVersion(): string {
+  try {
+    // Try to read package.json (works in dev and bundled installs)
+    const dir = dirname(fileURLToPath(import.meta.url));
+    for (const rel of ['../package.json', '../../package.json']) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(dir, rel), 'utf-8'));
+        if (pkg.version) return pkg.version;
+      } catch { /* try next */ }
+    }
+  } catch { /* fallback */ }
+  return '0.0.0';
+}
+
+const VERSION = getVersion();
 
 const HELP_TEXT = `
 Alfred CLI v${VERSION}

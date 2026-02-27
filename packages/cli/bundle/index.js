@@ -4252,7 +4252,25 @@ var init_logs = __esm({
 });
 
 // packages/cli/dist/index.js
-var VERSION = "0.1.0";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+function getVersion() {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    for (const rel of ["../package.json", "../../package.json"]) {
+      try {
+        const pkg = JSON.parse(readFileSync(join(dir, rel), "utf-8"));
+        if (pkg.version)
+          return pkg.version;
+      } catch {
+      }
+    }
+  } catch {
+  }
+  return "0.0.0";
+}
+var VERSION = getVersion();
 var HELP_TEXT = `
 Alfred CLI v${VERSION}
 Personal AI Assistant
