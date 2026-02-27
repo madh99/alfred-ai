@@ -11,6 +11,7 @@ export interface SkillMetadata {
 export interface SkillContext {
   userId: string;
   chatId: string;
+  chatType?: string;
   platform: string;
   conversationId: string;
 }

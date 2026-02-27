@@ -124,6 +124,7 @@ export class MessagePipeline {
           const result = await this.executeToolCall(toolCall, {
             userId: user.id,
             chatId: message.chatId,
+            chatType: message.chatType,
             platform: message.platform,
             conversationId: conversation.id,
           });
@@ -180,6 +181,7 @@ export class MessagePipeline {
         riskLevel: skill.metadata.riskLevel,
         platform: context.platform,
         chatId: context.chatId,
+        chatType: context.chatType,
       });
 
       if (!evaluation.allowed) {

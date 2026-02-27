@@ -2239,8 +2239,8 @@ var init_system_info = __esm({
           properties: {
             category: {
               type: "string",
-              enum: ["general", "memory", "uptime"],
-              description: "Category of system info"
+              enum: ["general", "memory", "uptime", "datetime"],
+              description: "Category of system info (use datetime for current date/time)"
             }
           },
           required: ["category"]
@@ -2255,6 +2255,8 @@ var init_system_info = __esm({
             return this.getMemoryInfo();
           case "uptime":
             return this.getUptimeInfo();
+          case "datetime":
+            return this.getDateTimeInfo();
           default:
             return {
               success: false,
@@ -2302,6 +2304,21 @@ var init_system_info = __esm({
           success: true,
           data: info,
           display: `Uptime: ${info.formatted}`
+        };
+      }
+      getDateTimeInfo() {
+        const now = /* @__PURE__ */ new Date();
+        const info = {
+          iso: now.toISOString(),
+          date: now.toLocaleDateString("de-DE", { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
+          time: now.toLocaleTimeString("de-DE"),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timestamp: now.getTime()
+        };
+        return {
+          success: true,
+          data: info,
+          display: `${info.date}, ${info.time} (${info.timezone})`
         };
       }
     };
@@ -3906,6 +3923,7 @@ var init_message_pipeline = __esm({
               const result = await this.executeToolCall(toolCall, {
                 userId: user.id,
                 chatId: message.chatId,
+                chatType: message.chatType,
                 platform: message.platform,
                 conversationId: conversation.id
               });
@@ -3940,7 +3958,8 @@ var init_message_pipeline = __esm({
             action: toolCall.name,
             riskLevel: skill.metadata.riskLevel,
             platform: context.platform,
-            chatId: context.chatId
+            chatId: context.chatId,
+            chatType: context.chatType
           });
           if (!evaluation.allowed) {
             this.logger.warn({ tool: toolCall.name, reason: evaluation.reason, rule: evaluation.matchedRule?.id }, "Skill execution denied by security rules");

@@ -1,7 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-type SystemInfoCategory = 'general' | 'memory' | 'uptime';
+type SystemInfoCategory = 'general' | 'memory' | 'uptime' | 'datetime';
 
 export class SystemInfoSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -14,8 +14,8 @@ export class SystemInfoSkill extends Skill {
       properties: {
         category: {
           type: 'string',
-          enum: ['general', 'memory', 'uptime'],
-          description: 'Category of system info',
+          enum: ['general', 'memory', 'uptime', 'datetime'],
+          description: 'Category of system info (use datetime for current date/time)',
         },
       },
       required: ['category'],
@@ -35,6 +35,8 @@ export class SystemInfoSkill extends Skill {
         return this.getMemoryInfo();
       case 'uptime':
         return this.getUptimeInfo();
+      case 'datetime':
+        return this.getDateTimeInfo();
       default:
         return {
           success: false,
@@ -90,6 +92,23 @@ export class SystemInfoSkill extends Skill {
       success: true,
       data: info,
       display: `Uptime: ${info.formatted}`,
+    };
+  }
+
+  private getDateTimeInfo(): SkillResult {
+    const now = new Date();
+    const info = {
+      iso: now.toISOString(),
+      date: now.toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
+      time: now.toLocaleTimeString('de-DE'),
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timestamp: now.getTime(),
+    };
+
+    return {
+      success: true,
+      data: info,
+      display: `${info.date}, ${info.time} (${info.timezone})`,
     };
   }
 }
