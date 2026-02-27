@@ -3944,7 +3944,7 @@ var init_message_pipeline = __esm({
             const toolResultBlocks = [];
             for (const toolCall of response.toolCalls) {
               const result = await this.executeToolCall(toolCall, {
-                userId: user.id,
+                userId: message.userId,
                 chatId: message.chatId,
                 chatType: message.chatType,
                 platform: message.platform,
