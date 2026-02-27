@@ -72,7 +72,7 @@ const PROVIDERS: ProviderDef[] = [
     label: 'OpenWebUI (local OpenAI-compatible UI)',
     defaultModel: 'llama3.2',
     envKeyName: 'ALFRED_OPENWEBUI_API_KEY',
-    needsApiKey: false,
+    needsApiKey: true,
     baseUrl: 'http://localhost:3000/api/v1',
   },
 ];
