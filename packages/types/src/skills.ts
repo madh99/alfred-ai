@@ -16,6 +16,8 @@ export interface SkillContext {
   chatType?: string;
   platform: string;
   conversationId: string;
+  /** User timezone (from profile) or server timezone as fallback. */
+  timezone?: string;
 }
 
 export interface SkillResult {

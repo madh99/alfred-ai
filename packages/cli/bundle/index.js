@@ -2526,20 +2526,120 @@ var init_skill_registry = __esm({
 });
 
 // ../skills/dist/skill-sandbox.js
-var DEFAULT_TIMEOUT_MS, SkillSandbox;
+var DEFAULT_TIMEOUT_MS, INACTIVITY_THRESHOLD_MS, POLL_INTERVAL_MS, MAX_TOTAL_TIME_MS, SkillSandbox;
 var init_skill_sandbox = __esm({
   "../skills/dist/skill-sandbox.js"() {
     "use strict";
     DEFAULT_TIMEOUT_MS = 3e4;
+    INACTIVITY_THRESHOLD_MS = 12e4;
+    POLL_INTERVAL_MS = 1e4;
+    MAX_TOTAL_TIME_MS = 20 * 6e4;
     SkillSandbox = class {
       logger;
       constructor(logger) {
         this.logger = logger;
       }
-      async execute(skill, input2, context, timeoutMs) {
+      /**
+       * Execute a skill with timeout protection.
+       *
+       * If an ActivityTracker is provided, uses an inactivity-based timeout:
+       * the skill keeps running as long as the tracker receives pings.
+       * Only kills the skill when it goes silent for INACTIVITY_THRESHOLD_MS.
+       *
+       * Without a tracker, falls back to a simple hard timeout.
+       */
+      async execute(skill, input2, context, timeoutMs, tracker) {
         timeoutMs = timeoutMs ?? skill.metadata.timeoutMs ?? DEFAULT_TIMEOUT_MS;
         const { name } = skill.metadata;
         this.logger.info({ skill: name, input: input2 }, "Skill execution started");
+        if (tracker) {
+          return this.executeWithTracker(skill, input2, context, name, timeoutMs, tracker);
+        }
+        return this.executeWithHardTimeout(skill, input2, context, name, timeoutMs);
+      }
+      /**
+       * Activity-aware timeout: polls the tracker and only kills
+       * the skill when it has been inactive for too long.
+       */
+      async executeWithTracker(skill, input2, context, name, initialTimeoutMs, tracker) {
+        return new Promise((resolve) => {
+          let settled = false;
+          let pollTimer;
+          let safetyTimer;
+          let initialTimer;
+          const cleanup = () => {
+            if (pollTimer)
+              clearInterval(pollTimer);
+            if (safetyTimer)
+              clearTimeout(safetyTimer);
+            if (initialTimer)
+              clearTimeout(initialTimer);
+          };
+          const finish = (result) => {
+            if (settled)
+              return;
+            settled = true;
+            cleanup();
+            resolve(result);
+          };
+          skill.execute(input2, context).then((result) => {
+            this.logger.info({ skill: name, success: result.success }, "Skill execution completed");
+            finish(result);
+          }, (error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error({ skill: name, error: message }, "Skill execution failed");
+            finish({ success: false, error: message });
+          });
+          initialTimer = setTimeout(() => {
+            if (settled)
+              return;
+            const idleMs = tracker.getIdleMs();
+            if (idleMs >= INACTIVITY_THRESHOLD_MS) {
+              const snapshot2 = tracker.getSnapshot();
+              this.logger.warn({ skill: name, idleMs, state: snapshot2.state, iteration: snapshot2.iteration }, "Agent inactive after initial timeout \u2014 aborting");
+              finish({
+                success: false,
+                error: `Skill "${name}" timed out \u2014 inactive for ${Math.round(idleMs / 1e3)}s (last state: ${snapshot2.state})`
+              });
+              return;
+            }
+            const snapshot = tracker.getSnapshot();
+            this.logger.info({ skill: name, idleMs, state: snapshot.state, iteration: snapshot.iteration, totalMs: snapshot.totalElapsedMs }, "Initial timeout reached but agent is active \u2014 extending");
+            pollTimer = setInterval(() => {
+              if (settled) {
+                cleanup();
+                return;
+              }
+              const currentIdleMs = tracker.getIdleMs();
+              const snap = tracker.getSnapshot();
+              if (currentIdleMs >= INACTIVITY_THRESHOLD_MS) {
+                this.logger.warn({ skill: name, idleMs: currentIdleMs, state: snap.state, iteration: snap.iteration, totalMs: snap.totalElapsedMs }, "Agent went inactive \u2014 aborting");
+                finish({
+                  success: false,
+                  error: `Skill "${name}" killed \u2014 inactive for ${Math.round(currentIdleMs / 1e3)}s (last state: ${snap.state})`
+                });
+              } else {
+                this.logger.debug({ skill: name, idleMs: currentIdleMs, state: snap.state, iteration: snap.iteration }, "Agent still active, continuing...");
+              }
+            }, POLL_INTERVAL_MS);
+          }, initialTimeoutMs);
+          safetyTimer = setTimeout(() => {
+            if (settled)
+              return;
+            const snap = tracker.getSnapshot();
+            this.logger.error({ skill: name, totalMs: snap.totalElapsedMs, state: snap.state, iteration: snap.iteration }, "Absolute time limit reached \u2014 force killing agent");
+            finish({
+              success: false,
+              error: `Skill "${name}" force-killed after ${Math.round(MAX_TOTAL_TIME_MS / 6e4)} minutes (safety limit)`
+            });
+          }, MAX_TOTAL_TIME_MS);
+        });
+      }
+      /**
+       * Simple hard timeout for skills that don't use a tracker.
+       * This is the legacy behavior.
+       */
+      async executeWithHardTimeout(skill, input2, context, name, timeoutMs) {
         try {
           const result = await Promise.race([
             skill.execute(input2, context),
@@ -2557,6 +2657,90 @@ var init_skill_sandbox = __esm({
             error: message
           };
         }
+      }
+    };
+  }
+});
+
+// ../skills/dist/activity-tracker.js
+var ActivityTracker;
+var init_activity_tracker = __esm({
+  "../skills/dist/activity-tracker.js"() {
+    "use strict";
+    ActivityTracker = class {
+      state = "starting";
+      iteration = 0;
+      maxIterations = 0;
+      currentTool;
+      lastPingAt;
+      startedAt;
+      history = [];
+      onProgress;
+      constructor(onProgress) {
+        this.startedAt = Date.now();
+        this.lastPingAt = Date.now();
+        this.onProgress = onProgress;
+      }
+      /**
+       * Called by the agent at every meaningful step.
+       * Resets the inactivity timer and reports status upward.
+       */
+      ping(state, meta) {
+        this.state = state;
+        this.lastPingAt = Date.now();
+        if (meta?.iteration !== void 0)
+          this.iteration = meta.iteration;
+        if (meta?.maxIterations !== void 0)
+          this.maxIterations = meta.maxIterations;
+        this.currentTool = meta?.tool;
+        this.history.push({
+          state,
+          tool: meta?.tool,
+          iteration: this.iteration,
+          timestamp: this.lastPingAt
+        });
+        if (this.onProgress) {
+          this.onProgress(this.formatStatus());
+        }
+      }
+      /** How long since last activity, in ms. */
+      getIdleMs() {
+        return Date.now() - this.lastPingAt;
+      }
+      /** Total elapsed time since agent started. */
+      getTotalElapsedMs() {
+        return Date.now() - this.startedAt;
+      }
+      /** Current human-readable status string. */
+      formatStatus() {
+        const iter = this.maxIterations > 0 ? ` (${this.iteration}/${this.maxIterations})` : "";
+        switch (this.state) {
+          case "starting":
+            return `Sub-agent starting...`;
+          case "llm_call":
+            return `Sub-agent thinking...${iter}`;
+          case "tool_call":
+            return this.currentTool ? `Sub-agent using ${this.currentTool}${iter}` : `Sub-agent using tool...${iter}`;
+          case "processing":
+            return `Sub-agent processing...${iter}`;
+          case "done":
+            return `Sub-agent done${iter}`;
+          default:
+            return `Sub-agent working...${iter}`;
+        }
+      }
+      /** Full snapshot for logging / debugging. */
+      getSnapshot() {
+        return {
+          state: this.state,
+          iteration: this.iteration,
+          maxIterations: this.maxIterations,
+          lastPingAt: this.lastPingAt,
+          idleMs: this.getIdleMs(),
+          currentTool: this.currentTool,
+          totalElapsedMs: this.getTotalElapsedMs(),
+          history: [...this.history]
+        };
       }
     };
   }
@@ -3576,12 +3760,15 @@ ${results.map((r) => `- ${r.key}: "${r.value}" (score: ${r.score.toFixed(2)})`).
 });
 
 // ../skills/dist/built-in/delegate.js
-var MAX_SUB_AGENT_ITERATIONS, DelegateSkill;
+var DEFAULT_MAX_ITERATIONS, MAX_ALLOWED_ITERATIONS, INITIAL_TIMEOUT_MS, DelegateSkill;
 var init_delegate = __esm({
   "../skills/dist/built-in/delegate.js"() {
     "use strict";
     init_skill();
-    MAX_SUB_AGENT_ITERATIONS = 5;
+    init_activity_tracker();
+    DEFAULT_MAX_ITERATIONS = 5;
+    MAX_ALLOWED_ITERATIONS = 15;
+    INITIAL_TIMEOUT_MS = 12e4;
     DelegateSkill = class extends Skill {
       llm;
       skillRegistry;
@@ -3589,11 +3776,10 @@ var init_delegate = __esm({
       securityManager;
       metadata = {
         name: "delegate",
-        description: 'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. The sub-agent can use shell, web search, calculator, memory, email, and all other tools. Use when a task is independent enough to run in parallel or when it requires a focused, multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", "check the weather and draft a packing list"). The sub-agent runs up to 5 tool iterations autonomously.',
+        description: 'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. The sub-agent can use shell, web search, calculator, memory, email, and all other tools. Use when a task is independent enough to run in parallel or when it requires a focused, multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", "check the weather and draft a packing list"). Control depth with max_iterations (default 5, max 15).',
         riskLevel: "write",
-        version: "2.0.0",
-        timeoutMs: 12e4,
-        // 2 minutes — delegate chains multiple LLM calls + tool executions
+        version: "3.0.0",
+        timeoutMs: INITIAL_TIMEOUT_MS,
         inputSchema: {
           type: "object",
           properties: {
@@ -3604,17 +3790,37 @@ var init_delegate = __esm({
             context: {
               type: "string",
               description: "Additional context the sub-agent needs (optional)"
+            },
+            max_iterations: {
+              type: "number",
+              description: "Max tool iterations (1-15). Use higher values for complex multi-step tasks. Default: 5."
             }
           },
           required: ["task"]
         }
       };
+      onProgress;
       constructor(llm, skillRegistry, skillSandbox, securityManager) {
         super();
         this.llm = llm;
         this.skillRegistry = skillRegistry;
         this.skillSandbox = skillSandbox;
         this.securityManager = securityManager;
+      }
+      /**
+       * Set a progress callback before execution.
+       * The pipeline calls this so the user sees live status updates
+       * like "Sub-agent using web_search (2/5)".
+       */
+      setProgressCallback(cb) {
+        this.onProgress = cb;
+      }
+      /**
+       * Create an ActivityTracker for this execution.
+       * The sandbox uses this to decide whether to extend or kill.
+       */
+      createTracker() {
+        return new ActivityTracker(this.onProgress);
       }
       async execute(input2, context) {
         const task = input2.task;
@@ -3625,6 +3831,10 @@ var init_delegate = __esm({
             error: 'Missing required field "task"'
           };
         }
+        const requestedIterations = input2.max_iterations;
+        const maxIterations = requestedIterations ? Math.max(1, Math.min(MAX_ALLOWED_ITERATIONS, Math.round(requestedIterations))) : DEFAULT_MAX_ITERATIONS;
+        const tracker = new ActivityTracker(this.onProgress);
+        tracker.ping("starting", { maxIterations });
         const tools = this.buildSubAgentTools();
         const systemPrompt = "You are a sub-agent of Alfred, a personal AI assistant. Complete the assigned task using the tools available to you. Work step by step: use tools to gather information, then synthesize a clear result. Be concise and return only the final answer when done.";
         let userContent = task;
@@ -3641,6 +3851,7 @@ Additional context: ${additionalContext}`;
           let totalInputTokens = 0;
           let totalOutputTokens = 0;
           while (true) {
+            tracker.ping("llm_call", { iteration, maxIterations });
             const response = await this.llm.complete({
               messages,
               system: systemPrompt,
@@ -3649,7 +3860,9 @@ Additional context: ${additionalContext}`;
             });
             totalInputTokens += response.usage.inputTokens;
             totalOutputTokens += response.usage.outputTokens;
-            if (!response.toolCalls || response.toolCalls.length === 0 || iteration >= MAX_SUB_AGENT_ITERATIONS) {
+            tracker.ping("processing", { iteration, maxIterations });
+            if (!response.toolCalls || response.toolCalls.length === 0 || iteration >= maxIterations) {
+              tracker.ping("done", { iteration, maxIterations });
               return {
                 success: true,
                 data: {
@@ -3676,6 +3889,7 @@ Additional context: ${additionalContext}`;
             messages.push({ role: "assistant", content: assistantContent });
             const toolResultBlocks = [];
             for (const toolCall of response.toolCalls) {
+              tracker.ping("tool_call", { iteration, maxIterations, tool: toolCall.name });
               const result = await this.executeSubAgentTool(toolCall, context);
               toolResultBlocks.push({
                 type: "tool_result",
@@ -5673,6 +5887,7 @@ var init_dist6 = __esm({
     init_skill();
     init_skill_registry();
     init_skill_sandbox();
+    init_activity_tracker();
     init_plugin_loader();
     init_calculator();
     init_system_info();
@@ -5746,6 +5961,9 @@ var init_message_pipeline = __esm({
       speechTranscriber;
       inboxPath;
       embeddingService;
+      /** Registry of currently running delegate agents, keyed by a unique agent ID. */
+      activeAgents = /* @__PURE__ */ new Map();
+      agentIdCounter = 0;
       constructor(options) {
         this.llm = options.llm;
         this.conversationManager = options.conversationManager;
@@ -5806,11 +6024,15 @@ var init_message_pipeline = __esm({
           }
           const skillMetas = this.skillRegistry ? this.skillRegistry.getAll().map((s) => s.metadata) : void 0;
           const tools = skillMetas ? this.promptBuilder.buildTools(skillMetas) : void 0;
-          const system = this.promptBuilder.buildSystemPrompt({
+          let system = this.promptBuilder.buildSystemPrompt({
             memories,
             skills: skillMetas,
             userProfile
           });
+          const agentStatusBlock = this.buildActiveAgentStatus();
+          if (agentStatusBlock) {
+            system += "\n\n" + agentStatusBlock;
+          }
           const allMessages = this.promptBuilder.buildMessages(history);
           const userContent = await this.buildUserContent(message, onProgress);
           allMessages.push({ role: "user", content: userContent });
@@ -5855,7 +6077,7 @@ var init_message_pipeline = __esm({
                 chatType: message.chatType,
                 platform: message.platform,
                 conversationId: conversation.id
-              });
+              }, onProgress);
               toolResultBlocks.push({
                 type: "tool_result",
                 tool_use_id: toolCall.id,
@@ -5885,7 +6107,7 @@ var init_message_pipeline = __esm({
           throw error;
         }
       }
-      async executeToolCall(toolCall, context) {
+      async executeToolCall(toolCall, context, onProgress) {
         const skill = this.skillRegistry?.get(toolCall.name);
         if (!skill) {
           this.logger.warn({ tool: toolCall.name }, "Unknown skill requested");
@@ -5909,11 +6131,33 @@ var init_message_pipeline = __esm({
           }
         }
         if (this.skillSandbox) {
-          const result = await this.skillSandbox.execute(skill, toolCall.input, context);
-          return {
-            content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? "Unknown error"),
-            isError: !result.success
-          };
+          let tracker;
+          let agentId;
+          if (toolCall.name === "delegate" && "setProgressCallback" in skill && "createTracker" in skill) {
+            const delegateSkill = skill;
+            if (onProgress) {
+              delegateSkill.setProgressCallback(onProgress);
+            }
+            tracker = delegateSkill.createTracker();
+            agentId = `agent-${++this.agentIdCounter}`;
+            this.activeAgents.set(agentId, {
+              chatId: context.chatId,
+              task: String(toolCall.input.task ?? "").slice(0, 200),
+              tracker,
+              startedAt: Date.now()
+            });
+          }
+          try {
+            const result = await this.skillSandbox.execute(skill, toolCall.input, context, void 0, tracker);
+            return {
+              content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? "Unknown error"),
+              isError: !result.success
+            };
+          } finally {
+            if (agentId) {
+              this.activeAgents.delete(agentId);
+            }
+          }
         }
         try {
           const result = await skill.execute(toolCall.input, context);
@@ -5965,6 +6209,24 @@ var init_message_pipeline = __esm({
           default:
             return `Using ${toolName}...`;
         }
+      }
+      /**
+       * Build a status block describing currently running delegate agents.
+       * Injected into the system prompt so the LLM can answer user questions
+       * like "What is the agent doing right now?".
+       */
+      buildActiveAgentStatus() {
+        if (this.activeAgents.size === 0)
+          return void 0;
+        const lines = ["## Currently running sub-agents"];
+        for (const [id, agent] of this.activeAgents) {
+          const snapshot = agent.tracker.getSnapshot();
+          const elapsedSec = Math.round(snapshot.totalElapsedMs / 1e3);
+          lines.push(`- **${id}**: "${agent.task}"`, `  Status: ${agent.tracker.formatStatus()}`, `  Running for ${elapsedSec}s | Last activity ${Math.round(snapshot.idleMs / 1e3)}s ago`);
+        }
+        lines.push("");
+        lines.push("If the user asks what you or the agent is doing, describe the above status in natural language.");
+        return lines.join("\n");
       }
       /**
        * Trim messages to fit within the LLM's context window.

@@ -96,6 +96,25 @@ For complex tasks, work through multiple steps:
 - Desktop: ${homeDir}/Desktop
 - Downloads: ${homeDir}/Downloads`;
 
+    // Always inject current date/time — critical for time-based tasks (reminders, scheduling)
+    const serverTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const effectiveTimezone = userProfile?.timezone || serverTimezone;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString('en-GB', {
+      timeZone: effectiveTimezone,
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const dateStr = now.toLocaleDateString('en-CA', { timeZone: effectiveTimezone }); // YYYY-MM-DD
+    const dayStr = now.toLocaleDateString('en-US', { timeZone: effectiveTimezone, weekday: 'long' });
+    prompt += `\n\n## Current date & time`;
+    prompt += `\n- Timezone: ${effectiveTimezone}`;
+    prompt += `\n- Date: ${dateStr} (${dayStr})`;
+    prompt += `\n- Time: ${timeStr}`;
+    if (userProfile?.timezone && userProfile.timezone !== serverTimezone) {
+      prompt += `\n- Server timezone: ${serverTimezone}`;
+    }
+
     // List available skills so the LLM knows what it can do
     if (skills && skills.length > 0) {
       prompt += '\n\n## Available tools\n';
@@ -111,12 +130,7 @@ For complex tasks, work through multiple steps:
         prompt += `\n- Name: ${userProfile.displayName}`;
       }
       if (userProfile.timezone) {
-        const now = new Date().toLocaleTimeString('en-GB', {
-          timeZone: userProfile.timezone,
-          hour: '2-digit',
-          minute: '2-digit',
-        });
-        prompt += `\n- Timezone: ${userProfile.timezone} (Current local time: ${now})`;
+        prompt += `\n- Timezone: ${userProfile.timezone}`;
       }
       if (userProfile.language) {
         prompt += `\n- Language: ${userProfile.language}`;

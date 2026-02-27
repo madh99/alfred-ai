@@ -150,6 +150,9 @@ export class MessagePipeline {
         // Profile loading is non-critical
       }
 
+      // 5c. Resolve timezone: user profile > server timezone
+      const resolvedTimezone = userProfile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
       // 6. Build tools and LLM request with token-aware context trimming
       const skillMetas = this.skillRegistry
         ? this.skillRegistry.getAll().map(s => s.metadata)
@@ -225,6 +228,7 @@ export class MessagePipeline {
             chatType: message.chatType,
             platform: message.platform,
             conversationId: conversation.id,
+            timezone: resolvedTimezone,
           }, onProgress);
           toolResultBlocks.push({
             type: 'tool_result',
