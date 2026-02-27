@@ -271,6 +271,37 @@ export class OllamaProvider extends LLMProvider {
     }
   }
 
+  async embed(text: string): Promise<import('../provider.js').EmbeddingResult | undefined> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/embed`, {
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          model: 'nomic-embed-text',
+          input: text,
+        }),
+      });
+
+      if (!res.ok) return undefined;
+
+      const data = (await res.json()) as { embeddings?: number[][] };
+      if (!data.embeddings || data.embeddings.length === 0) return undefined;
+
+      const embedding = data.embeddings[0];
+      return {
+        embedding,
+        model: 'nomic-embed-text',
+        dimensions: embedding.length,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  supportsEmbeddings(): boolean {
+    return true;
+  }
+
   private buildOptions(
     request: LLMRequest,
   ): Record<string, unknown> {

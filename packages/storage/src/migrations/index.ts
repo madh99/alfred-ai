@@ -89,4 +89,41 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 5,
+    description: 'Add user profile fields (timezone, language, bio, preferences)',
+    up(db) {
+      db.exec(`
+        ALTER TABLE users ADD COLUMN timezone TEXT;
+        ALTER TABLE users ADD COLUMN language TEXT;
+        ALTER TABLE users ADD COLUMN bio TEXT;
+        ALTER TABLE users ADD COLUMN preferences TEXT;
+      `);
+    },
+  },
+  {
+    version: 6,
+    description: 'Add embeddings table for semantic search',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS embeddings (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_type TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          embedding BLOB NOT NULL,
+          model TEXT NOT NULL,
+          dimensions INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_embeddings_user
+          ON embeddings(user_id);
+
+        CREATE INDEX IF NOT EXISTS idx_embeddings_source
+          ON embeddings(source_type, source_id);
+      `);
+    },
+  },
 ];

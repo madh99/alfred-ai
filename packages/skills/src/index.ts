@@ -19,3 +19,6 @@ export { FileSkill } from './built-in/file.js';
 export { ClipboardSkill } from './built-in/clipboard.js';
 export { ScreenshotSkill } from './built-in/screenshot.js';
 export { BrowserSkill } from './built-in/browser.js';
+export { ProfileSkill } from './built-in/profile.js';
+export { CalendarSkill, CalendarProvider, createCalendarProvider } from './built-in/calendar/index.js';
+export type { CalendarEvent, CreateEventInput } from './built-in/calendar/index.js';

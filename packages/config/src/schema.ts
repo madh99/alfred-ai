@@ -82,6 +82,32 @@ export const SpeechConfigSchema = z.object({
   baseUrl: z.string().optional(),
 });
 
+export const CalDAVConfigSchema = z.object({
+  serverUrl: z.string(),
+  username: z.string(),
+  password: z.string(),
+});
+
+export const GoogleCalendarConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  refreshToken: z.string(),
+});
+
+export const MicrosoftCalendarConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  tenantId: z.string(),
+  refreshToken: z.string(),
+});
+
+export const CalendarConfigSchema = z.object({
+  provider: z.enum(['caldav', 'google', 'microsoft']),
+  caldav: CalDAVConfigSchema.optional(),
+  google: GoogleCalendarConfigSchema.optional(),
+  microsoft: MicrosoftCalendarConfigSchema.optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -96,4 +122,5 @@ export const AlfredConfigSchema = z.object({
   search: SearchConfigSchema.optional(),
   email: EmailConfigSchema.optional(),
   speech: SpeechConfigSchema.optional(),
+  calendar: CalendarConfigSchema.optional(),
 });

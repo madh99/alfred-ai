@@ -6,6 +6,8 @@ export interface SkillMetadata {
   riskLevel: RiskLevel;
   version: string;
   inputSchema: Record<string, unknown>;
+  /** Custom timeout in ms. Skills that make LLM calls (e.g. delegate) need more time. */
+  timeoutMs?: number;
 }
 
 export interface SkillContext {

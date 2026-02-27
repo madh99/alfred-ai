@@ -96,6 +96,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
     chatId: string,
     messageId: string,
     text: string,
+    _options?: SendMessageOptions,
   ): Promise<void> {
     await this.socket!.sendMessage(chatId, {
       text,

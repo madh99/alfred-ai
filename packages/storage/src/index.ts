@@ -11,3 +11,5 @@ export { ReminderRepository } from './repositories/reminder-repository.js';
 export type { ReminderEntry } from './repositories/reminder-repository.js';
 export { NoteRepository } from './repositories/note-repository.js';
 export type { NoteEntry } from './repositories/note-repository.js';
+export { EmbeddingRepository } from './repositories/embedding-repository.js';
+export type { EmbeddingEntry, StoreEmbeddingInput } from './repositories/embedding-repository.js';

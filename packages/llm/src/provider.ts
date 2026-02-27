@@ -10,6 +10,12 @@ export interface ContextWindow {
   maxOutputTokens: number;
 }
 
+export interface EmbeddingResult {
+  embedding: number[];
+  model: string;
+  dimensions: number;
+}
+
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   // Anthropic
@@ -66,5 +72,13 @@ export abstract class LLMProvider {
 
   getContextWindow(): ContextWindow {
     return this.contextWindow;
+  }
+
+  async embed(_text: string): Promise<EmbeddingResult | undefined> {
+    return undefined;
+  }
+
+  supportsEmbeddings(): boolean {
+    return false;
   }
 }

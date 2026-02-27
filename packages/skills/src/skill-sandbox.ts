@@ -15,8 +15,10 @@ export class SkillSandbox {
     skill: Skill,
     input: Record<string, unknown>,
     context: SkillContext,
-    timeoutMs: number = DEFAULT_TIMEOUT_MS,
+    timeoutMs?: number,
   ): Promise<SkillResult> {
+    // Use skill-specific timeout if defined, otherwise caller override, otherwise default
+    timeoutMs = timeoutMs ?? skill.metadata.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const { name } = skill.metadata;
 
     this.logger.info({ skill: name, input }, 'Skill execution started');

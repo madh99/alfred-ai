@@ -24,6 +24,10 @@ export interface User {
   platformUserId: string;
   username?: string;
   displayName?: string;
+  timezone?: string;
+  language?: string;
+  bio?: string;
+  preferences?: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }

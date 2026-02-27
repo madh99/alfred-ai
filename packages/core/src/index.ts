@@ -1,6 +1,9 @@
 export { Alfred } from './alfred.js';
 export { MessagePipeline } from './message-pipeline.js';
-export type { ProgressCallback } from './message-pipeline.js';
+export type { ProgressCallback, PipelineOptions } from './message-pipeline.js';
 export { ConversationManager } from './conversation-manager.js';
 export { ReminderScheduler } from './reminder-scheduler.js';
 export { SpeechTranscriber } from './speech-transcriber.js';
+export { ResponseFormatter } from './response-formatter.js';
+export type { FormattedResponse } from './response-formatter.js';
+export { EmbeddingService } from './embedding-service.js';

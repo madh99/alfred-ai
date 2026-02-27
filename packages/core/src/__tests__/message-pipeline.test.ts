@@ -10,6 +10,9 @@ const mockLLM = {
   complete: vi.fn(),
   stream: vi.fn(),
   isAvailable: vi.fn(() => true),
+  getContextWindow: vi.fn(() => ({ maxInputTokens: 200_000, maxOutputTokens: 4_096 })),
+  supportsEmbeddings: vi.fn(() => false),
+  embed: vi.fn(),
   config: { provider: 'anthropic' as const, model: 'test', apiKey: 'test' },
 };
 
@@ -79,12 +82,12 @@ describe('MessagePipeline', () => {
       stopReason: 'end_turn',
     });
 
-    const pipeline = new MessagePipeline(
-      mockLLM as any,
-      mockConversationManager as any,
-      mockUsers as any,
-      mockLogger as any,
-    );
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any,
+      conversationManager: mockConversationManager as any,
+      users: mockUsers as any,
+      logger: mockLogger as any,
+    });
 
     const result = await pipeline.process(makeMessage());
 
@@ -141,14 +144,14 @@ describe('MessagePipeline', () => {
       }),
     };
 
-    const pipeline = new MessagePipeline(
-      mockLLM as any,
-      mockConversationManager as any,
-      mockUsers as any,
-      mockLogger as any,
-      mockSkillRegistry as any,
-      mockSkillSandbox as any,
-    );
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any,
+      conversationManager: mockConversationManager as any,
+      users: mockUsers as any,
+      logger: mockLogger as any,
+      skillRegistry: mockSkillRegistry as any,
+      skillSandbox: mockSkillSandbox as any,
+    });
 
     const result = await pipeline.process(makeMessage());
 
@@ -203,15 +206,14 @@ describe('MessagePipeline', () => {
       })),
     };
 
-    const pipeline = new MessagePipeline(
-      mockLLM as any,
-      mockConversationManager as any,
-      mockUsers as any,
-      mockLogger as any,
-      mockSkillRegistry as any,
-      undefined, // no sandbox
-      mockSecurityManager as any,
-    );
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any,
+      conversationManager: mockConversationManager as any,
+      users: mockUsers as any,
+      logger: mockLogger as any,
+      skillRegistry: mockSkillRegistry as any,
+      securityManager: mockSecurityManager as any,
+    });
 
     const result = await pipeline.process(makeMessage());
 
@@ -250,13 +252,13 @@ describe('MessagePipeline', () => {
       toToolDefinitions: vi.fn(() => []),
     };
 
-    const pipeline = new MessagePipeline(
-      mockLLM as any,
-      mockConversationManager as any,
-      mockUsers as any,
-      mockLogger as any,
-      mockSkillRegistry as any,
-    );
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any,
+      conversationManager: mockConversationManager as any,
+      users: mockUsers as any,
+      logger: mockLogger as any,
+      skillRegistry: mockSkillRegistry as any,
+    });
 
     const result = await pipeline.process(makeMessage());
 

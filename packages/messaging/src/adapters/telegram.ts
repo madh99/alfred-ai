@@ -164,11 +164,15 @@ export class TelegramAdapter extends MessagingAdapter {
     chatId: string,
     messageId: string,
     text: string,
+    options?: SendMessageOptions,
   ): Promise<void> {
     await this.bot.api.editMessageText(
       Number(chatId),
       Number(messageId),
       text,
+      {
+        parse_mode: mapParseMode(options?.parseMode),
+      },
     );
   }
 

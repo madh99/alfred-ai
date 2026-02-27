@@ -17,6 +17,7 @@ import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import type { SpeechTranscriber } from './speech-transcriber.js';
+import type { EmbeddingService } from './embedding-service.js';
 
 const MAX_TOOL_ITERATIONS = 10;
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
@@ -24,21 +25,46 @@ const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 
 
 export type ProgressCallback = (status: string) => void;
 
+export interface PipelineOptions {
+  llm: LLMProvider;
+  conversationManager: ConversationManager;
+  users: UserRepository;
+  logger: Logger;
+  skillRegistry?: SkillRegistry;
+  skillSandbox?: SkillSandbox;
+  securityManager?: SecurityManager;
+  memoryRepo?: MemoryRepository;
+  speechTranscriber?: SpeechTranscriber;
+  inboxPath?: string;
+  embeddingService?: EmbeddingService;
+}
+
 export class MessagePipeline {
   private readonly promptBuilder: PromptBuilder;
+  private readonly llm: LLMProvider;
+  private readonly conversationManager: ConversationManager;
+  private readonly users: UserRepository;
+  private readonly logger: Logger;
+  private readonly skillRegistry?: SkillRegistry;
+  private readonly skillSandbox?: SkillSandbox;
+  private readonly securityManager?: SecurityManager;
+  private readonly memoryRepo?: MemoryRepository;
+  private readonly speechTranscriber?: SpeechTranscriber;
+  private readonly inboxPath?: string;
+  private readonly embeddingService?: EmbeddingService;
 
-  constructor(
-    private readonly llm: LLMProvider,
-    private readonly conversationManager: ConversationManager,
-    private readonly users: UserRepository,
-    private readonly logger: Logger,
-    private readonly skillRegistry?: SkillRegistry,
-    private readonly skillSandbox?: SkillSandbox,
-    private readonly securityManager?: SecurityManager,
-    private readonly memoryRepo?: MemoryRepository,
-    private readonly speechTranscriber?: SpeechTranscriber,
-    private readonly inboxPath?: string,
-  ) {
+  constructor(options: PipelineOptions) {
+    this.llm = options.llm;
+    this.conversationManager = options.conversationManager;
+    this.users = options.users;
+    this.logger = options.logger;
+    this.skillRegistry = options.skillRegistry;
+    this.skillSandbox = options.skillSandbox;
+    this.securityManager = options.securityManager;
+    this.memoryRepo = options.memoryRepo;
+    this.speechTranscriber = options.speechTranscriber;
+    this.inboxPath = options.inboxPath;
+    this.embeddingService = options.embeddingService;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -68,14 +94,48 @@ export class MessagePipeline {
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
 
-      // 5. Load user memories for prompt injection
+      // 5. Load user memories for prompt injection (semantic search if available)
       let memories: { key: string; value: string; category: string }[] | undefined;
       if (this.memoryRepo) {
         try {
-          memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+          if (this.embeddingService && message.text) {
+            // Use semantic search: top-10 relevant + 5 newest
+            const semanticResults = await this.embeddingService.semanticSearch(user.id, message.text, 10);
+            const recentResults = this.memoryRepo.getRecentForPrompt(user.id, 5);
+            // Merge and deduplicate by key
+            const seen = new Set<string>();
+            memories = [];
+            for (const m of semanticResults) {
+              if (!seen.has(m.key)) {
+                seen.add(m.key);
+                memories.push(m);
+              }
+            }
+            for (const m of recentResults) {
+              if (!seen.has(m.key)) {
+                seen.add(m.key);
+                memories.push(m);
+              }
+            }
+          } else {
+            memories = this.memoryRepo.getRecentForPrompt(user.id, 20);
+          }
         } catch {
           // Memory loading is non-critical
         }
+      }
+
+      // 5b. Load user profile for prompt injection
+      let userProfile: import('@alfred/llm').UserProfile | undefined;
+      try {
+        if ('getProfile' in this.users) {
+          userProfile = (this.users as any).getProfile(user.id);
+          if (userProfile && !userProfile.displayName) {
+            userProfile.displayName = user.displayName ?? user.username;
+          }
+        }
+      } catch {
+        // Profile loading is non-critical
       }
 
       // 6. Build tools and LLM request with token-aware context trimming
@@ -85,7 +145,11 @@ export class MessagePipeline {
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
-      const system = this.promptBuilder.buildSystemPrompt(memories, skillMetas);
+      const system = this.promptBuilder.buildSystemPrompt({
+        memories,
+        skills: skillMetas,
+        userProfile,
+      });
       const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
 
       // Build user message with attachments (images, transcribed audio)
@@ -273,6 +337,8 @@ export class MessagePipeline {
       case 'browser': return `Browser: ${String(input.action ?? '')} ${String(input.url ?? '').slice(0, 50)}`;
       case 'weather': return `Weather: ${String(input.location ?? '')}`;
       case 'note': return `Note: ${String(input.action ?? '')}`;
+      case 'profile': return `Profile: ${String(input.action ?? '')}`;
+      case 'calendar': return `Calendar: ${String(input.action ?? '')}`;
       default: return `Using ${toolName}...`;
     }
   }

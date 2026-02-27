@@ -28,6 +28,7 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
     chatId: string,
     messageId: string,
     text: string,
+    options?: SendMessageOptions,
   ): Promise<void>;
   abstract deleteMessage(
     chatId: string,

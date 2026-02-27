@@ -65,8 +65,17 @@ export class MatrixAdapter extends MessagingAdapter {
   async sendMessage(
     chatId: string,
     text: string,
-    _options?: SendMessageOptions,
+    options?: SendMessageOptions,
   ): Promise<string> {
+    if (options?.parseMode === 'html') {
+      const eventId: string = await this.client.sendEvent(chatId, 'm.room.message', {
+        msgtype: 'm.text',
+        body: text.replace(/<[^>]*>/g, ''),
+        format: 'org.matrix.custom.html',
+        formatted_body: text,
+      });
+      return eventId;
+    }
     const eventId: string = await this.client.sendText(chatId, text);
     return eventId;
   }
@@ -75,19 +84,23 @@ export class MatrixAdapter extends MessagingAdapter {
     chatId: string,
     messageId: string,
     text: string,
+    options?: SendMessageOptions,
   ): Promise<void> {
-    await this.client.sendEvent(chatId, 'm.room.message', {
+    const isHtml = options?.parseMode === 'html';
+    const content: Record<string, unknown> = {
       'msgtype': 'm.text',
-      'body': '* ' + text,
+      'body': '* ' + (isHtml ? text.replace(/<[^>]*>/g, '') : text),
       'm.new_content': {
         msgtype: 'm.text',
-        body: text,
+        body: isHtml ? text.replace(/<[^>]*>/g, '') : text,
+        ...(isHtml ? { format: 'org.matrix.custom.html', formatted_body: text } : {}),
       },
       'm.relates_to': {
         rel_type: 'm.replace',
         event_id: messageId,
       },
-    });
+    };
+    await this.client.sendEvent(chatId, 'm.room.message', content);
   }
 
   async deleteMessage(chatId: string, messageId: string): Promise<void> {

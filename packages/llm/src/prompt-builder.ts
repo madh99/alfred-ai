@@ -13,6 +13,29 @@ export interface MemoryForPrompt {
   category: string;
 }
 
+export interface UserProfile {
+  displayName?: string;
+  timezone?: string;
+  language?: string;
+  bio?: string;
+  preferences?: Record<string, unknown>;
+}
+
+export interface CalendarEvent {
+  title: string;
+  start: Date;
+  end: Date;
+  location?: string;
+  allDay?: boolean;
+}
+
+export interface SystemPromptContext {
+  memories?: MemoryForPrompt[];
+  skills?: SkillMetadata[];
+  userProfile?: UserProfile;
+  todayEvents?: CalendarEvent[];
+}
+
 /**
  * Rough token estimate: ~4 characters per token for English text.
  * This is intentionally conservative (overestimates) to avoid exceeding limits.
@@ -46,7 +69,8 @@ export function estimateMessageTokens(msg: LLMMessage): number {
 }
 
 export class PromptBuilder {
-  buildSystemPrompt(memories?: MemoryForPrompt[], skills?: SkillMetadata[]): string {
+  buildSystemPrompt(context: SystemPromptContext = {}): string {
+    const { memories, skills, userProfile, todayEvents } = context;
     const os = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
     const homeDir = process.env['HOME'] || process.env['USERPROFILE'] || '~';
 
@@ -77,6 +101,51 @@ For complex tasks, work through multiple steps:
       prompt += '\n\n## Available tools\n';
       for (const s of skills) {
         prompt += `- **${s.name}** (${s.riskLevel}): ${s.description}\n`;
+      }
+    }
+
+    // User profile section
+    if (userProfile) {
+      prompt += '\n\n## User profile';
+      if (userProfile.displayName) {
+        prompt += `\n- Name: ${userProfile.displayName}`;
+      }
+      if (userProfile.timezone) {
+        const now = new Date().toLocaleTimeString('en-GB', {
+          timeZone: userProfile.timezone,
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        prompt += `\n- Timezone: ${userProfile.timezone} (Current local time: ${now})`;
+      }
+      if (userProfile.language) {
+        prompt += `\n- Language: ${userProfile.language}`;
+      }
+      if (userProfile.bio) {
+        prompt += `\n- Bio: ${userProfile.bio}`;
+      }
+    }
+
+    // Today's calendar events
+    if (todayEvents && todayEvents.length > 0) {
+      prompt += '\n\n## Today\'s events';
+      for (const event of todayEvents) {
+        const startTime = event.allDay
+          ? 'All day'
+          : event.start.toLocaleTimeString('en-GB', {
+              hour: '2-digit',
+              minute: '2-digit',
+              ...(userProfile?.timezone ? { timeZone: userProfile.timezone } : {}),
+            });
+        const endTime = event.allDay
+          ? ''
+          : `-${event.end.toLocaleTimeString('en-GB', {
+              hour: '2-digit',
+              minute: '2-digit',
+              ...(userProfile?.timezone ? { timeZone: userProfile.timezone } : {}),
+            })}`;
+        const location = event.location ? ` @ ${event.location}` : '';
+        prompt += `\n- ${startTime}${endTime}: ${event.title}${location}`;
       }
     }
 

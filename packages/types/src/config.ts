@@ -79,6 +79,32 @@ export interface SpeechConfig {
   baseUrl?: string;
 }
 
+export interface CalDAVConfig {
+  serverUrl: string;
+  username: string;
+  password: string;
+}
+
+export interface GoogleCalendarConfig {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}
+
+export interface MicrosoftCalendarConfig {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+  refreshToken: string;
+}
+
+export interface CalendarConfig {
+  provider: 'caldav' | 'google' | 'microsoft';
+  caldav?: CalDAVConfig;
+  google?: GoogleCalendarConfig;
+  microsoft?: MicrosoftCalendarConfig;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -93,4 +119,5 @@ export interface AlfredConfig {
   search?: SearchConfig;
   email?: EmailConfig;
   speech?: SpeechConfig;
+  calendar?: CalendarConfig;
 }

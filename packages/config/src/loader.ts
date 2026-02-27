@@ -54,6 +54,17 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_SPEECH_PROVIDER: ['speech', 'provider'],
   ALFRED_SPEECH_API_KEY: ['speech', 'apiKey'],
   ALFRED_SPEECH_BASE_URL: ['speech', 'baseUrl'],
+  ALFRED_CALENDAR_PROVIDER: ['calendar', 'provider'],
+  ALFRED_CALDAV_SERVER_URL: ['calendar', 'caldav', 'serverUrl'],
+  ALFRED_CALDAV_USERNAME: ['calendar', 'caldav', 'username'],
+  ALFRED_CALDAV_PASSWORD: ['calendar', 'caldav', 'password'],
+  ALFRED_GOOGLE_CALENDAR_CLIENT_ID: ['calendar', 'google', 'clientId'],
+  ALFRED_GOOGLE_CALENDAR_CLIENT_SECRET: ['calendar', 'google', 'clientSecret'],
+  ALFRED_GOOGLE_CALENDAR_REFRESH_TOKEN: ['calendar', 'google', 'refreshToken'],
+  ALFRED_MICROSOFT_CALENDAR_CLIENT_ID: ['calendar', 'microsoft', 'clientId'],
+  ALFRED_MICROSOFT_CALENDAR_CLIENT_SECRET: ['calendar', 'microsoft', 'clientSecret'],
+  ALFRED_MICROSOFT_CALENDAR_TENANT_ID: ['calendar', 'microsoft', 'tenantId'],
+  ALFRED_MICROSOFT_CALENDAR_REFRESH_TOKEN: ['calendar', 'microsoft', 'refreshToken'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

@@ -97,6 +97,7 @@ export class DiscordAdapter extends MessagingAdapter {
     chatId: string,
     messageId: string,
     text: string,
+    _options?: SendMessageOptions,
   ): Promise<void> {
     if (!this.client) throw new Error('Client is not connected');
 

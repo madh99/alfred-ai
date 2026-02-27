@@ -2,7 +2,12 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { MemoryRepository } from '@alfred/storage';
 
-type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete';
+interface EmbeddingServiceLike {
+  embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<void>;
+  semanticSearch(userId: string, query: string, limit?: number): Promise<{ key: string; value: string; category: string; score: number }[]>;
+}
+
+type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic_search';
 
 export class MemorySkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -17,7 +22,7 @@ export class MemorySkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['save', 'recall', 'search', 'list', 'delete'],
+          enum: ['save', 'recall', 'search', 'list', 'delete', 'semantic_search'],
           description: 'The memory action to perform',
         },
         key: {
@@ -41,7 +46,10 @@ export class MemorySkill extends Skill {
     },
   };
 
-  constructor(private readonly memoryRepo: MemoryRepository) {
+  constructor(
+    private readonly memoryRepo: MemoryRepository,
+    private readonly embeddingService?: EmbeddingServiceLike,
+  ) {
     super();
   }
 
@@ -62,10 +70,12 @@ export class MemorySkill extends Skill {
         return this.listMemories(input, context);
       case 'delete':
         return this.deleteMemory(input, context);
+      case 'semantic_search':
+        return this.semanticSearchMemories(input, context);
       default:
         return {
           success: false,
-          error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete`,
+          error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete, semantic_search`,
         };
     }
   }
@@ -98,6 +108,16 @@ export class MemorySkill extends Skill {
       value,
       category ?? 'general',
     );
+
+    // Auto-embed for semantic search
+    if (this.embeddingService) {
+      this.embeddingService.embedAndStore(
+        context.userId,
+        `${key}: ${value}`,
+        'memory',
+        key,
+      ).catch(() => { /* non-critical */ });
+    }
 
     return {
       success: true,
@@ -205,6 +225,33 @@ export class MemorySkill extends Skill {
       display: deleted
         ? `Memory "${key}" deleted.`
         : `No memory found for key "${key}".`,
+    };
+  }
+
+  private async semanticSearchMemories(
+    input: Record<string, unknown>,
+    context: SkillContext,
+  ): Promise<SkillResult> {
+    const query = input.query as string | undefined;
+    if (!query || typeof query !== 'string') {
+      return { success: false, error: 'Missing required field "query" for semantic_search action' };
+    }
+
+    if (!this.embeddingService) {
+      // Fallback to keyword search
+      return this.searchMemories(input, context);
+    }
+
+    const results = await this.embeddingService.semanticSearch(context.userId, query, 10);
+    if (results.length === 0) {
+      // Fallback to keyword search
+      return this.searchMemories(input, context);
+    }
+
+    return {
+      success: true,
+      data: results,
+      display: `Found ${results.length} semantically related memory(ies):\n${results.map(r => `- ${r.key}: "${r.value}" (score: ${r.score.toFixed(2)})`).join('\n')}`,
     };
   }
 }

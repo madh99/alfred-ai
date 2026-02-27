@@ -27,6 +27,7 @@ export class DelegateSkill extends Skill {
       'The sub-agent runs up to 5 tool iterations autonomously.',
     riskLevel: 'write',
     version: '2.0.0',
+    timeoutMs: 120_000, // 2 minutes — delegate chains multiple LLM calls + tool executions
     inputSchema: {
       type: 'object',
       properties: {

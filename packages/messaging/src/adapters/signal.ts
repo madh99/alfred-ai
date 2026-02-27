@@ -78,7 +78,7 @@ export class SignalAdapter extends MessagingAdapter {
     return String(result.timestamp ?? Date.now());
   }
 
-  async editMessage(_chatId: string, _messageId: string, _text: string): Promise<void> {
+  async editMessage(_chatId: string, _messageId: string, _text: string, _options?: SendMessageOptions): Promise<void> {
     // Signal does not support message editing via REST API
     throw new Error('Signal does not support message editing');
   }

@@ -149,6 +149,27 @@ export class OpenAIProvider extends LLMProvider {
     return !!this.config.apiKey;
   }
 
+  async embed(text: string): Promise<import('../provider.js').EmbeddingResult | undefined> {
+    try {
+      const response = await this.client.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: text,
+      });
+      const data = response.data[0];
+      return {
+        embedding: data.embedding,
+        model: 'text-embedding-3-small',
+        dimensions: data.embedding.length,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  supportsEmbeddings(): boolean {
+    return true;
+  }
+
   private mapMessages(
     messages: LLMMessage[],
     system?: string,

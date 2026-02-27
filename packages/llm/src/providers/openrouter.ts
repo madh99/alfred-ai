@@ -16,4 +16,8 @@ export class OpenRouterProvider extends OpenAIProvider {
   isAvailable(): boolean {
     return !!this.config.apiKey;
   }
+
+  supportsEmbeddings(): boolean {
+    return false; // OpenRouter doesn't reliably support embeddings endpoint
+  }
 }

@@ -11,6 +11,27 @@ describe('PromptBuilder', () => {
       expect(typeof prompt).toBe('string');
       expect(prompt.length).toBeGreaterThan(0);
     });
+
+    it('should accept a SystemPromptContext object', () => {
+      const prompt = builder.buildSystemPrompt({
+        memories: [{ key: 'name', value: 'Markus', category: 'personal' }],
+        skills: [],
+      });
+      expect(prompt).toContain('Markus');
+    });
+
+    it('should include user profile when provided', () => {
+      const prompt = builder.buildSystemPrompt({
+        userProfile: {
+          displayName: 'Markus',
+          timezone: 'Europe/Vienna',
+          language: 'de',
+        },
+      });
+      expect(prompt).toContain('Markus');
+      expect(prompt).toContain('Europe/Vienna');
+      expect(prompt).toContain('Language: de');
+    });
   });
 
   describe('buildMessages', () => {

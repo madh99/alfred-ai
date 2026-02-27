@@ -65,6 +65,48 @@ export class UserRepository {
     this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
   }
 
+  updateProfile(id: string, data: { timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown> }): void {
+    const fields: string[] = [];
+    const values: (string | null)[] = [];
+
+    if (data.timezone !== undefined) {
+      fields.push('timezone = ?');
+      values.push(data.timezone ?? null);
+    }
+    if (data.language !== undefined) {
+      fields.push('language = ?');
+      values.push(data.language ?? null);
+    }
+    if (data.bio !== undefined) {
+      fields.push('bio = ?');
+      values.push(data.bio ?? null);
+    }
+    if (data.preferences !== undefined) {
+      fields.push('preferences = ?');
+      values.push(data.preferences ? JSON.stringify(data.preferences) : null);
+    }
+
+    if (fields.length === 0) return;
+
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+  }
+
+  getProfile(id: string): { timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown>; displayName?: string } | undefined {
+    const row = this.db.prepare('SELECT display_name, timezone, language, bio, preferences FROM users WHERE id = ?').get(id) as Record<string, string> | undefined;
+    if (!row) return undefined;
+    return {
+      displayName: row.display_name ?? undefined,
+      timezone: row.timezone ?? undefined,
+      language: row.language ?? undefined,
+      bio: row.bio ?? undefined,
+      preferences: row.preferences ? JSON.parse(row.preferences) : undefined,
+    };
+  }
+
   private mapRow(row: Record<string, string>): User {
     return {
       id: row.id,
@@ -72,6 +114,10 @@ export class UserRepository {
       platformUserId: row.platform_user_id,
       username: row.username ?? undefined,
       displayName: row.display_name ?? undefined,
+      timezone: row.timezone ?? undefined,
+      language: row.language ?? undefined,
+      bio: row.bio ?? undefined,
+      preferences: row.preferences ? JSON.parse(row.preferences) : undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
