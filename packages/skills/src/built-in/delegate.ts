@@ -13,7 +13,8 @@ import type { SkillRegistry } from '../skill-registry.js';
 import type { SkillSandbox } from '../skill-sandbox.js';
 import type { SecurityManager } from '@alfred/security';
 
-const MAX_SUB_AGENT_ITERATIONS = 5;
+const DEFAULT_MAX_ITERATIONS = 5;
+const MAX_ALLOWED_ITERATIONS = 15;
 
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -24,10 +25,10 @@ export class DelegateSkill extends Skill {
       'Use when a task is independent enough to run in parallel or when it requires a focused, ' +
       'multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", ' +
       '"check the weather and draft a packing list"). ' +
-      'The sub-agent runs up to 5 tool iterations autonomously.',
+      'Control depth with max_iterations (default 5, max 15).',
     riskLevel: 'write',
-    version: '2.0.0',
-    timeoutMs: 120_000, // 2 minutes — delegate chains multiple LLM calls + tool executions
+    version: '2.1.0',
+    timeoutMs: MAX_ALLOWED_ITERATIONS * 35_000, // ~35s per iteration worst-case
     inputSchema: {
       type: 'object',
       properties: {
@@ -38,6 +39,10 @@ export class DelegateSkill extends Skill {
         context: {
           type: 'string',
           description: 'Additional context the sub-agent needs (optional)',
+        },
+        max_iterations: {
+          type: 'number',
+          description: 'Max tool iterations (1-15). Use higher values for complex multi-step tasks. Default: 5.',
         },
       },
       required: ['task'],
@@ -66,6 +71,12 @@ export class DelegateSkill extends Skill {
         error: 'Missing required field "task"',
       };
     }
+
+    // LLM can control depth — clamp between 1 and max
+    const requestedIterations = input.max_iterations as number | undefined;
+    const maxIterations = requestedIterations
+      ? Math.max(1, Math.min(MAX_ALLOWED_ITERATIONS, Math.round(requestedIterations)))
+      : DEFAULT_MAX_ITERATIONS;
 
     // Build tools list — exclude 'delegate' to prevent recursion
     const tools = this.buildSubAgentTools();
@@ -105,7 +116,7 @@ export class DelegateSkill extends Skill {
         if (
           !response.toolCalls ||
           response.toolCalls.length === 0 ||
-          iteration >= MAX_SUB_AGENT_ITERATIONS
+          iteration >= maxIterations
         ) {
           return {
             success: true,
