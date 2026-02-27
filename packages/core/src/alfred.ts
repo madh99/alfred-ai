@@ -1,4 +1,7 @@
-import type { AlfredConfig, NormalizedMessage, Platform } from '@alfred/types';
+import fs from 'node:fs';
+import path from 'node:path';
+import yaml from 'js-yaml';
+import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
@@ -49,14 +52,16 @@ export class Alfred {
     const reminderRepo = new ReminderRepository(db);
     this.logger.info('Storage initialized');
 
-    // 2. Initialize security
+    // 2. Initialize security — load rules from YAML files
     const ruleEngine = new RuleEngine();
+    const rules = this.loadSecurityRules();
+    ruleEngine.loadRules(rules);
     const securityManager = new SecurityManager(
       ruleEngine,
       auditRepo,
       this.logger.child({ component: 'security' }),
     );
-    this.logger.info('Security engine initialized');
+    this.logger.info({ ruleCount: rules.length }, 'Security engine initialized');
 
     // 3. Initialize LLM provider
     const llmProvider = createLLMProvider(this.config.llm);
@@ -229,5 +234,41 @@ export class Alfred {
     adapter.on('disconnected', () => {
       this.logger.warn({ platform }, 'Adapter disconnected');
     });
+  }
+
+  private loadSecurityRules(): SecurityRule[] {
+    const rulesPath = path.resolve(this.config.security.rulesPath);
+    const rules: SecurityRule[] = [];
+
+    if (!fs.existsSync(rulesPath)) {
+      this.logger.warn({ rulesPath }, 'Security rules directory not found, using default deny');
+      return rules;
+    }
+
+    const stat = fs.statSync(rulesPath);
+    if (!stat.isDirectory()) {
+      this.logger.warn({ rulesPath }, 'Security rules path is not a directory');
+      return rules;
+    }
+
+    const files = fs.readdirSync(rulesPath).filter(
+      f => f.endsWith('.yml') || f.endsWith('.yaml'),
+    );
+
+    for (const file of files) {
+      try {
+        const filePath = path.join(rulesPath, file);
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const parsed = yaml.load(content) as { rules?: SecurityRule[] };
+        if (parsed?.rules && Array.isArray(parsed.rules)) {
+          rules.push(...parsed.rules);
+          this.logger.info({ file, count: parsed.rules.length }, 'Loaded security rules');
+        }
+      } catch (err) {
+        this.logger.error({ err, file }, 'Failed to load security rules file');
+      }
+    }
+
+    return rules;
   }
 }

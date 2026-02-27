@@ -9,11 +9,11 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// ../config/dist/schema.js
+// packages/config/dist/schema.js
 import { z } from "zod";
 var TelegramConfigSchema, DiscordConfigSchema, WhatsAppConfigSchema, MatrixConfigSchema, SignalConfigSchema, StorageConfigSchema, LoggerConfigSchema, SecurityConfigSchema, LLMProviderConfigSchema, SearchConfigSchema, EmailConfigSchema, AlfredConfigSchema;
 var init_schema = __esm({
-  "../config/dist/schema.js"() {
+  "packages/config/dist/schema.js"() {
     "use strict";
     TelegramConfigSchema = z.object({
       token: z.string().default(""),
@@ -97,10 +97,10 @@ var init_schema = __esm({
   }
 });
 
-// ../config/dist/defaults.js
+// packages/config/dist/defaults.js
 var DEFAULT_CONFIG;
 var init_defaults = __esm({
-  "../config/dist/defaults.js"() {
+  "packages/config/dist/defaults.js"() {
     "use strict";
     DEFAULT_CONFIG = {
       name: "Alfred",
@@ -148,7 +148,7 @@ var init_defaults = __esm({
   }
 });
 
-// ../config/dist/loader.js
+// packages/config/dist/loader.js
 import fs from "node:fs";
 import path from "node:path";
 import { config as loadDotenv } from "dotenv";
@@ -187,7 +187,7 @@ function applyEnvOverrides(config) {
 }
 var ENV_MAP, ConfigLoader;
 var init_loader = __esm({
-  "../config/dist/loader.js"() {
+  "packages/config/dist/loader.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -236,9 +236,9 @@ var init_loader = __esm({
   }
 });
 
-// ../config/dist/index.js
+// packages/config/dist/index.js
 var init_dist = __esm({
-  "../config/dist/index.js"() {
+  "packages/config/dist/index.js"() {
     "use strict";
     init_schema();
     init_defaults();
@@ -246,7 +246,7 @@ var init_dist = __esm({
   }
 });
 
-// ../logger/dist/logger.js
+// packages/logger/dist/logger.js
 import pino from "pino";
 function createLogger(name, level) {
   const logLevel = level ?? process.env.LOG_LEVEL ?? "info";
@@ -261,32 +261,32 @@ function createLogger(name, level) {
   return pino({ name, level: logLevel });
 }
 var init_logger = __esm({
-  "../logger/dist/logger.js"() {
+  "packages/logger/dist/logger.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/audit.js
+// packages/logger/dist/audit.js
 import pino2 from "pino";
 var init_audit = __esm({
-  "../logger/dist/audit.js"() {
+  "packages/logger/dist/audit.js"() {
     "use strict";
   }
 });
 
-// ../logger/dist/index.js
+// packages/logger/dist/index.js
 var init_dist2 = __esm({
-  "../logger/dist/index.js"() {
+  "packages/logger/dist/index.js"() {
     "use strict";
     init_logger();
     init_audit();
   }
 });
 
-// ../storage/dist/migrations/migrator.js
+// packages/storage/dist/migrations/migrator.js
 var Migrator;
 var init_migrator = __esm({
-  "../storage/dist/migrations/migrator.js"() {
+  "packages/storage/dist/migrations/migrator.js"() {
     "use strict";
     Migrator = class {
       db;
@@ -335,10 +335,10 @@ var init_migrator = __esm({
   }
 });
 
-// ../storage/dist/migrations/index.js
+// packages/storage/dist/migrations/index.js
 var MIGRATIONS;
 var init_migrations = __esm({
-  "../storage/dist/migrations/index.js"() {
+  "packages/storage/dist/migrations/index.js"() {
     "use strict";
     init_migrator();
     MIGRATIONS = [
@@ -408,13 +408,13 @@ var init_migrations = __esm({
   }
 });
 
-// ../storage/dist/database.js
+// packages/storage/dist/database.js
 import BetterSqlite3 from "better-sqlite3";
 import fs2 from "node:fs";
 import path2 from "node:path";
 var Database;
 var init_database = __esm({
-  "../storage/dist/database.js"() {
+  "packages/storage/dist/database.js"() {
     "use strict";
     init_migrator();
     init_migrations();
@@ -495,11 +495,11 @@ var init_database = __esm({
   }
 });
 
-// ../storage/dist/repositories/conversation-repository.js
+// packages/storage/dist/repositories/conversation-repository.js
 import crypto from "node:crypto";
 var ConversationRepository;
 var init_conversation_repository = __esm({
-  "../storage/dist/repositories/conversation-repository.js"() {
+  "packages/storage/dist/repositories/conversation-repository.js"() {
     "use strict";
     ConversationRepository = class {
       db;
@@ -577,11 +577,11 @@ var init_conversation_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/user-repository.js
+// packages/storage/dist/repositories/user-repository.js
 import crypto2 from "node:crypto";
 var UserRepository;
 var init_user_repository = __esm({
-  "../storage/dist/repositories/user-repository.js"() {
+  "packages/storage/dist/repositories/user-repository.js"() {
     "use strict";
     UserRepository = class {
       db;
@@ -648,10 +648,10 @@ var init_user_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/audit-repository.js
+// packages/storage/dist/repositories/audit-repository.js
 var AuditRepository;
 var init_audit_repository = __esm({
-  "../storage/dist/repositories/audit-repository.js"() {
+  "packages/storage/dist/repositories/audit-repository.js"() {
     "use strict";
     AuditRepository = class {
       db;
@@ -718,11 +718,11 @@ var init_audit_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/memory-repository.js
+// packages/storage/dist/repositories/memory-repository.js
 import { randomUUID } from "node:crypto";
 var MemoryRepository;
 var init_memory_repository = __esm({
-  "../storage/dist/repositories/memory-repository.js"() {
+  "packages/storage/dist/repositories/memory-repository.js"() {
     "use strict";
     MemoryRepository = class {
       db;
@@ -790,11 +790,11 @@ var init_memory_repository = __esm({
   }
 });
 
-// ../storage/dist/repositories/reminder-repository.js
+// packages/storage/dist/repositories/reminder-repository.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 var ReminderRepository;
 var init_reminder_repository = __esm({
-  "../storage/dist/repositories/reminder-repository.js"() {
+  "packages/storage/dist/repositories/reminder-repository.js"() {
     "use strict";
     ReminderRepository = class {
       db;
@@ -850,9 +850,9 @@ var init_reminder_repository = __esm({
   }
 });
 
-// ../storage/dist/index.js
+// packages/storage/dist/index.js
 var init_dist3 = __esm({
-  "../storage/dist/index.js"() {
+  "packages/storage/dist/index.js"() {
     "use strict";
     init_database();
     init_conversation_repository();
@@ -865,7 +865,7 @@ var init_dist3 = __esm({
   }
 });
 
-// ../llm/dist/provider.js
+// packages/llm/dist/provider.js
 function lookupContextWindow(model) {
   if (KNOWN_CONTEXT_WINDOWS[model])
     return KNOWN_CONTEXT_WINDOWS[model];
@@ -877,7 +877,7 @@ function lookupContextWindow(model) {
 }
 var KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW, LLMProvider;
 var init_provider = __esm({
-  "../llm/dist/provider.js"() {
+  "packages/llm/dist/provider.js"() {
     "use strict";
     KNOWN_CONTEXT_WINDOWS = {
       // Anthropic
@@ -920,11 +920,11 @@ var init_provider = __esm({
   }
 });
 
-// ../llm/dist/providers/anthropic.js
+// packages/llm/dist/providers/anthropic.js
 import Anthropic from "@anthropic-ai/sdk";
 var AnthropicProvider;
 var init_anthropic = __esm({
-  "../llm/dist/providers/anthropic.js"() {
+  "packages/llm/dist/providers/anthropic.js"() {
     "use strict";
     init_provider();
     AnthropicProvider = class extends LLMProvider {
@@ -1058,11 +1058,11 @@ var init_anthropic = __esm({
   }
 });
 
-// ../llm/dist/providers/openai.js
+// packages/llm/dist/providers/openai.js
 import OpenAI from "openai";
 var OpenAIProvider;
 var init_openai = __esm({
-  "../llm/dist/providers/openai.js"() {
+  "packages/llm/dist/providers/openai.js"() {
     "use strict";
     init_provider();
     OpenAIProvider = class extends LLMProvider {
@@ -1288,10 +1288,10 @@ var init_openai = __esm({
   }
 });
 
-// ../llm/dist/providers/openrouter.js
+// packages/llm/dist/providers/openrouter.js
 var OpenRouterProvider;
 var init_openrouter = __esm({
-  "../llm/dist/providers/openrouter.js"() {
+  "packages/llm/dist/providers/openrouter.js"() {
     "use strict";
     init_openai();
     OpenRouterProvider = class extends OpenAIProvider {
@@ -1308,10 +1308,10 @@ var init_openrouter = __esm({
   }
 });
 
-// ../llm/dist/providers/ollama.js
+// packages/llm/dist/providers/ollama.js
 var OllamaProvider;
 var init_ollama = __esm({
-  "../llm/dist/providers/ollama.js"() {
+  "packages/llm/dist/providers/ollama.js"() {
     "use strict";
     init_provider();
     OllamaProvider = class extends LLMProvider {
@@ -1608,7 +1608,7 @@ var init_ollama = __esm({
   }
 });
 
-// ../llm/dist/provider-factory.js
+// packages/llm/dist/provider-factory.js
 function createLLMProvider(config) {
   switch (config.provider) {
     case "anthropic":
@@ -1624,7 +1624,7 @@ function createLLMProvider(config) {
   }
 }
 var init_provider_factory = __esm({
-  "../llm/dist/provider-factory.js"() {
+  "packages/llm/dist/provider-factory.js"() {
     "use strict";
     init_anthropic();
     init_openai();
@@ -1633,7 +1633,7 @@ var init_provider_factory = __esm({
   }
 });
 
-// ../llm/dist/prompt-builder.js
+// packages/llm/dist/prompt-builder.js
 function estimateTokens(text) {
   return Math.ceil(text.length / 3.5);
 }
@@ -1659,7 +1659,7 @@ function estimateMessageTokens(msg) {
 }
 var PromptBuilder;
 var init_prompt_builder = __esm({
-  "../llm/dist/prompt-builder.js"() {
+  "packages/llm/dist/prompt-builder.js"() {
     "use strict";
     PromptBuilder = class {
       buildSystemPrompt(memories) {
@@ -1708,9 +1708,9 @@ var init_prompt_builder = __esm({
   }
 });
 
-// ../llm/dist/index.js
+// packages/llm/dist/index.js
 var init_dist4 = __esm({
-  "../llm/dist/index.js"() {
+  "packages/llm/dist/index.js"() {
     "use strict";
     init_provider();
     init_anthropic();
@@ -1722,10 +1722,10 @@ var init_dist4 = __esm({
   }
 });
 
-// ../security/dist/rate-limiter.js
+// packages/security/dist/rate-limiter.js
 var RateLimiter;
 var init_rate_limiter = __esm({
-  "../security/dist/rate-limiter.js"() {
+  "packages/security/dist/rate-limiter.js"() {
     "use strict";
     RateLimiter = class {
       buckets = /* @__PURE__ */ new Map();
@@ -1771,10 +1771,10 @@ var init_rate_limiter = __esm({
   }
 });
 
-// ../security/dist/rule-engine.js
+// packages/security/dist/rule-engine.js
 var RuleEngine;
 var init_rule_engine = __esm({
-  "../security/dist/rule-engine.js"() {
+  "packages/security/dist/rule-engine.js"() {
     "use strict";
     init_rate_limiter();
     RuleEngine = class {
@@ -1917,10 +1917,10 @@ var init_rule_engine = __esm({
   }
 });
 
-// ../security/dist/rule-loader.js
+// packages/security/dist/rule-loader.js
 var VALID_EFFECTS, VALID_SCOPES, VALID_RISK_LEVELS, RuleLoader;
 var init_rule_loader = __esm({
-  "../security/dist/rule-loader.js"() {
+  "packages/security/dist/rule-loader.js"() {
     "use strict";
     VALID_EFFECTS = ["allow", "deny"];
     VALID_SCOPES = ["global", "user", "conversation", "platform"];
@@ -2000,11 +2000,11 @@ var init_rule_loader = __esm({
   }
 });
 
-// ../security/dist/security-manager.js
+// packages/security/dist/security-manager.js
 import crypto3 from "node:crypto";
 var SecurityManager;
 var init_security_manager = __esm({
-  "../security/dist/security-manager.js"() {
+  "packages/security/dist/security-manager.js"() {
     "use strict";
     SecurityManager = class {
       ruleEngine;
@@ -2050,9 +2050,9 @@ var init_security_manager = __esm({
   }
 });
 
-// ../security/dist/index.js
+// packages/security/dist/index.js
 var init_dist5 = __esm({
-  "../security/dist/index.js"() {
+  "packages/security/dist/index.js"() {
     "use strict";
     init_rule_engine();
     init_rate_limiter();
@@ -2061,20 +2061,20 @@ var init_dist5 = __esm({
   }
 });
 
-// ../skills/dist/skill.js
+// packages/skills/dist/skill.js
 var Skill;
 var init_skill = __esm({
-  "../skills/dist/skill.js"() {
+  "packages/skills/dist/skill.js"() {
     "use strict";
     Skill = class {
     };
   }
 });
 
-// ../skills/dist/skill-registry.js
+// packages/skills/dist/skill-registry.js
 var SkillRegistry;
 var init_skill_registry = __esm({
-  "../skills/dist/skill-registry.js"() {
+  "packages/skills/dist/skill-registry.js"() {
     "use strict";
     SkillRegistry = class {
       skills = /* @__PURE__ */ new Map();
@@ -2105,10 +2105,10 @@ var init_skill_registry = __esm({
   }
 });
 
-// ../skills/dist/skill-sandbox.js
+// packages/skills/dist/skill-sandbox.js
 var DEFAULT_TIMEOUT_MS, SkillSandbox;
 var init_skill_sandbox = __esm({
-  "../skills/dist/skill-sandbox.js"() {
+  "packages/skills/dist/skill-sandbox.js"() {
     "use strict";
     DEFAULT_TIMEOUT_MS = 3e4;
     SkillSandbox = class {
@@ -2141,20 +2141,20 @@ var init_skill_sandbox = __esm({
   }
 });
 
-// ../skills/dist/plugin-loader.js
+// packages/skills/dist/plugin-loader.js
 import fs3 from "node:fs";
 import path3 from "node:path";
 var init_plugin_loader = __esm({
-  "../skills/dist/plugin-loader.js"() {
+  "packages/skills/dist/plugin-loader.js"() {
     "use strict";
     init_skill();
   }
 });
 
-// ../skills/dist/built-in/calculator.js
+// packages/skills/dist/built-in/calculator.js
 var ALLOWED_PATTERN, SAFE_EXPRESSION_PATTERN, CalculatorSkill;
 var init_calculator = __esm({
-  "../skills/dist/built-in/calculator.js"() {
+  "packages/skills/dist/built-in/calculator.js"() {
     "use strict";
     init_skill();
     ALLOWED_PATTERN = /^[\d+\-*/().,%\s]|Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/;
@@ -2222,10 +2222,10 @@ var init_calculator = __esm({
   }
 });
 
-// ../skills/dist/built-in/system-info.js
+// packages/skills/dist/built-in/system-info.js
 var SystemInfoSkill;
 var init_system_info = __esm({
-  "../skills/dist/built-in/system-info.js"() {
+  "packages/skills/dist/built-in/system-info.js"() {
     "use strict";
     init_skill();
     SystemInfoSkill = class extends Skill {
@@ -2308,10 +2308,10 @@ var init_system_info = __esm({
   }
 });
 
-// ../skills/dist/built-in/web-search.js
+// packages/skills/dist/built-in/web-search.js
 var WebSearchSkill;
 var init_web_search = __esm({
-  "../skills/dist/built-in/web-search.js"() {
+  "packages/skills/dist/built-in/web-search.js"() {
     "use strict";
     init_skill();
     WebSearchSkill = class extends Skill {
@@ -2526,10 +2526,10 @@ ${display}`
   }
 });
 
-// ../skills/dist/built-in/reminder.js
+// packages/skills/dist/built-in/reminder.js
 var ReminderSkill;
 var init_reminder = __esm({
-  "../skills/dist/built-in/reminder.js"() {
+  "packages/skills/dist/built-in/reminder.js"() {
     "use strict";
     init_skill();
     ReminderSkill = class extends Skill {
@@ -2645,11 +2645,11 @@ ${reminderList.map((r) => `- ${r.reminderId}: "${r.message}" (triggers at ${r.tr
   }
 });
 
-// ../skills/dist/built-in/note.js
+// packages/skills/dist/built-in/note.js
 import { randomUUID as randomUUID3 } from "node:crypto";
 var NoteSkill;
 var init_note = __esm({
-  "../skills/dist/built-in/note.js"() {
+  "packages/skills/dist/built-in/note.js"() {
     "use strict";
     init_skill();
     NoteSkill = class extends Skill {
@@ -2808,10 +2808,10 @@ ${matches.map((n) => `- ${n.noteId}: "${n.title}"`).join("\n")}`
   }
 });
 
-// ../skills/dist/built-in/summarize.js
+// packages/skills/dist/built-in/summarize.js
 var DEFAULT_MAX_LENGTH, SummarizeSkill;
 var init_summarize = __esm({
-  "../skills/dist/built-in/summarize.js"() {
+  "packages/skills/dist/built-in/summarize.js"() {
     "use strict";
     init_skill();
     DEFAULT_MAX_LENGTH = 280;
@@ -3009,10 +3009,10 @@ var init_summarize = __esm({
   }
 });
 
-// ../skills/dist/built-in/translate.js
+// packages/skills/dist/built-in/translate.js
 var TranslateSkill;
 var init_translate = __esm({
-  "../skills/dist/built-in/translate.js"() {
+  "packages/skills/dist/built-in/translate.js"() {
     "use strict";
     init_skill();
     TranslateSkill = class extends Skill {
@@ -3074,10 +3074,10 @@ Requested text: "${text}"`
   }
 });
 
-// ../skills/dist/built-in/weather.js
+// packages/skills/dist/built-in/weather.js
 var WeatherSkill;
 var init_weather = __esm({
-  "../skills/dist/built-in/weather.js"() {
+  "packages/skills/dist/built-in/weather.js"() {
     "use strict";
     init_skill();
     WeatherSkill = class extends Skill {
@@ -3125,7 +3125,7 @@ var init_weather = __esm({
   }
 });
 
-// ../skills/dist/built-in/shell.js
+// packages/skills/dist/built-in/shell.js
 import { exec } from "node:child_process";
 function truncate(text) {
   if (text.length > MAX_OUTPUT_SIZE) {
@@ -3135,7 +3135,7 @@ function truncate(text) {
 }
 var DEFAULT_TIMEOUT, MAX_OUTPUT_SIZE, ShellSkill;
 var init_shell = __esm({
-  "../skills/dist/built-in/shell.js"() {
+  "packages/skills/dist/built-in/shell.js"() {
     "use strict";
     init_skill();
     DEFAULT_TIMEOUT = 3e4;
@@ -3217,10 +3217,10 @@ ${truncate(stderr)}`);
   }
 });
 
-// ../skills/dist/built-in/memory.js
+// packages/skills/dist/built-in/memory.js
 var MemorySkill;
 var init_memory = __esm({
-  "../skills/dist/built-in/memory.js"() {
+  "packages/skills/dist/built-in/memory.js"() {
     "use strict";
     init_skill();
     MemorySkill = class extends Skill {
@@ -3373,10 +3373,10 @@ ${entries.map((e) => `- [${e.category}] ${e.key}: "${e.value}"`).join("\n")}`
   }
 });
 
-// ../skills/dist/built-in/delegate.js
+// packages/skills/dist/built-in/delegate.js
 var DelegateSkill;
 var init_delegate = __esm({
-  "../skills/dist/built-in/delegate.js"() {
+  "packages/skills/dist/built-in/delegate.js"() {
     "use strict";
     init_skill();
     DelegateSkill = class extends Skill {
@@ -3450,10 +3450,10 @@ Additional context: ${additionalContext}`;
   }
 });
 
-// ../skills/dist/built-in/email.js
+// packages/skills/dist/built-in/email.js
 var EmailSkill;
 var init_email = __esm({
-  "../skills/dist/built-in/email.js"() {
+  "packages/skills/dist/built-in/email.js"() {
     "use strict";
     init_skill();
     EmailSkill = class extends Skill {
@@ -3772,9 +3772,9 @@ Message ID: ${info.messageId}`
   }
 });
 
-// ../skills/dist/index.js
+// packages/skills/dist/index.js
 var init_dist6 = __esm({
-  "../skills/dist/index.js"() {
+  "packages/skills/dist/index.js"() {
     "use strict";
     init_skill();
     init_skill_registry();
@@ -3795,10 +3795,10 @@ var init_dist6 = __esm({
   }
 });
 
-// ../core/dist/conversation-manager.js
+// packages/core/dist/conversation-manager.js
 var ConversationManager;
 var init_conversation_manager = __esm({
-  "../core/dist/conversation-manager.js"() {
+  "packages/core/dist/conversation-manager.js"() {
     "use strict";
     ConversationManager = class {
       conversations;
@@ -3823,10 +3823,10 @@ var init_conversation_manager = __esm({
   }
 });
 
-// ../core/dist/message-pipeline.js
+// packages/core/dist/message-pipeline.js
 var MAX_TOOL_ITERATIONS, TOKEN_BUDGET_RATIO, MessagePipeline;
 var init_message_pipeline = __esm({
-  "../core/dist/message-pipeline.js"() {
+  "packages/core/dist/message-pipeline.js"() {
     "use strict";
     init_dist4();
     MAX_TOOL_ITERATIONS = 10;
@@ -4009,10 +4009,10 @@ var init_message_pipeline = __esm({
   }
 });
 
-// ../core/dist/reminder-scheduler.js
+// packages/core/dist/reminder-scheduler.js
 var ReminderScheduler;
 var init_reminder_scheduler = __esm({
-  "../core/dist/reminder-scheduler.js"() {
+  "packages/core/dist/reminder-scheduler.js"() {
     "use strict";
     ReminderScheduler = class {
       reminderRepo;
@@ -4058,11 +4058,11 @@ var init_reminder_scheduler = __esm({
   }
 });
 
-// ../messaging/dist/adapter.js
+// packages/messaging/dist/adapter.js
 import { EventEmitter } from "node:events";
 var MessagingAdapter;
 var init_adapter = __esm({
-  "../messaging/dist/adapter.js"() {
+  "packages/messaging/dist/adapter.js"() {
     "use strict";
     MessagingAdapter = class extends EventEmitter {
       status = "disconnected";
@@ -4073,7 +4073,7 @@ var init_adapter = __esm({
   }
 });
 
-// ../messaging/dist/adapters/telegram.js
+// packages/messaging/dist/adapters/telegram.js
 import { Bot } from "grammy";
 function mapParseMode(mode) {
   if (mode === "markdown")
@@ -4084,7 +4084,7 @@ function mapParseMode(mode) {
 }
 var TelegramAdapter;
 var init_telegram = __esm({
-  "../messaging/dist/adapters/telegram.js"() {
+  "packages/messaging/dist/adapters/telegram.js"() {
     "use strict";
     init_adapter();
     TelegramAdapter = class extends MessagingAdapter {
@@ -4144,11 +4144,11 @@ var init_telegram = __esm({
   }
 });
 
-// ../messaging/dist/adapters/discord.js
+// packages/messaging/dist/adapters/discord.js
 import { Client, GatewayIntentBits, Events } from "discord.js";
 var DiscordAdapter;
 var init_discord = __esm({
-  "../messaging/dist/adapters/discord.js"() {
+  "packages/messaging/dist/adapters/discord.js"() {
     "use strict";
     init_adapter();
     DiscordAdapter = class extends MessagingAdapter {
@@ -4240,10 +4240,10 @@ var init_discord = __esm({
   }
 });
 
-// ../messaging/dist/adapters/matrix.js
+// packages/messaging/dist/adapters/matrix.js
 var MatrixAdapter;
 var init_matrix = __esm({
-  "../messaging/dist/adapters/matrix.js"() {
+  "packages/messaging/dist/adapters/matrix.js"() {
     "use strict";
     init_adapter();
     MatrixAdapter = class extends MessagingAdapter {
@@ -4316,10 +4316,10 @@ var init_matrix = __esm({
   }
 });
 
-// ../messaging/dist/adapters/whatsapp.js
+// packages/messaging/dist/adapters/whatsapp.js
 var WhatsAppAdapter;
 var init_whatsapp = __esm({
-  "../messaging/dist/adapters/whatsapp.js"() {
+  "packages/messaging/dist/adapters/whatsapp.js"() {
     "use strict";
     init_adapter();
     WhatsAppAdapter = class extends MessagingAdapter {
@@ -4419,10 +4419,10 @@ var init_whatsapp = __esm({
   }
 });
 
-// ../messaging/dist/adapters/signal.js
+// packages/messaging/dist/adapters/signal.js
 var SignalAdapter;
 var init_signal = __esm({
-  "../messaging/dist/adapters/signal.js"() {
+  "packages/messaging/dist/adapters/signal.js"() {
     "use strict";
     init_adapter();
     SignalAdapter = class extends MessagingAdapter {
@@ -4531,7 +4531,7 @@ var init_signal = __esm({
   }
 });
 
-// ../messaging/dist/index.js
+// packages/messaging/dist/index.js
 var dist_exports = {};
 __export(dist_exports, {
   DiscordAdapter: () => DiscordAdapter,
@@ -4542,7 +4542,7 @@ __export(dist_exports, {
   WhatsAppAdapter: () => WhatsAppAdapter
 });
 var init_dist7 = __esm({
-  "../messaging/dist/index.js"() {
+  "packages/messaging/dist/index.js"() {
     "use strict";
     init_adapter();
     init_telegram();
@@ -4553,10 +4553,13 @@ var init_dist7 = __esm({
   }
 });
 
-// ../core/dist/alfred.js
+// packages/core/dist/alfred.js
+import fs4 from "node:fs";
+import path4 from "node:path";
+import yaml2 from "js-yaml";
 var Alfred;
 var init_alfred = __esm({
-  "../core/dist/alfred.js"() {
+  "packages/core/dist/alfred.js"() {
     "use strict";
     init_dist2();
     init_dist3();
@@ -4588,8 +4591,10 @@ var init_alfred = __esm({
         const reminderRepo = new ReminderRepository(db);
         this.logger.info("Storage initialized");
         const ruleEngine = new RuleEngine();
+        const rules = this.loadSecurityRules();
+        ruleEngine.loadRules(rules);
         const securityManager = new SecurityManager(ruleEngine, auditRepo, this.logger.child({ component: "security" }));
-        this.logger.info("Security engine initialized");
+        this.logger.info({ ruleCount: rules.length }, "Security engine initialized");
         const llmProvider = createLLMProvider(this.config.llm);
         await llmProvider.initialize();
         this.logger.info({ provider: this.config.llm.provider, model: this.config.llm.model }, "LLM provider initialized");
@@ -4708,13 +4713,41 @@ var init_alfred = __esm({
           this.logger.warn({ platform }, "Adapter disconnected");
         });
       }
+      loadSecurityRules() {
+        const rulesPath = path4.resolve(this.config.security.rulesPath);
+        const rules = [];
+        if (!fs4.existsSync(rulesPath)) {
+          this.logger.warn({ rulesPath }, "Security rules directory not found, using default deny");
+          return rules;
+        }
+        const stat = fs4.statSync(rulesPath);
+        if (!stat.isDirectory()) {
+          this.logger.warn({ rulesPath }, "Security rules path is not a directory");
+          return rules;
+        }
+        const files = fs4.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+        for (const file of files) {
+          try {
+            const filePath = path4.join(rulesPath, file);
+            const content = fs4.readFileSync(filePath, "utf-8");
+            const parsed = yaml2.load(content);
+            if (parsed?.rules && Array.isArray(parsed.rules)) {
+              rules.push(...parsed.rules);
+              this.logger.info({ file, count: parsed.rules.length }, "Loaded security rules");
+            }
+          } catch (err) {
+            this.logger.error({ err, file }, "Failed to load security rules file");
+          }
+        }
+        return rules;
+      }
     };
   }
 });
 
-// ../core/dist/index.js
+// packages/core/dist/index.js
 var init_dist8 = __esm({
-  "../core/dist/index.js"() {
+  "packages/core/dist/index.js"() {
     "use strict";
     init_alfred();
     init_message_pipeline();
@@ -4723,7 +4756,7 @@ var init_dist8 = __esm({
   }
 });
 
-// dist/commands/start.js
+// packages/cli/dist/commands/start.js
 var start_exports = {};
 __export(start_exports, {
   startCommand: () => startCommand
@@ -4775,7 +4808,7 @@ async function startCommand() {
   }
 }
 var init_start = __esm({
-  "dist/commands/start.js"() {
+  "packages/cli/dist/commands/start.js"() {
     "use strict";
     init_dist();
     init_dist2();
@@ -4783,16 +4816,16 @@ var init_start = __esm({
   }
 });
 
-// dist/commands/setup.js
+// packages/cli/dist/commands/setup.js
 var setup_exports = {};
 __export(setup_exports, {
   setupCommand: () => setupCommand
 });
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import fs4 from "node:fs";
-import path4 from "node:path";
-import yaml2 from "js-yaml";
+import fs5 from "node:fs";
+import path5 from "node:path";
+import yaml3 from "js-yaml";
 function green(s) {
   return `${GREEN}${s}${RESET}`;
 }
@@ -4822,20 +4855,20 @@ function loadExistingConfig(projectRoot) {
   let shellEnabled = false;
   let writeInGroups = false;
   let rateLimit = 30;
-  const configPath = path4.join(projectRoot, "config", "default.yml");
-  if (fs4.existsSync(configPath)) {
+  const configPath = path5.join(projectRoot, "config", "default.yml");
+  if (fs5.existsSync(configPath)) {
     try {
-      const parsed = yaml2.load(fs4.readFileSync(configPath, "utf-8"));
+      const parsed = yaml3.load(fs5.readFileSync(configPath, "utf-8"));
       if (parsed && typeof parsed === "object") {
         Object.assign(config, parsed);
       }
     } catch {
     }
   }
-  const envPath = path4.join(projectRoot, ".env");
-  if (fs4.existsSync(envPath)) {
+  const envPath = path5.join(projectRoot, ".env");
+  if (fs5.existsSync(envPath)) {
     try {
-      const lines = fs4.readFileSync(envPath, "utf-8").split("\n");
+      const lines = fs5.readFileSync(envPath, "utf-8").split("\n");
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith("#"))
@@ -4848,10 +4881,10 @@ function loadExistingConfig(projectRoot) {
     } catch {
     }
   }
-  const rulesPath = path4.join(projectRoot, "config", "rules", "default-rules.yml");
-  if (fs4.existsSync(rulesPath)) {
+  const rulesPath = path5.join(projectRoot, "config", "rules", "default-rules.yml");
+  if (fs5.existsSync(rulesPath)) {
     try {
-      const rulesContent = yaml2.load(fs4.readFileSync(rulesPath, "utf-8"));
+      const rulesContent = yaml3.load(fs5.readFileSync(rulesPath, "utf-8"));
       if (rulesContent?.rules) {
         shellEnabled = rulesContent.rules.some((r) => r.id === "allow-owner-admin" && r.effect === "allow");
         const writeDmRule = rulesContent.rules.find((r) => r.id === "allow-write-for-dm" || r.id === "allow-write-all");
@@ -5209,12 +5242,12 @@ ${bold("Writing configuration files...")}`);
       envLines.push("# ALFRED_OWNER_USER_ID=");
     }
     envLines.push("");
-    const envPath = path4.join(projectRoot, ".env");
-    fs4.writeFileSync(envPath, envLines.join("\n"), "utf-8");
+    const envPath = path5.join(projectRoot, ".env");
+    fs5.writeFileSync(envPath, envLines.join("\n"), "utf-8");
     console.log(`  ${green("+")} ${dim(".env")} written`);
-    const configDir = path4.join(projectRoot, "config");
-    if (!fs4.existsSync(configDir)) {
-      fs4.mkdirSync(configDir, { recursive: true });
+    const configDir = path5.join(projectRoot, "config");
+    if (!fs5.existsSync(configDir)) {
+      fs5.mkdirSync(configDir, { recursive: true });
     }
     const config = {
       name: botName,
@@ -5278,13 +5311,13 @@ ${bold("Writing configuration files...")}`);
     if (ownerUserId) {
       config.security.ownerUserId = ownerUserId;
     }
-    const yamlStr = "# Alfred \u2014 Configuration\n# Generated by `alfred setup`\n# Edit manually or re-run `alfred setup` to reconfigure.\n\n" + yaml2.dump(config, { lineWidth: 120, noRefs: true, sortKeys: false });
-    const configPath = path4.join(configDir, "default.yml");
-    fs4.writeFileSync(configPath, yamlStr, "utf-8");
+    const yamlStr = "# Alfred \u2014 Configuration\n# Generated by `alfred setup`\n# Edit manually or re-run `alfred setup` to reconfigure.\n\n" + yaml3.dump(config, { lineWidth: 120, noRefs: true, sortKeys: false });
+    const configPath = path5.join(configDir, "default.yml");
+    fs5.writeFileSync(configPath, yamlStr, "utf-8");
     console.log(`  ${green("+")} ${dim("config/default.yml")} written`);
-    const rulesDir = path4.join(configDir, "rules");
-    if (!fs4.existsSync(rulesDir)) {
-      fs4.mkdirSync(rulesDir, { recursive: true });
+    const rulesDir = path5.join(configDir, "rules");
+    if (!fs5.existsSync(rulesDir)) {
+      fs5.mkdirSync(rulesDir, { recursive: true });
     }
     const ownerAdminRule = enableShell && ownerUserId ? `
   # Allow admin actions (shell, etc.) for the owner only
@@ -5365,12 +5398,12 @@ ${ownerAdminRule}
     actions: ["*"]
     riskLevels: [read, write, destructive, admin]
 `;
-    const rulesPath = path4.join(rulesDir, "default-rules.yml");
-    fs4.writeFileSync(rulesPath, rulesYaml, "utf-8");
+    const rulesPath = path5.join(rulesDir, "default-rules.yml");
+    fs5.writeFileSync(rulesPath, rulesYaml, "utf-8");
     console.log(`  ${green("+")} ${dim("config/rules/default-rules.yml")} written`);
-    const dataDir = path4.join(projectRoot, "data");
-    if (!fs4.existsSync(dataDir)) {
-      fs4.mkdirSync(dataDir, { recursive: true });
+    const dataDir = path5.join(projectRoot, "data");
+    if (!fs5.existsSync(dataDir)) {
+      fs5.mkdirSync(dataDir, { recursive: true });
       console.log(`  ${green("+")} ${dim("data/")} directory created`);
     }
     console.log("");
@@ -5459,7 +5492,7 @@ ${DIM}  Personal AI Assistant \u2014 Setup Wizard${RESET}
 }
 var RESET, BOLD, DIM, GREEN, YELLOW, CYAN, RED, MAGENTA, PROVIDERS, PLATFORMS;
 var init_setup = __esm({
-  "dist/commands/setup.js"() {
+  "packages/cli/dist/commands/setup.js"() {
     "use strict";
     RESET = "\x1B[0m";
     BOLD = "\x1B[1m";
@@ -5584,7 +5617,7 @@ var init_setup = __esm({
   }
 });
 
-// dist/commands/config.js
+// packages/cli/dist/commands/config.js
 var config_exports = {};
 __export(config_exports, {
   configCommand: () => configCommand
@@ -5631,21 +5664,21 @@ async function configCommand() {
 }
 var SENSITIVE_KEYS;
 var init_config = __esm({
-  "dist/commands/config.js"() {
+  "packages/cli/dist/commands/config.js"() {
     "use strict";
     init_dist();
     SENSITIVE_KEYS = ["token", "apikey", "api_key", "accesstoken", "secret", "password"];
   }
 });
 
-// dist/commands/rules.js
+// packages/cli/dist/commands/rules.js
 var rules_exports = {};
 __export(rules_exports, {
   rulesCommand: () => rulesCommand
 });
-import fs5 from "node:fs";
-import path5 from "node:path";
-import yaml3 from "js-yaml";
+import fs6 from "node:fs";
+import path6 from "node:path";
+import yaml4 from "js-yaml";
 async function rulesCommand() {
   const configLoader = new ConfigLoader();
   let config;
@@ -5655,18 +5688,18 @@ async function rulesCommand() {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const rulesPath = path5.resolve(config.security.rulesPath);
-  if (!fs5.existsSync(rulesPath)) {
+  const rulesPath = path6.resolve(config.security.rulesPath);
+  if (!fs6.existsSync(rulesPath)) {
     console.log(`Rules directory not found: ${rulesPath}`);
     console.log("No security rules loaded.");
     return;
   }
-  const stat = fs5.statSync(rulesPath);
+  const stat = fs6.statSync(rulesPath);
   if (!stat.isDirectory()) {
     console.error(`Rules path is not a directory: ${rulesPath}`);
     process.exit(1);
   }
-  const files = fs5.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  const files = fs6.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
   if (files.length === 0) {
     console.log(`No YAML rule files found in: ${rulesPath}`);
     return;
@@ -5675,10 +5708,10 @@ async function rulesCommand() {
   const allRules = [];
   const errors = [];
   for (const file of files) {
-    const filePath = path5.join(rulesPath, file);
+    const filePath = path6.join(rulesPath, file);
     try {
-      const raw = fs5.readFileSync(filePath, "utf-8");
-      const parsed = yaml3.load(raw);
+      const raw = fs6.readFileSync(filePath, "utf-8");
+      const parsed = yaml4.load(raw);
       const rules = ruleLoader.loadFromObject(parsed);
       allRules.push(...rules);
     } catch (error) {
@@ -5717,21 +5750,21 @@ async function rulesCommand() {
   }
 }
 var init_rules = __esm({
-  "dist/commands/rules.js"() {
+  "packages/cli/dist/commands/rules.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/status.js
+// packages/cli/dist/commands/status.js
 var status_exports = {};
 __export(status_exports, {
   statusCommand: () => statusCommand
 });
-import fs6 from "node:fs";
-import path6 from "node:path";
-import yaml4 from "js-yaml";
+import fs7 from "node:fs";
+import path7 from "node:path";
+import yaml5 from "js-yaml";
 async function statusCommand() {
   const configLoader = new ConfigLoader();
   let config;
@@ -5787,23 +5820,23 @@ async function statusCommand() {
   }
   console.log("");
   console.log("Storage:");
-  const dbPath = path6.resolve(config.storage.path);
-  const dbExists = fs6.existsSync(dbPath);
+  const dbPath = path7.resolve(config.storage.path);
+  const dbExists = fs7.existsSync(dbPath);
   console.log(`  Database: ${dbPath}`);
   console.log(`  Status:   ${dbExists ? "exists" : "not yet created"}`);
   console.log("");
-  const rulesPath = path6.resolve(config.security.rulesPath);
+  const rulesPath = path7.resolve(config.security.rulesPath);
   let ruleCount = 0;
   let ruleFileCount = 0;
-  if (fs6.existsSync(rulesPath) && fs6.statSync(rulesPath).isDirectory()) {
-    const files = fs6.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
+  if (fs7.existsSync(rulesPath) && fs7.statSync(rulesPath).isDirectory()) {
+    const files = fs7.readdirSync(rulesPath).filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"));
     ruleFileCount = files.length;
     const ruleLoader = new RuleLoader();
     for (const file of files) {
-      const filePath = path6.join(rulesPath, file);
+      const filePath = path7.join(rulesPath, file);
       try {
-        const raw = fs6.readFileSync(filePath, "utf-8");
-        const parsed = yaml4.load(raw);
+        const raw = fs7.readFileSync(filePath, "utf-8");
+        const parsed = yaml5.load(raw);
         const rules = ruleLoader.loadFromObject(parsed);
         ruleCount += rules.length;
       } catch {
@@ -5824,20 +5857,20 @@ async function statusCommand() {
   console.log(`  Pretty: ${config.logger.pretty}`);
 }
 var init_status = __esm({
-  "dist/commands/status.js"() {
+  "packages/cli/dist/commands/status.js"() {
     "use strict";
     init_dist();
     init_dist5();
   }
 });
 
-// dist/commands/logs.js
+// packages/cli/dist/commands/logs.js
 var logs_exports = {};
 __export(logs_exports, {
   logsCommand: () => logsCommand
 });
-import fs7 from "node:fs";
-import path7 from "node:path";
+import fs8 from "node:fs";
+import path8 from "node:path";
 async function logsCommand(tail) {
   const configLoader = new ConfigLoader();
   let config;
@@ -5847,8 +5880,8 @@ async function logsCommand(tail) {
     console.error("Failed to load configuration:", error.message);
     process.exit(1);
   }
-  const dbPath = path7.resolve(config.storage.path);
-  if (!fs7.existsSync(dbPath)) {
+  const dbPath = path8.resolve(config.storage.path);
+  if (!fs8.existsSync(dbPath)) {
     console.log(`Database not found at: ${dbPath}`);
     console.log("No audit log entries. Alfred has not been run yet, or the database path is incorrect.");
     return;
@@ -5894,14 +5927,14 @@ async function logsCommand(tail) {
   }
 }
 var init_logs = __esm({
-  "dist/commands/logs.js"() {
+  "packages/cli/dist/commands/logs.js"() {
     "use strict";
     init_dist();
     init_dist3();
   }
 });
 
-// dist/index.js
+// packages/cli/dist/index.js
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
