@@ -528,6 +528,8 @@ export class MessagePipeline {
    * Trim messages to fit within the LLM's context window.
    * Groups tool_use/tool_result pairs as atomic units so they are never
    * split during trimming. Drops oldest groups first.
+   * When messages are trimmed, builds a compact summary of the dropped
+   * messages so the LLM retains conversational context.
    */
   private trimToContextWindow(system: string, messages: LLMMessage[]): LLMMessage[] {
     const contextWindow = this.llm.getContextWindow();
@@ -538,8 +540,9 @@ export class MessagePipeline {
     const latestMsg = messages[messages.length - 1];
     const latestTokens = estimateMessageTokens(latestMsg);
 
-    // Reserve tokens for system + latest message + output buffer
-    const reservedTokens = systemTokens + latestTokens + 200; // 200 for overhead
+    // Reserve tokens for system + latest message + output buffer + summary
+    const summaryBudget = 500; // tokens reserved for the trimmed-context summary
+    const reservedTokens = systemTokens + latestTokens + 200 + summaryBudget;
     let availableTokens = maxInputTokens - reservedTokens;
 
     if (availableTokens <= 0) {
@@ -569,15 +572,71 @@ export class MessagePipeline {
         { trimmedCount, totalMessages: messages.length, maxInputTokens },
         'Trimmed conversation history to fit context window',
       );
-      // Prepend a context note so the LLM knows history was trimmed
+
+      // Build a compact summary of the trimmed (dropped) messages
+      const droppedMessages = history.slice(0, history.length - keptMessages.length);
+      const summary = this.summarizeTrimmedMessages(droppedMessages);
+
       keptMessages.unshift({
         role: 'user',
-        content: `[System note: ${trimmedCount} older message(s) were omitted to fit the context window. The conversation continues from the most recent messages.]`,
+        content: `[Earlier conversation summary — ${trimmedCount} messages were trimmed to fit the context window:\n${summary}\n\nThe conversation continues below with the most recent messages.]`,
       });
     }
 
     keptMessages.push(latestMsg);
     return keptMessages;
+  }
+
+  /**
+   * Build a compact text summary of messages that were trimmed from history.
+   * Extracts the key topics, user requests, and assistant actions so the LLM
+   * retains conversational context without needing the full messages.
+   */
+  private summarizeTrimmedMessages(messages: LLMMessage[]): string {
+    const lines: string[] = [];
+    for (const msg of messages) {
+      const text = this.extractMessageText(msg);
+      if (!text) continue;
+
+      // Truncate long messages to keep the summary compact
+      const truncated = text.length > 150 ? text.slice(0, 150) + '...' : text;
+      const prefix = msg.role === 'user' ? 'User' : 'Assistant';
+      lines.push(`- ${prefix}: ${truncated}`);
+
+      // Also note tool usage without the full result
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_use') {
+            const inputSummary = JSON.stringify(block.input).slice(0, 80);
+            lines.push(`  → Tool: ${block.name}(${inputSummary})`);
+          }
+        }
+      }
+    }
+
+    // Cap the summary to avoid using too many tokens itself
+    const MAX_SUMMARY_LINES = 40;
+    if (lines.length > MAX_SUMMARY_LINES) {
+      const kept = lines.slice(0, MAX_SUMMARY_LINES);
+      kept.push(`  ... and ${lines.length - MAX_SUMMARY_LINES} more interactions`);
+      return kept.join('\n');
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Extract the plain text content from an LLM message, ignoring tool blocks.
+   */
+  private extractMessageText(msg: LLMMessage): string {
+    if (typeof msg.content === 'string') return msg.content;
+    if (!Array.isArray(msg.content)) return '';
+    const texts: string[] = [];
+    for (const block of msg.content) {
+      if (block.type === 'text' && block.text) {
+        texts.push(block.text);
+      }
+    }
+    return texts.join(' ');
   }
 
   /**
