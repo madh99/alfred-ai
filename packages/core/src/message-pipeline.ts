@@ -21,7 +21,7 @@ import type { EmbeddingService } from './embedding-service.js';
 import type { ActiveLearningService } from './active-learning/active-learning-service.js';
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 
-const MAX_TOOL_ITERATIONS = 10;
+const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 
@@ -194,9 +194,10 @@ export class MessagePipeline {
 
       const messages = this.trimToContextWindow(system, allMessages);
 
-      // 7. Agentic tool-use loop
+      // 7. Agentic tool-use loop (timeout-based, no hard iteration limit)
       let response: LLMResponse;
       let iteration = 0;
+      const toolLoopStart = Date.now();
       onProgress?.('Thinking...');
 
       while (true) {
@@ -211,10 +212,12 @@ export class MessagePipeline {
           break;
         }
 
-        // Max iterations reached — inject synthetic tool_results so the
-        // tool_use/tool_result pair is never left incomplete in DB or in-flight messages.
-        if (iteration >= MAX_TOOL_ITERATIONS) {
-          this.logger.warn({ iteration, pendingToolCalls: response.toolCalls.length }, 'Max tool iterations reached, injecting synthetic results');
+        // Timeout reached — inject synthetic tool_results, persist to DB,
+        // and let the LLM produce a final summary for the user.
+        const elapsed = Date.now() - toolLoopStart;
+        if (elapsed >= MAX_TOOL_DURATION_MS) {
+          const elapsedMin = Math.round(elapsed / 60_000);
+          this.logger.warn({ iteration, elapsedMin, pendingToolCalls: response.toolCalls.length }, 'Tool loop timeout reached');
 
           const assistantContent: LLMContentBlock[] = [];
           if (response.content) {
@@ -228,24 +231,26 @@ export class MessagePipeline {
           const syntheticResults: LLMContentBlock[] = response.toolCalls.map(tc => ({
             type: 'tool_result' as const,
             tool_use_id: tc.id,
-            content: 'Error: max tool iterations reached, execution skipped.',
+            content: `Error: time limit reached (${elapsedMin} min), execution skipped.`,
             is_error: true,
           }));
           messages.push({ role: 'user', content: syntheticResults });
 
           // Persist both to DB so the pair is complete
           this.conversationManager.addMessage(
-            conversation.id,
-            'assistant',
-            response.content ?? '',
-            JSON.stringify(response.toolCalls),
+            conversation.id, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
           );
           this.conversationManager.addMessage(
-            conversation.id,
-            'user',
-            '',
-            JSON.stringify(syntheticResults),
+            conversation.id, 'user', '', JSON.stringify(syntheticResults),
           );
+
+          // Ask the LLM to summarize what it accomplished and what remains
+          messages.push({
+            role: 'user',
+            content: `[System: Das Zeitlimit von ${elapsedMin} Minuten für Tool-Aufrufe wurde erreicht. Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist. Der User kann dir dann sagen ob du weitermachen sollst.]`,
+          });
+          const summaryResponse = await this.llm.complete({ messages, system });
+          response = summaryResponse;
           break;
         }
 
@@ -282,29 +287,16 @@ export class MessagePipeline {
         );
 
         // Save intermediate tool interaction to DB so follow-up questions have context.
-        // Store assistant content WITHOUT tool-call text summary (the tool_use blocks
-        // are already captured in the toolCalls JSON column and will be replayed
-        // structurally by buildMessages()).
         this.conversationManager.addMessage(
-          conversation.id,
-          'assistant',
-          response.content ?? '',
-          JSON.stringify(response.toolCalls),
+          conversation.id, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
         );
-        // Store tool results as structured JSON so buildMessages() can replay them
-        // as proper tool_result blocks (required by the Anthropic API protocol).
         this.conversationManager.addMessage(
-          conversation.id,
-          'user',
-          '',
-          JSON.stringify(toolResultBlocks),
+          conversation.id, 'user', '', JSON.stringify(toolResultBlocks),
         );
 
         // Add tool results as user message
         messages.push({ role: 'user', content: toolResultBlocks });
-        if (iteration < MAX_TOOL_ITERATIONS) {
-          onProgress?.('Thinking...');
-        }
+        onProgress?.('Thinking...');
       }
 
       // Use the final response content, or fall back to the last assistant text
