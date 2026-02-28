@@ -483,9 +483,8 @@ export class MessagePipeline {
 
   /**
    * Trim messages to fit within the LLM's context window.
-   * Keeps the system prompt, the latest user message, and as many
-   * recent history messages as possible. Drops oldest messages first.
-   * Injects a summary note when messages are trimmed.
+   * Groups tool_use/tool_result pairs as atomic units so they are never
+   * split during trimming. Drops oldest groups first.
    */
   private trimToContextWindow(system: string, messages: LLMMessage[]): LLMMessage[] {
     const contextWindow = this.llm.getContextWindow();
@@ -506,16 +505,22 @@ export class MessagePipeline {
       return [latestMsg];
     }
 
-    // Walk backwards from the second-to-last message, keeping as many as fit
-    const keptMessages: LLMMessage[] = [];
-    for (let i = messages.length - 2; i >= 0; i--) {
-      const msgTokens = estimateMessageTokens(messages[i]);
-      if (msgTokens > availableTokens) break;
-      availableTokens -= msgTokens;
-      keptMessages.unshift(messages[i]);
+    // Group history into atomic units (tool_use + tool_result stay together)
+    const history = messages.slice(0, -1);
+    const groups = this.groupToolPairs(history);
+
+    // Walk backwards through groups, keeping as many as fit
+    const keptGroups: LLMMessage[][] = [];
+    for (let i = groups.length - 1; i >= 0; i--) {
+      const groupTokens = groups[i].reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
+      if (groupTokens > availableTokens) break;
+      availableTokens -= groupTokens;
+      keptGroups.unshift(groups[i]);
     }
 
-    const trimmedCount = messages.length - 1 - keptMessages.length;
+    const keptMessages = keptGroups.flat();
+    const trimmedCount = history.length - keptMessages.length;
+
     if (trimmedCount > 0) {
       this.logger.info(
         { trimmedCount, totalMessages: messages.length, maxInputTokens },
@@ -530,6 +535,37 @@ export class MessagePipeline {
 
     keptMessages.push(latestMsg);
     return keptMessages;
+  }
+
+  /**
+   * Group messages so that tool_use (assistant) + tool_result (user) pairs
+   * are treated as atomic units that are never split during trimming.
+   */
+  private groupToolPairs(messages: LLMMessage[]): LLMMessage[][] {
+    const groups: LLMMessage[][] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i];
+      if (msg.role === 'assistant' && Array.isArray(msg.content) && msg.content.some(b => b.type === 'tool_use')) {
+        const group = [msg];
+        // Look ahead for the matching tool_result user message
+        if (i + 1 < messages.length && messages[i + 1].role === 'user') {
+          const next = messages[i + 1];
+          if (Array.isArray(next.content) && next.content.some(b => b.type === 'tool_result')) {
+            group.push(next);
+            i += 2;
+            groups.push(group);
+            continue;
+          }
+        }
+        groups.push(group);
+        i++;
+      } else {
+        groups.push([msg]);
+        i++;
+      }
+    }
+    return groups;
   }
 
   /**

@@ -87,6 +87,10 @@ describe('PromptBuilder', () => {
         { id: 'tc1', name: 'calculator', input: { expression: '2+2' } },
       ]);
 
+      const toolResultBlocks = JSON.stringify([
+        { type: 'tool_result', tool_use_id: 'tc1', content: '4', is_error: false },
+      ]);
+
       const history: ConversationMessage[] = [
         {
           id: 'msg-1',
@@ -96,10 +100,18 @@ describe('PromptBuilder', () => {
           toolCalls,
           createdAt: new Date().toISOString(),
         },
+        {
+          id: 'msg-2',
+          conversationId: 'conv-1',
+          role: 'user',
+          content: '',
+          toolCalls: toolResultBlocks,
+          createdAt: new Date().toISOString(),
+        },
       ];
 
       const messages = builder.buildMessages(history);
-      expect(messages).toHaveLength(1);
+      expect(messages).toHaveLength(2);
       expect(messages[0].role).toBe('assistant');
       // Content should be an array of LLMContentBlock when toolCalls are present
       expect(Array.isArray(messages[0].content)).toBe(true);
@@ -110,6 +122,15 @@ describe('PromptBuilder', () => {
         id: 'tc1',
         name: 'calculator',
         input: { expression: '2+2' },
+      });
+      // Tool result message
+      expect(messages[1].role).toBe('user');
+      const resultContent = messages[1].content as any[];
+      expect(resultContent[0]).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'tc1',
+        content: '4',
+        is_error: false,
       });
     });
   });

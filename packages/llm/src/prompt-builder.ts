@@ -216,7 +216,7 @@ For complex tasks, work through multiple steps:
   }
 
   buildMessages(history: ConversationMessage[]): LLMMessage[] {
-    return history
+    const messages = history
       .filter((msg) => msg.role === 'user' || msg.role === 'assistant')
       .map((msg): LLMMessage => {
         if (msg.toolCalls) {
@@ -260,6 +260,66 @@ For complex tasks, work through multiple steps:
 
         return { role: msg.role as 'user' | 'assistant', content: msg.content };
       });
+
+    return this.sanitizeToolMessages(messages);
+  }
+
+  /**
+   * Remove messages with orphaned tool_use or tool_result blocks.
+   * This heals corrupt DB entries where tool_use/tool_result pairs were
+   * broken (e.g. by partial trimming or data loss). Without this,
+   * the Anthropic API rejects the entire request with a 400 error.
+   */
+  private sanitizeToolMessages(messages: LLMMessage[]): LLMMessage[] {
+    // Collect all tool_use IDs from assistant messages
+    const toolUseIds = new Set<string>();
+    for (const msg of messages) {
+      if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_use') {
+            toolUseIds.add(block.id);
+          }
+        }
+      }
+    }
+
+    // Collect all tool_result IDs from user messages
+    const toolResultIds = new Set<string>();
+    for (const msg of messages) {
+      if (msg.role === 'user' && Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'tool_result') {
+            toolResultIds.add(block.tool_use_id);
+          }
+        }
+      }
+    }
+
+    return messages.filter(msg => {
+      if (!Array.isArray(msg.content)) return true;
+
+      if (msg.role === 'assistant') {
+        const hasToolUse = msg.content.some(b => b.type === 'tool_use');
+        if (!hasToolUse) return true;
+        // Keep only if every tool_use has a matching tool_result
+        const allMatched = msg.content
+          .filter(b => b.type === 'tool_use')
+          .every(b => toolResultIds.has((b as { id: string }).id));
+        return allMatched;
+      }
+
+      if (msg.role === 'user') {
+        const hasToolResult = msg.content.some(b => b.type === 'tool_result');
+        if (!hasToolResult) return true;
+        // Keep only if every tool_result has a matching tool_use
+        const allMatched = msg.content
+          .filter(b => b.type === 'tool_result')
+          .every(b => toolUseIds.has((b as { tool_use_id: string }).tool_use_id));
+        return allMatched;
+      }
+
+      return true;
+    });
   }
 
   buildTools(skills: SkillMetadata[]): ToolDefinition[] {
