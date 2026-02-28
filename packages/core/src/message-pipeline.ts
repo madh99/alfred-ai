@@ -206,11 +206,46 @@ export class MessagePipeline {
           tools: tools && tools.length > 0 ? tools : undefined,
         });
 
-        // If no tool calls or max iterations reached, break
-        if (!response.toolCalls || response.toolCalls.length === 0 || iteration >= MAX_TOOL_ITERATIONS) {
-          if (iteration >= MAX_TOOL_ITERATIONS && response.toolCalls?.length) {
-            this.logger.warn({ iteration }, 'Max tool iterations reached, stopping loop');
+        // If no tool calls, we're done
+        if (!response.toolCalls || response.toolCalls.length === 0) {
+          break;
+        }
+
+        // Max iterations reached — inject synthetic tool_results so the
+        // tool_use/tool_result pair is never left incomplete in DB or in-flight messages.
+        if (iteration >= MAX_TOOL_ITERATIONS) {
+          this.logger.warn({ iteration, pendingToolCalls: response.toolCalls.length }, 'Max tool iterations reached, injecting synthetic results');
+
+          const assistantContent: LLMContentBlock[] = [];
+          if (response.content) {
+            assistantContent.push({ type: 'text', text: response.content });
           }
+          for (const tc of response.toolCalls) {
+            assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+          }
+          messages.push({ role: 'assistant', content: assistantContent });
+
+          const syntheticResults: LLMContentBlock[] = response.toolCalls.map(tc => ({
+            type: 'tool_result' as const,
+            tool_use_id: tc.id,
+            content: 'Error: max tool iterations reached, execution skipped.',
+            is_error: true,
+          }));
+          messages.push({ role: 'user', content: syntheticResults });
+
+          // Persist both to DB so the pair is complete
+          this.conversationManager.addMessage(
+            conversation.id,
+            'assistant',
+            response.content ?? '',
+            JSON.stringify(response.toolCalls),
+          );
+          this.conversationManager.addMessage(
+            conversation.id,
+            'user',
+            '',
+            JSON.stringify(syntheticResults),
+          );
           break;
         }
 

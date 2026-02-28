@@ -53,6 +53,12 @@ export class FileSkill extends Skill {
       return { success: false, error: 'Missing required fields "action" and "path"' };
     }
 
+    // Validate content early for actions that require it, so the LLM gets
+    // a clear error message and can retry with content instead of burning iterations.
+    if ((action === 'write' || action === 'write_binary' || action === 'append') && !content) {
+      return { success: false, error: `Missing "content" field for "${action}" action. You must provide the file content.` };
+    }
+
     const resolvedPath = this.resolvePath(rawPath);
 
     // Block access to sensitive system directories

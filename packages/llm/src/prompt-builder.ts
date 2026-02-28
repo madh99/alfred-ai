@@ -295,31 +295,27 @@ For complex tasks, work through multiple steps:
       }
     }
 
-    return messages.filter(msg => {
-      if (!Array.isArray(msg.content)) return true;
-
-      if (msg.role === 'assistant') {
-        const hasToolUse = msg.content.some(b => b.type === 'tool_use');
-        if (!hasToolUse) return true;
-        // Keep only if every tool_use has a matching tool_result
-        const allMatched = msg.content
-          .filter(b => b.type === 'tool_use')
-          .every(b => toolResultIds.has((b as { id: string }).id));
-        return allMatched;
+    // Filter individual orphaned blocks, not entire messages.
+    // This avoids cascade effects where removing a message with one
+    // orphaned block also removes valid text/tool blocks.
+    const result: LLMMessage[] = [];
+    for (const msg of messages) {
+      if (!Array.isArray(msg.content)) {
+        result.push(msg);
+        continue;
       }
 
-      if (msg.role === 'user') {
-        const hasToolResult = msg.content.some(b => b.type === 'tool_result');
-        if (!hasToolResult) return true;
-        // Keep only if every tool_result has a matching tool_use
-        const allMatched = msg.content
-          .filter(b => b.type === 'tool_result')
-          .every(b => toolUseIds.has((b as { tool_use_id: string }).tool_use_id));
-        return allMatched;
-      }
+      const filtered = msg.content.filter(block => {
+        if (block.type === 'tool_use') return toolResultIds.has(block.id);
+        if (block.type === 'tool_result') return toolUseIds.has(block.tool_use_id);
+        return true;
+      });
 
-      return true;
-    });
+      // Drop message only if all content was removed
+      if (filtered.length === 0) continue;
+      result.push({ ...msg, content: filtered });
+    }
+    return result;
   }
 
   buildTools(skills: SkillMetadata[]): ToolDefinition[] {
