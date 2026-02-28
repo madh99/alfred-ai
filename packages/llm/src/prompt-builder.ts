@@ -11,6 +11,7 @@ export interface MemoryForPrompt {
   key: string;
   value: string;
   category: string;
+  type?: string;
 }
 
 export interface UserProfile {
@@ -165,9 +166,47 @@ For complex tasks, work through multiple steps:
 
     if (memories && memories.length > 0) {
       prompt += '\n\n## Memories about this user\n';
-      for (const m of memories) {
-        prompt += `- [${m.category}] ${m.key}: ${m.value}\n`;
+
+      // Group by type if type info is available
+      const hasTypes = memories.some(m => m.type && m.type !== 'general');
+      if (hasTypes) {
+        const groups = new Map<string, MemoryForPrompt[]>();
+        for (const m of memories) {
+          const type = m.type || 'general';
+          let group = groups.get(type);
+          if (!group) {
+            group = [];
+            groups.set(type, group);
+          }
+          group.push(m);
+        }
+
+        const typeLabels: Record<string, string> = {
+          fact: 'Facts',
+          preference: 'Preferences',
+          correction: 'Corrections',
+          entity: 'Entities',
+          decision: 'Decisions',
+          relationship: 'Relationships',
+          principle: 'Principles',
+          commitment: 'Commitments',
+          moment: 'Moments',
+          skill: 'Skills',
+          general: 'General',
+        };
+
+        for (const [type, items] of groups) {
+          prompt += `\n### ${typeLabels[type] || type}\n`;
+          for (const m of items) {
+            prompt += `- ${m.key}: ${m.value}\n`;
+          }
+        }
+      } else {
+        for (const m of memories) {
+          prompt += `- [${m.category}] ${m.key}: ${m.value}\n`;
+        }
       }
+
       prompt += '\nUse these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.';
     } else {
       prompt += '\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.';

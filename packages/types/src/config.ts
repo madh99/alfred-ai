@@ -124,6 +124,13 @@ export interface CodeSandboxConfig {
   allowNetwork?: boolean;
 }
 
+export interface ActiveLearningConfig {
+  enabled?: boolean;
+  minMessageLength?: number;
+  minConfidence?: number;
+  maxExtractionsPerMinute?: number;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -141,4 +148,5 @@ export interface AlfredConfig {
   calendar?: CalendarConfig;
   mcp?: MCPConfig;
   codeSandbox?: CodeSandboxConfig;
+  activeLearning?: ActiveLearningConfig;
 }

@@ -137,6 +137,13 @@ export const CodeSandboxConfigSchema = z.object({
   allowNetwork: z.boolean().optional(),
 });
 
+export const ActiveLearningConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  minMessageLength: z.number().optional(),
+  minConfidence: z.number().min(0).max(1).optional(),
+  maxExtractionsPerMinute: z.number().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -154,4 +161,5 @@ export const AlfredConfigSchema = z.object({
   calendar: CalendarConfigSchema.optional(),
   mcp: MCPConfigSchema.optional(),
   codeSandbox: CodeSandboxConfigSchema.optional(),
+  activeLearning: ActiveLearningConfigSchema.optional(),
 });

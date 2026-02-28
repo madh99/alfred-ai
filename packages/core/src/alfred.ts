@@ -43,6 +43,8 @@ import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
 import { BackgroundTaskRunner } from './background-task-runner.js';
 import { ProactiveScheduler } from './proactive-scheduler.js';
+import { ActiveLearningService } from './active-learning/active-learning-service.js';
+import { MemoryRetriever } from './active-learning/memory-retriever.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -100,6 +102,31 @@ export class Alfred {
       embeddingRepo,
       this.logger.child({ component: 'embeddings' }),
     );
+
+    // 3b. Active learning & memory retriever
+    const activeLearningEnabled = this.config.activeLearning?.enabled !== false;
+    let activeLearning: ActiveLearningService | undefined;
+    let memoryRetriever: MemoryRetriever | undefined;
+
+    if (activeLearningEnabled) {
+      activeLearning = new ActiveLearningService({
+        llm: llmProvider,
+        memoryRepo,
+        logger: this.logger.child({ component: 'active-learning' }),
+        embeddingService,
+        minMessageLength: this.config.activeLearning?.minMessageLength,
+        minConfidence: this.config.activeLearning?.minConfidence,
+        maxExtractionsPerMinute: this.config.activeLearning?.maxExtractionsPerMinute,
+      });
+
+      memoryRetriever = new MemoryRetriever(
+        memoryRepo,
+        this.logger.child({ component: 'memory-retriever' }),
+        embeddingService,
+      );
+
+      this.logger.info('Active learning & memory retriever initialized');
+    }
 
     // 4. Initialize skills
     const skillSandbox = new SkillSandbox(
@@ -202,6 +229,8 @@ export class Alfred {
       speechTranscriber,
       inboxPath,
       embeddingService,
+      activeLearning,
+      memoryRetriever,
     });
 
     // 6. Initialize reminder scheduler

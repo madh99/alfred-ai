@@ -1,0 +1,163 @@
+import type { Logger } from 'pino';
+import type { LLMProvider } from '@alfred/llm';
+import type { MemoryRepository, MemoryEntry } from '@alfred/storage';
+
+const MERGE_PROMPT = `You are a memory consolidation system. Merge these similar memories into one concise entry.
+
+Memories to merge:
+{MEMORIES}
+
+Return a single JSON object with: {"key": "merged_key", "value": "merged concise value", "category": "best_category"}
+Return ONLY valid JSON, no explanation.`;
+
+export class MemoryConsolidator {
+  constructor(
+    private readonly llm: LLMProvider,
+    private readonly memoryRepo: MemoryRepository,
+    private readonly logger: Logger,
+  ) {}
+
+  /**
+   * Run consolidation for a user:
+   * 1. Delete stale low-confidence memories (older than staleDays)
+   * 2. Find and merge similar memories via LLM
+   */
+  async consolidate(
+    userId: string,
+    staleDays = 60,
+    staleMaxConfidence = 0.5,
+  ): Promise<{ deleted: number; merged: number }> {
+    let deleted = 0;
+    let merged = 0;
+
+    // 1. Delete stale memories
+    try {
+      const stale = this.memoryRepo.findStale(userId, staleDays, staleMaxConfidence);
+      if (stale.length > 0) {
+        deleted = this.memoryRepo.deleteByIds(stale.map(m => m.id));
+        this.logger.info({ userId, deleted }, 'Deleted stale memories');
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to delete stale memories');
+    }
+
+    // 2. Find and merge similar memories
+    try {
+      const allMemories = this.memoryRepo.listAll(userId);
+      const groups = this.findSimilarGroups(allMemories);
+
+      for (const group of groups) {
+        try {
+          const mergeResult = await this.mergeGroup(group);
+          if (mergeResult) {
+            // Delete old entries
+            this.memoryRepo.deleteByIds(group.map(m => m.id));
+            // Save merged entry (keep highest confidence from the group)
+            const maxConfidence = Math.max(...group.map(m => m.confidence));
+            this.memoryRepo.saveWithMetadata(
+              userId,
+              mergeResult.key,
+              mergeResult.value,
+              mergeResult.category,
+              group[0].type,
+              maxConfidence,
+              'auto',
+            );
+            merged++;
+            this.logger.info(
+              { mergedKeys: group.map(m => m.key), newKey: mergeResult.key },
+              'Merged similar memories',
+            );
+          }
+        } catch (err) {
+          this.logger.warn({ err, keys: group.map(m => m.key) }, 'Failed to merge memory group');
+        }
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to find similar memories for merging');
+    }
+
+    return { deleted, merged };
+  }
+
+  /**
+   * Find groups of similar memories using Jaccard similarity on key tokens.
+   */
+  private findSimilarGroups(memories: MemoryEntry[]): MemoryEntry[][] {
+    const groups: MemoryEntry[][] = [];
+    const used = new Set<string>();
+
+    for (let i = 0; i < memories.length; i++) {
+      if (used.has(memories[i].id)) continue;
+
+      const group = [memories[i]];
+      const tokensA = this.tokenize(memories[i].key);
+
+      for (let j = i + 1; j < memories.length; j++) {
+        if (used.has(memories[j].id)) continue;
+
+        const tokensB = this.tokenize(memories[j].key);
+        const similarity = this.jaccardSimilarity(tokensA, tokensB);
+
+        if (similarity >= 0.5) {
+          group.push(memories[j]);
+        }
+      }
+
+      if (group.length >= 2) {
+        for (const m of group) used.add(m.id);
+        groups.push(group);
+      }
+    }
+
+    return groups;
+  }
+
+  private tokenize(text: string): Set<string> {
+    return new Set(text.toLowerCase().split(/[\s_\-]+/).filter(t => t.length >= 2));
+  }
+
+  private jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 && b.size === 0) return 0;
+    let intersection = 0;
+    for (const token of a) {
+      if (b.has(token)) intersection++;
+    }
+    const union = a.size + b.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  }
+
+  private async mergeGroup(
+    group: MemoryEntry[],
+  ): Promise<{ key: string; value: string; category: string } | null> {
+    const memoriesText = group
+      .map(m => `- ${m.key}: ${m.value} [${m.category}]`)
+      .join('\n');
+
+    const prompt = MERGE_PROMPT.replace('{MEMORIES}', memoriesText);
+
+    try {
+      const response = await this.llm.complete({
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        tier: 'fast',
+        maxTokens: 256,
+      });
+
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      if (!parsed.key || !parsed.value) return null;
+
+      return {
+        key: String(parsed.key),
+        value: String(parsed.value),
+        category: String(parsed.category || group[0].category),
+      };
+    } catch (err) {
+      this.logger.debug({ err }, 'LLM merge failed');
+      return null;
+    }
+  }
+}

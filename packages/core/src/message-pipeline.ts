@@ -18,6 +18,8 @@ import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import type { SpeechTranscriber } from './speech-transcriber.js';
 import type { EmbeddingService } from './embedding-service.js';
+import type { ActiveLearningService } from './active-learning/active-learning-service.js';
+import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 
 const MAX_TOOL_ITERATIONS = 10;
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
@@ -37,6 +39,8 @@ export interface PipelineOptions {
   speechTranscriber?: SpeechTranscriber;
   inboxPath?: string;
   embeddingService?: EmbeddingService;
+  activeLearning?: ActiveLearningService;
+  memoryRetriever?: MemoryRetriever;
 }
 
 /** Tracks a running delegate agent so other messages can query its status. */
@@ -60,6 +64,8 @@ export class MessagePipeline {
   private readonly speechTranscriber?: SpeechTranscriber;
   private readonly inboxPath?: string;
   private readonly embeddingService?: EmbeddingService;
+  private readonly activeLearning?: ActiveLearningService;
+  private readonly memoryRetriever?: MemoryRetriever;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -77,6 +83,8 @@ export class MessagePipeline {
     this.speechTranscriber = options.speechTranscriber;
     this.inboxPath = options.inboxPath;
     this.embeddingService = options.embeddingService;
+    this.activeLearning = options.activeLearning;
+    this.memoryRetriever = options.memoryRetriever;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -111,10 +119,15 @@ export class MessagePipeline {
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
 
-      // 5. Load user memories for prompt injection (semantic search if available)
+      // 5. Load user memories for prompt injection (hybrid retrieval or fallback)
       //    Uses masterUserId so linked cross-platform accounts share memories.
-      let memories: { key: string; value: string; category: string }[] | undefined;
-      if (this.memoryRepo) {
+      let memories: { key: string; value: string; category: string; type?: string }[] | undefined;
+      if (this.memoryRetriever && message.text) {
+        try {
+          memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15);
+        } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
+      }
+      if (!memories && this.memoryRepo) {
         try {
           if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
             // Use semantic search: top-10 relevant + 5 newest
@@ -267,6 +280,11 @@ export class MessagePipeline {
         'assistant',
         responseText,
       );
+
+      // 9. Active learning: extract memories from conversation (fire-and-forget)
+      if (this.activeLearning) {
+        this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
+      }
 
       const duration = Date.now() - startTime;
       this.logger.info(

@@ -220,4 +220,19 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 11,
+    description: 'Active learning: memory metadata (type, confidence, source, access tracking)',
+    up(db) {
+      db.exec(`
+        ALTER TABLE memories ADD COLUMN type TEXT NOT NULL DEFAULT 'general';
+        ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;
+        ALTER TABLE memories ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+        ALTER TABLE memories ADD COLUMN last_accessed_at TEXT;
+        ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS idx_memories_user_type ON memories(user_id, type);
+        CREATE INDEX IF NOT EXISTS idx_memories_confidence ON memories(user_id, confidence DESC);
+      `);
+    },
+  },
 ];
