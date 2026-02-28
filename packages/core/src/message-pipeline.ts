@@ -307,7 +307,23 @@ export class MessagePipeline {
         }
       }
 
-      const responseText = response.content || '(no response)';
+      // Use the final response content, or fall back to the last assistant text
+      // from a previous tool iteration (the LLM may have already answered inline
+      // with a tool_use and then returned empty content after the tool_result).
+      let responseText = response.content;
+      if (!responseText) {
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+            const textBlock = msg.content.find(b => b.type === 'text');
+            if (textBlock && 'text' in textBlock && textBlock.text) {
+              responseText = textBlock.text;
+              break;
+            }
+          }
+        }
+      }
+      if (!responseText) responseText = '(no response)';
 
       // 8. Save final assistant response
       this.conversationManager.addMessage(
