@@ -54,6 +54,20 @@ export class DocumentSkill extends Skill {
     super();
   }
 
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
+  private allUserIds(context: SkillContext): string[] {
+    const set = new Set<string>();
+    set.add(this.effectiveUserId(context));
+    set.add(context.userId);
+    if (context.linkedPlatformUserIds) {
+      for (const id of context.linkedPlatformUserIds) set.add(id);
+    }
+    return [...set];
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -112,7 +126,7 @@ export class DocumentSkill extends Skill {
     }
 
     try {
-      const result = await this.processor.ingest(context.userId, filePath, filename, mimeType);
+      const result = await this.processor.ingest(this.effectiveUserId(context), filePath, filename, mimeType);
       return {
         success: true,
         data: result,
@@ -141,10 +155,21 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Embedding service not available for document search' };
     }
 
-    const results = await this.embeddingService.semanticSearch(context.userId, query, limit);
+    // Search across all linked user IDs for cross-platform document access
+    const allIds = this.allUserIds(context);
+    const seen = new Set<string>();
+    const allResults: { key: string; value: string; category: string; score: number }[] = [];
+    for (const uid of allIds) {
+      for (const r of await this.embeddingService.semanticSearch(uid, query, limit)) {
+        if (!seen.has(r.key)) {
+          seen.add(r.key);
+          allResults.push(r);
+        }
+      }
+    }
 
     // Filter to only document-sourced results
-    const docResults = results.filter(r => r.category === 'document');
+    const docResults = allResults.filter(r => r.category === 'document');
 
     if (docResults.length === 0) {
       return { success: true, data: [], display: `No document matches found for "${query}".` };
@@ -202,7 +227,18 @@ export class DocumentSkill extends Skill {
     context: SkillContext,
   ): SkillResult {
     const limit = (input.limit as number) || 50;
-    const docs = this.docRepo.listByUser(context.userId);
+    // List documents across all linked user IDs
+    const allIds = this.allUserIds(context);
+    const seenDocs = new Set<string>();
+    const docs: ReturnType<typeof this.docRepo.listByUser> = [];
+    for (const uid of allIds) {
+      for (const d of this.docRepo.listByUser(uid)) {
+        if (!seenDocs.has(d.id)) {
+          seenDocs.add(d.id);
+          docs.push(d);
+        }
+      }
+    }
     const limited = docs.slice(0, limit);
 
     if (limited.length === 0) {

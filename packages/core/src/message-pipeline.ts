@@ -117,6 +117,13 @@ export class MessagePipeline {
         ? (this.users as { getMasterUserId(id: string): string }).getMasterUserId(user.id)
         : user.id;
 
+      // Resolve all linked platform user IDs once — reused for memory retrieval and skill context.
+      let linkedPlatformUserIds: string[] | undefined;
+      if ('getLinkedUsers' in this.users) {
+        const linked = (this.users as { getLinkedUsers(id: string): { platformUserId: string }[] }).getLinkedUsers(masterUserId);
+        linkedPlatformUserIds = linked.map(u => u.platformUserId);
+      }
+
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
         message.platform,
@@ -141,32 +148,35 @@ export class MessagePipeline {
       const skipMemories = syntheticInput && !hasAudioAttachment;
       if (this.memoryRetriever && message.text && !skipMemories) {
         try {
-          memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15);
+          memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15, linkedPlatformUserIds);
         } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
       }
       if (!memories && this.memoryRepo && !skipMemories) {
         try {
+          // Build all user IDs for cross-platform memory access
+          const memUserIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
           if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
-            // Use semantic search: top-10 relevant + 5 newest
-            const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
-            const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
-            // Merge and deduplicate by key
+            // Use semantic search: top-10 relevant + 5 newest across all linked IDs
             const seen = new Set<string>();
             memories = [];
-            for (const m of semanticResults) {
-              if (!seen.has(m.key)) {
-                seen.add(m.key);
-                memories.push(m);
+            for (const uid of memUserIds) {
+              for (const m of await this.embeddingService.semanticSearch(uid, message.text, 10)) {
+                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
               }
             }
-            for (const m of recentResults) {
-              if (!seen.has(m.key)) {
-                seen.add(m.key);
-                memories.push(m);
+            for (const uid of memUserIds) {
+              for (const m of this.memoryRepo.getRecentForPrompt(uid, 5)) {
+                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
               }
             }
           } else {
-            memories = this.memoryRepo.getRecentForPrompt(masterUserId, 20);
+            const seen = new Set<string>();
+            memories = [];
+            for (const uid of memUserIds) {
+              for (const m of this.memoryRepo.getRecentForPrompt(uid, 20)) {
+                if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
+              }
+            }
           }
         } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
       }
@@ -277,14 +287,6 @@ export class MessagePipeline {
         messages.push({ role: 'assistant', content: assistantContent });
 
         // Execute tool calls in parallel
-        // Resolve all linked platform user IDs so skills can find data stored
-        // under any linked account's platform ID (backward compat).
-        let linkedPlatformUserIds: string[] | undefined;
-        if ('getLinkedUsers' in this.users) {
-          const linked = (this.users as { getLinkedUsers(id: string): { platformUserId: string }[] }).getLinkedUsers(masterUserId);
-          linkedPlatformUserIds = linked.map(u => u.platformUserId);
-        }
-
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {

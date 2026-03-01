@@ -32,17 +32,43 @@ export class MemoryRetriever {
    * Hybrid retrieval combining keyword search, semantic search, and temporal decay.
    * Graceful degradation: without embeddings → 100% keyword score.
    */
-  async retrieve(userId: string, query: string, limit = 15): Promise<RetrievedMemory[]> {
-    try {
-      // 1. Keyword search (always available)
-      const keywordResults = this.memoryRepo.keywordSearch(userId, query, 30);
+  async retrieve(userId: string, query: string, limit = 15, additionalUserIds?: string[]): Promise<RetrievedMemory[]> {
+    // Build list of all user IDs to search (primary + linked platform IDs)
+    const userIds = [userId];
+    if (additionalUserIds) {
+      for (const id of additionalUserIds) {
+        if (id !== userId) userIds.push(id);
+      }
+    }
 
-      // 2. Semantic search (only if embeddings available)
+    try {
+
+      // 1. Keyword search across all user IDs (always available)
+      const keywordSeen = new Set<string>();
+      const keywordResults: MemoryEntry[] = [];
+      for (const uid of userIds) {
+        for (const m of this.memoryRepo.keywordSearch(uid, query, 30)) {
+          if (!keywordSeen.has(m.id)) {
+            keywordSeen.add(m.id);
+            keywordResults.push(m);
+          }
+        }
+      }
+
+      // 2. Semantic search across all user IDs (only if embeddings available)
       let semanticResults: SemanticSearchResult[] = [];
       let hasSemanticSearch = false;
       if (this.embeddingService) {
         try {
-          semanticResults = await this.embeddingService.semanticSearch(userId, query, 30);
+          const semanticSeen = new Set<string>();
+          for (const uid of userIds) {
+            for (const r of await this.embeddingService.semanticSearch(uid, query, 30)) {
+              if (!semanticSeen.has(r.key)) {
+                semanticSeen.add(r.key);
+                semanticResults.push(r);
+              }
+            }
+          }
           hasSemanticSearch = semanticResults.length > 0;
         } catch (err) {
           this.logger.debug({ err }, 'Semantic search failed, falling back to keyword-only');
@@ -148,14 +174,18 @@ export class MemoryRetriever {
       return diverseResults;
     } catch (err) {
       this.logger.error({ err }, 'Memory retrieval failed');
-      // Fallback: return recent memories
-      return this.memoryRepo.getRecentForPrompt(userId, limit).map(m => ({
-        key: m.key,
-        value: m.value,
-        category: m.category,
-        type: m.type,
-        score: 0,
-      }));
+      // Fallback: return recent memories across all user IDs
+      const fallbackSeen = new Set<string>();
+      const fallback: RetrievedMemory[] = [];
+      for (const uid of userIds) {
+        for (const m of this.memoryRepo.getRecentForPrompt(uid, limit)) {
+          if (!fallbackSeen.has(m.key)) {
+            fallbackSeen.add(m.key);
+            fallback.push({ key: m.key, value: m.value, category: m.category, type: m.type, score: 0 });
+          }
+        }
+      }
+      return fallback.slice(0, limit);
     }
   }
 
