@@ -310,7 +310,11 @@ For complex tasks, work through multiple steps:
       }
     }
 
-    // Filter: only keep tool_use/tool_result blocks that are in valid pairs
+    // Filter: only keep tool_use/tool_result blocks that are in valid pairs.
+    // Also deduplicate: each tool_use_id may only have ONE tool_result
+    // (concurrent message processing can create duplicates in the DB).
+    const emittedUseIds = new Set<string>();
+    const seenResultIds = new Set<string>();
     const result: LLMMessage[] = [];
     for (const msg of messages) {
       if (!Array.isArray(msg.content)) {
@@ -319,8 +323,19 @@ For complex tasks, work through multiple steps:
       }
 
       const filtered = msg.content.filter(block => {
-        if (block.type === 'tool_use') return validPairIds.has(block.id);
-        if (block.type === 'tool_result') return validPairIds.has(block.tool_use_id);
+        if (block.type === 'tool_use') {
+          if (!validPairIds.has(block.id)) return false;
+          if (emittedUseIds.has(block.id)) return false;
+          emittedUseIds.add(block.id);
+          return true;
+        }
+        if (block.type === 'tool_result') {
+          if (!validPairIds.has(block.tool_use_id)) return false;
+          // Keep only the first tool_result per tool_use_id
+          if (seenResultIds.has(block.tool_use_id)) return false;
+          seenResultIds.add(block.tool_use_id);
+          return true;
+        }
         return true;
       });
 
