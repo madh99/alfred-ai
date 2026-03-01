@@ -62,6 +62,11 @@ export class CrossPlatformSkill extends Skill {
     super();
   }
 
+  /** Resolve platform user ID to internal DB UUID via findOrCreate. */
+  private resolveInternalId(context: SkillContext): string {
+    return this.users.findOrCreate(context.platform as Platform, context.userId).id;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -110,13 +115,15 @@ export class CrossPlatformSkill extends Skill {
     // Clean up expired tokens first
     this.linkTokens.cleanup();
 
+    const internalId = this.resolveInternalId(context);
+
     // Rate limit: max 5 active codes per user per 10 minutes
-    const recentCount = this.linkTokens.countRecentByUser(context.userId, 10);
+    const recentCount = this.linkTokens.countRecentByUser(internalId, 10);
     if (recentCount >= 5) {
       return { success: false, error: 'Too many linking codes generated recently. Please wait a few minutes.' };
     }
 
-    const token = this.linkTokens.create(context.userId, context.platform);
+    const token = this.linkTokens.create(internalId, context.platform);
 
     return {
       success: true,
@@ -137,23 +144,28 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: 'Missing required field "code"' };
     }
 
+    const currentInternalId = this.resolveInternalId(context);
+
     // Rate limit failed confirmation attempts (max 5 per 5 minutes)
-    const rateLimitError = this.checkConfirmRateLimit(context.userId);
+    const rateLimitError = this.checkConfirmRateLimit(currentInternalId);
     if (rateLimitError) {
       return { success: false, error: rateLimitError };
     }
 
     const token = this.linkTokens.findByCode(code.trim());
     if (!token) {
-      this.recordFailedConfirm(context.userId);
+      this.recordFailedConfirm(currentInternalId);
       return {
         success: false,
         error: 'Invalid or expired linking code. Please generate a new one.',
       };
     }
 
+    // token.userId is already an internal UUID (stored by linkStart)
+    const tokenInternalId = token.userId;
+
     // Don't allow linking to yourself on the same platform
-    if (token.userId === context.userId) {
+    if (tokenInternalId === currentInternalId) {
       return {
         success: false,
         error: 'Cannot link an account to itself. Use the code on a different platform.',
@@ -161,29 +173,24 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // Determine master user: use existing master if either user already has one
-    const existingMaster1 = this.users.getMasterUserId(token.userId);
-    const existingMaster2 = this.users.getMasterUserId(context.userId);
+    const existingMaster1 = this.users.getMasterUserId(tokenInternalId);
+    const existingMaster2 = this.users.getMasterUserId(currentInternalId);
 
     let masterUserId: string;
-    if (existingMaster1 !== token.userId) {
-      // Token user already has a master — use it as canonical master
+    if (existingMaster1 !== tokenInternalId) {
       masterUserId = existingMaster1;
-    } else if (existingMaster2 !== context.userId) {
-      // Current user already has a master — use it
+    } else if (existingMaster2 !== currentInternalId) {
       masterUserId = existingMaster2;
     } else {
-      // Neither has a master — use the token user as master
-      masterUserId = token.userId;
+      masterUserId = tokenInternalId;
     }
 
-    // If BOTH users have different existing master groups, merge them:
-    // Re-point the second group to the canonical master
+    // If BOTH users have different existing master groups, merge them
     if (
-      existingMaster1 !== token.userId &&
-      existingMaster2 !== context.userId &&
+      existingMaster1 !== tokenInternalId &&
+      existingMaster2 !== currentInternalId &&
       existingMaster1 !== existingMaster2
     ) {
-      // Merge: re-point all users from master2's group to master1
       const groupToMerge = this.users.getLinkedUsers(existingMaster2);
       for (const u of groupToMerge) {
         this.users.setMasterUser(u.id, masterUserId);
@@ -191,17 +198,17 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // Link both users to the master
-    if (token.userId !== masterUserId) {
-      this.users.setMasterUser(token.userId, masterUserId);
+    if (tokenInternalId !== masterUserId) {
+      this.users.setMasterUser(tokenInternalId, masterUserId);
     }
-    if (context.userId !== masterUserId) {
-      this.users.setMasterUser(context.userId, masterUserId);
+    if (currentInternalId !== masterUserId) {
+      this.users.setMasterUser(currentInternalId, masterUserId);
     }
 
     // Consume the token
     this.linkTokens.consume(token.id);
 
-    const tokenUser = this.users.findById(token.userId);
+    const tokenUser = this.users.findById(tokenInternalId);
     const platformName = token.platform;
 
     return {
@@ -254,7 +261,8 @@ export class CrossPlatformSkill extends Skill {
   }
 
   private async listIdentities(context: SkillContext): Promise<SkillResult> {
-    const masterUserId = this.users.getMasterUserId(context.userId);
+    const currentInternalId = this.resolveInternalId(context);
+    const masterUserId = this.users.getMasterUserId(currentInternalId);
     const linkedUsers = this.users.getLinkedUsers(masterUserId);
 
     if (linkedUsers.length <= 1) {
@@ -269,7 +277,7 @@ export class CrossPlatformSkill extends Skill {
     }
 
     const lines = linkedUsers.map(u => {
-      const isCurrent = u.id === context.userId ? ' (current)' : '';
+      const isCurrent = u.id === currentInternalId ? ' (current)' : '';
       const name = u.displayName ?? u.username ?? u.platformUserId;
       return `- **${u.platform}**: ${name}${isCurrent}`;
     });
@@ -290,10 +298,11 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: 'Missing required field "platform"' };
     }
 
-    const masterUserId = this.users.getMasterUserId(context.userId);
+    const currentInternalId = this.resolveInternalId(context);
+    const masterUserId = this.users.getMasterUserId(currentInternalId);
     const linkedUsers = this.users.getLinkedUsers(masterUserId);
 
-    const targetUser = linkedUsers.find(u => u.platform === platform && u.id !== context.userId);
+    const targetUser = linkedUsers.find(u => u.platform === platform && u.id !== currentInternalId);
     if (!targetUser) {
       return {
         success: false,
