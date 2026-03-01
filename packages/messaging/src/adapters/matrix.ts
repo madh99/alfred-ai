@@ -237,7 +237,9 @@ export class MatrixAdapter extends MessagingAdapter {
 
   /**
    * Download a Matrix media file from an mxc:// URL.
-   * Uses the /_matrix/media/v3/download endpoint.
+   * Downloads media from an mxc:// URL, trying the authenticated
+   * /_matrix/client/v1/media endpoint first (Synapse 1.94+), then
+   * falling back to the legacy /_matrix/media/v3 endpoint.
    */
   private async downloadAttachment(
     content: any,
@@ -252,22 +254,25 @@ export class MatrixAdapter extends MessagingAdapter {
     const fileName = (content.filename ?? content.body ?? 'file') as string;
 
     const mxcParts = mxcUrl.slice(6); // remove "mxc://"
-    const downloadUrl = `${this.homeserverUrl}/_matrix/media/v3/download/${mxcParts}`;
-    const maxRetries = 2;
+    const urls = [
+      `${this.homeserverUrl}/_matrix/client/v1/media/download/${mxcParts}`,
+      `${this.homeserverUrl}/_matrix/media/v3/download/${mxcParts}`,
+    ];
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (const downloadUrl of urls) {
       try {
         const res = await fetch(downloadUrl, {
           headers: { Authorization: `Bearer ${this.accessToken}` },
         });
 
+        if (res.status === 404) {
+          // Endpoint not available, try next
+          continue;
+        }
+
         if (!res.ok) {
-          console.error(`[matrix] Download failed (${res.status}), attempt ${attempt + 1}/${maxRetries + 1}`, mxcUrl);
-          if (attempt < maxRetries) {
-            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-            continue;
-          }
-          return undefined;
+          console.error(`[matrix] Download failed (${res.status})`, mxcUrl, downloadUrl);
+          continue;
         }
 
         const arrayBuffer = await res.arrayBuffer();
@@ -281,14 +286,12 @@ export class MatrixAdapter extends MessagingAdapter {
           data,
         };
       } catch (err) {
-        console.error(`[matrix] Download error, attempt ${attempt + 1}/${maxRetries + 1}`, mxcUrl, err);
-        if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-          continue;
-        }
-        return undefined;
+        console.error(`[matrix] Download error`, mxcUrl, downloadUrl, err);
+        continue;
       }
     }
+
+    console.error(`[matrix] All download endpoints failed for`, mxcUrl);
     return undefined;
   }
 
