@@ -24,9 +24,16 @@ export interface SkillContext {
   onProgress?: (status: string) => void;
 }
 
+export interface SkillResultAttachment {
+  fileName: string;
+  data: Buffer;
+  mimeType: string;
+}
+
 export interface SkillResult {
   success: boolean;
   data?: unknown;
   error?: string;
   display?: string;
+  attachments?: SkillResultAttachment[];
 }

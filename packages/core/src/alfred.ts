@@ -397,8 +397,8 @@ export class Alfred {
           }
         };
 
-        const response = await this.pipeline.process(message, onProgress);
-        const formatted = this.formatter.format(response, message.platform);
+        const result = await this.pipeline.process(message, onProgress);
+        const formatted = this.formatter.format(result.text, message.platform);
         const sendOpts = formatted.parseMode !== 'text'
           ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
           : undefined;
@@ -413,6 +413,22 @@ export class Alfred {
           }
         } else {
           await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+        }
+
+        // Send file attachments (e.g. from code_sandbox) after the text reply
+        if (result.attachments) {
+          for (const att of result.attachments) {
+            try {
+              const isImage = att.mimeType.startsWith('image/');
+              if (isImage) {
+                await adapter.sendPhoto(message.chatId, att.data, att.fileName);
+              } else {
+                await adapter.sendFile(message.chatId, att.data, att.fileName);
+              }
+            } catch (err) {
+              this.logger.warn({ err, fileName: att.fileName, chatId: message.chatId }, 'Failed to send attachment');
+            }
+          }
         }
       } catch (error) {
         this.logger.error({ platform, err: error, chatId: message.chatId }, 'Failed to handle message');

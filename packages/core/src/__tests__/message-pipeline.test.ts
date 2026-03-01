@@ -91,7 +91,8 @@ describe('MessagePipeline', () => {
 
     const result = await pipeline.process(makeMessage());
 
-    expect(result).toBe('Hello!');
+    expect(result.text).toBe('Hello!');
+    expect(result.attachments).toBeUndefined();
     expect(mockUsers.findOrCreate).toHaveBeenCalled();
     expect(mockConversationManager.getOrCreateConversation).toHaveBeenCalled();
     // addMessage is called twice: once for the user message, once for the assistant response
@@ -155,7 +156,7 @@ describe('MessagePipeline', () => {
 
     const result = await pipeline.process(makeMessage());
 
-    expect(result).toBe('The result is 4');
+    expect(result.text).toBe('The result is 4');
     expect(mockLLM.complete).toHaveBeenCalledTimes(2);
     expect(mockSkillSandbox.execute).toHaveBeenCalledTimes(1);
   });
@@ -262,7 +263,7 @@ describe('MessagePipeline', () => {
 
     const result = await pipeline.process(makeMessage());
 
-    expect(result).toBe('I could not find that tool. Let me help you another way.');
+    expect(result.text).toBe('I could not find that tool. Let me help you another way.');
     expect(mockLLM.complete).toHaveBeenCalledTimes(2);
 
     // Verify the error was passed back to the LLM as a tool result
@@ -271,5 +272,83 @@ describe('MessagePipeline', () => {
     const toolResultBlock = toolResultMessage.content[0];
     expect(toolResultBlock.content).toContain('Unknown tool');
     expect(toolResultBlock.is_error).toBe(true);
+  });
+
+  // ---- Test 5: Attachments from skill are propagated through pipeline ----
+  it('should propagate attachments from skill results', async () => {
+    // First LLM call returns a tool call
+    mockLLM.complete.mockResolvedValueOnce({
+      content: '',
+      toolCalls: [
+        { id: 'tc1', name: 'code_sandbox', input: { action: 'run', code: 'print("hi")', language: 'python' } },
+      ],
+      usage: { inputTokens: 10, outputTokens: 5 },
+      stopReason: 'tool_use',
+    });
+
+    // Second LLM call returns text after processing tool result
+    mockLLM.complete.mockResolvedValueOnce({
+      content: 'Here is your chart.',
+      usage: { inputTokens: 20, outputTokens: 10 },
+      stopReason: 'end_turn',
+    });
+
+    const mockSkill = {
+      metadata: {
+        name: 'code_sandbox',
+        description: 'Run code',
+        riskLevel: 'destructive' as const,
+        version: '1.0.0',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      execute: vi.fn(),
+    };
+
+    const mockSkillRegistry = {
+      get: vi.fn((name: string) => (name === 'code_sandbox' ? mockSkill : undefined)),
+      getAll: vi.fn(() => [mockSkill]),
+      has: vi.fn(),
+      toToolDefinitions: vi.fn(),
+    };
+
+    const pdfBuffer = Buffer.from('fake-pdf-data');
+    const pngBuffer = Buffer.from('fake-png-data');
+
+    const mockSkillSandbox = {
+      execute: vi.fn().mockResolvedValueOnce({
+        success: true,
+        data: { exitCode: 0 },
+        display: 'Output:\nDone\n\nExit code: 0',
+        attachments: [
+          { fileName: 'report.pdf', data: pdfBuffer, mimeType: 'application/pdf' },
+          { fileName: 'chart.png', data: pngBuffer, mimeType: 'image/png' },
+        ],
+      }),
+    };
+
+    const pipeline = new MessagePipeline({
+      llm: mockLLM as any,
+      conversationManager: mockConversationManager as any,
+      users: mockUsers as any,
+      logger: mockLogger as any,
+      skillRegistry: mockSkillRegistry as any,
+      skillSandbox: mockSkillSandbox as any,
+    });
+
+    const result = await pipeline.process(makeMessage());
+
+    expect(result.text).toBe('Here is your chart.');
+    expect(result.attachments).toHaveLength(2);
+    expect(result.attachments![0].fileName).toBe('report.pdf');
+    expect(result.attachments![0].data).toBe(pdfBuffer);
+    expect(result.attachments![1].fileName).toBe('chart.png');
+    expect(result.attachments![1].mimeType).toBe('image/png');
+
+    // Verify the LLM was informed about the attachments in the tool_result
+    const secondCallMessages = mockLLM.complete.mock.calls[1][0].messages;
+    const toolResultMessage = secondCallMessages[secondCallMessages.length - 1];
+    const toolResultBlock = toolResultMessage.content[0];
+    expect(toolResultBlock.content).toContain('Datei(en) werden dem User gesendet');
+    expect(toolResultBlock.content).toContain('report.pdf');
   });
 });

@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, SkillResultAttachment } from '@alfred/types';
 import { Skill } from '../../skill.js';
 import { CodeExecutor } from './code-executor.js';
 
@@ -57,11 +57,21 @@ export class CodeExecutionSkill extends Skill {
 
     const result = await this.executor.execute(finalCode, language, { timeout });
 
+    // Map output files to attachments so the pipeline can send them to the user
+    const attachments: SkillResultAttachment[] | undefined = result.files?.map(f => ({
+      fileName: f.name,
+      data: f.data,
+      mimeType: f.mimeType,
+    }));
+
     const output = [
       result.stdout ? `Output:\n${result.stdout}` : '',
       result.stderr ? `Errors:\n${result.stderr}` : '',
       `Exit code: ${result.exitCode}`,
       `Duration: ${result.durationMs}ms`,
+      attachments && attachments.length > 0
+        ? `Files generated: ${attachments.map(a => a.fileName).join(', ')}`
+        : '',
     ].filter(Boolean).join('\n\n');
 
     return {
@@ -75,6 +85,7 @@ export class CodeExecutionSkill extends Skill {
       },
       display: output,
       error: result.exitCode !== 0 ? `Code execution failed with exit code ${result.exitCode}` : undefined,
+      attachments,
     };
   }
 }

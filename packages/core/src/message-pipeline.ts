@@ -7,6 +7,7 @@ import type {
   LLMContentBlock,
   ToolCall,
   SkillContext,
+  SkillResultAttachment,
   Attachment,
 } from '@alfred/types';
 import type { Logger } from 'pino';
@@ -28,6 +29,11 @@ const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 
 export type ProgressCallback = (status: string) => void;
+
+export interface PipelineResult {
+  text: string;
+  attachments?: SkillResultAttachment[];
+}
 
 export interface PipelineOptions {
   llm: LLMProvider;
@@ -90,7 +96,7 @@ export class MessagePipeline {
     this.promptBuilder = new PromptBuilder();
   }
 
-  async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<string> {
+  async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
 
@@ -212,6 +218,7 @@ export class MessagePipeline {
       const toolLoopStart = Date.now();
       let lastErrorSignature = '';
       let consecutiveErrors = 0;
+      const pendingAttachments: SkillResultAttachment[] = [];
       onProgress?.('Thinking...');
 
       while (true) {
@@ -267,7 +274,7 @@ export class MessagePipeline {
         messages.push({ role: 'assistant', content: assistantContent });
 
         // Execute tool calls in parallel
-        const toolResultBlocks: LLMContentBlock[] = await this.executeToolCallsParallel(
+        const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {
             userId: message.userId,
@@ -279,6 +286,10 @@ export class MessagePipeline {
           },
           onProgress,
         );
+        const toolResultBlocks = toolExecResult.blocks;
+        if (toolExecResult.attachments.length > 0) {
+          pendingAttachments.push(...toolExecResult.attachments);
+        }
 
         // Save intermediate tool interaction to DB so follow-up questions have context.
         this.conversationManager.addMessage(
@@ -357,7 +368,10 @@ export class MessagePipeline {
         'Message processed',
       );
 
-      return responseText;
+      return {
+        text: responseText,
+        attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
+      };
     } catch (error) {
       this.logger.error({ err: error }, 'Failed to process message');
       throw error;
@@ -503,19 +517,34 @@ export class MessagePipeline {
     toolCalls: ToolCall[],
     context: SkillContext,
     onProgress?: ProgressCallback,
-  ): Promise<LLMContentBlock[]> {
+  ): Promise<{ blocks: LLMContentBlock[]; attachments: SkillResultAttachment[] }> {
+    const allAttachments: SkillResultAttachment[] = [];
+
+    const buildBlock = (
+      tc: ToolCall,
+      result: { content: string; isError?: boolean; attachments?: SkillResultAttachment[] },
+    ): LLMContentBlock => {
+      let content = result.content;
+      if (result.attachments && result.attachments.length > 0) {
+        allAttachments.push(...result.attachments);
+        const names = result.attachments.map(a => a.fileName).join(', ');
+        content += `\n\n[${result.attachments.length} Datei(en) werden dem User gesendet: ${names}]`;
+      }
+      return {
+        type: 'tool_result' as const,
+        tool_use_id: tc.id,
+        content,
+        is_error: result.isError,
+      };
+    };
+
     // For single tool call, run directly (no overhead)
     if (toolCalls.length === 1) {
       const tc = toolCalls[0];
       const toolLabel = this.getToolLabel(tc.name, tc.input);
       onProgress?.(toolLabel);
       const result = await this.executeToolCall(tc, context, onProgress);
-      return [{
-        type: 'tool_result' as const,
-        tool_use_id: tc.id,
-        content: result.content,
-        is_error: result.isError,
-      }];
+      return { blocks: [buildBlock(tc, result)], attachments: allAttachments };
     }
 
     // Multiple tool calls: execute in parallel
@@ -525,15 +554,10 @@ export class MessagePipeline {
       toolCalls.map(tc => this.executeToolCall(tc, context, onProgress))
     );
 
-    return toolCalls.map((tc, i) => {
+    const blocks = toolCalls.map((tc, i) => {
       const settled = results[i];
       if (settled.status === 'fulfilled') {
-        return {
-          type: 'tool_result' as const,
-          tool_use_id: tc.id,
-          content: settled.value.content,
-          is_error: settled.value.isError,
-        };
+        return buildBlock(tc, settled.value);
       } else {
         return {
           type: 'tool_result' as const,
@@ -543,13 +567,15 @@ export class MessagePipeline {
         };
       }
     });
+
+    return { blocks, attachments: allAttachments };
   }
 
   private async executeToolCall(
     toolCall: ToolCall,
     context: SkillContext,
     onProgress?: ProgressCallback,
-  ): Promise<{ content: string; isError?: boolean }> {
+  ): Promise<{ content: string; isError?: boolean; attachments?: SkillResultAttachment[] }> {
     const skill = this.skillRegistry?.get(toolCall.name);
     if (!skill) {
       this.logger.warn({ tool: toolCall.name }, 'Unknown skill requested');
@@ -608,6 +634,7 @@ export class MessagePipeline {
         return {
           content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
           isError: !result.success,
+          attachments: result.attachments,
         };
       } finally {
         if (agentId) {
@@ -622,6 +649,7 @@ export class MessagePipeline {
       return {
         content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
         isError: !result.success,
+        attachments: result.attachments,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
