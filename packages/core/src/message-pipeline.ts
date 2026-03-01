@@ -886,6 +886,9 @@ export class MessagePipeline {
       blocks.push({ type: 'text', text: message.text });
     } else if (blocks.some(b => b.type === 'image') && !blocks.some(b => b.type === 'text')) {
       blocks.push({ type: 'text', text: 'What do you see in this image?' });
+    } else if (blocks.some(b => b.type === 'text' && (b as { text: string }).text.startsWith('[File received:'))) {
+      // File sent without any accompanying text — ask the user what they want
+      blocks.push({ type: 'text', text: 'The user sent this file without any instructions. Ask them what they would like you to do with it.' });
     } else if (blocks.length === 0) {
       blocks.push({ type: 'text', text: message.text || '(empty message)' });
     }
