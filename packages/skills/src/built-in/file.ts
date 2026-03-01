@@ -1,16 +1,91 @@
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, SkillResultAttachment } from '@alfred/types';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Skill } from '../skill.js';
 
 const MAX_READ_SIZE = 500_000; // 500KB
+const MAX_SEND_SIZE = 50_000_000; // 50MB
+
+const MIME_MAP: Record<string, string> = {
+  // Documents
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.odt': 'application/vnd.oasis.opendocument.text',
+  '.ods': 'application/vnd.oasis.opendocument.spreadsheet',
+  '.odp': 'application/vnd.oasis.opendocument.presentation',
+  '.rtf': 'application/rtf',
+  '.epub': 'application/epub+zip',
+  // Text
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.csv': 'text/csv',
+  '.tsv': 'text/tab-separated-values',
+  '.html': 'text/html',
+  '.htm': 'text/html',
+  '.xml': 'application/xml',
+  '.yaml': 'application/yaml',
+  '.yml': 'application/yaml',
+  '.toml': 'application/toml',
+  '.ini': 'text/plain',
+  '.cfg': 'text/plain',
+  '.log': 'text/plain',
+  // Code
+  '.json': 'application/json',
+  '.js': 'application/javascript',
+  '.ts': 'application/typescript',
+  '.py': 'text/x-python',
+  '.sh': 'application/x-sh',
+  '.sql': 'application/sql',
+  '.css': 'text/css',
+  // Images
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.tiff': 'image/tiff',
+  '.tif': 'image/tiff',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+  '.aac': 'audio/aac',
+  '.m4a': 'audio/mp4',
+  // Video
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.mov': 'video/quicktime',
+  // Archives
+  '.zip': 'application/zip',
+  '.tar': 'application/x-tar',
+  '.gz': 'application/gzip',
+  '.7z': 'application/x-7z-compressed',
+  '.rar': 'application/vnd.rar',
+  // Fonts
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
 
 export class FileSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'file',
     description:
-      'Read, write, move, or copy files. Use for reading file contents, writing text to files, ' +
+      'Read, write, move, copy, or send files. Use for reading file contents, writing text to files, ' +
       'saving binary data, listing directory contents, moving/copying files, or getting file info. ' +
+      'Use "send" to deliver a file to the user in the chat (PDF, images, etc.). ' +
       'Prefer this over shell for file operations. ' +
       'When a user sends a file attachment, it is saved to the inbox — use "move" to relocate it.',
     riskLevel: 'write',
@@ -20,7 +95,7 @@ export class FileSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete'],
+          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete', 'send'],
           description: 'The file operation to perform',
         },
         path: {
@@ -91,8 +166,9 @@ export class FileSkill extends Skill {
       case 'move': return this.moveFile(resolvedPath, destination);
       case 'copy': return this.copyFile(resolvedPath, destination);
       case 'delete': return this.deleteFile(resolvedPath);
+      case 'send': return this.sendFile(resolvedPath);
       default:
-        return { success: false, error: `Unknown action "${action}". Valid: read, write, write_binary, append, list, info, exists, move, copy, delete` };
+        return { success: false, error: `Unknown action "${action}". Valid: read, write, write_binary, append, list, info, exists, move, copy, delete, send` };
     }
   }
 
@@ -306,6 +382,34 @@ export class FileSkill extends Skill {
       };
     } catch (err) {
       return { success: false, error: `Cannot copy "${source}" to "${resolvedDest}": ${(err as Error).message}` };
+    }
+  }
+
+  private sendFile(filePath: string): SkillResult {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: `"${filePath}" does not exist` };
+      }
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        return { success: false, error: `"${filePath}" is a directory, not a file` };
+      }
+      if (stat.size > MAX_SEND_SIZE) {
+        return { success: false, error: `File too large to send (${stat.size} bytes, max ${MAX_SEND_SIZE})` };
+      }
+      const data = fs.readFileSync(filePath);
+      const fileName = path.basename(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeType = MIME_MAP[ext] || 'application/octet-stream';
+      const attachment: SkillResultAttachment = { fileName, data, mimeType };
+      return {
+        success: true,
+        data: { path: filePath, size: stat.size, fileName, mimeType },
+        display: `Sending ${fileName} (${stat.size} bytes)`,
+        attachments: [attachment],
+      };
+    } catch (err) {
+      return { success: false, error: `Cannot send "${filePath}": ${(err as Error).message}` };
     }
   }
 
