@@ -22,6 +22,7 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
+const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 
@@ -194,10 +195,12 @@ export class MessagePipeline {
 
       const messages = this.trimToContextWindow(system, allMessages);
 
-      // 7. Agentic tool-use loop (timeout-based, no hard iteration limit)
+      // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
       let iteration = 0;
       const toolLoopStart = Date.now();
+      let lastErrorSignature = '';
+      let consecutiveErrors = 0;
       onProgress?.('Thinking...');
 
       while (true) {
@@ -212,45 +215,15 @@ export class MessagePipeline {
           break;
         }
 
-        // Timeout reached — inject synthetic tool_results, persist to DB,
-        // and let the LLM produce a final summary for the user.
+        // Timeout check
         const elapsed = Date.now() - toolLoopStart;
         if (elapsed >= MAX_TOOL_DURATION_MS) {
           const elapsedMin = Math.round(elapsed / 60_000);
           this.logger.warn({ iteration, elapsedMin, pendingToolCalls: response.toolCalls.length }, 'Tool loop timeout reached');
-
-          const assistantContent: LLMContentBlock[] = [];
-          if (response.content) {
-            assistantContent.push({ type: 'text', text: response.content });
-          }
-          for (const tc of response.toolCalls) {
-            assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
-          }
-          messages.push({ role: 'assistant', content: assistantContent });
-
-          const syntheticResults: LLMContentBlock[] = response.toolCalls.map(tc => ({
-            type: 'tool_result' as const,
-            tool_use_id: tc.id,
-            content: `Error: time limit reached (${elapsedMin} min), execution skipped.`,
-            is_error: true,
-          }));
-          messages.push({ role: 'user', content: syntheticResults });
-
-          // Persist both to DB so the pair is complete
-          this.conversationManager.addMessage(
-            conversation.id, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
+          response = await this.abortToolLoop(
+            messages, response, conversation.id, system,
+            `Das Zeitlimit von ${elapsedMin} Minuten für Tool-Aufrufe wurde erreicht.`,
           );
-          this.conversationManager.addMessage(
-            conversation.id, 'user', '', JSON.stringify(syntheticResults),
-          );
-
-          // Ask the LLM to summarize what it accomplished and what remains
-          messages.push({
-            role: 'user',
-            content: `[System: Das Zeitlimit von ${elapsedMin} Minuten für Tool-Aufrufe wurde erreicht. Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist. Der User kann dir dann sagen ob du weitermachen sollst.]`,
-          });
-          const summaryResponse = await this.llm.complete({ messages, system });
-          response = summaryResponse;
           break;
         }
 
@@ -293,6 +266,33 @@ export class MessagePipeline {
         this.conversationManager.addMessage(
           conversation.id, 'user', '', JSON.stringify(toolResultBlocks),
         );
+
+        // Detect repeated identical errors: build a signature from error results
+        const errorSignature = this.buildErrorSignature(toolResultBlocks);
+        if (errorSignature) {
+          if (errorSignature === lastErrorSignature) {
+            consecutiveErrors++;
+          } else {
+            consecutiveErrors = 1;
+            lastErrorSignature = errorSignature;
+          }
+
+          if (consecutiveErrors >= MAX_REPEATED_ERRORS) {
+            this.logger.warn(
+              { iteration, consecutiveErrors, errorSignature },
+              'Tool loop aborted: same error repeated consecutively',
+            );
+            response = await this.abortToolLoop(
+              messages, response, conversation.id, system,
+              `Der gleiche Tool-Fehler ist ${consecutiveErrors}x hintereinander aufgetreten: "${lastErrorSignature.slice(0, 200)}". Erkläre dem User kurz was nicht funktioniert hat und schlage eine Alternative vor.`,
+            );
+            break;
+          }
+        } else {
+          // Successful tool call — reset error tracking
+          consecutiveErrors = 0;
+          lastErrorSignature = '';
+        }
 
         // Add tool results as user message
         messages.push({ role: 'user', content: toolResultBlocks });
@@ -340,6 +340,64 @@ export class MessagePipeline {
       this.logger.error({ err: error }, 'Failed to process message');
       throw error;
     }
+  }
+
+  /**
+   * Abort the tool loop: inject synthetic tool_results for pending calls,
+   * persist to DB, and ask the LLM to produce a user-facing summary.
+   */
+  private async abortToolLoop(
+    messages: LLMMessage[],
+    response: LLMResponse,
+    conversationId: string,
+    system: string,
+    reason: string,
+  ): Promise<LLMResponse> {
+    const assistantContent: LLMContentBlock[] = [];
+    if (response.content) {
+      assistantContent.push({ type: 'text', text: response.content });
+    }
+    for (const tc of response.toolCalls!) {
+      assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+    }
+    messages.push({ role: 'assistant', content: assistantContent });
+
+    const syntheticResults: LLMContentBlock[] = response.toolCalls!.map(tc => ({
+      type: 'tool_result' as const,
+      tool_use_id: tc.id,
+      content: `Error: tool loop aborted — ${reason}`,
+      is_error: true,
+    }));
+    messages.push({ role: 'user', content: syntheticResults });
+
+    // Persist both to DB so the pair is complete
+    this.conversationManager.addMessage(
+      conversationId, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
+    );
+    this.conversationManager.addMessage(
+      conversationId, 'user', '', JSON.stringify(syntheticResults),
+    );
+
+    // Ask the LLM to summarize for the user
+    messages.push({
+      role: 'user',
+      content: `[System: ${reason} Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist.]`,
+    });
+    return await this.llm.complete({ messages, system });
+  }
+
+  /**
+   * Build a signature string from error tool_result blocks.
+   * Returns empty string if no errors (= all tools succeeded).
+   */
+  private buildErrorSignature(toolResultBlocks: LLMContentBlock[]): string {
+    const errors: string[] = [];
+    for (const block of toolResultBlocks) {
+      if (block.type === 'tool_result' && block.is_error) {
+        errors.push(block.content);
+      }
+    }
+    return errors.length > 0 ? errors.join('|') : '';
   }
 
   private async executeToolCallsParallel(
