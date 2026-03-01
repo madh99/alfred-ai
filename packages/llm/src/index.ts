@@ -5,6 +5,7 @@ export { OpenAIProvider } from './providers/openai.js';
 export { OpenRouterProvider } from './providers/openrouter.js';
 export { OllamaProvider } from './providers/ollama.js';
 export { OpenWebUIProvider } from './providers/openwebui.js';
+export { GoogleProvider } from './providers/google.js';
 export { createLLMProvider } from './provider-factory.js';
 export { ModelRouter, createModelRouter } from './model-router.js';
 export { PromptBuilder, estimateTokens, estimateMessageTokens } from './prompt-builder.js';

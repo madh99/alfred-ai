@@ -52,6 +52,14 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
     return undefined; // Not supported by default
   }
 
+  async sendVoice(
+    _chatId: string,
+    _audio: Buffer,
+    _caption?: string,
+  ): Promise<string | undefined> {
+    return undefined; // Not supported by default
+  }
+
   getStatus(): MessagingAdapterStatus {
     return this.status;
   }

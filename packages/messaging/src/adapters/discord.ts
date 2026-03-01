@@ -162,6 +162,14 @@ export class DiscordAdapter extends MessagingAdapter {
     return msg.id;
   }
 
+  async sendVoice(
+    chatId: string,
+    audio: Buffer,
+    caption?: string,
+  ): Promise<string | undefined> {
+    return this.sendFile(chatId, audio, 'voice.ogg', caption);
+  }
+
   // ── Private helpers ──────────────────────────────────────────────
 
   private async downloadAttachments(message: any): Promise<Attachment[]> {

@@ -4,6 +4,7 @@ export type { ProgressCallback, PipelineOptions, PipelineResult } from './messag
 export { ConversationManager } from './conversation-manager.js';
 export { ReminderScheduler } from './reminder-scheduler.js';
 export { SpeechTranscriber } from './speech-transcriber.js';
+export { SpeechSynthesizer } from './speech-synthesizer.js';
 export { ResponseFormatter } from './response-formatter.js';
 export type { FormattedResponse } from './response-formatter.js';
 export { EmbeddingService } from './embedding-service.js';

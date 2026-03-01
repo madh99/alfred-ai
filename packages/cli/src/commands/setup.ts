@@ -75,6 +75,13 @@ const PROVIDERS: ProviderDef[] = [
     needsApiKey: true,
     baseUrl: 'http://localhost:3000/api/v1',
   },
+  {
+    name: 'google',
+    label: 'Google (Gemini)',
+    defaultModel: 'gemini-2.0-flash',
+    envKeyName: 'ALFRED_GOOGLE_API_KEY',
+    needsApiKey: true,
+  },
 ];
 
 // ── Platform definitions ──────────────────────────────────────────────
@@ -354,7 +361,7 @@ export async function setupCommand(): Promise<void> {
 
     // ── 3b. Base URL (for providers with configurable endpoints) ──
     let baseUrl = provider.baseUrl ?? '';
-    const providersWithBaseUrl = ['ollama', 'openwebui', 'openai', 'openrouter'];
+    const providersWithBaseUrl = ['ollama', 'openwebui', 'openai', 'openrouter', 'google'];
     if (providersWithBaseUrl.includes(provider.name)) {
       const existingUrl = existing.config.llm?.baseUrl ?? existing.env['ALFRED_LLM_BASE_URL'] ?? '';
       const defaultUrl = existingUrl || provider.baseUrl || '';
@@ -364,6 +371,7 @@ export async function setupCommand(): Promise<void> {
           openwebui: 'OpenWebUI URL',
           openai: 'OpenAI-compatible API URL (leave default for official API)',
           openrouter: 'OpenRouter API URL',
+          google: 'Google Gemini API URL (leave default for official API)',
         };
         console.log('');
         baseUrl = await askWithDefault(
@@ -752,6 +760,39 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Voice transcription disabled — you can configure it later.')}`);
     }
 
+    // ── 8a. Text-to-Speech (voice responses) ─────────────────
+    let ttsEnabled = false;
+    let ttsVoice = 'alloy';
+
+    if (speechProvider) {
+      const existingTTS = (existing.config as Record<string, any>).speech?.ttsEnabled ?? false;
+      const ttsDefault = existingTTS ? 'Y/n' : 'y/N';
+      console.log(`\n${bold('Voice responses (Text-to-Speech)?')}`);
+      console.log(`${dim('Alfred can reply as a voice message when the user asks for it.')}`);
+      const ttsAnswer = (
+        await rl.question(`${YELLOW}> ${RESET}${dim(`[${ttsDefault}] `)}`)
+      ).trim().toLowerCase();
+      ttsEnabled = ttsAnswer === '' ? existingTTS : (ttsAnswer === 'y' || ttsAnswer === 'yes');
+
+      if (ttsEnabled) {
+        const voices = ['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'];
+        const existingVoice = (existing.config as Record<string, any>).speech?.ttsVoice ?? 'alloy';
+        const existingVoiceIdx = voices.indexOf(existingVoice);
+        const defaultVoiceChoice = existingVoiceIdx >= 0 ? existingVoiceIdx + 1 : 1;
+
+        console.log(`\n  ${bold('Which voice?')}`);
+        for (let i = 0; i < voices.length; i++) {
+          const cur = existingVoiceIdx === i ? ` ${dim('(current)')}` : '';
+          console.log(`  ${cyan(String(i + 1) + ')')} ${voices[i]}${cur}`);
+        }
+        const voiceChoice = await askNumber(rl, '  > ', 1, voices.length, defaultVoiceChoice);
+        ttsVoice = voices[voiceChoice - 1];
+        console.log(`  ${green('>')} TTS voice: ${bold(ttsVoice)}`);
+      } else {
+        console.log(`  ${dim('Voice responses disabled.')}`);
+      }
+    }
+
     // ── 8b. Code Sandbox (Python/JavaScript execution) ────────
     const sandboxDefault = existing.codeSandboxEnabled ? 'Y/n' : 'y/N';
     console.log(`\n${bold('Code Sandbox (execute Python/JavaScript in a sandboxed environment)?')}`);
@@ -905,13 +946,17 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_EMAIL_PASS=');
     }
 
-    envLines.push('', '# === Speech-to-Text ===', '');
+    envLines.push('', '# === Speech ===', '');
 
     if (speechProvider) {
       envLines.push(`ALFRED_SPEECH_PROVIDER=${speechProvider}`);
       envLines.push(`ALFRED_SPEECH_API_KEY=${speechApiKey}`);
       if (speechBaseUrl) {
         envLines.push(`ALFRED_SPEECH_BASE_URL=${speechBaseUrl}`);
+      }
+      if (ttsEnabled) {
+        envLines.push(`ALFRED_TTS_ENABLED=true`);
+        envLines.push(`ALFRED_TTS_VOICE=${ttsVoice}`);
       }
     } else {
       envLines.push('# ALFRED_SPEECH_PROVIDER=groq');
@@ -1017,6 +1062,7 @@ export async function setupCommand(): Promise<void> {
           provider: speechProvider,
           apiKey: speechApiKey,
           ...(speechBaseUrl ? { baseUrl: speechBaseUrl } : {}),
+          ...(ttsEnabled ? { ttsEnabled: true, ttsVoice } : {}),
         },
       } : {}),
       ...(enableSandbox ? {
@@ -1199,7 +1245,8 @@ ${ownerAdminRule}
         openai: 'OpenAI Whisper',
         groq: 'Groq Whisper',
       };
-      console.log(`  ${bold('Voice:')}          ${speechLabelMap[speechProvider]}`);
+      const ttsLabel = ttsEnabled ? `, TTS: ${ttsVoice}` : '';
+      console.log(`  ${bold('Voice:')}          ${speechLabelMap[speechProvider]}${ttsLabel}`);
     } else {
       console.log(`  ${bold('Voice:')}          ${dim('disabled')}`);
     }

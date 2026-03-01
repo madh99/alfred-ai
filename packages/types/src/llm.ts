@@ -1,5 +1,5 @@
 export interface LLMProviderConfig {
-  provider: 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'openwebui';
+  provider: 'anthropic' | 'openai' | 'openrouter' | 'ollama' | 'openwebui' | 'google';
   apiKey?: string;
   baseUrl?: string;
   model: string;

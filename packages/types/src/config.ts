@@ -74,9 +74,12 @@ export interface EmailConfig {
 }
 
 export interface SpeechConfig {
-  provider: 'openai' | 'groq';
+  provider: 'openai' | 'groq' | 'google';
   apiKey: string;
   baseUrl?: string;
+  ttsEnabled?: boolean;
+  ttsModel?: string;
+  ttsVoice?: string;
 }
 
 export interface CalDAVConfig {

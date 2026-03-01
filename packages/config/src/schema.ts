@@ -45,7 +45,7 @@ export const SecurityConfigSchema = z.object({
 });
 
 export const LLMProviderConfigSchema = z.object({
-  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama', 'openwebui']),
+  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama', 'openwebui', 'google']),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   model: z.string(),
@@ -87,9 +87,12 @@ export const EmailConfigSchema = z.object({
 });
 
 export const SpeechConfigSchema = z.object({
-  provider: z.enum(['openai', 'groq']),
+  provider: z.enum(['openai', 'groq', 'google']),
   apiKey: z.string(),
   baseUrl: z.string().optional(),
+  ttsEnabled: z.boolean().optional(),
+  ttsModel: z.string().optional(),
+  ttsVoice: z.string().optional(),
 });
 
 export const CalDAVConfigSchema = z.object({

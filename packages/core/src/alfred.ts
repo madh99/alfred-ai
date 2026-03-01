@@ -33,11 +33,13 @@ import {
   BackgroundTaskSkill,
   ScheduledTaskSkill,
   DocumentSkill,
+  TTSSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
 import { ReminderScheduler } from './reminder-scheduler.js';
 import { SpeechTranscriber } from './speech-transcriber.js';
+import { SpeechSynthesizer } from './speech-synthesizer.js';
 import { ResponseFormatter } from './response-formatter.js';
 import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
@@ -211,6 +213,16 @@ export class Alfred {
         this.logger.child({ component: 'speech' }),
       );
       this.logger.info({ provider: this.config.speech.provider }, 'Speech-to-text initialized');
+    }
+
+    // 5b. Initialize text-to-speech (optional)
+    if (this.config.speech?.ttsEnabled) {
+      const synthesizer = new SpeechSynthesizer(
+        this.config.speech,
+        this.logger.child({ component: 'tts' }),
+      );
+      skillRegistry.register(new TTSSkill(synthesizer));
+      this.logger.info('Text-to-speech skill registered');
     }
 
     // 6. Create conversation manager and pipeline
@@ -420,8 +432,11 @@ export class Alfred {
           for (const att of result.attachments) {
             try {
               const isImage = att.mimeType.startsWith('image/');
+              const isVoice = att.mimeType === 'audio/ogg' || att.mimeType === 'audio/opus';
               if (isImage) {
                 await adapter.sendPhoto(message.chatId, att.data, att.fileName);
+              } else if (isVoice) {
+                await adapter.sendVoice(message.chatId, att.data);
               } else {
                 await adapter.sendFile(message.chatId, att.data, att.fileName);
               }

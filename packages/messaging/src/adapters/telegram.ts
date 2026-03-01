@@ -212,6 +212,19 @@ export class TelegramAdapter extends MessagingAdapter {
     return String(result.message_id);
   }
 
+  async sendVoice(
+    chatId: string,
+    audio: Buffer,
+    caption?: string,
+  ): Promise<string | undefined> {
+    const result = await this.bot.api.sendVoice(
+      Number(chatId),
+      new InputFile(audio, 'voice.ogg'),
+      { caption },
+    );
+    return String(result.message_id);
+  }
+
   private normalizeMessage(msg: Message, text: string): NormalizedMessage {
     return {
       id: String(msg.message_id),

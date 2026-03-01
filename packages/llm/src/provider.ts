@@ -43,6 +43,11 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'phi3':                         { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
   'deepseek-r1':                  { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
   'command-r':                    { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
+  // Google Gemini
+  'gemini-2.0-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
+  'gemini-2.0-pro':               { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
+  'gemini-1.5-pro':               { maxInputTokens: 2_097_152, maxOutputTokens: 8_192 },
+  'gemini-1.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
 };
 
 const DEFAULT_CONTEXT_WINDOW: ContextWindow = { maxInputTokens: 8_192, maxOutputTokens: 4_096 };

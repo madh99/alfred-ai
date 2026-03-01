@@ -5,6 +5,7 @@ import { OpenAIProvider } from './providers/openai.js';
 import { OpenRouterProvider } from './providers/openrouter.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { OpenWebUIProvider } from './providers/openwebui.js';
+import { GoogleProvider } from './providers/google.js';
 
 export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
   switch (config.provider) {
@@ -18,6 +19,8 @@ export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
       return new OllamaProvider(config);
     case 'openwebui':
       return new OpenWebUIProvider(config);
+    case 'google':
+      return new GoogleProvider(config);
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);
   }
