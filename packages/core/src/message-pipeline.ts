@@ -277,11 +277,20 @@ export class MessagePipeline {
         messages.push({ role: 'assistant', content: assistantContent });
 
         // Execute tool calls in parallel
+        // Resolve all linked platform user IDs so skills can find data stored
+        // under any linked account's platform ID (backward compat).
+        let linkedPlatformUserIds: string[] | undefined;
+        if ('getLinkedUsers' in this.users) {
+          const linked = (this.users as { getLinkedUsers(id: string): { platformUserId: string }[] }).getLinkedUsers(masterUserId);
+          linkedPlatformUserIds = linked.map(u => u.platformUserId);
+        }
+
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {
             userId: message.userId,
             masterUserId,
+            linkedPlatformUserIds,
             chatId: message.chatId,
             chatType: message.chatType,
             platform: message.platform,

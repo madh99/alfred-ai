@@ -16,10 +16,13 @@ export interface SkillContext {
   chatType?: string;
   platform: string;
   conversationId: string;
-  /** Resolved cross-platform master user ID (platform user ID of the linked master).
+  /** Resolved cross-platform master user ID (internal DB UUID of the linked master).
    *  Falls back to userId when accounts are not linked. Use this for data storage
    *  (memories, notes, embeddings) so linked accounts share data. */
   masterUserId?: string;
+  /** All platform user IDs for linked accounts (e.g. ["5060785419", "@user:matrix.org"]).
+   *  Used to find data stored under any linked platform ID (backward compat). */
+  linkedPlatformUserIds?: string[];
   /** User timezone (from profile) or server timezone as fallback. */
   timezone?: string;
   /** ActivityTracker instance (avoid circular dep with skills package). */

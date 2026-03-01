@@ -51,13 +51,16 @@ export class ReminderSkill extends Skill {
     return context.masterUserId ?? context.userId;
   }
 
-  /** Get all user IDs to query (masterUserId + platform userId) for backward compat. */
+  /** Get all user IDs to query — includes masterUserId, current platform userId,
+   *  and all linked platform user IDs for backward compat with old data. */
   private allUserIds(context: SkillContext): string[] {
-    const ids = [this.effectiveUserId(context)];
-    if (context.masterUserId && context.masterUserId !== context.userId) {
-      ids.push(context.userId);
+    const set = new Set<string>();
+    set.add(this.effectiveUserId(context));
+    set.add(context.userId);
+    if (context.linkedPlatformUserIds) {
+      for (const id of context.linkedPlatformUserIds) set.add(id);
     }
-    return ids;
+    return [...set];
   }
 
   /** Get reminders for all linked user IDs (handles old data stored under platform ID). */
