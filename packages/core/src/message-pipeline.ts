@@ -114,8 +114,8 @@ export class MessagePipeline {
         user.id,
       );
 
-      // 3. Load conversation history (fetch more than needed, we'll trim by tokens)
-      const history = this.conversationManager.getHistory(conversation.id, 50);
+      // 3. Load conversation history (fetch generously, we'll trim by tokens later)
+      const history = this.conversationManager.getHistory(conversation.id, 200);
 
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
@@ -187,7 +187,11 @@ export class MessagePipeline {
       if (agentStatusBlock) {
         system += '\n\n' + agentStatusBlock;
       }
-      const allMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
+      const rawMessages: LLMMessage[] = this.promptBuilder.buildMessages(history);
+
+      // Collapse repeated tool-error loops (e.g. 68x the same file.write failure)
+      // into a single representative pair + a note, to avoid wasting the context window.
+      const allMessages = this.collapseRepeatedToolErrors(rawMessages);
 
       // Build user message with attachments (images, transcribed audio)
       const userContent = await this.buildUserContent(message, onProgress);
@@ -398,6 +402,77 @@ export class MessagePipeline {
       }
     }
     return errors.length > 0 ? errors.join('|') : '';
+  }
+
+  /**
+   * Collapse runs of identical tool-error pairs into a single representative pair.
+   * When the LLM called the same tool with the same broken input N times in a row,
+   * keep only the first pair and replace the rest with a short note.
+   * This prevents old error loops from filling the entire context window.
+   */
+  private collapseRepeatedToolErrors(messages: LLMMessage[]): LLMMessage[] {
+    const result: LLMMessage[] = [];
+    let i = 0;
+    while (i < messages.length) {
+      const msg = messages[i];
+
+      // Detect assistant tool_use message
+      if (msg.role === 'assistant' && Array.isArray(msg.content) &&
+          msg.content.some(b => b.type === 'tool_use')) {
+        // Check if next message is a user tool_result with errors
+        const next = i + 1 < messages.length ? messages[i + 1] : null;
+        if (next && next.role === 'user' && Array.isArray(next.content) &&
+            next.content.every(b => b.type === 'tool_result' && b.is_error)) {
+
+          // Build a signature for this error pair
+          const sig = this.toolPairSignature(msg, next);
+
+          // Count how many consecutive identical error pairs follow
+          let runLength = 1;
+          let j = i + 2;
+          while (j + 1 < messages.length) {
+            const nextAssistant = messages[j];
+            const nextUser = messages[j + 1];
+            if (nextAssistant.role === 'assistant' && nextUser?.role === 'user' &&
+                this.toolPairSignature(nextAssistant, nextUser) === sig) {
+              runLength++;
+              j += 2;
+            } else {
+              break;
+            }
+          }
+
+          if (runLength > 1) {
+            // Keep only the first pair + a note about the repetitions
+            result.push(msg);
+            result.push(next);
+            result.push({
+              role: 'user',
+              content: `[System: The above tool error repeated ${runLength} times with identical input. The loop was aborted.]`,
+            });
+            i = j; // Skip all repeated pairs
+            continue;
+          }
+        }
+      }
+
+      result.push(msg);
+      i++;
+    }
+    return result;
+  }
+
+  /**
+   * Build a stable signature for a tool_use + tool_result pair for deduplication.
+   */
+  private toolPairSignature(assistant: LLMMessage, user: LLMMessage): string {
+    const toolUses = Array.isArray(assistant.content)
+      ? assistant.content.filter(b => b.type === 'tool_use').map(b => `${b.name}:${JSON.stringify(b.input)}`).join(',')
+      : '';
+    const toolResults = Array.isArray(user.content)
+      ? user.content.filter(b => b.type === 'tool_result').map(b => b.content).join(',')
+      : '';
+    return `${toolUses}|${toolResults}`;
   }
 
   private async executeToolCallsParallel(
