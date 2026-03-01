@@ -67,6 +67,30 @@ export class ScheduledTaskSkill extends Skill {
     return context.masterUserId ?? context.userId;
   }
 
+  /** All user IDs to query (masterUserId + platform userId) for backward compat. */
+  private allUserIds(context: SkillContext): string[] {
+    const ids = [this.effectiveUserId(context)];
+    if (context.masterUserId && context.masterUserId !== context.userId) {
+      ids.push(context.userId);
+    }
+    return ids;
+  }
+
+  /** Get scheduled actions for all linked user IDs. */
+  private getAllActions(context: SkillContext): import('@alfred/types').ScheduledAction[] {
+    const seen = new Set<string>();
+    const results: import('@alfred/types').ScheduledAction[] = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const a of this.actionRepo.getByUser(uid)) {
+        if (!seen.has(a.id)) {
+          seen.add(a.id);
+          results.push(a);
+        }
+      }
+    }
+    return results;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -170,7 +194,7 @@ export class ScheduledTaskSkill extends Skill {
   }
 
   private listActions(context: SkillContext): SkillResult {
-    const actions = this.actionRepo.getByUser(this.effectiveUserId(context));
+    const actions = this.getAllActions(context);
 
     if (actions.length === 0) {
       return {
@@ -216,7 +240,8 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before toggling
     const action = this.actionRepo.findById(actionId);
-    if (!action || action.userId !== this.effectiveUserId(context)) {
+    const userIds = this.allUserIds(context);
+    if (!action || !userIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
@@ -242,7 +267,8 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before deleting
     const action = this.actionRepo.findById(actionId);
-    if (!action || action.userId !== this.effectiveUserId(context)) {
+    const deleteUserIds = this.allUserIds(context);
+    if (!action || !deleteUserIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 

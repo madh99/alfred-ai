@@ -50,6 +50,30 @@ export class BackgroundTaskSkill extends Skill {
     return context.masterUserId ?? context.userId;
   }
 
+  /** All user IDs to query (masterUserId + platform userId) for backward compat. */
+  private allUserIds(context: SkillContext): string[] {
+    const ids = [this.effectiveUserId(context)];
+    if (context.masterUserId && context.masterUserId !== context.userId) {
+      ids.push(context.userId);
+    }
+    return ids;
+  }
+
+  /** Get tasks for all linked user IDs. */
+  private getAllTasks(context: SkillContext): import('@alfred/types').BackgroundTask[] {
+    const seen = new Set<string>();
+    const results: import('@alfred/types').BackgroundTask[] = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const t of this.taskRepo.getByUser(uid)) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          results.push(t);
+        }
+      }
+    }
+    return results;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -103,7 +127,7 @@ export class BackgroundTaskSkill extends Skill {
   }
 
   private listTasks(context: SkillContext): SkillResult {
-    const tasks = this.taskRepo.getByUser(this.effectiveUserId(context));
+    const tasks = this.getAllTasks(context);
 
     if (tasks.length === 0) {
       return {
@@ -146,7 +170,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own tasks
-    const userTasks = this.taskRepo.getByUser(this.effectiveUserId(context));
+    const userTasks = this.getAllTasks(context);
     const ownsTask = userTasks.some(t => t.id === taskId);
     if (!ownsTask) {
       return {

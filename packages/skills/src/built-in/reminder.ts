@@ -51,6 +51,30 @@ export class ReminderSkill extends Skill {
     return context.masterUserId ?? context.userId;
   }
 
+  /** Get all user IDs to query (masterUserId + platform userId) for backward compat. */
+  private allUserIds(context: SkillContext): string[] {
+    const ids = [this.effectiveUserId(context)];
+    if (context.masterUserId && context.masterUserId !== context.userId) {
+      ids.push(context.userId);
+    }
+    return ids;
+  }
+
+  /** Get reminders for all linked user IDs (handles old data stored under platform ID). */
+  private getAllReminders(context: SkillContext): import('@alfred/storage').ReminderEntry[] {
+    const seen = new Set<string>();
+    const results: import('@alfred/storage').ReminderEntry[] = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const r of this.reminderRepo.getByUser(uid)) {
+        if (!seen.has(r.id)) {
+          seen.add(r.id);
+          results.push(r);
+        }
+      }
+    }
+    return results;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -245,7 +269,7 @@ export class ReminderSkill extends Skill {
   }
 
   private listReminders(context: SkillContext): SkillResult {
-    const reminders = this.reminderRepo.getByUser(this.effectiveUserId(context));
+    const reminders = this.getAllReminders(context);
 
     const reminderList = reminders.map((r) => ({
       reminderId: r.id,
@@ -274,7 +298,7 @@ export class ReminderSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own reminders
-    const userReminders = this.reminderRepo.getByUser(this.effectiveUserId(context));
+    const userReminders = this.getAllReminders(context);
     const ownsReminder = userReminders.some(r => r.id === reminderId);
     if (!ownsReminder) {
       return {
