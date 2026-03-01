@@ -13,6 +13,9 @@ export interface CrossPlatformAdapter {
   sendMessage(chatId: string, text: string): Promise<string>;
 }
 
+/** Resolve chat_id for a linked user on another platform. */
+export type FindConversationFn = (platform: string, userId: string) => { chatId: string } | undefined;
+
 export class CrossPlatformSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'cross_platform',
@@ -58,6 +61,7 @@ export class CrossPlatformSkill extends Skill {
     private readonly users: UserRepository,
     private readonly linkTokens: LinkTokenRepository,
     private readonly adapters: Map<Platform, CrossPlatformAdapter>,
+    private readonly findConversation?: FindConversationFn,
   ) {
     super();
   }
@@ -79,7 +83,7 @@ export class CrossPlatformSkill extends Skill {
       case 'link_confirm':
         return this.linkConfirm(input, context);
       case 'send_message':
-        return this.sendMessage(input);
+        return this.sendMessage(input, context);
       case 'list_identities':
         return this.listIdentities(context);
       case 'unlink':
@@ -224,16 +228,14 @@ export class CrossPlatformSkill extends Skill {
 
   private async sendMessage(
     input: Record<string, unknown>,
+    context: SkillContext,
   ): Promise<SkillResult> {
     const platform = input.platform as string | undefined;
-    const chatId = input.chat_id as string | undefined;
+    let chatId = input.chat_id as string | undefined;
     const message = input.message as string | undefined;
 
     if (!platform) {
       return { success: false, error: 'Missing required field "platform"' };
-    }
-    if (!chatId) {
-      return { success: false, error: 'Missing required field "chat_id"' };
     }
     if (!message) {
       return { success: false, error: 'Missing required field "message"' };
@@ -247,12 +249,32 @@ export class CrossPlatformSkill extends Skill {
       };
     }
 
+    // Resolve chat_id: try DB conversation lookup for linked user on target platform
+    if (!chatId || !/^[!0-9]/.test(chatId)) {
+      const currentInternalId = this.resolveInternalId(context);
+      const masterUserId = this.users.getMasterUserId(currentInternalId);
+      const linked = this.users.getLinkedUsers(masterUserId);
+      const targetUser = linked.find(u => u.platform === platform);
+      if (targetUser && this.findConversation) {
+        const conv = this.findConversation(platform, targetUser.id);
+        if (conv) chatId = conv.chatId;
+      }
+      // Fallback to platformUserId for Telegram DMs
+      if (!chatId && targetUser) {
+        chatId = targetUser.platformUserId;
+      }
+    }
+
+    if (!chatId) {
+      return { success: false, error: 'Could not resolve chat_id for target platform. No linked account or conversation found.' };
+    }
+
     try {
       const messageId = await adapter.sendMessage(chatId, message);
       return {
         success: true,
         data: { messageId, platform, chatId },
-        display: `Message sent to ${platform} (chat ${chatId}).`,
+        display: `Message sent to ${platform}.`,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

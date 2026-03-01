@@ -251,31 +251,45 @@ export class MatrixAdapter extends MessagingAdapter {
     const size = info.size as number | undefined;
     const fileName = (content.filename ?? content.body ?? 'file') as string;
 
-    try {
-      // mxc://server/mediaId → /_matrix/media/v3/download/server/mediaId
-      const mxcParts = mxcUrl.slice(6); // remove "mxc://"
-      const downloadUrl = `${this.homeserverUrl}/_matrix/media/v3/download/${mxcParts}`;
+    const mxcParts = mxcUrl.slice(6); // remove "mxc://"
+    const downloadUrl = `${this.homeserverUrl}/_matrix/media/v3/download/${mxcParts}`;
+    const maxRetries = 2;
 
-      const res = await fetch(downloadUrl, {
-        headers: { Authorization: `Bearer ${this.accessToken}` },
-      });
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const res = await fetch(downloadUrl, {
+          headers: { Authorization: `Bearer ${this.accessToken}` },
+        });
 
-      if (!res.ok) return undefined;
+        if (!res.ok) {
+          console.error(`[matrix] Download failed (${res.status}), attempt ${attempt + 1}/${maxRetries + 1}`, mxcUrl);
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+            continue;
+          }
+          return undefined;
+        }
 
-      const arrayBuffer = await res.arrayBuffer();
-      const data = Buffer.from(arrayBuffer);
+        const arrayBuffer = await res.arrayBuffer();
+        const data = Buffer.from(arrayBuffer);
 
-      return {
-        type,
-        mimeType,
-        fileName,
-        size: size ?? data.length,
-        data,
-      };
-    } catch (err) {
-      console.error('[matrix] Failed to download attachment', mxcUrl, err);
-      return undefined;
+        return {
+          type,
+          mimeType,
+          fileName,
+          size: size ?? data.length,
+          data,
+        };
+      } catch (err) {
+        console.error(`[matrix] Download error, attempt ${attempt + 1}/${maxRetries + 1}`, mxcUrl, err);
+        if (attempt < maxRetries) {
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        return undefined;
+      }
     }
+    return undefined;
   }
 
   private guessMimeType(fileName: string): string {

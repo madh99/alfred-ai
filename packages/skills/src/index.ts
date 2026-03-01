@@ -34,4 +34,4 @@ export type { ExecutionResult } from './built-in/code-sandbox/index.js';
 export { DocumentSkill } from './built-in/document.js';
 export { TTSSkill } from './built-in/tts.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
-export type { CrossPlatformAdapter } from './built-in/cross-platform.js';
+export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';

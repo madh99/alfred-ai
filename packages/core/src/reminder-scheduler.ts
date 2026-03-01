@@ -4,6 +4,13 @@ import type { Platform } from '@alfred/types';
 
 export type SendMessageFn = (platform: Platform, chatId: string, text: string) => Promise<void>;
 
+/** Minimal interface to resolve linked users for cross-platform reminder delivery. */
+export interface LinkedUserResolver {
+  getMasterUserId(userId: string): string;
+  getLinkedUsers(masterUserId: string): { id: string; platform: string; platformUserId: string }[];
+  findConversation(platform: string, userId: string): { chatId: string } | undefined;
+}
+
 export class ReminderScheduler {
   private intervalId?: ReturnType<typeof setInterval>;
   private readonly checkIntervalMs: number;
@@ -13,6 +20,7 @@ export class ReminderScheduler {
     private readonly sendMessage: SendMessageFn,
     private readonly logger: Logger,
     checkIntervalMs = 15_000,
+    private readonly linkedUsers?: LinkedUserResolver,
   ) {
     this.checkIntervalMs = checkIntervalMs;
   }
@@ -37,11 +45,32 @@ export class ReminderScheduler {
       const due = this.reminderRepo.getDue();
       for (const reminder of due) {
         try {
+          const text = `\u23F0 Reminder: ${reminder.message}`;
+
+          // Send to the original platform
           await this.sendMessage(
             reminder.platform as Platform,
             reminder.chatId,
-            `\u23F0 Reminder: ${reminder.message}`,
+            text,
           );
+
+          // Also send to all other linked platforms
+          if (this.linkedUsers) {
+            try {
+              const masterUserId = this.linkedUsers.getMasterUserId(reminder.userId);
+              const linked = this.linkedUsers.getLinkedUsers(masterUserId);
+              for (const user of linked) {
+                if (user.platform === reminder.platform) continue;
+                const conv = this.linkedUsers.findConversation(user.platform, user.id);
+                if (conv) {
+                  await this.sendMessage(user.platform as Platform, conv.chatId, text);
+                }
+              }
+            } catch (err) {
+              this.logger.debug({ err, reminderId: reminder.id }, 'Cross-platform reminder delivery failed');
+            }
+          }
+
           this.reminderRepo.markFired(reminder.id);
           this.logger.info({ reminderId: reminder.id }, 'Reminder fired');
         } catch (err) {

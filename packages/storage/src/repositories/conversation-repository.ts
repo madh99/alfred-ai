@@ -40,6 +40,12 @@ export class ConversationRepository {
     return this.mapRow(row);
   }
 
+  findByPlatformAndUser(platform: string, userId: string): Conversation | undefined {
+    const row = this.db.prepare('SELECT * FROM conversations WHERE platform = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1').get(platform, userId) as Record<string, string> | undefined;
+    if (!row) return undefined;
+    return this.mapRow(row);
+  }
+
   addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string): ConversationMessage {
     const message: ConversationMessage = {
       id: crypto.randomUUID(),

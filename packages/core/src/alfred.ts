@@ -159,7 +159,7 @@ export class Alfred {
     skillRegistry.register(new ScreenshotSkill());
     skillRegistry.register(new BrowserSkill());
     skillRegistry.register(new ProfileSkill(userRepo));
-    skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters));
+    skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters, (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId)));
     skillRegistry.register(new BackgroundTaskSkill(backgroundTaskRepo));
     skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
 
@@ -257,6 +257,12 @@ export class Alfred {
         }
       },
       this.logger.child({ component: 'reminders' }),
+      15_000,
+      {
+        getMasterUserId: (userId) => userRepo.getMasterUserId(userId),
+        getLinkedUsers: (masterUserId) => userRepo.getLinkedUsers(masterUserId),
+        findConversation: (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId),
+      },
     );
 
     // 7b. Initialize background task runner
