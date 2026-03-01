@@ -176,9 +176,16 @@ const PLATFORMS: PlatformDef[] = [
 
 // ── Load existing config ──────────────────────────────────────────────
 
+interface TierConfig {
+  provider?: string;
+  model?: string;
+  apiKey?: string;
+  baseUrl?: string;
+}
+
 interface ExistingConfig {
   name?: string;
-  llm?: { provider?: string; model?: string; baseUrl?: string };
+  llm?: { provider?: string; model?: string; baseUrl?: string; default?: TierConfig; strong?: TierConfig; fast?: TierConfig; embeddings?: TierConfig; local?: TierConfig };
   telegram?: { token?: string; enabled?: boolean };
   discord?: { token?: string; enabled?: boolean };
   whatsapp?: { enabled?: boolean; dataPath?: string };
@@ -197,6 +204,7 @@ function loadExistingConfig(projectRoot: string): {
   writeInGroups: boolean;
   rateLimit: number;
   codeSandboxEnabled: boolean;
+  multiModelTiers: Record<string, TierConfig>;
 } {
   const config: ExistingConfig = {};
   const env: Record<string, string> = {};
@@ -260,7 +268,22 @@ function loadExistingConfig(projectRoot: string): {
 
   const codeSandboxEnabled = !!(config as any).codeSandbox?.enabled;
 
-  return { config, env, shellEnabled, writeInGroups, rateLimit, codeSandboxEnabled };
+  // Detect existing multi-model tiers
+  const llm = config.llm as Record<string, any> | undefined;
+  const multiModelTiers: Record<string, TierConfig> = {};
+  if (llm) {
+    for (const tier of ['strong', 'fast', 'embeddings', 'local'] as const) {
+      if (llm[tier]?.provider && llm[tier]?.model) {
+        multiModelTiers[tier] = llm[tier];
+      }
+    }
+    // Also check if config is already in nested format (llm.default exists)
+    if (llm.default?.provider) {
+      config.llm = { ...config.llm, provider: llm.default.provider, model: llm.default.model, baseUrl: llm.default.baseUrl };
+    }
+  }
+
+  return { config, env, shellEnabled, writeInGroups, rateLimit, codeSandboxEnabled, multiModelTiers };
 }
 
 // ── Main setup command ────────────────────────────────────────────────
@@ -357,6 +380,96 @@ export async function setupCommand(): Promise<void> {
     const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log('');
     const model = await askWithDefault(rl, 'Which model?', existingModel);
+
+    // ── 4b. Additional model tiers (multi-model) ──────────────
+    const hasExistingTiers = Object.keys(existing.multiModelTiers).length > 0;
+    const multiModelDefault = hasExistingTiers ? 'Y/n' : 'y/N';
+    console.log(`\n${bold('Configure additional model tiers for specialized tasks?')}`);
+    console.log(`${dim('Optional: use different models for complex tasks, quick replies, embeddings, or offline.')}`);
+    const multiModelAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim(`[${multiModelDefault}] `)}`)
+    ).trim().toLowerCase();
+    const enableMultiModel = multiModelAnswer === '' ? hasExistingTiers : (multiModelAnswer === 'y' || multiModelAnswer === 'yes');
+
+    interface TierEntry { provider: string; model: string; apiKey?: string; baseUrl?: string }
+    const configuredTiers: Record<string, TierEntry> = {};
+
+    if (enableMultiModel) {
+      const tierDefs: { key: string; label: string; hint: string; defaultModel: string }[] = [
+        { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-20250514' },
+        { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-haiku-4-5-20251001' },
+        { key: 'embeddings', label: 'Embeddings', hint: 'semantic search & memory', defaultModel: 'text-embedding-3-small' },
+        { key: 'local', label: 'Local', hint: 'offline fallback via Ollama', defaultModel: 'llama3.2' },
+      ];
+
+      for (const tier of tierDefs) {
+        const existingTier = existing.multiModelTiers[tier.key];
+        const hasExisting = !!existingTier?.model;
+
+        console.log(`\n  ${bold(`${tier.label} model`)} ${dim(`(${tier.hint})`)}`);
+        if (hasExisting) {
+          console.log(`  ${dim(`Current: ${existingTier!.provider}/${existingTier!.model}`)}`);
+        }
+        console.log(`  ${dim('Press Enter to skip.')}`);
+
+        const tierModelAnswer = (
+          await rl.question(`  ${YELLOW}Model: ${RESET}${hasExisting ? dim(`[${existingTier!.model}] `) : ''}`)
+        ).trim();
+
+        const tierModel = tierModelAnswer || (hasExisting ? existingTier!.model! : '');
+        if (!tierModel) {
+          console.log(`    ${dim('Skipped.')}`);
+          continue;
+        }
+
+        // Provider: default to same as main provider, or existing tier provider
+        const tierProviderDefault = existingTier?.provider ?? provider.name;
+        const tierProviderNames = PROVIDERS.map(p => p.name).join(', ');
+        console.log(`  ${dim(`Providers: ${tierProviderNames}`)}`);
+        const tierProviderAnswer = (
+          await rl.question(`  ${YELLOW}Provider: ${RESET}${dim(`[${tierProviderDefault}] `)}`)
+        ).trim();
+        const tierProvider = tierProviderAnswer || tierProviderDefault;
+
+        // API key: only ask if different provider than default
+        let tierApiKey: string | undefined;
+        let tierBaseUrl: string | undefined;
+        if (tierProvider !== provider.name) {
+          const existingTierKey = existingTier?.apiKey ?? existing.env[`ALFRED_LLM_${tier.key.toUpperCase()}_API_KEY`] ?? '';
+          if (existingTierKey) {
+            tierApiKey = await askWithDefault(rl, `  API key for ${tierProvider}`, existingTierKey);
+          } else {
+            const needsKey = PROVIDERS.find(p => p.name === tierProvider)?.needsApiKey ?? true;
+            if (needsKey) {
+              tierApiKey = await askRequired(rl, `  API key for ${tierProvider}`);
+            }
+          }
+          // Base URL for local/ollama/openwebui
+          const localProviders = ['ollama', 'openwebui'];
+          if (localProviders.includes(tierProvider)) {
+            const existingUrl = existingTier?.baseUrl ?? '';
+            const defaultUrl = existingUrl || PROVIDERS.find(p => p.name === tierProvider)?.baseUrl || '';
+            if (defaultUrl) {
+              tierBaseUrl = await askWithDefault(rl, `  ${tierProvider} URL`, defaultUrl);
+            }
+          }
+        }
+
+        configuredTiers[tier.key] = {
+          provider: tierProvider,
+          model: tierModel,
+          ...(tierApiKey ? { apiKey: tierApiKey } : {}),
+          ...(tierBaseUrl ? { baseUrl: tierBaseUrl } : {}),
+        };
+        console.log(`    ${green('>')} ${tier.label}: ${bold(tierProvider)}/${bold(tierModel)}`);
+      }
+
+      if (Object.keys(configuredTiers).length === 0) {
+        console.log(`\n  ${dim('No additional tiers configured — using single model.')}`);
+      }
+    } else {
+      console.log(`  ${dim('Using single model for all tasks.')}`);
+    }
 
     // ── 5. Web Search ──────────────────────────────────────────
     const searchProviders = ['brave', 'tavily', 'duckduckgo', 'searxng'] as const;
@@ -744,6 +857,23 @@ export async function setupCommand(): Promise<void> {
       envLines.push(`ALFRED_LLM_BASE_URL=${baseUrl}`);
     }
 
+    // Multi-model tier env vars
+    if (Object.keys(configuredTiers).length > 0) {
+      envLines.push('', '# === Additional Model Tiers ===');
+      for (const [tierKey, tierCfg] of Object.entries(configuredTiers)) {
+        const prefix = `ALFRED_LLM_${tierKey.toUpperCase()}`;
+        envLines.push('');
+        envLines.push(`${prefix}_PROVIDER=${tierCfg.provider}`);
+        envLines.push(`${prefix}_MODEL=${tierCfg.model}`);
+        if (tierCfg.apiKey) {
+          envLines.push(`${prefix}_API_KEY=${tierCfg.apiKey}`);
+        }
+        if (tierCfg.baseUrl) {
+          envLines.push(`${prefix}_BASE_URL=${tierCfg.baseUrl}`);
+        }
+      }
+    }
+
     envLines.push('', '# === Messaging Platforms ===', '');
 
     for (const [envKey, envVal] of Object.entries(envOverrides)) {
@@ -815,7 +945,7 @@ export async function setupCommand(): Promise<void> {
       whatsapp: { enabled: boolean; dataPath: string };
       matrix: { homeserverUrl: string; accessToken: string; userId: string; enabled: boolean };
       signal: { apiUrl: string; phoneNumber: string; enabled: boolean };
-      llm: { provider: string; model: string; baseUrl?: string; temperature: number; maxTokens: number };
+      llm: Record<string, unknown>;
       search?: { provider: string; apiKey?: string; baseUrl?: string };
       email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
       speech?: { provider: string; apiKey: string; baseUrl?: string };
@@ -850,13 +980,24 @@ export async function setupCommand(): Promise<void> {
         phoneNumber: platformCredentials['signal']?.['phoneNumber'] ?? '',
         enabled: selectedPlatforms.some((p) => p.name === 'signal'),
       },
-      llm: {
-        provider: provider.name,
-        model,
-        ...(baseUrl ? { baseUrl } : {}),
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
+      llm: Object.keys(configuredTiers).length > 0
+        ? {
+            default: {
+              provider: provider.name,
+              model,
+              ...(baseUrl ? { baseUrl } : {}),
+              temperature: 0.7,
+              maxTokens: 4096,
+            },
+            ...configuredTiers,
+          }
+        : {
+            provider: provider.name,
+            model,
+            ...(baseUrl ? { baseUrl } : {}),
+            temperature: 0.7,
+            maxTokens: 4096,
+          },
       ...(searchProvider ? {
         search: {
           provider: searchProvider,
@@ -1022,9 +1163,13 @@ ${ownerAdminRule}
     console.log(`${GREEN}${'='.repeat(52)}${RESET}`);
     console.log('');
     console.log(`  ${bold('Bot name:')}       ${botName}`);
-    console.log(`  ${bold('LLM provider:')}   ${provider.name} (${model})`);
+    console.log(`  ${bold('LLM default:')}    ${provider.name} (${model})`);
     if (apiKey) {
       console.log(`  ${bold('API key:')}        ${maskKey(apiKey)}`);
+    }
+    for (const [tierKey, tierCfg] of Object.entries(configuredTiers)) {
+      const label = tierKey.charAt(0).toUpperCase() + tierKey.slice(1);
+      console.log(`  ${bold(`LLM ${label}:`)}${' '.repeat(Math.max(1, 10 - label.length))}${tierCfg.provider} (${tierCfg.model})`);
     }
     if (selectedPlatforms.length > 0) {
       console.log(
