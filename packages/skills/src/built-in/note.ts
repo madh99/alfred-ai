@@ -79,7 +79,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "content" for save action' };
     }
 
-    const entry = this.noteRepo.save(context.userId, title, content);
+    const entry = this.noteRepo.save(context.masterUserId ?? context.userId, title, content);
 
     return {
       success: true,
@@ -89,7 +89,7 @@ export class NoteSkill extends Skill {
   }
 
   private listNotes(context: SkillContext): SkillResult {
-    const notes = this.noteRepo.list(context.userId);
+    const notes = this.noteRepo.list(context.masterUserId ?? context.userId);
 
     if (notes.length === 0) {
       return { success: true, data: [], display: 'No notes found.' };
@@ -109,7 +109,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "query" for search action' };
     }
 
-    const matches = this.noteRepo.search(context.userId, query);
+    const matches = this.noteRepo.search(context.masterUserId ?? context.userId, query);
 
     if (matches.length === 0) {
       return { success: true, data: [], display: `No notes matching "${query}".` };
@@ -134,7 +134,7 @@ export class NoteSkill extends Skill {
     if (!note) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
-    if (note.userId !== context.userId) {
+    if (note.userId !== (context.masterUserId ?? context.userId)) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
 

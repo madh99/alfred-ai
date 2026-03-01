@@ -43,11 +43,17 @@ export class ProfileSkill extends Skill {
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as ProfileAction;
-    // Resolve internal user ID from platform user ID
-    const user = this.userRepo.findOrCreate(
+    // Resolve internal user ID — use master user for cross-platform linked accounts
+    const currentUser = this.userRepo.findOrCreate(
       context.platform as any,
       context.userId,
     );
+    const masterInternalId = 'getMasterUserId' in this.userRepo
+      ? (this.userRepo as any).getMasterUserId(currentUser.id) as string
+      : currentUser.id;
+    const user = ('findById' in this.userRepo
+      ? (this.userRepo as any).findById(masterInternalId)
+      : currentUser) ?? currentUser;
 
     switch (action) {
       case 'get':

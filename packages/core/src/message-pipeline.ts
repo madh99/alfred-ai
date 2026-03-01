@@ -287,7 +287,8 @@ export class MessagePipeline {
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {
-            userId: masterPlatformUserId,
+            userId: message.userId,
+            masterUserId: masterPlatformUserId,
             chatId: message.chatId,
             chatType: message.chatType,
             platform: message.platform,

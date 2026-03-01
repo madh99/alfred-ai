@@ -53,6 +53,11 @@ export class MemorySkill extends Skill {
     super();
   }
 
+  /** Resolve effective user ID: cross-platform master if linked, else current user. */
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -103,7 +108,7 @@ export class MemorySkill extends Skill {
     }
 
     const entry = this.memoryRepo.save(
-      context.userId,
+      this.effectiveUserId(context),
       key,
       value,
       category ?? 'general',
@@ -112,7 +117,7 @@ export class MemorySkill extends Skill {
     // Auto-embed for semantic search
     if (this.embeddingService) {
       this.embeddingService.embedAndStore(
-        context.userId,
+        this.effectiveUserId(context),
         `${key}: ${value}`,
         'memory',
         key,
@@ -139,7 +144,7 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entry = this.memoryRepo.recall(context.userId, key);
+    const entry = this.memoryRepo.recall(this.effectiveUserId(context), key);
 
     if (!entry) {
       return {
@@ -169,7 +174,7 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entries = this.memoryRepo.search(context.userId, query);
+    const entries = this.memoryRepo.search(this.effectiveUserId(context), query);
 
     return {
       success: true,
@@ -189,8 +194,8 @@ export class MemorySkill extends Skill {
 
     const entries =
       category && typeof category === 'string'
-        ? this.memoryRepo.listByCategory(context.userId, category)
-        : this.memoryRepo.listAll(context.userId);
+        ? this.memoryRepo.listByCategory(this.effectiveUserId(context), category)
+        : this.memoryRepo.listAll(this.effectiveUserId(context));
 
     const label = category ? `in category "${category}"` : 'total';
 
@@ -217,7 +222,7 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const deleted = this.memoryRepo.delete(context.userId, key);
+    const deleted = this.memoryRepo.delete(this.effectiveUserId(context), key);
 
     return {
       success: true,
@@ -242,7 +247,7 @@ export class MemorySkill extends Skill {
       return this.searchMemories(input, context);
     }
 
-    const results = await this.embeddingService.semanticSearch(context.userId, query, 10);
+    const results = await this.embeddingService.semanticSearch(this.effectiveUserId(context), query, 10);
     if (results.length === 0) {
       // Fallback to keyword search
       return this.searchMemories(input, context);
