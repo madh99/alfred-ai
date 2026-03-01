@@ -109,10 +109,20 @@ export class MessagePipeline {
         message.displayName,
       );
 
-      // Resolve master user for cross-platform shared context
+      // Resolve master user for cross-platform shared context.
+      // masterUserId is the internal DB UUID; masterPlatformUserId is the
+      // platform-specific ID (e.g. Telegram numeric ID) used as key in
+      // memories, embeddings, notes, etc.
       const masterUserId = 'getMasterUserId' in this.users
         ? (this.users as { getMasterUserId(id: string): string }).getMasterUserId(user.id)
         : user.id;
+      let masterPlatformUserId = message.userId;
+      if (masterUserId !== user.id && 'findById' in this.users) {
+        const masterUser = (this.users as { findById(id: string): { platformUserId: string } | undefined }).findById(masterUserId);
+        if (masterUser) {
+          masterPlatformUserId = masterUser.platformUserId;
+        }
+      }
 
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
@@ -138,15 +148,15 @@ export class MessagePipeline {
       const skipMemories = syntheticInput && !hasAudioAttachment;
       if (this.memoryRetriever && message.text && !skipMemories) {
         try {
-          memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15);
+          memories = await this.memoryRetriever.retrieve(masterPlatformUserId, message.text, 15);
         } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
       }
       if (!memories && this.memoryRepo && !skipMemories) {
         try {
           if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
             // Use semantic search: top-10 relevant + 5 newest
-            const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
-            const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
+            const semanticResults = await this.embeddingService.semanticSearch(masterPlatformUserId, message.text, 10);
+            const recentResults = this.memoryRepo.getRecentForPrompt(masterPlatformUserId, 5);
             // Merge and deduplicate by key
             const seen = new Set<string>();
             memories = [];
@@ -163,7 +173,7 @@ export class MessagePipeline {
               }
             }
           } else {
-            memories = this.memoryRepo.getRecentForPrompt(masterUserId, 20);
+            memories = this.memoryRepo.getRecentForPrompt(masterPlatformUserId, 20);
           }
         } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
       }
@@ -172,7 +182,7 @@ export class MessagePipeline {
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {
         if ('getProfile' in this.users) {
-          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(masterUserId);
+          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(masterUserId);  // internal UUID — getProfile queries by users.id
           if (userProfile && !userProfile.displayName) {
             userProfile.displayName = user.displayName ?? user.username;
           }
@@ -277,7 +287,7 @@ export class MessagePipeline {
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {
-            userId: masterUserId,
+            userId: masterPlatformUserId,
             chatId: message.chatId,
             chatType: message.chatType,
             platform: message.platform,
@@ -359,7 +369,7 @@ export class MessagePipeline {
 
       // 9. Active learning: extract memories from conversation (fire-and-forget)
       if (this.activeLearning) {
-        this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
+        this.activeLearning.onMessageProcessed(masterPlatformUserId, message.text, responseText);
       }
 
       const duration = Date.now() - startTime;
