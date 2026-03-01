@@ -48,6 +48,14 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'gemini-2.0-pro':               { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
   'gemini-1.5-pro':               { maxInputTokens: 2_097_152, maxOutputTokens: 8_192 },
   'gemini-1.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
+  // Mistral AI
+  'mistral-large-latest':         { maxInputTokens: 256_000, maxOutputTokens: 8_192 },
+  'mistral-medium-latest':        { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
+  'mistral-small-latest':         { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
+  'codestral-latest':             { maxInputTokens: 256_000, maxOutputTokens: 8_192 },
+  'magistral-medium-latest':      { maxInputTokens: 40_000,  maxOutputTokens: 8_192 },
+  'magistral-small-latest':       { maxInputTokens: 40_000,  maxOutputTokens: 8_192 },
+  'ministral-8b-latest':          { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
 };
 
 const DEFAULT_CONTEXT_WINDOW: ContextWindow = { maxInputTokens: 8_192, maxOutputTokens: 4_096 };

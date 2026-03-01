@@ -34,6 +34,7 @@ interface ProviderDef {
   envKeyName: string;
   needsApiKey: boolean;
   baseUrl?: string;
+  models?: { id: string; desc: string }[];
 }
 
 const PROVIDERS: ProviderDef[] = [
@@ -43,6 +44,11 @@ const PROVIDERS: ProviderDef[] = [
     defaultModel: 'claude-sonnet-4-20250514',
     envKeyName: 'ALFRED_ANTHROPIC_API_KEY',
     needsApiKey: true,
+    models: [
+      { id: 'claude-sonnet-4-20250514', desc: 'Sonnet 4 — fast, smart, recommended' },
+      { id: 'claude-opus-4-20250514',   desc: 'Opus 4 — most capable, slower' },
+      { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest' },
+    ],
   },
   {
     name: 'openai',
@@ -50,6 +56,11 @@ const PROVIDERS: ProviderDef[] = [
     defaultModel: 'gpt-4o',
     envKeyName: 'ALFRED_OPENAI_API_KEY',
     needsApiKey: true,
+    models: [
+      { id: 'gpt-4o',       desc: 'GPT-4o — flagship, 128k context' },
+      { id: 'gpt-4o-mini',  desc: 'GPT-4o Mini — fast, cheap, 128k context' },
+      { id: 'o3-mini',      desc: 'o3-mini — reasoning, 200k context' },
+    ],
   },
   {
     name: 'openrouter',
@@ -81,6 +92,28 @@ const PROVIDERS: ProviderDef[] = [
     defaultModel: 'gemini-2.0-flash',
     envKeyName: 'ALFRED_GOOGLE_API_KEY',
     needsApiKey: true,
+    models: [
+      { id: 'gemini-2.0-flash', desc: 'Flash 2.0 — fast, 1M context' },
+      { id: 'gemini-2.0-pro',   desc: 'Pro 2.0 — capable, 1M context' },
+      { id: 'gemini-1.5-pro',   desc: 'Pro 1.5 — 2M context' },
+      { id: 'gemini-1.5-flash', desc: 'Flash 1.5 — fast, 1M context' },
+    ],
+  },
+  {
+    name: 'mistral',
+    label: 'Mistral AI',
+    defaultModel: 'mistral-small-latest',
+    envKeyName: 'ALFRED_MISTRAL_API_KEY',
+    needsApiKey: true,
+    models: [
+      { id: 'mistral-small-latest',    desc: 'Small 3.2 — fast, 128k context, best value' },
+      { id: 'mistral-medium-latest',   desc: 'Medium 3.1 — balanced, 128k context' },
+      { id: 'mistral-large-latest',    desc: 'Large 3 — flagship, 256k context' },
+      { id: 'codestral-latest',        desc: 'Codestral — code-optimized, 256k context' },
+      { id: 'magistral-medium-latest', desc: 'Magistral Medium — reasoning, 40k context' },
+      { id: 'magistral-small-latest',  desc: 'Magistral Small — reasoning (light), 40k context' },
+      { id: 'ministral-8b-latest',     desc: 'Ministral 8B — edge/tiny, 128k context' },
+    ],
   },
 ];
 
@@ -387,7 +420,27 @@ export async function setupCommand(): Promise<void> {
     // ── 4. Model ─────────────────────────────────────────────────
     const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log('');
-    const model = await askWithDefault(rl, 'Which model?', existingModel);
+    let model: string;
+    if (provider.models && provider.models.length > 0) {
+      console.log(`${bold('Available models:')}`);
+      for (let i = 0; i < provider.models.length; i++) {
+        const m = provider.models[i];
+        const marker = m.id === existingModel ? ` ${green('(current)')}` : '';
+        console.log(`  ${cyan(`${i + 1})`)} ${m.id} ${dim(`— ${m.desc}`)}${marker}`);
+      }
+      console.log(`  ${cyan(`${provider.models.length + 1})`)} ${dim('Other (enter manually)')}`);
+      const choice = await askWithDefault(rl, 'Choose model', '1');
+      const idx = parseInt(choice, 10) - 1;
+      if (idx >= 0 && idx < provider.models.length) {
+        model = provider.models[idx].id;
+      } else if (idx === provider.models.length) {
+        model = await askWithDefault(rl, 'Model ID', existingModel);
+      } else {
+        model = await askWithDefault(rl, 'Model ID', existingModel);
+      }
+    } else {
+      model = await askWithDefault(rl, 'Which model?', existingModel);
+    }
 
     // ── 4b. Additional model tiers (multi-model) ──────────────
     const hasExistingTiers = Object.keys(existing.multiModelTiers).length > 0;

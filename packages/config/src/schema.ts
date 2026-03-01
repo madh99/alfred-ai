@@ -45,7 +45,7 @@ export const SecurityConfigSchema = z.object({
 });
 
 export const LLMProviderConfigSchema = z.object({
-  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama', 'openwebui', 'google']),
+  provider: z.enum(['anthropic', 'openai', 'openrouter', 'ollama', 'openwebui', 'google', 'mistral']),
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   model: z.string(),

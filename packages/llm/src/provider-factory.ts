@@ -6,6 +6,7 @@ import { OpenRouterProvider } from './providers/openrouter.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { OpenWebUIProvider } from './providers/openwebui.js';
 import { GoogleProvider } from './providers/google.js';
+import { MistralProvider } from './providers/mistral.js';
 
 export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
   switch (config.provider) {
@@ -21,6 +22,8 @@ export function createLLMProvider(config: LLMProviderConfig): LLMProvider {
       return new OpenWebUIProvider(config);
     case 'google':
       return new GoogleProvider(config);
+    case 'mistral':
+      return new MistralProvider(config);
     default:
       throw new Error(`Unknown LLM provider: ${config.provider}`);
   }
