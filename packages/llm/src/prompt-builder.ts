@@ -279,38 +279,38 @@ For complex tasks, work through multiple steps:
 
   /**
    * Remove messages with orphaned tool_use or tool_result blocks.
-   * This heals corrupt DB entries where tool_use/tool_result pairs were
-   * broken (e.g. by partial trimming or data loss). Without this,
-   * the Anthropic API rejects the entire request with a 400 error.
+   * Uses SEQUENTIAL pairing: a tool_result is valid only if its matching
+   * tool_use appeared in a PRECEDING assistant message. This matches the
+   * Anthropic API requirement that "each tool_result block must have a
+   * corresponding tool_use block in the previous message".
+   *
+   * Handles: broken DB pairs, same-timestamp reordering, trimming gaps,
+   * duplicate tool_use IDs, and any other data corruption.
    */
-  private sanitizeToolMessages(messages: LLMMessage[]): LLMMessage[] {
-    // Collect all tool_use IDs from assistant messages
-    const toolUseIds = new Set<string>();
+  sanitizeToolMessages(messages: LLMMessage[]): LLMMessage[] {
+    // Forward scan: track tool_use IDs seen so far in assistant messages.
+    // A tool_result is valid only if its tool_use_id was seen in a preceding
+    // assistant message (not just anywhere in the conversation).
+    const seenToolUseIds = new Set<string>();
+    const validPairIds = new Set<string>();
+
     for (const msg of messages) {
       if (msg.role === 'assistant' && Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block.type === 'tool_use') {
-            toolUseIds.add(block.id);
+            seenToolUseIds.add(block.id);
           }
         }
-      }
-    }
-
-    // Collect all tool_result IDs from user messages
-    const toolResultIds = new Set<string>();
-    for (const msg of messages) {
-      if (msg.role === 'user' && Array.isArray(msg.content)) {
+      } else if (msg.role === 'user' && Array.isArray(msg.content)) {
         for (const block of msg.content) {
-          if (block.type === 'tool_result') {
-            toolResultIds.add(block.tool_use_id);
+          if (block.type === 'tool_result' && seenToolUseIds.has(block.tool_use_id)) {
+            validPairIds.add(block.tool_use_id);
           }
         }
       }
     }
 
-    // Filter individual orphaned blocks, not entire messages.
-    // This avoids cascade effects where removing a message with one
-    // orphaned block also removes valid text/tool blocks.
+    // Filter: only keep tool_use/tool_result blocks that are in valid pairs
     const result: LLMMessage[] = [];
     for (const msg of messages) {
       if (!Array.isArray(msg.content)) {
@@ -319,8 +319,8 @@ For complex tasks, work through multiple steps:
       }
 
       const filtered = msg.content.filter(block => {
-        if (block.type === 'tool_use') return toolResultIds.has(block.id);
-        if (block.type === 'tool_result') return toolUseIds.has(block.tool_use_id);
+        if (block.type === 'tool_use') return validPairIds.has(block.id);
+        if (block.type === 'tool_result') return validPairIds.has(block.tool_use_id);
         return true;
       });
 

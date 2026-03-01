@@ -395,10 +395,13 @@ export class MessagePipeline {
     }));
     messages.push({ role: 'user', content: syntheticResults });
 
-    // Persist both to DB so the pair is complete
-    this.conversationManager.addMessage(
-      conversationId, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
-    );
+    // Persist to DB so the pair is complete.
+    // Only save the assistant message if it wasn't already saved by the main loop.
+    if (!assistantAlreadyPushed) {
+      this.conversationManager.addMessage(
+        conversationId, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
+      );
+    }
     this.conversationManager.addMessage(
       conversationId, 'user', '', JSON.stringify(syntheticResults),
     );
@@ -738,7 +741,10 @@ export class MessagePipeline {
     }
 
     keptMessages.push(latestMsg);
-    return keptMessages;
+
+    // Final sanitization pass: trimming can skip groups and create new orphaned
+    // tool_use/tool_result blocks. Re-sanitize to ensure sequential pairing.
+    return this.promptBuilder.sanitizeToolMessages(keptMessages);
   }
 
   /**
