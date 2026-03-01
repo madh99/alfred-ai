@@ -46,6 +46,10 @@ export class BackgroundTaskSkill extends Skill {
     super();
   }
 
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -83,7 +87,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     const task = this.taskRepo.create(
-      context.userId,
+      this.effectiveUserId(context),
       context.platform,
       context.chatId,
       description,
@@ -99,7 +103,7 @@ export class BackgroundTaskSkill extends Skill {
   }
 
   private listTasks(context: SkillContext): SkillResult {
-    const tasks = this.taskRepo.getByUser(context.userId);
+    const tasks = this.taskRepo.getByUser(this.effectiveUserId(context));
 
     if (tasks.length === 0) {
       return {
@@ -142,7 +146,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own tasks
-    const userTasks = this.taskRepo.getByUser(context.userId);
+    const userTasks = this.taskRepo.getByUser(this.effectiveUserId(context));
     const ownsTask = userTasks.some(t => t.id === taskId);
     if (!ownsTask) {
       return {

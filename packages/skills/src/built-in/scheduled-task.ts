@@ -63,6 +63,10 @@ export class ScheduledTaskSkill extends Skill {
     super();
   }
 
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -140,7 +144,7 @@ export class ScheduledTaskSkill extends Skill {
     }
 
     const entry = this.actionRepo.create({
-      userId: context.userId,
+      userId: this.effectiveUserId(context),
       platform: context.platform,
       chatId: context.chatId,
       name,
@@ -166,7 +170,7 @@ export class ScheduledTaskSkill extends Skill {
   }
 
   private listActions(context: SkillContext): SkillResult {
-    const actions = this.actionRepo.getByUser(context.userId);
+    const actions = this.actionRepo.getByUser(this.effectiveUserId(context));
 
     if (actions.length === 0) {
       return {
@@ -212,7 +216,7 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before toggling
     const action = this.actionRepo.findById(actionId);
-    if (!action || action.userId !== context.userId) {
+    if (!action || action.userId !== this.effectiveUserId(context)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
@@ -238,7 +242,7 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before deleting
     const action = this.actionRepo.findById(actionId);
-    if (!action || action.userId !== context.userId) {
+    if (!action || action.userId !== this.effectiveUserId(context)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 

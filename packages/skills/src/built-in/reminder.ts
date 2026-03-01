@@ -47,6 +47,10 @@ export class ReminderSkill extends Skill {
     super();
   }
 
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -112,7 +116,7 @@ export class ReminderSkill extends Skill {
     }
 
     const entry = this.reminderRepo.create(
-      context.userId,
+      this.effectiveUserId(context),
       context.platform,
       context.chatId,
       message,
@@ -241,7 +245,7 @@ export class ReminderSkill extends Skill {
   }
 
   private listReminders(context: SkillContext): SkillResult {
-    const reminders = this.reminderRepo.getByUser(context.userId);
+    const reminders = this.reminderRepo.getByUser(this.effectiveUserId(context));
 
     const reminderList = reminders.map((r) => ({
       reminderId: r.id,
@@ -270,7 +274,7 @@ export class ReminderSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own reminders
-    const userReminders = this.reminderRepo.getByUser(context.userId);
+    const userReminders = this.reminderRepo.getByUser(this.effectiveUserId(context));
     const ownsReminder = userReminders.some(r => r.id === reminderId);
     if (!ownsReminder) {
       return {
