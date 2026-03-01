@@ -45,6 +45,20 @@ export class NoteSkill extends Skill {
     super();
   }
 
+  private effectiveUserId(context: SkillContext): string {
+    return context.masterUserId ?? context.userId;
+  }
+
+  private allUserIds(context: SkillContext): string[] {
+    const set = new Set<string>();
+    set.add(this.effectiveUserId(context));
+    set.add(context.userId);
+    if (context.linkedPlatformUserIds) {
+      for (const id of context.linkedPlatformUserIds) set.add(id);
+    }
+    return [...set];
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -79,7 +93,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "content" for save action' };
     }
 
-    const entry = this.noteRepo.save(context.masterUserId ?? context.userId, title, content);
+    const entry = this.noteRepo.save(this.effectiveUserId(context), title, content);
 
     return {
       success: true,
@@ -89,7 +103,16 @@ export class NoteSkill extends Skill {
   }
 
   private listNotes(context: SkillContext): SkillResult {
-    const notes = this.noteRepo.list(context.masterUserId ?? context.userId);
+    const seen = new Set<string>();
+    const notes: ReturnType<typeof this.noteRepo.list> = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const n of this.noteRepo.list(uid)) {
+        if (!seen.has(n.id)) {
+          seen.add(n.id);
+          notes.push(n);
+        }
+      }
+    }
 
     if (notes.length === 0) {
       return { success: true, data: [], display: 'No notes found.' };
@@ -109,7 +132,16 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "query" for search action' };
     }
 
-    const matches = this.noteRepo.search(context.masterUserId ?? context.userId, query);
+    const seen = new Set<string>();
+    const matches: ReturnType<typeof this.noteRepo.search> = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const n of this.noteRepo.search(uid, query)) {
+        if (!seen.has(n.id)) {
+          seen.add(n.id);
+          matches.push(n);
+        }
+      }
+    }
 
     if (matches.length === 0) {
       return { success: true, data: [], display: `No notes matching "${query}".` };
@@ -129,12 +161,13 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "noteId" for delete action' };
     }
 
-    // Verify ownership before deleting
+    // Verify ownership before deleting (check all linked user IDs)
     const note = this.noteRepo.getById(noteId);
     if (!note) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
-    if (note.userId !== (context.masterUserId ?? context.userId)) {
+    const userIds = this.allUserIds(context);
+    if (!userIds.includes(note.userId)) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
 

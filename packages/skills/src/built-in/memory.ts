@@ -58,6 +58,18 @@ export class MemorySkill extends Skill {
     return context.masterUserId ?? context.userId;
   }
 
+  /** All user IDs to query — includes masterUserId, current platform userId,
+   *  and all linked platform user IDs for backward compat with old data. */
+  private allUserIds(context: SkillContext): string[] {
+    const set = new Set<string>();
+    set.add(this.effectiveUserId(context));
+    set.add(context.userId);
+    if (context.linkedPlatformUserIds) {
+      for (const id of context.linkedPlatformUserIds) set.add(id);
+    }
+    return [...set];
+  }
+
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -144,7 +156,12 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entry = this.memoryRepo.recall(this.effectiveUserId(context), key);
+    // Search across all linked user IDs for cross-platform access
+    let entry: ReturnType<typeof this.memoryRepo.recall>;
+    for (const uid of this.allUserIds(context)) {
+      entry = this.memoryRepo.recall(uid, key);
+      if (entry) break;
+    }
 
     if (!entry) {
       return {
@@ -174,7 +191,17 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entries = this.memoryRepo.search(this.effectiveUserId(context), query);
+    // Search across all linked user IDs for cross-platform access
+    const seen = new Set<string>();
+    const entries: ReturnType<typeof this.memoryRepo.search> = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const e of this.memoryRepo.search(uid, query)) {
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          entries.push(e);
+        }
+      }
+    }
 
     return {
       success: true,
@@ -192,10 +219,20 @@ export class MemorySkill extends Skill {
   ): SkillResult {
     const category = input.category as string | undefined;
 
-    const entries =
-      category && typeof category === 'string'
-        ? this.memoryRepo.listByCategory(this.effectiveUserId(context), category)
-        : this.memoryRepo.listAll(this.effectiveUserId(context));
+    // List across all linked user IDs for cross-platform access
+    const seen = new Set<string>();
+    const entries: ReturnType<typeof this.memoryRepo.listAll> = [];
+    for (const uid of this.allUserIds(context)) {
+      const items = category && typeof category === 'string'
+        ? this.memoryRepo.listByCategory(uid, category)
+        : this.memoryRepo.listAll(uid);
+      for (const e of items) {
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          entries.push(e);
+        }
+      }
+    }
 
     const label = category ? `in category "${category}"` : 'total';
 
@@ -222,7 +259,14 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const deleted = this.memoryRepo.delete(this.effectiveUserId(context), key);
+    // Try deleting across all linked user IDs (old data may be under platform ID)
+    let deleted = false;
+    for (const uid of this.allUserIds(context)) {
+      if (this.memoryRepo.delete(uid, key)) {
+        deleted = true;
+        break;
+      }
+    }
 
     return {
       success: true,
@@ -247,7 +291,18 @@ export class MemorySkill extends Skill {
       return this.searchMemories(input, context);
     }
 
-    const results = await this.embeddingService.semanticSearch(this.effectiveUserId(context), query, 10);
+    // Search across all linked user IDs for cross-platform access
+    const seen = new Set<string>();
+    const results: { key: string; value: string; category: string; score: number }[] = [];
+    for (const uid of this.allUserIds(context)) {
+      for (const r of await this.embeddingService.semanticSearch(uid, query, 10)) {
+        if (!seen.has(r.key)) {
+          seen.add(r.key);
+          results.push(r);
+        }
+      }
+    }
+
     if (results.length === 0) {
       // Fallback to keyword search
       return this.searchMemories(input, context);
