@@ -56,11 +56,21 @@ export class ShellSkill extends Skill {
 
     // Block obviously dangerous shell patterns
     const dangerous = [
-      /\brm\s+-rf\s+\/(?:\s|$)/,  // rm -rf /
-      /:(){ :|:& };:/,             // fork bomb
-      />\s*\/dev\/sd[a-z]/,        // write to raw disk
-      /\bmkfs\b/,                  // format filesystem
-      /\bdd\s+.*of=\/dev/,         // dd to device
+      /\brm\s+-rf\s+\/(?:\s|$)/,        // rm -rf /
+      /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+-[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*\s+-[a-zA-Z]*r)[a-zA-Z]*\s+\/(?:\s|$)/, // rm -r -f /
+      /\brm\s+-rf\s+\/\*/,              // rm -rf /*
+      /:(){ :|:& };:/,                  // fork bomb
+      /:\(\)\s*\{.*\|.*&\s*\}\s*;/,     // fork bomb variant
+      />\s*\/dev\/sd[a-z]/,              // write to raw disk
+      /\bmkfs\b/,                        // format filesystem
+      /\bdd\s+.*\bif=/,                  // dd if=
+      /\bchmod\s+777\b/,                 // chmod 777
+      /\bcurl\b.*\|\s*\bbash\b/,         // curl|bash
+      /\bwget\b.*\|\s*\bsh\b/,           // wget|sh
+      /\bpython[23]?\s+-c\b/,            // python -c
+      /\bnode\s+-e\b/,                    // node -e
+      /\b(bash|sh)\s+-i\b.*\/dev\/tcp/,  // reverse shell via /dev/tcp
+      /\bnc\s+.*-e\b/,                   // netcat reverse shell
     ];
     for (const pattern of dangerous) {
       if (pattern.test(command)) {

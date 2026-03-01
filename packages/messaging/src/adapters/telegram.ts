@@ -151,13 +151,18 @@ export class TelegramAdapter extends MessagingAdapter {
     text: string,
     options?: SendMessageOptions,
   ): Promise<string> {
-    const result = await this.bot.api.sendMessage(Number(chatId), text, {
-      reply_to_message_id: options?.replyToMessageId
-        ? Number(options.replyToMessageId)
-        : undefined,
-      parse_mode: mapParseMode(options?.parseMode),
-    });
-    return String(result.message_id);
+    const chunks = this.splitText(text, 4096);
+    let lastMessageId = '';
+    for (const chunk of chunks) {
+      const result = await this.bot.api.sendMessage(Number(chatId), chunk, {
+        reply_to_message_id: options?.replyToMessageId
+          ? Number(options.replyToMessageId)
+          : undefined,
+        parse_mode: mapParseMode(options?.parseMode),
+      });
+      lastMessageId = String(result.message_id);
+    }
+    return lastMessageId;
   }
 
   async editMessage(

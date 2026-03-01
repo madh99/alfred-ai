@@ -61,12 +61,23 @@ export class FileSkill extends Skill {
 
     const resolvedPath = this.resolvePath(rawPath);
 
-    // Block access to sensitive system directories
-    const lowerPath = resolvedPath.toLowerCase();
-    const blocked = ['/etc/shadow', '/etc/passwd', '/proc/', '/sys/', '/dev/',
-                     'c:\\windows\\system32', 'c:\\windows\\syswow64'];
-    if (blocked.some(b => lowerPath.startsWith(b) || lowerPath === b.replace(/\/$/, ''))) {
-      return { success: false, error: 'Access to system directories/files is blocked for security' };
+    // Block access to sensitive system directories and files
+    const blockedResult = this.checkBlocked(resolvedPath);
+    if (blockedResult) {
+      return blockedResult;
+    }
+
+    // Reject symlinks that resolve to blocked paths
+    try {
+      if (fs.existsSync(resolvedPath) && fs.lstatSync(resolvedPath).isSymbolicLink()) {
+        const realTarget = fs.realpathSync(resolvedPath);
+        const targetBlocked = this.checkBlocked(realTarget);
+        if (targetBlocked) {
+          return { success: false, error: 'Access denied: symlink target is a blocked path' };
+        }
+      }
+    } catch {
+      // If we can't check the symlink, continue — the operation itself will fail if needed
     }
 
     switch (action) {
@@ -89,6 +100,30 @@ export class FileSkill extends Skill {
     const home = process.env['HOME'] || process.env['USERPROFILE'] || '';
     const expanded = raw.startsWith('~') ? raw.replace('~', home) : raw;
     return path.resolve(expanded);
+  }
+
+  private checkBlocked(filePath: string): SkillResult | null {
+    const lowerPath = filePath.toLowerCase().replace(/\\/g, '/');
+    const home = (process.env['HOME'] || process.env['USERPROFILE'] || '').toLowerCase().replace(/\\/g, '/');
+    const blocked = [
+      '/etc/shadow', '/etc/passwd', '/etc/sudoers',
+      '/proc/', '/sys/', '/dev/',
+      'c:/windows/system32', 'c:/windows/syswow64',
+    ];
+    const blockedHome = ['/.ssh', '/.aws', '/.gnupg'];
+    const blockedFiles = ['.env'];
+
+    if (blocked.some(b => lowerPath.startsWith(b) || lowerPath === b.replace(/\/$/, ''))) {
+      return { success: false, error: 'Access to system directories/files is blocked for security' };
+    }
+    if (home && blockedHome.some(b => lowerPath.startsWith(home + b))) {
+      return { success: false, error: 'Access to sensitive user directories is blocked for security' };
+    }
+    const baseName = path.basename(filePath);
+    if (blockedFiles.includes(baseName.toLowerCase())) {
+      return { success: false, error: 'Access to sensitive files is blocked for security' };
+    }
+    return null;
   }
 
   private readFile(filePath: string): SkillResult {
@@ -222,6 +257,10 @@ export class FileSkill extends Skill {
       return { success: false, error: 'Missing "destination" for move action' };
     }
     const resolvedDest = this.resolvePath(destination);
+    const destBlocked = this.checkBlocked(resolvedDest);
+    if (destBlocked) {
+      return destBlocked;
+    }
     try {
       const destDir = path.dirname(resolvedDest);
       fs.mkdirSync(destDir, { recursive: true });
@@ -252,6 +291,10 @@ export class FileSkill extends Skill {
       return { success: false, error: 'Missing "destination" for copy action' };
     }
     const resolvedDest = this.resolvePath(destination);
+    const destBlocked = this.checkBlocked(resolvedDest);
+    if (destBlocked) {
+      return destBlocked;
+    }
     try {
       const destDir = path.dirname(resolvedDest);
       fs.mkdirSync(destDir, { recursive: true });

@@ -67,17 +67,23 @@ export class MatrixAdapter extends MessagingAdapter {
     text: string,
     options?: SendMessageOptions,
   ): Promise<string> {
-    if (options?.parseMode === 'html') {
-      const eventId: string = await this.client.sendEvent(chatId, 'm.room.message', {
-        msgtype: 'm.text',
-        body: text.replace(/<[^>]*>/g, ''),
-        format: 'org.matrix.custom.html',
-        formatted_body: text,
-      });
-      return eventId;
+    const chunks = this.splitText(text, 32000);
+    let lastEventId = '';
+
+    for (const chunk of chunks) {
+      if (options?.parseMode === 'html') {
+        lastEventId = await this.client.sendEvent(chatId, 'm.room.message', {
+          msgtype: 'm.text',
+          body: chunk.replace(/<[^>]*>/g, ''),
+          format: 'org.matrix.custom.html',
+          formatted_body: chunk,
+        });
+      } else {
+        lastEventId = await this.client.sendText(chatId, chunk);
+      }
     }
-    const eventId: string = await this.client.sendText(chatId, text);
-    return eventId;
+
+    return lastEventId;
   }
 
   async editMessage(
@@ -155,6 +161,14 @@ export class MatrixAdapter extends MessagingAdapter {
     event: any,
     msgtype: string,
   ): Promise<NormalizedMessage | undefined> {
+    let displayName: string | undefined;
+    try {
+      const profile = await this.client.getUserProfile(event.sender);
+      displayName = profile?.displayname ?? undefined;
+    } catch {
+      // Profile lookup may fail; proceed without displayName
+    }
+
     const base = {
       id: event.event_id as string,
       platform: 'matrix' as const,
@@ -162,6 +176,7 @@ export class MatrixAdapter extends MessagingAdapter {
       chatType: 'group' as const,
       userId: event.sender as string,
       userName: (event.sender as string).split(':')[0].slice(1),
+      displayName,
       timestamp: new Date(event.origin_server_ts),
       replyToMessageId:
         event.content['m.relates_to']?.['m.in_reply_to']?.event_id as string | undefined,
@@ -173,36 +188,40 @@ export class MatrixAdapter extends MessagingAdapter {
 
       case 'm.image': {
         const attachment = await this.downloadAttachment(event.content, 'image');
+        if (attachment && event.content.body) attachment.fileName = event.content.body;
         return {
           ...base,
-          text: event.content.body ?? '[Photo]',
+          text: '[Photo]',
           attachments: attachment ? [attachment] : undefined,
         };
       }
 
       case 'm.audio': {
         const attachment = await this.downloadAttachment(event.content, 'audio');
+        if (attachment && event.content.body) attachment.fileName = event.content.body;
         return {
           ...base,
-          text: event.content.body ?? '[Voice message]',
+          text: '[Voice message]',
           attachments: attachment ? [attachment] : undefined,
         };
       }
 
       case 'm.video': {
         const attachment = await this.downloadAttachment(event.content, 'video');
+        if (attachment && event.content.body) attachment.fileName = event.content.body;
         return {
           ...base,
-          text: event.content.body ?? '[Video]',
+          text: '[Video]',
           attachments: attachment ? [attachment] : undefined,
         };
       }
 
       case 'm.file': {
         const attachment = await this.downloadAttachment(event.content, 'document');
+        if (attachment && event.content.body) attachment.fileName = event.content.body;
         return {
           ...base,
-          text: event.content.body ?? '[Document]',
+          text: '[Document]',
           attachments: attachment ? [attachment] : undefined,
         };
       }

@@ -60,7 +60,7 @@ export class ConversationRepository {
 
   getMessages(conversationId: string, limit = 50): ConversationMessage[] {
     const rows = this.db.prepare(
-      'SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?'
+      'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?) ORDER BY created_at ASC'
     ).all(conversationId, limit) as Record<string, string>[];
 
     return rows.map((row) => ({

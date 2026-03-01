@@ -59,7 +59,7 @@ export class ReminderSkill extends Skill {
       case 'list':
         return this.listReminders(context);
       case 'cancel':
-        return this.cancelReminder(input);
+        return this.cancelReminder(input, context);
       default:
         return {
           success: false,
@@ -259,13 +259,23 @@ export class ReminderSkill extends Skill {
     };
   }
 
-  private cancelReminder(input: Record<string, unknown>): SkillResult {
+  private cancelReminder(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const reminderId = input.reminderId as string | undefined;
 
     if (!reminderId || typeof reminderId !== 'string') {
       return {
         success: false,
         error: 'Missing required field "reminderId" for cancel action',
+      };
+    }
+
+    // Verify ownership: only allow canceling own reminders
+    const userReminders = this.reminderRepo.getByUser(context.userId);
+    const ownsReminder = userReminders.some(r => r.id === reminderId);
+    if (!ownsReminder) {
+      return {
+        success: false,
+        error: `Reminder "${reminderId}" not found`,
       };
     }
 

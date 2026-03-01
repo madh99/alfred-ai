@@ -51,7 +51,12 @@ export function lookupContextWindow(model: string): ContextWindow | undefined {
   // Exact match
   if (KNOWN_CONTEXT_WINDOWS[model]) return KNOWN_CONTEXT_WINDOWS[model];
   // Prefix match (e.g. "gpt-4o-2024-08-06" → "gpt-4o")
-  for (const [key, value] of Object.entries(KNOWN_CONTEXT_WINDOWS)) {
+  // Sort by key length descending so longer/more-specific prefixes match first
+  // (e.g. "gpt-4-turbo" matches before "gpt-4")
+  const entries = Object.entries(KNOWN_CONTEXT_WINDOWS).sort(
+    (a, b) => b[0].length - a[0].length,
+  );
+  for (const [key, value] of entries) {
     if (model.startsWith(key)) return value;
   }
   return undefined;

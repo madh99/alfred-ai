@@ -73,7 +73,7 @@ export class DocumentRepository {
       if (chunks.length > 0) {
         const embeddingIds = chunks.map(c => c.embedding_id);
         const placeholders = embeddingIds.map(() => '?').join(', ');
-        this.db.prepare(`DELETE FROM embeddings WHERE key IN (${placeholders})`).run(...embeddingIds);
+        this.db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...embeddingIds);
       }
 
       this.db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(id);

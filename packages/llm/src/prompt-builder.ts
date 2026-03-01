@@ -249,6 +249,10 @@ For complex tasks, work through multiple steps:
                 input: tc.input,
               });
             }
+            // Ensure content is not empty — APIs reject assistant messages with empty content
+            if (content.length === 0) {
+              content.push({ type: 'text', text: '' });
+            }
             return { role: 'assistant', content };
           }
 
@@ -324,7 +328,26 @@ For complex tasks, work through multiple steps:
       if (filtered.length === 0) continue;
       result.push({ ...msg, content: filtered });
     }
-    return result;
+
+    // Merge consecutive same-role messages that may have been created by
+    // dropping empty messages above.
+    const merged: LLMMessage[] = [];
+    for (const msg of result) {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.role === msg.role) {
+        // Merge content: normalise both to arrays then concatenate
+        const prevContent = typeof prev.content === 'string'
+          ? [{ type: 'text' as const, text: prev.content }]
+          : prev.content;
+        const curContent = typeof msg.content === 'string'
+          ? [{ type: 'text' as const, text: msg.content }]
+          : msg.content;
+        merged[merged.length - 1] = { ...prev, content: [...prevContent, ...curContent] };
+      } else {
+        merged.push(msg);
+      }
+    }
+    return merged;
   }
 
   buildTools(skills: SkillMetadata[]): ToolDefinition[] {

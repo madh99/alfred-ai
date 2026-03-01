@@ -65,7 +65,7 @@ export class MemoryRetriever {
           mem,
         );
 
-        scored.set(mem.id, {
+        scored.set(mem.key, {
           memory: {
             key: mem.key,
             value: mem.value,

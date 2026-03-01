@@ -1,11 +1,10 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-const ALLOWED_PATTERN =
-  /^[\d+\-*/().,%\s]|Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/;
+const MATH_NAMES = /Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)/g;
 
 const SAFE_EXPRESSION_PATTERN =
-  /^[0-9+\-*/().,\s%]*(Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)[(0-9+\-*/().,\s%]*)*$/;
+  /^[\d+\-*/().,\s%]*(Math\.(sin|cos|tan|sqrt|pow|abs|floor|ceil|round|log|log2|log10|PI|E)[\d+\-*/().,\s(%)]*)*$/;
 
 export class CalculatorSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -40,18 +39,20 @@ export class CalculatorSkill extends Skill {
 
     const trimmed = expression.trim();
 
-    if (!ALLOWED_PATTERN.test(trimmed)) {
-      return {
-        success: false,
-        error: `Invalid expression: "${trimmed}" contains disallowed characters`,
-      };
-    }
-
     // Validate the entire expression only contains safe tokens
     if (!SAFE_EXPRESSION_PATTERN.test(trimmed)) {
       return {
         success: false,
         error: `Invalid expression: "${trimmed}" contains disallowed constructs`,
+      };
+    }
+
+    // After stripping Math.* names, no alphabetic chars should remain
+    const stripped = trimmed.replace(MATH_NAMES, '');
+    if (/[a-zA-Z]/.test(stripped)) {
+      return {
+        success: false,
+        error: `Invalid expression: "${trimmed}" contains disallowed identifiers`,
       };
     }
 

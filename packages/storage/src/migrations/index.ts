@@ -235,4 +235,45 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 12,
+    description: 'Add ON DELETE CASCADE to messages and document_chunks, add missing indexes',
+    up(db) {
+      db.exec(`
+        -- Recreate messages table with ON DELETE CASCADE
+        CREATE TABLE messages_new (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tool_calls TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO messages_new SELECT * FROM messages;
+        DROP TABLE messages;
+        ALTER TABLE messages_new RENAME TO messages;
+        CREATE INDEX IF NOT EXISTS idx_messages_conversation
+          ON messages(conversation_id, created_at);
+
+        -- Recreate document_chunks table with ON DELETE CASCADE
+        CREATE TABLE document_chunks_new (
+          id TEXT PRIMARY KEY,
+          document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+          chunk_index INTEGER NOT NULL,
+          content TEXT NOT NULL,
+          embedding_id TEXT REFERENCES embeddings(id),
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO document_chunks_new SELECT * FROM document_chunks;
+        DROP TABLE document_chunks;
+        ALTER TABLE document_chunks_new RENAME TO document_chunks;
+        CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON document_chunks(document_id);
+
+        -- Add missing indexes
+        CREATE INDEX IF NOT EXISTS idx_audit_log_user_ts ON audit_log(user_id, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_background_tasks_status ON background_tasks(status);
+        CREATE INDEX IF NOT EXISTS idx_background_tasks_user ON background_tasks(user_id);
+      `);
+    },
+  },
 ];

@@ -83,10 +83,13 @@ export class OpenAIProvider extends LLMProvider {
           if (toolCallDelta.id) {
             // New tool call starting - flush previous if any
             if (currentToolCallId) {
+              let parsedArgs: Record<string, unknown>;
+              try { parsedArgs = JSON.parse(currentToolCallArgs || '{}'); }
+              catch { parsedArgs = {}; }
               toolCalls.push({
                 id: currentToolCallId,
                 name: currentToolCallName!,
-                input: JSON.parse(currentToolCallArgs || '{}'),
+                input: parsedArgs,
               });
             }
             currentToolCallId = toolCallDelta.id;
@@ -100,6 +103,7 @@ export class OpenAIProvider extends LLMProvider {
               },
             };
           } else if (toolCallDelta.function?.arguments) {
+            // Arguments are accumulated as a string during streaming and parsed at completion
             currentToolCallArgs += toolCallDelta.function.arguments;
             yield {
               type: 'tool_use_delta',
@@ -124,10 +128,13 @@ export class OpenAIProvider extends LLMProvider {
 
     // Flush last tool call if any
     if (currentToolCallId) {
+      let parsedArgs: Record<string, unknown>;
+      try { parsedArgs = JSON.parse(currentToolCallArgs || '{}'); }
+      catch { parsedArgs = {}; }
       toolCalls.push({
         id: currentToolCallId,
         name: currentToolCallName!,
-        input: JSON.parse(currentToolCallArgs || '{}'),
+        input: parsedArgs,
       });
     }
 

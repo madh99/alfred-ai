@@ -87,19 +87,26 @@ export class WhatsAppAdapter extends MessagingAdapter {
     text: string,
     options?: SendMessageOptions,
   ): Promise<string> {
-    const msg = await this.socket!.sendMessage(
-      chatId,
-      { text },
-      options?.replyToMessageId
-        ? {
-            quoted: {
-              key: { remoteJid: chatId, id: options.replyToMessageId },
-              message: {},
-            } as any,
-          }
-        : undefined,
-    );
-    return msg?.key?.id ?? '';
+    const chunks = this.splitText(text, 65000);
+    let lastId = '';
+
+    for (let i = 0; i < chunks.length; i++) {
+      const msg = await this.socket!.sendMessage(
+        chatId,
+        { text: chunks[i] },
+        i === 0 && options?.replyToMessageId
+          ? {
+              quoted: {
+                key: { remoteJid: chatId, id: options.replyToMessageId },
+                message: {},
+              } as any,
+            }
+          : undefined,
+      );
+      lastId = msg?.key?.id ?? '';
+    }
+
+    return lastId;
   }
 
   async editMessage(
@@ -176,9 +183,11 @@ export class WhatsAppAdapter extends MessagingAdapter {
     if (msg.imageMessage) {
       const data = await this.downloadMediaSafe(message);
       if (data) {
+        const mime = msg.imageMessage.mimetype ?? 'image/jpeg';
         attachments.push({
           type: 'image',
-          mimeType: msg.imageMessage.mimetype ?? 'image/jpeg',
+          mimeType: mime,
+          fileName: msg.imageMessage.fileName ?? `image.${mime.split('/')[1] ?? 'jpeg'}`,
           size: msg.imageMessage.fileLength ?? data.length,
           data,
         });
@@ -187,9 +196,11 @@ export class WhatsAppAdapter extends MessagingAdapter {
     } else if (msg.audioMessage) {
       const data = await this.downloadMediaSafe(message);
       if (data) {
+        const mime = msg.audioMessage.mimetype ?? 'audio/ogg';
         attachments.push({
           type: 'audio',
-          mimeType: msg.audioMessage.mimetype ?? 'audio/ogg',
+          mimeType: mime,
+          fileName: msg.audioMessage.fileName ?? `audio.${mime.split('/')[1] ?? 'ogg'}`,
           size: msg.audioMessage.fileLength ?? data.length,
           data,
         });
@@ -240,6 +251,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
         message.key.participant ??
         message.key.remoteJid ??
         '',
+      displayName: message.pushName ?? undefined,
       text: fallbackText,
       timestamp: new Date(
         (message.messageTimestamp as number) * 1000,

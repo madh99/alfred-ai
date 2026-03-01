@@ -59,7 +59,7 @@ export class NoteSkill extends Skill {
       case 'search':
         return this.searchNotes(input, context);
       case 'delete':
-        return this.deleteNote(input);
+        return this.deleteNote(input, context);
       default:
         return {
           success: false,
@@ -122,11 +122,20 @@ export class NoteSkill extends Skill {
     return { success: true, data: matches, display: `Found ${matches.length} note(s):\n${display}` };
   }
 
-  private deleteNote(input: Record<string, unknown>): SkillResult {
+  private deleteNote(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const noteId = input.noteId as string | undefined;
 
     if (!noteId || typeof noteId !== 'string') {
       return { success: false, error: 'Missing required field "noteId" for delete action' };
+    }
+
+    // Verify ownership before deleting
+    const note = this.noteRepo.getById(noteId);
+    if (!note) {
+      return { success: false, error: `Note "${noteId}" not found` };
+    }
+    if (note.userId !== context.userId) {
+      return { success: false, error: `Note "${noteId}" not found` };
     }
 
     const deleted = this.noteRepo.delete(noteId);

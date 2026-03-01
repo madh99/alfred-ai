@@ -48,40 +48,24 @@ export class MemoryRepository {
     source: MemorySource,
   ): MemoryEntry {
     const now = new Date().toISOString();
-
-    const existing = this.db.prepare(
-      'SELECT id FROM memories WHERE user_id = ? AND key = ?',
-    ).get(userId, key) as { id: string } | undefined;
-
-    if (existing) {
-      this.db.prepare(
-        'UPDATE memories SET value = ?, category = ?, type = ?, confidence = ?, source = ?, updated_at = ? WHERE id = ?',
-      ).run(value, category, type, confidence, source, now, existing.id);
-
-      const row = this.db.prepare('SELECT * FROM memories WHERE id = ?').get(existing.id) as Record<string, unknown>;
-      return this.mapRow(row);
-    }
-
     const id = randomUUID();
 
     this.db.prepare(
-      'INSERT INTO memories (id, user_id, key, value, category, type, confidence, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      `INSERT INTO memories (id, user_id, key, value, category, type, confidence, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, key) DO UPDATE SET
+         value = excluded.value,
+         category = excluded.category,
+         type = excluded.type,
+         confidence = excluded.confidence,
+         source = excluded.source,
+         updated_at = excluded.updated_at`,
     ).run(id, userId, key, value, category, type, confidence, source, now, now);
 
-    return {
-      id,
-      userId,
-      key,
-      value,
-      category,
-      type,
-      confidence,
-      source,
-      lastAccessedAt: null,
-      accessCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const row = this.db.prepare(
+      'SELECT * FROM memories WHERE user_id = ? AND key = ?',
+    ).get(userId, key) as Record<string, unknown>;
+    return this.mapRow(row);
   }
 
   recall(userId: string, key: string): MemoryEntry | undefined {

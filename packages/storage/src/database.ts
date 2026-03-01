@@ -14,6 +14,7 @@ export class Database {
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    this.db.pragma('busy_timeout = 5000');
     this.initTables();
     this.runMigrations();
   }
@@ -61,13 +62,13 @@ export class Database {
         context TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_conversations_platform_chat
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_platform_chat
         ON conversations(platform, chat_id);
 
       CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversation_id, created_at);
 
-      CREATE INDEX IF NOT EXISTS idx_users_platform
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_platform
         ON users(platform, platform_user_id);
     `);
   }

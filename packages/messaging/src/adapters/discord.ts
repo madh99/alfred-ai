@@ -83,14 +83,21 @@ export class DiscordAdapter extends MessagingAdapter {
       throw new Error(`Channel ${chatId} is not a text channel`);
     }
 
-    if (options?.replyToMessageId) {
-      const original = await channel.messages.fetch(options.replyToMessageId);
-      const reply = await original.reply(text);
-      return reply.id;
+    const chunks = this.splitText(text, 2000);
+    let lastMessageId = '';
+
+    for (let i = 0; i < chunks.length; i++) {
+      if (i === 0 && options?.replyToMessageId) {
+        const original = await channel.messages.fetch(options.replyToMessageId);
+        const reply = await original.reply(chunks[i]);
+        lastMessageId = reply.id;
+      } else {
+        const message = await channel.send(chunks[i]);
+        lastMessageId = message.id;
+      }
     }
 
-    const message = await channel.send(text);
-    return message.id;
+    return lastMessageId;
   }
 
   async editMessage(

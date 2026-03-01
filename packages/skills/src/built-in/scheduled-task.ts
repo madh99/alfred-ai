@@ -75,11 +75,11 @@ export class ScheduledTaskSkill extends Skill {
       case 'list':
         return this.listActions(context);
       case 'enable':
-        return this.toggleAction(input, true);
+        return this.toggleAction(input, true, context);
       case 'disable':
-        return this.toggleAction(input, false);
+        return this.toggleAction(input, false, context);
       case 'delete':
-        return this.deleteAction(input);
+        return this.deleteAction(input, context);
       default:
         return {
           success: false,
@@ -203,11 +203,17 @@ export class ScheduledTaskSkill extends Skill {
     };
   }
 
-  private toggleAction(input: Record<string, unknown>, enabled: boolean): SkillResult {
+  private toggleAction(input: Record<string, unknown>, enabled: boolean, context: SkillContext): SkillResult {
     const actionId = input.action_id as string | undefined;
 
     if (!actionId || typeof actionId !== 'string') {
       return { success: false, error: `Missing required field "action_id" for ${enabled ? 'enable' : 'disable'} action` };
+    }
+
+    // Verify ownership before toggling
+    const action = this.actionRepo.findById(actionId);
+    if (!action || action.userId !== context.userId) {
+      return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
     const updated = this.actionRepo.setEnabled(actionId, enabled);
@@ -223,11 +229,17 @@ export class ScheduledTaskSkill extends Skill {
     };
   }
 
-  private deleteAction(input: Record<string, unknown>): SkillResult {
+  private deleteAction(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const actionId = input.action_id as string | undefined;
 
     if (!actionId || typeof actionId !== 'string') {
       return { success: false, error: 'Missing required field "action_id" for delete action' };
+    }
+
+    // Verify ownership before deleting
+    const action = this.actionRepo.findById(actionId);
+    if (!action || action.userId !== context.userId) {
+      return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
     const deleted = this.actionRepo.delete(actionId);

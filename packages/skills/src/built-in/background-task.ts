@@ -58,7 +58,7 @@ export class BackgroundTaskSkill extends Skill {
       case 'list':
         return this.listTasks(context);
       case 'cancel':
-        return this.cancelTask(input);
+        return this.cancelTask(input, context);
       default:
         return {
           success: false,
@@ -134,11 +134,21 @@ export class BackgroundTaskSkill extends Skill {
     };
   }
 
-  private cancelTask(input: Record<string, unknown>): SkillResult {
+  private cancelTask(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const taskId = input.task_id as string | undefined;
 
     if (!taskId || typeof taskId !== 'string') {
       return { success: false, error: 'Missing required field "task_id" for cancel action' };
+    }
+
+    // Verify ownership: only allow canceling own tasks
+    const userTasks = this.taskRepo.getByUser(context.userId);
+    const ownsTask = userTasks.some(t => t.id === taskId);
+    if (!ownsTask) {
+      return {
+        success: false,
+        error: `Task "${taskId}" not found or already completed`,
+      };
     }
 
     const cancelled = this.taskRepo.cancel(taskId);

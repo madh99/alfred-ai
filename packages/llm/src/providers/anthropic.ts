@@ -94,7 +94,7 @@ export class AnthropicProvider extends LLMProvider {
         return { role: msg.role, content: msg.content };
       }
 
-      const blocks: Anthropic.ContentBlockParam[] = msg.content.map((block) => {
+      const blocks: Anthropic.ContentBlockParam[] = msg.content.map((block): Anthropic.ContentBlockParam => {
         switch (block.type) {
           case 'text':
             return { type: 'text' as const, text: block.text };
@@ -121,8 +121,10 @@ export class AnthropicProvider extends LLMProvider {
               content: block.content,
               is_error: block.is_error,
             };
+          default:
+            return { type: 'text' as const, text: '[Unsupported block type]' };
         }
-      });
+      }).filter((block): block is Anthropic.ContentBlockParam => block !== undefined);
 
       return { role: msg.role, content: blocks };
     });

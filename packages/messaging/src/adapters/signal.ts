@@ -20,26 +20,38 @@ export class SignalAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
-    try {
-      // Verify API is reachable
-      const res = await fetch(`${this.apiUrl}/v1/about`);
-      if (!res.ok) {
-        throw new Error(`Signal API not reachable: ${res.status}`);
+    const maxRetries = 3;
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // Verify API is reachable
+        const res = await fetch(`${this.apiUrl}/v1/about`);
+        if (!res.ok) {
+          throw new Error(`Signal API not reachable: ${res.status}`);
+        }
+
+        // Start polling for new messages
+        this.pollingInterval = setInterval(() => {
+          this.pollMessages().catch((err) => {
+            this.emit('error', err instanceof Error ? err : new Error(String(err)));
+          });
+        }, 2000);
+
+        this.status = 'connected';
+        this.emit('connected');
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries) {
+          const delay = 1000 * Math.pow(2, attempt);
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
       }
-
-      // Start polling for new messages
-      this.pollingInterval = setInterval(() => {
-        this.pollMessages().catch((err) => {
-          this.emit('error', err instanceof Error ? err : new Error(String(err)));
-        });
-      }, 2000);
-
-      this.status = 'connected';
-      this.emit('connected');
-    } catch (error) {
-      this.status = 'error';
-      this.emit('error', error instanceof Error ? error : new Error(String(error)));
     }
+
+    this.status = 'error';
+    this.emit('error', lastError!);
   }
 
   async disconnect(): Promise<void> {
@@ -52,30 +64,37 @@ export class SignalAdapter extends MessagingAdapter {
   }
 
   async sendMessage(chatId: string, text: string, _options?: SendMessageOptions): Promise<string> {
-    const isGroup = chatId.startsWith('group.');
-    const body: Record<string, unknown> = {
-      message: text,
-      number: this.phoneNumber,
-    };
+    const chunks = this.splitText(text, 6000);
+    let lastTimestamp = '';
 
-    if (isGroup) {
-      body.recipients = [chatId.replace('group.', '')];
-    } else {
-      body.recipients = [chatId];
+    for (const chunk of chunks) {
+      const isGroup = chatId.startsWith('group.');
+      const body: Record<string, unknown> = {
+        message: chunk,
+        number: this.phoneNumber,
+      };
+
+      if (isGroup) {
+        body.recipients = [chatId.replace('group.', '')];
+      } else {
+        body.recipients = [chatId];
+      }
+
+      const res = await fetch(`${this.apiUrl}/v2/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Signal send failed: ${res.status} ${await res.text()}`);
+      }
+
+      const result = (await res.json()) as Record<string, unknown>;
+      lastTimestamp = String(result.timestamp ?? Date.now());
     }
 
-    const res = await fetch(`${this.apiUrl}/v2/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Signal send failed: ${res.status} ${await res.text()}`);
-    }
-
-    const result = (await res.json()) as Record<string, unknown>;
-    return String(result.timestamp ?? Date.now());
+    return lastTimestamp;
   }
 
   async editMessage(_chatId: string, _messageId: string, _text: string, _options?: SendMessageOptions): Promise<void> {

@@ -55,4 +55,51 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
   getStatus(): MessagingAdapterStatus {
     return this.status;
   }
+
+  /**
+   * Split text into chunks that fit within a character limit.
+   * Splits on paragraph boundaries first, then sentence boundaries, then hard splits.
+   */
+  protected splitText(text: string, maxLen: number): string[] {
+    if (text.length <= maxLen) return [text];
+
+    const chunks: string[] = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+      if (remaining.length <= maxLen) {
+        chunks.push(remaining);
+        break;
+      }
+
+      let splitIndex = -1;
+
+      // Try to split on paragraph boundary (double newline)
+      const paragraphRegion = remaining.slice(0, maxLen);
+      const lastParagraph = paragraphRegion.lastIndexOf('\n\n');
+      if (lastParagraph > 0) {
+        splitIndex = lastParagraph;
+      }
+
+      // Try sentence boundary if no paragraph boundary found
+      if (splitIndex < 0) {
+        const sentenceRegion = remaining.slice(0, maxLen);
+        // Look for sentence-ending punctuation followed by space or newline
+        const sentenceMatch = sentenceRegion.match(/.*[.!?]\s/s);
+        if (sentenceMatch) {
+          splitIndex = sentenceMatch[0].length;
+        }
+      }
+
+      // Hard split at maxLen if no natural boundary found
+      if (splitIndex < 0) {
+        splitIndex = maxLen;
+      }
+
+      chunks.push(remaining.slice(0, splitIndex).trimEnd());
+      remaining = remaining.slice(splitIndex).trimStart();
+    }
+
+    return chunks;
+  }
 }

@@ -338,6 +338,10 @@ export class OllamaProvider extends LLMProvider {
     return mapped;
   }
 
+  // NOTE: This method converts tool_use/tool_result blocks to plain text
+  // representations. Ollama supports native tool calling via its API, but
+  // that path is handled in mapTools/mapResponse. This text fallback loses
+  // native tool support for messages that already contain tool blocks.
   private mapContentBlocks(
     role: string,
     blocks: LLMContentBlock[],

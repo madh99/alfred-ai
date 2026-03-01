@@ -50,9 +50,7 @@ export class MemoryConsolidator {
         try {
           const mergeResult = await this.mergeGroup(group);
           if (mergeResult) {
-            // Delete old entries
-            this.memoryRepo.deleteByIds(group.map(m => m.id));
-            // Save merged entry (keep highest confidence from the group)
+            // Save merged entry FIRST (keep highest confidence from the group)
             const maxConfidence = Math.max(...group.map(m => m.confidence));
             this.memoryRepo.saveWithMetadata(
               userId,
@@ -63,6 +61,8 @@ export class MemoryConsolidator {
               maxConfidence,
               'auto',
             );
+            // Then delete old entries
+            this.memoryRepo.deleteByIds(group.map(m => m.id));
             merged++;
             this.logger.info(
               { mergedKeys: group.map(m => m.key), newKey: mergeResult.key },

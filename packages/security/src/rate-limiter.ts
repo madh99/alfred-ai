@@ -13,8 +13,14 @@ interface Bucket {
 
 export class RateLimiter {
   private buckets: Map<string, Bucket> = new Map();
+  private checkCount = 0;
 
   check(key: string, limit: RateLimit): RateLimitResult {
+    this.checkCount++;
+    if (this.checkCount % 100 === 0) {
+      this.cleanup();
+    }
+
     const now = Date.now();
     const windowMs = limit.windowSeconds * 1000;
     const bucket = this.buckets.get(key);
@@ -56,6 +62,18 @@ export class RateLimiter {
       this.buckets.set(key, { count: 1, windowStart: now });
     } else {
       bucket.count += 1;
+    }
+  }
+
+  cleanup(): void {
+    const now = Date.now();
+    for (const [key, bucket] of this.buckets) {
+      // Remove entries whose window has long expired (use a generous 2x window)
+      // Since we don't know each key's window size, use a default max of 1 hour
+      const maxWindowMs = 3_600_000;
+      if (now > bucket.windowStart + maxWindowMs) {
+        this.buckets.delete(key);
+      }
     }
   }
 

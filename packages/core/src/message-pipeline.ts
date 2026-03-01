@@ -22,6 +22,7 @@ import type { ActiveLearningService } from './active-learning/active-learning-se
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
+const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
@@ -237,6 +238,16 @@ export class MessagePipeline {
           break;
         }
 
+        // Iteration cap check
+        if (iteration >= MAX_TOOL_ITERATIONS) {
+          this.logger.warn({ iteration, pendingToolCalls: response.toolCalls.length }, 'Tool loop iteration cap reached');
+          response = await this.abortToolLoop(
+            messages, response, conversation.id, system,
+            `Das Iterationslimit von ${MAX_TOOL_ITERATIONS} Tool-Aufrufen wurde erreicht.`,
+          );
+          break;
+        }
+
         iteration++;
         this.logger.info({ iteration, toolCalls: response.toolCalls.length }, 'Processing tool calls');
 
@@ -295,6 +306,7 @@ export class MessagePipeline {
             response = await this.abortToolLoop(
               messages, response, conversation.id, system,
               `Der gleiche Tool-Fehler ist ${consecutiveErrors}x hintereinander aufgetreten: "${lastErrorSignature.slice(0, 200)}". Erkläre dem User kurz was nicht funktioniert hat und schlage eine Alternative vor.`,
+              true,
             );
             break;
           }
@@ -362,15 +374,18 @@ export class MessagePipeline {
     conversationId: string,
     system: string,
     reason: string,
+    assistantAlreadyPushed = false,
   ): Promise<LLMResponse> {
-    const assistantContent: LLMContentBlock[] = [];
-    if (response.content) {
-      assistantContent.push({ type: 'text', text: response.content });
+    if (!assistantAlreadyPushed) {
+      const assistantContent: LLMContentBlock[] = [];
+      if (response.content) {
+        assistantContent.push({ type: 'text', text: response.content });
+      }
+      for (const tc of response.toolCalls!) {
+        assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
+      }
+      messages.push({ role: 'assistant', content: assistantContent });
     }
-    for (const tc of response.toolCalls!) {
-      assistantContent.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input });
-    }
-    messages.push({ role: 'assistant', content: assistantContent });
 
     const syntheticResults: LLMContentBlock[] = response.toolCalls!.map(tc => ({
       type: 'tool_result' as const,
@@ -453,7 +468,7 @@ export class MessagePipeline {
             result.push(msg);
             result.push(next);
             result.push({
-              role: 'user',
+              role: 'assistant',
               content: `[System: The above tool error repeated ${runLength} times with identical input. The loop was aborted.]`,
             });
             i = j; // Skip all repeated pairs
@@ -698,7 +713,7 @@ export class MessagePipeline {
     const keptGroups: LLMMessage[][] = [];
     for (let i = groups.length - 1; i >= 0; i--) {
       const groupTokens = groups[i].reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
-      if (groupTokens > availableTokens) break;
+      if (groupTokens > availableTokens) continue;
       availableTokens -= groupTokens;
       keptGroups.unshift(groups[i]);
     }
@@ -717,7 +732,7 @@ export class MessagePipeline {
       const summary = this.summarizeTrimmedMessages(droppedMessages);
 
       keptMessages.unshift({
-        role: 'user',
+        role: 'assistant',
         content: `[Earlier conversation summary — ${trimmedCount} messages were trimmed to fit the context window:\n${summary}\n\nThe conversation continues below with the most recent messages.]`,
       });
     }
@@ -799,6 +814,13 @@ export class MessagePipeline {
             continue;
           }
         }
+        // Orphaned tool_use with no matching tool_result: include the next user message in the group if present
+        if (group.length === 1 && i + 1 < messages.length && messages[i + 1].role === 'user') {
+          group.push(messages[i + 1]);
+          i += 2;
+          groups.push(group);
+          continue;
+        }
         groups.push(group);
         i++;
       } else {
@@ -853,7 +875,9 @@ export class MessagePipeline {
               text: `${label}[Voice transcript]: ${transcript}`,
             });
             this.logger.info({ transcriptLength: transcript.length }, 'Voice message transcribed');
-            return blocks.length === 1 ? blocks[0].type === 'text' ? (blocks[0] as { type: 'text'; text: string }).text : blocks : blocks;
+            if (attachments.length === 1) {
+              return blocks.length === 1 ? blocks[0].type === 'text' ? (blocks[0] as { type: 'text'; text: string }).text : blocks : blocks;
+            }
           } catch (err) {
             this.logger.error({ err }, 'Voice transcription failed');
             blocks.push({
@@ -914,7 +938,7 @@ export class MessagePipeline {
    */
   private isSyntheticLabel(text: string | undefined): boolean {
     if (!text) return true;
-    const prefixes = ['[Photo', '[Voice message', '[Video', '[Document', '[File', '[Sticker'];
+    const prefixes = ['[Photo', '[Voice message', '[Video', '[Document', '[File', '[Sticker', '[Audio'];
     return prefixes.some(p => text.startsWith(p));
   }
 

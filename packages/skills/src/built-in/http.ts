@@ -61,6 +61,11 @@ export class HttpSkill extends Skill {
       return { success: false, error: `Unsupported URL scheme "${parsed.protocol}". Only http: and https: are allowed.` };
     }
 
+    // Block requests to private/internal network addresses (SSRF protection)
+    if (this.isPrivateHost(parsed.hostname)) {
+      return { success: false, error: `Access to private/internal network address "${parsed.hostname}" is blocked.` };
+    }
+
     try {
       const fetchOptions: RequestInit = {
         method,
@@ -117,6 +122,29 @@ export class HttpSkill extends Skill {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: `HTTP request failed: ${msg}` };
     }
+  }
+
+  private isPrivateHost(hostname: string): boolean {
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return true;
+    }
+    // IPv6 private (fc00::/7)
+    const clean = hostname.replace(/[\[\]]/g, '').toLowerCase();
+    if (clean.startsWith('fc') || clean.startsWith('fd') || clean === '::1') {
+      return true;
+    }
+    // IPv4 private ranges
+    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+    if (ipv4Match) {
+      const [, a, b] = ipv4Match.map(Number);
+      if (a === 10) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 127) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 0) return true;
+    }
+    return false;
   }
 
   private stripHtml(html: string): string {

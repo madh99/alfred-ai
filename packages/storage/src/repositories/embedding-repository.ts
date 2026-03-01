@@ -30,17 +30,20 @@ export class EmbeddingRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    // Delete existing embedding for same source
-    this.db.prepare(
-      'DELETE FROM embeddings WHERE user_id = ? AND source_type = ? AND source_id = ?',
-    ).run(input.userId, input.sourceType, input.sourceId);
-
     // Store embedding as Float32Array buffer
     const buffer = Buffer.from(new Float32Array(input.embedding).buffer);
 
-    this.db.prepare(
-      'INSERT INTO embeddings (id, user_id, source_type, source_id, content, embedding, model, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    ).run(id, input.userId, input.sourceType, input.sourceId, input.content, buffer, input.model, input.dimensions, now);
+    const upsert = this.db.transaction(() => {
+      // Delete existing embedding for same source
+      this.db.prepare(
+        'DELETE FROM embeddings WHERE user_id = ? AND source_type = ? AND source_id = ?',
+      ).run(input.userId, input.sourceType, input.sourceId);
+
+      this.db.prepare(
+        'INSERT INTO embeddings (id, user_id, source_type, source_id, content, embedding, model, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(id, input.userId, input.sourceType, input.sourceId, input.content, buffer, input.model, input.dimensions, now);
+    });
+    upsert();
 
     return {
       id,

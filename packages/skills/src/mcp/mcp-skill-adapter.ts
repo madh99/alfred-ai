@@ -1,6 +1,8 @@
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, RiskLevel } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { MCPClient } from './mcp-client.js';
+
+const VALID_RISK_LEVELS: RiskLevel[] = ['read', 'write', 'destructive', 'admin'];
 
 export class MCPSkillAdapter extends Skill {
   readonly metadata: SkillMetadata;
@@ -11,12 +13,16 @@ export class MCPSkillAdapter extends Skill {
     private readonly toolName: string,
     description: string,
     inputSchema: Record<string, unknown>,
+    riskLevel?: string,
   ) {
     super();
+    const resolvedRisk: RiskLevel = (riskLevel && VALID_RISK_LEVELS.includes(riskLevel as RiskLevel))
+      ? (riskLevel as RiskLevel)
+      : 'write';
     this.metadata = {
       name: `mcp__${serverName}__${toolName}`,
       description: `[MCP/${serverName}] ${description || toolName}`,
-      riskLevel: 'write',
+      riskLevel: resolvedRisk,
       version: '1.0.0',
       inputSchema,
     };
