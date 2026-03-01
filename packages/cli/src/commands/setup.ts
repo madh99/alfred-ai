@@ -187,6 +187,7 @@ interface ExistingConfig {
   security?: { ownerUserId?: string };
   search?: { provider?: string; apiKey?: string; baseUrl?: string };
   email?: { imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string } };
+  codeSandbox?: { enabled?: boolean; allowedLanguages?: string[] };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -195,6 +196,7 @@ function loadExistingConfig(projectRoot: string): {
   shellEnabled: boolean;
   writeInGroups: boolean;
   rateLimit: number;
+  codeSandboxEnabled: boolean;
 } {
   const config: ExistingConfig = {};
   const env: Record<string, string> = {};
@@ -256,7 +258,9 @@ function loadExistingConfig(projectRoot: string): {
     } catch { /* ignore */ }
   }
 
-  return { config, env, shellEnabled, writeInGroups, rateLimit };
+  const codeSandboxEnabled = !!(config as any).codeSandbox?.enabled;
+
+  return { config, env, shellEnabled, writeInGroups, rateLimit, codeSandboxEnabled };
 }
 
 // ── Main setup command ────────────────────────────────────────────────
@@ -635,6 +639,20 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Voice transcription disabled — you can configure it later.')}`);
     }
 
+    // ── 8b. Code Sandbox (Python/JavaScript execution) ────────
+    const sandboxDefault = existing.codeSandboxEnabled ? 'Y/n' : 'y/N';
+    console.log(`\n${bold('Code Sandbox (execute Python/JavaScript in a sandboxed environment)?')}`);
+    console.log(`${dim('Enables code execution for calculations, data processing, PDF generation, charts, etc.')}`);
+    const sandboxAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim(`[${sandboxDefault}] `)}`)
+    ).trim().toLowerCase();
+    const enableSandbox = sandboxAnswer === '' ? existing.codeSandboxEnabled : (sandboxAnswer === 'y' || sandboxAnswer === 'yes');
+    if (enableSandbox) {
+      console.log(`  ${green('>')} Code Sandbox ${bold('enabled')} (JavaScript + Python)`);
+    } else {
+      console.log(`  ${dim('Code Sandbox disabled — you can enable it later in config/default.yml.')}`);
+    }
+
     // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
@@ -801,6 +819,7 @@ export async function setupCommand(): Promise<void> {
       search?: { provider: string; apiKey?: string; baseUrl?: string };
       email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
       speech?: { provider: string; apiKey: string; baseUrl?: string };
+      codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -857,6 +876,12 @@ export async function setupCommand(): Promise<void> {
           provider: speechProvider,
           apiKey: speechApiKey,
           ...(speechBaseUrl ? { baseUrl: speechBaseUrl } : {}),
+        },
+      } : {}),
+      ...(enableSandbox ? {
+        codeSandbox: {
+          enabled: true,
+          allowedLanguages: ['javascript', 'python'],
         },
       } : {}),
       storage: {
@@ -1033,6 +1058,7 @@ ${ownerAdminRule}
     } else {
       console.log(`  ${bold('Voice:')}          ${dim('disabled')}`);
     }
+    console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
       console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);
