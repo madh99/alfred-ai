@@ -122,16 +122,21 @@ export class MessagePipeline {
 
       // 5. Load user memories for prompt injection (hybrid retrieval or fallback)
       //    Uses masterUserId so linked cross-platform accounts share memories.
+      //    Skip memory loading entirely for media without captions (files, images) to avoid
+      //    context contamination from irrelevant memories. Voice messages still load memories
+      //    because the transcribed audio is the real user content.
       let memories: { key: string; value: string; category: string; type?: string }[] | undefined;
       const syntheticInput = this.isSyntheticLabel(message.text);
-      if (this.memoryRetriever && message.text && !syntheticInput) {
+      const hasAudioAttachment = message.attachments?.some(a => a.type === 'audio') ?? false;
+      const skipMemories = syntheticInput && !hasAudioAttachment;
+      if (this.memoryRetriever && message.text && !skipMemories) {
         try {
           memories = await this.memoryRetriever.retrieve(masterUserId, message.text, 15);
         } catch (err) { this.logger.debug({ err }, 'Hybrid memory retrieval failed'); }
       }
-      if (!memories && this.memoryRepo) {
+      if (!memories && this.memoryRepo && !skipMemories) {
         try {
-          if (this.embeddingService && message.text && !syntheticInput && this.llm.supportsEmbeddings()) {
+          if (this.embeddingService && message.text && this.llm.supportsEmbeddings()) {
             // Use semantic search: top-10 relevant + 5 newest
             const semanticResults = await this.embeddingService.semanticSearch(masterUserId, message.text, 10);
             const recentResults = this.memoryRepo.getRecentForPrompt(masterUserId, 5);
@@ -892,8 +897,9 @@ export class MessagePipeline {
     if (blocks.some(b => b.type === 'image') && !hasTextBlock) {
       blocks.push({ type: 'text', text: 'What do you see in this image?' });
     } else if (isSynthetic && blocks.some(b => b.type === 'text' && (b as { text: string }).text.startsWith('[File received:'))) {
-      // File sent without any accompanying text — ask the user what they want
-      blocks.push({ type: 'text', text: 'The user sent this file without any instructions. Ask them what they would like you to do with it.' });
+      // File sent without any accompanying text — ask the user what they want.
+      // Strong instruction to prevent the LLM from acting on conversation history or memories.
+      blocks.push({ type: 'text', text: 'The user sent this file without any instructions. Ask them what they would like you to do with it. Do NOT take any other actions, do NOT use any tools, and do NOT act on conversation history or memories. ONLY ask what the user wants.' });
     } else if (blocks.length === 0) {
       blocks.push({ type: 'text', text: message.text || '(empty message)' });
     }
