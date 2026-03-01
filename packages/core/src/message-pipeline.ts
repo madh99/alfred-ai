@@ -172,7 +172,7 @@ export class MessagePipeline {
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {
         if ('getProfile' in this.users) {
-          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(user.id);
+          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(masterUserId);
           if (userProfile && !userProfile.displayName) {
             userProfile.displayName = user.displayName ?? user.username;
           }
@@ -277,7 +277,7 @@ export class MessagePipeline {
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
           {
-            userId: message.userId,
+            userId: masterUserId,
             chatId: message.chatId,
             chatType: message.chatType,
             platform: message.platform,
