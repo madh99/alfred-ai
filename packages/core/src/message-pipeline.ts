@@ -27,6 +27,9 @@ const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
+const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
+const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
+const TOOL_LOOP_KEEP_RECENT = 3; // Keep last N tool pairs uncompressed during re-trimming
 
 export type ProgressCallback = (status: string) => void;
 
@@ -142,7 +145,7 @@ export class MessagePipeline {
       //    Skip memory loading entirely for media without captions (files, images) to avoid
       //    context contamination from irrelevant memories. Voice messages still load memories
       //    because the transcribed audio is the real user content.
-      let memories: { key: string; value: string; category: string; type?: string }[] | undefined;
+      let memories: { key: string; value: string; category: string; type?: string; score?: number }[] | undefined;
       const syntheticInput = this.isSyntheticLabel(message.text);
       const hasAudioAttachment = message.attachments?.some(a => a.type === 'audio') ?? false;
       const skipMemories = syntheticInput && !hasAudioAttachment;
@@ -179,6 +182,11 @@ export class MessagePipeline {
             }
           }
         } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
+      }
+
+      // 5a. Apply memory token budget: filter low-relevance and cap by token count
+      if (memories && memories.length > 0) {
+        memories = this.applyMemoryBudget(memories);
       }
 
       // 5b. Load user profile for prompt injection
@@ -235,6 +243,11 @@ export class MessagePipeline {
       onProgress?.('Thinking...');
 
       while (true) {
+        // Re-trim if tool loop has grown beyond the context budget
+        if (iteration > 0) {
+          this.compressToolLoop(messages, system);
+        }
+
         response = await this.llm.complete({
           messages,
           system,
@@ -722,6 +735,106 @@ export class MessagePipeline {
     lines.push('If the user asks what you or the agent is doing, describe the above status in natural language.');
 
     return lines.join('\n');
+  }
+
+  /**
+   * Filter memories by relevance score and cap total token usage.
+   * Memories are already sorted by score (highest first) from the retriever.
+   */
+  private applyMemoryBudget(
+    memories: { key: string; value: string; category: string; type?: string; score?: number }[],
+  ): typeof memories {
+    // Filter by minimum relevance score (only when scores are present)
+    const hasScores = memories.some(m => m.score != null && m.score > 0);
+    let filtered = memories;
+    if (hasScores) {
+      filtered = memories.filter(m => (m.score ?? 1) >= MIN_MEMORY_SCORE);
+    }
+
+    // Apply token budget: keep highest-scored memories until budget exhausted
+    let tokenCount = 0;
+    const budgeted: typeof memories = [];
+    for (const m of filtered) {
+      const memTokens = estimateTokens(`[${m.category}] ${m.key}: ${m.value}`);
+      if (tokenCount + memTokens > MEMORY_TOKEN_BUDGET) break;
+      tokenCount += memTokens;
+      budgeted.push(m);
+    }
+
+    if (budgeted.length < memories.length) {
+      this.logger.info(
+        { original: memories.length, kept: budgeted.length, tokenCount, droppedByScore: memories.length - filtered.length },
+        'Memory budget applied',
+      );
+    }
+
+    return budgeted;
+  }
+
+  /**
+   * Compress older tool interactions when the tool loop exceeds the context budget.
+   * Keeps the last TOOL_LOOP_KEEP_RECENT tool pairs intact and summarizes the rest.
+   * Modifies the messages array in-place.
+   */
+  private compressToolLoop(messages: LLMMessage[], system: string): void {
+    const contextWindow = this.llm.getContextWindow();
+    const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
+    const systemTokens = estimateTokens(system);
+    const totalTokens = systemTokens + messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+
+    if (totalTokens <= maxInputTokens) return;
+
+    // Find all tool pairs (assistant with tool_use + user with tool_result)
+    const toolPairs: { start: number; end: number }[] = [];
+    for (let i = 0; i < messages.length - 1; i++) {
+      const msg = messages[i];
+      const next = messages[i + 1];
+      if (msg.role === 'assistant' && Array.isArray(msg.content) &&
+          msg.content.some(b => b.type === 'tool_use') &&
+          next.role === 'user' && Array.isArray(next.content) &&
+          next.content.some(b => b.type === 'tool_result')) {
+        toolPairs.push({ start: i, end: i + 1 });
+      }
+    }
+
+    if (toolPairs.length <= TOOL_LOOP_KEEP_RECENT) return;
+
+    // Compress all but the last TOOL_LOOP_KEEP_RECENT pairs
+    const compressUpTo = toolPairs.length - TOOL_LOOP_KEEP_RECENT;
+    const toCompress = toolPairs.slice(0, compressUpTo);
+
+    const summaryLines: string[] = [];
+    for (const pair of toCompress) {
+      const assistantMsg = messages[pair.start];
+      const toolNames: string[] = [];
+      if (Array.isArray(assistantMsg.content)) {
+        for (const block of assistantMsg.content) {
+          if (block.type === 'tool_use') toolNames.push(block.name);
+        }
+      }
+      const resultMsg = messages[pair.end];
+      let status = 'ok';
+      if (Array.isArray(resultMsg.content)) {
+        const hasError = resultMsg.content.some(b => b.type === 'tool_result' && b.is_error);
+        if (hasError) status = 'error';
+      }
+      summaryLines.push(`- ${toolNames.join(', ')}: ${status}`);
+    }
+
+    // Replace compressed pairs with an assistant+user pair to maintain alternation
+    const firstIdx = toCompress[0].start;
+    const lastIdx = toCompress[toCompress.length - 1].end;
+    const removeCount = lastIdx - firstIdx + 1;
+
+    messages.splice(firstIdx, removeCount,
+      { role: 'assistant', content: `[Earlier tool interactions compressed (${toCompress.length} pairs):\n${summaryLines.join('\n')}\n]` },
+      { role: 'user', content: '[Context compressed to fit context window. Continue with the current task.]' },
+    );
+
+    this.logger.info(
+      { compressedPairs: toCompress.length, removedMessages: removeCount - 2 },
+      'Compressed tool loop to fit context window',
+    );
   }
 
   /**
