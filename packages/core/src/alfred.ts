@@ -205,6 +205,15 @@ export class Alfred {
       this.logger.info('Code sandbox enabled');
     }
 
+    // 4e. Code agents (optional, requires explicit enable)
+    if (this.config.codeAgents?.enabled) {
+      const { CodeAgentSkill } = await import('@alfred/skills');
+      skillRegistry.register(new CodeAgentSkill({
+        agents: this.config.codeAgents.agents,
+      }));
+      this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

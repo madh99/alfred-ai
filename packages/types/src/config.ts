@@ -140,6 +140,21 @@ export interface ApiConfig {
   host: string;
 }
 
+export interface CodeAgentDefinitionConfig {
+  name: string;
+  command: string;
+  argsTemplate: string[];
+  promptVia?: 'arg' | 'stdin';
+  env?: Record<string, string>;
+  cwd?: string;
+  timeoutMs?: number;
+}
+
+export interface CodeAgentsConfig {
+  enabled: boolean;
+  agents: CodeAgentDefinitionConfig[];
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -159,4 +174,5 @@ export interface AlfredConfig {
   codeSandbox?: CodeSandboxConfig;
   activeLearning?: ActiveLearningConfig;
   api?: ApiConfig;
+  codeAgents?: CodeAgentsConfig;
 }

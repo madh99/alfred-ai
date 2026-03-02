@@ -153,6 +153,21 @@ export const ApiConfigSchema = z.object({
   host: z.string(),
 });
 
+export const CodeAgentDefinitionSchema = z.object({
+  name: z.string(),
+  command: z.string(),
+  argsTemplate: z.array(z.string()),
+  promptVia: z.enum(['arg', 'stdin']).default('arg'),
+  env: z.record(z.string()).optional(),
+  cwd: z.string().optional(),
+  timeoutMs: z.number().max(900_000).optional(),
+});
+
+export const CodeAgentsConfigSchema = z.object({
+  enabled: z.boolean(),
+  agents: z.array(CodeAgentDefinitionSchema),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -172,4 +187,5 @@ export const AlfredConfigSchema = z.object({
   codeSandbox: CodeSandboxConfigSchema.optional(),
   activeLearning: ActiveLearningConfigSchema.optional(),
   api: ApiConfigSchema.optional(),
+  codeAgents: CodeAgentsConfigSchema.optional(),
 });
