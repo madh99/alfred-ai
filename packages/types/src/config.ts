@@ -150,9 +150,30 @@ export interface CodeAgentDefinitionConfig {
   timeoutMs?: number;
 }
 
+export interface GitHubForgeConfig {
+  token: string;
+  owner: string;
+  repo: string;
+  baseUrl?: string;
+}
+
+export interface GitLabForgeConfig {
+  token: string;
+  projectId: string;
+  baseUrl?: string;
+}
+
+export interface ForgeConfig {
+  provider: 'github' | 'gitlab';
+  baseBranch?: string;
+  github?: GitHubForgeConfig;
+  gitlab?: GitLabForgeConfig;
+}
+
 export interface CodeAgentsConfig {
   enabled: boolean;
   agents: CodeAgentDefinitionConfig[];
+  forge?: ForgeConfig;
 }
 
 export interface AlfredConfig {

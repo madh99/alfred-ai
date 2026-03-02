@@ -1,11 +1,12 @@
-import type { SkillMetadata, SkillContext, SkillResult, CodeAgentDefinitionConfig } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, CodeAgentDefinitionConfig, ForgeConfig } from '@alfred/types';
 import type { LLMProvider } from '@alfred/llm';
 import { Skill } from '../../skill.js';
 import { executeAgent } from './agent-executor.js';
-import { orchestrate, type OrchestrationResult } from './orchestrator.js';
+import { orchestrate, orchestrateWithGit, type OrchestrationResult, type GitOrchestrationResult } from './orchestrator.js';
 
 export interface CodeAgentSkillConfig {
   agents: CodeAgentDefinitionConfig[];
+  forge?: ForgeConfig;
 }
 
 export class CodeAgentSkill extends Skill {
@@ -57,12 +58,25 @@ export class CodeAgentSkill extends Skill {
           type: 'number',
           description: 'Timeout in milliseconds (optional, max 900000)',
         },
+        git: {
+          type: 'boolean',
+          description: 'Enable git workflow: auto-branch, commit, push, and PR creation (for "orchestrate")',
+        },
+        prTitle: {
+          type: 'string',
+          description: 'Custom PR/MR title (used with git=true)',
+        },
+        baseBranch: {
+          type: 'string',
+          description: 'Target branch for the PR/MR (default: "main")',
+        },
       },
       required: ['action'],
     },
   };
 
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
+  private readonly forgeConfig?: ForgeConfig;
 
   constructor(
     config: CodeAgentSkillConfig,
@@ -70,6 +84,7 @@ export class CodeAgentSkill extends Skill {
   ) {
     super();
     this.agents = new Map(config.agents.map((a) => [a.name, a]));
+    this.forgeConfig = config.forge;
   }
 
   async execute(
@@ -209,8 +224,27 @@ export class CodeAgentSkill extends Skill {
     const maxIterations = typeof input.maxIterations === 'number'
       ? input.maxIterations
       : undefined;
+    const useGit = input.git === true;
+    const prTitle = typeof input.prTitle === 'string' ? input.prTitle : undefined;
+    const baseBranch = typeof input.baseBranch === 'string' ? input.baseBranch : undefined;
 
     try {
+      if (useGit) {
+        const result: GitOrchestrationResult = await orchestrateWithGit(
+          task,
+          selectedAgents,
+          this.llm,
+          {
+            maxIterations,
+            onProgress: context.onProgress,
+            forge: this.forgeConfig,
+            prTitle,
+            baseBranch,
+          },
+        );
+        return this.formatGitOrchestrationResult(result);
+      }
+
       const result: OrchestrationResult = await orchestrate(
         task,
         selectedAgents,
@@ -268,6 +302,43 @@ export class CodeAgentSkill extends Skill {
         totalDurationMs: result.totalDurationMs,
       },
       display: parts.join('\n'),
+    };
+  }
+
+  private formatGitOrchestrationResult(result: GitOrchestrationResult): SkillResult {
+    const base = this.formatOrchestrationResult(result);
+    const gitParts: string[] = [];
+    const { git } = result;
+
+    if (git.branch) {
+      gitParts.push(`**Branch:** ${git.branch}`);
+    }
+    if (git.commit) {
+      gitParts.push(`**Commit:** ${git.commit.sha} (${git.commit.filesChanged} files changed)`);
+    }
+    if (git.pullRequest) {
+      gitParts.push(`**PR:** ${git.pullRequest.url} (#${git.pullRequest.number})`);
+    }
+    for (const warning of git.warnings) {
+      gitParts.push(`**Warning:** ${warning}`);
+    }
+
+    const gitDisplay = gitParts.length > 0
+      ? `\n\n**Git:**\n${gitParts.join('\n')}`
+      : '';
+
+    return {
+      ...base,
+      data: {
+        ...(base.data as Record<string, unknown>),
+        git: {
+          branch: git.branch,
+          commit: git.commit,
+          pullRequest: git.pullRequest,
+          warnings: git.warnings,
+        },
+      },
+      display: (base.display ?? '') + gitDisplay,
     };
   }
 }

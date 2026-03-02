@@ -163,9 +163,30 @@ export const CodeAgentDefinitionSchema = z.object({
   timeoutMs: z.number().max(900_000).optional(),
 });
 
+export const GitHubForgeConfigSchema = z.object({
+  token: z.string(),
+  owner: z.string(),
+  repo: z.string(),
+  baseUrl: z.string().optional(),
+});
+
+export const GitLabForgeConfigSchema = z.object({
+  token: z.string(),
+  projectId: z.string(),
+  baseUrl: z.string().optional(),
+});
+
+export const ForgeConfigSchema = z.object({
+  provider: z.enum(['github', 'gitlab']),
+  baseBranch: z.string().optional(),
+  github: GitHubForgeConfigSchema.optional(),
+  gitlab: GitLabForgeConfigSchema.optional(),
+});
+
 export const CodeAgentsConfigSchema = z.object({
   enabled: z.boolean(),
   agents: z.array(CodeAgentDefinitionSchema),
+  forge: ForgeConfigSchema.optional(),
 });
 
 export const AlfredConfigSchema = z.object({

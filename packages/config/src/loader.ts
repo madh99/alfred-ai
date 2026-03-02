@@ -78,6 +78,15 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_MICROSOFT_CALENDAR_CLIENT_SECRET: ['calendar', 'microsoft', 'clientSecret'],
   ALFRED_MICROSOFT_CALENDAR_TENANT_ID: ['calendar', 'microsoft', 'tenantId'],
   ALFRED_MICROSOFT_CALENDAR_REFRESH_TOKEN: ['calendar', 'microsoft', 'refreshToken'],
+  ALFRED_FORGE_PROVIDER: ['codeAgents', 'forge', 'provider'],
+  ALFRED_FORGE_BASE_BRANCH: ['codeAgents', 'forge', 'baseBranch'],
+  ALFRED_GITHUB_TOKEN: ['codeAgents', 'forge', 'github', 'token'],
+  ALFRED_GITHUB_OWNER: ['codeAgents', 'forge', 'github', 'owner'],
+  ALFRED_GITHUB_REPO: ['codeAgents', 'forge', 'github', 'repo'],
+  ALFRED_GITHUB_BASE_URL: ['codeAgents', 'forge', 'github', 'baseUrl'],
+  ALFRED_GITLAB_TOKEN: ['codeAgents', 'forge', 'gitlab', 'token'],
+  ALFRED_GITLAB_PROJECT_ID: ['codeAgents', 'forge', 'gitlab', 'projectId'],
+  ALFRED_GITLAB_BASE_URL: ['codeAgents', 'forge', 'gitlab', 'baseUrl'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

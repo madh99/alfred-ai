@@ -1,6 +1,16 @@
 import type { LLMProvider } from '@alfred/llm';
-import type { CodeAgentDefinitionConfig } from '@alfred/types';
+import type { CodeAgentDefinitionConfig, ForgeConfig } from '@alfred/types';
 import { executeAgent, type AgentExecutionResult } from './agent-executor.js';
+import {
+  gitStatus,
+  gitCreateBranch,
+  gitStageAll,
+  gitCommit,
+  gitPush,
+  slugifyBranch,
+  type GitCommitResult,
+} from './git-ops.js';
+import { createForgeClient, type PullRequestResult } from './forge-client.js';
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -34,6 +44,24 @@ export interface OrchestrationOptions {
   maxIterations?: number;
   maxConcurrent?: number;
   onProgress?: (status: string) => void;
+}
+
+export interface GitOrchestrationOptions extends OrchestrationOptions {
+  forge?: ForgeConfig;
+  prTitle?: string;
+  baseBranch?: string;
+  cwd?: string;
+}
+
+export interface GitInfo {
+  branch?: string;
+  commit?: GitCommitResult;
+  pullRequest?: PullRequestResult;
+  warnings: string[];
+}
+
+export interface GitOrchestrationResult extends OrchestrationResult {
+  git: GitInfo;
 }
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -328,4 +356,103 @@ export async function orchestrate(
     summary,
     totalDurationMs: Date.now() - startTime,
   };
+}
+
+// ── Git-aware Orchestration Wrapper ─────────────────────────────────────────
+
+export async function orchestrateWithGit(
+  task: string,
+  agents: CodeAgentDefinitionConfig[],
+  llm: LLMProvider,
+  options: GitOrchestrationOptions = {},
+): Promise<GitOrchestrationResult> {
+  const onProgress = options.onProgress;
+  const cwd = options.cwd ?? process.cwd();
+  const gitInfo: GitInfo = { warnings: [] };
+
+  // 1. Check git status
+  const status = await gitStatus({ cwd });
+  if (!status.isRepo) {
+    gitInfo.warnings.push('Not a git repository — skipping git operations');
+    onProgress?.('Warning: not a git repository, skipping git operations');
+    const result = await orchestrate(task, agents, llm, options);
+    return { ...result, git: gitInfo };
+  }
+
+  // 2. Create branch
+  const branchName = slugifyBranch(task);
+  try {
+    await gitCreateBranch(branchName, { cwd });
+    gitInfo.branch = branchName;
+    onProgress?.(`Created branch: ${branchName}`);
+  } catch (err) {
+    // Branch already exists — this is fatal per the plan
+    throw new Error(`Failed to create branch "${branchName}": ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // 3. Run orchestration (unchanged)
+  const result = await orchestrate(task, agents, llm, options);
+
+  // 4. Stage + commit
+  try {
+    await gitStageAll({ cwd });
+    const commitMsg = `feat: ${task.slice(0, 72)}\n\nOrchestrated by Alfred (${result.iterations} iteration(s), ${result.allModifiedFiles.length} file(s))`;
+    const commitResult = await gitCommit(commitMsg, { cwd });
+    gitInfo.commit = commitResult;
+    onProgress?.(`Committed: ${commitResult.sha} (${commitResult.filesChanged} files changed)`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    gitInfo.warnings.push(`Commit failed: ${msg}`);
+    onProgress?.(`Warning: commit failed — ${msg}`);
+    return { ...result, git: gitInfo };
+  }
+
+  // 5. Push + PR (only if forge is configured)
+  const forgeConfig = options.forge;
+  if (!forgeConfig) {
+    gitInfo.warnings.push('No forge configured — skipping push and PR creation');
+    onProgress?.('No forge configured, skipping push and PR');
+    return { ...result, git: gitInfo };
+  }
+
+  try {
+    await gitPush('origin', branchName, { cwd });
+    onProgress?.(`Pushed branch: ${branchName}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    gitInfo.warnings.push(`Push failed: ${msg}`);
+    onProgress?.(`Warning: push failed — ${msg}`);
+    return { ...result, git: gitInfo };
+  }
+
+  try {
+    const forge = createForgeClient(forgeConfig);
+    const baseBranch = options.baseBranch ?? forgeConfig.baseBranch ?? 'main';
+    const prTitle = options.prTitle ?? `feat: ${task.slice(0, 72)}`;
+    const prBody = [
+      `## Summary`,
+      result.summary,
+      '',
+      `**Iterations:** ${result.iterations}`,
+      `**Modified files:** ${result.allModifiedFiles.length}`,
+      result.allModifiedFiles.map((f) => `- \`${f}\``).join('\n'),
+      '',
+      '_Automated by Alfred_',
+    ].join('\n');
+
+    const pr = await forge.createPullRequest({
+      title: prTitle,
+      body: prBody,
+      head: branchName,
+      base: baseBranch,
+    });
+    gitInfo.pullRequest = pr;
+    onProgress?.(`PR created: ${pr.url}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    gitInfo.warnings.push(`PR creation failed: ${msg}`);
+    onProgress?.(`Warning: PR creation failed — ${msg}`);
+  }
+
+  return { ...result, git: gitInfo };
 }
