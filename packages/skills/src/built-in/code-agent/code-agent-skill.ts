@@ -1,6 +1,8 @@
 import type { SkillMetadata, SkillContext, SkillResult, CodeAgentDefinitionConfig } from '@alfred/types';
+import type { LLMProvider } from '@alfred/llm';
 import { Skill } from '../../skill.js';
 import { executeAgent } from './agent-executor.js';
+import { orchestrate, type OrchestrationResult } from './orchestrator.js';
 
 export interface CodeAgentSkillConfig {
   agents: CodeAgentDefinitionConfig[];
@@ -11,19 +13,33 @@ export class CodeAgentSkill extends Skill {
     name: 'code_agent',
     description:
       'Run a CLI-based coding agent (e.g. Claude Code, Codex, Gemini CLI, Aider) as a subprocess. ' +
-      'Use action "list_agents" to see available agents, or "run" to execute one with a prompt. ' +
+      'Use action "list_agents" to see available agents, "run" to execute one with a prompt, ' +
+      'or "orchestrate" to have the LLM decompose a task into parallel subtasks. ' +
       'The agent runs in a specified working directory and returns stdout, stderr, exit code, ' +
       'duration, and a list of files it modified.',
     riskLevel: 'admin',
     version: '1.0.0',
-    timeoutMs: 300_000,
+    timeoutMs: 600_000,
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list_agents', 'run'],
+          enum: ['list_agents', 'run', 'orchestrate'],
           description: 'The action to perform',
+        },
+        task: {
+          type: 'string',
+          description: 'High-level task description for "orchestrate" action',
+        },
+        agents: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional agent name filter for "orchestrate" (uses all agents if omitted)',
+        },
+        maxIterations: {
+          type: 'number',
+          description: 'Max validation iterations for "orchestrate" (1-5, default 3)',
         },
         agent: {
           type: 'string',
@@ -48,7 +64,10 @@ export class CodeAgentSkill extends Skill {
 
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
 
-  constructor(config: CodeAgentSkillConfig) {
+  constructor(
+    config: CodeAgentSkillConfig,
+    private readonly llm?: LLMProvider,
+  ) {
     super();
     this.agents = new Map(config.agents.map((a) => [a.name, a]));
   }
@@ -64,10 +83,12 @@ export class CodeAgentSkill extends Skill {
         return this.listAgents();
       case 'run':
         return this.runAgent(input, context);
+      case 'orchestrate':
+        return this.orchestrateTask(input, context);
       default:
         return {
           success: false,
-          error: `Unknown action "${action}". Use "list_agents" or "run".`,
+          error: `Unknown action "${action}". Use "list_agents", "run", or "orchestrate".`,
         };
     }
   }
@@ -150,6 +171,103 @@ export class CodeAgentSkill extends Skill {
           ? `Agent "${agentName}" timed out`
           : `Agent "${agentName}" exited with code ${result.exitCode}`,
       }),
+    };
+  }
+
+  private async orchestrateTask(
+    input: Record<string, unknown>,
+    context: SkillContext,
+  ): Promise<SkillResult> {
+    if (!this.llm) {
+      return {
+        success: false,
+        error: 'Orchestration requires an LLM provider but none was configured.',
+      };
+    }
+
+    const task = input.task as string | undefined;
+    if (!task || typeof task !== 'string') {
+      return { success: false, error: 'Missing required field "task" for orchestrate action.' };
+    }
+
+    // Resolve agent filter
+    let selectedAgents = [...this.agents.values()];
+    const agentFilter = input.agents as string[] | undefined;
+    if (Array.isArray(agentFilter) && agentFilter.length > 0) {
+      selectedAgents = agentFilter
+        .map((name) => this.agents.get(name))
+        .filter((a): a is CodeAgentDefinitionConfig => a !== undefined);
+      if (selectedAgents.length === 0) {
+        const available = [...this.agents.keys()].join(', ');
+        return {
+          success: false,
+          error: `None of the specified agents exist. Available: ${available}`,
+        };
+      }
+    }
+
+    const maxIterations = typeof input.maxIterations === 'number'
+      ? input.maxIterations
+      : undefined;
+
+    try {
+      const result: OrchestrationResult = await orchestrate(
+        task,
+        selectedAgents,
+        this.llm,
+        {
+          maxIterations,
+          onProgress: context.onProgress,
+        },
+      );
+
+      return this.formatOrchestrationResult(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { success: false, error: `Orchestration failed: ${message}` };
+    }
+  }
+
+  private formatOrchestrationResult(result: OrchestrationResult): SkillResult {
+    const parts: string[] = [];
+
+    parts.push(`**Orchestration completed in ${result.iterations} iteration(s)**`);
+    parts.push(`**Plan:** ${result.plan.reasoning}`);
+    parts.push(`**Duration:** ${(result.totalDurationMs / 1000).toFixed(1)}s`);
+
+    for (const sr of result.subtaskResults) {
+      const status = sr.execution.exitCode === 0 ? 'OK' : `FAIL (exit ${sr.execution.exitCode})`;
+      parts.push(`- **${sr.subtask.id}** [${sr.subtask.agent}]: ${sr.subtask.description} — ${status}`);
+    }
+
+    if (result.allModifiedFiles.length > 0) {
+      parts.push(`\n**Modified files:**\n${result.allModifiedFiles.map((f) => `- ${f}`).join('\n')}`);
+    }
+
+    if (result.summary) {
+      parts.push(`\n**Summary:** ${result.summary}`);
+    }
+
+    const hasFailures = result.subtaskResults.some((r) => r.execution.exitCode !== 0);
+
+    return {
+      success: !hasFailures,
+      data: {
+        plan: result.plan,
+        iterations: result.iterations,
+        subtaskResults: result.subtaskResults.map((sr) => ({
+          id: sr.subtask.id,
+          agent: sr.subtask.agent,
+          description: sr.subtask.description,
+          exitCode: sr.execution.exitCode,
+          modifiedFiles: sr.execution.modifiedFiles,
+          durationMs: sr.execution.durationMs,
+        })),
+        allModifiedFiles: result.allModifiedFiles,
+        summary: result.summary,
+        totalDurationMs: result.totalDurationMs,
+      },
+      display: parts.join('\n'),
     };
   }
 }

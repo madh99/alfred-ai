@@ -208,9 +208,10 @@ export class Alfred {
     // 4e. Code agents (optional, requires explicit enable)
     if (this.config.codeAgents?.enabled) {
       const { CodeAgentSkill } = await import('@alfred/skills');
-      skillRegistry.register(new CodeAgentSkill({
-        agents: this.config.codeAgents.agents,
-      }));
+      skillRegistry.register(new CodeAgentSkill(
+        { agents: this.config.codeAgents.agents },
+        llmProvider,
+      ));
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
     }
 
