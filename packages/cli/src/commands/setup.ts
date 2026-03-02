@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
@@ -214,6 +215,52 @@ const PLATFORMS: PlatformDef[] = [
   },
 ];
 
+// ── Known code agents ─────────────────────────────────────────────────
+
+interface KnownAgent {
+  name: string;
+  label: string;
+  command: string;
+  argsTemplate: string[];
+  promptVia: 'arg' | 'stdin';
+  whichCmd: string; // command to check existence
+}
+
+const KNOWN_AGENTS: KnownAgent[] = [
+  {
+    name: 'claude-code',
+    label: 'Claude Code',
+    command: 'claude',
+    argsTemplate: ['-p', '{{prompt}}'],
+    promptVia: 'arg',
+    whichCmd: 'claude',
+  },
+  {
+    name: 'codex',
+    label: 'OpenAI Codex CLI',
+    command: 'codex',
+    argsTemplate: ['{{prompt}}'],
+    promptVia: 'arg',
+    whichCmd: 'codex',
+  },
+  {
+    name: 'aider',
+    label: 'Aider',
+    command: 'aider',
+    argsTemplate: ['--message', '{{prompt}}'],
+    promptVia: 'arg',
+    whichCmd: 'aider',
+  },
+  {
+    name: 'gemini',
+    label: 'Gemini CLI',
+    command: 'gemini',
+    argsTemplate: ['-p', '{{prompt}}'],
+    promptVia: 'arg',
+    whichCmd: 'gemini',
+  },
+];
+
 // ── Load existing config ──────────────────────────────────────────────
 
 interface TierConfig {
@@ -235,7 +282,7 @@ interface ExistingConfig {
   search?: { provider?: string; apiKey?: string; baseUrl?: string };
   email?: { imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string } };
   codeSandbox?: { enabled?: boolean; allowedLanguages?: string[] };
-  codeAgents?: { forge?: { provider?: string; github?: { token?: string; owner?: string; repo?: string }; gitlab?: { token?: string; projectId?: string } } };
+  codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string; owner?: string; repo?: string }; gitlab?: { token?: string; projectId?: string } } };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -861,7 +908,85 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Code Sandbox disabled — you can enable it later in config/default.yml.')}`);
     }
 
-    // ── 8c. Forge Integration (GitHub / GitLab) ───────────────
+    // ── 8c. Code Agents (auto-detect CLI tools) ──────────────
+    console.log(`\n${bold('Code Agents (CLI-based coding agents for automated tasks)?')}`);
+    console.log(`${dim('Scanning for known coding agents on this system...')}`);
+
+    const isWindows = process.platform === 'win32';
+    const whichCommand = isWindows ? 'where' : 'which';
+    const detectedAgents: KnownAgent[] = [];
+
+    for (const agent of KNOWN_AGENTS) {
+      try {
+        execFileSync(whichCommand, [agent.whichCmd], { stdio: 'ignore' });
+        detectedAgents.push(agent);
+        console.log(`  ${green('✓')} ${bold(agent.label)} ${dim(`(${agent.command})`)}`);
+      } catch {
+        console.log(`  ${dim('·')} ${dim(agent.label)} ${dim('— not found')}`);
+      }
+    }
+
+    // Check existing agents that aren't in KNOWN_AGENTS (custom config)
+    const existingAgents = existing.config.codeAgents?.agents ?? [];
+    const customAgents = existingAgents.filter(
+      (a) => !KNOWN_AGENTS.some((k) => k.name === a.name),
+    );
+    for (const a of customAgents) {
+      console.log(`  ${green('✓')} ${bold(a.name)} ${dim(`(${a.command}) — from existing config`)}`);
+    }
+
+    interface SelectedAgent {
+      name: string;
+      command: string;
+      argsTemplate: string[];
+      promptVia: 'arg' | 'stdin';
+    }
+
+    let selectedAgents: SelectedAgent[] = [];
+
+    if (detectedAgents.length === 0 && customAgents.length === 0) {
+      console.log(`\n  ${dim('No coding agents found. You can add them manually in config/default.yml later.')}`);
+    } else {
+      const allCandidates = [
+        ...detectedAgents.map((a) => ({ name: a.name, command: a.command, argsTemplate: a.argsTemplate, promptVia: a.promptVia, label: a.label, detected: true })),
+        ...customAgents.map((a) => ({ name: a.name, command: a.command, argsTemplate: a.argsTemplate, promptVia: (a.promptVia ?? 'arg') as 'arg' | 'stdin', label: a.name, detected: false })),
+      ];
+
+      // Show selection
+      console.log(`\n  ${bold('Which agents should Alfred use?')} ${dim('(comma-separated, e.g. 1,2)')}`);
+      const alreadyEnabled = new Set((existing.config.codeAgents?.agents ?? []).map((a) => a.name));
+      for (let i = 0; i < allCandidates.length; i++) {
+        const c = allCandidates[i];
+        const current = alreadyEnabled.has(c.name) ? ` ${dim('(current)')}` : '';
+        console.log(`  ${YELLOW}${i + 1}${RESET}) ${c.label}${current}`);
+      }
+      console.log(`  ${YELLOW}0${RESET}) None`);
+
+      const defaultNums = allCandidates
+        .map((c, i) => alreadyEnabled.size > 0 ? (alreadyEnabled.has(c.name) ? String(i + 1) : null) : (c.detected ? String(i + 1) : null))
+        .filter(Boolean)
+        .join(',') || '0';
+
+      const agentChoice = (
+        await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${defaultNums}] `)}`)
+      ).trim() || defaultNums;
+
+      if (agentChoice !== '0') {
+        const nums = agentChoice.split(',').map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n) && n >= 1 && n <= allCandidates.length);
+        selectedAgents = nums.map((n) => {
+          const c = allCandidates[n - 1];
+          return { name: c.name, command: c.command, argsTemplate: c.argsTemplate, promptVia: c.promptVia };
+        });
+      }
+
+      if (selectedAgents.length > 0) {
+        console.log(`  ${green('>')} ${bold(String(selectedAgents.length))} agent(s) selected: ${selectedAgents.map((a) => a.name).join(', ')}`);
+      } else {
+        console.log(`  ${dim('No agents selected.')}`);
+      }
+    }
+
+    // ── 8d. Forge Integration (GitHub / GitLab) ───────────────
     const existingForge = existing.config.codeAgents?.forge;
     const existingForgeProvider = existingForge?.provider ?? existing.env['ALFRED_FORGE_PROVIDER'] ?? '';
     console.log(`\n${bold('Forge Integration (auto-create PRs/MRs after code agent orchestration)?')}`);
@@ -1127,7 +1252,7 @@ export async function setupCommand(): Promise<void> {
       email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
       speech?: { provider: string; apiKey: string; baseUrl?: string };
       codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
-      codeAgents?: { enabled: boolean; agents: never[]; forge: { provider: string; github?: { token: string; owner: string; repo: string }; gitlab?: { token: string; projectId: string } } };
+      codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string; owner: string; repo: string }; gitlab?: { token: string; projectId: string } } };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1204,23 +1329,21 @@ export async function setupCommand(): Promise<void> {
           allowedLanguages: ['javascript', 'python'],
         },
       } : {}),
-      ...(forgeProvider === 'github' ? {
+      ...((selectedAgents.length > 0 || forgeProvider) ? {
         codeAgents: {
-          enabled: true,
-          agents: [],
-          forge: {
-            provider: 'github',
-            github: { token: forgeGithubToken, owner: forgeGithubOwner, repo: forgeGithubRepo },
-          },
-        },
-      } : forgeProvider === 'gitlab' ? {
-        codeAgents: {
-          enabled: true,
-          agents: [],
-          forge: {
-            provider: 'gitlab',
-            gitlab: { token: forgeGitlabToken, projectId: forgeGitlabProjectId },
-          },
+          enabled: selectedAgents.length > 0,
+          agents: selectedAgents,
+          ...(forgeProvider === 'github' ? {
+            forge: {
+              provider: 'github',
+              github: { token: forgeGithubToken, owner: forgeGithubOwner, repo: forgeGithubRepo },
+            },
+          } : forgeProvider === 'gitlab' ? {
+            forge: {
+              provider: 'gitlab',
+              gitlab: { token: forgeGitlabToken, projectId: forgeGitlabProjectId },
+            },
+          } : {}),
         },
       } : {}),
       storage: {

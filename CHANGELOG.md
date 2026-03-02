@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.46] - 2026-03-02
+
+### Added
+- **Code Agent Auto-Detection im Setup-Wizard**: Erkennt automatisch installierte CLI-Tools (Claude Code, Codex, Aider, Gemini CLI) via `which`/`where` und bietet sie zur Auswahl an
+- Bestehende custom Agents aus der Config werden erkannt und beibehalten
+- Agents und Forge-Integration werden in einem gemeinsamen `codeAgents`-Block zusammengeführt
+
 ## [0.9.45] - 2026-03-02
 
 ### Added
