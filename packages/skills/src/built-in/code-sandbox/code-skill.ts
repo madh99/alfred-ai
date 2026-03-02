@@ -5,7 +5,7 @@ import { CodeExecutor } from './code-executor.js';
 export class CodeExecutionSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'code_sandbox',
-    description: 'Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating charts, or testing code snippets. Code runs in an isolated temp directory with a timeout.',
+    description: 'Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating files (HTML, CSV, etc.), or testing code snippets. Code runs in an isolated temp directory with a timeout. IMPORTANT: When generating large files, write compact data-driven code — define data as arrays/objects, then build the output programmatically. Never embed large HTML/text as string literals.',
     riskLevel: 'destructive',
     version: '1.0.0',
     timeoutMs: 120_000,
@@ -39,7 +39,7 @@ export class CodeExecutionSkill extends Skill {
     const data = input.data as string | undefined;
     const timeout = Math.min((input.timeout as number) ?? 30_000, this.maxTimeout);
 
-    if (!code) return { success: false, error: 'Missing required field "code"' };
+    if (!code) return { success: false, error: 'Missing required field "code". IMPORTANT: Do NOT embed large HTML/text as string literals — write compact code that builds content programmatically from data arrays/objects, e.g. rows.map(r => `<tr><td>${r.time}</td><td>${r.price}</td></tr>`).join(""). Keep the code short and data-driven.' };
     if (!language) return { success: false, error: 'Missing required field "language"' };
     if (!this.allowedLanguages.has(language)) {
       return { success: false, error: `Language "${language}" is not allowed. Allowed: ${[...this.allowedLanguages].join(', ')}` };

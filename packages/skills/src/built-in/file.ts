@@ -132,7 +132,7 @@ export class FileSkill extends Skill {
     // Validate content early for actions that require it, so the LLM gets
     // a clear error message and can retry with content instead of burning iterations.
     if ((action === 'write' || action === 'write_binary' || action === 'append') && !content) {
-      return { success: false, error: `Missing "content" field for "${action}" action. The content is likely too large to include in a tool call. Use the code_sandbox skill instead: write a script that generates the file with fs.writeFileSync(), e.g. code_sandbox with code: "const fs = require('fs'); const html = \`...\`; fs.writeFileSync('output.html', html);" — the sandbox will collect the output file automatically.` };
+      return { success: false, error: `Missing "content" field for "${action}" action. The content is likely too large to include in a tool call. Use the code_sandbox skill instead — write COMPACT data-driven code: define your data as arrays/objects, then build HTML/text programmatically with .map()/.join(). Example: const data = [{h:8,p:5.2},{h:9,p:4.1}]; const rows = data.map(r => \`<tr><td>\${r.h}</td><td>\${r.p}</td></tr>\`).join(''); fs.writeFileSync('output.html', \`<table>\${rows}</table>\`); — the sandbox collects output files automatically. Do NOT embed large string literals.` };
     }
 
     const resolvedPath = this.resolvePath(rawPath);
