@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.50-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.51-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -96,7 +96,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
-| **Admin** | `configure` | Configure services (Proxmox, UniFi) via chat |
+| **Admin** | `configure` | Configure services (Proxmox, UniFi) via chat — hot-reload, no restart needed |
 
 ### Code Agent Orchestration
 

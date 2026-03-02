@@ -6,6 +6,7 @@ import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository } from '@alfred/storage';
+import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
 import {
@@ -59,10 +60,11 @@ export class Alfred {
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
   private userRepo!: UserRepository;
+  private skillRegistry!: SkillRegistry;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
 
-  constructor(private readonly config: AlfredConfig) {
+  constructor(private config: AlfredConfig) {
     this.logger = createLogger('alfred', config.logger.level);
   }
 
@@ -137,7 +139,7 @@ export class Alfred {
     const skillSandbox = new SkillSandbox(
       this.logger.child({ component: 'sandbox' }),
     );
-    const skillRegistry = new SkillRegistry();
+    const skillRegistry = this.skillRegistry = new SkillRegistry();
     skillRegistry.register(new CalculatorSkill());
     skillRegistry.register(new SystemInfoSkill());
     skillRegistry.register(new WebSearchSkill(this.config.search ? {
@@ -158,7 +160,9 @@ export class Alfred {
     } : undefined));
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
-    skillRegistry.register(new ConfigureSkill());
+    const configureSkill = new ConfigureSkill();
+    configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi'));
+    skillRegistry.register(configureSkill);
     skillRegistry.register(new ClipboardSkill());
     skillRegistry.register(new ScreenshotSkill());
     skillRegistry.register(new BrowserSkill());
@@ -430,6 +434,41 @@ export class Alfred {
 
     this.database.close();
     this.logger.info('Alfred stopped');
+  }
+
+  async reloadService(service: 'proxmox' | 'unifi'): Promise<{ success: boolean; error?: string }> {
+    try {
+      // 1. Reload .env → process.env updated
+      reloadDotenv();
+
+      // 2. Reload config from env + yaml
+      const freshConfig = new ConfigLoader().loadConfig();
+
+      // 3. Unregister old skill if present
+      if (this.skillRegistry.has(service)) {
+        this.skillRegistry.unregister(service);
+      }
+
+      // 4. Register new skill if config is present
+      if (service === 'proxmox' && freshConfig.proxmox) {
+        const { ProxmoxSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new ProxmoxSkill(freshConfig.proxmox));
+        this.config.proxmox = freshConfig.proxmox;
+        this.logger.info({ baseUrl: freshConfig.proxmox.baseUrl }, 'Proxmox skill hot-reloaded');
+      }
+      if (service === 'unifi' && freshConfig.unifi) {
+        const { UniFiSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new UniFiSkill(freshConfig.unifi));
+        this.config.unifi = freshConfig.unifi;
+        this.logger.info({ baseUrl: freshConfig.unifi.baseUrl }, 'UniFi skill hot-reloaded');
+      }
+
+      return { success: true };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error({ err, service }, 'Failed to hot-reload service');
+      return { success: false, error: message };
+    }
   }
 
   private autoLinkApiUser(message: NormalizedMessage): void {

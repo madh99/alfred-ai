@@ -35,7 +35,15 @@ const SERVICES: Record<string, { label: string; fields: ServiceField[] }> = {
 
 // ── Skill ────────────────────────────────────────────────────────────────
 
+export type ReloadCallback = (service: string) => Promise<{ success: boolean; error?: string }>;
+
 export class ConfigureSkill extends Skill {
+  private reloadCallback?: ReloadCallback;
+
+  setReloadCallback(cb: ReloadCallback): void {
+    this.reloadCallback = cb;
+  }
+
   readonly metadata: SkillMetadata = {
     name: 'configure',
     description:
@@ -43,7 +51,7 @@ export class ConfigureSkill extends Skill {
       'Use action "list_services" to see available services. ' +
       'Use action "show" to check current config of a service. ' +
       'Use action "set" to write config — provide service name and values. ' +
-      'After setting config, Alfred needs a restart to pick up the changes.',
+      'After setting config, the service is activated immediately — no restart needed.',
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -120,7 +128,7 @@ export class ConfigureSkill extends Skill {
     return { success: true, data, display: lines.join('\n') };
   }
 
-  private setService(service: string, values: Record<string, string> | undefined): SkillResult {
+  private async setService(service: string, values: Record<string, string> | undefined): Promise<SkillResult> {
     const svc = SERVICES[service];
     if (!svc) return { success: false, error: `Unknown service "${service}". Available: ${Object.keys(SERVICES).join(', ')}` };
     if (!values || Object.keys(values).length === 0) {
@@ -171,6 +179,13 @@ export class ConfigureSkill extends Skill {
 
     if (missing.length > 0) {
       lines.push(`\n**Still missing:** ${missing.join(', ')}`);
+    } else if (this.reloadCallback) {
+      const result = await this.reloadCallback(service);
+      if (result.success) {
+        lines.push(`\n**${svc.label} wurde aktiviert.** Du kannst es jetzt sofort nutzen.`);
+      } else {
+        lines.push(`\n**${svc.label} is fully configured.** Hot-Reload fehlgeschlagen: ${result.error ?? 'unbekannter Fehler'}. Restart Alfred: \`alfred start\``);
+      }
     } else {
       lines.push(`\n**${svc.label} is fully configured.** Restart Alfred to activate: \`alfred start\``);
     }

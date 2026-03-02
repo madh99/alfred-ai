@@ -26,6 +26,10 @@ export class SkillRegistry {
     return this.skills.has(name);
   }
 
+  unregister(name: string): boolean {
+    return this.skills.delete(name);
+  }
+
   toToolDefinitions(): ToolDefinition[] {
     return this.getAll().map((skill) => ({
       name: skill.metadata.name,

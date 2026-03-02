@@ -114,6 +114,10 @@ function applyEnvOverrides(config: Record<string, unknown>): Record<string, unkn
   return result;
 }
 
+export function reloadDotenv(): void {
+  loadDotenv({ override: true });
+}
+
 export class ConfigLoader {
   loadConfig(configPath?: string): AlfredConfig {
     loadDotenv();
