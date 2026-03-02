@@ -29,6 +29,14 @@
     "ollama"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/madh99/alfred-ai.git"
+  },
+  "homepage": "https://github.com/madh99/alfred-ai#readme",
+  "bugs": {
+    "url": "https://github.com/madh99/alfred-ai/issues"
+  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "better-sqlite3": "^11.8.0",
