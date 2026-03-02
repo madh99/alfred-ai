@@ -456,8 +456,9 @@ export class Alfred {
           ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
           : undefined;
 
-        // Replace status message with final response, or send new if no status was shown
-        if (statusMessageId) {
+        // Replace status message with final response, or send new if no status was shown.
+        // For the API adapter, always use sendMessage so the client receives a 'response' event.
+        if (statusMessageId && platform !== 'api') {
           try {
             await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
           } catch (err) {
