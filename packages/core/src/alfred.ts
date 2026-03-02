@@ -215,6 +215,20 @@ export class Alfred {
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
     }
 
+    // 4f. Proxmox (optional)
+    if (this.config.proxmox) {
+      const { ProxmoxSkill } = await import('@alfred/skills');
+      skillRegistry.register(new ProxmoxSkill(this.config.proxmox));
+      this.logger.info({ baseUrl: this.config.proxmox.baseUrl }, 'Proxmox skill enabled');
+    }
+
+    // 4g. UniFi (optional)
+    if (this.config.unifi) {
+      const { UniFiSkill } = await import('@alfred/skills');
+      skillRegistry.register(new UniFiSkill(this.config.unifi));
+      this.logger.info({ baseUrl: this.config.unifi.baseUrl }, 'UniFi skill enabled');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

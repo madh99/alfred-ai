@@ -131,6 +131,22 @@ For complex tasks, work through multiple steps:
       for (const s of skills) {
         prompt += `- **${s.name}** (${s.riskLevel}): ${s.description}\n`;
       }
+
+      // Delegation instruction: when code agents are configured, instruct the
+      // LLM to delegate coding/file-editing tasks to them instead of doing it
+      // via conversation or shell.
+      if (skills.some(s => s.name === 'code_agent')) {
+        prompt += `
+## Code agent delegation
+When the user asks you to **write code, edit files, fix bugs, refactor, implement features, or perform any coding task**, you MUST delegate to the \`code_agent\` tool instead of doing it yourself. You are an orchestrator, not a coder.
+
+- For **single, focused tasks**: use \`code_agent\` with \`action: "run"\` and pick the best agent.
+- For **complex, multi-step tasks**: use \`code_agent\` with \`action: "orchestrate"\` — the system will decompose the task, run agents in parallel, and validate results.
+- Add \`git: true\` when the user wants the changes committed, pushed, and a PR/MR created.
+- Use \`action: "list_agents"\` if you're unsure which agents are available.
+
+**Do NOT** attempt to write code or edit files yourself through conversation. Always delegate to a code agent.`;
+      }
     }
 
     // User profile section

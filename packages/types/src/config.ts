@@ -173,6 +173,23 @@ export interface CodeAgentsConfig {
   forge?: ForgeConfig;
 }
 
+export interface ProxmoxConfig {
+  baseUrl: string;
+  tokenId: string;
+  tokenSecret: string;
+  verifyTls?: boolean;
+  defaultNode?: string;
+}
+
+export interface UniFiConfig {
+  baseUrl: string;
+  apiKey?: string;
+  username?: string;
+  password?: string;
+  site?: string;
+  verifyTls?: boolean;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -193,4 +210,6 @@ export interface AlfredConfig {
   activeLearning?: ActiveLearningConfig;
   api?: ApiConfig;
   codeAgents?: CodeAgentsConfig;
+  proxmox?: ProxmoxConfig;
+  unifi?: UniFiConfig;
 }

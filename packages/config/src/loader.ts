@@ -84,6 +84,14 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_GITHUB_BASE_URL: ['codeAgents', 'forge', 'github', 'baseUrl'],
   ALFRED_GITLAB_TOKEN: ['codeAgents', 'forge', 'gitlab', 'token'],
   ALFRED_GITLAB_BASE_URL: ['codeAgents', 'forge', 'gitlab', 'baseUrl'],
+  ALFRED_PROXMOX_BASE_URL: ['proxmox', 'baseUrl'],
+  ALFRED_PROXMOX_TOKEN_ID: ['proxmox', 'tokenId'],
+  ALFRED_PROXMOX_TOKEN_SECRET: ['proxmox', 'tokenSecret'],
+  ALFRED_UNIFI_BASE_URL: ['unifi', 'baseUrl'],
+  ALFRED_UNIFI_API_KEY: ['unifi', 'apiKey'],
+  ALFRED_UNIFI_USERNAME: ['unifi', 'username'],
+  ALFRED_UNIFI_PASSWORD: ['unifi', 'password'],
+  ALFRED_UNIFI_SITE: ['unifi', 'site'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

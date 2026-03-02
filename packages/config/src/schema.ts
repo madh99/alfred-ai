@@ -186,6 +186,23 @@ export const CodeAgentsConfigSchema = z.object({
   forge: ForgeConfigSchema.optional(),
 });
 
+export const ProxmoxConfigSchema = z.object({
+  baseUrl: z.string(),
+  tokenId: z.string(),
+  tokenSecret: z.string(),
+  verifyTls: z.boolean().optional(),
+  defaultNode: z.string().optional(),
+});
+
+export const UniFiConfigSchema = z.object({
+  baseUrl: z.string(),
+  apiKey: z.string().optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  site: z.string().optional(),
+  verifyTls: z.boolean().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -206,4 +223,6 @@ export const AlfredConfigSchema = z.object({
   activeLearning: ActiveLearningConfigSchema.optional(),
   api: ApiConfigSchema.optional(),
   codeAgents: CodeAgentsConfigSchema.optional(),
+  proxmox: ProxmoxConfigSchema.optional(),
+  unifi: UniFiConfigSchema.optional(),
 });
