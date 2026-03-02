@@ -73,3 +73,77 @@ export function slugifyBranch(task: string): string {
     .slice(0, 60);
   return `alfred/${slug}`;
 }
+
+// ── Remote-Info ──────────────────────────────────────────────────────────
+
+export interface RemoteInfo {
+  owner: string;
+  repo: string;
+  baseUrl: string;
+}
+
+/**
+ * Read the URL of a named git remote (e.g. "origin").
+ * Returns `null` when the remote does not exist.
+ */
+export async function gitGetRemoteUrl(
+  remote: string,
+  opts: GitCmdOptions,
+): Promise<string | null> {
+  try {
+    return await git(['remote', 'get-url', remote], opts);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse an HTTPS or SSH remote URL into owner, repo and baseUrl.
+ *
+ * Supported formats:
+ *  - https://github.com/owner/repo.git
+ *  - git@github.com:owner/repo.git
+ *  - http://git.lokalkraft.at/madh/alfred-ai.git
+ *  - All variants with or without .git suffix
+ */
+export function parseRemoteUrl(url: string): RemoteInfo | null {
+  // SSH  — git@host:owner/repo.git
+  const sshMatch = url.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+  if (sshMatch) {
+    const host = sshMatch[1];
+    const ownerRepo = sshMatch[2];
+    const parts = ownerRepo.split('/');
+    if (parts.length < 2) return null;
+    const repo = parts.pop()!;
+    const owner = parts.join('/');
+    return { owner, repo, baseUrl: `https://${host}` };
+  }
+
+  // HTTPS / HTTP — https://host/owner/repo.git
+  const httpsMatch = url.match(/^https?:\/\/([^/]+)\/(.+?)(?:\.git)?$/);
+  if (httpsMatch) {
+    const host = httpsMatch[1];
+    const ownerRepo = httpsMatch[2];
+    const parts = ownerRepo.split('/');
+    if (parts.length < 2) return null;
+    const repo = parts.pop()!;
+    const owner = parts.join('/');
+    return { owner, repo, baseUrl: `https://${host}` };
+  }
+
+  return null;
+}
+
+/** Initialise a new git repository. */
+export async function gitInitRepo(opts: GitCmdOptions): Promise<void> {
+  await git(['init'], opts);
+}
+
+/** Add a named remote. */
+export async function gitAddRemote(
+  name: string,
+  url: string,
+  opts: GitCmdOptions,
+): Promise<void> {
+  await git(['remote', 'add', name, url], opts);
+}

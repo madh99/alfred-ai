@@ -1,6 +1,11 @@
 import type { ForgeConfig, GitHubForgeConfig, GitLabForgeConfig } from '@alfred/types';
 
-// ── Interfaces ──────────────────────────────────────────────────────────────
+// ── Interfaces ──────────────────────────────────────────────────────────
+
+export interface RepoIdentifier {
+  owner: string;
+  repo: string;
+}
 
 export interface PullRequestInput {
   title: string;
@@ -21,14 +26,27 @@ export interface PipelineStatus {
   url?: string;
 }
 
-// ── Abstract Client ─────────────────────────────────────────────────────────
-
-export abstract class ForgeClient {
-  abstract createPullRequest(input: PullRequestInput): Promise<PullRequestResult>;
-  abstract getPipelineStatus(ref: string): Promise<PipelineStatus>;
+export interface CreateProjectInput {
+  name: string;
+  description?: string;
+  visibility?: 'private' | 'public';
 }
 
-// ── GitHub ───────────────────────────────────────────────────────────────────
+export interface CreateProjectResult {
+  id: number;
+  url: string;
+  cloneUrl: string;
+}
+
+// ── Abstract Client ─────────────────────────────────────────────────────
+
+export abstract class ForgeClient {
+  abstract createPullRequest(repo: RepoIdentifier, input: PullRequestInput): Promise<PullRequestResult>;
+  abstract getPipelineStatus(repo: RepoIdentifier, ref: string): Promise<PipelineStatus>;
+  abstract createProject(input: CreateProjectInput): Promise<CreateProjectResult>;
+}
+
+// ── GitHub ───────────────────────────────────────────────────────────────
 
 class GitHubForgeClient extends ForgeClient {
   private readonly baseUrl: string;
@@ -38,8 +56,8 @@ class GitHubForgeClient extends ForgeClient {
     this.baseUrl = config.baseUrl?.replace(/\/+$/, '') ?? 'https://api.github.com';
   }
 
-  async createPullRequest(input: PullRequestInput): Promise<PullRequestResult> {
-    const url = `${this.baseUrl}/repos/${this.config.owner}/${this.config.repo}/pulls`;
+  async createPullRequest(repo: RepoIdentifier, input: PullRequestInput): Promise<PullRequestResult> {
+    const url = `${this.baseUrl}/repos/${repo.owner}/${repo.repo}/pulls`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -69,8 +87,8 @@ class GitHubForgeClient extends ForgeClient {
     };
   }
 
-  async getPipelineStatus(ref: string): Promise<PipelineStatus> {
-    const url = `${this.baseUrl}/repos/${this.config.owner}/${this.config.repo}/commits/${ref}/status`;
+  async getPipelineStatus(repo: RepoIdentifier, ref: string): Promise<PipelineStatus> {
+    const url = `${this.baseUrl}/repos/${repo.owner}/${repo.repo}/commits/${ref}/status`;
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${this.config.token}`,
@@ -92,22 +110,50 @@ class GitHubForgeClient extends ForgeClient {
     };
     return { state: stateMap[ghState] ?? 'unknown' };
   }
+
+  async createProject(input: CreateProjectInput): Promise<CreateProjectResult> {
+    const url = `${this.baseUrl}/user/repos`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.config.token}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: input.name,
+        description: input.description ?? '',
+        private: (input.visibility ?? 'private') === 'private',
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`GitHub project creation failed (${res.status}): ${body}`);
+    }
+
+    const data = (await res.json()) as Record<string, unknown>;
+    return {
+      id: data.id as number,
+      url: data.html_url as string,
+      cloneUrl: data.clone_url as string,
+    };
+  }
 }
 
-// ── GitLab ──────────────────────────────────────────────────────────────────
+// ── GitLab ──────────────────────────────────────────────────────────────
 
 class GitLabForgeClient extends ForgeClient {
   private readonly baseUrl: string;
-  private readonly projectId: string;
 
   constructor(private readonly config: GitLabForgeConfig) {
     super();
     this.baseUrl = config.baseUrl?.replace(/\/+$/, '') ?? 'https://gitlab.com';
-    this.projectId = encodeURIComponent(config.projectId);
   }
 
-  async createPullRequest(input: PullRequestInput): Promise<PullRequestResult> {
-    const url = `${this.baseUrl}/api/v4/projects/${this.projectId}/merge_requests`;
+  async createPullRequest(repo: RepoIdentifier, input: PullRequestInput): Promise<PullRequestResult> {
+    const projectPath = encodeURIComponent(`${repo.owner}/${repo.repo}`);
+    const url = `${this.baseUrl}/api/v4/projects/${projectPath}/merge_requests`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -136,8 +182,9 @@ class GitLabForgeClient extends ForgeClient {
     };
   }
 
-  async getPipelineStatus(ref: string): Promise<PipelineStatus> {
-    const url = `${this.baseUrl}/api/v4/projects/${this.projectId}/pipelines?ref=${encodeURIComponent(ref)}&per_page=1`;
+  async getPipelineStatus(repo: RepoIdentifier, ref: string): Promise<PipelineStatus> {
+    const projectPath = encodeURIComponent(`${repo.owner}/${repo.repo}`);
+    const url = `${this.baseUrl}/api/v4/projects/${projectPath}/pipelines?ref=${encodeURIComponent(ref)}&per_page=1`;
     const res = await fetch(url, {
       headers: { 'PRIVATE-TOKEN': this.config.token },
     });
@@ -165,9 +212,37 @@ class GitLabForgeClient extends ForgeClient {
       url: pipeline.web_url as string | undefined,
     };
   }
+
+  async createProject(input: CreateProjectInput): Promise<CreateProjectResult> {
+    const url = `${this.baseUrl}/api/v4/projects`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'PRIVATE-TOKEN': this.config.token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: input.name,
+        description: input.description ?? '',
+        visibility: input.visibility ?? 'private',
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`GitLab project creation failed (${res.status}): ${body}`);
+    }
+
+    const data = (await res.json()) as Record<string, unknown>;
+    return {
+      id: data.id as number,
+      url: data.web_url as string,
+      cloneUrl: data.http_url_to_repo as string,
+    };
+  }
 }
 
-// ── Factory ─────────────────────────────────────────────────────────────────
+// ── Factory ─────────────────────────────────────────────────────────────
 
 export function createForgeClient(config: ForgeConfig): ForgeClient {
   switch (config.provider) {

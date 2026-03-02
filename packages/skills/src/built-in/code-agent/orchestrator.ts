@@ -8,9 +8,13 @@ import {
   gitCommit,
   gitPush,
   slugifyBranch,
+  gitGetRemoteUrl,
+  gitInitRepo,
+  gitAddRemote,
+  parseRemoteUrl,
   type GitCommitResult,
 } from './git-ops.js';
-import { createForgeClient, type PullRequestResult } from './forge-client.js';
+import { createForgeClient, type PullRequestResult, type RepoIdentifier } from './forge-client.js';
 
 // ── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -370,30 +374,71 @@ export async function orchestrateWithGit(
   const cwd = options.cwd ?? process.cwd();
   const gitInfo: GitInfo = { warnings: [] };
 
-  // 1. Check git status
-  const status = await gitStatus({ cwd });
+  // 1. Check git status — init if needed
+  let status = await gitStatus({ cwd });
   if (!status.isRepo) {
-    gitInfo.warnings.push('Not a git repository — skipping git operations');
-    onProgress?.('Warning: not a git repository, skipping git operations');
-    const result = await orchestrate(task, agents, llm, options);
-    return { ...result, git: gitInfo };
+    try {
+      await gitInitRepo({ cwd });
+      status = await gitStatus({ cwd });
+      onProgress?.('Initialised new git repository');
+    } catch {
+      gitInfo.warnings.push('Not a git repository and init failed — skipping git operations');
+      onProgress?.('Warning: not a git repository, skipping git operations');
+      const result = await orchestrate(task, agents, llm, options);
+      return { ...result, git: gitInfo };
+    }
   }
 
-  // 2. Create branch
+  // 2. Detect remote + parse owner/repo
+  let repoId: RepoIdentifier | null = null;
+  const remoteUrl = await gitGetRemoteUrl('origin', { cwd });
+
+  if (remoteUrl) {
+    const parsed = parseRemoteUrl(remoteUrl);
+    if (parsed) {
+      repoId = { owner: parsed.owner, repo: parsed.repo };
+      onProgress?.(`Detected remote: ${parsed.owner}/${parsed.repo} (${parsed.baseUrl})`);
+    } else {
+      gitInfo.warnings.push(`Could not parse remote URL: ${remoteUrl}`);
+    }
+  }
+
+  // 3. No remote + forge configured → create project + add remote
+  const forgeConfig = options.forge;
+  if (!remoteUrl && forgeConfig) {
+    try {
+      const forge = createForgeClient(forgeConfig);
+      const projectName = cwd.split(/[\\/]/).pop() ?? 'alfred-project';
+      onProgress?.(`No remote found — creating project "${projectName}" on forge...`);
+      const project = await forge.createProject({ name: projectName, visibility: 'private' });
+      await gitAddRemote('origin', project.cloneUrl, { cwd });
+      // Re-parse to get owner/repo from the new clone URL
+      const parsed = parseRemoteUrl(project.cloneUrl);
+      if (parsed) {
+        repoId = { owner: parsed.owner, repo: parsed.repo };
+      }
+      onProgress?.(`Project created: ${project.url} — remote "origin" set`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      gitInfo.warnings.push(`Project creation failed: ${msg}`);
+      onProgress?.(`Warning: project creation failed — ${msg}`);
+    }
+  }
+
+  // 4. Create branch
   const branchName = slugifyBranch(task);
   try {
     await gitCreateBranch(branchName, { cwd });
     gitInfo.branch = branchName;
     onProgress?.(`Created branch: ${branchName}`);
   } catch (err) {
-    // Branch already exists — this is fatal per the plan
     throw new Error(`Failed to create branch "${branchName}": ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // 3. Run orchestration (unchanged)
+  // 5. Run orchestration (unchanged)
   const result = await orchestrate(task, agents, llm, options);
 
-  // 4. Stage + commit
+  // 6. Stage + commit
   try {
     await gitStageAll({ cwd });
     const commitMsg = `feat: ${task.slice(0, 72)}\n\nOrchestrated by Alfred (${result.iterations} iteration(s), ${result.allModifiedFiles.length} file(s))`;
@@ -407,11 +452,11 @@ export async function orchestrateWithGit(
     return { ...result, git: gitInfo };
   }
 
-  // 5. Push + PR (only if forge is configured)
-  const forgeConfig = options.forge;
-  if (!forgeConfig) {
-    gitInfo.warnings.push('No forge configured — skipping push and PR creation');
-    onProgress?.('No forge configured, skipping push and PR');
+  // 7. Push (only if remote is known)
+  const currentRemoteUrl = await gitGetRemoteUrl('origin', { cwd });
+  if (!currentRemoteUrl) {
+    gitInfo.warnings.push('No remote configured — skipping push and PR creation');
+    onProgress?.('No remote configured, skipping push and PR');
     return { ...result, git: gitInfo };
   }
 
@@ -425,33 +470,39 @@ export async function orchestrateWithGit(
     return { ...result, git: gitInfo };
   }
 
-  try {
-    const forge = createForgeClient(forgeConfig);
-    const baseBranch = options.baseBranch ?? forgeConfig.baseBranch ?? 'main';
-    const prTitle = options.prTitle ?? `feat: ${task.slice(0, 72)}`;
-    const prBody = [
-      `## Summary`,
-      result.summary,
-      '',
-      `**Iterations:** ${result.iterations}`,
-      `**Modified files:** ${result.allModifiedFiles.length}`,
-      result.allModifiedFiles.map((f) => `- \`${f}\``).join('\n'),
-      '',
-      '_Automated by Alfred_',
-    ].join('\n');
+  // 8. Create PR/MR (only if forge + repoId available)
+  if (forgeConfig && repoId) {
+    try {
+      const forge = createForgeClient(forgeConfig);
+      const baseBranch = options.baseBranch ?? forgeConfig.baseBranch ?? 'main';
+      const prTitle = options.prTitle ?? `feat: ${task.slice(0, 72)}`;
+      const prBody = [
+        `## Summary`,
+        result.summary,
+        '',
+        `**Iterations:** ${result.iterations}`,
+        `**Modified files:** ${result.allModifiedFiles.length}`,
+        result.allModifiedFiles.map((f) => `- \`${f}\``).join('\n'),
+        '',
+        '_Automated by Alfred_',
+      ].join('\n');
 
-    const pr = await forge.createPullRequest({
-      title: prTitle,
-      body: prBody,
-      head: branchName,
-      base: baseBranch,
-    });
-    gitInfo.pullRequest = pr;
-    onProgress?.(`PR created: ${pr.url}`);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    gitInfo.warnings.push(`PR creation failed: ${msg}`);
-    onProgress?.(`Warning: PR creation failed — ${msg}`);
+      const pr = await forge.createPullRequest(repoId, {
+        title: prTitle,
+        body: prBody,
+        head: branchName,
+        base: baseBranch,
+      });
+      gitInfo.pullRequest = pr;
+      onProgress?.(`PR created: ${pr.url}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      gitInfo.warnings.push(`PR creation failed: ${msg}`);
+      onProgress?.(`Warning: PR creation failed — ${msg}`);
+    }
+  } else if (!forgeConfig) {
+    gitInfo.warnings.push('No forge configured — skipping PR creation');
+    onProgress?.('No forge configured, skipping PR creation');
   }
 
   return { ...result, git: gitInfo };

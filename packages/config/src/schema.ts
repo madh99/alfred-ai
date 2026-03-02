@@ -165,14 +165,11 @@ export const CodeAgentDefinitionSchema = z.object({
 
 export const GitHubForgeConfigSchema = z.object({
   token: z.string(),
-  owner: z.string(),
-  repo: z.string(),
   baseUrl: z.string().optional(),
 });
 
 export const GitLabForgeConfigSchema = z.object({
   token: z.string(),
-  projectId: z.string(),
   baseUrl: z.string().optional(),
 });
 

@@ -152,14 +152,11 @@ export interface CodeAgentDefinitionConfig {
 
 export interface GitHubForgeConfig {
   token: string;
-  owner: string;
-  repo: string;
   baseUrl?: string;
 }
 
 export interface GitLabForgeConfig {
   token: string;
-  projectId: string;
   baseUrl?: string;
 }
 

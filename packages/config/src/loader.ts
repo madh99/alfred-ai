@@ -81,11 +81,8 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_FORGE_PROVIDER: ['codeAgents', 'forge', 'provider'],
   ALFRED_FORGE_BASE_BRANCH: ['codeAgents', 'forge', 'baseBranch'],
   ALFRED_GITHUB_TOKEN: ['codeAgents', 'forge', 'github', 'token'],
-  ALFRED_GITHUB_OWNER: ['codeAgents', 'forge', 'github', 'owner'],
-  ALFRED_GITHUB_REPO: ['codeAgents', 'forge', 'github', 'repo'],
   ALFRED_GITHUB_BASE_URL: ['codeAgents', 'forge', 'github', 'baseUrl'],
   ALFRED_GITLAB_TOKEN: ['codeAgents', 'forge', 'gitlab', 'token'],
-  ALFRED_GITLAB_PROJECT_ID: ['codeAgents', 'forge', 'gitlab', 'projectId'],
   ALFRED_GITLAB_BASE_URL: ['codeAgents', 'forge', 'gitlab', 'baseUrl'],
 };
 

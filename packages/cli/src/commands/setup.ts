@@ -282,7 +282,7 @@ interface ExistingConfig {
   search?: { provider?: string; apiKey?: string; baseUrl?: string };
   email?: { imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string } };
   codeSandbox?: { enabled?: boolean; allowedLanguages?: string[] };
-  codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string; owner?: string; repo?: string }; gitlab?: { token?: string; projectId?: string } } };
+  codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string }; gitlab?: { token?: string } } };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -991,6 +991,7 @@ export async function setupCommand(): Promise<void> {
     const existingForgeProvider = existingForge?.provider ?? existing.env['ALFRED_FORGE_PROVIDER'] ?? '';
     console.log(`\n${bold('Forge Integration (auto-create PRs/MRs after code agent orchestration)?')}`);
     console.log(`${dim('Connects to GitHub or GitLab to push branches and create pull/merge requests.')}`);
+    console.log(`${dim('Owner/repo are detected automatically from the git remote at runtime.')}`);
     const forgeOptions = [
       { num: '1', name: '', label: 'None — skip forge integration' },
       { num: '2', name: 'github', label: 'GitHub' },
@@ -1007,10 +1008,7 @@ export async function setupCommand(): Promise<void> {
     const forgeProvider = forgeOptions.find((o) => o.num === forgeChoice)?.name ?? '';
 
     let forgeGithubToken = '';
-    let forgeGithubOwner = '';
-    let forgeGithubRepo = '';
     let forgeGitlabToken = '';
-    let forgeGitlabProjectId = '';
 
     if (forgeProvider === 'github') {
       console.log(`  ${green('>')} Forge: ${bold('GitHub')}`);
@@ -1022,12 +1020,6 @@ export async function setupCommand(): Promise<void> {
       forgeGithubToken = (await rl.question(`  ${BOLD}GitHub Token${RESET}: ${YELLOW}`)).trim();
       process.stdout.write(RESET);
       if (!forgeGithubToken && existingToken) forgeGithubToken = existingToken;
-
-      const existingOwner = existing.env['ALFRED_GITHUB_OWNER'] ?? existingForge?.github?.owner ?? '';
-      forgeGithubOwner = await askWithDefault(rl, '  GitHub Owner (user or org)', existingOwner);
-      const existingRepo = existing.env['ALFRED_GITHUB_REPO'] ?? existingForge?.github?.repo ?? '';
-      forgeGithubRepo = await askWithDefault(rl, '  GitHub Repository name', existingRepo);
-      console.log(`  ${green('>')} Repository: ${bold(`${forgeGithubOwner}/${forgeGithubRepo}`)}`);
     } else if (forgeProvider === 'gitlab') {
       console.log(`  ${green('>')} Forge: ${bold('GitLab')}`);
       const existingToken = existing.env['ALFRED_GITLAB_TOKEN'] ?? existingForge?.gitlab?.token ?? '';
@@ -1038,11 +1030,6 @@ export async function setupCommand(): Promise<void> {
       forgeGitlabToken = (await rl.question(`  ${BOLD}GitLab Token${RESET}: ${YELLOW}`)).trim();
       process.stdout.write(RESET);
       if (!forgeGitlabToken && existingToken) forgeGitlabToken = existingToken;
-
-      const existingProject = existing.env['ALFRED_GITLAB_PROJECT_ID'] ?? existingForge?.gitlab?.projectId ?? '';
-      console.log(`  ${dim('Use the path from your GitLab URL, e.g. "myuser/my-project"')}`);
-      forgeGitlabProjectId = await askWithDefault(rl, '  GitLab Project (e.g. madh/alfred-ai)', existingProject);
-      console.log(`  ${green('>')} Project: ${bold(forgeGitlabProjectId)}`);
     } else {
       console.log(`  ${dim('Forge integration disabled — you can enable it later in config/default.yml.')}`);
     }
@@ -1208,17 +1195,12 @@ export async function setupCommand(): Promise<void> {
     if (forgeProvider === 'github') {
       envLines.push(`ALFRED_FORGE_PROVIDER=github`);
       envLines.push(`ALFRED_GITHUB_TOKEN=${forgeGithubToken}`);
-      envLines.push(`ALFRED_GITHUB_OWNER=${forgeGithubOwner}`);
-      envLines.push(`ALFRED_GITHUB_REPO=${forgeGithubRepo}`);
     } else if (forgeProvider === 'gitlab') {
       envLines.push(`ALFRED_FORGE_PROVIDER=gitlab`);
       envLines.push(`ALFRED_GITLAB_TOKEN=${forgeGitlabToken}`);
-      envLines.push(`ALFRED_GITLAB_PROJECT_ID=${forgeGitlabProjectId}`);
     } else {
       envLines.push('# ALFRED_FORGE_PROVIDER=github');
       envLines.push('# ALFRED_GITHUB_TOKEN=');
-      envLines.push('# ALFRED_GITHUB_OWNER=');
-      envLines.push('# ALFRED_GITHUB_REPO=');
     }
 
     envLines.push('', '# === Security ===', '');
@@ -1253,7 +1235,7 @@ export async function setupCommand(): Promise<void> {
       email?: { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean }; auth: { user: string; pass: string } };
       speech?: { provider: string; apiKey: string; baseUrl?: string };
       codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
-      codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string; owner: string; repo: string }; gitlab?: { token: string; projectId: string } } };
+      codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string }; gitlab?: { token: string } } };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1337,12 +1319,12 @@ export async function setupCommand(): Promise<void> {
           ...(forgeProvider === 'github' ? {
             forge: {
               provider: 'github',
-              github: { token: forgeGithubToken, owner: forgeGithubOwner, repo: forgeGithubRepo },
+              github: { token: forgeGithubToken },
             },
           } : forgeProvider === 'gitlab' ? {
             forge: {
               provider: 'gitlab',
-              gitlab: { token: forgeGitlabToken, projectId: forgeGitlabProjectId },
+              gitlab: { token: forgeGitlabToken },
             },
           } : {}),
         },
