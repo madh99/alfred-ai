@@ -1040,7 +1040,8 @@ export async function setupCommand(): Promise<void> {
       if (!forgeGitlabToken && existingToken) forgeGitlabToken = existingToken;
 
       const existingProject = existing.env['ALFRED_GITLAB_PROJECT_ID'] ?? existingForge?.gitlab?.projectId ?? '';
-      forgeGitlabProjectId = await askWithDefault(rl, '  GitLab Project ID (numeric or "group/project")', existingProject);
+      console.log(`  ${dim('Use the path from your GitLab URL, e.g. "myuser/my-project"')}`);
+      forgeGitlabProjectId = await askWithDefault(rl, '  GitLab Project (e.g. madh/alfred-ai)', existingProject);
       console.log(`  ${green('>')} Project: ${bold(forgeGitlabProjectId)}`);
     } else {
       console.log(`  ${dim('Forge integration disabled — you can enable it later in config/default.yml.')}`);
