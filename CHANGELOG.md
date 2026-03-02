@@ -5,11 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.44] - 2026-03-02
+
 ### Added
 - **Git + Forge Integration** für code_agent orchestrate: automatisches Branching, Commit, Push und PR/MR-Erstellung (GitHub REST v3, GitLab REST v4)
 - `orchestrateWithGit()` als Wrapper um die bestehende Orchestrierung
-- `git-ops.ts`: Git CLI Wrapper via `execFile` (branch, stage, commit, push)
-- `forge-client.ts`: Abstraktes ForgeClient-Pattern mit GitHub- und GitLab-Implementierung
+- Git CLI Wrapper via `execFile` (branch, stage, commit, push) — kein Shell-Injection-Risiko
+- Abstraktes ForgeClient-Pattern mit GitHub- und GitLab-Implementierung via native `fetch`
 - ForgeConfig in Types, Zod-Schemas und ENV-Overrides (`ALFRED_FORGE_*`, `ALFRED_GITHUB_*`, `ALFRED_GITLAB_*`)
 
 ### Changed
