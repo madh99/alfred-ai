@@ -147,6 +147,12 @@ export const ActiveLearningConfigSchema = z.object({
   maxExtractionsPerMinute: z.number().optional(),
 });
 
+export const ApiConfigSchema = z.object({
+  enabled: z.boolean(),
+  port: z.coerce.number().int().min(1).max(65535),
+  host: z.string(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -165,4 +171,5 @@ export const AlfredConfigSchema = z.object({
   mcp: MCPConfigSchema.optional(),
   codeSandbox: CodeSandboxConfigSchema.optional(),
   activeLearning: ActiveLearningConfigSchema.optional(),
+  api: ApiConfigSchema.optional(),
 });

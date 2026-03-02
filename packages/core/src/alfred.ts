@@ -57,6 +57,7 @@ export class Alfred {
   private proactiveScheduler?: ProactiveScheduler;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
+  private userRepo!: UserRepository;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
 
@@ -72,6 +73,7 @@ export class Alfred {
     const db = this.database.getDb();
     const conversationRepo = new ConversationRepository(db);
     const userRepo = new UserRepository(db);
+    this.userRepo = userRepo;
     const auditRepo = new AuditRepository(db);
     const memoryRepo = new MemoryRepository(db);
     const reminderRepo = new ReminderRepository(db);
@@ -329,6 +331,14 @@ export class Alfred {
       ));
       this.logger.info('Signal adapter registered');
     }
+
+    if (config.api?.enabled !== false) {
+      const { HttpAdapter } = await import('@alfred/messaging');
+      const port = config.api?.port ?? 3420;
+      const host = config.api?.host ?? '127.0.0.1';
+      this.adapters.set('api', new HttpAdapter(port, host));
+      this.logger.info({ port, host }, 'HTTP API adapter registered');
+    }
   }
 
   async start(): Promise<void> {
@@ -394,9 +404,34 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
+  private autoLinkApiUser(message: NormalizedMessage): void {
+    if (message.platform !== 'api') return;
+
+    try {
+      const apiUser = this.userRepo.findOrCreate('api', message.userId, message.userName);
+      const masterUserId = this.userRepo.getMasterUserId(apiUser.id);
+
+      // Already linked to another user
+      if (masterUserId !== apiUser.id) return;
+
+      // Find the first non-API/non-CLI user to link with
+      const existingUser = this.userRepo.findFirstByPlatformNotIn(['api', 'cli']);
+      if (existingUser) {
+        const targetMasterId = this.userRepo.getMasterUserId(existingUser.id);
+        this.userRepo.setMasterUser(apiUser.id, targetMasterId);
+        this.logger.info({ apiUserId: apiUser.id, masterUserId: targetMasterId }, 'Auto-linked API user');
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'Auto-link API user failed');
+    }
+  }
+
   private setupAdapterHandlers(platform: Platform, adapter: MessagingAdapter): void {
     adapter.on('message', async (message: NormalizedMessage) => {
       try {
+        // Auto-link API user with existing platform user
+        this.autoLinkApiUser(message);
+
         // Send a placeholder message and update it with progress
         let statusMessageId: string | undefined;
         let lastStatus = '';
@@ -451,6 +486,9 @@ export class Alfred {
             }
           }
         }
+
+        // Signal end of stream (closes SSE for HttpAdapter, no-op for others)
+        adapter.endStream(message.chatId);
       } catch (error) {
         this.logger.error({ platform, err: error, chatId: message.chatId }, 'Failed to handle message');
         try {
@@ -458,6 +496,7 @@ export class Alfred {
         } catch (sendError) {
           this.logger.error({ err: sendError }, 'Failed to send error message');
         }
+        adapter.endStream(message.chatId);
       }
     });
 

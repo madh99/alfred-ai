@@ -134,6 +134,12 @@ export interface ActiveLearningConfig {
   maxExtractionsPerMinute?: number;
 }
 
+export interface ApiConfig {
+  enabled: boolean;
+  port: number;
+  host: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -152,4 +158,5 @@ export interface AlfredConfig {
   mcp?: MCPConfig;
   codeSandbox?: CodeSandboxConfig;
   activeLearning?: ActiveLearningConfig;
+  api?: ApiConfig;
 }

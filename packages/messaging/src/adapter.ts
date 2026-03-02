@@ -60,6 +60,10 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
     return undefined; // Not supported by default
   }
 
+  endStream(_chatId: string): void {
+    // No-op. HttpAdapter overrides this to close SSE streams.
+  }
+
   getStatus(): MessagingAdapterStatus {
     return this.status;
   }

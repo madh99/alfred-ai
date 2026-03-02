@@ -43,4 +43,9 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
     rulesPath: './config/rules',
     defaultEffect: 'deny',
   },
+  api: {
+    enabled: true,
+    port: 3420,
+    host: '127.0.0.1',
+  },
 };

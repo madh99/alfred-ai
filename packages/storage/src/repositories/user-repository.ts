@@ -119,6 +119,15 @@ export class UserRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  findFirstByPlatformNotIn(excludedPlatforms: Platform[]): User | undefined {
+    const placeholders = excludedPlatforms.map(() => '?').join(', ');
+    const row = this.db.prepare(
+      `SELECT * FROM users WHERE platform NOT IN (${placeholders}) LIMIT 1`
+    ).get(...excludedPlatforms) as Record<string, string> | undefined;
+    if (!row) return undefined;
+    return this.mapRow(row);
+  }
+
   getMasterUserId(userId: string): string {
     const row = this.db.prepare('SELECT master_user_id FROM users WHERE id = ?').get(userId) as { master_user_id: string | null } | undefined;
     return row?.master_user_id ?? userId;
