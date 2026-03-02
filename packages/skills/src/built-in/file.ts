@@ -87,7 +87,8 @@ export class FileSkill extends Skill {
       'saving binary data, listing directory contents, moving/copying files, or getting file info. ' +
       'Use "send" to deliver a file to the user in the chat (PDF, images, etc.). ' +
       'Prefer this over shell for file operations. ' +
-      'When a user sends a file attachment, it is saved to the inbox — use "move" to relocate it.',
+      'When a user sends a file attachment, it is saved to the inbox — use "move" to relocate it. ' +
+      'IMPORTANT: For large content (HTML pages, long text), use code_sandbox instead to generate the file programmatically.',
     riskLevel: 'write',
     version: '2.0.0',
     inputSchema: {
@@ -131,7 +132,7 @@ export class FileSkill extends Skill {
     // Validate content early for actions that require it, so the LLM gets
     // a clear error message and can retry with content instead of burning iterations.
     if ((action === 'write' || action === 'write_binary' || action === 'append') && !content) {
-      return { success: false, error: `Missing "content" field for "${action}" action. You must provide the file content.` };
+      return { success: false, error: `Missing "content" field for "${action}" action. The content is likely too large to include in a tool call. Use the code_sandbox skill instead: write a script that generates the file with fs.writeFileSync(), e.g. code_sandbox with code: "const fs = require('fs'); const html = \`...\`; fs.writeFileSync('output.html', html);" — the sandbox will collect the output file automatically.` };
     }
 
     const resolvedPath = this.resolvePath(rawPath);
