@@ -1,6 +1,6 @@
 {
   "name": "@alfred/skills",
-  "version": "0.9.44",
+  "version": "0.9.45",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

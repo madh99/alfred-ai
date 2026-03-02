@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.45] - 2026-03-02
+
+### Added
+- **Forge-Integration im Setup-Wizard**: GitHub/GitLab Provider-Auswahl, Token und Owner/Repo bzw. ProjectId interaktiv konfigurierbar
+- ENV-Variablen und YAML-Config werden automatisch geschrieben
+
 ## [0.9.44] - 2026-03-02
 
 ### Added
