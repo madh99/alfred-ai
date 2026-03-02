@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 
@@ -214,6 +215,48 @@ const PLATFORMS: PlatformDef[] = [
     ],
   },
 ];
+
+// ── Agent detection helpers ───────────────────────────────────────────
+
+/**
+ * Try to find a command: first via which/where, then by checking common
+ * installation directories that may not be in PATH (e.g. ~/.local/bin).
+ * Returns the resolved absolute path or null.
+ */
+function findCommand(cmd: string): string | null {
+  const isWin = process.platform === 'win32';
+  const whichCmd = isWin ? 'where' : 'which';
+
+  // 1. Standard which / where
+  try {
+    const result = execFileSync(whichCmd, [cmd], { stdio: 'pipe' }).toString().trim();
+    if (result) return result.split(/\r?\n/)[0]; // where may return multiple lines
+  } catch { /* not in PATH */ }
+
+  // 2. Probe well-known directories
+  const home = os.homedir();
+  const candidates: string[] = isWin
+    ? [
+        path.join(home, '.local', 'bin', `${cmd}.exe`),
+        path.join(home, 'AppData', 'Roaming', 'npm', `${cmd}.cmd`),
+        path.join(home, 'AppData', 'Roaming', 'npm', `${cmd}`),
+      ]
+    : [
+        path.join(home, '.local', 'bin', cmd),
+        '/usr/local/bin/' + cmd,
+        '/opt/homebrew/bin/' + cmd,
+        path.join(home, '.npm-global', 'bin', cmd),
+      ];
+
+  for (const p of candidates) {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return p;
+    } catch { /* not here */ }
+  }
+
+  return null;
+}
 
 // ── Known code agents ─────────────────────────────────────────────────
 
@@ -912,16 +955,14 @@ export async function setupCommand(): Promise<void> {
     console.log(`\n${bold('Code Agents (CLI-based coding agents for automated tasks)?')}`);
     console.log(`${dim('Scanning for known coding agents on this system...')}`);
 
-    const isWindows = process.platform === 'win32';
-    const whichCommand = isWindows ? 'where' : 'which';
-    const detectedAgents: KnownAgent[] = [];
+    const detectedAgents: (KnownAgent & { resolvedPath?: string })[] = [];
 
     for (const agent of KNOWN_AGENTS) {
-      try {
-        execFileSync(whichCommand, [agent.whichCmd], { stdio: 'ignore' });
-        detectedAgents.push(agent);
-        console.log(`  ${green('✓')} ${bold(agent.label)} ${dim(`(${agent.command})`)}`);
-      } catch {
+      const resolved = findCommand(agent.whichCmd);
+      if (resolved) {
+        detectedAgents.push({ ...agent, resolvedPath: resolved });
+        console.log(`  ${green('✓')} ${bold(agent.label)} ${dim(`(${resolved})`)}`);
+      } else {
         console.log(`  ${dim('·')} ${dim(agent.label)} ${dim('— not found')}`);
       }
     }
@@ -948,7 +989,7 @@ export async function setupCommand(): Promise<void> {
       console.log(`\n  ${dim('No coding agents found. You can add them manually in config/default.yml later.')}`);
     } else {
       const allCandidates = [
-        ...detectedAgents.map((a) => ({ name: a.name, command: a.command, argsTemplate: a.argsTemplate, promptVia: a.promptVia, label: a.label, detected: true })),
+        ...detectedAgents.map((a) => ({ name: a.name, command: a.resolvedPath ?? a.command, argsTemplate: a.argsTemplate, promptVia: a.promptVia, label: a.label, detected: true })),
         ...customAgents.map((a) => ({ name: a.name, command: a.command, argsTemplate: a.argsTemplate, promptVia: (a.promptVia ?? 'arg') as 'arg' | 'stdin', label: a.name, detected: false })),
       ];
 
