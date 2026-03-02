@@ -35,6 +35,7 @@ export { DocumentSkill } from './built-in/document.js';
 export { TTSSkill } from './built-in/tts.js';
 export { ProxmoxSkill } from './built-in/proxmox.js';
 export { UniFiSkill } from './built-in/unifi.js';
+export { ConfigureSkill } from './built-in/configure.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
 export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl } from './built-in/code-agent/index.js';

@@ -326,6 +326,8 @@ interface ExistingConfig {
   email?: { imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string } };
   codeSandbox?: { enabled?: boolean; allowedLanguages?: string[] };
   codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string }; gitlab?: { token?: string } } };
+  proxmox?: { baseUrl?: string; tokenId?: string; tokenSecret?: string; verifyTls?: boolean; defaultNode?: string };
+  unifi?: { baseUrl?: string; apiKey?: string; username?: string; password?: string; site?: string; verifyTls?: boolean };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1075,6 +1077,104 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Forge integration disabled — you can enable it later in config/default.yml.')}`);
     }
 
+    // ── 8e. Infrastructure (Proxmox / UniFi) ───────────────────
+    console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi)?')}`);
+    console.log(`${dim('Control VMs, containers, and network devices through Alfred.')}`);
+
+    // Proxmox
+    const existingPve = existing.config.proxmox;
+    const existingPveUrl = existing.env['ALFRED_PROXMOX_BASE_URL'] ?? existingPve?.baseUrl ?? '';
+    const enableProxmoxDefault = existingPveUrl ? 'Y/n' : 'y/N';
+    const enableProxmoxInput = (
+      await rl.question(`  ${BOLD}Enable Proxmox VE?${RESET} ${dim(`[${enableProxmoxDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingPveUrl ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableProxmox = enableProxmoxInput === 'y' || enableProxmoxInput === 'yes';
+
+    let proxmoxBaseUrl = '';
+    let proxmoxTokenId = '';
+    let proxmoxTokenSecret = '';
+    let proxmoxVerifyTls = true;
+
+    if (enableProxmox) {
+      proxmoxBaseUrl = await askWithDefault(rl, '  Proxmox URL (e.g. https://pve.local:8006)', existingPveUrl || 'https://pve.local:8006');
+      const existingTokenId = existing.env['ALFRED_PROXMOX_TOKEN_ID'] ?? existingPve?.tokenId ?? '';
+      if (existingTokenId) console.log(`  ${dim(`Current token ID: ${existingTokenId}`)}`);
+      console.log(`  ${dim('Create: Datacenter → Permissions → API Tokens')}`);
+      proxmoxTokenId = await askWithDefault(rl, '  API Token ID (user@realm!name)', existingTokenId);
+      const existingSecret = existing.env['ALFRED_PROXMOX_TOKEN_SECRET'] ?? existingPve?.tokenSecret ?? '';
+      if (existingSecret) console.log(`  ${dim(`Current secret: ${maskKey(existingSecret)}`)}`);
+      proxmoxTokenSecret = (await rl.question(`  ${BOLD}API Token Secret${RESET}: ${YELLOW}`)).trim();
+      process.stdout.write(RESET);
+      if (!proxmoxTokenSecret && existingSecret) proxmoxTokenSecret = existingSecret;
+      const tlsDefault = existingPve?.verifyTls === false ? 'y/N' : 'Y/n';
+      const tlsInput = (
+        await rl.question(`  ${BOLD}Verify TLS?${RESET} ${dim(`(self-signed? → no) [${tlsDefault}]`)}: ${YELLOW}`)
+      ).trim().toLowerCase() || (existingPve?.verifyTls === false ? 'n' : 'y');
+      process.stdout.write(RESET);
+      proxmoxVerifyTls = tlsInput === 'y' || tlsInput === 'yes';
+      console.log(`  ${green('>')} Proxmox: ${bold(proxmoxBaseUrl)} ${dim(`(TLS verify: ${proxmoxVerifyTls ? 'yes' : 'no'})`)}`);
+    } else {
+      console.log(`  ${dim('Proxmox disabled.')}`);
+    }
+
+    // UniFi
+    const existingUnifi = existing.config.unifi;
+    const existingUnifiUrl = existing.env['ALFRED_UNIFI_BASE_URL'] ?? existingUnifi?.baseUrl ?? '';
+    const enableUnifiDefault = existingUnifiUrl ? 'Y/n' : 'y/N';
+    const enableUnifiInput = (
+      await rl.question(`\n  ${BOLD}Enable UniFi Network?${RESET} ${dim(`[${enableUnifiDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingUnifiUrl ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableUnifi = enableUnifiInput === 'y' || enableUnifiInput === 'yes';
+
+    let unifiBaseUrl = '';
+    let unifiApiKey = '';
+    let unifiUsername = '';
+    let unifiPassword = '';
+    let unifiVerifyTls = true;
+
+    if (enableUnifi) {
+      unifiBaseUrl = await askWithDefault(rl, '  UniFi URL (e.g. https://unifi.local)', existingUnifiUrl || 'https://unifi.local');
+      console.log(`  ${dim('Auth: API Key (recommended) or Username/Password')}`);
+      const existingApiKey = existing.env['ALFRED_UNIFI_API_KEY'] ?? existingUnifi?.apiKey ?? '';
+      const authOptions = [
+        { num: '1', name: 'apikey', label: 'API Key (UniFi OS)' },
+        { num: '2', name: 'password', label: 'Username / Password' },
+      ];
+      const defaultAuthNum = existingApiKey ? '1' : (existingUnifi?.username ? '2' : '1');
+      for (const o of authOptions) console.log(`    ${YELLOW}${o.num}${RESET}) ${o.label}`);
+      const authChoice = (
+        await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${defaultAuthNum}] `)}`)
+      ).trim() || defaultAuthNum;
+
+      if (authChoice === '1') {
+        if (existingApiKey) console.log(`  ${dim(`Current key: ${maskKey(existingApiKey)}`)}`);
+        console.log(`  ${dim('Create: Settings → Admins → API Keys (UniFi OS)')}`);
+        unifiApiKey = (await rl.question(`  ${BOLD}API Key${RESET}: ${YELLOW}`)).trim();
+        process.stdout.write(RESET);
+        if (!unifiApiKey && existingApiKey) unifiApiKey = existingApiKey;
+      } else {
+        const existingUser = existing.env['ALFRED_UNIFI_USERNAME'] ?? existingUnifi?.username ?? '';
+        unifiUsername = await askWithDefault(rl, '  Username', existingUser || 'alfred');
+        const existingPass = existing.env['ALFRED_UNIFI_PASSWORD'] ?? existingUnifi?.password ?? '';
+        if (existingPass) console.log(`  ${dim(`Current password: ${maskKey(existingPass)}`)}`);
+        unifiPassword = (await rl.question(`  ${BOLD}Password${RESET}: ${YELLOW}`)).trim();
+        process.stdout.write(RESET);
+        if (!unifiPassword && existingPass) unifiPassword = existingPass;
+      }
+
+      const unifiTlsDefault = existingUnifi?.verifyTls === false ? 'y/N' : 'Y/n';
+      const unifiTlsInput = (
+        await rl.question(`  ${BOLD}Verify TLS?${RESET} ${dim(`(self-signed? → no) [${unifiTlsDefault}]`)}: ${YELLOW}`)
+      ).trim().toLowerCase() || (existingUnifi?.verifyTls === false ? 'n' : 'y');
+      process.stdout.write(RESET);
+      unifiVerifyTls = unifiTlsInput === 'y' || unifiTlsInput === 'yes';
+      console.log(`  ${green('>')} UniFi: ${bold(unifiBaseUrl)} ${dim(`(TLS verify: ${unifiVerifyTls ? 'yes' : 'no'})`)}`);
+    } else {
+      console.log(`  ${dim('UniFi disabled.')}`);
+    }
+
     // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
@@ -1244,6 +1344,30 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_GITHUB_TOKEN=');
     }
 
+    envLines.push('', '# === Infrastructure (Proxmox / UniFi) ===', '');
+
+    if (enableProxmox) {
+      envLines.push(`ALFRED_PROXMOX_BASE_URL=${proxmoxBaseUrl}`);
+      envLines.push(`ALFRED_PROXMOX_TOKEN_ID=${proxmoxTokenId}`);
+      envLines.push(`ALFRED_PROXMOX_TOKEN_SECRET=${proxmoxTokenSecret}`);
+    } else {
+      envLines.push('# ALFRED_PROXMOX_BASE_URL=');
+      envLines.push('# ALFRED_PROXMOX_TOKEN_ID=');
+      envLines.push('# ALFRED_PROXMOX_TOKEN_SECRET=');
+    }
+
+    if (enableUnifi && unifiApiKey) {
+      envLines.push(`ALFRED_UNIFI_BASE_URL=${unifiBaseUrl}`);
+      envLines.push(`ALFRED_UNIFI_API_KEY=${unifiApiKey}`);
+    } else if (enableUnifi) {
+      envLines.push(`ALFRED_UNIFI_BASE_URL=${unifiBaseUrl}`);
+      envLines.push(`ALFRED_UNIFI_USERNAME=${unifiUsername}`);
+      envLines.push(`ALFRED_UNIFI_PASSWORD=${unifiPassword}`);
+    } else {
+      envLines.push('# ALFRED_UNIFI_BASE_URL=');
+      envLines.push('# ALFRED_UNIFI_API_KEY=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -1277,6 +1401,8 @@ export async function setupCommand(): Promise<void> {
       speech?: { provider: string; apiKey: string; baseUrl?: string };
       codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
       codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string }; gitlab?: { token: string } } };
+      proxmox?: { baseUrl: string; tokenId: string; tokenSecret: string; verifyTls: boolean };
+      unifi?: { baseUrl: string; apiKey?: string; username?: string; password?: string; site: string; verifyTls: boolean };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1368,6 +1494,22 @@ export async function setupCommand(): Promise<void> {
               gitlab: { token: forgeGitlabToken },
             },
           } : {}),
+        },
+      } : {}),
+      ...(enableProxmox ? {
+        proxmox: {
+          baseUrl: proxmoxBaseUrl,
+          tokenId: proxmoxTokenId,
+          tokenSecret: proxmoxTokenSecret,
+          verifyTls: proxmoxVerifyTls,
+        },
+      } : {}),
+      ...(enableUnifi ? {
+        unifi: {
+          baseUrl: unifiBaseUrl,
+          ...(unifiApiKey ? { apiKey: unifiApiKey } : { username: unifiUsername, password: unifiPassword }),
+          site: 'default',
+          verifyTls: unifiVerifyTls,
         },
       } : {}),
       storage: {

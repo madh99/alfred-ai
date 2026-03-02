@@ -34,6 +34,7 @@ import {
   ScheduledTaskSkill,
   DocumentSkill,
   TTSSkill,
+  ConfigureSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -157,6 +158,7 @@ export class Alfred {
     } : undefined));
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
+    skillRegistry.register(new ConfigureSkill());
     skillRegistry.register(new ClipboardSkill());
     skillRegistry.register(new ScreenshotSkill());
     skillRegistry.register(new BrowserSkill());
