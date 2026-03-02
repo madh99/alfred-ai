@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.38-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.50-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -57,6 +57,7 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 | **Anthropic** | Claude Opus, Sonnet, Haiku | Yes |
 | **OpenAI** | GPT-4o, GPT-4, GPT-3.5 | Yes |
 | **Google** | Gemini 2.0 Flash, Gemini Pro | Yes |
+| **Mistral** | Mistral Large, Medium, Small, Codestral | Yes |
 | **OpenRouter** | 200+ models via unified API | Yes |
 | **Ollama** | Llama, Mistral, Phi, any local model | No |
 | **Open WebUI** | Any OpenAI-compatible endpoint | Configurable |
@@ -79,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (21+)
+### Built-in Skills (27+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -90,10 +91,65 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Scheduling** | `reminder`, `scheduled_task`, `background_task` | Timed reminders, cron jobs, long-running tasks |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
-| **Code** | `code_sandbox` | Execute JavaScript & Python in an isolated sandbox |
+| **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
+| **Infrastructure** | `proxmox`, `unifi` | Proxmox VE cluster management, UniFi network management |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
+| **Admin** | `configure` | Configure services (Proxmox, UniFi) via chat |
+
+### Code Agent Orchestration
+
+Delegate coding tasks to external CLI agents — Alfred plans, splits, parallelizes, and validates.
+
+```
+You: "Refactor the auth module to use JWT instead of sessions"
+Alfred → code_agent orchestrate:
+  1. Planning: LLM splits task into subtasks
+  2. Execution: Parallel agent runs (Claude Code, Codex, Aider, Gemini CLI)
+  3. Validation: LLM reviews results, retries if needed
+  4. Git: Auto-branch, commit, push, and create PR/MR
+```
+
+Supported agents are auto-detected during setup: **Claude Code**, **Codex**, **Aider**, **Gemini CLI**, or any custom CLI tool.
+
+**Forge Integration** — Automatically creates branches, commits, pushes, and opens Pull Requests (GitHub) or Merge Requests (GitLab). Owner/repo is detected from `git remote` at runtime — no manual config needed.
+
+### Infrastructure Management
+
+#### Proxmox VE
+
+Full Proxmox API integration — manage your hypervisor cluster through natural language:
+
+- Cluster status, nodes, storage overview
+- List, start, stop, shutdown, reboot VMs and containers
+- Snapshots: create, restore, delete
+- Backup (vzdump), migration between nodes
+- Task monitoring
+
+```
+You: "Show me all running VMs"
+You: "Snapshot vm 101 before the update"
+You: "Migrate container 200 to node pve2"
+```
+
+#### UniFi Network
+
+Full UniFi controller integration — manage your network infrastructure:
+
+- Devices, clients, WLANs, networks overview
+- Adopt, restart, upgrade devices
+- Block/unblock clients, reconnect clients
+- DPI statistics, alerts, events
+- Create guest WiFi vouchers
+
+Supports **API Key** (UniFi OS 4.x+) and **Username/Password** authentication with auto-detection of UniFi OS vs. Classic Controller.
+
+```
+You: "How many clients are online?"
+You: "Create 5 guest vouchers for 24 hours"
+You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
+```
 
 ### Cross-Platform Identity
 
@@ -211,6 +267,9 @@ The interactive wizard guides you through:
 2. **API tokens** — Enter bot tokens for each platform
 3. **LLM provider** — Choose your AI provider and model
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
+5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
+6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
+7. **Infrastructure** — Proxmox VE and UniFi Network controller credentials
 
 This generates `config.yaml` and `.env` in your working directory.
 
@@ -328,6 +387,23 @@ api:
   port: 3420
   host: 127.0.0.1
 
+codeAgents:
+  agents:
+    - name: claude-code
+      command: claude
+      args: ["--print"]
+  forge:
+    provider: github   # or gitlab
+    # token via ALFRED_GITHUB_TOKEN or ALFRED_GITLAB_TOKEN
+
+proxmox:
+  baseUrl: https://pve.local:8006
+  # tokenId/tokenSecret via ENV
+
+unifi:
+  baseUrl: https://unifi.local
+  # apiKey or username/password via ENV
+
 mcp: []
 ```
 
@@ -344,7 +420,27 @@ ALFRED_SIGNAL_PHONE_NUMBER=
 ALFRED_ANTHROPIC_API_KEY=
 ALFRED_OPENAI_API_KEY=
 ALFRED_GOOGLE_API_KEY=
+ALFRED_MISTRAL_API_KEY=
 ALFRED_OPENROUTER_API_KEY=
+
+# Forge (GitHub / GitLab)
+ALFRED_GITHUB_TOKEN=
+ALFRED_GITLAB_TOKEN=
+ALFRED_GITLAB_BASE_URL=          # for self-hosted GitLab
+
+# Proxmox VE
+ALFRED_PROXMOX_BASE_URL=         # e.g. https://pve.local:8006
+ALFRED_PROXMOX_TOKEN_ID=         # user@realm!tokenname
+ALFRED_PROXMOX_TOKEN_SECRET=
+ALFRED_PROXMOX_VERIFY_TLS=true
+
+# UniFi Network
+ALFRED_UNIFI_BASE_URL=           # e.g. https://unifi.local
+ALFRED_UNIFI_API_KEY=            # preferred (UniFi OS 4.x+)
+ALFRED_UNIFI_USERNAME=           # alternative: username/password
+ALFRED_UNIFI_PASSWORD=
+ALFRED_UNIFI_SITE=default
+ALFRED_UNIFI_VERIFY_TLS=true
 
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db
@@ -521,8 +617,8 @@ alfred start > /tmp/alfred.log 2>&1 &
 
 ## Roadmap
 
-- [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Web chat UI (HTTP API backend is ready)
+- [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms
 - [ ] Multi-user household support
