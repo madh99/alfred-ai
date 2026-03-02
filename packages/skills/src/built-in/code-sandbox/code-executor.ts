@@ -73,6 +73,11 @@ export class CodeExecutor {
                   : f.endsWith('.svg') ? 'image/svg+xml'
                   : f.endsWith('.csv') ? 'text/csv'
                   : f.endsWith('.json') ? 'application/json'
+                  : f.endsWith('.html') || f.endsWith('.htm') ? 'text/html'
+                  : f.endsWith('.txt') ? 'text/plain'
+                  : f.endsWith('.md') ? 'text/markdown'
+                  : f.endsWith('.xml') ? 'application/xml'
+                  : f.endsWith('.pdf') ? 'application/pdf'
                   : 'application/octet-stream';
                 files.push({ name: f, data, mimeType });
               }
