@@ -284,6 +284,8 @@ export class Alfred {
       llmProvider,
       this.adapters,
       this.logger.child({ component: 'proactive-scheduler' }),
+      this.pipeline,
+      this.formatter,
     );
 
     // 8. Initialize messaging adapters

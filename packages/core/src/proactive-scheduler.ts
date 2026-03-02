@@ -1,9 +1,12 @@
+import crypto from 'node:crypto';
 import type { Logger } from 'pino';
 import type { ScheduledActionRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
-import type { Platform, ScheduledAction } from '@alfred/types';
+import type { Platform, ScheduledAction, NormalizedMessage } from '@alfred/types';
 import type { LLMProvider } from '@alfred/llm';
+import type { MessagePipeline } from './message-pipeline.js';
+import type { ResponseFormatter } from './response-formatter.js';
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -16,6 +19,8 @@ export class ProactiveScheduler {
     private readonly llm: LLMProvider,
     private readonly adapters: Map<Platform, MessagingAdapter>,
     private readonly logger: Logger,
+    private readonly pipeline?: MessagePipeline,
+    private readonly formatter?: ResponseFormatter,
   ) {}
 
   start(): void {
@@ -53,8 +58,53 @@ export class ProactiveScheduler {
 
     let resultText: string;
 
-    if (action.promptTemplate) {
-      // Use LLM to generate a response based on the prompt template
+    if (action.promptTemplate && this.pipeline) {
+      // Route through the full message pipeline so the LLM can use all tools
+      try {
+        const syntheticMessage: NormalizedMessage = {
+          id: `scheduled-${crypto.randomUUID()}`,
+          platform: action.platform as Platform,
+          chatId: action.chatId,
+          chatType: 'dm',
+          userId: action.userId,
+          userName: action.userId,
+          text: action.promptTemplate,
+          timestamp: new Date(),
+        };
+
+        const result = await this.pipeline.process(syntheticMessage);
+        const formatted = this.formatter
+          ? this.formatter.format(result.text, action.platform as Platform)
+          : { text: result.text, parseMode: 'text' as const };
+
+        resultText = formatted.text;
+
+        // Send file attachments if any
+        const adapter = this.adapters.get(action.platform as Platform);
+        if (adapter && result.attachments) {
+          for (const att of result.attachments) {
+            try {
+              const isImage = att.mimeType.startsWith('image/');
+              const isVoice = att.mimeType === 'audio/ogg' || att.mimeType === 'audio/opus';
+              if (isImage) {
+                await adapter.sendPhoto(action.chatId, att.data, att.fileName);
+              } else if (isVoice) {
+                await adapter.sendVoice(action.chatId, att.data);
+              } else {
+                await adapter.sendFile(action.chatId, att.data, att.fileName);
+              }
+            } catch (err) {
+              this.logger.warn({ err, fileName: att.fileName, actionId: action.id }, 'Failed to send scheduled action attachment');
+            }
+          }
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.logger.error({ actionId: action.id, err }, 'Pipeline execution failed for scheduled action');
+        resultText = `Scheduled action "${action.name}" failed: ${errorMsg}`;
+      }
+    } else if (action.promptTemplate) {
+      // Fallback: LLM-only (no pipeline available)
       try {
         const response = await this.llm.complete({
           messages: [{ role: 'user', content: action.promptTemplate }],
