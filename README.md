@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.35-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.38-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -15,11 +15,11 @@
 </pre>
 
 <p align="center">
-  <strong>Self-hosted AI assistant for Telegram, Discord, WhatsApp, Matrix & Signal</strong>
+  <strong>Self-hosted AI assistant for Telegram, Discord, WhatsApp, Matrix, Signal & HTTP API</strong>
 </p>
 
 <p align="center">
-  Alfred is a self-hosted AI assistant that connects to Telegram, Discord, WhatsApp, Matrix, and Signal simultaneously. It remembers who you are across platforms, learns from every conversation, and executes real-world tasks through an extensible skill system.
+  Alfred is a self-hosted AI assistant that connects to Telegram, Discord, WhatsApp, Matrix, and Signal simultaneously — plus an HTTP API for CLI and web access. It remembers who you are across platforms, learns from every conversation, and executes real-world tasks through an extensible skill system.
 </p>
 
 ---
@@ -47,7 +47,8 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 | **WhatsApp** | baileys | Text, images, files, voice |
 | **Matrix** | matrix-bot-sdk | Text, images, files, voice, end-to-end encryption capable |
 | **Signal** | signal-cli REST | Text, attachments |
-| **CLI** | built-in | Interactive terminal mode for local use |
+| **HTTP API** | built-in | REST + SSE streaming, CORS-ready for web UIs |
+| **CLI** | built-in | Interactive terminal, auto-connects to running server |
 
 ### LLM Providers
 
@@ -219,7 +220,7 @@ This generates `config.yaml` and `.env` in your working directory.
 alfred start
 ```
 
-Alfred connects to all configured platforms and starts listening.
+Alfred connects to all configured platforms and starts the HTTP API server.
 
 ### CLI Chat Mode
 
@@ -229,6 +230,34 @@ Talk to Alfred directly in your terminal:
 alfred chat
 alfred chat --model gpt-4o        # use a specific model
 alfred chat --tier strong          # use the strong tier
+```
+
+If `alfred start` is running, `alfred chat` automatically connects to the server via HTTP API. Your CLI user is linked with your main account — shared memories, context, and preferences. If no server is running, it falls back to standalone mode.
+
+### HTTP API
+
+`alfred start` exposes an HTTP API on port 3420 (localhost only by default):
+
+```bash
+# Health check
+curl http://localhost:3420/api/health
+# → {"status":"ok"}
+
+# Send a message (returns SSE stream)
+curl -N -X POST http://localhost:3420/api/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Hello Alfred", "chatId": "my-chat", "userId": "my-user"}'
+```
+
+SSE events: `status` (progress), `response` (final answer), `attachment` (files/images), `done` (stream end), `error`.
+
+Configure in `config.yaml`:
+
+```yaml
+api:
+  enabled: true
+  port: 3420
+  host: 127.0.0.1   # localhost only; use 0.0.0.0 to expose
 ```
 
 ### Other Commands
@@ -294,6 +323,11 @@ email:
     host: smtp.gmail.com
     port: 587
 
+api:
+  enabled: true
+  port: 3420
+  host: 127.0.0.1
+
 mcp: []
 ```
 
@@ -333,7 +367,7 @@ alfred/
 │   ├── storage/      # SQLite database, repositories, migrations
 │   ├── security/     # Rule engine, rate limiting, audit logging
 │   ├── llm/          # LLM providers, multi-model router, prompt builder
-│   ├── messaging/    # Platform adapters (Telegram, Discord, Matrix, ...)
+│   ├── messaging/    # Platform adapters (Telegram, Discord, Matrix, HTTP API, ...)
 │   ├── skills/       # Skill system, built-in skills, MCP integration
 │   ├── core/         # Orchestration: pipeline, scheduler, speech, learning
 │   └── cli/          # CLI commands, setup wizard, bundled entry point
@@ -344,7 +378,7 @@ alfred/
 ### Message Pipeline
 
 ```
-User Message (any platform)
+User Message (Telegram, Discord, Matrix, Signal, WhatsApp, HTTP API, CLI)
     │
     ├── Normalize → Unified message format
     ├── User Lookup → Cross-platform identity resolution
@@ -488,7 +522,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 ## Roadmap
 
 - [ ] Google Cloud TTS & ElevenLabs voice providers
-- [ ] Web dashboard for configuration and monitoring
+- [ ] Web chat UI (HTTP API backend is ready)
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms
 - [ ] Multi-user household support
