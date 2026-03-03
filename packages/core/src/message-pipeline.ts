@@ -652,10 +652,12 @@ export class MessagePipeline {
         });
       }
 
-      // Pass tracker and onProgress via context for delegate skill
+      // Pass tracker and onProgress via context
       const execContext = toolCall.name === 'delegate'
         ? { ...context, tracker, onProgress }
-        : context;
+        : onProgress
+          ? { ...context, onProgress }
+          : context;
 
       try {
         const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, undefined, tracker);
