@@ -31,6 +31,36 @@ const SERVICES: Record<string, { label: string; fields: ServiceField[] }> = {
       { env: 'ALFRED_UNIFI_SITE', label: 'Site name (default: "default")' },
     ],
   },
+  homeassistant: {
+    label: 'Home Assistant',
+    fields: [
+      { env: 'ALFRED_HOMEASSISTANT_URL', label: 'Base URL (e.g. http://homeassistant.local:8123)', required: true },
+      { env: 'ALFRED_HOMEASSISTANT_TOKEN', label: 'Long-Lived Access Token', required: true, secret: true },
+    ],
+  },
+  contacts: {
+    label: 'Contacts',
+    fields: [
+      { env: 'ALFRED_CONTACTS_PROVIDER', label: 'Provider (carddav, google, microsoft)', required: true },
+      { env: 'ALFRED_CARDDAV_CONTACTS_SERVER_URL', label: 'CardDAV Server URL (if carddav)' },
+      { env: 'ALFRED_CARDDAV_CONTACTS_USERNAME', label: 'CardDAV Username (if carddav)' },
+      { env: 'ALFRED_CARDDAV_CONTACTS_PASSWORD', label: 'CardDAV Password (if carddav)', secret: true },
+      { env: 'ALFRED_GOOGLE_CONTACTS_CLIENT_ID', label: 'Google Client ID (if google)', secret: true },
+      { env: 'ALFRED_GOOGLE_CONTACTS_CLIENT_SECRET', label: 'Google Client Secret (if google)', secret: true },
+      { env: 'ALFRED_GOOGLE_CONTACTS_REFRESH_TOKEN', label: 'Google Refresh Token (if google)', secret: true },
+      { env: 'ALFRED_MICROSOFT_CONTACTS_CLIENT_ID', label: 'Microsoft Client ID (if microsoft)', secret: true },
+      { env: 'ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET', label: 'Microsoft Client Secret (if microsoft)', secret: true },
+      { env: 'ALFRED_MICROSOFT_CONTACTS_TENANT_ID', label: 'Microsoft Tenant ID (if microsoft)' },
+      { env: 'ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN', label: 'Microsoft Refresh Token (if microsoft)', secret: true },
+    ],
+  },
+  docker: {
+    label: 'Docker',
+    fields: [
+      { env: 'ALFRED_DOCKER_SOCKET_PATH', label: 'Docker socket path (e.g. /var/run/docker.sock)' },
+      { env: 'ALFRED_DOCKER_HOST', label: 'Docker host (e.g. http://192.168.1.10:2375)' },
+    ],
+  },
 };
 
 // ── Skill ────────────────────────────────────────────────────────────────
@@ -47,7 +77,7 @@ export class ConfigureSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'configure',
     description:
-      'Configure Alfred services (Proxmox, UniFi, etc.) by writing environment variables. ' +
+      'Configure Alfred services (Proxmox, UniFi, Home Assistant, Contacts, Docker) by writing environment variables. ' +
       'Use action "list_services" to see available services. ' +
       'Use action "show" to check current config of a service. ' +
       'Use action "set" to write config — provide service name and values. ' +
@@ -64,7 +94,7 @@ export class ConfigureSkill extends Skill {
         },
         service: {
           type: 'string',
-          enum: ['proxmox', 'unifi'],
+          enum: ['proxmox', 'unifi', 'homeassistant', 'contacts', 'docker'],
           description: 'Service to configure (required for show/set)',
         },
         values: {

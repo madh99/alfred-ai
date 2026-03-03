@@ -1,6 +1,6 @@
 {
   "name": "@alfred/skills",
-  "version": "0.9.57",
+  "version": "0.9.58",
   "private": true,
   "type": "module",
   "main": "dist/index.js",
@@ -24,7 +24,8 @@
     "@alfred/types": "workspace:*",
     "imapflow": "^1.2.10",
     "nodemailer": "^8.0.1",
-    "pino": "^9.6.0"
+    "pino": "^9.6.0",
+    "tsdav": "^2.1.1"
   },
   "devDependencies": {
     "@types/nodemailer": "^7.0.11"

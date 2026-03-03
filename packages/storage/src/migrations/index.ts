@@ -276,4 +276,30 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 13,
+    description: 'Add todos table for todo list management',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS todos (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          list TEXT NOT NULL DEFAULT 'default',
+          title TEXT NOT NULL,
+          description TEXT,
+          priority TEXT NOT NULL DEFAULT 'normal',
+          due_date TEXT,
+          completed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_todos_user_list
+          ON todos(user_id, list, completed, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_todos_user_due
+          ON todos(user_id, completed, due_date);
+      `);
+    },
+  },
 ];

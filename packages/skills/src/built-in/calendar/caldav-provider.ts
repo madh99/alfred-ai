@@ -11,7 +11,6 @@ export class CalDAVProvider extends CalendarProvider {
 
   async initialize(): Promise<void> {
     try {
-      // @ts-expect-error tsdav is an optional dependency, installed in the CLI package
       const tsdav = await import('tsdav');
       const { createDAVClient } = tsdav;
       this.client = await createDAVClient({

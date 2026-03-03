@@ -330,6 +330,8 @@ interface ExistingConfig {
   proxmox?: { baseUrl?: string; tokenId?: string; tokenSecret?: string; verifyTls?: boolean; defaultNode?: string };
   unifi?: { baseUrl?: string; apiKey?: string; username?: string; password?: string; site?: string; verifyTls?: boolean };
   homeassistant?: { baseUrl?: string; accessToken?: string; verifyTls?: boolean };
+  contacts?: { provider?: string; carddav?: { serverUrl?: string; username?: string; password?: string }; google?: { clientId?: string; clientSecret?: string; refreshToken?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
+  docker?: { socketPath?: string; host?: string };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1307,6 +1309,96 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Home Assistant disabled.')}`);
     }
 
+    // Contacts
+    const existingContacts = existing.config.contacts;
+    const existingContactsProvider = existing.env['ALFRED_CONTACTS_PROVIDER'] ?? existingContacts?.provider ?? '';
+    const enableContactsDefault = existingContactsProvider ? 'Y/n' : 'y/N';
+    const enableContactsInput = (
+      await rl.question(`\n  ${BOLD}Enable Contacts management?${RESET} ${dim(`[${enableContactsDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingContactsProvider ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableContacts = enableContactsInput === 'y' || enableContactsInput === 'yes';
+
+    let contactsProvider = '';
+    let contactsEnvEntries: Record<string, string> = {};
+
+    if (enableContacts) {
+      const contactsProviders = ['carddav', 'google', 'microsoft'] as const;
+      const existingIdx = contactsProviders.indexOf(existingContactsProvider as typeof contactsProviders[number]);
+      const defaultChoice = existingIdx >= 0 ? existingIdx + 1 : 1;
+      console.log(`    ${cyan('1)')} CardDAV (Nextcloud, Radicale, etc.)`);
+      console.log(`    ${cyan('2)')} Google Contacts`);
+      console.log(`    ${cyan('3)')} Microsoft 365`);
+      const contactsChoice = await askNumber(rl, '  > ', 1, 3, defaultChoice);
+      contactsProvider = contactsProviders[contactsChoice - 1];
+      contactsEnvEntries['ALFRED_CONTACTS_PROVIDER'] = contactsProvider;
+
+      if (contactsProvider === 'carddav') {
+        const existingUrl = existing.env['ALFRED_CARDDAV_CONTACTS_SERVER_URL'] ?? existingContacts?.carddav?.serverUrl ?? '';
+        contactsEnvEntries['ALFRED_CARDDAV_CONTACTS_SERVER_URL'] = await askWithDefault(rl, '  CardDAV Server URL', existingUrl || 'https://cloud.example.com/remote.php/dav');
+        const existingUser = existing.env['ALFRED_CARDDAV_CONTACTS_USERNAME'] ?? existingContacts?.carddav?.username ?? '';
+        contactsEnvEntries['ALFRED_CARDDAV_CONTACTS_USERNAME'] = await askWithDefault(rl, '  Username', existingUser);
+        const existingPass = existing.env['ALFRED_CARDDAV_CONTACTS_PASSWORD'] ?? existingContacts?.carddav?.password ?? '';
+        if (existingPass) console.log(`  ${dim(`Current password: ${maskKey(existingPass)}`)}`);
+        const pass = (await rl.question(`  ${BOLD}Password${RESET}: ${YELLOW}`)).trim();
+        process.stdout.write(RESET);
+        contactsEnvEntries['ALFRED_CARDDAV_CONTACTS_PASSWORD'] = pass || existingPass;
+      } else if (contactsProvider === 'google') {
+        const existingClientId = existing.env['ALFRED_GOOGLE_CONTACTS_CLIENT_ID'] ?? existingContacts?.google?.clientId ?? '';
+        if (existingClientId) console.log(`  ${dim(`Current client ID: ${maskKey(existingClientId)}`)}`);
+        contactsEnvEntries['ALFRED_GOOGLE_CONTACTS_CLIENT_ID'] = (await rl.question(`  ${BOLD}Google Client ID${RESET}: ${YELLOW}`)).trim() || existingClientId;
+        process.stdout.write(RESET);
+        const existingSecret = existing.env['ALFRED_GOOGLE_CONTACTS_CLIENT_SECRET'] ?? existingContacts?.google?.clientSecret ?? '';
+        contactsEnvEntries['ALFRED_GOOGLE_CONTACTS_CLIENT_SECRET'] = (await rl.question(`  ${BOLD}Google Client Secret${RESET}: ${YELLOW}`)).trim() || existingSecret;
+        process.stdout.write(RESET);
+        const existingRefresh = existing.env['ALFRED_GOOGLE_CONTACTS_REFRESH_TOKEN'] ?? existingContacts?.google?.refreshToken ?? '';
+        contactsEnvEntries['ALFRED_GOOGLE_CONTACTS_REFRESH_TOKEN'] = (await rl.question(`  ${BOLD}Refresh Token${RESET}: ${YELLOW}`)).trim() || existingRefresh;
+        process.stdout.write(RESET);
+      } else if (contactsProvider === 'microsoft') {
+        const existingClientId = existing.env['ALFRED_MICROSOFT_CONTACTS_CLIENT_ID'] ?? existingContacts?.microsoft?.clientId ?? '';
+        if (existingClientId) console.log(`  ${dim(`Current client ID: ${maskKey(existingClientId)}`)}`);
+        contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_CLIENT_ID'] = (await rl.question(`  ${BOLD}Microsoft Client ID${RESET}: ${YELLOW}`)).trim() || existingClientId;
+        process.stdout.write(RESET);
+        const existingSecret = existing.env['ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET'] ?? existingContacts?.microsoft?.clientSecret ?? '';
+        contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET'] = (await rl.question(`  ${BOLD}Microsoft Client Secret${RESET}: ${YELLOW}`)).trim() || existingSecret;
+        process.stdout.write(RESET);
+        const existingTenantId = existing.env['ALFRED_MICROSOFT_CONTACTS_TENANT_ID'] ?? existingContacts?.microsoft?.tenantId ?? '';
+        contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_TENANT_ID'] = await askWithDefault(rl, '  Tenant ID', existingTenantId || 'common');
+        const existingRefresh = existing.env['ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN'] ?? existingContacts?.microsoft?.refreshToken ?? '';
+        contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN'] = (await rl.question(`  ${BOLD}Refresh Token${RESET}: ${YELLOW}`)).trim() || existingRefresh;
+        process.stdout.write(RESET);
+      }
+      console.log(`  ${green('>')} Contacts: ${bold(contactsProvider)}`);
+    } else {
+      console.log(`  ${dim('Contacts disabled.')}`);
+    }
+
+    // Docker
+    const existingDocker = existing.config.docker;
+    const existingDockerSocket = existing.env['ALFRED_DOCKER_SOCKET_PATH'] ?? existingDocker?.socketPath ?? '';
+    const existingDockerHost = existing.env['ALFRED_DOCKER_HOST'] ?? existingDocker?.host ?? '';
+    const enableDockerDefault = (existingDockerSocket || existingDockerHost) ? 'Y/n' : 'y/N';
+    const enableDockerInput = (
+      await rl.question(`\n  ${BOLD}Enable Docker management?${RESET} ${dim(`[${enableDockerDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || ((existingDockerSocket || existingDockerHost) ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableDocker = enableDockerInput === 'y' || enableDockerInput === 'yes';
+
+    let dockerSocketPath = '';
+    let dockerHost = '';
+
+    if (enableDocker) {
+      const defaultSocket = process.platform === 'win32' ? '//./pipe/docker_engine' : '/var/run/docker.sock';
+      console.log(`  ${dim('Use socket path for local Docker, or host URL for remote.')}`);
+      dockerSocketPath = await askWithDefault(rl, '  Docker socket path', existingDockerSocket || defaultSocket);
+      const hostInput = (await rl.question(`  ${BOLD}Docker host URL (optional, for remote)${RESET}: ${YELLOW}`)).trim();
+      process.stdout.write(RESET);
+      dockerHost = hostInput || existingDockerHost;
+      console.log(`  ${green('>')} Docker: ${bold(dockerHost || dockerSocketPath)}`);
+    } else {
+      console.log(`  ${dim('Docker disabled.')}`);
+    }
+
     // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
@@ -1524,6 +1616,26 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_HOMEASSISTANT_TOKEN=');
     }
 
+    envLines.push('', '# === Contacts ===', '');
+
+    if (enableContacts) {
+      for (const [key, val] of Object.entries(contactsEnvEntries)) {
+        envLines.push(`${key}=${val}`);
+      }
+    } else {
+      envLines.push('# ALFRED_CONTACTS_PROVIDER=carddav');
+    }
+
+    envLines.push('', '# === Docker ===', '');
+
+    if (enableDocker) {
+      if (dockerSocketPath) envLines.push(`ALFRED_DOCKER_SOCKET_PATH=${dockerSocketPath}`);
+      if (dockerHost) envLines.push(`ALFRED_DOCKER_HOST=${dockerHost}`);
+    } else {
+      envLines.push('# ALFRED_DOCKER_SOCKET_PATH=');
+      envLines.push('# ALFRED_DOCKER_HOST=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -1560,6 +1672,8 @@ export async function setupCommand(): Promise<void> {
       proxmox?: { baseUrl: string; tokenId: string; tokenSecret: string; verifyTls: boolean };
       unifi?: { baseUrl: string; apiKey?: string; username?: string; password?: string; site: string; verifyTls: boolean };
       homeassistant?: { baseUrl: string; accessToken: string; verifyTls: boolean };
+      contacts?: { provider: string; carddav?: Record<string, string>; google?: Record<string, string>; microsoft?: Record<string, string> };
+      docker?: { socketPath?: string; host?: string };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1690,6 +1804,32 @@ export async function setupCommand(): Promise<void> {
           baseUrl: haBaseUrl,
           accessToken: haAccessToken,
           verifyTls: haVerifyTls,
+        },
+      } : {}),
+      ...(enableContacts ? {
+        contacts: {
+          provider: contactsProvider,
+          ...(contactsProvider === 'carddav' ? {
+            carddav: {
+              serverUrl: contactsEnvEntries['ALFRED_CARDDAV_CONTACTS_SERVER_URL'],
+              username: contactsEnvEntries['ALFRED_CARDDAV_CONTACTS_USERNAME'],
+            },
+          } : contactsProvider === 'google' ? {
+            google: {
+              clientId: contactsEnvEntries['ALFRED_GOOGLE_CONTACTS_CLIENT_ID'],
+            },
+          } : contactsProvider === 'microsoft' ? {
+            microsoft: {
+              clientId: contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_CLIENT_ID'],
+              tenantId: contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_TENANT_ID'],
+            },
+          } : {}),
+        },
+      } : {}),
+      ...(enableDocker ? {
+        docker: {
+          ...(dockerSocketPath ? { socketPath: dockerSocketPath } : {}),
+          ...(dockerHost ? { host: dockerHost } : {}),
         },
       } : {}),
       storage: {
@@ -1881,6 +2021,8 @@ ${ownerAdminRule}
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
     if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);
     if (enableHa) console.log(`  ${bold('Home Assist.:')} ${green(haBaseUrl)}`);
+    if (enableContacts) console.log(`  ${bold('Contacts:')}      ${green(contactsProvider)}`);
+    if (enableDocker) console.log(`  ${bold('Docker:')}        ${green(dockerHost || dockerSocketPath)}`);
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
       console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);

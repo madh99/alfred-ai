@@ -210,6 +210,39 @@ export interface HomeAssistantConfig {
   verifyTls?: boolean;
 }
 
+export interface CardDAVContactsConfig {
+  serverUrl: string;
+  username: string;
+  password: string;
+  addressBookPath?: string;
+}
+
+export interface GoogleContactsConfig {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+}
+
+export interface MicrosoftContactsConfig {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+  refreshToken: string;
+}
+
+export interface ContactsConfig {
+  provider: 'carddav' | 'google' | 'microsoft';
+  carddav?: CardDAVContactsConfig;
+  google?: GoogleContactsConfig;
+  microsoft?: MicrosoftContactsConfig;
+}
+
+export interface DockerConfig {
+  socketPath?: string;
+  host?: string;
+  verifyTls?: boolean;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -233,4 +266,6 @@ export interface AlfredConfig {
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;
+  contacts?: ContactsConfig;
+  docker?: DockerConfig;
 }

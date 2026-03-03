@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.57-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.58-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (27+)
+### Built-in Skills (30+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -88,15 +88,16 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 |----------|--------|-------------|
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), cross-platform messaging, autonomous sub-agents |
-| **Scheduling** | `reminder`, `scheduled_task`, `background_task` | Timed reminders, cron jobs, long-running tasks |
+| **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
+| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo` | Timed reminders, cron jobs, long-running tasks, todo list management |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant` | Proxmox VE cluster management, UniFi network, Home Assistant smart home |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
-| **Admin** | `configure` | Configure services (Proxmox, UniFi, Home Assistant) via chat — hot-reload, no restart needed |
+| **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
 
 ### Code Agent Orchestration
 
@@ -178,6 +179,48 @@ You: "What's going on in the living room?"
 You: "Activate movie night scene"
 You: "Show me calendar events for tomorrow"
 ```
+
+#### Contacts
+
+Manage contacts from CardDAV, Google People API, or Microsoft Graph:
+
+```
+You: "Search for John in my contacts"
+You: "Add a new contact: Jane Doe, jane@example.com, +1-555-0123"
+You: "Show me the details for contact abc123"
+You: "Delete contact abc123"
+```
+
+Supports CardDAV (Nextcloud, Radicale, etc.), Google Contacts, and Microsoft 365.
+
+#### Todo Lists
+
+Persistent todo lists stored in SQLite — always available, no external service needed:
+
+```
+You: "Add a todo: Buy groceries"
+You: "Add a high priority todo to my work list: Finish report by Friday"
+You: "Show my todos"
+You: "Complete todo abc123"
+You: "Show all my lists"
+```
+
+Multiple named lists, priorities (low/normal/high/urgent), due dates, and cross-platform access.
+
+#### Docker
+
+Full Docker Engine API integration — manage containers, images, volumes, and networks:
+
+```
+You: "Show all running containers"
+You: "Show logs for container myapp"
+You: "Pull the latest nginx image"
+You: "Restart container myapp"
+You: "Show Docker system info"
+You: "Prune unused images and containers"
+```
+
+Connects via Unix socket (default) or TCP. Supports Docker Compose operations.
 
 ### Cross-Platform Identity
 
@@ -297,7 +340,7 @@ The interactive wizard guides you through:
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
-7. **Infrastructure** — Proxmox VE, UniFi Network, and Home Assistant credentials
+7. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker credentials
 
 This generates `config.yaml` and `.env` in your working directory.
 
@@ -447,6 +490,16 @@ homeassistant:
   baseUrl: http://homeassistant.local:8123
   # accessToken via ALFRED_HOMEASSISTANT_TOKEN
 
+contacts:
+  provider: carddav  # or google, microsoft
+  carddav:
+    serverUrl: https://cloud.example.com/remote.php/dav
+    # username/password via ENV
+
+docker:
+  socketPath: /var/run/docker.sock
+  # or host: http://192.168.1.10:2375
+
 mcp: []
 ```
 
@@ -495,6 +548,23 @@ ALFRED_MICROSOFT_EMAIL_CLIENT_ID=
 ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET=
 ALFRED_MICROSOFT_EMAIL_TENANT_ID=
 ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN=
+
+# Contacts
+ALFRED_CONTACTS_PROVIDER=           # carddav, google, or microsoft
+ALFRED_CARDDAV_CONTACTS_SERVER_URL=
+ALFRED_CARDDAV_CONTACTS_USERNAME=
+ALFRED_CARDDAV_CONTACTS_PASSWORD=
+ALFRED_GOOGLE_CONTACTS_CLIENT_ID=
+ALFRED_GOOGLE_CONTACTS_CLIENT_SECRET=
+ALFRED_GOOGLE_CONTACTS_REFRESH_TOKEN=
+ALFRED_MICROSOFT_CONTACTS_CLIENT_ID=
+ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET=
+ALFRED_MICROSOFT_CONTACTS_TENANT_ID=
+ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN=
+
+# Docker
+ALFRED_DOCKER_SOCKET_PATH=          # e.g. /var/run/docker.sock
+ALFRED_DOCKER_HOST=                 # e.g. http://192.168.1.10:2375
 
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db

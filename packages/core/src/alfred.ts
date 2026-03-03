@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -37,6 +37,7 @@ import {
   DocumentSkill,
   TTSSkill,
   ConfigureSkill,
+  TodoSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -150,6 +151,8 @@ export class Alfred {
     } : undefined));
     skillRegistry.register(new ReminderSkill(reminderRepo));
     skillRegistry.register(new NoteSkill(noteRepo));
+    const todoRepo = new TodoRepository(db);
+    skillRegistry.register(new TodoSkill(todoRepo));
     skillRegistry.register(new WeatherSkill());
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
@@ -258,6 +261,25 @@ export class Alfred {
       const { HomeAssistantSkill } = await import('@alfred/skills');
       skillRegistry.register(new HomeAssistantSkill(this.config.homeassistant));
       this.logger.info({ baseUrl: this.config.homeassistant.baseUrl }, 'Home Assistant skill enabled');
+    }
+
+    // 4i. Contacts (optional)
+    if (this.config.contacts) {
+      try {
+        const { ContactsSkill, createContactsProvider } = await import('@alfred/skills');
+        const contactsProvider = await createContactsProvider(this.config.contacts);
+        skillRegistry.register(new ContactsSkill(contactsProvider));
+        this.logger.info({ provider: this.config.contacts.provider }, 'Contacts skill enabled');
+      } catch (err) {
+        this.logger.warn({ err }, 'Contacts initialization failed, continuing without contacts');
+      }
+    }
+
+    // 4j. Docker (optional — auto-detect socket if no explicit config)
+    if (this.config.docker) {
+      const { DockerSkill } = await import('@alfred/skills');
+      skillRegistry.register(new DockerSkill(this.config.docker));
+      this.logger.info('Docker skill enabled');
     }
 
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
@@ -461,7 +483,7 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
-  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant'): Promise<{ success: boolean; error?: string }> {
+  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker'): Promise<{ success: boolean; error?: string }> {
     try {
       // 1. Reload .env → process.env updated
       reloadDotenv();
@@ -492,6 +514,19 @@ export class Alfred {
         this.skillRegistry.register(new HomeAssistantSkill(freshConfig.homeassistant));
         this.config.homeassistant = freshConfig.homeassistant;
         this.logger.info({ baseUrl: freshConfig.homeassistant.baseUrl }, 'Home Assistant skill hot-reloaded');
+      }
+      if (service === 'contacts' && freshConfig.contacts) {
+        const { ContactsSkill, createContactsProvider } = await import('@alfred/skills');
+        const contactsProvider = await createContactsProvider(freshConfig.contacts);
+        this.skillRegistry.register(new ContactsSkill(contactsProvider));
+        this.config.contacts = freshConfig.contacts;
+        this.logger.info({ provider: freshConfig.contacts.provider }, 'Contacts skill hot-reloaded');
+      }
+      if (service === 'docker' && freshConfig.docker) {
+        const { DockerSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new DockerSkill(freshConfig.docker));
+        this.config.docker = freshConfig.docker;
+        this.logger.info('Docker skill hot-reloaded');
       }
 
       return { success: true };

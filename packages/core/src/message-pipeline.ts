@@ -231,7 +231,12 @@ export class MessagePipeline {
       const userContent = await this.buildUserContent(message, onProgress);
       allMessages.push({ role: 'user', content: userContent });
 
-      const messages = this.trimToContextWindow(system, allMessages);
+      // Estimate tokens consumed by tool definitions (skill schemas)
+      const toolTokens = tools
+        ? estimateTokens(JSON.stringify(tools))
+        : 0;
+
+      const messages = this.trimToContextWindow(system, allMessages, toolTokens);
 
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
@@ -245,7 +250,7 @@ export class MessagePipeline {
       while (true) {
         // Re-trim if tool loop has grown beyond the context budget
         if (iteration > 0) {
-          this.compressToolLoop(messages, system);
+          this.compressToolLoop(messages, system, toolTokens);
         }
 
         response = await this.llm.complete({
@@ -778,10 +783,10 @@ export class MessagePipeline {
    * Keeps the last TOOL_LOOP_KEEP_RECENT tool pairs intact and summarizes the rest.
    * Modifies the messages array in-place.
    */
-  private compressToolLoop(messages: LLMMessage[], system: string): void {
+  private compressToolLoop(messages: LLMMessage[], system: string, toolTokens = 0): void {
     const contextWindow = this.llm.getContextWindow();
     const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
-    const systemTokens = estimateTokens(system);
+    const systemTokens = estimateTokens(system) + toolTokens;
     const totalTokens = systemTokens + messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
 
     if (totalTokens <= maxInputTokens) return;
@@ -846,11 +851,11 @@ export class MessagePipeline {
    * When messages are trimmed, builds a compact summary of the dropped
    * messages so the LLM retains conversational context.
    */
-  private trimToContextWindow(system: string, messages: LLMMessage[]): LLMMessage[] {
+  private trimToContextWindow(system: string, messages: LLMMessage[], toolTokens = 0): LLMMessage[] {
     const contextWindow = this.llm.getContextWindow();
     const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
 
-    const systemTokens = estimateTokens(system);
+    const systemTokens = estimateTokens(system) + toolTokens;
     // Always keep the latest message (current user input)
     const latestMsg = messages[messages.length - 1];
     const latestTokens = estimateMessageTokens(latestMsg);

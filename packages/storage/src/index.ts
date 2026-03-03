@@ -17,3 +17,5 @@ export { LinkTokenRepository } from './repositories/link-token-repository.js';
 export { BackgroundTaskRepository } from './repositories/background-task-repository.js';
 export { ScheduledActionRepository } from './repositories/scheduled-action-repository.js';
 export { DocumentRepository } from './repositories/document-repository.js';
+export { TodoRepository } from './repositories/todo-repository.js';
+export type { TodoEntry } from './repositories/todo-repository.js';

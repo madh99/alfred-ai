@@ -99,6 +99,21 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_UNIFI_SITE: ['unifi', 'site'],
   ALFRED_HOMEASSISTANT_URL: ['homeassistant', 'baseUrl'],
   ALFRED_HOMEASSISTANT_TOKEN: ['homeassistant', 'accessToken'],
+  // Contacts
+  ALFRED_CONTACTS_PROVIDER: ['contacts', 'provider'],
+  ALFRED_CARDDAV_CONTACTS_SERVER_URL: ['contacts', 'carddav', 'serverUrl'],
+  ALFRED_CARDDAV_CONTACTS_USERNAME: ['contacts', 'carddav', 'username'],
+  ALFRED_CARDDAV_CONTACTS_PASSWORD: ['contacts', 'carddav', 'password'],
+  ALFRED_GOOGLE_CONTACTS_CLIENT_ID: ['contacts', 'google', 'clientId'],
+  ALFRED_GOOGLE_CONTACTS_CLIENT_SECRET: ['contacts', 'google', 'clientSecret'],
+  ALFRED_GOOGLE_CONTACTS_REFRESH_TOKEN: ['contacts', 'google', 'refreshToken'],
+  ALFRED_MICROSOFT_CONTACTS_CLIENT_ID: ['contacts', 'microsoft', 'clientId'],
+  ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET: ['contacts', 'microsoft', 'clientSecret'],
+  ALFRED_MICROSOFT_CONTACTS_TENANT_ID: ['contacts', 'microsoft', 'tenantId'],
+  ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN: ['contacts', 'microsoft', 'refreshToken'],
+  // Docker
+  ALFRED_DOCKER_SOCKET_PATH: ['docker', 'socketPath'],
+  ALFRED_DOCKER_HOST: ['docker', 'host'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

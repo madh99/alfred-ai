@@ -222,6 +222,39 @@ export const HomeAssistantConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const CardDAVContactsConfigSchema = z.object({
+  serverUrl: z.string(),
+  username: z.string(),
+  password: z.string(),
+  addressBookPath: z.string().optional(),
+});
+
+export const GoogleContactsConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  refreshToken: z.string(),
+});
+
+export const MicrosoftContactsConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  tenantId: z.string(),
+  refreshToken: z.string(),
+});
+
+export const ContactsConfigSchema = z.object({
+  provider: z.enum(['carddav', 'google', 'microsoft']),
+  carddav: CardDAVContactsConfigSchema.optional(),
+  google: GoogleContactsConfigSchema.optional(),
+  microsoft: MicrosoftContactsConfigSchema.optional(),
+});
+
+export const DockerConfigSchema = z.object({
+  socketPath: z.string().optional(),
+  host: z.string().optional(),
+  verifyTls: z.boolean().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -245,4 +278,6 @@ export const AlfredConfigSchema = z.object({
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),
+  contacts: ContactsConfigSchema.optional(),
+  docker: DockerConfigSchema.optional(),
 });
