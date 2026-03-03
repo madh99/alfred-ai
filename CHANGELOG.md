@@ -5,16 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.61] - 2026-03-03
+
+### Fixed
+- **Prompt-too-long Retry** — Wenn die API den Prompt als zu lang ablehnt, wird automatisch mit halbiertem Budget neu getrimmt und erneut gesendet (bis zu 3 Retries). Macht die char-basierte Token-Schätzung irrelevant — Alfred korrigiert sich selbst
+- **Trim-Algorithmus** — `continue` → `break` beim Gruppen-Walk: überspringt keine großen kürzlichen Message-Gruppen mehr zugunsten kleinerer alter Gruppen. Neueste Nachrichten haben Vorrang
+- Token-Schätzung und Budget-Ratio auf Originalwerte zurückgesetzt (chars/3.5, 85%) — Retry-Mechanismus macht konservative Schätzung überflüssig
+
 ## [0.9.60] - 2026-03-03
 
 ### Fixed
-- **Token-Schätzung korrigiert** — `estimateTokens` von `chars/3.5` auf `chars/2.5` angepasst (konservativere Schätzung, die besser zu realen BPE-Tokenizern passt — insbesondere bei strukturiertem JSON wie Tool-Definitionen)
-- **Context-Budget reduziert** — `TOKEN_BUDGET_RATIO` von 85% auf 75% gesenkt, ~32k Token Headroom bei langen Konversationen
+- Token-Schätzung chars/3.5 → chars/2.5, Budget-Ratio 85% → 75% (nicht ausreichend, siehe 0.9.61)
 
 ## [0.9.59] - 2026-03-03
 
 ### Fixed
-- Token-Schätzung chars/3.5 → chars/2.8, Budget-Ratio 85% → 80% (nicht ausreichend, siehe 0.9.60)
+- Token-Schätzung chars/3.5 → chars/2.8, Budget-Ratio 85% → 80% (nicht ausreichend, siehe 0.9.61)
 
 ## [0.9.58] - 2026-03-03
 

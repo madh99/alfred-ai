@@ -25,7 +25,7 @@ import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
-const TOKEN_BUDGET_RATIO = 0.75; // Use at most 75% of input window for context
+const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
 const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
@@ -236,7 +236,10 @@ export class MessagePipeline {
         ? estimateTokens(JSON.stringify(tools))
         : 0;
 
-      const messages = this.trimToContextWindow(system, allMessages, toolTokens);
+      // Trim with retry: if the API rejects as "prompt is too long",
+      // re-trim with a tighter budget and retry (up to 3 times).
+      let budgetMultiplier = 1.0;
+      let messages = this.trimToContextWindow(system, allMessages, toolTokens, budgetMultiplier);
 
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
@@ -253,11 +256,22 @@ export class MessagePipeline {
           this.compressToolLoop(messages, system, toolTokens);
         }
 
-        response = await this.llm.complete({
-          messages,
-          system,
-          tools: tools && tools.length > 0 ? tools : undefined,
-        });
+        try {
+          response = await this.llm.complete({
+            messages,
+            system,
+            tools: tools && tools.length > 0 ? tools : undefined,
+          });
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (errMsg.includes('prompt is too long') && budgetMultiplier > 0.3) {
+            budgetMultiplier *= 0.5;
+            this.logger.warn({ budgetMultiplier }, 'Prompt too long, retrimming with reduced budget');
+            messages = this.trimToContextWindow(system, allMessages, toolTokens, budgetMultiplier);
+            continue;
+          }
+          throw err;
+        }
 
         // If no tool calls, we're done
         if (!response.toolCalls || response.toolCalls.length === 0) {
@@ -851,9 +865,9 @@ export class MessagePipeline {
    * When messages are trimmed, builds a compact summary of the dropped
    * messages so the LLM retains conversational context.
    */
-  private trimToContextWindow(system: string, messages: LLMMessage[], toolTokens = 0): LLMMessage[] {
+  private trimToContextWindow(system: string, messages: LLMMessage[], toolTokens = 0, budgetMultiplier = 1.0): LLMMessage[] {
     const contextWindow = this.llm.getContextWindow();
-    const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO);
+    const maxInputTokens = Math.floor(contextWindow.maxInputTokens * TOKEN_BUDGET_RATIO * budgetMultiplier);
 
     const systemTokens = estimateTokens(system) + toolTokens;
     // Always keep the latest message (current user input)
@@ -875,11 +889,11 @@ export class MessagePipeline {
     const history = messages.slice(0, -1);
     const groups = this.groupToolPairs(history);
 
-    // Walk backwards through groups, keeping as many as fit
+    // Walk backwards through groups, keeping the most recent that fit
     const keptGroups: LLMMessage[][] = [];
     for (let i = groups.length - 1; i >= 0; i--) {
       const groupTokens = groups[i].reduce((sum, msg) => sum + estimateMessageTokens(msg), 0);
-      if (groupTokens > availableTokens) continue;
+      if (groupTokens > availableTokens) break;
       availableTokens -= groupTokens;
       keptGroups.unshift(groups[i]);
     }
