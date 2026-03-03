@@ -199,6 +199,12 @@ export interface UniFiConfig {
   verifyTls?: boolean;
 }
 
+export interface HomeAssistantConfig {
+  baseUrl: string;
+  accessToken: string;
+  verifyTls?: boolean;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -221,4 +227,5 @@ export interface AlfredConfig {
   codeAgents?: CodeAgentsConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
+  homeassistant?: HomeAssistantConfig;
 }

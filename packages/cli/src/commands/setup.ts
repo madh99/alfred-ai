@@ -329,6 +329,7 @@ interface ExistingConfig {
   calendar?: { provider?: string; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
   proxmox?: { baseUrl?: string; tokenId?: string; tokenSecret?: string; verifyTls?: boolean; defaultNode?: string };
   unifi?: { baseUrl?: string; apiKey?: string; username?: string; password?: string; site?: string; verifyTls?: boolean };
+  homeassistant?: { baseUrl?: string; accessToken?: string; verifyTls?: boolean };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1130,9 +1131,9 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Forge integration disabled — you can enable it later in config/default.yml.')}`);
     }
 
-    // ── 8e. Infrastructure (Proxmox / UniFi) ───────────────────
-    console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi)?')}`);
-    console.log(`${dim('Control VMs, containers, and network devices through Alfred.')}`);
+    // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
+    console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi / Home Assistant)?')}`);
+    console.log(`${dim('Control VMs, containers, network devices, and smart home through Alfred.')}`);
 
     // Proxmox
     const existingPve = existing.config.proxmox;
@@ -1226,6 +1227,39 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${green('>')} UniFi: ${bold(unifiBaseUrl)} ${dim(`(TLS verify: ${unifiVerifyTls ? 'yes' : 'no'})`)}`);
     } else {
       console.log(`  ${dim('UniFi disabled.')}`);
+    }
+
+    // Home Assistant
+    const existingHa = existing.config.homeassistant;
+    const existingHaUrl = existing.env['ALFRED_HOMEASSISTANT_URL'] ?? existingHa?.baseUrl ?? '';
+    const enableHaDefault = existingHaUrl ? 'Y/n' : 'y/N';
+    const enableHaInput = (
+      await rl.question(`\n  ${BOLD}Enable Home Assistant?${RESET} ${dim(`[${enableHaDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingHaUrl ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableHa = enableHaInput === 'y' || enableHaInput === 'yes';
+
+    let haBaseUrl = '';
+    let haAccessToken = '';
+    let haVerifyTls = true;
+
+    if (enableHa) {
+      haBaseUrl = await askWithDefault(rl, '  Home Assistant URL (e.g. http://homeassistant.local:8123)', existingHaUrl || 'http://homeassistant.local:8123');
+      const existingToken = existing.env['ALFRED_HOMEASSISTANT_TOKEN'] ?? existingHa?.accessToken ?? '';
+      if (existingToken) console.log(`  ${dim(`Current token: ${maskKey(existingToken)}`)}`);
+      console.log(`  ${dim('Create: Settings → Security → Long-Lived Access Tokens')}`);
+      haAccessToken = (await rl.question(`  ${BOLD}Long-Lived Access Token${RESET}: ${YELLOW}`)).trim();
+      process.stdout.write(RESET);
+      if (!haAccessToken && existingToken) haAccessToken = existingToken;
+      const haTlsDefault = existingHa?.verifyTls === false ? 'y/N' : 'Y/n';
+      const haTlsInput = (
+        await rl.question(`  ${BOLD}Verify TLS?${RESET} ${dim(`(self-signed? → no) [${haTlsDefault}]`)}: ${YELLOW}`)
+      ).trim().toLowerCase() || (existingHa?.verifyTls === false ? 'n' : 'y');
+      process.stdout.write(RESET);
+      haVerifyTls = haTlsInput === 'y' || haTlsInput === 'yes';
+      console.log(`  ${green('>')} Home Assistant: ${bold(haBaseUrl)} ${dim(`(TLS verify: ${haVerifyTls ? 'yes' : 'no'})`)}`);
+    } else {
+      console.log(`  ${dim('Home Assistant disabled.')}`);
     }
 
     // ── 9. Security configuration ──────────────────────────────
@@ -1409,7 +1443,7 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_GITHUB_TOKEN=');
     }
 
-    envLines.push('', '# === Infrastructure (Proxmox / UniFi) ===', '');
+    envLines.push('', '# === Infrastructure (Proxmox / UniFi / Home Assistant) ===', '');
 
     if (enableProxmox) {
       envLines.push(`ALFRED_PROXMOX_BASE_URL=${proxmoxBaseUrl}`);
@@ -1431,6 +1465,14 @@ export async function setupCommand(): Promise<void> {
     } else {
       envLines.push('# ALFRED_UNIFI_BASE_URL=');
       envLines.push('# ALFRED_UNIFI_API_KEY=');
+    }
+
+    if (enableHa) {
+      envLines.push(`ALFRED_HOMEASSISTANT_URL=${haBaseUrl}`);
+      envLines.push(`ALFRED_HOMEASSISTANT_TOKEN=${haAccessToken}`);
+    } else {
+      envLines.push('# ALFRED_HOMEASSISTANT_URL=');
+      envLines.push('# ALFRED_HOMEASSISTANT_TOKEN=');
     }
 
     envLines.push('', '# === Security ===', '');
@@ -1468,6 +1510,7 @@ export async function setupCommand(): Promise<void> {
       codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string }; gitlab?: { token: string } } };
       proxmox?: { baseUrl: string; tokenId: string; tokenSecret: string; verifyTls: boolean };
       unifi?: { baseUrl: string; apiKey?: string; username?: string; password?: string; site: string; verifyTls: boolean };
+      homeassistant?: { baseUrl: string; accessToken: string; verifyTls: boolean };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1587,6 +1630,13 @@ export async function setupCommand(): Promise<void> {
           ...(unifiApiKey ? { apiKey: unifiApiKey } : { username: unifiUsername, password: unifiPassword }),
           site: 'default',
           verifyTls: unifiVerifyTls,
+        },
+      } : {}),
+      ...(enableHa ? {
+        homeassistant: {
+          baseUrl: haBaseUrl,
+          accessToken: haAccessToken,
+          verifyTls: haVerifyTls,
         },
       } : {}),
       storage: {
@@ -1773,6 +1823,9 @@ ${ownerAdminRule}
       console.log(`  ${bold('Voice:')}          ${dim('disabled')}`);
     }
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
+    if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
+    if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);
+    if (enableHa) console.log(`  ${bold('Home Assist.:')} ${green(haBaseUrl)}`);
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
       console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);

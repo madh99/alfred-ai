@@ -176,7 +176,7 @@ export class Alfred {
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
     const configureSkill = new ConfigureSkill();
-    configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi'));
+    configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi' | 'homeassistant'));
     skillRegistry.register(configureSkill);
     skillRegistry.register(new ClipboardSkill());
     skillRegistry.register(new ScreenshotSkill());
@@ -248,6 +248,13 @@ export class Alfred {
       const { UniFiSkill } = await import('@alfred/skills');
       skillRegistry.register(new UniFiSkill(this.config.unifi));
       this.logger.info({ baseUrl: this.config.unifi.baseUrl }, 'UniFi skill enabled');
+    }
+
+    // 4h. Home Assistant (optional)
+    if (this.config.homeassistant) {
+      const { HomeAssistantSkill } = await import('@alfred/skills');
+      skillRegistry.register(new HomeAssistantSkill(this.config.homeassistant));
+      this.logger.info({ baseUrl: this.config.homeassistant.baseUrl }, 'Home Assistant skill enabled');
     }
 
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
@@ -451,7 +458,7 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
-  async reloadService(service: 'proxmox' | 'unifi'): Promise<{ success: boolean; error?: string }> {
+  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant'): Promise<{ success: boolean; error?: string }> {
     try {
       // 1. Reload .env → process.env updated
       reloadDotenv();
@@ -476,6 +483,12 @@ export class Alfred {
         this.skillRegistry.register(new UniFiSkill(freshConfig.unifi));
         this.config.unifi = freshConfig.unifi;
         this.logger.info({ baseUrl: freshConfig.unifi.baseUrl }, 'UniFi skill hot-reloaded');
+      }
+      if (service === 'homeassistant' && freshConfig.homeassistant) {
+        const { HomeAssistantSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new HomeAssistantSkill(freshConfig.homeassistant));
+        this.config.homeassistant = freshConfig.homeassistant;
+        this.logger.info({ baseUrl: freshConfig.homeassistant.baseUrl }, 'Home Assistant skill hot-reloaded');
       }
 
       return { success: true };

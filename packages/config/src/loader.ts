@@ -97,6 +97,8 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_UNIFI_USERNAME: ['unifi', 'username'],
   ALFRED_UNIFI_PASSWORD: ['unifi', 'password'],
   ALFRED_UNIFI_SITE: ['unifi', 'site'],
+  ALFRED_HOMEASSISTANT_URL: ['homeassistant', 'baseUrl'],
+  ALFRED_HOMEASSISTANT_TOKEN: ['homeassistant', 'accessToken'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

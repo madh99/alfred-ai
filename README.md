@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.54-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.55-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -92,11 +92,11 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
-| **Infrastructure** | `proxmox`, `unifi` | Proxmox VE cluster management, UniFi network management |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant` | Proxmox VE cluster management, UniFi network, Home Assistant smart home |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
-| **Admin** | `configure` | Configure services (Proxmox, UniFi) via chat — hot-reload, no restart needed |
+| **Admin** | `configure` | Configure services (Proxmox, UniFi, Home Assistant) via chat — hot-reload, no restart needed |
 
 ### Code Agent Orchestration
 
@@ -149,6 +149,25 @@ Supports **API Key** (UniFi OS 4.x+) and **Username/Password** authentication wi
 You: "How many clients are online?"
 You: "Create 5 guest vouchers for 24 hours"
 You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
+```
+
+#### Home Assistant
+
+Smart home control via the Home Assistant REST API:
+
+- List all entities or filter by domain (lights, sensors, switches)
+- Turn on, turn off, toggle devices
+- Call any service with custom parameters
+- View entity state history and logbook
+- List available services and system config
+
+Uses **Long-Lived Access Tokens** for authentication (Settings → Security → Long-Lived Access Tokens).
+
+```
+You: "Show me all lights"
+You: "Turn off light.wohnzimmer"
+You: "Set the thermostat to 22 degrees"
+You: "Show me the temperature history for the last 24 hours"
 ```
 
 ### Cross-Platform Identity
@@ -269,7 +288,7 @@ The interactive wizard guides you through:
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
-7. **Infrastructure** — Proxmox VE and UniFi Network controller credentials
+7. **Infrastructure** — Proxmox VE, UniFi Network, and Home Assistant credentials
 
 This generates `config.yaml` and `.env` in your working directory.
 
@@ -411,6 +430,10 @@ unifi:
   baseUrl: https://unifi.local
   # apiKey or username/password via ENV
 
+homeassistant:
+  baseUrl: http://homeassistant.local:8123
+  # accessToken via ALFRED_HOMEASSISTANT_TOKEN
+
 mcp: []
 ```
 
@@ -448,6 +471,10 @@ ALFRED_UNIFI_USERNAME=           # alternative: username/password
 ALFRED_UNIFI_PASSWORD=
 ALFRED_UNIFI_SITE=default
 ALFRED_UNIFI_VERIFY_TLS=true
+
+# Home Assistant
+ALFRED_HOMEASSISTANT_URL=         # e.g. http://homeassistant.local:8123
+ALFRED_HOMEASSISTANT_TOKEN=       # Long-Lived Access Token
 
 # Email (Microsoft 365 — alternative to IMAP/SMTP)
 ALFRED_EMAIL_PROVIDER=              # microsoft (default: imap-smtp)

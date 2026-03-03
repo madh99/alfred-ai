@@ -210,6 +210,12 @@ export const UniFiConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const HomeAssistantConfigSchema = z.object({
+  baseUrl: z.string(),
+  accessToken: z.string(),
+  verifyTls: z.boolean().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -232,4 +238,5 @@ export const AlfredConfigSchema = z.object({
   codeAgents: CodeAgentsConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
+  homeassistant: HomeAssistantConfigSchema.optional(),
 });
