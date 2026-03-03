@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.53-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.54-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -87,7 +87,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | Category | Skills | Description |
 |----------|--------|-------------|
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
-| **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails, cross-platform messaging, autonomous sub-agents |
+| **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API), cross-platform messaging, autonomous sub-agents |
 | **Scheduling** | `reminder`, `scheduled_task`, `background_task` | Timed reminders, cron jobs, long-running tasks |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
@@ -374,6 +374,7 @@ search:
   provider: brave
 
 email:
+  # provider: imap-smtp (default) or microsoft
   imap:
     host: imap.gmail.com
     port: 993
@@ -381,6 +382,12 @@ email:
   smtp:
     host: smtp.gmail.com
     port: 587
+  # For Microsoft 365:
+  # provider: microsoft
+  # microsoft:
+  #   clientId: ...
+  #   tenantId: ...
+  #   # clientSecret + refreshToken via ENV
 
 api:
   enabled: true
@@ -441,6 +448,13 @@ ALFRED_UNIFI_USERNAME=           # alternative: username/password
 ALFRED_UNIFI_PASSWORD=
 ALFRED_UNIFI_SITE=default
 ALFRED_UNIFI_VERIFY_TLS=true
+
+# Email (Microsoft 365 — alternative to IMAP/SMTP)
+ALFRED_EMAIL_PROVIDER=              # microsoft (default: imap-smtp)
+ALFRED_MICROSOFT_EMAIL_CLIENT_ID=
+ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET=
+ALFRED_MICROSOFT_EMAIL_TENANT_ID=
+ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN=
 
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db

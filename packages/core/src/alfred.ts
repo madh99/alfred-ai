@@ -22,6 +22,7 @@ import {
   MemorySkill,
   DelegateSkill,
   EmailSkill,
+  createEmailProvider,
   HttpSkill,
   FileSkill,
   ClipboardSkill,
@@ -153,11 +154,25 @@ export class Alfred {
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
     skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
-    skillRegistry.register(new EmailSkill(this.config.email ? {
-      imap: this.config.email.imap,
-      smtp: this.config.email.smtp,
-      auth: this.config.email.auth,
-    } : undefined));
+    // 4a-email. Initialize email (optional, provider-based)
+    if (this.config.email) {
+      try {
+        // Share Microsoft credentials from calendar if not set
+        if (this.config.email.provider === 'microsoft' && !this.config.email.microsoft?.clientId) {
+          if (this.config.calendar?.microsoft) {
+            this.config.email.microsoft = { ...this.config.calendar.microsoft };
+          }
+        }
+        const emailProvider = await createEmailProvider(this.config.email);
+        skillRegistry.register(new EmailSkill(emailProvider));
+        this.logger.info({ provider: this.config.email.provider ?? 'imap-smtp' }, 'Email initialized');
+      } catch (err) {
+        this.logger.warn({ err }, 'Email initialization failed, continuing without email');
+        skillRegistry.register(new EmailSkill());
+      }
+    } else {
+      skillRegistry.register(new EmailSkill());
+    }
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
     const configureSkill = new ConfigureSkill();

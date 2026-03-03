@@ -67,10 +67,19 @@ export interface EmailAuthConfig {
   pass: string;
 }
 
+export interface MicrosoftEmailConfig {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+  refreshToken: string;
+}
+
 export interface EmailConfig {
-  imap: EmailImapConfig;
-  smtp: EmailSmtpConfig;
-  auth: EmailAuthConfig;
+  provider?: 'imap-smtp' | 'microsoft';
+  imap?: EmailImapConfig;
+  smtp?: EmailSmtpConfig;
+  auth?: EmailAuthConfig;
+  microsoft?: MicrosoftEmailConfig;
 }
 
 export interface SpeechConfig {

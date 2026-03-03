@@ -70,20 +70,27 @@ export const SearchConfigSchema = z.object({
 });
 
 export const EmailConfigSchema = z.object({
+  provider: z.enum(['imap-smtp', 'microsoft']).optional(),
   imap: z.object({
     host: z.string(),
     port: z.number(),
     secure: z.boolean(),
-  }),
+  }).optional(),
   smtp: z.object({
     host: z.string(),
     port: z.number(),
     secure: z.boolean(),
-  }),
+  }).optional(),
   auth: z.object({
     user: z.string(),
     pass: z.string(),
-  }),
+  }).optional(),
+  microsoft: z.object({
+    clientId: z.string(),
+    clientSecret: z.string(),
+    tenantId: z.string(),
+    refreshToken: z.string(),
+  }).optional(),
 });
 
 export const SpeechConfigSchema = z.object({
