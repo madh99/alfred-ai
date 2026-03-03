@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.59] - 2026-03-03
+
+### Fixed
+- **Token-Schätzung korrigiert** — `estimateTokens` von `chars/3.5` auf `chars/2.8` angepasst (konservativere Schätzung, die besser zu realen BPE-Tokenizern passt, unabhängig vom LLM-Provider)
+- **Context-Budget reduziert** — `TOKEN_BUDGET_RATIO` von 85% auf 80% gesenkt, verhindert zuverlässig `prompt is too long`-Fehler auch bei langen Konversationen mit vielen Tool-Definitionen
+
 ## [0.9.58] - 2026-03-03
 
 ### Added
