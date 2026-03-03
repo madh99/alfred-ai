@@ -1,7 +1,7 @@
-import type { EmailConfig } from '@alfred/types';
+import type { EmailAccountConfig } from '@alfred/types';
 import type { EmailProvider } from './email-provider.js';
 
-export async function createEmailProvider(config: EmailConfig): Promise<EmailProvider> {
+export async function createEmailProvider(config: EmailAccountConfig): Promise<EmailProvider> {
   if (config.provider === 'microsoft') {
     if (!config.microsoft) throw new Error('Microsoft email config missing');
     const { MicrosoftGraphEmailProvider } = await import('./microsoft-provider.js');

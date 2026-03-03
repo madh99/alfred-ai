@@ -74,12 +74,17 @@ export interface MicrosoftEmailConfig {
   refreshToken: string;
 }
 
-export interface EmailConfig {
+export interface EmailAccountConfig {
+  name: string;
   provider?: 'imap-smtp' | 'microsoft';
   imap?: EmailImapConfig;
   smtp?: EmailSmtpConfig;
   auth?: EmailAuthConfig;
   microsoft?: MicrosoftEmailConfig;
+}
+
+export interface EmailConfig {
+  accounts: EmailAccountConfig[];
 }
 
 export interface SpeechConfig {

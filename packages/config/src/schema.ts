@@ -69,7 +69,8 @@ export const SearchConfigSchema = z.object({
   baseUrl: z.string().optional(),
 });
 
-export const EmailConfigSchema = z.object({
+export const EmailAccountConfigSchema = z.object({
+  name: z.string().optional(),
   provider: z.enum(['imap-smtp', 'microsoft']).optional(),
   imap: z.object({
     host: z.string(),
@@ -92,6 +93,11 @@ export const EmailConfigSchema = z.object({
     refreshToken: z.string(),
   }).optional(),
 });
+
+export const EmailConfigSchema = z.union([
+  z.object({ accounts: z.array(EmailAccountConfigSchema) }),
+  EmailAccountConfigSchema,
+]);
 
 export const SpeechConfigSchema = z.object({
   provider: z.enum(['openai', 'groq', 'google']),

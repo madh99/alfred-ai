@@ -154,22 +154,25 @@ export class Alfred {
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
     skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
-    // 4a-email. Initialize email (optional, provider-based)
-    if (this.config.email) {
-      try {
-        // Share Microsoft credentials from calendar if not set
-        if (this.config.email.provider === 'microsoft' && !this.config.email.microsoft?.clientId) {
-          if (this.config.calendar?.microsoft) {
-            this.config.email.microsoft = { ...this.config.calendar.microsoft };
+    // 4a-email. Initialize email (optional, multi-account)
+    if (this.config.email?.accounts?.length) {
+      const providers = new Map<string, import('@alfred/skills').EmailProvider>();
+      for (const account of this.config.email.accounts) {
+        try {
+          // Share Microsoft credentials from calendar if not set
+          if (account.provider === 'microsoft' && !account.microsoft?.clientId) {
+            if (this.config.calendar?.microsoft) {
+              account.microsoft = { ...this.config.calendar.microsoft };
+            }
           }
+          const provider = await createEmailProvider(account);
+          providers.set(account.name, provider);
+          this.logger.info({ account: account.name, provider: account.provider ?? 'imap-smtp' }, 'Email account initialized');
+        } catch (err) {
+          this.logger.warn({ err, account: account.name }, 'Email account initialization failed, skipping');
         }
-        const emailProvider = await createEmailProvider(this.config.email);
-        skillRegistry.register(new EmailSkill(emailProvider));
-        this.logger.info({ provider: this.config.email.provider ?? 'imap-smtp' }, 'Email initialized');
-      } catch (err) {
-        this.logger.warn({ err }, 'Email initialization failed, continuing without email');
-        skillRegistry.register(new EmailSkill());
       }
+      skillRegistry.register(providers.size > 0 ? new EmailSkill(providers) : new EmailSkill());
     } else {
       skillRegistry.register(new EmailSkill());
     }

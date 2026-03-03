@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.55-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.57-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -87,7 +87,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | Category | Skills | Description |
 |----------|--------|-------------|
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
-| **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API), cross-platform messaging, autonomous sub-agents |
+| **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), cross-platform messaging, autonomous sub-agents |
 | **Scheduling** | `reminder`, `scheduled_task`, `background_task` | Timed reminders, cron jobs, long-running tasks |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
@@ -153,21 +153,30 @@ You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
 
 #### Home Assistant
 
-Smart home control via the Home Assistant REST API:
+Smart home control via the Home Assistant REST API — 19 actions:
 
 - List all entities or filter by domain (lights, sensors, switches)
 - Turn on, turn off, toggle devices
 - Call any service with custom parameters
 - View entity state history and logbook
 - List available services and system config
+- **Areas** — List rooms/zones and their entities (via Jinja2 templates)
+- **Presence** — Who is home? Person entity status at a glance
+- **Scenes & Automations** — Activate scenes, trigger/enable/disable automations, run scripts
+- **Notifications** — Send notifications to mobile apps or other targets
+- **Calendar Events** — Query HA calendar entities with time range
+- **Templates** — Execute arbitrary Jinja2 queries for maximum flexibility
+- **Error Log** — View the Home Assistant error log
 
 Uses **Long-Lived Access Tokens** for authentication (Settings → Security → Long-Lived Access Tokens).
 
 ```
 You: "Show me all lights"
 You: "Turn off light.wohnzimmer"
-You: "Set the thermostat to 22 degrees"
-You: "Show me the temperature history for the last 24 hours"
+You: "Who is home?"
+You: "What's going on in the living room?"
+You: "Activate movie night scene"
+You: "Show me calendar events for tomorrow"
 ```
 
 ### Cross-Platform Identity
@@ -393,20 +402,24 @@ search:
   provider: brave
 
 email:
-  # provider: imap-smtp (default) or microsoft
-  imap:
-    host: imap.gmail.com
-    port: 993
-    secure: true
-  smtp:
-    host: smtp.gmail.com
-    port: 587
-  # For Microsoft 365:
-  # provider: microsoft
-  # microsoft:
-  #   clientId: ...
-  #   tenantId: ...
-  #   # clientSecret + refreshToken via ENV
+  accounts:
+    - name: default
+      # provider: imap-smtp (default) or microsoft
+      imap:
+        host: imap.gmail.com
+        port: 993
+        secure: true
+      smtp:
+        host: smtp.gmail.com
+        port: 587
+    # Additional accounts (optional):
+    # - name: work
+    #   provider: microsoft
+    #   microsoft:
+    #     clientId: ...
+    #     tenantId: ...
+    #     # clientSecret + refreshToken via ENV
+  # Legacy flat format (single account) is also supported
 
 api:
   enabled: true

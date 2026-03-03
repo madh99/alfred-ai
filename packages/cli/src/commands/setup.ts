@@ -323,7 +323,7 @@ interface ExistingConfig {
   signal?: { apiUrl?: string; phoneNumber?: string; enabled?: boolean };
   security?: { ownerUserId?: string };
   search?: { provider?: string; apiKey?: string; baseUrl?: string };
-  email?: { provider?: string; imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
+  email?: { accounts?: Array<{ name?: string; provider?: string; imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } }>; provider?: string; imap?: { host?: string; port?: number }; smtp?: { host?: string; port?: number }; auth?: { user?: string; pass?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
   codeSandbox?: { enabled?: boolean; allowedLanguages?: string[] };
   codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string }; gitlab?: { token?: string } } };
   calendar?: { provider?: string; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
@@ -778,37 +778,72 @@ export async function setupCommand(): Promise<void> {
       platformCredentials[platform.configKey] = creds;
     }
 
-    // ── 7. Email configuration ──────────────────────────────────
-    const existingEmailUser = existing.config.email?.auth?.user ?? existing.env['ALFRED_EMAIL_USER'] ?? '';
-    const existingEmailProvider = existing.config.email?.provider ?? existing.env['ALFRED_EMAIL_PROVIDER'] ?? '';
-    const hasEmail = !!existingEmailUser || existingEmailProvider === 'microsoft';
+    // ── 7. Email configuration (multi-account) ──────────────────
+    // Detect existing accounts from both flat and accounts-array format
+    const existingAccounts = existing.config.email?.accounts ?? [];
+    const existingFirstAccount = existingAccounts[0];
+    const existingEmailUser = existingFirstAccount?.auth?.user ?? existing.config.email?.auth?.user ?? existing.env['ALFRED_EMAIL_USER'] ?? '';
+    const existingEmailProvider = existingFirstAccount?.provider ?? existing.config.email?.provider ?? existing.env['ALFRED_EMAIL_PROVIDER'] ?? '';
+    const hasEmail = existingAccounts.length > 0 || !!existingEmailUser || existingEmailProvider === 'microsoft';
     const emailDefault = hasEmail ? 'Y/n' : 'y/N';
     console.log(`\n${bold('Email access (read & send emails)?')}`);
-    console.log(`${dim('Works with Gmail, Outlook, Microsoft 365, or any IMAP/SMTP provider.')}`);
+    console.log(`${dim('Works with Gmail, Outlook, Microsoft 365, or any IMAP/SMTP provider. Supports multiple accounts.')}`);
     const emailAnswer = (
       await rl.question(`${YELLOW}> ${RESET}${dim(`[${emailDefault}] `)}`)
     ).trim().toLowerCase();
     const enableEmail = emailAnswer === '' ? hasEmail : (emailAnswer === 'y' || emailAnswer === 'yes');
 
-    let emailProvider: 'imap-smtp' | 'microsoft' = 'imap-smtp';
-    let emailUser = '';
-    let emailPass = '';
-    let emailImapHost = '';
-    let emailImapPort = 993;
-    let emailSmtpHost = '';
-    let emailSmtpPort = 587;
-    let emailMsClientId = '';
-    let emailMsClientSecret = '';
-    let emailMsTenantId = '';
-    let emailMsRefreshToken = '';
+    interface EmailAccountSetup {
+      name: string;
+      provider: 'imap-smtp' | 'microsoft';
+      user: string;
+      pass: string;
+      imapHost: string;
+      imapPort: number;
+      smtpHost: string;
+      smtpPort: number;
+      msClientId: string;
+      msClientSecret: string;
+      msTenantId: string;
+      msRefreshToken: string;
+    }
 
-    if (enableEmail) {
-      // Provider selection
+    const emailAccounts: EmailAccountSetup[] = [];
+
+    const emailImapPresets: Record<string, { imap: string; smtp: string }> = {
+      'gmail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
+      'googlemail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
+      'outlook.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+      'hotmail.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+      'live.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
+      'yahoo.com': { imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com' },
+      'icloud.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
+      'me.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
+      'gmx.de': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
+      'gmx.net': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
+      'web.de': { imap: 'imap.web.de', smtp: 'smtp.web.de' },
+      'posteo.de': { imap: 'posteo.de', smtp: 'posteo.de' },
+      'mailbox.org': { imap: 'imap.mailbox.org', smtp: 'smtp.mailbox.org' },
+      'protonmail.com': { imap: '127.0.0.1', smtp: '127.0.0.1' },
+      'proton.me': { imap: '127.0.0.1', smtp: '127.0.0.1' },
+    };
+
+    const configureEmailAccount = async (accountName: string, existingAccount?: typeof existingFirstAccount): Promise<EmailAccountSetup> => {
+      const acct: EmailAccountSetup = {
+        name: accountName,
+        provider: 'imap-smtp',
+        user: '', pass: '',
+        imapHost: '', imapPort: 993,
+        smtpHost: '', smtpPort: 587,
+        msClientId: '', msClientSecret: '', msTenantId: '', msRefreshToken: '',
+      };
+
+      const existAcctProvider = existingAccount?.provider ?? '';
       const emailProviderLabels = [
         'IMAP/SMTP (classic)',
         'Microsoft 365 (Graph API, OAuth)',
       ];
-      const existingProviderIdx = existingEmailProvider === 'microsoft' ? 1 : 0;
+      const existingProviderIdx = existAcctProvider === 'microsoft' ? 1 : 0;
       console.log('');
       for (let i = 0; i < emailProviderLabels.length; i++) {
         const current = i === existingProviderIdx ? ` ${dim('(current)')}` : '';
@@ -816,92 +851,102 @@ export async function setupCommand(): Promise<void> {
       }
       const epChoice = (await rl.question(`${YELLOW}> ${RESET}${dim(`[${existingProviderIdx + 1}] `)}`)).trim();
       const epIdx = epChoice === '' ? existingProviderIdx : parseInt(epChoice, 10) - 1;
-      emailProvider = epIdx === 1 ? 'microsoft' : 'imap-smtp';
+      acct.provider = epIdx === 1 ? 'microsoft' : 'imap-smtp';
 
-      if (emailProvider === 'microsoft') {
-        // Check if calendar already has Microsoft credentials
+      if (acct.provider === 'microsoft') {
         const calMs = existing.config.calendar?.microsoft;
-        const existingMsClientId = existing.config.email?.microsoft?.clientId ?? existing.env['ALFRED_MICROSOFT_EMAIL_CLIENT_ID'] ?? '';
-        const existingMsTenantId = existing.config.email?.microsoft?.tenantId ?? existing.env['ALFRED_MICROSOFT_EMAIL_TENANT_ID'] ?? '';
-        const existingMsRefreshToken = existing.config.email?.microsoft?.refreshToken ?? existing.env['ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN'] ?? '';
+        const existMsClientId = existingAccount?.microsoft?.clientId ?? existing.env['ALFRED_MICROSOFT_EMAIL_CLIENT_ID'] ?? '';
+        const existMsTenantId = existingAccount?.microsoft?.tenantId ?? existing.env['ALFRED_MICROSOFT_EMAIL_TENANT_ID'] ?? '';
+        const existMsRefreshToken = existingAccount?.microsoft?.refreshToken ?? existing.env['ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN'] ?? '';
 
-        if (calMs && !existingMsClientId) {
+        if (calMs && !existMsClientId) {
           console.log(`  ${green('>')} Microsoft Calendar already configured — credentials will be shared.`);
           console.log(`  ${dim('The same Azure App Registration will be used for Mail + Calendar.')}`);
           console.log(`  ${dim('Ensure the app has Mail.ReadWrite and Mail.Send scopes.')}`);
-          // Leave empty — alfred.ts will copy from calendar config at runtime
         } else {
           console.log(`  ${dim('Azure Portal → App Registrations → your app → Mail.ReadWrite + Mail.Send scopes')}`);
-          emailMsClientId = await askWithDefault(rl, '  Client ID', existingMsClientId);
-          if (!emailMsClientId) emailMsClientId = await askRequired(rl, '  Client ID');
+          acct.msClientId = await askWithDefault(rl, '  Client ID', existMsClientId);
+          if (!acct.msClientId) acct.msClientId = await askRequired(rl, '  Client ID');
 
-          const existingMsSecret = existing.env['ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET'] ?? '';
-          emailMsClientSecret = await askWithDefault(rl, '  Client Secret', existingMsSecret);
-          if (!emailMsClientSecret) emailMsClientSecret = await askRequired(rl, '  Client Secret');
+          const existMsSecret = existing.env['ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET'] ?? '';
+          acct.msClientSecret = await askWithDefault(rl, '  Client Secret', existMsSecret);
+          if (!acct.msClientSecret) acct.msClientSecret = await askRequired(rl, '  Client Secret');
 
-          emailMsTenantId = await askWithDefault(rl, '  Tenant ID', existingMsTenantId);
-          if (!emailMsTenantId) emailMsTenantId = await askRequired(rl, '  Tenant ID');
+          acct.msTenantId = await askWithDefault(rl, '  Tenant ID', existMsTenantId);
+          if (!acct.msTenantId) acct.msTenantId = await askRequired(rl, '  Tenant ID');
 
-          emailMsRefreshToken = await askWithDefault(rl, '  Refresh Token', existingMsRefreshToken);
-          if (!emailMsRefreshToken) emailMsRefreshToken = await askRequired(rl, '  Refresh Token');
+          acct.msRefreshToken = await askWithDefault(rl, '  Refresh Token', existMsRefreshToken);
+          if (!acct.msRefreshToken) acct.msRefreshToken = await askRequired(rl, '  Refresh Token');
         }
 
-        console.log(`  ${green('>')} Email: Microsoft 365 (Graph API)`);
+        console.log(`  ${green('>')} Email [${accountName}]: Microsoft 365 (Graph API)`);
       } else {
+        const existUser = existingAccount?.auth?.user ?? '';
         console.log('');
-        emailUser = await askWithDefault(rl, '  Email address', existingEmailUser || '');
-        if (!emailUser) {
-          emailUser = await askRequired(rl, '  Email address');
+        acct.user = await askWithDefault(rl, '  Email address', existUser || '');
+        if (!acct.user) {
+          acct.user = await askRequired(rl, '  Email address');
         }
 
-        const existingPass = existing.env['ALFRED_EMAIL_PASS'] ?? '';
-        if (existingPass) {
-          emailPass = await askWithDefault(rl, '  Password / App password', existingPass);
+        const existPass = existingAccount?.auth?.pass ?? existing.env['ALFRED_EMAIL_PASS'] ?? '';
+        if (existPass) {
+          acct.pass = await askWithDefault(rl, '  Password / App password', existPass);
         } else {
           console.log(`  ${dim('For Gmail: use an App Password (not your regular password)')}`);
           console.log(`  ${dim('  → Google Account → Security → 2-Step → App passwords')}`);
-          emailPass = await askRequired(rl, '  Password / App password');
+          acct.pass = await askRequired(rl, '  Password / App password');
         }
 
-        // Auto-detect IMAP/SMTP settings based on email domain
-        const domain = emailUser.split('@')[1]?.toLowerCase() ?? '';
-        const presets: Record<string, { imap: string; smtp: string }> = {
-          'gmail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
-          'googlemail.com': { imap: 'imap.gmail.com', smtp: 'smtp.gmail.com' },
-          'outlook.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
-          'hotmail.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
-          'live.com': { imap: 'outlook.office365.com', smtp: 'smtp.office365.com' },
-          'yahoo.com': { imap: 'imap.mail.yahoo.com', smtp: 'smtp.mail.yahoo.com' },
-          'icloud.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
-          'me.com': { imap: 'imap.mail.me.com', smtp: 'smtp.mail.me.com' },
-          'gmx.de': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
-          'gmx.net': { imap: 'imap.gmx.net', smtp: 'mail.gmx.net' },
-          'web.de': { imap: 'imap.web.de', smtp: 'smtp.web.de' },
-          'posteo.de': { imap: 'posteo.de', smtp: 'posteo.de' },
-          'mailbox.org': { imap: 'imap.mailbox.org', smtp: 'smtp.mailbox.org' },
-          'protonmail.com': { imap: '127.0.0.1', smtp: '127.0.0.1' },
-          'proton.me': { imap: '127.0.0.1', smtp: '127.0.0.1' },
-        };
-
-        const preset = presets[domain];
-        const defaultImap = existing.config.email?.imap?.host ?? preset?.imap ?? `imap.${domain}`;
-        const defaultSmtp = existing.config.email?.smtp?.host ?? preset?.smtp ?? `smtp.${domain}`;
-        const defaultImapPort = existing.config.email?.imap?.port ?? 993;
-        const defaultSmtpPort = existing.config.email?.smtp?.port ?? 587;
+        const domain = acct.user.split('@')[1]?.toLowerCase() ?? '';
+        const preset = emailImapPresets[domain];
+        const defaultImap = existingAccount?.imap?.host ?? preset?.imap ?? `imap.${domain}`;
+        const defaultSmtp = existingAccount?.smtp?.host ?? preset?.smtp ?? `smtp.${domain}`;
+        const defaultImapPort = existingAccount?.imap?.port ?? 993;
+        const defaultSmtpPort = existingAccount?.smtp?.port ?? 587;
 
         if (preset) {
           console.log(`  ${green('>')} Detected ${domain} — using preset server settings`);
         }
 
-        emailImapHost = await askWithDefault(rl, '  IMAP server', defaultImap);
+        acct.imapHost = await askWithDefault(rl, '  IMAP server', defaultImap);
         const imapPortStr = await askWithDefault(rl, '  IMAP port', String(defaultImapPort));
-        emailImapPort = parseInt(imapPortStr, 10) || 993;
+        acct.imapPort = parseInt(imapPortStr, 10) || 993;
 
-        emailSmtpHost = await askWithDefault(rl, '  SMTP server', defaultSmtp);
+        acct.smtpHost = await askWithDefault(rl, '  SMTP server', defaultSmtp);
         const smtpPortStr = await askWithDefault(rl, '  SMTP port', String(defaultSmtpPort));
-        emailSmtpPort = parseInt(smtpPortStr, 10) || 587;
+        acct.smtpPort = parseInt(smtpPortStr, 10) || 587;
 
-        console.log(`  ${green('>')} Email: ${dim(emailUser)} via ${dim(emailImapHost)}`);
+        console.log(`  ${green('>')} Email [${accountName}]: ${dim(acct.user)} via ${dim(acct.imapHost)}`);
+      }
+
+      return acct;
+    };
+
+    if (enableEmail) {
+      // Configure first account (name: default)
+      const firstExisting = existingFirstAccount ?? (existing.config.email?.auth ? {
+        provider: existing.config.email.provider,
+        auth: existing.config.email.auth,
+        imap: existing.config.email.imap,
+        smtp: existing.config.email.smtp,
+        microsoft: existing.config.email.microsoft,
+      } : undefined);
+      emailAccounts.push(await configureEmailAccount('default', firstExisting as typeof existingFirstAccount));
+
+      // Add more accounts?
+      let addMore = true;
+      while (addMore) {
+        const moreAnswer = (
+          await rl.question(`\n  ${bold('Add another email account?')} ${dim('[y/N]')} `)
+        ).trim().toLowerCase();
+        if (moreAnswer === 'y' || moreAnswer === 'yes') {
+          const nameAnswer = (await rl.question(`  ${bold('Account name:')} `)).trim();
+          const name = nameAnswer || `account${emailAccounts.length + 1}`;
+          const existAcct = existingAccounts.find(a => a.name === name);
+          emailAccounts.push(await configureEmailAccount(name, existAcct));
+        } else {
+          addMore = false;
+        }
       }
     } else {
       console.log(`  ${dim('Email disabled — you can configure it later.')}`);
@@ -1393,20 +1438,24 @@ export async function setupCommand(): Promise<void> {
 
     envLines.push('', '# === Email ===', '');
 
-    if (enableEmail) {
-      if (emailProvider === 'microsoft') {
+    if (enableEmail && emailAccounts.length > 0) {
+      const firstAcct = emailAccounts[0];
+      if (firstAcct.provider === 'microsoft') {
         envLines.push(`ALFRED_EMAIL_PROVIDER=microsoft`);
-        if (emailMsClientId) {
-          envLines.push(`ALFRED_MICROSOFT_EMAIL_CLIENT_ID=${emailMsClientId}`);
-          envLines.push(`ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET=${emailMsClientSecret}`);
-          envLines.push(`ALFRED_MICROSOFT_EMAIL_TENANT_ID=${emailMsTenantId}`);
-          envLines.push(`ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN=${emailMsRefreshToken}`);
+        if (firstAcct.msClientId) {
+          envLines.push(`ALFRED_MICROSOFT_EMAIL_CLIENT_ID=${firstAcct.msClientId}`);
+          envLines.push(`ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET=${firstAcct.msClientSecret}`);
+          envLines.push(`ALFRED_MICROSOFT_EMAIL_TENANT_ID=${firstAcct.msTenantId}`);
+          envLines.push(`ALFRED_MICROSOFT_EMAIL_REFRESH_TOKEN=${firstAcct.msRefreshToken}`);
         } else {
           envLines.push('# Microsoft email credentials shared from calendar config');
         }
       } else {
-        envLines.push(`ALFRED_EMAIL_USER=${emailUser}`);
-        envLines.push(`ALFRED_EMAIL_PASS=${emailPass}`);
+        envLines.push(`ALFRED_EMAIL_USER=${firstAcct.user}`);
+        envLines.push(`ALFRED_EMAIL_PASS=${firstAcct.pass}`);
+      }
+      if (emailAccounts.length > 1) {
+        envLines.push('# Additional email accounts configured in config/default.yml');
       }
     } else {
       envLines.push('# ALFRED_EMAIL_USER=');
@@ -1504,7 +1553,7 @@ export async function setupCommand(): Promise<void> {
       signal: { apiUrl: string; phoneNumber: string; enabled: boolean };
       llm: Record<string, unknown>;
       search?: { provider: string; apiKey?: string; baseUrl?: string };
-      email?: { provider?: string; imap?: { host: string; port: number; secure: boolean }; smtp?: { host: string; port: number; secure: boolean }; auth?: { user: string; pass: string }; microsoft?: { clientId: string; clientSecret: string; tenantId: string; refreshToken: string } };
+      email?: { accounts: Array<{ name: string; provider?: string; imap?: { host: string; port: number; secure: boolean }; smtp?: { host: string; port: number; secure: boolean }; auth?: { user: string; pass: string }; microsoft?: { clientId: string; clientSecret: string; tenantId: string; refreshToken: string } }> };
       speech?: { provider: string; apiKey: string; baseUrl?: string };
       codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
       codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string }; gitlab?: { token: string } } };
@@ -1566,24 +1615,28 @@ export async function setupCommand(): Promise<void> {
           ...(searchBaseUrl ? { baseUrl: searchBaseUrl } : {}),
         },
       } : {}),
-      ...(enableEmail ? {
-        email: emailProvider === 'microsoft'
-          ? {
-              provider: 'microsoft' as const,
-              ...(emailMsClientId ? {
-                microsoft: {
-                  clientId: emailMsClientId,
-                  clientSecret: emailMsClientSecret,
-                  tenantId: emailMsTenantId,
-                  refreshToken: emailMsRefreshToken,
-                },
-              } : {}),
-            }
-          : {
-              imap: { host: emailImapHost, port: emailImapPort, secure: emailImapPort === 993 },
-              smtp: { host: emailSmtpHost, port: emailSmtpPort, secure: emailSmtpPort === 465 },
-              auth: { user: emailUser, pass: emailPass },
-            },
+      ...(enableEmail && emailAccounts.length > 0 ? {
+        email: {
+          accounts: emailAccounts.map(acct => acct.provider === 'microsoft'
+            ? {
+                name: acct.name,
+                provider: 'microsoft' as const,
+                ...(acct.msClientId ? {
+                  microsoft: {
+                    clientId: acct.msClientId,
+                    clientSecret: acct.msClientSecret,
+                    tenantId: acct.msTenantId,
+                    refreshToken: acct.msRefreshToken,
+                  },
+                } : {}),
+              }
+            : {
+                name: acct.name,
+                imap: { host: acct.imapHost, port: acct.imapPort, secure: acct.imapPort === 993 },
+                smtp: { host: acct.smtpHost, port: acct.smtpPort, secure: acct.smtpPort === 465 },
+                auth: { user: acct.user, pass: acct.pass },
+              }),
+        },
       } : {}),
       ...(speechProvider ? {
         speech: {
@@ -1803,12 +1856,14 @@ ${ownerAdminRule}
     } else {
       console.log(`  ${bold('Web search:')}     ${dim('disabled')}`);
     }
-    if (enableEmail) {
-      if (emailProvider === 'microsoft') {
-        console.log(`  ${bold('Email:')}          Microsoft 365 (Graph API)${emailMsClientId ? '' : ' — shared from Calendar'}`);
-      } else {
-        console.log(`  ${bold('Email:')}          ${emailUser} (${emailImapHost})`);
-      }
+    if (enableEmail && emailAccounts.length > 0) {
+      const accountSummaries = emailAccounts.map(acct => {
+        if (acct.provider === 'microsoft') {
+          return `${acct.name} (Microsoft 365)${acct.msClientId ? '' : ' — shared from Calendar'}`;
+        }
+        return `${acct.name} (${acct.imapHost})`;
+      });
+      console.log(`  ${bold('Email:')}          ${accountSummaries.join(', ')}`);
     } else {
       console.log(`  ${bold('Email:')}          ${dim('disabled')}`);
     }

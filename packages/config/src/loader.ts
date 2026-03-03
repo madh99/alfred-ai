@@ -151,6 +151,12 @@ export class ConfigLoader {
       validated.llm = { default: llm };
     }
 
+    // Normalize flat email config → multi-account format
+    const email = validated.email as Record<string, unknown> | undefined;
+    if (email && !('accounts' in email)) {
+      validated.email = { accounts: [{ name: 'default', ...email }] };
+    }
+
     return validated as unknown as AlfredConfig;
   }
 }

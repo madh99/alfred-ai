@@ -1,9 +1,9 @@
-import type { EmailConfig } from '@alfred/types';
+import type { EmailAccountConfig } from '@alfred/types';
 import { EmailProvider } from './email-provider.js';
 import type { EmailMessage, EmailDetail, SendEmailInput } from './email-provider.js';
 
 export class StandardEmailProvider extends EmailProvider {
-  constructor(private readonly config: EmailConfig) {
+  constructor(private readonly config: EmailAccountConfig) {
     super();
   }
 
