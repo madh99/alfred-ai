@@ -48,8 +48,9 @@ export class ResponseFormatter {
     // Links [text](url) → <a href="url">text</a>
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-    // Escape remaining HTML-sensitive characters in non-tag content
-    // (Already handled within code blocks; the rest is minimal)
+    // Escape stray < in non-tag content (e.g. "<3s" or "x<y").
+    // Keep only known Telegram HTML tags: b, i, s, u, a, pre, code, tg-spoiler, tg-emoji, blockquote
+    html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))/gi, '&lt;');
 
     return html;
   }

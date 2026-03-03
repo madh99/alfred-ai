@@ -525,15 +525,22 @@ export class Alfred {
 
         // Replace status message with final response, or send new if no status was shown.
         // For the API adapter, always use sendMessage so the client receives a 'response' event.
-        if (statusMessageId && platform !== 'api') {
-          try {
-            await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
-          } catch (err) {
-            this.logger.debug({ err, chatId: message.chatId }, 'Final response edit failed, sending as new message');
+        try {
+          if (statusMessageId && platform !== 'api') {
+            try {
+              await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
+            } catch (err) {
+              this.logger.debug({ err, chatId: message.chatId }, 'Final response edit failed, sending as new message');
+              await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+            }
+          } else {
             await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
           }
-        } else {
-          await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+        } catch (fmtErr) {
+          // HTML/Markdown parsing failed (e.g. stray < in text) — retry as plain text
+          this.logger.warn({ err: fmtErr, chatId: message.chatId }, 'Formatted send failed, retrying as plain text');
+          const plain = this.formatter.format(result.text, 'signal'); // strips all formatting
+          await adapter.sendMessage(message.chatId, plain.text);
         }
 
         // Send file attachments (e.g. from code_sandbox) after the text reply
