@@ -25,7 +25,7 @@ import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
-const TOKEN_BUDGET_RATIO = 0.80; // Use at most 80% of input window for context
+const TOKEN_BUDGET_RATIO = 0.75; // Use at most 75% of input window for context
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
 const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion

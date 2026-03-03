@@ -42,7 +42,7 @@ export interface SystemPromptContext {
  * This is intentionally conservative (overestimates) to avoid exceeding limits.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 2.8);
+  return Math.ceil(text.length / 2.5);
 }
 
 export function estimateMessageTokens(msg: LLMMessage): number {
