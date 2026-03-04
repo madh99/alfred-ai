@@ -18,10 +18,15 @@ export interface EmbeddingResult {
 
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
-  // Anthropic
+  // Anthropic — Claude 4.x / 4.5
   'claude-opus-4-20250514':       { maxInputTokens: 200_000, maxOutputTokens: 32_000 },
+  'claude-opus-4-5-20251101':     { maxInputTokens: 200_000, maxOutputTokens: 32_000 },
   'claude-sonnet-4-20250514':     { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
+  'claude-sonnet-4-5-20250929':   { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
   'claude-haiku-3-5-20241022':    { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
+  'claude-haiku-4-5-20251001':    { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
+  // Generic Claude prefix fallback (any future claude-* model gets 200k)
+  'claude-':                      { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
   // OpenAI
   'gpt-4o':                       { maxInputTokens: 128_000, maxOutputTokens: 16_384 },
   'gpt-4o-mini':                  { maxInputTokens: 128_000, maxOutputTokens: 16_384 },
@@ -58,7 +63,7 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'ministral-8b-latest':          { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
 };
 
-const DEFAULT_CONTEXT_WINDOW: ContextWindow = { maxInputTokens: 8_192, maxOutputTokens: 4_096 };
+const DEFAULT_CONTEXT_WINDOW: ContextWindow = { maxInputTokens: 128_000, maxOutputTokens: 8_192 };
 
 export function lookupContextWindow(model: string): ContextWindow | undefined {
   // Exact match
