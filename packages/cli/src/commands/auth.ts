@@ -190,7 +190,9 @@ function updateEnvFile(creds: Credentials, refreshToken: string): void {
     }
   }
 
-  writeFileSync(envPath, lines.join('\n'));
+  // Ensure trailing newline so appended keys don't glue to the last line
+  const content = lines.join('\n').replace(/\n*$/, '\n');
+  writeFileSync(envPath, content);
 }
 
 function waitForCallback(creds: Credentials): Promise<string> {
