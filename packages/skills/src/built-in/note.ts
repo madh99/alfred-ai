@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { NoteRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 type NoteAction = 'save' | 'list' | 'search' | 'delete';
 
 export class NoteSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'note',
+    category: 'productivity',
     description:
       'Save, list, search, or delete persistent notes (stored in SQLite). ' +
       'Use when the user wants to write down or retrieve text notes, lists, or ideas.',
@@ -45,20 +47,6 @@ export class NoteSkill extends Skill {
     super();
   }
 
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
-  }
-
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -93,7 +81,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "content" for save action' };
     }
 
-    const entry = this.noteRepo.save(this.effectiveUserId(context), title, content);
+    const entry = this.noteRepo.save(effectiveUserId(context), title, content);
 
     return {
       success: true,
@@ -105,7 +93,7 @@ export class NoteSkill extends Skill {
   private listNotes(context: SkillContext): SkillResult {
     const seen = new Set<string>();
     const notes: ReturnType<typeof this.noteRepo.list> = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const n of this.noteRepo.list(uid)) {
         if (!seen.has(n.id)) {
           seen.add(n.id);
@@ -134,7 +122,7 @@ export class NoteSkill extends Skill {
 
     const seen = new Set<string>();
     const matches: ReturnType<typeof this.noteRepo.search> = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const n of this.noteRepo.search(uid, query)) {
         if (!seen.has(n.id)) {
           seen.add(n.id);
@@ -166,7 +154,7 @@ export class NoteSkill extends Skill {
     if (!note) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
-    const userIds = this.allUserIds(context);
+    const userIds = allUserIds(context);
     if (!userIds.includes(note.userId)) {
       return { success: false, error: `Note "${noteId}" not found` };
     }

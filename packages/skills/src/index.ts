@@ -1,4 +1,5 @@
 export { Skill } from './skill.js';
+export { effectiveUserId, allUserIds } from './user-utils.js';
 export { SkillRegistry } from './skill-registry.js';
 export { SkillSandbox } from './skill-sandbox.js';
 export { ActivityTracker } from './activity-tracker.js';

@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { DocumentRepository } from '@alfred/storage';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 /** Minimal embedding service interface to avoid circular dep on @alfred/core. */
 export interface EmbeddingSearchService {
@@ -21,6 +22,7 @@ type DocumentAction = 'ingest' | 'search' | 'summarize' | 'list' | 'delete';
 export class DocumentSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'document',
+    category: 'files',
     description:
       'Ingest, search, summarize, list, or delete documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. ' +
       'Documents are chunked and embedded for semantic search.',
@@ -52,20 +54,6 @@ export class DocumentSkill extends Skill {
     private readonly embeddingService?: EmbeddingSearchService,
   ) {
     super();
-  }
-
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
   }
 
   async execute(
@@ -126,7 +114,7 @@ export class DocumentSkill extends Skill {
     }
 
     try {
-      const result = await this.processor.ingest(this.effectiveUserId(context), filePath, filename, mimeType);
+      const result = await this.processor.ingest(effectiveUserId(context), filePath, filename, mimeType);
       return {
         success: true,
         data: result,
@@ -156,7 +144,7 @@ export class DocumentSkill extends Skill {
     }
 
     // Search across all linked user IDs for cross-platform document access
-    const allIds = this.allUserIds(context);
+    const allIds = allUserIds(context);
     const seen = new Set<string>();
     const allResults: { key: string; value: string; category: string; score: number }[] = [];
     for (const uid of allIds) {
@@ -228,7 +216,7 @@ export class DocumentSkill extends Skill {
   ): SkillResult {
     const limit = (input.limit as number) || 50;
     // List documents across all linked user IDs
-    const allIds = this.allUserIds(context);
+    const allIds = allUserIds(context);
     const seenDocs = new Set<string>();
     const docs: ReturnType<typeof this.docRepo.listByUser> = [];
     for (const uid of allIds) {

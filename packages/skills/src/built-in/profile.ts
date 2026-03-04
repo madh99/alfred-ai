@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { UserRepository } from '@alfred/storage';
+import { effectiveUserId } from '../user-utils.js';
 
 type ProfileAction = 'get' | 'set_timezone' | 'set_language' | 'set_bio' | 'set_preference';
 
 export class ProfileSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'profile',
+    category: 'core',
     description:
       'Manage user profile settings including timezone, language, and bio. ' +
       'Use this to personalize Alfred for each user.',
@@ -43,29 +45,20 @@ export class ProfileSkill extends Skill {
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as ProfileAction;
-    // Resolve internal user ID — use master user for cross-platform linked accounts
-    const currentUser = this.userRepo.findOrCreate(
-      context.platform as any,
-      context.userId,
-    );
-    const masterInternalId = 'getMasterUserId' in this.userRepo
-      ? (this.userRepo as any).getMasterUserId(currentUser.id) as string
-      : currentUser.id;
-    const user = ('findById' in this.userRepo
-      ? (this.userRepo as any).findById(masterInternalId)
-      : currentUser) ?? currentUser;
+    // Use effective user ID (masterUserId when linked, otherwise userId)
+    const userId = effectiveUserId(context);
 
     switch (action) {
       case 'get':
-        return this.getProfile(user.id);
+        return this.getProfile(userId);
       case 'set_timezone':
-        return this.setField(user.id, 'timezone', input.value as string);
+        return this.setField(userId, 'timezone', input.value as string);
       case 'set_language':
-        return this.setField(user.id, 'language', input.value as string);
+        return this.setField(userId, 'language', input.value as string);
       case 'set_bio':
-        return this.setField(user.id, 'bio', input.value as string);
+        return this.setField(userId, 'bio', input.value as string);
       case 'set_preference':
-        return this.setPreference(user.id, input.preference_key as string, input.preference_value as string);
+        return this.setPreference(userId, input.preference_key as string, input.preference_value as string);
       default:
         return { success: false, error: `Unknown action: "${String(action)}"` };
     }

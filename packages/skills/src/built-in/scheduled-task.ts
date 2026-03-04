@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { ScheduledActionRepository } from '@alfred/storage';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 type ScheduledTaskAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
 
 export class ScheduledTaskSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'scheduled_task',
+    category: 'automation',
     description:
       'Create, list, enable, disable, or delete scheduled actions that run automatically on a recurring basis. ' +
       'Supports cron expressions (e.g. "0 9 * * *" for daily at 9 AM), intervals (in minutes), and one-time schedules. ' +
@@ -63,27 +65,11 @@ export class ScheduledTaskSkill extends Skill {
     super();
   }
 
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  /** All user IDs to query — includes masterUserId, current platform userId,
-   *  and all linked platform user IDs for backward compat with old data. */
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
-  }
-
   /** Get scheduled actions for all linked user IDs. */
   private getAllActions(context: SkillContext): import('@alfred/types').ScheduledAction[] {
     const seen = new Set<string>();
     const results: import('@alfred/types').ScheduledAction[] = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const a of this.actionRepo.getByUser(uid)) {
         if (!seen.has(a.id)) {
           seen.add(a.id);
@@ -171,7 +157,7 @@ export class ScheduledTaskSkill extends Skill {
     }
 
     const entry = this.actionRepo.create({
-      userId: this.effectiveUserId(context),
+      userId: effectiveUserId(context),
       platform: context.platform,
       chatId: context.chatId,
       name,
@@ -243,7 +229,7 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before toggling
     const action = this.actionRepo.findById(actionId);
-    const userIds = this.allUserIds(context);
+    const userIds = allUserIds(context);
     if (!action || !userIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
@@ -270,7 +256,7 @@ export class ScheduledTaskSkill extends Skill {
 
     // Verify ownership before deleting
     const action = this.actionRepo.findById(actionId);
-    const deleteUserIds = this.allUserIds(context);
+    const deleteUserIds = allUserIds(context);
     if (!action || !deleteUserIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }

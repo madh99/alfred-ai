@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { BackgroundTaskRepository } from '@alfred/storage';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 type BackgroundTaskAction = 'schedule' | 'list' | 'cancel';
 
 export class BackgroundTaskSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'background_task',
+    category: 'automation',
     description:
       'Schedule, list, or cancel background tasks that run independently. ' +
       'Use "schedule" to queue a skill to execute in the background (user will be notified when done). ' +
@@ -46,27 +48,11 @@ export class BackgroundTaskSkill extends Skill {
     super();
   }
 
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  /** All user IDs to query — includes masterUserId, current platform userId,
-   *  and all linked platform user IDs for backward compat with old data. */
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
-  }
-
   /** Get tasks for all linked user IDs. */
   private getAllTasks(context: SkillContext): import('@alfred/types').BackgroundTask[] {
     const seen = new Set<string>();
     const results: import('@alfred/types').BackgroundTask[] = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const t of this.taskRepo.getByUser(uid)) {
         if (!seen.has(t.id)) {
           seen.add(t.id);
@@ -114,7 +100,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     const task = this.taskRepo.create(
-      this.effectiveUserId(context),
+      effectiveUserId(context),
       context.platform,
       context.chatId,
       description,

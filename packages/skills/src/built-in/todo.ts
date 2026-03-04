@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { TodoRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 type TodoAction = 'add' | 'list' | 'complete' | 'uncomplete' | 'delete' | 'lists' | 'clear';
 
 export class TodoSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'todo',
+    category: 'productivity',
     description:
       'Manage todo lists with multiple named lists. ' +
       'Actions: add, list, complete, uncomplete, delete, lists, clear.',
@@ -58,20 +60,6 @@ export class TodoSkill extends Skill {
     super();
   }
 
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
-  }
-
   async execute(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -113,7 +101,7 @@ export class TodoSkill extends Skill {
     const priority = input.priority as string | undefined;
     const dueDate = input.dueDate as string | undefined;
 
-    const entry = this.todoRepo.add(this.effectiveUserId(context), title, {
+    const entry = this.todoRepo.add(effectiveUserId(context), title, {
       list,
       description,
       priority,
@@ -133,7 +121,7 @@ export class TodoSkill extends Skill {
 
     const seen = new Set<string>();
     const todos: ReturnType<typeof this.todoRepo.list> = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const t of this.todoRepo.list(uid, list, includeCompleted)) {
         if (!seen.has(t.id)) {
           seen.add(t.id);
@@ -174,7 +162,7 @@ export class TodoSkill extends Skill {
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
-    const userIds = this.allUserIds(context);
+    const userIds = allUserIds(context);
     if (!userIds.includes(todo.userId)) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
@@ -198,7 +186,7 @@ export class TodoSkill extends Skill {
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
-    const userIds = this.allUserIds(context);
+    const userIds = allUserIds(context);
     if (!userIds.includes(todo.userId)) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
@@ -222,7 +210,7 @@ export class TodoSkill extends Skill {
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
-    const userIds = this.allUserIds(context);
+    const userIds = allUserIds(context);
     if (!userIds.includes(todo.userId)) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
@@ -238,7 +226,7 @@ export class TodoSkill extends Skill {
   private showLists(context: SkillContext): SkillResult {
     const merged = new Map<string, { open: number; completed: number; total: number }>();
 
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const entry of this.todoRepo.getLists(uid)) {
         const existing = merged.get(entry.list);
         if (existing) {
@@ -275,7 +263,7 @@ export class TodoSkill extends Skill {
   private clearCompleted(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const list = input.list as string | undefined;
 
-    const cleared = this.todoRepo.clearCompleted(this.effectiveUserId(context), list);
+    const cleared = this.todoRepo.clearCompleted(effectiveUserId(context), list);
 
     return {
       success: true,

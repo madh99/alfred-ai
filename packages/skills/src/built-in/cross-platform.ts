@@ -16,9 +16,16 @@ export interface CrossPlatformAdapter {
 /** Resolve chat_id for a linked user on another platform. */
 export type FindConversationFn = (platform: string, userId: string) => { chatId: string } | undefined;
 
+/**
+ * CrossPlatformSkill intentionally does NOT use the shared effectiveUserId/allUserIds
+ * utilities from user-utils.ts because it is the skill that *mutates* the user-linking
+ * graph (setMasterUser, link/unlink). It needs direct UserRepository access for
+ * findOrCreate, getMasterUserId, setMasterUser, and getLinkedUsers.
+ */
 export class CrossPlatformSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'cross_platform',
+    category: 'identity',
     description:
       'Manage cross-platform identity linking and messaging. ' +
       'Actions: link_start (generate a linking code on current platform), ' +

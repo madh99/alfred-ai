@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { MemoryRepository } from '@alfred/storage';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 interface EmbeddingServiceLike {
   embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<void>;
@@ -12,6 +13,7 @@ type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic
 export class MemorySkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'memory',
+    category: 'core',
     description:
       'Store and retrieve persistent memories. Use this to remember user preferences, facts, ' +
       'and important information across conversations.',
@@ -51,23 +53,6 @@ export class MemorySkill extends Skill {
     private readonly embeddingService?: EmbeddingServiceLike,
   ) {
     super();
-  }
-
-  /** Resolve effective user ID: cross-platform master if linked, else current user. */
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  /** All user IDs to query — includes masterUserId, current platform userId,
-   *  and all linked platform user IDs for backward compat with old data. */
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
   }
 
   async execute(
@@ -120,7 +105,7 @@ export class MemorySkill extends Skill {
     }
 
     const entry = this.memoryRepo.save(
-      this.effectiveUserId(context),
+      effectiveUserId(context),
       key,
       value,
       category ?? 'general',
@@ -129,7 +114,7 @@ export class MemorySkill extends Skill {
     // Auto-embed for semantic search
     if (this.embeddingService) {
       this.embeddingService.embedAndStore(
-        this.effectiveUserId(context),
+        effectiveUserId(context),
         `${key}: ${value}`,
         'memory',
         key,
@@ -158,7 +143,7 @@ export class MemorySkill extends Skill {
 
     // Search across all linked user IDs for cross-platform access
     let entry: ReturnType<typeof this.memoryRepo.recall>;
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       entry = this.memoryRepo.recall(uid, key);
       if (entry) break;
     }
@@ -194,7 +179,7 @@ export class MemorySkill extends Skill {
     // Search across all linked user IDs for cross-platform access
     const seen = new Set<string>();
     const entries: ReturnType<typeof this.memoryRepo.search> = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const e of this.memoryRepo.search(uid, query)) {
         if (!seen.has(e.id)) {
           seen.add(e.id);
@@ -222,7 +207,7 @@ export class MemorySkill extends Skill {
     // List across all linked user IDs for cross-platform access
     const seen = new Set<string>();
     const entries: ReturnType<typeof this.memoryRepo.listAll> = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       const items = category && typeof category === 'string'
         ? this.memoryRepo.listByCategory(uid, category)
         : this.memoryRepo.listAll(uid);
@@ -261,7 +246,7 @@ export class MemorySkill extends Skill {
 
     // Try deleting across all linked user IDs (old data may be under platform ID)
     let deleted = false;
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       if (this.memoryRepo.delete(uid, key)) {
         deleted = true;
         break;
@@ -294,7 +279,7 @@ export class MemorySkill extends Skill {
     // Search across all linked user IDs for cross-platform access
     const seen = new Set<string>();
     const results: { key: string; value: string; category: string; score: number }[] = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const r of await this.embeddingService.semanticSearch(uid, query, 10)) {
         if (!seen.has(r.key)) {
           seen.add(r.key);

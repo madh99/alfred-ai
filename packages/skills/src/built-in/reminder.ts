@@ -1,12 +1,14 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { ReminderRepository } from '@alfred/storage';
+import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 type ReminderAction = 'set' | 'list' | 'cancel';
 
 export class ReminderSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'reminder',
+    category: 'productivity',
     description:
       'Set timed reminders that notify the user later. Use when the user says "remind me", "erinnere mich", or asks to be notified about something at a specific time. ' +
       'Prefer triggerAt (absolute time like "14:30" or "2026-02-28 09:00") over delayMinutes — it is more precise and avoids calculation errors.',
@@ -47,27 +49,11 @@ export class ReminderSkill extends Skill {
     super();
   }
 
-  private effectiveUserId(context: SkillContext): string {
-    return context.masterUserId ?? context.userId;
-  }
-
-  /** Get all user IDs to query — includes masterUserId, current platform userId,
-   *  and all linked platform user IDs for backward compat with old data. */
-  private allUserIds(context: SkillContext): string[] {
-    const set = new Set<string>();
-    set.add(this.effectiveUserId(context));
-    set.add(context.userId);
-    if (context.linkedPlatformUserIds) {
-      for (const id of context.linkedPlatformUserIds) set.add(id);
-    }
-    return [...set];
-  }
-
   /** Get reminders for all linked user IDs (handles old data stored under platform ID). */
   private getAllReminders(context: SkillContext): import('@alfred/storage').ReminderEntry[] {
     const seen = new Set<string>();
     const results: import('@alfred/storage').ReminderEntry[] = [];
-    for (const uid of this.allUserIds(context)) {
+    for (const uid of allUserIds(context)) {
       for (const r of this.reminderRepo.getByUser(uid)) {
         if (!seen.has(r.id)) {
           seen.add(r.id);
@@ -143,7 +129,7 @@ export class ReminderSkill extends Skill {
     }
 
     const entry = this.reminderRepo.create(
-      this.effectiveUserId(context),
+      effectiveUserId(context),
       context.platform,
       context.chatId,
       message,
