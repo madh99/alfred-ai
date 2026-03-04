@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
+import { getModels, mergeModels } from '../model-discovery.js';
 
 // ── ANSI helpers ──────────────────────────────────────────────────────
 const RESET = '\x1b[0m';
@@ -518,20 +519,23 @@ export async function setupCommand(): Promise<void> {
     const existingModel = existing.config.llm?.model ?? provider.defaultModel;
     console.log('');
     let model: string;
-    if (provider.models && provider.models.length > 0) {
+
+    const dynamicModels = await getModels(provider.name, apiKey, baseUrl);
+    const allModels = mergeModels(dynamicModels, provider.models ?? []);
+
+    if (allModels.length > 0) {
       console.log(`${bold('Available models:')}`);
-      for (let i = 0; i < provider.models.length; i++) {
-        const m = provider.models[i];
+      for (let i = 0; i < allModels.length; i++) {
+        const m = allModels[i];
+        const label = m.desc ?? m.name ?? '';
         const marker = m.id === existingModel ? ` ${green('(current)')}` : '';
-        console.log(`  ${cyan(`${i + 1})`)} ${m.id} ${dim(`— ${m.desc}`)}${marker}`);
+        console.log(`  ${cyan(`${i + 1})`)} ${m.id}${label ? ` ${dim(`— ${label}`)}` : ''}${marker}`);
       }
-      console.log(`  ${cyan(`${provider.models.length + 1})`)} ${dim('Other (enter manually)')}`);
+      console.log(`  ${cyan(`${allModels.length + 1})`)} ${dim('Other (enter manually)')}`);
       const choice = await askWithDefault(rl, 'Choose model', '1');
       const idx = parseInt(choice, 10) - 1;
-      if (idx >= 0 && idx < provider.models.length) {
-        model = provider.models[idx].id;
-      } else if (idx === provider.models.length) {
-        model = await askWithDefault(rl, 'Model ID', existingModel);
+      if (idx >= 0 && idx < allModels.length) {
+        model = allModels[idx].id;
       } else {
         model = await askWithDefault(rl, 'Model ID', existingModel);
       }
@@ -568,17 +572,6 @@ export async function setupCommand(): Promise<void> {
         if (hasExisting) {
           console.log(`  ${dim(`Current: ${existingTier!.provider}/${existingTier!.model}`)}`);
         }
-        console.log(`  ${dim('Press Enter to skip.')}`);
-
-        const tierModelAnswer = (
-          await rl.question(`  ${YELLOW}Model: ${RESET}${hasExisting ? dim(`[${existingTier!.model}] `) : ''}`)
-        ).trim();
-
-        const tierModel = tierModelAnswer || (hasExisting ? existingTier!.model! : '');
-        if (!tierModel) {
-          console.log(`    ${dim('Skipped.')}`);
-          continue;
-        }
 
         // Provider: default to same as main provider, or existing tier provider
         const tierProviderDefault = existingTier?.provider ?? provider.name;
@@ -587,7 +580,14 @@ export async function setupCommand(): Promise<void> {
         const tierProviderAnswer = (
           await rl.question(`  ${YELLOW}Provider: ${RESET}${dim(`[${tierProviderDefault}] `)}`)
         ).trim();
-        const tierProvider = tierProviderAnswer || tierProviderDefault;
+        const tierProviderInput = tierProviderAnswer || tierProviderDefault;
+
+        // Allow skipping by entering empty provider when no existing tier
+        if (!tierProviderInput && !hasExisting) {
+          console.log(`    ${dim('Skipped.')}`);
+          continue;
+        }
+        const tierProvider = tierProviderInput;
 
         // API key: only ask if different provider than default
         let tierApiKey: string | undefined;
@@ -610,6 +610,53 @@ export async function setupCommand(): Promise<void> {
             if (defaultUrl) {
               tierBaseUrl = await askWithDefault(rl, `  ${tierProvider} URL`, defaultUrl);
             }
+          }
+        }
+
+        // Resolve the effective key & url for model discovery
+        const effectiveTierKey = tierApiKey ?? (tierProvider === provider.name ? apiKey : undefined);
+        const effectiveTierUrl = tierBaseUrl ?? (tierProvider === provider.name ? baseUrl : undefined);
+        const tierProviderDef = PROVIDERS.find(p => p.name === tierProvider);
+
+        // Fetch dynamic models for this tier's provider
+        const tierDynamic = await getModels(tierProvider, effectiveTierKey, effectiveTierUrl);
+        const tierAllModels = mergeModels(tierDynamic, tierProviderDef?.models ?? []);
+
+        let tierModel: string;
+        if (tierAllModels.length > 0) {
+          console.log(`  ${bold('Available models:')}`);
+          for (let i = 0; i < tierAllModels.length; i++) {
+            const m = tierAllModels[i];
+            const label = m.desc ?? m.name ?? '';
+            const marker = m.id === existingTier?.model ? ` ${green('(current)')}` : '';
+            console.log(`    ${cyan(`${i + 1})`)} ${m.id}${label ? ` ${dim(`— ${label}`)}` : ''}${marker}`);
+          }
+          console.log(`    ${cyan(`${tierAllModels.length + 1})`)} ${dim('Other (enter manually)')}`);
+          console.log(`    ${cyan('0)')} ${dim('Skip this tier')}`);
+          const tierChoice = (
+            await rl.question(`  ${YELLOW}> ${RESET}${hasExisting ? dim(`[${existingTier!.model}] `) : ''}`)
+          ).trim();
+          if (tierChoice === '0') {
+            console.log(`    ${dim('Skipped.')}`);
+            continue;
+          }
+          const tierIdx = parseInt(tierChoice, 10) - 1;
+          if (tierIdx >= 0 && tierIdx < tierAllModels.length) {
+            tierModel = tierAllModels[tierIdx].id;
+          } else if (!tierChoice && hasExisting) {
+            tierModel = existingTier!.model!;
+          } else {
+            tierModel = await askWithDefault(rl, '  Model ID', hasExisting ? existingTier!.model! : tier.defaultModel);
+          }
+        } else {
+          console.log(`  ${dim('Press Enter to skip.')}`);
+          const tierModelAnswer = (
+            await rl.question(`  ${YELLOW}Model: ${RESET}${hasExisting ? dim(`[${existingTier!.model}] `) : ''}`)
+          ).trim();
+          tierModel = tierModelAnswer || (hasExisting ? existingTier!.model! : '');
+          if (!tierModel) {
+            console.log(`    ${dim('Skipped.')}`);
+            continue;
           }
         }
 

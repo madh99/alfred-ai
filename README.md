@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.66-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.67-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -336,13 +336,13 @@ The interactive wizard guides you through:
 
 1. **Platform selection** — Enable Telegram, Discord, WhatsApp, Matrix, and/or Signal
 2. **API tokens** — Enter bot tokens for each platform
-3. **LLM provider** — Choose your AI provider and model
+3. **LLM provider** — Choose your AI provider and model (available models are fetched dynamically from the provider API)
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
 7. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker credentials
 
-This generates `config.yaml` and `.env` in your working directory.
+This generates `config.yaml` and `.env` in your working directory. Model lists are cached locally (`~/.alfred/model-cache.json`, TTL 24h) for fast subsequent runs.
 
 ### Start
 

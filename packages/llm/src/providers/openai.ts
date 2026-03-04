@@ -21,6 +21,7 @@ export class OpenAIProvider extends LLMProvider {
     this.client = new OpenAI({
       apiKey: this.config.apiKey,
       baseURL: this.config.baseUrl,
+      maxRetries: 5,
     });
     const cw = lookupContextWindow(this.config.model);
     if (cw) this.contextWindow = cw;

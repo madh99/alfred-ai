@@ -18,7 +18,10 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   async initialize(): Promise<void> {
-    this.client = new Anthropic({ apiKey: this.config.apiKey });
+    this.client = new Anthropic({
+      apiKey: this.config.apiKey,
+      maxRetries: 5,        // Default 2 reicht bei Overload (529) oft nicht
+    });
     const cw = lookupContextWindow(this.config.model);
     if (cw) this.contextWindow = cw;
   }

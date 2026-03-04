@@ -1,6 +1,7 @@
 import { ConfigLoader } from '@alfred/config';
 import { createLogger } from '@alfred/logger';
 import { Alfred } from '@alfred/core';
+import { refreshCacheInBackground } from '../model-discovery.js';
 
 export async function startCommand(): Promise<void> {
   const configLoader = new ConfigLoader();
@@ -54,6 +55,20 @@ export async function startCommand(): Promise<void> {
     await alfred.initialize();
     await alfred.start();
     logger.info('Alfred is ready');
+
+    // Refresh model cache in background for all configured providers
+    const llm = config.llm as Record<string, any>;
+    if (llm?.default?.provider) {
+      refreshCacheInBackground(llm.default.provider, llm.default.apiKey, llm.default.baseUrl);
+    } else if (llm?.provider) {
+      refreshCacheInBackground(llm.provider, undefined, llm.baseUrl);
+    }
+    for (const tier of ['strong', 'fast'] as const) {
+      const tc = llm?.[tier];
+      if (tc?.provider) {
+        refreshCacheInBackground(tc.provider, tc.apiKey, tc.baseUrl);
+      }
+    }
   } catch (error) {
     logger.fatal({ error }, 'Failed to start Alfred');
     process.exit(1);
