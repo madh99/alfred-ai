@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.63-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.64-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -606,7 +606,8 @@ User Message (Telegram, Discord, Matrix, Signal, WhatsApp, HTTP API, CLI)
     ├── Memory Retrieval → Semantic search on stored memories
     ├── Active Learning → Extract new memories (async)
     │
-    ├── LLM Request → System prompt + context + tools
+    ├── Skill Filtering → Category-based tool selection per message
+    ├── LLM Request → System prompt + context + filtered tools
     │
     ├── Tool Loop (up to 50 iterations)
     │   ├── Security Check → Rule engine evaluation
@@ -669,6 +670,7 @@ import { Skill } from '../skill.js';
 export class MySkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'my_skill',
+    category: 'information',  // core | productivity | information | media | automation | files | infrastructure | identity | mcp
     description: 'What this skill does — the LLM reads this to decide when to use it.',
     riskLevel: 'read',
     version: '1.0.0',
