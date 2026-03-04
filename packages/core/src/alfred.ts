@@ -101,9 +101,8 @@ export class Alfred {
     this.logger.info({ ruleCount: rules.length }, 'Security engine initialized');
 
     // 3. Initialize LLM provider (multi-model router)
-    const llmProvider = createModelRouter(this.config.llm);
+    const llmProvider = createModelRouter(this.config.llm, this.logger.child({ component: 'llm' }));
     await llmProvider.initialize();
-    this.logger.info({ provider: this.config.llm.default.provider, model: this.config.llm.default.model }, 'LLM provider initialized');
 
     // Create embedding service
     const embeddingService = new EmbeddingService(
