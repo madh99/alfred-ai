@@ -152,8 +152,11 @@ function updateEnvFile(creds: Credentials, refreshToken: string): void {
     lines = readFileSync(envPath, 'utf-8').split('\n');
   }
 
-  // Keys to set: same credentials for email, calendar, contacts
+  // Keys to set: provider flags + same credentials for email, calendar, contacts
   const entries: Record<string, string> = {
+    ALFRED_EMAIL_PROVIDER: 'microsoft',
+    ALFRED_CALENDAR_PROVIDER: 'microsoft',
+    ALFRED_CONTACTS_PROVIDER: 'microsoft',
     ALFRED_MICROSOFT_EMAIL_CLIENT_ID: creds.clientId,
     ALFRED_MICROSOFT_EMAIL_CLIENT_SECRET: creds.clientSecret,
     ALFRED_MICROSOFT_EMAIL_TENANT_ID: creds.tenantId,
@@ -170,9 +173,9 @@ function updateEnvFile(creds: Credentials, refreshToken: string): void {
 
   const remaining = new Set(Object.keys(entries));
 
-  // Update existing lines
+  // Update existing lines (including commented-out ones like "# KEY=value")
   for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^([A-Z_]+)=/);
+    const match = lines[i].match(/^#?\s*([A-Z_]+)=/);
     if (match && remaining.has(match[1])) {
       lines[i] = `${match[1]}=${entries[match[1]]}`;
       remaining.delete(match[1]);
