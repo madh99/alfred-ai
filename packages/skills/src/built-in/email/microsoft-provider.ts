@@ -14,6 +14,9 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   }
 
   private async refreshAccessToken(): Promise<void> {
+    if (!this.config.refreshToken) {
+      throw new Error('Microsoft email: refreshToken is missing from config');
+    }
     const tokenUrl = `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
     const body = new URLSearchParams({
       client_id: this.config.clientId,
@@ -30,11 +33,13 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`Microsoft token refresh failed: ${res.status}`);
+      const errorBody = await res.text().catch(() => '');
+      throw new Error(`Microsoft token refresh failed: ${res.status} — ${errorBody.slice(0, 300)}`);
     }
 
-    const data = (await res.json()) as { access_token: string };
+    const data = (await res.json()) as { access_token: string; refresh_token?: string };
     this.accessToken = data.access_token;
+    // Note: Microsoft may rotate refresh tokens but we don't persist them here
   }
 
   private async graphRequest(path: string, options: RequestInit = {}): Promise<any> {
