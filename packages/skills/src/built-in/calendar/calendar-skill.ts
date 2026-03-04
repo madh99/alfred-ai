@@ -203,12 +203,15 @@ export class CalendarSkill extends Skill {
       ...(this.timezone ? { timeZone: this.timezone } : {}),
     };
 
+    const loc = event.location ? ` @ ${event.location}` : '';
+    const idTag = event.id ? ` [id:${event.id}]` : '';
+
     if (event.allDay) {
-      return `- All day: ${event.title}${event.location ? ` @ ${event.location}` : ''}`;
+      return `- All day: ${event.title}${loc}${idTag}`;
     }
 
     const startTime = event.start.toLocaleTimeString('en-GB', opts);
     const endTime = event.end.toLocaleTimeString('en-GB', opts);
-    return `- ${startTime}-${endTime}: ${event.title}${event.location ? ` @ ${event.location}` : ''}`;
+    return `- ${startTime}-${endTime}: ${event.title}${loc}${idTag}`;
   }
 }
