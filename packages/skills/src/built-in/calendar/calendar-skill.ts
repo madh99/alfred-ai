@@ -7,6 +7,7 @@ type CalendarAction = 'list_events' | 'create_event' | 'update_event' | 'delete_
 export class CalendarSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'calendar',
+    category: 'productivity',
     description:
       'Manage calendar events. List upcoming events, create new events, update or delete existing ones, and check availability.',
     riskLevel: 'write',

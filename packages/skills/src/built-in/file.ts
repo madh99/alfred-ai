@@ -82,6 +82,7 @@ const MIME_MAP: Record<string, string> = {
 export class FileSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'file',
+    category: 'files',
     description:
       'Read, write, move, copy, or send files. Use for reading file contents, writing text to files, ' +
       'saving binary data, listing directory contents, moving/copying files, or getting file info. ' +

@@ -40,6 +40,7 @@ function extractDomain(entityId: string): string {
 export class HomeAssistantSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'homeassistant',
+    category: 'infrastructure',
     description:
       'Control Home Assistant smart home devices. ' +
       'Use "states" to list entities, "turn_on"/"turn_off"/"toggle" to control devices, ' +

@@ -6,6 +6,7 @@ type ControllerMode = 'unifi-os' | 'classic';
 export class UniFiSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'unifi',
+    category: 'infrastructure',
     description:
       'Manage UniFi network devices, clients, and WLANs. ' +
       'Use "list_devices" to see APs/switches, "list_clients" for connected clients, ' +

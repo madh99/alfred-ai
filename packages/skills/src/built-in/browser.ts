@@ -37,6 +37,7 @@ export class BrowserSkill extends Skill {
 
   readonly metadata: SkillMetadata = {
     name: 'browser',
+    category: 'media',
     description:
       'Open web pages in a real browser (Puppeteer/Chromium). Renders JavaScript, ' +
       'so it works with SPAs and dynamic sites. Can also interact with pages: ' +

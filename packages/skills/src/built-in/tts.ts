@@ -9,6 +9,7 @@ export interface SpeechSynthesizerInterface {
 export class TTSSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'text_to_speech',
+    category: 'media',
     description: 'Send a voice/audio message to the user. You MUST use this tool whenever the user asks you to respond as a voice message, speak, or reply with audio. Pass the full response text — it will be converted to speech and delivered as a playable voice message.',
     riskLevel: 'read',
     version: '1.0.0',

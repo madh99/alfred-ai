@@ -15,6 +15,7 @@ function truncate(text: string): string {
 export class ShellSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'shell',
+    category: 'automation',
     description:
       'Execute shell commands on the host system. Use this for ANY task involving files, folders, ' +
       'system operations, or running programs: ls, cat, find, file, du, mkdir, cp, mv, grep, etc. ' +

@@ -83,6 +83,7 @@ function uptimeStr(seconds: number | undefined): string {
 export class ProxmoxSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'proxmox',
+    category: 'infrastructure',
     description:
       'Manage Proxmox VE virtual machines, containers, and cluster. ' +
       'Use action "list_vms" to see VMs, "start_vm"/"shutdown_vm" to control them, ' +

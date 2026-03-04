@@ -76,6 +76,7 @@ export class ConfigureSkill extends Skill {
 
   readonly metadata: SkillMetadata = {
     name: 'configure',
+    category: 'core',
     description:
       'Configure Alfred services (Proxmox, UniFi, Home Assistant, Contacts, Docker) by writing environment variables. ' +
       'Use action "list_services" to see available services. ' +

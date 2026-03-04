@@ -96,6 +96,7 @@ function relativeTime(epoch: number | undefined): string {
 export class DockerSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'docker',
+    category: 'infrastructure',
     description:
       'Manage Docker containers, images, volumes, networks. ' +
       'Actions: containers, container, logs, start, stop, restart, images, pull_image, ' +

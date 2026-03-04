@@ -7,6 +7,7 @@ type ContactsAction = 'search' | 'get' | 'list' | 'create' | 'update' | 'delete'
 export class ContactsSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'contacts',
+    category: 'productivity',
     description:
       'Manage contacts. Search, view, create, update, or delete contacts.',
     riskLevel: 'write',

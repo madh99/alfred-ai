@@ -5,6 +5,7 @@ import { Skill } from '../skill.js';
 export class ClipboardSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'clipboard',
+    category: 'media',
     description:
       'Read or write the system clipboard. Use when the user asks to copy something, ' +
       'paste from clipboard, or check what is in their clipboard.',

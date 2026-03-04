@@ -21,6 +21,7 @@ export class MCPSkillAdapter extends Skill {
       : 'write';
     this.metadata = {
       name: `mcp__${serverName}__${toolName}`,
+      category: 'mcp',
       description: `[MCP/${serverName}] ${description || toolName}`,
       riskLevel: resolvedRisk,
       version: '1.0.0',

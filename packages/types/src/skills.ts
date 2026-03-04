@@ -1,5 +1,16 @@
 import type { RiskLevel } from './security.js';
 
+export type SkillCategory =
+  | 'core'           // memory, profile, configure, delegate — always included
+  | 'productivity'   // todo, note, reminder, calendar, contacts, email
+  | 'information'    // web_search, weather, calculator, system_info
+  | 'media'          // tts, screenshot, clipboard, browser
+  | 'automation'     // background_task, scheduled_task, shell, code_sandbox, code_agent
+  | 'files'          // file, document, http
+  | 'infrastructure' // proxmox, unifi, homeassistant, docker
+  | 'identity'       // cross_platform
+  | 'mcp';           // MCP-based skills
+
 export interface SkillMetadata {
   name: string;
   description: string;
@@ -8,6 +19,8 @@ export interface SkillMetadata {
   inputSchema: Record<string, unknown>;
   /** Custom timeout in ms. Skills that make LLM calls (e.g. delegate) need more time. */
   timeoutMs?: number;
+  /** Skill category for context-based filtering. Defaults to 'core' if omitted. */
+  category?: SkillCategory;
 }
 
 export interface SkillContext {

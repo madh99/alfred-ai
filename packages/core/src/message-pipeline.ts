@@ -21,6 +21,8 @@ import type { SpeechTranscriber } from './speech-transcriber.js';
 import type { EmbeddingService } from './embedding-service.js';
 import type { ActiveLearningService } from './active-learning/active-learning-service.js';
 import type { MemoryRetriever } from './active-learning/memory-retriever.js';
+import { buildSkillContext } from './context-factory.js';
+import { selectCategories, filterSkills } from './skill-filter.js';
 
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
@@ -104,28 +106,18 @@ export class MessagePipeline {
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
 
     try {
-      // 1. Find or create user
-      const user = this.users.findOrCreate(
-        message.platform,
-        message.userId,
-        message.userName,
-        message.displayName,
+      // 1. Resolve user, master ID, and linked platform IDs via central factory
+      const { user, masterUserId, linkedPlatformUserIds, context: baseContext } = buildSkillContext(
+        this.users,
+        {
+          platformUserId: message.userId,
+          platform: message.platform,
+          chatId: message.chatId,
+          chatType: message.chatType,
+          userName: message.userName,
+          displayName: message.displayName,
+        },
       );
-
-      // Resolve master user for cross-platform shared context.
-      // masterUserId is the internal DB UUID — used consistently as the key
-      // for memories, embeddings, notes, active learning, and skill context
-      // so that linked accounts share all data.
-      const masterUserId = 'getMasterUserId' in this.users
-        ? (this.users as { getMasterUserId(id: string): string }).getMasterUserId(user.id)
-        : user.id;
-
-      // Resolve all linked platform user IDs once — reused for memory retrieval and skill context.
-      let linkedPlatformUserIds: string[] | undefined;
-      if ('getLinkedUsers' in this.users) {
-        const linked = (this.users as { getLinkedUsers(id: string): { platformUserId: string }[] }).getLinkedUsers(masterUserId);
-        linkedPlatformUserIds = linked.map(u => u.platformUserId);
-      }
 
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
@@ -200,13 +192,21 @@ export class MessagePipeline {
         }
       } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
 
-      // 5c. Resolve timezone: user profile > server timezone
-      const resolvedTimezone = userProfile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      // 5c. Timezone already resolved by buildSkillContext
+      const resolvedTimezone = baseContext.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 
       // 6. Build tools and LLM request with token-aware context trimming
-      const skillMetas = this.skillRegistry
+      //    Filter skills by category keywords in the user message to avoid
+      //    sending all 30+ tool schemas in every request.
+      const allSkillMetas = this.skillRegistry
         ? this.skillRegistry.getAll().map(s => s.metadata)
         : undefined;
+      let skillMetas = allSkillMetas;
+      if (allSkillMetas && message.text) {
+        const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
+        const selectedCategories = selectCategories(message.text, availableCategories);
+        skillMetas = filterSkills(allSkillMetas, selectedCategories);
+      }
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
@@ -321,16 +321,7 @@ export class MessagePipeline {
         // Execute tool calls in parallel
         const toolExecResult = await this.executeToolCallsParallel(
           response.toolCalls,
-          {
-            userId: message.userId,
-            masterUserId,
-            linkedPlatformUserIds,
-            chatId: message.chatId,
-            chatType: message.chatType,
-            platform: message.platform,
-            conversationId: conversation.id,
-            timezone: resolvedTimezone,
-          },
+          { ...baseContext, conversationId: conversation.id, timezone: resolvedTimezone },
           onProgress,
         );
         const toolResultBlocks = toolExecResult.blocks;

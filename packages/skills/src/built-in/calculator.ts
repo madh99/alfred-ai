@@ -9,6 +9,7 @@ const SAFE_EXPRESSION_PATTERN =
 export class CalculatorSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'calculator',
+    category: 'information',
     description: 'Evaluate mathematical expressions. Use for any calculation, unit conversion, or math question the user asks.',
     riskLevel: 'read',
     version: '1.0.0',

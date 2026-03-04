@@ -7,6 +7,7 @@ import { Skill } from '../skill.js';
 export class ScreenshotSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'screenshot',
+    category: 'media',
     description:
       'Take a screenshot of the current screen and save it to a file. ' +
       'Use when the user asks to capture their screen or take a screenshot.',

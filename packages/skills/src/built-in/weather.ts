@@ -48,6 +48,7 @@ const WEATHER_CODES: Record<number, string> = {
 export class WeatherSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'weather',
+    category: 'information',
     description:
       'Get current weather for any location. Uses Open-Meteo (free, no API key). ' +
       'Use when the user asks about weather, temperature, or conditions somewhere.',

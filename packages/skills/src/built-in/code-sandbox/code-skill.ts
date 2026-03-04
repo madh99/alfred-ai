@@ -5,6 +5,7 @@ import { CodeExecutor } from './code-executor.js';
 export class CodeExecutionSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'code_sandbox',
+    category: 'automation',
     description: 'Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating files (HTML, CSV, etc.), or testing code snippets. Code runs in an isolated temp directory with a timeout. IMPORTANT: When generating large files, write compact data-driven code — define data as arrays/objects, then build the output programmatically. Never embed large HTML/text as string literals.',
     riskLevel: 'destructive',
     version: '1.0.0',

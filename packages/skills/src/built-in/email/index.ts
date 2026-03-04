@@ -47,6 +47,7 @@ export class EmailSkill extends Skill {
 
     this.metadata = {
       name: 'email',
+      category: 'productivity',
       description,
       riskLevel: 'write',
       version: '3.0.0',

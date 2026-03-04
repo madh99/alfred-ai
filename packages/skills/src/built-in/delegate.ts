@@ -28,6 +28,7 @@ const INITIAL_TIMEOUT_MS = 120_000; // 2 minutes
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'delegate',
+    category: 'core',
     description:
       'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. ' +
       'The sub-agent can use shell, web search, calculator, memory, email, and all other tools. ' +

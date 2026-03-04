@@ -12,6 +12,7 @@ export interface CodeAgentSkillConfig {
 export class CodeAgentSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'code_agent',
+    category: 'automation',
     description:
       'Run a CLI-based coding agent (e.g. Claude Code, Codex, Gemini CLI, Aider) as a subprocess. ' +
       'Use action "list_agents" to see available agents, "run" to execute one with a prompt, ' +

@@ -6,6 +6,7 @@ const MAX_RESPONSE_SIZE = 100_000; // 100KB text limit
 export class HttpSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'http',
+    category: 'files',
     description:
       'Make HTTP requests to fetch web pages or call REST APIs. ' +
       'Use when you need to read a URL, call an API endpoint, or fetch data from the web. ' +
