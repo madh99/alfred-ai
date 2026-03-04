@@ -28,23 +28,46 @@ function generateCodeChallenge(verifier: string): string {
   return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
-// ── Telematik Descriptor Keys ─────────────────────────────
+// ── Telematik Descriptor Keys (from BMW Telematics Data Catalogue) ───
 const DESCRIPTORS = [
+  // Battery & SoC
   'vehicle.drivetrain.batteryManagement.header',
   'vehicle.drivetrain.batteryManagement.maxEnergy',
+  'vehicle.drivetrain.batteryManagement.batterySizeMax',
+  'vehicle.powertrain.electric.battery.stateOfHealth.displayed',
+  'vehicle.powertrain.electric.battery.stateOfCharge.target',
+  // Range
   'vehicle.drivetrain.electricEngine.remainingElectricRange',
+  // Charging status
   'vehicle.drivetrain.electricEngine.charging.status',
   'vehicle.drivetrain.electricEngine.charging.level',
   'vehicle.drivetrain.electricEngine.charging.timeRemaining',
+  'vehicle.drivetrain.electricEngine.charging.timeToFullyCharged',
   'vehicle.drivetrain.electricEngine.charging.hvStatus',
+  'vehicle.drivetrain.electricEngine.charging.method',
+  'vehicle.drivetrain.electricEngine.charging.phaseNumber',
+  'vehicle.drivetrain.electricEngine.charging.lastChargingReason',
+  'vehicle.drivetrain.electricEngine.charging.lastChargingResult',
+  'vehicle.drivetrain.electricEngine.charging.reasonChargingEnd',
+  // Charging power & limits
   'vehicle.powertrain.electric.battery.charging.power',
   'vehicle.drivetrain.electricEngine.charging.acVoltage',
   'vehicle.drivetrain.electricEngine.charging.acAmpere',
-  'vehicle.powertrain.electric.battery.stateOfCharge.target',
-  'vehicle.powertrain.electric.battery.stateOfHealth.displayed',
+  'vehicle.powertrain.electric.battery.charging.acLimit.selected',
+  // Plug & port
   'vehicle.powertrain.tractionBattery.charging.port.anyPosition.isPlugged',
   'vehicle.powertrain.tractionBattery.charging.port.anyPosition.flap.isOpen',
   'vehicle.body.chargingPort.lockedStatus',
+  'vehicle.body.chargingPort.plugEventId',
+  // Preconditioning
+  'vehicle.powertrain.electric.battery.preconditioning.automaticMode.statusFeedback',
+  'vehicle.powertrain.electric.battery.preconditioning.manualMode.statusFeedback',
+  // Trip & energy
+  'vehicle.vehicle.avgAuxPower',
+  'vehicle.trip.segment.end.drivetrain.batteryManagement.hvSoc',
+  'vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal',
+  // Vehicle identification
+  'vehicle.vehicleIdentification.basicVehicleData',
 ];
 
 // ── Types ─────────────────────────────────────────────────
@@ -235,32 +258,52 @@ export class BMWSkill extends Skill {
     const data = (await res.json()) as Record<string, unknown>;
     const accessToken = data.access_token as string;
 
-    // Fetch VIN + setup container
-    const vin = await this.fetchVin(accessToken);
-    const containerId = await this.ensureContainer(accessToken);
-
-    const tokens: BMWTokens = {
+    // Save tokens first so they're not lost if container setup fails
+    const baseTokens: BMWTokens = {
       accessToken,
       refreshToken: data.refresh_token as string,
       idToken: data.id_token as string,
       expiresAt: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
-      vin,
-      containerId,
+      vin: '',
+      containerId: '',
     };
 
-    await this.saveTokens(tokens);
-    this.tokens = tokens;
+    // Fetch VIN
+    const vin = await this.fetchVin(accessToken);
+    baseTokens.vin = vin;
+    await this.saveTokens(baseTokens);
+
+    // Setup container — save tokens even if this fails
+    let containerId = '';
+    let containerError = '';
+    try {
+      containerId = await this.ensureContainer(accessToken);
+      baseTokens.containerId = containerId;
+      await this.saveTokens(baseTokens);
+    } catch (err) {
+      containerError = err instanceof Error ? err.message : String(err);
+    }
+
+    this.tokens = baseTokens;
+
+    const lines = [
+      '## BMW Autorisierung erfolgreich',
+      '',
+      `**VIN:** ${vin}`,
+    ];
+    if (containerId) {
+      lines.push(`**Container:** ${containerId}`);
+      lines.push('Tokens gespeichert. Du kannst jetzt Fahrzeugdaten abrufen.');
+    } else {
+      lines.push(`**Container-Fehler:** ${containerError}`);
+      lines.push('Tokens + VIN gespeichert, aber Container konnte nicht erstellt werden.');
+      lines.push('Erstelle den Container manuell im BMW CarData Portal oder versuche es erneut.');
+    }
 
     return {
-      success: true,
-      data: { vin, containerId },
-      display: [
-        '## BMW Autorisierung erfolgreich',
-        '',
-        `**VIN:** ${vin}`,
-        `**Container:** ${containerId}`,
-        'Tokens gespeichert. Du kannst jetzt Fahrzeugdaten abrufen.',
-      ].join('\n'),
+      success: containerId !== '',
+      data: { vin, containerId, containerError: containerError || undefined },
+      display: lines.join('\n'),
     };
   }
 
