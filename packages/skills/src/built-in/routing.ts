@@ -168,8 +168,9 @@ export class RoutingSkill extends Skill {
       return { success: false, error: 'Missing required field "arrival_time" for departure_time action' };
     }
 
-    // Compute route with departure now to estimate duration
-    const body = this.buildRequestBody(origin, destination, travelMode, new Date().toISOString());
+    // Compute route without explicit departureTime — Google defaults to "now"
+    // (sending an explicit "now" timestamp is rejected: "Timestamp must be set to a future time.")
+    const body = this.buildRequestBody(origin, destination, travelMode);
     const data = await this.callRoutesApi(body);
     const route = data.routes?.[0];
 
@@ -256,11 +257,22 @@ export class RoutingSkill extends Skill {
       routingPreference: 'TRAFFIC_AWARE',
     };
 
+    // Google rejects departureTime/arrivalTime that are not strictly in the future.
+    // If omitted, Google defaults to "now" which is what we want for current-time queries.
     if (departureTime) {
-      body.departureTime = this.normalizeTimestamp(departureTime);
+      const normalized = this.normalizeTimestamp(departureTime);
+      const dt = new Date(normalized);
+      if (dt.getTime() > Date.now() + 60_000) {
+        // Only send if at least 1 min in the future
+        body.departureTime = normalized;
+      }
     }
     if (arrivalTime) {
-      body.arrivalTime = this.normalizeTimestamp(arrivalTime);
+      const normalized = this.normalizeTimestamp(arrivalTime);
+      const dt = new Date(normalized);
+      if (dt.getTime() > Date.now() + 60_000) {
+        body.arrivalTime = normalized;
+      }
     }
 
     return body;
