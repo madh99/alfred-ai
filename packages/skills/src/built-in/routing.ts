@@ -218,6 +218,30 @@ export class RoutingSkill extends Skill {
     return { address: place };
   }
 
+  /**
+   * Normalize a timestamp to RFC 3339 (required by Google Routes API).
+   * If the input has no timezone info, treat it as local time and append
+   * the system's UTC offset so Google interprets it correctly.
+   */
+  private normalizeTimestamp(ts: string): string {
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return ts; // pass through, let API report the error
+
+    // If input already has Z or +/- offset, it's fine — use ISO
+    if (/[Zz]|[+-]\d{2}:\d{2}$/.test(ts)) {
+      return d.toISOString();
+    }
+
+    // No timezone → treat as local: build RFC 3339 with local offset
+    const off = d.getTimezoneOffset();
+    const sign = off <= 0 ? '+' : '-';
+    const absOff = Math.abs(off);
+    const hh = String(Math.floor(absOff / 60)).padStart(2, '0');
+    const mm = String(absOff % 60).padStart(2, '0');
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${sign}${hh}:${mm}`;
+  }
+
   private buildRequestBody(
     origin: string,
     destination: string,
@@ -233,10 +257,10 @@ export class RoutingSkill extends Skill {
     };
 
     if (departureTime) {
-      body.departureTime = departureTime;
+      body.departureTime = this.normalizeTimestamp(departureTime);
     }
     if (arrivalTime) {
-      body.arrivalTime = arrivalTime;
+      body.arrivalTime = this.normalizeTimestamp(arrivalTime);
     }
 
     return body;
