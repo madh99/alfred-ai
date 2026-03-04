@@ -129,11 +129,14 @@ export class ProactiveScheduler {
           let input: Record<string, unknown>;
           try { input = JSON.parse(action.skillInput); }
           catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
-          const user = this.users.findOrCreate(action.platform as Platform, action.userId);
+          // action.userId may be an internal UUID (from masterUserId) or a platform user ID.
+          // Try internal lookup first to avoid creating phantom users.
+          const existingUser = this.users.findById(action.userId);
+          const user = existingUser ?? this.users.findOrCreate(action.platform as Platform, action.userId);
           const masterUserId = this.users.getMasterUserId(user.id);
           const linked = this.users.getLinkedUsers(masterUserId);
           const context = {
-            userId: action.userId,
+            userId: user.platformUserId,
             masterUserId,
             linkedPlatformUserIds: linked.map(u => u.platformUserId),
             chatId: action.chatId,

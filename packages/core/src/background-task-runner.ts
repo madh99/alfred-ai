@@ -66,11 +66,14 @@ export class BackgroundTaskRunner {
         this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
         return;
       }
-      const user = this.users.findOrCreate(task.platform as Platform, task.userId);
+      // task.userId may be an internal UUID (from masterUserId) or a platform user ID.
+      // Try internal lookup first to avoid creating phantom users.
+      const existingUser = this.users.findById(task.userId);
+      const user = existingUser ?? this.users.findOrCreate(task.platform as Platform, task.userId);
       const masterUserId = this.users.getMasterUserId(user.id);
       const linked = this.users.getLinkedUsers(masterUserId);
       const context = {
-        userId: task.userId,
+        userId: user.platformUserId,
         masterUserId,
         linkedPlatformUserIds: linked.map(u => u.platformUserId),
         chatId: task.chatId,
