@@ -255,6 +255,14 @@ export const DockerConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const BMWCarDataConfigSchema = z.object({
+  clientId: z.string(),
+});
+
+export const RoutingConfigSchema = z.object({
+  apiKey: z.string(),
+});
+
 export const ConversationConfigSchema = z.object({
   maxHistoryMessages: z.number().min(10).max(500).optional(),
 }).optional();
@@ -284,5 +292,7 @@ export const AlfredConfigSchema = z.object({
   homeassistant: HomeAssistantConfigSchema.optional(),
   contacts: ContactsConfigSchema.optional(),
   docker: DockerConfigSchema.optional(),
+  bmw: BMWCarDataConfigSchema.optional(),
+  routing: RoutingConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

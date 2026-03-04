@@ -114,6 +114,10 @@ const ENV_MAP: Record<string, string[]> = {
   // Docker
   ALFRED_DOCKER_SOCKET_PATH: ['docker', 'socketPath'],
   ALFRED_DOCKER_HOST: ['docker', 'host'],
+  // BMW CarData
+  ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
+  // Google Routing
+  ALFRED_ROUTING_API_KEY: ['routing', 'apiKey'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

@@ -243,6 +243,14 @@ export interface DockerConfig {
   verifyTls?: boolean;
 }
 
+export interface BMWCarDataConfig {
+  clientId: string;
+}
+
+export interface RoutingConfig {
+  apiKey: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -268,6 +276,8 @@ export interface AlfredConfig {
   homeassistant?: HomeAssistantConfig;
   contacts?: ContactsConfig;
   docker?: DockerConfig;
+  bmw?: BMWCarDataConfig;
+  routing?: RoutingConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

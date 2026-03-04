@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.67-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.68-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (30+)
+### Built-in Skills (32+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -93,7 +93,8 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData |
+| **Navigation** | `routing` | Google Routes API — Routen mit Live-Traffic, Abfahrtszeit-Empfehlung |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
@@ -222,6 +223,40 @@ You: "Prune unused images and containers"
 
 Connects via Unix socket (default) or TCP. Supports Docker Compose operations.
 
+#### BMW CarData
+
+Vehicle data from your BMW via the BMW CarData Customer API:
+
+- Battery state of charge, electric range, mileage
+- Door lock status, window status
+- GPS location
+- Charging status, power, remaining time
+- Charging session history (last 30 days)
+
+Uses OAuth Device Authorization Flow — one-time setup via `authorize` action. Tokens are stored persistently and refreshed automatically. Response cache (5 min TTL) respects BMW's 50 calls/day rate limit.
+
+```
+You: "Wie ist der Ladestand meines Autos?"
+You: "Wo steht mein Auto gerade?"
+You: "Zeig mir die letzten Ladevorgänge"
+```
+
+#### Routing (Google Routes API)
+
+Route calculation with live traffic data:
+
+- Distance, duration, traffic delay
+- Departure time recommendation for a desired arrival time
+- Supports addresses and lat/lng coordinates
+- Travel modes: DRIVE, BICYCLE, WALK, TRANSIT
+
+```
+You: "Wie weit ist es von Altlengbach nach Wien?"
+You: "Wann muss ich losfahren um um 9 Uhr im Büro zu sein?"
+```
+
+The LLM combines BMW + Routing skills intelligently for questions like *"Schaffe ich es mit dem Auto ins Büro ohne Laden?"*
+
 ### Cross-Platform Identity
 
 Link your identity across platforms so Alfred treats you as one person:
@@ -340,7 +375,7 @@ The interactive wizard guides you through:
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
-7. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker credentials
+7. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker, BMW CarData, Google Routing
 
 This generates `config.yaml` and `.env` in your working directory. Model lists are cached locally (`~/.alfred/model-cache.json`, TTL 24h) for fast subsequent runs.
 
@@ -503,6 +538,12 @@ docker:
   socketPath: /var/run/docker.sock
   # or host: http://192.168.1.10:2375
 
+bmw:
+  # clientId via ALFRED_BMW_CLIENT_ID
+
+routing:
+  # apiKey via ALFRED_ROUTING_API_KEY
+
 mcp: []
 ```
 
@@ -568,6 +609,12 @@ ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN=
 # Docker
 ALFRED_DOCKER_SOCKET_PATH=          # e.g. /var/run/docker.sock
 ALFRED_DOCKER_HOST=                 # e.g. http://192.168.1.10:2375
+
+# BMW CarData
+ALFRED_BMW_CLIENT_ID=               # from bmw-cardata.bmwgroup.com/customer
+
+# Google Routing
+ALFRED_ROUTING_API_KEY=             # Google Routes API key
 
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db

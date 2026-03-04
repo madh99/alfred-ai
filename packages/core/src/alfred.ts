@@ -281,6 +281,20 @@ export class Alfred {
       this.logger.info('Docker skill enabled');
     }
 
+    // 4k. BMW CarData (optional)
+    if (this.config.bmw) {
+      const { BMWSkill } = await import('@alfred/skills');
+      skillRegistry.register(new BMWSkill(this.config.bmw));
+      this.logger.info('BMW CarData skill enabled');
+    }
+
+    // 4l. Routing (optional)
+    if (this.config.routing) {
+      const { RoutingSkill } = await import('@alfred/skills');
+      skillRegistry.register(new RoutingSkill(this.config.routing));
+      this.logger.info('Routing skill enabled');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)
@@ -485,7 +499,7 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
-  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker'): Promise<{ success: boolean; error?: string }> {
+  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker' | 'bmw' | 'routing'): Promise<{ success: boolean; error?: string }> {
     try {
       // 1. Reload .env → process.env updated
       reloadDotenv();
@@ -529,6 +543,18 @@ export class Alfred {
         this.skillRegistry.register(new DockerSkill(freshConfig.docker));
         this.config.docker = freshConfig.docker;
         this.logger.info('Docker skill hot-reloaded');
+      }
+      if (service === 'bmw' && freshConfig.bmw) {
+        const { BMWSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new BMWSkill(freshConfig.bmw));
+        this.config.bmw = freshConfig.bmw;
+        this.logger.info('BMW CarData skill hot-reloaded');
+      }
+      if (service === 'routing' && freshConfig.routing) {
+        const { RoutingSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new RoutingSkill(freshConfig.routing));
+        this.config.routing = freshConfig.routing;
+        this.logger.info('Routing skill hot-reloaded');
       }
 
       return { success: true };

@@ -333,6 +333,8 @@ interface ExistingConfig {
   homeassistant?: { baseUrl?: string; accessToken?: string; verifyTls?: boolean };
   contacts?: { provider?: string; carddav?: { serverUrl?: string; username?: string; password?: string }; google?: { clientId?: string; clientSecret?: string; refreshToken?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
   docker?: { socketPath?: string; host?: string };
+  bmw?: { clientId?: string };
+  routing?: { apiKey?: string };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1446,6 +1448,53 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Docker disabled.')}`);
     }
 
+    // BMW CarData
+    const existingBmw = existing.config.bmw;
+    const existingBmwClientId = existing.env['ALFRED_BMW_CLIENT_ID'] ?? existingBmw?.clientId ?? '';
+    const enableBmwDefault = existingBmwClientId ? 'Y/n' : 'y/N';
+    const enableBmwInput = (
+      await rl.question(`\n  ${BOLD}Enable BMW CarData (vehicle status, charging, location)?${RESET} ${dim(`[${enableBmwDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingBmwClientId ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableBmw = enableBmwInput === 'y' || enableBmwInput === 'yes';
+
+    let bmwClientId = '';
+
+    if (enableBmw) {
+      console.log(`  ${dim('Setup:')}`);
+      console.log(`  ${dim('  1. Öffne https://bmw-cardata.bmwgroup.com/customer')}`);
+      console.log(`  ${dim('  2. Login mit deinem MyBMW-Account')}`);
+      console.log(`  ${dim('  3. Client-ID generieren')}`);
+      console.log(`  ${dim('  4. Scope "CarData API" aktivieren (ca. 60s warten)')}`);
+      bmwClientId = await askWithDefault(rl, '  BMW CarData Client ID', existingBmwClientId);
+      console.log(`  ${green('>')} BMW CarData: ${bold('enabled')}`);
+    } else {
+      console.log(`  ${dim('BMW CarData disabled.')}`);
+    }
+
+    // Google Routing
+    const existingRouting = existing.config.routing;
+    const existingRoutingApiKey = existing.env['ALFRED_ROUTING_API_KEY'] ?? existingRouting?.apiKey ?? '';
+    const enableRoutingDefault = existingRoutingApiKey ? 'Y/n' : 'y/N';
+    const enableRoutingInput = (
+      await rl.question(`\n  ${BOLD}Enable route planning with live traffic (Google Routes)?${RESET} ${dim(`[${enableRoutingDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingRoutingApiKey ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableRouting = enableRoutingInput === 'y' || enableRoutingInput === 'yes';
+
+    let routingApiKey = '';
+
+    if (enableRouting) {
+      console.log(`  ${dim('Setup:')}`);
+      console.log(`  ${dim('  1. Öffne https://console.cloud.google.com')}`);
+      console.log(`  ${dim('  2. Routes API aktivieren')}`);
+      console.log(`  ${dim('  3. API Key erstellen')}`);
+      routingApiKey = await askWithDefault(rl, '  Google Maps API Key', existingRoutingApiKey);
+      console.log(`  ${green('>')} Routing: ${bold('enabled')}`);
+    } else {
+      console.log(`  ${dim('Routing disabled.')}`);
+    }
+
     // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
@@ -1683,6 +1732,22 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_DOCKER_HOST=');
     }
 
+    envLines.push('', '# === BMW CarData ===', '');
+
+    if (enableBmw) {
+      envLines.push(`ALFRED_BMW_CLIENT_ID=${bmwClientId}`);
+    } else {
+      envLines.push('# ALFRED_BMW_CLIENT_ID=');
+    }
+
+    envLines.push('', '# === Routing ===', '');
+
+    if (enableRouting) {
+      envLines.push(`ALFRED_ROUTING_API_KEY=${routingApiKey}`);
+    } else {
+      envLines.push('# ALFRED_ROUTING_API_KEY=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -1721,6 +1786,8 @@ export async function setupCommand(): Promise<void> {
       homeassistant?: { baseUrl: string; accessToken: string; verifyTls: boolean };
       contacts?: { provider: string; carddav?: Record<string, string>; google?: Record<string, string>; microsoft?: Record<string, string> };
       docker?: { socketPath?: string; host?: string };
+      bmw?: { clientId: string };
+      routing?: { apiKey: string };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -1878,6 +1945,12 @@ export async function setupCommand(): Promise<void> {
           ...(dockerSocketPath ? { socketPath: dockerSocketPath } : {}),
           ...(dockerHost ? { host: dockerHost } : {}),
         },
+      } : {}),
+      ...(enableBmw ? {
+        bmw: { clientId: bmwClientId },
+      } : {}),
+      ...(enableRouting ? {
+        routing: { apiKey: routingApiKey },
       } : {}),
       storage: {
         path: './data/alfred.db',
@@ -2070,6 +2143,8 @@ ${ownerAdminRule}
     if (enableHa) console.log(`  ${bold('Home Assist.:')} ${green(haBaseUrl)}`);
     if (enableContacts) console.log(`  ${bold('Contacts:')}      ${green(contactsProvider)}`);
     if (enableDocker) console.log(`  ${bold('Docker:')}        ${green(dockerHost || dockerSocketPath)}`);
+    if (enableBmw) console.log(`  ${bold('BMW CarData:')}   ${green('enabled')}`);
+    if (enableRouting) console.log(`  ${bold('Routing:')}       ${green('enabled')}`);
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
       console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);

@@ -41,6 +41,8 @@ export { ContactsSkill, ContactsProvider, createContactsProvider } from './built
 export type { Contact, CreateContactInput } from './built-in/contacts/index.js';
 export { TodoSkill } from './built-in/todo.js';
 export { DockerSkill } from './built-in/docker.js';
+export { BMWSkill } from './built-in/bmw.js';
+export { RoutingSkill } from './built-in/routing.js';
 export { ConfigureSkill } from './built-in/configure.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
 export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';
