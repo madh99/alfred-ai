@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.68-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.69-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -225,19 +225,19 @@ Connects via Unix socket (default) or TCP. Supports Docker Compose operations.
 
 #### BMW CarData
 
-Vehicle data from your BMW via the BMW CarData Customer API:
+Vehicle data from your BMW via the BMW CarData Customer API (`api-cardata.bmwgroup.com`):
 
-- Battery state of charge, electric range, mileage
-- Door lock status, window status
-- GPS location
-- Charging status, power, remaining time
-- Charging session history (last 30 days)
+- Battery state of charge, electric range, battery health (SoH)
+- Charging status, power (kW), remaining time, target SoC
+- Plug/flap/lock status, AC voltage & amperage
+- Charging session history (custom date range)
+- Vehicle model & basic data
 
-Uses OAuth Device Authorization Flow — one-time setup via `authorize` action. Tokens are stored persistently and refreshed automatically. Response cache (5 min TTL) respects BMW's 50 calls/day rate limit.
+Uses OAuth Device Authorization Flow with PKCE (S256). Container-based telematic data access. Tokens are stored persistently and refreshed automatically. Response cache (5 min TTL) respects BMW's 50 calls/day rate limit.
 
 ```
 You: "Wie ist der Ladestand meines Autos?"
-You: "Wo steht mein Auto gerade?"
+You: "Zeig mir den Ladestatus"
 You: "Zeig mir die letzten Ladevorgänge"
 ```
 

@@ -1453,7 +1453,7 @@ export async function setupCommand(): Promise<void> {
     const existingBmwClientId = existing.env['ALFRED_BMW_CLIENT_ID'] ?? existingBmw?.clientId ?? '';
     const enableBmwDefault = existingBmwClientId ? 'Y/n' : 'y/N';
     const enableBmwInput = (
-      await rl.question(`\n  ${BOLD}Enable BMW CarData (vehicle status, charging, location)?${RESET} ${dim(`[${enableBmwDefault}]`)}: ${YELLOW}`)
+      await rl.question(`\n  ${BOLD}Enable BMW CarData (vehicle status, charging)?${RESET} ${dim(`[${enableBmwDefault}]`)}: ${YELLOW}`)
     ).trim().toLowerCase() || (existingBmwClientId ? 'y' : 'n');
     process.stdout.write(RESET);
     const enableBmw = enableBmwInput === 'y' || enableBmwInput === 'yes';
