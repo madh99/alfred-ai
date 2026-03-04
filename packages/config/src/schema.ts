@@ -59,7 +59,7 @@ export const MultiModelConfigSchema = z.object({
   fast: LLMProviderConfigSchema.optional(),
   embeddings: LLMProviderConfigSchema.optional(),
   local: LLMProviderConfigSchema.optional(),
-});
+}).passthrough();
 
 export const LLMConfigSchema = z.union([LLMProviderConfigSchema, MultiModelConfigSchema]);
 
@@ -255,6 +255,10 @@ export const DockerConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const ConversationConfigSchema = z.object({
+  maxHistoryMessages: z.number().min(10).max(500).optional(),
+}).optional();
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -280,4 +284,5 @@ export const AlfredConfigSchema = z.object({
   homeassistant: HomeAssistantConfigSchema.optional(),
   contacts: ContactsConfigSchema.optional(),
   docker: DockerConfigSchema.optional(),
+  conversation: ConversationConfigSchema,
 });

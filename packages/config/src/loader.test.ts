@@ -11,6 +11,12 @@ describe('ConfigLoader', () => {
     savedEnv['ALFRED_TELEGRAM_TOKEN'] = process.env['ALFRED_TELEGRAM_TOKEN'];
     savedEnv['ALFRED_LLM_PROVIDER'] = process.env['ALFRED_LLM_PROVIDER'];
     savedEnv['ALFRED_CONFIG_PATH'] = process.env['ALFRED_CONFIG_PATH'];
+    savedEnv['ALFRED_ANTHROPIC_API_KEY'] = process.env['ALFRED_ANTHROPIC_API_KEY'];
+    savedEnv['ALFRED_LLM_STRONG_PROVIDER'] = process.env['ALFRED_LLM_STRONG_PROVIDER'];
+    savedEnv['ALFRED_LLM_STRONG_MODEL'] = process.env['ALFRED_LLM_STRONG_MODEL'];
+    savedEnv['ALFRED_LLM_FAST_PROVIDER'] = process.env['ALFRED_LLM_FAST_PROVIDER'];
+    savedEnv['ALFRED_LLM_FAST_MODEL'] = process.env['ALFRED_LLM_FAST_MODEL'];
+    savedEnv['ALFRED_LLM_STRONG_API_KEY'] = process.env['ALFRED_LLM_STRONG_API_KEY'];
   });
 
   afterEach(() => {
@@ -61,5 +67,31 @@ describe('ConfigLoader', () => {
     expect(config).toHaveProperty('storage');
     expect(config).toHaveProperty('logger');
     expect(config).toHaveProperty('security');
+  });
+
+  it('should propagate top-level apiKey to strong/fast tiers', () => {
+    process.env['ALFRED_ANTHROPIC_API_KEY'] = 'sk-test-shared';
+    process.env['ALFRED_LLM_STRONG_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-20250514';
+    process.env['ALFRED_LLM_FAST_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_FAST_MODEL'] = 'claude-haiku-4-5-20251001';
+
+    const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+
+    expect(config.llm.default.apiKey).toBe('sk-test-shared');
+    expect(config.llm.strong?.apiKey).toBe('sk-test-shared');
+    expect(config.llm.fast?.apiKey).toBe('sk-test-shared');
+  });
+
+  it('should not overwrite tier-specific apiKey during propagation', () => {
+    process.env['ALFRED_ANTHROPIC_API_KEY'] = 'sk-test-shared';
+    process.env['ALFRED_LLM_STRONG_PROVIDER'] = 'anthropic';
+    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-20250514';
+    process.env['ALFRED_LLM_STRONG_API_KEY'] = 'sk-strong-own';
+
+    const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');
+
+    expect(config.llm.default.apiKey).toBe('sk-test-shared');
+    expect(config.llm.strong?.apiKey).toBe('sk-strong-own');
   });
 });

@@ -158,12 +158,52 @@ export class ConfigLoader {
 
     const merged = deepMerge(DEFAULT_CONFIG, fileConfig);
     const withEnv = applyEnvOverrides(merged);
+
+    // Pre-normalize LLM config before Zod validation:
+    // When env vars set both flat keys (provider, model) and tier sub-objects
+    // (strong, fast), the Zod union would pick the flat schema and strip tiers.
+    // Move flat keys into `default` so MultiModelConfigSchema is matched.
+    const tiers = ['strong', 'fast', 'embeddings', 'local'] as const;
+    const preLlm = withEnv.llm as Record<string, unknown> | undefined;
+    if (preLlm && 'provider' in preLlm) {
+      const hasTierSubObjects = tiers.some(t => preLlm[t] && typeof preLlm[t] === 'object');
+      if (hasTierSubObjects) {
+        const flatKeys: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(preLlm)) {
+          if (!tiers.includes(k as typeof tiers[number]) && k !== 'default') {
+            flatKeys[k] = v;
+          }
+        }
+        const normalized: Record<string, unknown> = { default: flatKeys };
+        for (const tier of tiers) {
+          if (preLlm[tier]) normalized[tier] = preLlm[tier];
+        }
+        withEnv.llm = normalized;
+      }
+    }
+
     const validated = AlfredConfigSchema.parse(withEnv) as Record<string, unknown>;
 
-    // Normalize flat LLM config → multi-model format
+    // Normalize flat LLM config → multi-model format (when no tier sub-objects)
     const llm = validated.llm as Record<string, unknown>;
     if (llm && 'provider' in llm) {
       validated.llm = { default: llm };
+    }
+
+    // Propagate top-level LLM apiKey to tiers that lack their own
+    const llmConfig = validated.llm as Record<string, unknown>;
+    if (llmConfig && typeof llmConfig === 'object') {
+      const sharedApiKey = (llmConfig as Record<string, unknown>).apiKey as string | undefined
+        ?? ((llmConfig.default as Record<string, unknown> | undefined)?.apiKey as string | undefined);
+
+      if (sharedApiKey) {
+        for (const tier of ['default', 'strong', 'fast', 'embeddings', 'local']) {
+          const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
+          if (tierConfig && !tierConfig.apiKey) {
+            tierConfig.apiKey = sharedApiKey;
+          }
+        }
+      }
     }
 
     // Normalize flat email config → multi-account format
