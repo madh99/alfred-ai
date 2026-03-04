@@ -38,6 +38,7 @@ Commands:
   config         Show current resolved configuration (API keys redacted)
   rules          List loaded security rules from the rules path
   status         Show status overview (adapters, LLM, rules)
+  auth <provider>  OAuth token setup (e.g., alfred auth microsoft)
   logs [--tail N] Show recent audit log entries (default: 20)
 
 Options:
@@ -145,6 +146,13 @@ async function main(): Promise<void> {
     case 'status': {
       const { statusCommand } = await import('./commands/status.js');
       await statusCommand();
+      break;
+    }
+
+    case 'auth': {
+      const provider = parsed.positional[0] ?? '';
+      const { authCommand } = await import('./commands/auth.js');
+      await authCommand(provider);
       break;
     }
 

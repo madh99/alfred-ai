@@ -926,6 +926,7 @@ export async function setupCommand(): Promise<void> {
           acct.msTenantId = await askWithDefault(rl, '  Tenant ID', existMsTenantId);
           if (!acct.msTenantId) acct.msTenantId = await askRequired(rl, '  Tenant ID');
 
+          console.log(`  ${dim('Tipp: Du kannst `alfred auth microsoft` ausführen um den Refresh Token automatisch zu holen.')}`);
           acct.msRefreshToken = await askWithDefault(rl, '  Refresh Token', existMsRefreshToken);
           if (!acct.msRefreshToken) acct.msRefreshToken = await askRequired(rl, '  Refresh Token');
         }
@@ -1414,6 +1415,7 @@ export async function setupCommand(): Promise<void> {
         const existingTenantId = existing.env['ALFRED_MICROSOFT_CONTACTS_TENANT_ID'] ?? existingContacts?.microsoft?.tenantId ?? '';
         contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_TENANT_ID'] = await askWithDefault(rl, '  Tenant ID', existingTenantId || 'common');
         const existingRefresh = existing.env['ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN'] ?? existingContacts?.microsoft?.refreshToken ?? '';
+        console.log(`  ${dim('Tipp: Du kannst `alfred auth microsoft` ausführen um den Refresh Token automatisch zu holen.')}`);
         contactsEnvEntries['ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN'] = (await rl.question(`  ${BOLD}Refresh Token${RESET}: ${YELLOW}`)).trim() || existingRefresh;
         process.stdout.write(RESET);
       }

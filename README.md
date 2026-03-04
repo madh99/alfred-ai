@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.69-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.70-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -428,11 +428,12 @@ api:
 ### Other Commands
 
 ```bash
-alfred status        # Show connection status and loaded skills
-alfred config        # Display current configuration (keys redacted)
-alfred rules         # List active security rules
-alfred logs          # Show recent audit log entries
-alfred --version     # Show version
+alfred status           # Show connection status and loaded skills
+alfred config           # Display current configuration (keys redacted)
+alfred auth microsoft   # Automatic OAuth token flow for Microsoft 365
+alfred rules            # List active security rules
+alfred logs             # Show recent audit log entries
+alfred --version        # Show version
 ```
 
 ---
