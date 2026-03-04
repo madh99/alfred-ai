@@ -250,6 +250,8 @@ export class MessagePipeline {
       const toolLoopStart = Date.now();
       let lastErrorSignature = '';
       let consecutiveErrors = 0;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
       const pendingAttachments: SkillResultAttachment[] = [];
       onProgress?.('Thinking...');
 
@@ -265,6 +267,8 @@ export class MessagePipeline {
             system,
             tools: tools && tools.length > 0 ? tools : undefined,
           });
+          totalInputTokens += response.usage?.inputTokens ?? 0;
+          totalOutputTokens += response.usage?.outputTokens ?? 0;
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           if (errMsg.includes('prompt is too long') && budgetMultiplier > 0.3) {
@@ -405,7 +409,13 @@ export class MessagePipeline {
 
       const duration = Date.now() - startTime;
       this.logger.info(
-        { duration, tokens: response.usage, stopReason: response.stopReason, toolIterations: iteration },
+        {
+          duration,
+          tokens: response.usage,
+          totalTokens: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+          stopReason: response.stopReason,
+          toolIterations: iteration,
+        },
         'Message processed',
       );
 
