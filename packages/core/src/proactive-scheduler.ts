@@ -7,6 +7,7 @@ import type { Platform, ScheduledAction, NormalizedMessage } from '@alfred/types
 import type { LLMProvider } from '@alfred/llm';
 import type { MessagePipeline } from './message-pipeline.js';
 import type { ResponseFormatter } from './response-formatter.js';
+import { buildSkillContext } from './context-factory.js';
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -129,21 +130,12 @@ export class ProactiveScheduler {
           let input: Record<string, unknown>;
           try { input = JSON.parse(action.skillInput); }
           catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
-          // action.userId may be an internal UUID (from masterUserId) or a platform user ID.
-          // Try internal lookup first to avoid creating phantom users.
-          const existingUser = this.users.findById(action.userId);
-          const user = existingUser ?? this.users.findOrCreate(action.platform as Platform, action.userId);
-          const masterUserId = this.users.getMasterUserId(user.id);
-          const linked = this.users.getLinkedUsers(masterUserId);
-          const context = {
-            userId: user.platformUserId,
-            masterUserId,
-            linkedPlatformUserIds: linked.map(u => u.platformUserId),
+          const { context } = buildSkillContext(this.users, {
+            userId: action.userId,
+            platform: action.platform as Platform,
             chatId: action.chatId,
-            platform: action.platform,
-            conversationId: '',
-            chatType: 'dm' as const,
-          };
+            chatType: 'dm',
+          });
 
           const result = await this.skillSandbox.execute(skill, input, context);
           resultText = result.success

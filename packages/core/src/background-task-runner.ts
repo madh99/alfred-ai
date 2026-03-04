@@ -3,6 +3,7 @@ import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { BackgroundTaskRepository, UserRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, BackgroundTask } from '@alfred/types';
+import { buildSkillContext } from './context-factory.js';
 
 export class BackgroundTaskRunner {
   private pollTimer?: ReturnType<typeof setInterval>;
@@ -66,21 +67,12 @@ export class BackgroundTaskRunner {
         this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
         return;
       }
-      // task.userId may be an internal UUID (from masterUserId) or a platform user ID.
-      // Try internal lookup first to avoid creating phantom users.
-      const existingUser = this.users.findById(task.userId);
-      const user = existingUser ?? this.users.findOrCreate(task.platform as Platform, task.userId);
-      const masterUserId = this.users.getMasterUserId(user.id);
-      const linked = this.users.getLinkedUsers(masterUserId);
-      const context = {
-        userId: user.platformUserId,
-        masterUserId,
-        linkedPlatformUserIds: linked.map(u => u.platformUserId),
+      const { context } = buildSkillContext(this.users, {
+        userId: task.userId,
+        platform: task.platform as Platform,
         chatId: task.chatId,
-        platform: task.platform,
-        conversationId: '',
-        chatType: 'dm' as const,
-      };
+        chatType: 'dm',
+      });
 
       // Enforce task timeout
       const timeoutPromise = new Promise<never>((_, reject) =>
