@@ -273,11 +273,17 @@ export class BMWSkill extends Skill {
     });
     if (!res.ok) throw new Error(`Failed to fetch vehicles: HTTP ${res.status}`);
 
-    const data = (await res.json()) as Array<{ vin: string; mappingType: string }>;
+    const raw = await res.json() as Record<string, unknown>;
+    // API may return an array directly or wrap it in an object (e.g. { vehicles: [...] })
+    const data: Array<{ vin: string; mappingType: string }> = Array.isArray(raw)
+      ? raw as unknown as Array<{ vin: string; mappingType: string }>
+      : Array.isArray(raw.vehicles) ? raw.vehicles as Array<{ vin: string; mappingType: string }>
+      : Array.isArray(raw.mappings) ? raw.mappings as Array<{ vin: string; mappingType: string }>
+      : [];
     const primary = data.find(v => v.mappingType === 'PRIMARY');
     if (!primary) {
       if (data.length > 0) return data[0].vin;
-      throw new Error('No vehicles found in account');
+      throw new Error(`No vehicles found in account (response: ${JSON.stringify(raw).slice(0, 200)})`);
     }
     return primary.vin;
   }
@@ -289,7 +295,11 @@ export class BMWSkill extends Skill {
       signal: AbortSignal.timeout(15_000),
     });
     if (listRes.ok) {
-      const containers = (await listRes.json()) as Array<{ containerId: string; name: string }>;
+      const listRaw = await listRes.json() as Record<string, unknown>;
+      const containers: Array<{ containerId: string; name: string }> = Array.isArray(listRaw)
+        ? listRaw as unknown as Array<{ containerId: string; name: string }>
+        : Array.isArray(listRaw.containers) ? listRaw.containers as Array<{ containerId: string; name: string }>
+        : [];
       const existing = containers.find(c => c.name === CONTAINER_NAME);
       if (existing) return existing.containerId;
     }
