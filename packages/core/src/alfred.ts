@@ -350,6 +350,7 @@ export class Alfred {
       skillSandbox,
       backgroundTaskRepo,
       this.adapters,
+      userRepo,
       this.logger.child({ component: 'background-tasks' }),
     );
 
@@ -360,6 +361,7 @@ export class Alfred {
       skillSandbox,
       llmProvider,
       this.adapters,
+      userRepo,
       this.logger.child({ component: 'proactive-scheduler' }),
       this.pipeline,
       this.formatter,

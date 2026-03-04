@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Logger } from 'pino';
-import type { ScheduledActionRepository } from '@alfred/storage';
+import type { ScheduledActionRepository, UserRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, ScheduledAction, NormalizedMessage } from '@alfred/types';
@@ -18,6 +18,7 @@ export class ProactiveScheduler {
     private readonly skillSandbox: SkillSandbox,
     private readonly llm: LLMProvider,
     private readonly adapters: Map<Platform, MessagingAdapter>,
+    private readonly users: UserRepository,
     private readonly logger: Logger,
     private readonly pipeline?: MessagePipeline,
     private readonly formatter?: ResponseFormatter,
@@ -128,8 +129,13 @@ export class ProactiveScheduler {
           let input: Record<string, unknown>;
           try { input = JSON.parse(action.skillInput); }
           catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
+          const user = this.users.findOrCreate(action.platform as Platform, action.userId);
+          const masterUserId = this.users.getMasterUserId(user.id);
+          const linked = this.users.getLinkedUsers(masterUserId);
           const context = {
             userId: action.userId,
+            masterUserId,
+            linkedPlatformUserIds: linked.map(u => u.platformUserId),
             chatId: action.chatId,
             platform: action.platform,
             conversationId: '',

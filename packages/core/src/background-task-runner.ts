@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
-import type { BackgroundTaskRepository } from '@alfred/storage';
+import type { BackgroundTaskRepository, UserRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, BackgroundTask } from '@alfred/types';
 
@@ -16,6 +16,7 @@ export class BackgroundTaskRunner {
     private readonly skillSandbox: SkillSandbox,
     private readonly taskRepo: BackgroundTaskRepository,
     private readonly adapters: Map<Platform, MessagingAdapter>,
+    private readonly users: UserRepository,
     private readonly logger: Logger,
   ) {}
 
@@ -65,8 +66,13 @@ export class BackgroundTaskRunner {
         this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
         return;
       }
+      const user = this.users.findOrCreate(task.platform as Platform, task.userId);
+      const masterUserId = this.users.getMasterUserId(user.id);
+      const linked = this.users.getLinkedUsers(masterUserId);
       const context = {
         userId: task.userId,
+        masterUserId,
+        linkedPlatformUserIds: linked.map(u => u.platformUserId),
         chatId: task.chatId,
         platform: task.platform,
         conversationId: '',
