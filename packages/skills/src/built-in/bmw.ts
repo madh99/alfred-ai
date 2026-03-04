@@ -237,7 +237,7 @@ export class BMWSkill extends Skill {
 
     // Fetch VIN + setup container
     const vin = await this.fetchVin(accessToken);
-    const containerId = await this.ensureContainer(accessToken, vin);
+    const containerId = await this.ensureContainer(accessToken);
 
     const tokens: BMWTokens = {
       accessToken,
@@ -274,21 +274,20 @@ export class BMWSkill extends Skill {
     if (!res.ok) throw new Error(`Failed to fetch vehicles: HTTP ${res.status}`);
 
     const raw = await res.json() as Record<string, unknown>;
-    // API may return an array directly or wrap it in an object (e.g. { vehicles: [...] })
-    const data: Array<{ vin: string; mappingType: string }> = Array.isArray(raw)
-      ? raw as unknown as Array<{ vin: string; mappingType: string }>
-      : Array.isArray(raw.vehicles) ? raw.vehicles as Array<{ vin: string; mappingType: string }>
-      : Array.isArray(raw.mappings) ? raw.mappings as Array<{ vin: string; mappingType: string }>
-      : [];
-    const primary = data.find(v => v.mappingType === 'PRIMARY');
-    if (!primary) {
-      if (data.length > 0) return data[0].vin;
-      throw new Error(`No vehicles found in account (response: ${JSON.stringify(raw).slice(0, 200)})`);
+    // API returns a single VehicleMappingDto { vin, mappedSince, mappingType }
+    // or possibly an array — handle both defensively
+    if (typeof raw.vin === 'string') {
+      return raw.vin;
     }
-    return primary.vin;
+    if (Array.isArray(raw)) {
+      const arr = raw as Array<{ vin: string; mappingType?: string }>;
+      const primary = arr.find(v => v.mappingType === 'PRIMARY');
+      return primary?.vin ?? arr[0]?.vin ?? (() => { throw new Error('No vehicles found'); })();
+    }
+    throw new Error(`No vehicles found in account (response: ${JSON.stringify(raw).slice(0, 200)})`);
   }
 
-  private async ensureContainer(accessToken: string, vin: string): Promise<string> {
+  private async ensureContainer(accessToken: string): Promise<string> {
     // Check existing containers
     const listRes = await fetch(`${API_BASE}/customers/containers`, {
       headers: this.apiHeaders(accessToken),
@@ -314,8 +313,7 @@ export class BMWSkill extends Skill {
       body: JSON.stringify({
         name: CONTAINER_NAME,
         purpose: 'Alfred AI Assistant',
-        technicalDescriptors: DESCRIPTORS.map(key => ({ key })),
-        vins: [vin],
+        technicalDescriptors: DESCRIPTORS,
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -492,7 +490,7 @@ export class BMWSkill extends Skill {
     const maxEnergy = tv(t, 'vehicle.drivetrain.batteryManagement.maxEnergy');
     const soh = tv(t, 'vehicle.powertrain.electric.battery.stateOfHealth.displayed');
 
-    const model = basicData.model ?? basicData.modelName ?? '?';
+    const model = basicData.modelName ?? basicData.model ?? '?';
 
     const lines = [
       '## BMW Fahrzeugstatus',
@@ -566,7 +564,7 @@ export class BMWSkill extends Skill {
       `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
     );
 
-    const sessions = (data.chargingSessions ?? data.sessions ?? []) as Array<Record<string, unknown>>;
+    const sessions = (data.data ?? data.chargingSessions ?? []) as Array<Record<string, unknown>>;
 
     const lines = [
       `## BMW Lade-Sessions (${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)})`,
@@ -576,11 +574,14 @@ export class BMWSkill extends Skill {
     ];
 
     for (const s of sessions.slice(0, 20)) {
-      const date = s.date ?? s.startTime ?? '-';
-      const duration = s.duration ?? s.chargingDuration ?? '-';
-      const energy = s.energyCharged ?? s.energy ?? '-';
-      const startSoc = s.startSoc ?? '-';
-      const endSoc = s.endSoc ?? '-';
+      // startTime/endTime are milliseconds timestamps per API spec
+      const startMs = s.startTime as number | undefined;
+      const date = startMs ? new Date(startMs).toLocaleDateString('de-AT') : '-';
+      const durationSec = s.totalChargingDurationSec as number | undefined;
+      const duration = durationSec != null ? Math.round(durationSec / 60) : '-';
+      const energy = s.energyConsumedFromPowerGridKwh ?? '-';
+      const startSoc = s.displayedStartSoc ?? '-';
+      const endSoc = s.displayedSoc ?? '-';
       lines.push(`| ${date} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% |`);
     }
 
