@@ -214,6 +214,19 @@ export class ConfigLoader {
     const email = validated.email as Record<string, unknown> | undefined;
     if (email && !('accounts' in email)) {
       validated.email = { accounts: [{ name: 'default', ...email }] };
+    } else if (email && 'accounts' in email && 'microsoft' in email) {
+      // YAML has accounts[] but ENV set email.microsoft.* — merge ENV into first microsoft account
+      const envMs = email.microsoft as Record<string, unknown> | undefined;
+      if (envMs) {
+        const accounts = email.accounts as Array<Record<string, unknown>>;
+        const msAccount = accounts.find(a => a.provider === 'microsoft');
+        if (msAccount) {
+          const acctMs = (msAccount.microsoft ?? {}) as Record<string, unknown>;
+          // ENV overrides YAML values (e.g. refreshToken from .env replaces stale YAML token)
+          msAccount.microsoft = { ...acctMs, ...envMs };
+        }
+        delete email.microsoft;
+      }
     }
 
     return validated as unknown as AlfredConfig;
