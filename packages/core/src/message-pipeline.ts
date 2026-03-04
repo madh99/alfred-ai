@@ -54,6 +54,7 @@ export interface PipelineOptions {
   embeddingService?: EmbeddingService;
   activeLearning?: ActiveLearningService;
   memoryRetriever?: MemoryRetriever;
+  maxHistoryMessages?: number;
 }
 
 /** Tracks a running delegate agent so other messages can query its status. */
@@ -79,6 +80,7 @@ export class MessagePipeline {
   private readonly embeddingService?: EmbeddingService;
   private readonly activeLearning?: ActiveLearningService;
   private readonly memoryRetriever?: MemoryRetriever;
+  private readonly maxHistoryMessages: number;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -98,6 +100,7 @@ export class MessagePipeline {
     this.embeddingService = options.embeddingService;
     this.activeLearning = options.activeLearning;
     this.memoryRetriever = options.memoryRetriever;
+    this.maxHistoryMessages = options.maxHistoryMessages ?? 100;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -127,7 +130,7 @@ export class MessagePipeline {
       );
 
       // 3. Load conversation history (fetch generously, we'll trim by tokens later)
-      const history = this.conversationManager.getHistory(conversation.id, 200);
+      const history = this.conversationManager.getHistory(conversation.id, this.maxHistoryMessages);
 
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);

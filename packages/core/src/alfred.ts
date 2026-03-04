@@ -322,6 +322,7 @@ export class Alfred {
       embeddingService,
       activeLearning,
       memoryRetriever,
+      maxHistoryMessages: this.config.conversation?.maxHistoryMessages ?? 100,
     });
 
     // 6. Initialize reminder scheduler

@@ -48,4 +48,7 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
     port: 3420,
     host: '127.0.0.1',
   },
+  conversation: {
+    maxHistoryMessages: 100,
+  },
 };

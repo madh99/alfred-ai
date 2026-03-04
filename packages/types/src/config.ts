@@ -268,4 +268,7 @@ export interface AlfredConfig {
   homeassistant?: HomeAssistantConfig;
   contacts?: ContactsConfig;
   docker?: DockerConfig;
+  conversation?: {
+    maxHistoryMessages?: number;
+  };
 }
