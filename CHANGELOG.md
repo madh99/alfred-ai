@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.9.92] - 2026-03-05
+## [0.9.93] - 2026-03-05
 
 ### Fixed
 - **Gemini — Tool-Call Message-Ordering** — Gemini 3/3.1 Pro verlangt strikt abwechselnde Rollen (user ↔ model) und lehnt Requests mit aufeinanderfolgenden same-role Turns ab. Vier Stellen in der Pipeline erzeugten invalide Sequenzen: `collapseRepeatedToolErrors()` fügte eine assistant-Note nach einem assistant-Turn ein, `trimToContextWindow()` injizierte ein assistant-Summary vor einem assistant-Turn, `abortToolLoop()` pushte zwei consecutive user-Messages, und `mapContents()` hatte keinen Guard. Fix: Role-Korrekturen in der Pipeline + `mergeConsecutiveRoles()` Guard im GoogleProvider. Andere Provider (Anthropic, OpenAI, Ollama) sind nicht betroffen
