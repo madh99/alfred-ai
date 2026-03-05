@@ -302,4 +302,29 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 14,
+    description: 'Document deduplication: content_hash + cleanup broken documents',
+    up(db) {
+      db.exec(`
+        ALTER TABLE documents ADD COLUMN content_hash TEXT;
+        CREATE INDEX IF NOT EXISTS idx_documents_user_hash ON documents(user_id, content_hash);
+      `);
+
+      // Clean up broken documents (chunk_count = 0) from FK bug:
+      // embedAndStore succeeded but addChunk failed → orphaned embeddings
+      const brokenDocs = db.prepare(
+        "SELECT id FROM documents WHERE chunk_count = 0"
+      ).all() as { id: string }[];
+      for (const doc of brokenDocs) {
+        db.prepare(
+          "DELETE FROM embeddings WHERE source_type = 'document' AND source_id LIKE ? || ':%'"
+        ).run(doc.id);
+      }
+      db.exec(`
+        DELETE FROM document_chunks WHERE document_id IN (SELECT id FROM documents WHERE chunk_count = 0);
+        DELETE FROM documents WHERE chunk_count = 0;
+      `);
+    },
+  },
 ];

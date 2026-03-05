@@ -14,7 +14,7 @@ export interface DocumentProcessorInterface {
     filePath: string,
     filename: string,
     mimeType: string,
-  ): Promise<{ documentId: string; chunkCount: number }>;
+  ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }>;
 }
 
 type DocumentAction = 'ingest' | 'search' | 'summarize' | 'list' | 'delete';
@@ -115,10 +115,13 @@ export class DocumentSkill extends Skill {
 
     try {
       const result = await this.processor.ingest(effectiveUserId(context), filePath, filename, mimeType);
+      const display = result.existing
+        ? `Document "${filename}" already ingested (${result.chunkCount} chunks). Ready for search. ID: ${result.documentId.slice(0, 8)}...`
+        : `Document "${filename}" ingested successfully (${result.chunkCount} chunks). ID: ${result.documentId.slice(0, 8)}...`;
       return {
         success: true,
         data: result,
-        display: `Document "${filename}" ingested successfully (${result.chunkCount} chunks). ID: ${result.documentId.slice(0, 8)}...`,
+        display,
       };
     } catch (err) {
       return {

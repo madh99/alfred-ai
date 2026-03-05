@@ -10,15 +10,23 @@ export class DocumentRepository {
     filename: string,
     mimeType: string,
     sizeBytes: number,
+    contentHash?: string,
   ): Document {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     this.db.prepare(
-      'INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)',
-    ).run(id, userId, filename, mimeType, sizeBytes, now);
+      'INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, content_hash, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
+    ).run(id, userId, filename, mimeType, sizeBytes, contentHash ?? null, now);
 
-    return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, createdAt: now };
+    return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, contentHash, createdAt: now };
+  }
+
+  findByContentHash(userId: string, hash: string): Document | undefined {
+    const row = this.db.prepare(
+      'SELECT * FROM documents WHERE user_id = ? AND content_hash = ? ORDER BY chunk_count DESC LIMIT 1',
+    ).get(userId, hash) as Record<string, unknown> | undefined;
+    return row ? this.mapDocumentRow(row) : undefined;
   }
 
   updateChunkCount(documentId: string, count: number): void {
@@ -100,6 +108,7 @@ export class DocumentRepository {
       mimeType: row.mime_type as string,
       sizeBytes: row.size_bytes as number,
       chunkCount: row.chunk_count as number,
+      contentHash: (row.content_hash as string) || undefined,
       createdAt: row.created_at as string,
     };
   }

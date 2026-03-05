@@ -83,6 +83,7 @@ export interface Document {
   mimeType: string;
   sizeBytes: number;
   chunkCount: number;
+  contentHash?: string;
   createdAt: string;
 }
 

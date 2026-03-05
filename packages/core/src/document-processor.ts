@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { EmbeddingService } from './embedding-service.js';
 import type { DocumentRepository } from '@alfred/storage';
+import { createHash } from 'node:crypto';
 
 export class DocumentProcessor {
   constructor(
@@ -14,19 +15,36 @@ export class DocumentProcessor {
     filePath: string,
     filename: string,
     mimeType: string,
-  ): Promise<{ documentId: string; chunkCount: number }> {
-    // 1. Read file content based on type
+  ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }> {
+    const fs = await import('node:fs');
+
+    // 1. Compute content hash for deduplication
+    const fileBuffer = fs.readFileSync(filePath);
+    const contentHash = createHash('sha256').update(fileBuffer).digest('hex');
+
+    // 2. Check for existing document with same content
+    const existing = this.docRepo.findByContentHash(userId, contentHash);
+    if (existing && existing.chunkCount > 0) {
+      this.logger.info({ documentId: existing.id, filename, contentHash: contentHash.slice(0, 12) }, 'Document already ingested (duplicate)');
+      return { documentId: existing.id, chunkCount: existing.chunkCount, existing: true };
+    }
+    // If existing but chunk_count = 0 → previous failed attempt, delete and re-ingest
+    if (existing && existing.chunkCount === 0) {
+      this.logger.info({ documentId: existing.id, filename }, 'Removing failed previous ingest attempt');
+      this.docRepo.deleteDocument(existing.id);
+    }
+
+    // 3. Extract text content
     const content = await this.extractText(filePath, mimeType);
 
-    // 2. Create document record
-    const fs = await import('node:fs');
+    // 4. Create document record
     const stat = fs.statSync(filePath);
-    const doc = this.docRepo.createDocument(userId, filename, mimeType, stat.size);
+    const doc = this.docRepo.createDocument(userId, filename, mimeType, stat.size, contentHash);
 
-    // 3. Chunk content (~500 tokens per chunk with 50-token overlap)
+    // 5. Chunk content (~500 tokens per chunk with 50-token overlap)
     const chunks = this.chunkText(content, 500, 50);
 
-    // 4. Store each chunk and create embeddings
+    // 6. Store each chunk and create embeddings
     for (let i = 0; i < chunks.length; i++) {
       let embeddingId: string | undefined;
       try {
