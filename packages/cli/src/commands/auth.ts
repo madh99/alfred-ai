@@ -11,6 +11,7 @@ const SCOPES = [
   'Mail.Read', 'Mail.ReadWrite', 'Mail.Send',
   'Contacts.Read', 'Contacts.ReadWrite',
   'Calendars.Read', 'Calendars.ReadWrite',
+  'Tasks.ReadWrite',
 ].join(' ');
 
 const SUCCESS_HTML = `<!DOCTYPE html>
@@ -53,6 +54,13 @@ function resolveCredentials(): Partial<Credentials> {
       if (!result.clientSecret && ms.clientSecret) result.clientSecret = ms.clientSecret;
       if (!result.tenantId && ms.tenantId) result.tenantId = ms.tenantId;
     }
+    // Check todo (flat keys, no nested 'microsoft' sub-object)
+    const todo = config['todo'] as Record<string, string> | undefined;
+    if (todo) {
+      if (!result.clientId && todo.clientId) result.clientId = todo.clientId;
+      if (!result.clientSecret && todo.clientSecret) result.clientSecret = todo.clientSecret;
+      if (!result.tenantId && todo.tenantId) result.tenantId = todo.tenantId;
+    }
     // Also check email.accounts[].microsoft
     const email = config['email'] as Record<string, unknown> | undefined;
     if (email?.accounts && Array.isArray(email.accounts)) {
@@ -71,6 +79,7 @@ function resolveCredentials(): Partial<Credentials> {
     'ALFRED_MICROSOFT_EMAIL',
     'ALFRED_MICROSOFT_CALENDAR',
     'ALFRED_MICROSOFT_CONTACTS',
+    'ALFRED_MICROSOFT_TODO',
   ];
   for (const prefix of prefixes) {
     if (!result.clientId) result.clientId = process.env[`${prefix}_CLIENT_ID`];
@@ -169,6 +178,10 @@ function updateEnvFile(creds: Credentials, refreshToken: string): void {
     ALFRED_MICROSOFT_CONTACTS_CLIENT_SECRET: creds.clientSecret,
     ALFRED_MICROSOFT_CONTACTS_TENANT_ID: creds.tenantId,
     ALFRED_MICROSOFT_CONTACTS_REFRESH_TOKEN: refreshToken,
+    ALFRED_MICROSOFT_TODO_CLIENT_ID: creds.clientId,
+    ALFRED_MICROSOFT_TODO_CLIENT_SECRET: creds.clientSecret,
+    ALFRED_MICROSOFT_TODO_TENANT_ID: creds.tenantId,
+    ALFRED_MICROSOFT_TODO_REFRESH_TOKEN: refreshToken,
   };
 
   const remaining = new Set(Object.keys(entries));
@@ -279,7 +292,7 @@ export async function authCommand(provider: string): Promise<void> {
     console.log('');
     console.log('  Refresh Token erhalten! Schreibe in .env ...');
     updateEnvFile(creds, refreshToken);
-    console.log('  .env aktualisiert (Email, Calendar, Contacts).');
+    console.log('  .env aktualisiert (Email, Calendar, Contacts, To Do).');
     console.log('');
     console.log('  Fertig! Du kannst Alfred jetzt mit Microsoft 365 nutzen.');
     console.log('');

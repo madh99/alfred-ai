@@ -119,6 +119,11 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
   // Google Routing
   ALFRED_ROUTING_API_KEY: ['routing', 'apiKey'],
+  // Microsoft To Do
+  ALFRED_MICROSOFT_TODO_CLIENT_ID: ['todo', 'clientId'],
+  ALFRED_MICROSOFT_TODO_CLIENT_SECRET: ['todo', 'clientSecret'],
+  ALFRED_MICROSOFT_TODO_TENANT_ID: ['todo', 'tenantId'],
+  ALFRED_MICROSOFT_TODO_REFRESH_TOKEN: ['todo', 'refreshToken'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

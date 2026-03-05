@@ -45,6 +45,7 @@ export { BMWSkill } from './built-in/bmw.js';
 export { RoutingSkill } from './built-in/routing.js';
 export { ConfigureSkill } from './built-in/configure.js';
 export { MonitorSkill } from './built-in/monitor.js';
+export { MicrosoftTodoSkill } from './built-in/microsoft-todo.js';
 export type { MonitorCheckConfig } from './built-in/monitor.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
 export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';

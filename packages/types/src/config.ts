@@ -251,6 +251,13 @@ export interface RoutingConfig {
   apiKey: string;
 }
 
+export interface MicrosoftTodoConfig {
+  clientId: string;
+  clientSecret: string;
+  tenantId: string;
+  refreshToken: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -278,6 +285,7 @@ export interface AlfredConfig {
   docker?: DockerConfig;
   bmw?: BMWCarDataConfig;
   routing?: RoutingConfig;
+  todo?: MicrosoftTodoConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

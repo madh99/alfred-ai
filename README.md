@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.95-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.96-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (33+)
+### Built-in Skills (34+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -89,7 +89,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo` | Timed reminders, cron jobs, long-running tasks, todo list management |
+| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
@@ -196,17 +196,16 @@ Supports CardDAV (Nextcloud, Radicale, etc.), Google Contacts, and Microsoft 365
 
 #### Todo Lists
 
-Persistent todo lists stored in SQLite — always available, no external service needed:
+**Local** — Persistent todo lists stored in SQLite, always available without external service.
+
+**Microsoft To Do** — Full Graph API integration for Microsoft To Do. Lists and tasks sync with the Microsoft To Do app across all devices. List resolution by display name — say *"füge Milch zur Einkaufsliste hinzu"* and Alfred finds the right list automatically. Configured automatically via `alfred auth microsoft`.
 
 ```
 You: "Add a todo: Buy groceries"
-You: "Add a high priority todo to my work list: Finish report by Friday"
-You: "Show my todos"
+You: "Füge Milch zur Einkaufsliste hinzu"
+You: "Show my Microsoft To Do lists"
 You: "Complete todo abc123"
-You: "Show all my lists"
 ```
-
-Multiple named lists, priorities (low/normal/high/urgent), due dates, and cross-platform access.
 
 #### Docker
 
@@ -616,6 +615,12 @@ ALFRED_BMW_CLIENT_ID=               # from bmw-cardata.bmwgroup.com/customer
 
 # Google Routing
 ALFRED_ROUTING_API_KEY=             # Google Routes API key
+
+# Microsoft To Do (set automatically by `alfred auth microsoft`)
+ALFRED_MICROSOFT_TODO_CLIENT_ID=
+ALFRED_MICROSOFT_TODO_CLIENT_SECRET=
+ALFRED_MICROSOFT_TODO_TENANT_ID=
+ALFRED_MICROSOFT_TODO_REFRESH_TOKEN=
 
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db

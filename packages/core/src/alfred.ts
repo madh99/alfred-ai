@@ -181,7 +181,7 @@ export class Alfred {
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
     const configureSkill = new ConfigureSkill();
-    configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi' | 'homeassistant'));
+    configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi' | 'homeassistant' | 'todo'));
     skillRegistry.register(configureSkill);
     skillRegistry.register(new ClipboardSkill());
     skillRegistry.register(new ScreenshotSkill());
@@ -295,7 +295,14 @@ export class Alfred {
       this.logger.info('Routing skill enabled');
     }
 
-    // 4m. Infrastructure Monitor (auto-enabled when any infra skill is configured)
+    // 4m. Microsoft To Do (optional)
+    if (this.config.todo) {
+      const { MicrosoftTodoSkill } = await import('@alfred/skills');
+      skillRegistry.register(new MicrosoftTodoSkill(this.config.todo));
+      this.logger.info('Microsoft To Do skill enabled');
+    }
+
+    // 4n. Infrastructure Monitor (auto-enabled when any infra skill is configured)
     if (this.config.proxmox || this.config.unifi || this.config.homeassistant) {
       const { MonitorSkill } = await import('@alfred/skills');
       skillRegistry.register(new MonitorSkill({
@@ -511,7 +518,7 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
-  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker' | 'bmw' | 'routing'): Promise<{ success: boolean; error?: string }> {
+  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker' | 'bmw' | 'routing' | 'todo'): Promise<{ success: boolean; error?: string }> {
     try {
       // 1. Reload .env → process.env updated
       reloadDotenv();
@@ -567,6 +574,12 @@ export class Alfred {
         this.skillRegistry.register(new RoutingSkill(freshConfig.routing));
         this.config.routing = freshConfig.routing;
         this.logger.info('Routing skill hot-reloaded');
+      }
+      if (service === 'todo' && freshConfig.todo) {
+        const { MicrosoftTodoSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new MicrosoftTodoSkill(freshConfig.todo));
+        this.config.todo = freshConfig.todo;
+        this.logger.info('Microsoft To Do skill hot-reloaded');
       }
 
       return { success: true };

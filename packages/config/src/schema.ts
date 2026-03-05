@@ -263,6 +263,13 @@ export const RoutingConfigSchema = z.object({
   apiKey: z.string(),
 });
 
+export const MicrosoftTodoConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  tenantId: z.string(),
+  refreshToken: z.string(),
+});
+
 export const ConversationConfigSchema = z.object({
   maxHistoryMessages: z.number().min(10).max(500).optional(),
 }).optional();
@@ -294,5 +301,6 @@ export const AlfredConfigSchema = z.object({
   docker: DockerConfigSchema.optional(),
   bmw: BMWCarDataConfigSchema.optional(),
   routing: RoutingConfigSchema.optional(),
+  todo: MicrosoftTodoConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });
