@@ -42,8 +42,8 @@ export class EmailSkill extends Skill {
       : {};
 
     const description = this.multiAccount
-      ? `Access the user's email accounts (${this.accountNames.join(', ')}): check inbox, read messages, search emails, send new emails, list folders, read from specific folders, reply to messages, or download attachments.`
-      : 'Access the user\'s email: check inbox, read messages, search emails, send new emails, list folders, read from specific folders, reply to messages, or download attachments. Use when the user asks about their emails or wants to send one.';
+      ? `Access the user's email accounts (${this.accountNames.join(', ')}): check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, or download attachments.`
+      : 'Access the user\'s email: check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, or download attachments. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
 
     this.metadata = {
       name: 'email',
@@ -56,7 +56,7 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'folders', 'folder', 'reply', 'attachment'],
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'attachment'],
             description: 'The email action to perform',
           },
           ...accountProp,
@@ -129,6 +129,8 @@ export class EmailSkill extends Skill {
           return await this.handleSearch(input);
         case 'send':
           return await this.handleSend(input);
+        case 'draft':
+          return await this.handleDraft(input);
         case 'folders':
           return await this.handleFolders(input);
         case 'folder':
@@ -138,7 +140,7 @@ export class EmailSkill extends Skill {
         case 'attachment':
           return await this.handleAttachment(input);
         default:
-          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, folders, folder, reply, attachment` };
+          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, attachment` };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -294,6 +296,34 @@ export class EmailSkill extends Skill {
       success: true,
       data: { messageId: result.messageId, to, subject },
       display: this.accountLabel(account, `Email sent to ${to}\nSubject: ${subject}\nMessage ID: ${result.messageId}`),
+    };
+  }
+
+  private async handleDraft(input: Record<string, unknown>): Promise<SkillResult> {
+    const to = input.to as string;
+    const subject = input.subject as string;
+    const body = input.body as string;
+
+    if (!to) return { success: false, error: '"to" (recipient email) is required.' };
+    if (!subject) return { success: false, error: '"subject" is required.' };
+    if (!body) return { success: false, error: '"body" is required.' };
+
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
+    const result = await provider.createDraft({
+      to,
+      subject,
+      body,
+      cc: input.cc as string | undefined,
+      isHtml: input.isHtml as boolean | undefined,
+    });
+
+    return {
+      success: true,
+      data: { messageId: result.messageId, to, subject },
+      display: this.accountLabel(account, `Draft created for ${to}\nSubject: ${subject}\nMessage ID: ${result.messageId}\n\nThe email is saved as a draft and has NOT been sent.`),
     };
   }
 

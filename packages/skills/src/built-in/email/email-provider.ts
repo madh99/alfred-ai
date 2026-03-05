@@ -42,4 +42,9 @@ export abstract class EmailProvider {
   abstract listFolders(): Promise<string[]>;
   abstract fetchFolder(folder: string, count: number): Promise<EmailMessage[]>;
   abstract downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
+
+  /** Create a draft email without sending. Not all providers support this. */
+  async createDraft(_input: SendEmailInput): Promise<{ messageId: string }> {
+    throw new Error('Draft creation is not supported by this email provider.');
+  }
 }

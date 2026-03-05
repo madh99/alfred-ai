@@ -59,13 +59,19 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       await this.refreshAccessToken();
       const retry = await doFetch(this.accessToken);
       if (!retry.ok) throw new Error(`Graph API error: ${retry.status}`);
-      if (retry.status === 204) return undefined;
-      return retry.json();
+      return this.parseJsonOrUndefined(retry);
     }
 
     if (!res.ok) throw new Error(`Graph API error: ${res.status}`);
-    if (res.status === 204) return undefined;
-    return res.json();
+    return this.parseJsonOrUndefined(res);
+  }
+
+  /** Parse JSON response body, returning undefined for empty bodies (202, 204, etc.). */
+  private async parseJsonOrUndefined(res: Response): Promise<any> {
+    if (res.status === 204 || res.status === 202) return undefined;
+    const text = await res.text();
+    if (!text || text.length === 0) return undefined;
+    return JSON.parse(text);
   }
 
   private async graphRequestRaw(path: string): Promise<Buffer> {
@@ -179,6 +185,43 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     });
 
     return { messageId: `sent-${Date.now()}` };
+  }
+
+  async createDraft(input: SendEmailInput): Promise<{ messageId: string }> {
+    if (input.replyTo) {
+      // Create a reply draft (not sent)
+      const data = await this.graphRequest(`/me/messages/${input.replyTo}/createReply`, {
+        method: 'POST',
+        body: JSON.stringify({
+          comment: input.body,
+        }),
+      });
+      return { messageId: data?.id ?? input.replyTo };
+    }
+
+    const message: Record<string, unknown> = {
+      subject: input.subject,
+      body: {
+        contentType: input.isHtml ? 'html' : 'text',
+        content: input.body,
+      },
+      toRecipients: input.to.split(',').map(addr => ({
+        emailAddress: { address: addr.trim() },
+      })),
+    };
+
+    if (input.cc) {
+      message.ccRecipients = input.cc.split(',').map(addr => ({
+        emailAddress: { address: addr.trim() },
+      }));
+    }
+
+    const data = await this.graphRequest('/me/messages', {
+      method: 'POST',
+      body: JSON.stringify(message),
+    });
+
+    return { messageId: data?.id ?? `draft-${Date.now()}` };
   }
 
   async listFolders(): Promise<string[]> {
