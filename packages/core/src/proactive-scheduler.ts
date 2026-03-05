@@ -7,6 +7,7 @@ import type { Platform, ScheduledAction, NormalizedMessage } from '@alfred/types
 import type { LLMProvider } from '@alfred/llm';
 import type { MessagePipeline } from './message-pipeline.js';
 import type { ResponseFormatter } from './response-formatter.js';
+import type { ConversationManager } from './conversation-manager.js';
 import { buildSkillContext } from './context-factory.js';
 
 export class ProactiveScheduler {
@@ -23,6 +24,7 @@ export class ProactiveScheduler {
     private readonly logger: Logger,
     private readonly pipeline?: MessagePipeline,
     private readonly formatter?: ResponseFormatter,
+    private readonly conversationManager?: ConversationManager,
   ) {}
 
   start(): void {
@@ -61,12 +63,16 @@ export class ProactiveScheduler {
     let resultText: string;
 
     if (action.promptTemplate && this.pipeline) {
-      // Route through the full message pipeline so the LLM can use all tools
+      // Route through the full message pipeline so the LLM can use all tools.
+      // Use an isolated chatId so scheduled prompts/responses don't pollute the
+      // user's main conversation (which would grow unbounded and cause LLM
+      // hallucinations from irrelevant context).
       try {
+        const isolatedChatId = `scheduled-${action.id}`;
         const syntheticMessage: NormalizedMessage = {
           id: `scheduled-${crypto.randomUUID()}`,
           platform: action.platform as Platform,
-          chatId: action.chatId,
+          chatId: isolatedChatId,
           chatType: 'dm',
           userId: action.userId,
           userName: action.userId,
@@ -81,7 +87,7 @@ export class ProactiveScheduler {
 
         resultText = formatted.text;
 
-        // Send file attachments if any
+        // Send file attachments if any — to the USER's original chatId
         const adapter = this.adapters.get(action.platform as Platform);
         if (adapter && result.attachments) {
           for (const att of result.attachments) {
@@ -148,13 +154,33 @@ export class ProactiveScheduler {
       }
     }
 
-    // Send result to user
-    const adapter = this.adapters.get(action.platform as Platform);
-    if (adapter) {
-      try {
-        await adapter.sendMessage(action.chatId, resultText);
-      } catch (err) {
-        this.logger.error({ err, actionId: action.id }, 'Failed to send scheduled action result');
+    // Send result to user — suppress empty/silent responses (e.g. when the
+    // prompt says "antworte NICHTS" and the LLM complied).
+    const trimmed = resultText.trim();
+    const isSilent = !trimmed || trimmed.length < 3;
+    if (isSilent) {
+      this.logger.info({ actionId: action.id, name: action.name }, 'Scheduled action produced no output — skipping notification');
+    } else {
+      const adapter = this.adapters.get(action.platform as Platform);
+      if (adapter) {
+        try {
+          await adapter.sendMessage(action.chatId, resultText);
+
+          // Inject the notification into the USER's conversation so they can
+          // reply to it with context (e.g. "restart the VM").  Only the
+          // outbound alert is stored — the monitoring prompt itself stays
+          // in the isolated scheduled-* conversation.
+          if (this.conversationManager) {
+            const userConv = this.conversationManager.getOrCreateConversation(
+              action.platform as Platform,
+              action.chatId,
+              action.userId,
+            );
+            this.conversationManager.addMessage(userConv.id, 'assistant', resultText);
+          }
+        } catch (err) {
+          this.logger.error({ err, actionId: action.id }, 'Failed to send scheduled action result');
+        }
       }
     }
 

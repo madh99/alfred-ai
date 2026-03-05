@@ -379,6 +379,7 @@ export class Alfred {
       this.logger.child({ component: 'proactive-scheduler' }),
       this.pipeline,
       this.formatter,
+      conversationManager,
     );
 
     // 8. Initialize messaging adapters
