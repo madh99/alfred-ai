@@ -281,7 +281,30 @@ export class GoogleProvider extends LLMProvider {
       }
     }
 
-    return contents;
+    // Gemini requires strict role alternation (user ↔ model).
+    // Merge consecutive same-role turns that can arise from pipeline
+    // transformations (e.g. collapseRepeatedToolErrors, trimToContextWindow).
+    return this.mergeConsecutiveRoles(contents);
+  }
+
+  /**
+   * Merge consecutive Content entries that share the same role.
+   * Gemini rejects requests with two consecutive 'model' or 'user' turns.
+   */
+  private mergeConsecutiveRoles(contents: Content[]): Content[] {
+    if (contents.length <= 1) return contents;
+    const merged: Content[] = [contents[0]];
+    for (let i = 1; i < contents.length; i++) {
+      const prev = merged[merged.length - 1];
+      const cur = contents[i];
+      if (prev.role === cur.role) {
+        // Merge parts into the previous entry
+        prev.parts = [...(prev.parts ?? []), ...(cur.parts ?? [])];
+      } else {
+        merged.push(cur);
+      }
+    }
+    return merged;
   }
 
   // ---------------------------------------------------------------------------

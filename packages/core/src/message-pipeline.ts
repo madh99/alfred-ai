@@ -471,11 +471,22 @@ export class MessagePipeline {
       conversationId, 'user', '', JSON.stringify(syntheticResults),
     );
 
-    // Ask the LLM to summarize for the user
-    messages.push({
-      role: 'user',
-      content: `[System: ${reason} Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist.]`,
-    });
+    // Ask the LLM to summarize for the user.
+    // Append the system instruction to the last user message (which contains
+    // synthetic tool_results) instead of pushing a second consecutive 'user'
+    // message — Gemini rejects two consecutive same-role turns.
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg && lastMsg.role === 'user' && Array.isArray(lastMsg.content)) {
+      lastMsg.content.push({
+        type: 'text' as const,
+        text: `[System: ${reason} Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist.]`,
+      } as LLMContentBlock);
+    } else {
+      messages.push({
+        role: 'user',
+        content: `[System: ${reason} Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist.]`,
+      });
+    }
     return await this.llm.complete({ messages, system });
   }
 
@@ -532,11 +543,13 @@ export class MessagePipeline {
           }
 
           if (runLength > 1) {
-            // Keep only the first pair + a note about the repetitions
+            // Keep only the first pair + a note about the repetitions.
+            // The note is a 'user' message so that we don't create two
+            // consecutive 'assistant' turns (Gemini rejects that).
             result.push(msg);
             result.push(next);
             result.push({
-              role: 'assistant',
+              role: 'user',
               content: `[System: The above tool error repeated ${runLength} times with identical input. The loop was aborted.]`,
             });
             i = j; // Skip all repeated pairs
@@ -915,8 +928,10 @@ export class MessagePipeline {
       const droppedMessages = history.slice(0, history.length - keptMessages.length);
       const summary = this.summarizeTrimmedMessages(droppedMessages);
 
+      // Use 'user' role for the summary so it never creates consecutive
+      // same-role turns with the first kept message (which may be 'assistant').
       keptMessages.unshift({
-        role: 'assistant',
+        role: 'user',
         content: `[Earlier conversation summary — ${trimmedCount} messages were trimmed to fit the context window:\n${summary}\n\nThe conversation continues below with the most recent messages.]`,
       });
     }
