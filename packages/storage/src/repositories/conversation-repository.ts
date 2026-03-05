@@ -83,6 +83,16 @@ export class ConversationRepository {
     this.db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
   }
 
+  /** Delete all but the most recent `keep` messages for a conversation. */
+  pruneMessages(conversationId: string, keep: number): number {
+    const result = this.db.prepare(`
+      DELETE FROM messages WHERE conversation_id = ? AND id NOT IN (
+        SELECT id FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
+      )
+    `).run(conversationId, conversationId, keep);
+    return result.changes;
+  }
+
   private mapRow(row: Record<string, string>): Conversation {
     return {
       id: row.id,

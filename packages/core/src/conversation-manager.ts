@@ -20,4 +20,9 @@ export class ConversationManager {
   getHistory(conversationId: string, limit = 20): ConversationMessage[] {
     return this.conversations.getMessages(conversationId, limit);
   }
+
+  /** Delete all but the most recent `keep` messages for a conversation. */
+  pruneMessages(conversationId: string, keep: number): number {
+    return this.conversations.pruneMessages(conversationId, keep);
+  }
 }

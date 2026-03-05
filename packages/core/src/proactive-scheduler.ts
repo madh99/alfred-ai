@@ -184,6 +184,22 @@ export class ProactiveScheduler {
       }
     }
 
+    // Prune isolated scheduled-task conversations to prevent unbounded growth.
+    // Keep only the last 20 messages (≈10 prompt/response pairs).
+    if (action.promptTemplate && this.conversationManager) {
+      try {
+        const isolatedChatId = `scheduled-${action.id}`;
+        const conv = this.conversationManager.getOrCreateConversation(
+          action.platform as Platform,
+          isolatedChatId,
+          action.userId,
+        );
+        this.conversationManager.pruneMessages(conv.id, 20);
+      } catch {
+        // Non-critical — ignore pruning errors
+      }
+    }
+
     // Calculate next run
     const nextRunAt = this.calculateNextRun(action);
 
