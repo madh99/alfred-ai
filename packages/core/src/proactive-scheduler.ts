@@ -168,18 +168,19 @@ export class ProactiveScheduler {
         try {
           await adapter.sendMessage(action.chatId, resultText);
 
-          // Inject the notification into the USER's conversation as a system
-          // message so the LLM knows it's an automated alert (not something it
-          // said unprompted).  This lets the user reply with context (e.g.
-          // "restart the VM") without confusing the LLM's conversation flow.
-          if (this.conversationManager) {
+          // For prompt_template tasks running in an isolated conversation:
+          // inject the alert into the USER's conversation so they can reply
+          // with context (e.g. "restart the VM").  Skill-based tasks already
+          // run without conversation context, so injecting their output would
+          // just bloat the user's history.
+          if (action.promptTemplate && this.conversationManager) {
             const userConv = this.conversationManager.getOrCreateConversation(
               action.platform as Platform,
               action.chatId,
               action.userId,
             );
-            const alertMsg = `[Scheduled Alert: ${action.name}]\n${resultText}`;
-            this.conversationManager.addMessage(userConv.id, 'system', alertMsg);
+            const alertMsg = `[Automated Scheduled Alert: ${action.name}]\n${resultText}`;
+            this.conversationManager.addMessage(userConv.id, 'assistant', alertMsg);
           }
         } catch (err) {
           this.logger.error({ err, actionId: action.id }, 'Failed to send scheduled action result');
