@@ -281,24 +281,58 @@ export class GoogleProvider extends LLMProvider {
       }
     }
 
-    // Gemini requires strict role alternation (user ↔ model).
-    // Merge consecutive same-role turns that can arise from pipeline
-    // transformations (e.g. collapseRepeatedToolErrors, trimToContextWindow).
-    return this.mergeConsecutiveRoles(contents);
+    // Gemini requires strict turn ordering:
+    // 1. No orphaned functionResponse without a preceding functionCall
+    // 2. No consecutive same-role turns
+    // 3. functionCall turns must follow user or functionResponse turns
+    return this.sanitizeContents(contents);
   }
 
   /**
-   * Merge consecutive Content entries that share the same role.
-   * Gemini rejects requests with two consecutive 'model' or 'user' turns.
+   * Sanitize Content array for Gemini's strict turn-ordering requirements.
+   * - Removes orphaned functionResponse parts (no matching prior functionCall)
+   * - Merges consecutive same-role turns
+   * - Removes empty entries after filtering
    */
-  private mergeConsecutiveRoles(contents: Content[]): Content[] {
-    if (contents.length <= 1) return contents;
-    const merged: Content[] = [contents[0]];
-    for (let i = 1; i < contents.length; i++) {
+  private sanitizeContents(contents: Content[]): Content[] {
+    // Pass 1: Track which function call IDs have been emitted by model turns.
+    // Remove functionResponse parts that reference unknown/orphaned call IDs.
+    const emittedCallIds = new Set<string>();
+    const cleaned: Content[] = [];
+
+    for (const entry of contents) {
+      if (entry.role === 'model') {
+        // Collect all functionCall IDs from this model turn
+        for (const part of entry.parts ?? []) {
+          if (part.functionCall) {
+            const id = part.functionCall.id ?? part.functionCall.name ?? '';
+            if (id) emittedCallIds.add(id);
+          }
+        }
+        cleaned.push(entry);
+      } else {
+        // User turn — filter out orphaned functionResponse parts
+        const parts = (entry.parts ?? []).filter((part: Part) => {
+          if (part.functionResponse) {
+            const id = part.functionResponse.id ?? part.functionResponse.name ?? '';
+            return id ? emittedCallIds.has(id) : false;
+          }
+          return true; // keep text, inlineData, etc.
+        });
+        if (parts.length > 0) {
+          cleaned.push({ role: entry.role, parts });
+        }
+        // If all parts were orphaned functionResponses, skip the entire entry
+      }
+    }
+
+    // Pass 2: Merge consecutive same-role turns
+    if (cleaned.length <= 1) return cleaned;
+    const merged: Content[] = [cleaned[0]];
+    for (let i = 1; i < cleaned.length; i++) {
       const prev = merged[merged.length - 1];
-      const cur = contents[i];
+      const cur = cleaned[i];
       if (prev.role === cur.role) {
-        // Merge parts into the previous entry
         prev.parts = [...(prev.parts ?? []), ...(cur.parts ?? [])];
       } else {
         merged.push(cur);
