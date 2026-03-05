@@ -326,12 +326,44 @@ export class GoogleProvider extends LLMProvider {
       }
     }
 
-    // Pass 2: Merge consecutive same-role turns
-    if (cleaned.length <= 1) return cleaned;
-    const merged: Content[] = [cleaned[0]];
-    for (let i = 1; i < cleaned.length; i++) {
+    // Pass 2: Remove orphaned functionCall parts (no matching functionResponse follows).
+    // Collect all functionResponse IDs across all user turns.
+    const respondedCallIds = new Set<string>();
+    for (const entry of cleaned) {
+      if (entry.role !== 'model') {
+        for (const part of entry.parts ?? []) {
+          if (part.functionResponse) {
+            const id = part.functionResponse.id ?? part.functionResponse.name ?? '';
+            if (id) respondedCallIds.add(id);
+          }
+        }
+      }
+    }
+    // Strip functionCall parts that have no matching response
+    const cleaned2: Content[] = [];
+    for (const entry of cleaned) {
+      if (entry.role === 'model') {
+        const parts = (entry.parts ?? []).filter((part: Part) => {
+          if (part.functionCall) {
+            const id = part.functionCall.id ?? part.functionCall.name ?? '';
+            return id ? respondedCallIds.has(id) : false;
+          }
+          return true;
+        });
+        if (parts.length > 0) {
+          cleaned2.push({ role: entry.role, parts });
+        }
+      } else {
+        cleaned2.push(entry);
+      }
+    }
+
+    // Pass 3: Merge consecutive same-role turns
+    if (cleaned2.length <= 1) return cleaned2;
+    const merged: Content[] = [cleaned2[0]];
+    for (let i = 1; i < cleaned2.length; i++) {
       const prev = merged[merged.length - 1];
-      const cur = cleaned[i];
+      const cur = cleaned2[i];
       if (prev.role === cur.role) {
         prev.parts = [...(prev.parts ?? []), ...(cur.parts ?? [])];
       } else {
