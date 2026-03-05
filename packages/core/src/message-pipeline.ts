@@ -1119,7 +1119,9 @@ export class MessagePipeline {
                 attachment.mimeType ?? 'application/octet-stream',
               );
               if (result.existing) {
-                fileNote += `\n[IMPORTANT: This document is already indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
+                // Remove duplicate file from inbox
+                try { fs.unlinkSync(savedPath); } catch { /* ignore */ }
+                fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (duplicate, not saved again)]\n[IMPORTANT: This document is already indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
               } else {
                 fileNote += `\n[IMPORTANT: Document has been indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
               }
