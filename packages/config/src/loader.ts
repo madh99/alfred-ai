@@ -39,6 +39,7 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_SIGNAL_PHONE_NUMBER: ['signal', 'phoneNumber'],
   ALFRED_ANTHROPIC_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENAI_API_KEY: ['llm', 'apiKey'],
+  ALFRED_GOOGLE_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENROUTER_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENWEBUI_API_KEY: ['llm', 'apiKey'],
   ALFRED_LLM_PROVIDER: ['llm', 'provider'],
