@@ -396,6 +396,9 @@ export class FileSkill extends Skill {
       if (stat.isDirectory()) {
         return { success: false, error: `"${filePath}" is a directory, not a file` };
       }
+      if (stat.size === 0) {
+        return { success: false, error: `"${filePath}" is empty (0 bytes) — cannot send an empty file` };
+      }
       if (stat.size > MAX_SEND_SIZE) {
         return { success: false, error: `File too large to send (${stat.size} bytes, max ${MAX_SEND_SIZE})` };
       }

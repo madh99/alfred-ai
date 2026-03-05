@@ -132,6 +132,17 @@ For complex tasks, work through multiple steps:
         prompt += `- **${s.name}** (${s.riskLevel}): ${s.description}\n`;
       }
 
+      // File generation workflow hint
+      if (skills.some(s => s.name === 'code_sandbox')) {
+        prompt += `
+## File generation (PDF, HTML, images, etc.)
+To generate and send a file to the user:
+1. Use \`code_sandbox\` to run code that creates the file (e.g. pdfkit for PDF, HTML generation, etc.)
+2. The sandbox **automatically collects all files** written to the working directory and sends them as attachments to the user.
+3. Do NOT use \`file send\` afterwards — the files are already delivered. Using \`file send\` on sandbox-generated files will fail because the sandbox runs in an isolated temp directory.
+`;
+      }
+
       // Delegation instruction: when code agents are configured, instruct the
       // LLM to delegate coding/file-editing tasks to them instead of doing it
       // via conversation or shell.
