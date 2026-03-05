@@ -1,6 +1,6 @@
 {
   "name": "@alfred/llm",
-  "version": "0.9.83",
+  "version": "0.9.84",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

@@ -129,8 +129,8 @@ export class ScheduledTaskSkill extends Skill {
     if (!scheduleValue || typeof scheduleValue !== 'string') {
       return { success: false, error: 'Missing required field "schedule_value" for create action' };
     }
-    if (!skillName || typeof skillName !== 'string') {
-      return { success: false, error: 'Missing required field "skill_name" for create action' };
+    if ((!skillName || typeof skillName !== 'string') && !promptTemplate) {
+      return { success: false, error: 'Missing required field "skill_name" (or "prompt_template") for create action' };
     }
 
     // Validate schedule_value based on type
@@ -164,7 +164,7 @@ export class ScheduledTaskSkill extends Skill {
       description,
       scheduleType: scheduleType as 'cron' | 'interval' | 'once',
       scheduleValue,
-      skillName,
+      skillName: skillName ?? 'llm_prompt',
       skillInput: JSON.stringify(skillInput ?? {}),
       promptTemplate,
     });
