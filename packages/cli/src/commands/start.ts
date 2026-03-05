@@ -70,7 +70,8 @@ export async function startCommand(): Promise<void> {
       }
     }
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start Alfred');
+    const err = error instanceof Error ? error : new Error(String(error));
+    logger.fatal({ err }, 'Failed to start Alfred');
     process.exit(1);
   }
 }
