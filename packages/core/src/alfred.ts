@@ -36,6 +36,7 @@ import {
   ScheduledTaskSkill,
   DocumentSkill,
   TTSSkill,
+  ImageGenerateSkill,
   ConfigureSkill,
   TodoSkill,
 } from '@alfred/skills';
@@ -44,6 +45,7 @@ import { MessagePipeline } from './message-pipeline.js';
 import { ReminderScheduler } from './reminder-scheduler.js';
 import { SpeechTranscriber } from './speech-transcriber.js';
 import { SpeechSynthesizer } from './speech-synthesizer.js';
+import { ImageGenerator } from './image-generator.js';
 import { ResponseFormatter } from './response-formatter.js';
 import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
@@ -333,6 +335,14 @@ export class Alfred {
       );
       skillRegistry.register(new TTSSkill(synthesizer));
       this.logger.info('Text-to-speech skill registered');
+    }
+
+    // 5c. Initialize image generation (auto-detect from LLM config)
+    const imageGenProvider = this.detectImageGenProvider();
+    if (imageGenProvider) {
+      const generator = new ImageGenerator(imageGenProvider, this.logger.child({ component: 'image-gen' }));
+      skillRegistry.register(new ImageGenerateSkill(generator));
+      this.logger.info({ provider: imageGenProvider.provider }, 'Image generation skill registered');
     }
 
     // 6. Create conversation manager and pipeline
@@ -706,6 +716,20 @@ export class Alfred {
     adapter.on('disconnected', () => {
       this.logger.warn({ platform }, 'Adapter disconnected');
     });
+  }
+
+  private detectImageGenProvider(): { provider: 'openai' | 'google'; apiKey: string; baseUrl?: string } | undefined {
+    const tiers = ['default', 'strong', 'fast', 'embeddings', 'local'] as const;
+    // Prefer OpenAI (better image quality), then Google
+    for (const preferred of ['openai', 'google'] as const) {
+      for (const tier of tiers) {
+        const tierConfig = this.config.llm[tier];
+        if (tierConfig?.provider === preferred && tierConfig.apiKey) {
+          return { provider: preferred, apiKey: tierConfig.apiKey, baseUrl: tierConfig.baseUrl };
+        }
+      }
+    }
+    return undefined;
   }
 
   private loadSecurityRules(): SecurityRule[] {

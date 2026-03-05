@@ -13,6 +13,7 @@ export { ProactiveScheduler } from './proactive-scheduler.js';
 export { buildSkillContext } from './context-factory.js';
 export type { ContextSource, ContextResult } from './context-factory.js';
 export { DocumentProcessor } from './document-processor.js';
+export { ImageGenerator } from './image-generator.js';
 export { ActiveLearningService } from './active-learning/active-learning-service.js';
 export type { ActiveLearningOptions } from './active-learning/active-learning-service.js';
 export { MemoryRetriever } from './active-learning/memory-retriever.js';

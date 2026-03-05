@@ -34,6 +34,8 @@ export { CodeExecutionSkill, CodeExecutor } from './built-in/code-sandbox/index.
 export type { ExecutionResult } from './built-in/code-sandbox/index.js';
 export { DocumentSkill } from './built-in/document.js';
 export { TTSSkill } from './built-in/tts.js';
+export { ImageGenerateSkill } from './built-in/image-generate.js';
+export type { ImageGeneratorInterface } from './built-in/image-generate.js';
 export { ProxmoxSkill } from './built-in/proxmox.js';
 export { UniFiSkill } from './built-in/unifi.js';
 export { HomeAssistantSkill } from './built-in/home-assistant.js';
