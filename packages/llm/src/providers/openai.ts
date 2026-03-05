@@ -33,8 +33,8 @@ export class OpenAIProvider extends LLMProvider {
 
     const params: OpenAI.ChatCompletionCreateParams = {
       model: this.config.model,
-      max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
-      temperature: request.temperature ?? this.config.temperature,
+      ...this.tokenLimitParam(request.maxTokens),
+      temperature: this.safeTemperature(request.temperature),
       messages,
       ...(tools ? { tools } : {}),
     };
@@ -50,8 +50,8 @@ export class OpenAIProvider extends LLMProvider {
 
     const stream = await this.client.chat.completions.create({
       model: this.config.model,
-      max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
-      temperature: request.temperature ?? this.config.temperature,
+      ...this.tokenLimitParam(request.maxTokens),
+      temperature: this.safeTemperature(request.temperature),
       messages,
       ...(tools ? { tools } : {}),
       stream: true,
@@ -176,6 +176,37 @@ export class OpenAIProvider extends LLMProvider {
 
   supportsEmbeddings(): boolean {
     return true;
+  }
+
+  /**
+   * Detect OpenAI reasoning models that use different API parameters.
+   * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1 — but NOT gpt-5.2+
+   * (gpt-5.2 restored support for temperature and is a "chat" model).
+   */
+  private isReasoningModel(): boolean {
+    return /^(o[1-9]|gpt-5($|[.-][01]))/.test(this.config.model);
+  }
+
+  /**
+   * Newer OpenAI models (gpt-5*, o1*, o3*, o4*) require `max_completion_tokens`
+   * instead of `max_tokens`.  Returns the correct parameter for the current model.
+   */
+  protected tokenLimitParam(requestMax?: number): { max_tokens?: number; max_completion_tokens?: number } {
+    const value = requestMax ?? this.config.maxTokens ?? 4096;
+    if (/^(gpt-5|o[1-9])/.test(this.config.model)) {
+      return { max_completion_tokens: value };
+    }
+    return { max_tokens: value };
+  }
+
+  /**
+   * Reasoning models (o1, o3, o4, gpt-5, gpt-5.1) reject temperature,
+   * top_p, frequency_penalty, presence_penalty.  Returns undefined for
+   * these models so the SDK omits the parameter.
+   */
+  protected safeTemperature(requested?: number): number | undefined {
+    if (this.isReasoningModel()) return undefined;
+    return requested ?? this.config.temperature;
   }
 
   private mapMessages(
