@@ -154,12 +154,18 @@ export class ProactiveScheduler {
       }
     }
 
-    // Send result to user — suppress empty/silent responses and "all clear"
-    // messages (the prompt says "antworte NICHTS" but some models still respond).
+    // Send result to user — for prompt_template tasks whose prompt contains
+    // "antworte NICHTS" or similar, use whitelist logic: only send if the
+    // response contains actual problem indicators.  This avoids chasing every
+    // creative LLM variation of "all clear" (e.g. "silenzio.", "(no response)").
     const trimmed = resultText.trim();
+    const promptLower = (action.promptTemplate ?? '').toLowerCase();
+    const isSilentPrompt = /nichts|silent|no\s*output|don't\s*respond|do\s*not\s*respond/i.test(promptLower);
+    const hasAlertIndicators = /offline|down|fehler|error|warn|critical|alert|fail|nicht\s+(erreichbar|verf[uü]gbar|gefunden|online)|ausgefallen|stopped|unreachable|unavailable|⚠|❌|🚨|🔴/i.test(trimmed)
+      && !/keine\s+(probleme|fehler|auff[aä]lligkeiten)/i.test(trimmed);
     const isSilent = !trimmed
       || trimmed.length < 3
-      || /^(alles\s+(in\s+ordnung|ok|gut|klar)|no\s+issues?|nothing\s+to\s+report|all\s+(clear|good|ok)|keine\s+(probleme|auff[aä]lligkeiten|fehler))/i.test(trimmed);
+      || (isSilentPrompt && !hasAlertIndicators);
     if (isSilent) {
       this.logger.info({ actionId: action.id, name: action.name }, 'Scheduled action produced no actionable output — skipping notification');
     } else {
