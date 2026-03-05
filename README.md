@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.7-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.8-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -94,7 +94,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData, deterministic health checks |
-| **Navigation** | `routing` | Google Routes API — Routen mit Live-Traffic, Abfahrtszeit-Empfehlung |
+| **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
@@ -255,6 +255,20 @@ You: "Wann muss ich losfahren um um 9 Uhr im Büro zu sein?"
 ```
 
 The LLM combines BMW + Routing skills intelligently for questions like *"Schaffe ich es mit dem Auto ins Büro ohne Laden?"*
+
+#### Public Transit (Austria)
+
+Public transit routing for all of Austria via hafas-client (ÖBB profile). No API key needed — auto-registered on startup.
+
+- Stop search, journey planning, departure boards
+- Covers ÖBB trains, Wiener Linien (U-Bahn, Tram, Bus), S-Bahn, Postbus, regional transit
+- Real-time delay information
+
+```
+You: "Wann fährt die nächste U-Bahn von Stephansplatz?"
+You: "Wie komme ich von Altlengbach nach Wien Hauptbahnhof?"
+You: "Zeig mir die Abfahrten am Westbahnhof in den nächsten 20 Minuten"
+```
 
 ### Cross-Platform Identity
 

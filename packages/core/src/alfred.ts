@@ -37,6 +37,7 @@ import {
   DocumentSkill,
   TTSSkill,
   ImageGenerateSkill,
+  TransitSkill,
   ConfigureSkill,
   TodoSkill,
 } from '@alfred/skills';
@@ -46,6 +47,7 @@ import { ReminderScheduler } from './reminder-scheduler.js';
 import { SpeechTranscriber } from './speech-transcriber.js';
 import { SpeechSynthesizer } from './speech-synthesizer.js';
 import { ImageGenerator } from './image-generator.js';
+import { TransitClient } from './transit-client.js';
 import { ResponseFormatter } from './response-formatter.js';
 import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
@@ -343,6 +345,15 @@ export class Alfred {
       const generator = new ImageGenerator(imageGenProvider, this.logger.child({ component: 'image-gen' }));
       skillRegistry.register(new ImageGenerateSkill(generator));
       this.logger.info({ provider: imageGenProvider.provider }, 'Image generation skill registered');
+    }
+
+    // 5d. Initialize public transit (always available, no config needed)
+    try {
+      const transitClient = new TransitClient(this.logger.child({ component: 'transit' }));
+      skillRegistry.register(new TransitSkill(transitClient));
+      this.logger.info('Public transit skill registered');
+    } catch (err) {
+      this.logger.warn({ err }, 'Failed to register transit skill');
     }
 
     // 6. Create conversation manager and pipeline

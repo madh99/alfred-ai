@@ -1,6 +1,6 @@
 {
   "name": "@madh-io/alfred-ai",
-  "version": "0.10.7",
+  "version": "0.10.8",
   "description": "Alfred — Personal AI Assistant across Telegram, Discord, WhatsApp, Matrix & Signal",
   "type": "module",
   "bin": {
@@ -60,7 +60,8 @@
     "@whiskeysockets/baileys": "^6.7.0",
     "matrix-bot-sdk": "^0.7.0",
     "tsdav": "^2.1.0",
-    "googleapis": "^144.0.0"
+    "googleapis": "^144.0.0",
+    "hafas-client": "^6.3.0"
   },
   "devDependencies": {
     "@alfred/config": "workspace:*",
