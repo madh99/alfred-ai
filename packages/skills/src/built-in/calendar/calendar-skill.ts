@@ -60,7 +60,11 @@ export class CalendarSkill extends Skill {
     super();
   }
 
-  async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
+  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    // Propagate user timezone to the provider so it sends correct times to the API
+    if (context.timezone) {
+      this.calendarProvider.timezone = context.timezone;
+    }
     const action = input.action as CalendarAction;
 
     switch (action) {

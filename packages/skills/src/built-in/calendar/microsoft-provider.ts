@@ -81,6 +81,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   async createEvent(input: CreateEventInput): Promise<CalendarEvent> {
+    const tz = this.timezone;
     const event: Record<string, unknown> = {
       subject: input.title,
       body: input.description ? { contentType: 'text', content: input.description } : undefined,
@@ -89,11 +90,11 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
     };
 
     if (input.allDay) {
-      event.start = { dateTime: input.start.toISOString().slice(0, 10) + 'T00:00:00', timeZone: 'UTC' };
-      event.end = { dateTime: input.end.toISOString().slice(0, 10) + 'T00:00:00', timeZone: 'UTC' };
+      event.start = { dateTime: this.formatDateInTz(input.start, tz).slice(0, 10) + 'T00:00:00', timeZone: tz };
+      event.end = { dateTime: this.formatDateInTz(input.end, tz).slice(0, 10) + 'T00:00:00', timeZone: tz };
     } else {
-      event.start = { dateTime: input.start.toISOString(), timeZone: 'UTC' };
-      event.end = { dateTime: input.end.toISOString(), timeZone: 'UTC' };
+      event.start = { dateTime: this.formatDateInTz(input.start, tz), timeZone: tz };
+      event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };
     }
 
     const data = await this.graphRequest('/me/events', {
@@ -110,10 +111,10 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
     if (input.description) patch.body = { contentType: 'text', content: input.description };
     if (input.location) patch.location = { displayName: input.location };
     if (input.start) {
-      patch.start = { dateTime: input.start.toISOString(), timeZone: 'UTC' };
+      patch.start = { dateTime: this.formatDateInTz(input.start, this.timezone), timeZone: this.timezone };
     }
     if (input.end) {
-      patch.end = { dateTime: input.end.toISOString(), timeZone: 'UTC' };
+      patch.end = { dateTime: this.formatDateInTz(input.end, this.timezone), timeZone: this.timezone };
     }
 
     const data = await this.graphRequest(`/me/events/${id}`, {
@@ -132,6 +133,18 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
     const events = await this.listEvents(start, end);
     const conflicts = events.filter(e => !e.allDay && e.start < end && e.end > start);
     return { available: conflicts.length === 0, conflicts };
+  }
+
+  /** Format a Date as a timezone-local datetime string (no Z, no offset) for Graph API. */
+  private formatDateInTz(date: Date, tz: string): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const g = (t: string) => parts.find(p => p.type === t)?.value ?? '00';
+    return `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}`;
   }
 
   private mapEvent(item: any): CalendarEvent {

@@ -18,6 +18,9 @@ export interface CreateEventInput {
 }
 
 export abstract class CalendarProvider {
+  /** User timezone (e.g. 'Europe/Vienna'). Set by CalendarSkill from SkillContext before each call. */
+  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   abstract initialize(): Promise<void>;
   abstract listEvents(start: Date, end: Date): Promise<CalendarEvent[]>;
   abstract createEvent(input: CreateEventInput): Promise<CalendarEvent>;
