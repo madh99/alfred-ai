@@ -154,29 +154,32 @@ export class ProactiveScheduler {
       }
     }
 
-    // Send result to user — suppress empty/silent responses (e.g. when the
-    // prompt says "antworte NICHTS" and the LLM complied).
+    // Send result to user — suppress empty/silent responses and "all clear"
+    // messages (the prompt says "antworte NICHTS" but some models still respond).
     const trimmed = resultText.trim();
-    const isSilent = !trimmed || trimmed.length < 3;
+    const isSilent = !trimmed
+      || trimmed.length < 3
+      || /^(alles\s+(in\s+ordnung|ok|gut|klar)|no\s+issues?|nothing\s+to\s+report|all\s+(clear|good|ok)|keine\s+(probleme|auff[aä]lligkeiten|fehler))/i.test(trimmed);
     if (isSilent) {
-      this.logger.info({ actionId: action.id, name: action.name }, 'Scheduled action produced no output — skipping notification');
+      this.logger.info({ actionId: action.id, name: action.name }, 'Scheduled action produced no actionable output — skipping notification');
     } else {
       const adapter = this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {
           await adapter.sendMessage(action.chatId, resultText);
 
-          // Inject the notification into the USER's conversation so they can
-          // reply to it with context (e.g. "restart the VM").  Only the
-          // outbound alert is stored — the monitoring prompt itself stays
-          // in the isolated scheduled-* conversation.
+          // Inject the notification into the USER's conversation as a system
+          // message so the LLM knows it's an automated alert (not something it
+          // said unprompted).  This lets the user reply with context (e.g.
+          // "restart the VM") without confusing the LLM's conversation flow.
           if (this.conversationManager) {
             const userConv = this.conversationManager.getOrCreateConversation(
               action.platform as Platform,
               action.chatId,
               action.userId,
             );
-            this.conversationManager.addMessage(userConv.id, 'assistant', resultText);
+            const alertMsg = `[Scheduled Alert: ${action.name}]\n${resultText}`;
+            this.conversationManager.addMessage(userConv.id, 'system', alertMsg);
           }
         } catch (err) {
           this.logger.error({ err, actionId: action.id }, 'Failed to send scheduled action result');
