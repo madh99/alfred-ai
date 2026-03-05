@@ -22,16 +22,16 @@ export class EmbeddingService {
     content: string,
     sourceType: string,
     sourceId: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     if (!this.llm.supportsEmbeddings()) {
-      return;
+      return undefined;
     }
 
     try {
       const result = await this.llm.embed(content);
-      if (!result) return;
+      if (!result) return undefined;
 
-      this.embeddingRepo.store({
+      const entry = this.embeddingRepo.store({
         userId,
         sourceType,
         sourceId,
@@ -42,8 +42,10 @@ export class EmbeddingService {
       });
 
       this.logger.debug({ userId, sourceType, sourceId }, 'Embedding stored');
+      return entry.id;
     } catch (err) {
       this.logger.error({ err, userId, sourceType, sourceId }, 'Failed to embed content');
+      return undefined;
     }
   }
 

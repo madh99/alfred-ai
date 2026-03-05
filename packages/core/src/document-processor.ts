@@ -30,8 +30,7 @@ export class DocumentProcessor {
     for (let i = 0; i < chunks.length; i++) {
       let embeddingId: string | undefined;
       try {
-        await this.embeddingService.embedAndStore(userId, chunks[i], 'document', `${doc.id}:${i}`);
-        embeddingId = `${doc.id}:${i}`;
+        embeddingId = await this.embeddingService.embedAndStore(userId, chunks[i], 'document', `${doc.id}:${i}`);
       } catch (err) {
         this.logger.warn({ documentId: doc.id, chunkIndex: i, err }, 'Embedding failed for chunk, continuing');
       }

@@ -4,7 +4,7 @@ import type { MemoryRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 interface EmbeddingServiceLike {
-  embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<void>;
+  embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<string | undefined>;
   semanticSearch(userId: string, query: string, limit?: number): Promise<{ key: string; value: string; category: string; score: number }[]>;
 }
 

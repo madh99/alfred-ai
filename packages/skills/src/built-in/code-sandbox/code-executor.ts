@@ -13,6 +13,18 @@ export interface ExecutionResult {
 }
 
 export class CodeExecutor {
+  private resolveNodePath(): string {
+    const paths: string[] = [];
+    try {
+      const resolved = require.resolve('pdf-parse/package.json');
+      paths.push(path.dirname(path.dirname(resolved)));
+    } catch { /* pdf-parse not available in parent */ }
+    if (process.env.NODE_PATH) {
+      paths.push(process.env.NODE_PATH);
+    }
+    return paths.filter(Boolean).join(path.delimiter);
+  }
+
   async execute(
     code: string,
     language: 'javascript' | 'python',
@@ -46,6 +58,7 @@ export class CodeExecutor {
             TMPDIR: tmpDir,
             TEMP: tmpDir,
             TMP: tmpDir,
+            NODE_PATH: this.resolveNodePath(),
           },
           stdio: ['pipe', 'pipe', 'pipe'],
         });
