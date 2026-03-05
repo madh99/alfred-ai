@@ -1119,9 +1119,9 @@ export class MessagePipeline {
                 attachment.mimeType ?? 'application/octet-stream',
               );
               if (result.existing) {
-                fileNote += `\n[Document already indexed: ${result.chunkCount} chunks, ready for search. ID: ${result.documentId.slice(0, 8)}...]`;
+                fileNote += `\n[IMPORTANT: This document is already indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
               } else {
-                fileNote += `\n[Document indexed: ${result.chunkCount} chunks created for search. ID: ${result.documentId.slice(0, 8)}...]`;
+                fileNote += `\n[IMPORTANT: Document has been indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
               }
             } catch (err) {
               this.logger.warn({ err, fileName: attachment.fileName }, 'Auto-ingest failed');
