@@ -1147,9 +1147,16 @@ export class MessagePipeline {
     if (blocks.some(b => b.type === 'image') && !hasTextBlock) {
       blocks.push({ type: 'text', text: 'What do you see in this image?' });
     } else if (isSynthetic && blocks.some(b => b.type === 'text' && (b as { text: string }).text.startsWith('[File received:'))) {
-      // File sent without any accompanying text — ask the user what they want.
-      // Strong instruction to prevent the LLM from acting on conversation history or memories.
-      blocks.push({ type: 'text', text: 'The user sent this file without any instructions. Ask them what they would like you to do with it. Do NOT take any other actions, do NOT use any tools, and do NOT act on conversation history or memories. ONLY ask what the user wants.' });
+      // File sent without any accompanying text.
+      const hasIndexedDoc = blocks.some(b => b.type === 'text' && (b as { text: string }).text.includes('document is already indexed'));
+      const hasNewDoc = blocks.some(b => b.type === 'text' && (b as { text: string }).text.includes('Document has been indexed'));
+      if (hasIndexedDoc || hasNewDoc) {
+        // Document was auto-ingested — tell the LLM it's ready for search
+        blocks.push({ type: 'text', text: 'The user sent this document. It has been automatically indexed. Acknowledge receipt and tell the user the document is ready — they can ask questions about its content anytime.' });
+      } else {
+        // Non-ingestable file — ask the user what they want.
+        blocks.push({ type: 'text', text: 'The user sent this file without any instructions. Ask them what they would like you to do with it. Do NOT take any other actions, do NOT use any tools, and do NOT act on conversation history or memories. ONLY ask what the user wants.' });
+      }
     } else if (blocks.length === 0) {
       blocks.push({ type: 'text', text: message.text || '(empty message)' });
     }
