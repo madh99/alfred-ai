@@ -77,7 +77,7 @@ export class SkillSandbox {
       // Run the skill
       skill.execute(input, context).then(
         (result) => {
-          this.logger.info({ skill: name, success: result.success }, 'Skill execution completed');
+          this.logger.info({ skill: name, success: result.success, ...(result.success ? {} : { error: result.error }) }, 'Skill execution completed');
           finish(result);
         },
         (error) => {
@@ -174,7 +174,7 @@ export class SkillSandbox {
         }),
       ]);
 
-      this.logger.info({ skill: name, success: result.success }, 'Skill execution completed');
+      this.logger.info({ skill: name, success: result.success, ...(result.success ? {} : { error: result.error }) }, 'Skill execution completed');
 
       return result;
     } catch (error) {

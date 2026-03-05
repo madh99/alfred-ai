@@ -94,7 +94,11 @@ export class EmailSkill extends Skill {
           },
           attachmentId: {
             type: 'string',
-            description: 'Attachment ID (for attachment action)',
+            description: 'Attachment ID or filename (for attachment action)',
+          },
+          save: {
+            type: 'string',
+            description: 'Directory path to save the attachment to disk instead of reading its content (for attachment action)',
           },
           isHtml: {
             type: 'boolean',
@@ -226,7 +230,7 @@ export class EmailSkill extends Skill {
     const detail = await provider.readMessage(rawId);
 
     const attLine = detail.attachments?.length
-      ? `\nAttachments: ${detail.attachments.map(a => `${a.name} (${a.contentType}, ${this.formatSize(a.size)})`).join(', ')}`
+      ? `\nAttachments:\n${detail.attachments.map(a => `  - [attachmentId: ${a.id}] ${a.name} (${a.contentType}, ${this.formatSize(a.size)})`).join('\n')}`
       : '';
 
     return {
@@ -452,6 +456,7 @@ export class EmailSkill extends Skill {
   private async handleAttachment(input: Record<string, unknown>): Promise<SkillResult> {
     const messageId = input.messageId as string;
     const attachmentId = input.attachmentId as string;
+    const savePath = input.save as string | undefined;
     if (!messageId) return { success: false, error: '"messageId" is required.' };
     if (!attachmentId) return { success: false, error: '"attachmentId" is required.' };
 
@@ -461,24 +466,85 @@ export class EmailSkill extends Skill {
       return { success: false, error: `Unknown email account "${account}".` };
     }
 
+    // Resolve attachment: try by ID first, then fall back to filename match
     const detail = await provider.readMessage(rawId);
-    const attMeta = detail.attachments?.find(a => a.id === attachmentId);
+    let attMeta = detail.attachments?.find(a => a.id === attachmentId);
+    if (!attMeta) {
+      attMeta = detail.attachments?.find(a => a.name.toLowerCase() === attachmentId.toLowerCase());
+    }
+    if (!attMeta) {
+      const available = detail.attachments?.map(a => `[${a.id}] ${a.name}`).join(', ') ?? 'none';
+      return { success: false, error: `Attachment "${attachmentId}" not found. Available: ${available}` };
+    }
 
-    const data = await provider.downloadAttachment(rawId, attachmentId);
+    const data = await provider.downloadAttachment(rawId, attMeta.id);
+    const fileName = attMeta.name;
+    const mimeType = attMeta.contentType;
 
-    const fileName = attMeta?.name ?? `attachment-${attachmentId}`;
-    const mimeType = attMeta?.contentType ?? 'application/octet-stream';
+    // Save mode: write to disk, no text extraction
+    if (savePath) {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const dir = path.resolve(savePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const filePath = path.join(dir, fileName);
+      fs.writeFileSync(filePath, data);
+      return {
+        success: true,
+        data: { messageId, attachmentId: attMeta.id, fileName, size: data.length, savedTo: filePath },
+        display: this.accountLabel(account, `Saved attachment: ${fileName} (${this.formatSize(data.length)}) → ${filePath}`),
+      };
+    }
 
+    // Read mode: extract text content for readable file types
+    const textContent = await this.extractText(data, mimeType, fileName);
+    if (textContent !== null) {
+      const truncated = textContent.length > 6000
+        ? textContent.slice(0, 6000) + '\n\n... (truncated)'
+        : textContent;
+      return {
+        success: true,
+        data: { messageId, attachmentId: attMeta.id, fileName, size: data.length, hasContent: true },
+        display: this.accountLabel(account, `Attachment: ${fileName} (${this.formatSize(data.length)})\n\nContent:\n${truncated}`),
+        attachments: [{ fileName, data, mimeType }],
+      };
+    }
+
+    // Binary file: just pass through to user
     return {
       success: true,
-      data: { messageId, attachmentId, fileName, size: data.length },
+      data: { messageId, attachmentId: attMeta.id, fileName, size: data.length },
       display: this.accountLabel(account, `Downloaded attachment: ${fileName} (${this.formatSize(data.length)})`),
-      attachments: [{
-        fileName,
-        data,
-        mimeType,
-      }],
+      attachments: [{ fileName, data, mimeType }],
     };
+  }
+
+  private async extractText(data: Buffer, mimeType: string, fileName: string): Promise<string | null> {
+    try {
+      if (mimeType === 'application/pdf') {
+        // pdf-parse is an optional runtime dependency (installed on deployment)
+        const pdfParse = (await import(/* webpackIgnore: true */ 'pdf-parse' as string)).default as (buf: Buffer) => Promise<{ text: string }>;
+        const result = await pdfParse(data);
+        return result.text?.trim() || null;
+      }
+      if (
+        mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+        mimeType === 'application/msword'
+      ) {
+        // mammoth is an optional runtime dependency
+        const mammoth = await import(/* webpackIgnore: true */ 'mammoth' as string) as { extractRawText: (opts: { buffer: Buffer }) => Promise<{ value: string }> };
+        const result = await mammoth.extractRawText({ buffer: data });
+        return result.value?.trim() || null;
+      }
+      if (mimeType.startsWith('text/') || fileName.endsWith('.csv') || fileName.endsWith('.json') || fileName.endsWith('.md')) {
+        return data.toString('utf-8');
+      }
+    } catch {
+      // Extraction failed — fall through to binary mode
+    }
+    return null;
   }
 
   private formatSize(bytes: number): string {
