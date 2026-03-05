@@ -295,6 +295,17 @@ export class Alfred {
       this.logger.info('Routing skill enabled');
     }
 
+    // 4m. Infrastructure Monitor (auto-enabled when any infra skill is configured)
+    if (this.config.proxmox || this.config.unifi || this.config.homeassistant) {
+      const { MonitorSkill } = await import('@alfred/skills');
+      skillRegistry.register(new MonitorSkill({
+        proxmox: this.config.proxmox,
+        unifi: this.config.unifi,
+        homeassistant: this.config.homeassistant,
+      }));
+      this.logger.info('Infrastructure monitor skill enabled');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

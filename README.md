@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.94-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.95-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (32+)
+### Built-in Skills (33+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -93,7 +93,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData, deterministic health checks |
 | **Navigation** | `routing` | Google Routes API — Routen mit Live-Traffic, Abfahrtszeit-Empfehlung |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts` | Web browsing via Puppeteer, text-to-speech voice messages |
