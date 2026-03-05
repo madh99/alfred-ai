@@ -71,6 +71,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.39.0
         version: 0.39.0
+      '@google/genai':
+        specifier: ^1.44.0
+        version: 1.44.0(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.1
         version: 1.27.1(zod@3.25.76)
