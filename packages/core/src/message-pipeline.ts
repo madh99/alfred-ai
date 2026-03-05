@@ -55,6 +55,7 @@ export interface PipelineOptions {
   activeLearning?: ActiveLearningService;
   memoryRetriever?: MemoryRetriever;
   maxHistoryMessages?: number;
+  documentProcessor?: import('./document-processor.js').DocumentProcessor;
 }
 
 /** Tracks a running delegate agent so other messages can query its status. */
@@ -81,6 +82,7 @@ export class MessagePipeline {
   private readonly activeLearning?: ActiveLearningService;
   private readonly memoryRetriever?: MemoryRetriever;
   private readonly maxHistoryMessages: number;
+  private readonly documentProcessor?: import('./document-processor.js').DocumentProcessor;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -101,6 +103,7 @@ export class MessagePipeline {
     this.activeLearning = options.activeLearning;
     this.memoryRetriever = options.memoryRetriever;
     this.maxHistoryMessages = options.maxHistoryMessages ?? 100;
+    this.documentProcessor = options.documentProcessor;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -1106,6 +1109,25 @@ export class MessagePipeline {
             fileNote += `\n[File content]:\n${textContent}`;
           }
 
+          // Auto-ingest documents for RAG search
+          if (this.documentProcessor && this.isIngestable(attachment.mimeType)) {
+            try {
+              const result = await this.documentProcessor.ingest(
+                message.userId,
+                savedPath,
+                attachment.fileName ?? 'unknown',
+                attachment.mimeType ?? 'application/octet-stream',
+              );
+              if (result.existing) {
+                fileNote += `\n[Document already indexed: ${result.chunkCount} chunks, ready for search. ID: ${result.documentId.slice(0, 8)}...]`;
+              } else {
+                fileNote += `\n[Document indexed: ${result.chunkCount} chunks created for search. ID: ${result.documentId.slice(0, 8)}...]`;
+              }
+            } catch (err) {
+              this.logger.warn({ err, fileName: attachment.fileName }, 'Auto-ingest failed');
+            }
+          }
+
           blocks.push({ type: 'text', text: fileNote });
           this.logger.info({ fileName: attachment.fileName, savedPath, size: attachment.data.length }, 'File saved to inbox');
         }
@@ -1173,6 +1195,18 @@ export class MessagePipeline {
       this.logger.error({ err, filePath }, 'Failed to save file to inbox');
       return undefined;
     }
+  }
+
+  private isIngestable(mimeType?: string): boolean {
+    if (!mimeType) return false;
+    const ingestable = [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+      'text/plain', 'text/csv', 'text/markdown', 'text/html',
+      'application/json', 'application/xml',
+    ];
+    return ingestable.includes(mimeType) || mimeType.startsWith('text/');
   }
 
   private isTextMimeType(mimeType?: string): boolean {

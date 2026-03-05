@@ -354,6 +354,7 @@ export class Alfred {
       activeLearning,
       memoryRetriever,
       maxHistoryMessages: this.config.conversation?.maxHistoryMessages ?? 100,
+      documentProcessor,
     });
 
     // 6. Initialize reminder scheduler
