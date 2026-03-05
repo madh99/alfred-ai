@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.88-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.89-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -56,7 +56,7 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 |----------|--------|:---:|
 | **Anthropic** | Claude Opus, Sonnet, Haiku | Yes |
 | **OpenAI** | GPT-4o, GPT-4, GPT-3.5 | Yes |
-| **Google** | Gemini 2.0 Flash, Gemini Pro | Yes |
+| **Google** | Gemini 3.1 Pro, Gemini 2.5 Flash, Gemini Pro | Yes |
 | **Mistral** | Mistral Large, Medium, Small, Codestral | Yes |
 | **OpenRouter** | 200+ models via unified API | Yes |
 | **Ollama** | Llama, Mistral, Phi, any local model | No |
