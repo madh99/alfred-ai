@@ -254,6 +254,20 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     return this.graphRequestRaw(`/me/messages/${messageId}/attachments/${attachmentId}/$value`);
   }
 
+  async forwardMessage(messageId: string, to: string, comment?: string): Promise<{ messageId: string }> {
+    await this.graphRequest(`/me/messages/${messageId}/forward`, {
+      method: 'POST',
+      body: JSON.stringify({
+        comment: comment ?? '',
+        toRecipients: to.split(',').map(addr => ({
+          emailAddress: { address: addr.trim() },
+        })),
+      }),
+    });
+
+    return { messageId: `fwd-${Date.now()}` };
+  }
+
   // ── Helpers ────────────────────────────────────────────────────
 
   private mapMessage(item: any): EmailMessage {

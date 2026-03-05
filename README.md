@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.9.97-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.9.98-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -87,7 +87,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | Category | Skills | Description |
 |----------|--------|-------------|
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
-| **Communication** | `email`, `cross_platform`, `delegate` | Send/read emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), cross-platform messaging, autonomous sub-agents |
+| **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
 | **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |

@@ -42,8 +42,8 @@ export class EmailSkill extends Skill {
       : {};
 
     const description = this.multiAccount
-      ? `Access the user's email accounts (${this.accountNames.join(', ')}): check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, or download attachments.`
-      : 'Access the user\'s email: check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, or download attachments. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
+      ? `Access the user's email accounts (${this.accountNames.join(', ')}): check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, forward messages, or download attachments.`
+      : 'Access the user\'s email: check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, forward messages, or download attachments. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
 
     this.metadata = {
       name: 'email',
@@ -56,7 +56,7 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'attachment'],
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment'],
             description: 'The email action to perform',
           },
           ...accountProp,
@@ -137,10 +137,12 @@ export class EmailSkill extends Skill {
           return await this.handleFolder(input);
         case 'reply':
           return await this.handleReply(input);
+        case 'forward':
+          return await this.handleForward(input);
         case 'attachment':
           return await this.handleAttachment(input);
         default:
-          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, attachment` };
+          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment` };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -300,9 +302,36 @@ export class EmailSkill extends Skill {
   }
 
   private async handleDraft(input: Record<string, unknown>): Promise<SkillResult> {
+    const messageId = input.messageId as string;
+    const body = input.body as string;
+
+    // Reply draft: only messageId + body required
+    if (messageId) {
+      if (!body) return { success: false, error: '"body" is required for reply draft.' };
+
+      const { account, rawId } = this.decodeId(messageId);
+      const provider = this.providers.get(account);
+      if (!provider) {
+        return { success: false, error: `Unknown email account "${account}".` };
+      }
+
+      const result = await provider.createDraft({
+        to: '',
+        subject: '',
+        body,
+        replyTo: rawId,
+      });
+
+      return {
+        success: true,
+        data: { messageId: result.messageId },
+        display: this.accountLabel(account, `Reply draft created for message ${rawId}.\nMessage ID: ${result.messageId}\n\nThe reply is saved as a draft and has NOT been sent.`),
+      };
+    }
+
+    // New draft: to, subject, body required
     const to = input.to as string;
     const subject = input.subject as string;
-    const body = input.body as string;
 
     if (!to) return { success: false, error: '"to" (recipient email) is required.' };
     if (!subject) return { success: false, error: '"subject" is required.' };
@@ -395,6 +424,28 @@ export class EmailSkill extends Skill {
       success: true,
       data: { messageId: result.messageId },
       display: this.accountLabel(account, `Reply sent to message ${rawId}.`),
+    };
+  }
+
+  private async handleForward(input: Record<string, unknown>): Promise<SkillResult> {
+    const messageId = input.messageId as string;
+    const to = input.to as string;
+    if (!messageId) return { success: false, error: '"messageId" is required for forward.' };
+    if (!to) return { success: false, error: '"to" (recipient email) is required for forward.' };
+
+    const { account, rawId } = this.decodeId(messageId);
+    const provider = this.providers.get(account);
+    if (!provider) {
+      return { success: false, error: `Unknown email account "${account}".` };
+    }
+
+    const comment = (input.body as string) ?? undefined;
+    const result = await provider.forwardMessage(rawId, to, comment);
+
+    return {
+      success: true,
+      data: { messageId: result.messageId, to },
+      display: this.accountLabel(account, `Email forwarded to ${to}.`),
     };
   }
 

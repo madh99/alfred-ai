@@ -47,4 +47,9 @@ export abstract class EmailProvider {
   async createDraft(_input: SendEmailInput): Promise<{ messageId: string }> {
     throw new Error('Draft creation is not supported by this email provider.');
   }
+
+  /** Forward a message. Not all providers support this. */
+  async forwardMessage(_messageId: string, _to: string, _comment?: string): Promise<{ messageId: string }> {
+    throw new Error('Email forwarding is not supported by this email provider.');
+  }
 }
