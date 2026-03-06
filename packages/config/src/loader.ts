@@ -125,8 +125,11 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_MICROSOFT_TODO_TENANT_ID: ['todo', 'tenantId'],
   ALFRED_MICROSOFT_TODO_REFRESH_TOKEN: ['todo', 'refreshToken'],
   // Energy / aWATTar
-  ALFRED_ENERGY_GRID_AREA: ['energy', 'gridArea'],
-  ALFRED_ENERGY_GRID_COST: ['energy', 'gridCostCtKwh'],
+  ALFRED_ENERGY_GRID_NAME: ['energy', 'gridName'],
+  ALFRED_ENERGY_GRID_USAGE_CT: ['energy', 'gridUsageCt'],
+  ALFRED_ENERGY_GRID_LOSS_CT: ['energy', 'gridLossCt'],
+  ALFRED_ENERGY_GRID_CAPACITY_FEE: ['energy', 'gridCapacityFee'],
+  ALFRED_ENERGY_GRID_METER_FEE: ['energy', 'gridMeterFee'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

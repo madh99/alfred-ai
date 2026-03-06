@@ -32,20 +32,6 @@ const OEKOSTROM_VERLUST_CT = 0.04;          // ct/kWh
 const OEKOSTROM_PAUSCHALE_NETTO = 0.32;     // €/Monat (3,80 €/Jahr)
 const ERNEUERBAREN_PAUSCHALE_NETTO = 1.62;  // €/Monat (19,02 €/Jahr)
 
-// Bekannte Netzgebiete — Netzebene 7 Haushalt (Stand 2026)
-// Werte: [Netznutzung ct/kWh, Netzverlust ct/kWh, Leistungspauschale €/Monat, Messentgelt €/Monat]
-const GRID_AREAS: Record<string, { name: string; usageCt: number; lossCt: number; capacityFee: number; meterFee: number }> = {
-  'netz-noe':       { name: 'Netz Niederösterreich',   usageCt: 8.79, lossCt: 0.38, capacityFee: 4.59, meterFee: 2.22 },
-  'wiener-netze':   { name: 'Wiener Netze',            usageCt: 4.43, lossCt: 0.27, capacityFee: 3.17, meterFee: 2.22 },
-  'netz-ooe':       { name: 'Netz Oberösterreich',     usageCt: 7.20, lossCt: 0.35, capacityFee: 3.75, meterFee: 2.22 },
-  'salzburg-netz':  { name: 'Salzburg Netz',           usageCt: 5.90, lossCt: 0.30, capacityFee: 3.50, meterFee: 2.22 },
-  'tinetz':         { name: 'TINETZ (Tirol)',           usageCt: 6.50, lossCt: 0.32, capacityFee: 3.80, meterFee: 2.22 },
-  'kaerntner-netz': { name: 'Kärnten Netz',            usageCt: 6.30, lossCt: 0.30, capacityFee: 3.50, meterFee: 2.22 },
-  'energienetze-stmk': { name: 'Energienetze Steiermark', usageCt: 8.50, lossCt: 0.36, capacityFee: 4.00, meterFee: 2.22 },
-  'vorarlberger-netz': { name: 'Vorarlberger Energienetze', usageCt: 5.50, lossCt: 0.28, capacityFee: 3.30, meterFee: 2.22 },
-  'burgenland-netz':   { name: 'Netz Burgenland',      usageCt: 9.50, lossCt: 0.40, capacityFee: 4.80, meterFee: 2.22 },
-};
-
 const API_URL = 'https://api.awattar.at/v1/marketdata';
 
 export class EnergyPriceSkill extends Skill {
@@ -289,25 +275,13 @@ export class EnergyPriceSkill extends Skill {
     };
   }
 
-  private getGridArea(): typeof GRID_AREAS[string] | undefined {
-    if (this.config?.gridArea) {
-      return GRID_AREAS[this.config.gridArea];
-    }
-    return undefined;
-  }
-
   private getGridCosts(): { name: string; usageCt: number; lossCt: number } {
-    // Explicit override
-    if (this.config?.gridCostCtKwh != null) {
-      return { name: 'Konfiguriert', usageCt: this.config.gridCostCtKwh, lossCt: 0 };
-    }
+    const usageCt = this.config?.gridUsageCt ?? 0;
+    const lossCt = this.config?.gridLossCt ?? 0;
+    const name = this.config?.gridName ?? '';
 
-    // Grid area lookup
-    if (this.config?.gridArea) {
-      const area = GRID_AREAS[this.config.gridArea];
-      if (area) {
-        return { name: area.name, usageCt: area.usageCt, lossCt: area.lossCt };
-      }
+    if (usageCt > 0) {
+      return { name, usageCt, lossCt };
     }
 
     return { name: '', usageCt: 0, lossCt: 0 };
@@ -341,22 +315,25 @@ export class EnergyPriceSkill extends Skill {
 
     if (!b.hasGrid) {
       lines.push('');
-      lines.push('*Netzentgelte nicht inkludiert — kein Netzgebiet konfiguriert (`ALFRED_ENERGY_GRID_AREA`)*');
+      lines.push('*Netzentgelte nicht inkludiert — Netzkosten via `alfred setup` oder ENV konfigurieren*');
     }
 
     // Fixed monthly costs
-    const area = this.getGridArea();
+    const capFee = this.config?.gridCapacityFee ?? 0;
+    const meterFee = this.config?.gridMeterFee ?? 0;
     lines.push('');
     lines.push('**Fixe Monatskosten (netto → brutto):**');
     lines.push(`- aWATTar Grundgebühr: ${AWATTAR_BASE_FEE_NETTO.toFixed(2)} € → ${AWATTAR_BASE_FEE_BRUTTO.toFixed(2)} €`);
-    if (area) {
-      lines.push(`- Leistungspauschale (${area.name}): ${area.capacityFee.toFixed(2)} € → ${(area.capacityFee * UST_FACTOR).toFixed(2)} €`);
-      lines.push(`- Messentgelt: ${area.meterFee.toFixed(2)} € → ${(area.meterFee * UST_FACTOR).toFixed(2)} €`);
+    if (capFee > 0) {
+      const label = this.config?.gridName ? ` (${this.config.gridName})` : '';
+      lines.push(`- Leistungspauschale${label}: ${capFee.toFixed(2)} € → ${(capFee * UST_FACTOR).toFixed(2)} €`);
+    }
+    if (meterFee > 0) {
+      lines.push(`- Messentgelt: ${meterFee.toFixed(2)} € → ${(meterFee * UST_FACTOR).toFixed(2)} €`);
     }
     lines.push(`- Ökostrom-Förderpauschale: ${OEKOSTROM_PAUSCHALE_NETTO.toFixed(2)} € → ${(OEKOSTROM_PAUSCHALE_NETTO * UST_FACTOR).toFixed(2)} €`);
     lines.push(`- Erneuerbaren-Förderpauschale: ${ERNEUERBAREN_PAUSCHALE_NETTO.toFixed(2)} € → ${(ERNEUERBAREN_PAUSCHALE_NETTO * UST_FACTOR).toFixed(2)} €`);
-    const fixNetto = AWATTAR_BASE_FEE_NETTO + OEKOSTROM_PAUSCHALE_NETTO + ERNEUERBAREN_PAUSCHALE_NETTO
-      + (area ? area.capacityFee + area.meterFee : 0);
+    const fixNetto = AWATTAR_BASE_FEE_NETTO + OEKOSTROM_PAUSCHALE_NETTO + ERNEUERBAREN_PAUSCHALE_NETTO + capFee + meterFee;
     const fixBrutto = fixNetto * UST_FACTOR;
     lines.push(`- **Summe:** ${fixNetto.toFixed(2)} € → **${fixBrutto.toFixed(2)} € brutto/Monat**`);
 

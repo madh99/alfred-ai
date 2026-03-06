@@ -252,8 +252,11 @@ export interface RoutingConfig {
 }
 
 export interface EnergyPriceConfig {
-  gridArea?: string;
-  gridCostCtKwh?: number;
+  gridName?: string;
+  gridUsageCt?: number;       // Netznutzungsentgelt ct/kWh
+  gridLossCt?: number;        // Netzverlustentgelt ct/kWh
+  gridCapacityFee?: number;   // Leistungspauschale €/Monat netto
+  gridMeterFee?: number;      // Messentgelt €/Monat netto
 }
 
 export interface MicrosoftTodoConfig {

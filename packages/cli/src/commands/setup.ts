@@ -335,6 +335,7 @@ interface ExistingConfig {
   docker?: { socketPath?: string; host?: string };
   bmw?: { clientId?: string };
   routing?: { apiKey?: string };
+  energy?: { gridName?: string; gridUsageCt?: number; gridLossCt?: number; gridCapacityFee?: number; gridMeterFee?: number };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1497,6 +1498,40 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Routing disabled.')}`);
     }
 
+    // Energy / aWATTar
+    const existingEnergy = existing.config.energy;
+    const existingGridName = existing.env['ALFRED_ENERGY_GRID_NAME'] ?? existingEnergy?.gridName ?? '';
+    const existingGridUsage = existing.env['ALFRED_ENERGY_GRID_USAGE_CT'] ?? (existingEnergy?.gridUsageCt != null ? String(existingEnergy.gridUsageCt) : '');
+    const existingGridLoss = existing.env['ALFRED_ENERGY_GRID_LOSS_CT'] ?? (existingEnergy?.gridLossCt != null ? String(existingEnergy.gridLossCt) : '');
+    const existingGridCapacity = existing.env['ALFRED_ENERGY_GRID_CAPACITY_FEE'] ?? (existingEnergy?.gridCapacityFee != null ? String(existingEnergy.gridCapacityFee) : '');
+    const existingGridMeter = existing.env['ALFRED_ENERGY_GRID_METER_FEE'] ?? (existingEnergy?.gridMeterFee != null ? String(existingEnergy.gridMeterFee) : '');
+    const enableEnergyDefault = existingGridUsage ? 'Y/n' : 'y/N';
+    const enableEnergyInput = (
+      await rl.question(`\n  ${BOLD}Enable energy prices (aWATTar HOURLY / EPEX Spot AT)?${RESET} ${dim(`[${enableEnergyDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingGridUsage ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableEnergy = enableEnergyInput === 'y' || enableEnergyInput === 'yes';
+
+    let energyGridName = '';
+    let energyGridUsageCt = '';
+    let energyGridLossCt = '';
+    let energyGridCapacityFee = '';
+    let energyGridMeterFee = '';
+
+    if (enableEnergy) {
+      console.log(`  ${dim('Die Werte findest du auf deiner Stromrechnung unter "Netzentgelte".')}`);
+      console.log(`  ${dim('Marktpreis + aWATTar-Aufschlag + Abgaben werden automatisch berechnet.')}`);
+      console.log('');
+      energyGridName = await askWithDefault(rl, '  Netzbetreiber Name (z.B. Netz Niederösterreich)', existingGridName);
+      energyGridUsageCt = await askWithDefault(rl, '  Netznutzungsentgelt (ct/kWh netto)', existingGridUsage);
+      energyGridLossCt = await askWithDefault(rl, '  Netzverlustentgelt (ct/kWh netto)', existingGridLoss || '0.38');
+      energyGridCapacityFee = await askWithDefault(rl, '  Leistungspauschale (€/Monat netto)', existingGridCapacity);
+      energyGridMeterFee = await askWithDefault(rl, '  Messentgelt (€/Monat netto)', existingGridMeter || '2.22');
+      console.log(`  ${green('>')} Energy: ${bold(energyGridName || 'enabled')} (${energyGridUsageCt} + ${energyGridLossCt} ct/kWh)`);
+    } else {
+      console.log(`  ${dim('Energy prices disabled (Marktpreise weiterhin ohne Netzentgelte verfügbar).')}`);
+    }
+
     // ── 9. Security configuration ──────────────────────────────
     console.log(`\n${bold('Security configuration:')}`);
 
@@ -1750,6 +1785,22 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_ROUTING_API_KEY=');
     }
 
+    envLines.push('', '# === Energy / aWATTar ===', '');
+
+    if (enableEnergy && energyGridUsageCt) {
+      if (energyGridName) envLines.push(`ALFRED_ENERGY_GRID_NAME=${energyGridName}`);
+      envLines.push(`ALFRED_ENERGY_GRID_USAGE_CT=${energyGridUsageCt}`);
+      envLines.push(`ALFRED_ENERGY_GRID_LOSS_CT=${energyGridLossCt}`);
+      if (energyGridCapacityFee) envLines.push(`ALFRED_ENERGY_GRID_CAPACITY_FEE=${energyGridCapacityFee}`);
+      if (energyGridMeterFee) envLines.push(`ALFRED_ENERGY_GRID_METER_FEE=${energyGridMeterFee}`);
+    } else {
+      envLines.push('# ALFRED_ENERGY_GRID_NAME=');
+      envLines.push('# ALFRED_ENERGY_GRID_USAGE_CT=');
+      envLines.push('# ALFRED_ENERGY_GRID_LOSS_CT=');
+      envLines.push('# ALFRED_ENERGY_GRID_CAPACITY_FEE=');
+      envLines.push('# ALFRED_ENERGY_GRID_METER_FEE=');
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -1954,6 +2005,15 @@ export async function setupCommand(): Promise<void> {
       ...(enableRouting ? {
         routing: { apiKey: routingApiKey },
       } : {}),
+      ...(enableEnergy && energyGridUsageCt ? {
+        energy: {
+          ...(energyGridName ? { gridName: energyGridName } : {}),
+          gridUsageCt: parseFloat(energyGridUsageCt),
+          gridLossCt: parseFloat(energyGridLossCt || '0'),
+          ...(energyGridCapacityFee ? { gridCapacityFee: parseFloat(energyGridCapacityFee) } : {}),
+          ...(energyGridMeterFee ? { gridMeterFee: parseFloat(energyGridMeterFee) } : {}),
+        },
+      } : {}),
       storage: {
         path: './data/alfred.db',
       },
@@ -2147,6 +2207,8 @@ ${ownerAdminRule}
     if (enableDocker) console.log(`  ${bold('Docker:')}        ${green(dockerHost || dockerSocketPath)}`);
     if (enableBmw) console.log(`  ${bold('BMW CarData:')}   ${green('enabled')}`);
     if (enableRouting) console.log(`  ${bold('Routing:')}       ${green('enabled')}`);
+    if (enableEnergy) console.log(`  ${bold('Energy:')}        ${green(energyGridName || 'enabled')} ${dim(`(${energyGridUsageCt} ct/kWh)`)}`);
+
     if (ownerUserId) {
       console.log(`  ${bold('Owner ID:')}       ${ownerUserId}`);
       console.log(`  ${bold('Shell access:')}   ${enableShell ? green('enabled') : dim('disabled')}`);

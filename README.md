@@ -575,8 +575,12 @@ routing:
   # apiKey via ALFRED_ROUTING_API_KEY
 
 energy:
-  # gridArea via ALFRED_ENERGY_GRID_AREA (e.g. netz-noe, wiener-netze, salzburg-netz)
-  # gridCostCtKwh via ALFRED_ENERGY_GRID_COST (manual override in ct/kWh)
+  # Grid fees from your electricity bill (set via `alfred setup` or ENV)
+  # gridName via ALFRED_ENERGY_GRID_NAME
+  # gridUsageCt via ALFRED_ENERGY_GRID_USAGE_CT
+  # gridLossCt via ALFRED_ENERGY_GRID_LOSS_CT
+  # gridCapacityFee via ALFRED_ENERGY_GRID_CAPACITY_FEE
+  # gridMeterFee via ALFRED_ENERGY_GRID_METER_FEE
 
 mcp: []
 ```
@@ -650,9 +654,12 @@ ALFRED_BMW_CLIENT_ID=               # from bmw-cardata.bmwgroup.com/customer
 # Google Routing
 ALFRED_ROUTING_API_KEY=             # Google Routes API key
 
-# Energy / aWATTar (optional — works without config, grid fees shown with config)
-ALFRED_ENERGY_GRID_AREA=            # netz-noe, wiener-netze, netz-ooe, salzburg-netz, tinetz, kaerntner-netz, energienetze-stmk, vorarlberger-netz, burgenland-netz
-ALFRED_ENERGY_GRID_COST=            # manual grid cost override in ct/kWh (replaces gridArea defaults)
+# Energy / aWATTar (optional — grid fees from your electricity bill)
+ALFRED_ENERGY_GRID_NAME=            # e.g. "Netz Niederösterreich"
+ALFRED_ENERGY_GRID_USAGE_CT=        # Netznutzungsentgelt ct/kWh netto (e.g. 8.79)
+ALFRED_ENERGY_GRID_LOSS_CT=         # Netzverlustentgelt ct/kWh netto (e.g. 0.38)
+ALFRED_ENERGY_GRID_CAPACITY_FEE=    # Leistungspauschale €/Monat netto (e.g. 4.59)
+ALFRED_ENERGY_GRID_METER_FEE=       # Messentgelt €/Monat netto (e.g. 2.22)
 
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=

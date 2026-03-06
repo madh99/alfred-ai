@@ -264,8 +264,11 @@ export const RoutingConfigSchema = z.object({
 });
 
 export const EnergyPriceConfigSchema = z.object({
-  gridArea: z.string().optional(),
-  gridCostCtKwh: z.number().optional(),
+  gridName: z.string().optional(),
+  gridUsageCt: z.number().optional(),
+  gridLossCt: z.number().optional(),
+  gridCapacityFee: z.number().optional(),
+  gridMeterFee: z.number().optional(),
 });
 
 export const MicrosoftTodoConfigSchema = z.object({

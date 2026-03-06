@@ -321,7 +321,7 @@ export class Alfred {
     {
       const { EnergyPriceSkill } = await import('@alfred/skills');
       skillRegistry.register(new EnergyPriceSkill(this.config.energy));
-      this.logger.info({ gridArea: this.config.energy?.gridArea }, 'Energy price skill registered');
+      this.logger.info({ grid: this.config.energy?.gridName }, 'Energy price skill registered');
     }
 
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
