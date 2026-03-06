@@ -173,40 +173,116 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     query: string,
     maxResults: number,
     fields: string[],
+    dateFrom?: string,
+    dateTo?: string,
   ): Promise<Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }>> {
-    // Step 1: Paginated search to get ALL matching emails
-    const allMessages = await this.searchMessages(query, maxResults);
+    // Step 1: Paginated search with optional date filter
+    const allMessages = await this.searchWithDateFilter(query, maxResults, dateFrom, dateTo);
 
-    // Step 2: If amount extraction requested, read bodies and extract
+    // Step 2: If amount extraction requested, read bodies in parallel batches
     const needAmount = fields.includes('amount');
-    const results: Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }> = [];
+    type ExtractResult = { id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string };
+    const results: ExtractResult[] = [];
 
-    for (const msg of allMessages) {
-      const entry: typeof results[0] = {
-        id: msg.id,
-        from: msg.from,
-        subject: msg.subject,
-        date: msg.date.toISOString().split('T')[0],
-        preview: (msg.preview ?? '').slice(0, 200),
-      };
-
-      if (needAmount) {
-        try {
-          const detail = await this.readMessage(msg.id);
-          const extracted = this.extractAmount(detail.body);
-          if (extracted) {
-            entry.amount = extracted.amount;
-            entry.currency = extracted.currency;
+    if (!needAmount) {
+      // No body reading needed — just map metadata
+      for (const msg of allMessages) {
+        results.push({
+          id: msg.id,
+          from: msg.from,
+          subject: msg.subject,
+          date: msg.date.toISOString().split('T')[0],
+          preview: (msg.preview ?? '').slice(0, 200),
+        });
+      }
+    } else {
+      // Read bodies in parallel batches of 5 to extract amounts
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < allMessages.length; i += BATCH_SIZE) {
+        const batch = allMessages.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (msg) => {
+            const entry: ExtractResult = {
+              id: msg.id,
+              from: msg.from,
+              subject: msg.subject,
+              date: msg.date.toISOString().split('T')[0],
+              preview: (msg.preview ?? '').slice(0, 200),
+            };
+            try {
+              const detail = await this.readMessage(msg.id);
+              const extracted = this.extractAmount(detail.body);
+              if (extracted) {
+                entry.amount = extracted.amount;
+                entry.currency = extracted.currency;
+              }
+            } catch {
+              // Skip unreadable emails (404, etc.)
+            }
+            return entry;
+          }),
+        );
+        for (const settled of batchResults) {
+          if (settled.status === 'fulfilled') {
+            results.push(settled.value);
           }
-        } catch {
-          // Skip unreadable emails (404, etc.)
         }
       }
-
-      results.push(entry);
     }
 
     return results;
+  }
+
+  /**
+   * Search with proper Microsoft Graph date filtering.
+   * Uses $filter for date ranges (receivedDateTime) combined with $search for keywords.
+   */
+  private async searchWithDateFilter(
+    query: string,
+    maxResults: number,
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<EmailMessage[]> {
+    const pageSize = Math.min(Math.max(1, maxResults), 50);
+
+    // Build query parameters
+    const params = new URLSearchParams({
+      $top: String(pageSize),
+      $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
+    });
+
+    // Add search keywords if provided
+    if (query) {
+      params.set('$search', `"${query}"`);
+    }
+
+    // Add date filter — $filter with receivedDateTime
+    if (dateFrom || dateTo) {
+      const filters: string[] = [];
+      if (dateFrom) filters.push(`receivedDateTime ge ${dateFrom}T00:00:00Z`);
+      if (dateTo) filters.push(`receivedDateTime lt ${dateTo}T23:59:59Z`);
+      params.set('$filter', filters.join(' and '));
+    }
+
+    // If we have both $search and $filter, Graph API requires specific ordering
+    // $search + $filter is supported but $orderby is not allowed with $search
+    if (!query) {
+      params.set('$orderby', 'receivedDateTime desc');
+    }
+
+    const data = await this.graphRequest(`/me/messages?${params}`);
+    const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
+
+    // Follow pagination
+    let nextLink = data['@odata.nextLink'] as string | undefined;
+    while (nextLink && results.length < maxResults) {
+      const nextData = await this.graphRequest(nextLink.replace('https://graph.microsoft.com/v1.0', ''));
+      const page = (nextData.value ?? []).map((item: any) => this.mapMessage(item));
+      results.push(...page);
+      nextLink = nextData['@odata.nextLink'] as string | undefined;
+    }
+
+    return results.slice(0, maxResults);
   }
 
   /**

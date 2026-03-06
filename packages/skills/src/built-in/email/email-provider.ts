@@ -48,6 +48,8 @@ export abstract class EmailProvider {
     _query: string,
     _maxResults: number,
     _fields: string[],
+    _dateFrom?: string,
+    _dateTo?: string,
   ): Promise<Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }>> {
     throw new Error('Extract is not supported by this email provider.');
   }

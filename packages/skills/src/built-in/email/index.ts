@@ -50,7 +50,8 @@ export class EmailSkill extends Skill {
       category: 'productivity',
       description,
       riskLevel: 'write',
-      version: '3.0.0',
+      version: '3.1.0',
+      timeoutMs: 300_000, // 5 min — extract action may read hundreds of emails
       inputSchema: {
         type: 'object',
         properties: {
@@ -112,6 +113,14 @@ export class EmailSkill extends Skill {
             type: 'array',
             items: { type: 'string' },
             description: 'Fields to extract (for extract action). Available: "from", "subject", "date", "amount". Include "amount" to read email bodies and extract monetary amounts.',
+          },
+          dateFrom: {
+            type: 'string',
+            description: 'Start date filter for extract action (YYYY-MM-DD format, e.g. "2026-01-01")',
+          },
+          dateTo: {
+            type: 'string',
+            description: 'End date filter for extract action (YYYY-MM-DD format, e.g. "2026-12-31")',
           },
         },
         required: ['action'],
@@ -544,9 +553,11 @@ export class EmailSkill extends Skill {
 
     const maxResults = Math.min(Math.max(1, (input.maxResults as number | undefined) ?? 200), 1000);
     const fields = (input.fields as string[] | undefined) ?? ['from', 'subject', 'date', 'amount'];
+    const dateFrom = input.dateFrom as string | undefined;
+    const dateTo = input.dateTo as string | undefined;
 
     try {
-      const results = await provider.extractFromSearch(query, maxResults, fields);
+      const results = await provider.extractFromSearch(query, maxResults, fields, dateFrom, dateTo);
 
       if (results.length === 0) {
         return { success: true, data: { results: [] }, display: this.accountLabel(account, `No emails found for "${query}".`) };
