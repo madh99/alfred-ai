@@ -58,8 +58,8 @@
     "exceljs": "^4.4.0"
   },
   "optionalDependencies": {
-    "@whiskeysockets/baileys": "^6.7.0",
-    "matrix-bot-sdk": "^0.7.0",
+    "@whiskeysockets/baileys": "6.7.21",
+    "matrix-bot-sdk": "^0.8.0",
     "tsdav": "^2.1.0",
     "googleapis": "^144.0.0",
     "hafas-client": "^6.3.0"

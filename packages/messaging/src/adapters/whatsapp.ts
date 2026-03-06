@@ -17,9 +17,7 @@ export class WhatsAppAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
-    const baileys = await import('@whiskeysockets/baileys');
-    const mod = baileys.default ?? baileys;
-    const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = mod;
+    const { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = await import('@whiskeysockets/baileys');
 
     this.downloadMedia = downloadMediaMessage;
 

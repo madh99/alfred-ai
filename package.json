@@ -12,6 +12,11 @@
     "setup": "node packages/cli/dist/index.js setup",
     "prepublish": "pnpm build && pnpm bundle"
   },
+  "pnpm": {
+    "overrides": {
+      "form-data": "^4.0.5"
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.13.0",
     "esbuild": "^0.24.0",
