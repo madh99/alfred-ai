@@ -76,6 +76,30 @@ export interface ScheduledAction {
   createdAt: string;
 }
 
+export interface WatchCondition {
+  field: string;
+  operator: 'lt' | 'gt' | 'lte' | 'gte' | 'eq' | 'neq' | 'contains' | 'not_contains' | 'changed' | 'increased' | 'decreased';
+  value?: string | number;
+}
+
+export interface Watch {
+  id: string;
+  chatId: string;
+  platform: string;
+  name: string;
+  skillName: string;
+  skillParams: Record<string, unknown>;
+  condition: WatchCondition;
+  intervalMinutes: number;
+  cooldownMinutes: number;
+  enabled: boolean;
+  lastCheckedAt: string | null;
+  lastTriggeredAt: string | null;
+  lastValue: string | null;
+  createdAt: string;
+  messageTemplate?: string;
+}
+
 export interface Document {
   id: string;
   userId: string;

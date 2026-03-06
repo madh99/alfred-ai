@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.12-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.13-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (35+)
+### Built-in Skills (36+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -89,7 +89,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API) |
+| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |

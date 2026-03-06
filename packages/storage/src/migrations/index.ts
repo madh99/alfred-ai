@@ -327,4 +327,33 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 15,
+    description: 'Watches table for condition-based alerts',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS watches (
+          id TEXT PRIMARY KEY,
+          chat_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          name TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_params TEXT NOT NULL DEFAULT '{}',
+          condition_field TEXT NOT NULL,
+          condition_operator TEXT NOT NULL,
+          condition_value TEXT,
+          interval_minutes INTEGER NOT NULL DEFAULT 15,
+          cooldown_minutes INTEGER NOT NULL DEFAULT 30,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_checked_at TEXT,
+          last_triggered_at TEXT,
+          last_value TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          message_template TEXT
+        );
+        CREATE INDEX idx_watches_chat ON watches(chat_id, platform);
+        CREATE INDEX idx_watches_enabled ON watches(enabled);
+      `);
+    },
+  },
 ];

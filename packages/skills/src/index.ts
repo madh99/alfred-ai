@@ -54,5 +54,6 @@ export { MicrosoftTodoSkill } from './built-in/microsoft-todo.js';
 export type { MonitorCheckConfig } from './built-in/monitor.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
 export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';
+export { WatchSkill } from './built-in/watch.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl } from './built-in/code-agent/index.js';
 export type { CodeAgentSkillConfig, AgentExecutionResult, OrchestrationPlan, SubTask, SubTaskResult, OrchestrationResult, GitOrchestrationResult, GitOrchestrationOptions, GitInfo, RepoIdentifier, PullRequestInput, PullRequestResult, PipelineStatus, CreateProjectInput, CreateProjectResult, RemoteInfo } from './built-in/code-agent/index.js';

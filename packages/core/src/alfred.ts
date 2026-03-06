@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -34,6 +34,7 @@ import {
   CrossPlatformSkill,
   BackgroundTaskSkill,
   ScheduledTaskSkill,
+  WatchSkill,
   DocumentSkill,
   TTSSkill,
   ImageGenerateSkill,
@@ -53,6 +54,7 @@ import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
 import { BackgroundTaskRunner } from './background-task-runner.js';
 import { ProactiveScheduler } from './proactive-scheduler.js';
+import { WatchEngine } from './watch-engine.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 
@@ -63,6 +65,7 @@ export class Alfred {
   private reminderScheduler?: ReminderScheduler;
   private backgroundTaskRunner?: BackgroundTaskRunner;
   private proactiveScheduler?: ProactiveScheduler;
+  private watchEngine?: WatchEngine;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
   private userRepo!: UserRepository;
@@ -429,6 +432,18 @@ export class Alfred {
       conversationManager,
     );
 
+    // 7d. Initialize watch engine (condition-based alerts)
+    const watchRepo = new WatchRepository(db);
+    skillRegistry.register(new WatchSkill(watchRepo));
+    this.watchEngine = new WatchEngine(
+      watchRepo,
+      skillRegistry,
+      skillSandbox,
+      this.adapters,
+      userRepo,
+      this.logger.child({ component: 'watch-engine' }),
+    );
+
     // 8. Initialize messaging adapters
     await this.initializeAdapters();
 
@@ -497,6 +512,7 @@ export class Alfred {
     this.reminderScheduler?.start();
     this.backgroundTaskRunner?.start();
     this.proactiveScheduler?.start();
+    this.watchEngine?.start();
 
     if (this.adapters.size === 0) {
       this.logger.warn('No messaging adapters enabled. Configure at least one platform.');
@@ -528,6 +544,7 @@ export class Alfred {
     this.reminderScheduler?.stop();
     this.backgroundTaskRunner?.stop();
     this.proactiveScheduler?.stop();
+    this.watchEngine?.stop();
 
     // Shutdown MCP servers
     if (this.mcpManager) {

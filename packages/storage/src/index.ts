@@ -19,3 +19,4 @@ export { ScheduledActionRepository } from './repositories/scheduled-action-repos
 export { DocumentRepository } from './repositories/document-repository.js';
 export { TodoRepository } from './repositories/todo-repository.js';
 export type { TodoEntry } from './repositories/todo-repository.js';
+export { WatchRepository } from './repositories/watch-repository.js';
