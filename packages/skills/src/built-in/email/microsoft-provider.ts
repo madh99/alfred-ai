@@ -235,7 +235,10 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
   /**
    * Search with proper Microsoft Graph date filtering.
-   * Uses $filter for date ranges (receivedDateTime) combined with $search for keywords.
+   * Graph API does NOT allow $search + $filter together, so:
+   * - If only keywords: use $search
+   * - If only dates: use $filter with receivedDateTime
+   * - If both: use $filter for dates, then filter by keywords client-side
    */
   private async searchWithDateFilter(
     query: string,
@@ -243,43 +246,53 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     dateFrom?: string,
     dateTo?: string,
   ): Promise<EmailMessage[]> {
+    const hasDateFilter = !!(dateFrom || dateTo);
+    const hasQuery = !!query;
     const pageSize = Math.min(Math.max(1, maxResults), 50);
 
-    // Build query parameters
     const params = new URLSearchParams({
       $top: String(pageSize),
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
-    // Add search keywords if provided
-    if (query) {
-      params.set('$search', `"${query}"`);
-    }
-
-    // Add date filter — $filter with receivedDateTime
-    if (dateFrom || dateTo) {
+    if (hasDateFilter) {
+      // Use $filter for dates — cannot combine with $search
       const filters: string[] = [];
       if (dateFrom) filters.push(`receivedDateTime ge ${dateFrom}T00:00:00Z`);
       if (dateTo) filters.push(`receivedDateTime lt ${dateTo}T23:59:59Z`);
       params.set('$filter', filters.join(' and '));
+      params.set('$orderby', 'receivedDateTime desc');
+    } else if (hasQuery) {
+      // No date filter: use $search for keywords
+      params.set('$search', `"${query}"`);
     }
 
-    // If we have both $search and $filter, Graph API requires specific ordering
-    // $search + $filter is supported but $orderby is not allowed with $search
-    if (!query) {
-      params.set('$orderby', 'receivedDateTime desc');
-    }
+    // Fetch with pagination — if we have both date+query, fetch more to allow for client-side filtering
+    const fetchLimit = (hasDateFilter && hasQuery) ? maxResults * 3 : maxResults;
 
     const data = await this.graphRequest(`/me/messages?${params}`);
-    const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
+    let results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
 
     // Follow pagination
     let nextLink = data['@odata.nextLink'] as string | undefined;
-    while (nextLink && results.length < maxResults) {
+    while (nextLink && results.length < fetchLimit) {
       const nextData = await this.graphRequest(nextLink.replace('https://graph.microsoft.com/v1.0', ''));
       const page = (nextData.value ?? []).map((item: any) => this.mapMessage(item));
       results.push(...page);
       nextLink = nextData['@odata.nextLink'] as string | undefined;
+    }
+
+    // Client-side keyword filtering when we used $filter for dates
+    if (hasDateFilter && hasQuery) {
+      const keywords = query
+        .split(/\s+(?:OR|AND)\s+/i)
+        .map(k => k.replace(/["']/g, '').trim().toLowerCase())
+        .filter(k => k.length > 0);
+
+      results = results.filter(msg => {
+        const text = `${msg.from} ${msg.subject} ${msg.preview ?? ''}`.toLowerCase();
+        return keywords.some(kw => text.includes(kw));
+      });
     }
 
     return results.slice(0, maxResults);
