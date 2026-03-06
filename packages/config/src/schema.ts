@@ -265,10 +265,10 @@ export const RoutingConfigSchema = z.object({
 
 export const EnergyPriceConfigSchema = z.object({
   gridName: z.string().optional(),
-  gridUsageCt: z.number().optional(),
-  gridLossCt: z.number().optional(),
-  gridCapacityFee: z.number().optional(),
-  gridMeterFee: z.number().optional(),
+  gridUsageCt: z.coerce.number().optional(),
+  gridLossCt: z.coerce.number().optional(),
+  gridCapacityFee: z.coerce.number().optional(),
+  gridMeterFee: z.coerce.number().optional(),
 });
 
 export const MicrosoftTodoConfigSchema = z.object({
