@@ -140,14 +140,105 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   }
 
   async searchMessages(query: string, count: number): Promise<EmailMessage[]> {
+    const pageSize = Math.min(Math.max(1, count), 50);
     const params = new URLSearchParams({
       $search: `"${query}"`,
-      $top: String(Math.min(Math.max(1, count), 50)),
+      $top: String(pageSize),
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
     const data = await this.graphRequest(`/me/messages?${params}`);
-    return (data.value ?? []).map((item: any) => this.mapMessage(item));
+    const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
+
+    // Follow pagination if more results requested
+    if (count > 50) {
+      let nextLink = data['@odata.nextLink'] as string | undefined;
+      while (nextLink && results.length < count) {
+        const nextData = await this.graphRequest(nextLink.replace('https://graph.microsoft.com/v1.0', ''));
+        const page = (nextData.value ?? []).map((item: any) => this.mapMessage(item));
+        results.push(...page);
+        nextLink = nextData['@odata.nextLink'] as string | undefined;
+      }
+    }
+
+    return results.slice(0, count);
+  }
+
+  /**
+   * Search emails and extract structured data server-side.
+   * Reads each email body internally (not in LLM context) and extracts amounts via regex.
+   * Returns a compact list suitable for large-scale processing (100s-1000s of emails).
+   */
+  async extractFromSearch(
+    query: string,
+    maxResults: number,
+    fields: string[],
+  ): Promise<Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }>> {
+    // Step 1: Paginated search to get ALL matching emails
+    const allMessages = await this.searchMessages(query, maxResults);
+
+    // Step 2: If amount extraction requested, read bodies and extract
+    const needAmount = fields.includes('amount');
+    const results: Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }> = [];
+
+    for (const msg of allMessages) {
+      const entry: typeof results[0] = {
+        id: msg.id,
+        from: msg.from,
+        subject: msg.subject,
+        date: msg.date.toISOString().split('T')[0],
+        preview: (msg.preview ?? '').slice(0, 200),
+      };
+
+      if (needAmount) {
+        try {
+          const detail = await this.readMessage(msg.id);
+          const extracted = this.extractAmount(detail.body);
+          if (extracted) {
+            entry.amount = extracted.amount;
+            entry.currency = extracted.currency;
+          }
+        } catch {
+          // Skip unreadable emails (404, etc.)
+        }
+      }
+
+      results.push(entry);
+    }
+
+    return results;
+  }
+
+  /**
+   * Extract monetary amount from email body text using common patterns.
+   */
+  private extractAmount(body: string): { amount: string; currency: string } | null {
+    // Patterns ordered by specificity
+    const patterns: Array<{ regex: RegExp; currency: string }> = [
+      // EUR patterns: €12.34, €1.234,56, EUR 12,34, 12,34 EUR, 12.34 €
+      { regex: /(?:gesamt|total|summe|betrag|amount|charged|bezahlt|preis|price)[:\s]*€\s*([\d.,]+)/i, currency: 'EUR' },
+      { regex: /(?:gesamt|total|summe|betrag|amount|charged|bezahlt|preis|price)[:\s]*([\d.,]+)\s*€/i, currency: 'EUR' },
+      { regex: /(?:gesamt|total|summe|betrag|amount|charged|bezahlt|preis|price)[:\s]*EUR\s*([\d.,]+)/i, currency: 'EUR' },
+      { regex: /(?:gesamt|total|summe|betrag|amount|charged|bezahlt|preis|price)[:\s]*([\d.,]+)\s*EUR/i, currency: 'EUR' },
+      // USD patterns
+      { regex: /(?:total|amount|charged|price|subtotal)[:\s]*\$\s*([\d.,]+)/i, currency: 'USD' },
+      { regex: /(?:total|amount|charged|price|subtotal)[:\s]*USD\s*([\d.,]+)/i, currency: 'USD' },
+      { regex: /(?:total|amount|charged|price|subtotal)[:\s]*([\d.,]+)\s*USD/i, currency: 'USD' },
+      // Fallback: any € or $ amount
+      { regex: /€\s*([\d]+[.,]\d{2})\b/, currency: 'EUR' },
+      { regex: /\b([\d]+[.,]\d{2})\s*€/, currency: 'EUR' },
+      { regex: /EUR\s*([\d]+[.,]\d{2})\b/, currency: 'EUR' },
+      { regex: /\$([\d]+[.,]\d{2})\b/, currency: 'USD' },
+      { regex: /USD\s*([\d]+[.,]\d{2})\b/, currency: 'USD' },
+    ];
+
+    for (const { regex, currency } of patterns) {
+      const match = body.match(regex);
+      if (match?.[1]) {
+        return { amount: match[1].trim(), currency };
+      }
+    }
+    return null;
   }
 
   async sendMessage(input: SendEmailInput): Promise<{ messageId: string }> {

@@ -56,8 +56,8 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment'],
-            description: 'The email action to perform',
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract'],
+            description: 'The email action to perform. Use "extract" for bulk invoice/receipt extraction from large mailboxes — it searches with pagination, reads bodies server-side, and returns structured data with amounts.',
           },
           ...accountProp,
           count: {
@@ -104,6 +104,15 @@ export class EmailSkill extends Skill {
             type: 'boolean',
             description: 'Whether the body is HTML (for send action)',
           },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of results for extract action (default: 200, max: 1000)',
+          },
+          fields: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Fields to extract (for extract action). Available: "from", "subject", "date", "amount". Include "amount" to read email bodies and extract monetary amounts.',
+          },
         },
         required: ['action'],
       },
@@ -145,6 +154,8 @@ export class EmailSkill extends Skill {
           return await this.handleForward(input);
         case 'attachment':
           return await this.handleAttachment(input);
+        case 'extract':
+          return await this.handleExtract(input);
         default:
           return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment` };
       }
@@ -519,6 +530,49 @@ export class EmailSkill extends Skill {
       display: this.accountLabel(account, `Downloaded attachment: ${fileName} (${this.formatSize(data.length)})`),
       attachments: [{ fileName, data, mimeType }],
     };
+  }
+
+  private async handleExtract(input: Record<string, unknown>): Promise<SkillResult> {
+    const query = input.query as string;
+    if (!query) {
+      return { success: false, error: 'query is required for extract. Example: "rechnung OR invoice OR receipt 2026"' };
+    }
+
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
+    const maxResults = Math.min(Math.max(1, (input.maxResults as number | undefined) ?? 200), 1000);
+    const fields = (input.fields as string[] | undefined) ?? ['from', 'subject', 'date', 'amount'];
+
+    try {
+      const results = await provider.extractFromSearch(query, maxResults, fields);
+
+      if (results.length === 0) {
+        return { success: true, data: { results: [] }, display: this.accountLabel(account, `No emails found for "${query}".`) };
+      }
+
+      // Build compact display
+      const lines = results.map((r, i) => {
+        const amount = r.amount ? ` | ${r.amount} ${r.currency ?? ''}` : '';
+        return `${i + 1}. ${r.date} | ${r.from} | ${r.subject}${amount}`;
+      });
+
+      const withAmount = results.filter(r => r.amount);
+      const summary = `Found ${results.length} emails (${withAmount.length} with detected amounts)`;
+
+      return {
+        success: true,
+        data: { results, totalFound: results.length, withAmounts: withAmount.length },
+        display: this.accountLabel(account, `${summary}:\n\n${lines.join('\n')}`),
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Extract is not supported')) {
+        return { success: false, error: 'The extract action is only supported with Microsoft Graph email. Use search + read for other providers.' };
+      }
+      throw err;
+    }
   }
 
   private async extractText(data: Buffer, mimeType: string, fileName: string): Promise<string | null> {

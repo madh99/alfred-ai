@@ -43,6 +43,15 @@ export abstract class EmailProvider {
   abstract fetchFolder(folder: string, count: number): Promise<EmailMessage[]>;
   abstract downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer>;
 
+  /** Search emails and extract structured data server-side. Not all providers support this. */
+  async extractFromSearch(
+    _query: string,
+    _maxResults: number,
+    _fields: string[],
+  ): Promise<Array<{ id: string; from: string; subject: string; date: string; preview: string; amount?: string; currency?: string }>> {
+    throw new Error('Extract is not supported by this email provider.');
+  }
+
   /** Create a draft email without sending. Not all providers support this. */
   async createDraft(_input: SendEmailInput): Promise<{ messageId: string }> {
     throw new Error('Draft creation is not supported by this email provider.');

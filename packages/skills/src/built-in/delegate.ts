@@ -15,8 +15,8 @@ import type { SecurityManager } from '@alfred/security';
 import { ActivityTracker } from '../activity-tracker.js';
 import type { ProgressCallback } from '../activity-tracker.js';
 
-const DEFAULT_MAX_ITERATIONS = 5;
-const MAX_ALLOWED_ITERATIONS = 15;
+const DEFAULT_MAX_ITERATIONS = 15;
+const MAX_ALLOWED_ITERATIONS = 25;
 
 /**
  * The initial timeout before inactivity-polling kicks in.
@@ -35,7 +35,7 @@ export class DelegateSkill extends Skill {
       'Use when a task is independent enough to run in parallel or when it requires a focused, ' +
       'multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", ' +
       '"check the weather and draft a packing list"). ' +
-      'Control depth with max_iterations (default 5, max 15).',
+      'Control depth with max_iterations (default 15, max 25).',
     riskLevel: 'write',
     version: '3.0.0',
     timeoutMs: INITIAL_TIMEOUT_MS,
@@ -52,7 +52,7 @@ export class DelegateSkill extends Skill {
         },
         max_iterations: {
           type: 'number',
-          description: 'Max tool iterations (1-15). Use higher values for complex multi-step tasks. Default: 5.',
+          description: 'Max tool iterations (1-25). Default: 15.',
         },
       },
       required: ['task'],
