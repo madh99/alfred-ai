@@ -317,6 +317,13 @@ export class Alfred {
       this.logger.info('Infrastructure monitor skill enabled');
     }
 
+    // 4o. Energy price / aWATTar (always available, config optional for grid costs)
+    {
+      const { EnergyPriceSkill } = await import('@alfred/skills');
+      skillRegistry.register(new EnergyPriceSkill(this.config.energy));
+      this.logger.info({ gridArea: this.config.energy?.gridArea }, 'Energy price skill registered');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

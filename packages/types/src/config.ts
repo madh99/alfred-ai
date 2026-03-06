@@ -251,6 +251,11 @@ export interface RoutingConfig {
   apiKey: string;
 }
 
+export interface EnergyPriceConfig {
+  gridArea?: string;
+  gridCostCtKwh?: number;
+}
+
 export interface MicrosoftTodoConfig {
   clientId: string;
   clientSecret: string;
@@ -286,6 +291,7 @@ export interface AlfredConfig {
   bmw?: BMWCarDataConfig;
   routing?: RoutingConfig;
   todo?: MicrosoftTodoConfig;
+  energy?: EnergyPriceConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

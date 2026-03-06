@@ -263,6 +263,11 @@ export const RoutingConfigSchema = z.object({
   apiKey: z.string(),
 });
 
+export const EnergyPriceConfigSchema = z.object({
+  gridArea: z.string().optional(),
+  gridCostCtKwh: z.number().optional(),
+});
+
 export const MicrosoftTodoConfigSchema = z.object({
   clientId: z.string(),
   clientSecret: z.string(),
@@ -302,5 +307,6 @@ export const AlfredConfigSchema = z.object({
   bmw: BMWCarDataConfigSchema.optional(),
   routing: RoutingConfigSchema.optional(),
   todo: MicrosoftTodoConfigSchema.optional(),
+  energy: EnergyPriceConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

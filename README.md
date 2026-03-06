@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.8-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.9-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -95,6 +95,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData, deterministic health checks |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
+| **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
@@ -268,6 +269,21 @@ Public transit routing for all of Austria via hafas-client (ÖBB profile). No AP
 You: "Wann fährt die nächste U-Bahn von Stephansplatz?"
 You: "Wie komme ich von Altlengbach nach Wien Hauptbahnhof?"
 You: "Zeig mir die Abfahrten am Westbahnhof in den nächsten 20 Minuten"
+```
+
+#### Energy Prices (aWATTar HOURLY)
+
+Real-time electricity prices based on EPEX Spot AT market data via aWATTar API. No API key needed.
+
+- Current price with full breakdown (market price, grid fees, taxes)
+- Hourly prices for today/tomorrow, cheapest hours, daily averages
+- 9 Austrian grid areas with default rates (configurable via `ALFRED_ENERGY_GRID_AREA`)
+- Automatic 3% surcharge handling (drops after 01.04.2026 per ElWG §21)
+
+```
+You: "Was kostet Strom gerade?"
+You: "Wann ist Strom heute am günstigsten?"
+You: "Zeig mir die Strompreise für morgen"
 ```
 
 ### Cross-Platform Identity
@@ -558,6 +574,10 @@ bmw:
 routing:
   # apiKey via ALFRED_ROUTING_API_KEY
 
+energy:
+  # gridArea via ALFRED_ENERGY_GRID_AREA (e.g. netz-noe, wiener-netze, salzburg-netz)
+  # gridCostCtKwh via ALFRED_ENERGY_GRID_COST (manual override in ct/kWh)
+
 mcp: []
 ```
 
@@ -629,6 +649,10 @@ ALFRED_BMW_CLIENT_ID=               # from bmw-cardata.bmwgroup.com/customer
 
 # Google Routing
 ALFRED_ROUTING_API_KEY=             # Google Routes API key
+
+# Energy / aWATTar (optional — works without config, grid fees shown with config)
+ALFRED_ENERGY_GRID_AREA=            # netz-noe, wiener-netze, netz-ooe, salzburg-netz, tinetz, kaerntner-netz, energienetze-stmk, vorarlberger-netz, burgenland-netz
+ALFRED_ENERGY_GRID_COST=            # manual grid cost override in ct/kWh (replaces gridArea defaults)
 
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=

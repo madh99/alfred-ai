@@ -45,6 +45,7 @@ export { TodoSkill } from './built-in/todo.js';
 export { DockerSkill } from './built-in/docker.js';
 export { BMWSkill } from './built-in/bmw.js';
 export { RoutingSkill } from './built-in/routing.js';
+export { EnergyPriceSkill } from './built-in/energy-price.js';
 export { TransitSkill } from './built-in/transit.js';
 export type { TransitClientInterface, TransitStop, TransitJourney, TransitDeparture, TransitLeg, JourneyOptions, DepartureOptions } from './built-in/transit.js';
 export { ConfigureSkill } from './built-in/configure.js';
