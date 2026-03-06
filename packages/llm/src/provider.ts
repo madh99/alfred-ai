@@ -48,8 +48,14 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'o4-mini':                      { maxInputTokens: 200_000, maxOutputTokens: 100_000 },
   'o1':                           { maxInputTokens: 200_000, maxOutputTokens: 100_000 },
   'o1-mini':                      { maxInputTokens: 128_000, maxOutputTokens: 65_536 },
+  'gpt-5.4':                      { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
+  'gpt-5':                        { maxInputTokens: 400_000,   maxOutputTokens: 128_000 },
 
   // Google Gemini
+  'gemini-3.1-pro':               { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3.1-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3-pro':                 { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
+  'gemini-3-flash':               { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-2.5-pro':               { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-2.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 65_536 },
   'gemini-2.0-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
@@ -58,13 +64,13 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'gemini-1.5-flash':             { maxInputTokens: 1_048_576, maxOutputTokens: 8_192 },
 
   // Mistral AI
-  'mistral-large-latest':         { maxInputTokens: 256_000, maxOutputTokens: 8_192 },
-  'mistral-medium-latest':        { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
-  'mistral-small-latest':         { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
-  'codestral-latest':             { maxInputTokens: 256_000, maxOutputTokens: 8_192 },
-  'magistral-medium-latest':      { maxInputTokens: 40_000,  maxOutputTokens: 8_192 },
-  'magistral-small-latest':       { maxInputTokens: 40_000,  maxOutputTokens: 8_192 },
-  'ministral-8b-latest':          { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
+  'mistral-large':                { maxInputTokens: 262_144, maxOutputTokens: 262_144 },
+  'mistral-medium':               { maxInputTokens: 128_000, maxOutputTokens: 128_000 },
+  'mistral-small':                { maxInputTokens: 128_000, maxOutputTokens: 128_000 },
+  'codestral':                    { maxInputTokens: 262_144, maxOutputTokens: 262_144 },
+  'magistral-medium':             { maxInputTokens: 128_000, maxOutputTokens: 131_072 },
+  'magistral-small':              { maxInputTokens: 128_000, maxOutputTokens: 131_072 },
+  'ministral':                    { maxInputTokens: 128_000, maxOutputTokens: 128_000 },
 
   // Common Ollama / local models
   'llama4':                       { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
@@ -75,8 +81,6 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'gemma2':                       { maxInputTokens: 8_192,   maxOutputTokens: 4_096 },
   'qwen3':                        { maxInputTokens: 128_000, maxOutputTokens: 8_192 },
   'qwen2.5':                      { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
-  'mistral':                      { maxInputTokens: 32_000,  maxOutputTokens: 4_096 },
-  'mistral-small':                { maxInputTokens: 32_000,  maxOutputTokens: 4_096 },
   'mixtral':                      { maxInputTokens: 32_000,  maxOutputTokens: 4_096 },
   'phi3':                         { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
   'phi4':                         { maxInputTokens: 128_000, maxOutputTokens: 4_096 },
