@@ -10,8 +10,10 @@ export class BackgroundTaskSkill extends Skill {
     name: 'background_task',
     category: 'automation',
     description:
-      'Schedule, list, or cancel background tasks that run independently. ' +
-      'Use "schedule" to queue a skill to execute in the background (user will be notified when done). ' +
+      'Schedule, list, or cancel background tasks that run a SINGLE skill call asynchronously. ' +
+      'Use "schedule" to queue ONE skill execution in the background (user will be notified when done). ' +
+      'NOT for multi-step tasks — use "delegate" instead when a task needs multiple tool calls ' +
+      '(e.g. search + read + process + generate). ' +
       'Use "list" to see active/recent tasks. Use "cancel" to stop a pending or running task.',
     riskLevel: 'write',
     version: '1.0.0',

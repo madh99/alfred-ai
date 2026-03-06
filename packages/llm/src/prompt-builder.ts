@@ -174,6 +174,15 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
 - **"Do X every day at 9 AM"** / **"Check X and report"** → use \`scheduled_task\` (time-based, can use LLM via prompt_template)
 - For infrastructure monitoring on a schedule, use \`scheduled_task\` with \`prompt_template\` that instructs you to run the \`monitor\` tool and report only problems.`;
       }
+
+      // Background task vs delegate guidance
+      if (skills.some(s => s.name === 'background_task') && skills.some(s => s.name === 'delegate')) {
+        prompt += `
+## background_task vs. delegate
+- **\`background_task\`**: Runs a **single skill call** asynchronously (e.g. schedule one email send, one file download). It does NOT support multi-step workflows.
+- **\`delegate\`**: Runs a **multi-step sub-agent** with full tool access. Use for any task that requires multiple tool calls (search → read → process → generate).
+- **NEVER use \`background_task\` for complex tasks** like "search emails and create a report" — use \`delegate\` instead.`;
+      }
     }
 
     // User profile section
