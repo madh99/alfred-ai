@@ -614,15 +614,54 @@ export class MessagePipeline {
       return { blocks: [buildBlock(tc, result)], attachments: allAttachments };
     }
 
-    // Multiple tool calls: execute in parallel
-    onProgress?.(`Running ${toolCalls.length} tools in parallel...`);
+    // Multiple tool calls: execute with per-skill concurrency limit
+    // This prevents rate-limiting (429) when the LLM fires many calls to the same API
+    const MAX_CONCURRENT_PER_SKILL = 3;
+    onProgress?.(`Running ${toolCalls.length} tools...`);
 
-    const results = await Promise.allSettled(
-      toolCalls.map(tc => this.executeToolCall(tc, context, onProgress))
-    );
+    // Group by skill name to detect skills that need throttling
+    const skillGroups = new Map<string, number[]>();
+    for (let i = 0; i < toolCalls.length; i++) {
+      const name = toolCalls[i].name;
+      let group = skillGroups.get(name);
+      if (!group) {
+        group = [];
+        skillGroups.set(name, group);
+      }
+      group.push(i);
+    }
+
+    // Check if any skill exceeds the concurrency limit
+    const needsThrottling = [...skillGroups.values()].some(g => g.length > MAX_CONCURRENT_PER_SKILL);
+
+    let resultMap: Map<number, PromiseSettledResult<{ content: string; isError?: boolean; attachments?: SkillResultAttachment[] }>>;
+
+    if (!needsThrottling) {
+      // All skills within limit — run everything in parallel
+      const settled = await Promise.allSettled(
+        toolCalls.map(tc => this.executeToolCall(tc, context, onProgress))
+      );
+      resultMap = new Map(settled.map((r, i) => [i, r]));
+    } else {
+      // Throttle: run each skill's calls in batches of MAX_CONCURRENT_PER_SKILL
+      // Different skills still run in parallel with each other
+      resultMap = new Map();
+      const skillPromises = [...skillGroups.entries()].map(async ([_name, indices]) => {
+        for (let batch = 0; batch < indices.length; batch += MAX_CONCURRENT_PER_SKILL) {
+          const batchIndices = indices.slice(batch, batch + MAX_CONCURRENT_PER_SKILL);
+          const settled = await Promise.allSettled(
+            batchIndices.map(idx => this.executeToolCall(toolCalls[idx], context, onProgress))
+          );
+          for (let j = 0; j < batchIndices.length; j++) {
+            resultMap.set(batchIndices[j], settled[j]);
+          }
+        }
+      });
+      await Promise.all(skillPromises);
+    }
 
     const blocks = toolCalls.map((tc, i) => {
-      const settled = results[i];
+      const settled = resultMap.get(i)!;
       if (settled.status === 'fulfilled') {
         return buildBlock(tc, settled.value);
       } else {
