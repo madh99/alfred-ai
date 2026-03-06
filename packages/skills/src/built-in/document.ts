@@ -237,7 +237,7 @@ export class DocumentSkill extends Skill {
     }
 
     const display = limited
-      .map(d => `- **${d.filename}** (${d.id.slice(0, 8)}...) — ${d.mimeType}, ${d.chunkCount} chunks, ${d.sizeBytes} bytes`)
+      .map(d => `- **${d.filename}** [id=${d.id}] — ${d.mimeType}, ${d.chunkCount} chunks, ${d.sizeBytes} bytes`)
       .join('\n');
 
     return {

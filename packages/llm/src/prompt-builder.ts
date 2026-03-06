@@ -86,6 +86,7 @@ export class PromptBuilder {
 - Be concise. No filler text, no unnecessary explanations.
 - If a tool fails or is denied, explain why and try an alternative approach.
 - **If a tool call fails with the same error twice, STOP.** Tell the user what went wrong and ask how to proceed. Do NOT retry the same call.
+- **If a delegate sub-agent fails or returns incomplete results, do NOT re-delegate the same task.** Analyze the failure, fix the issue yourself, and continue directly.
 
 ## Follow-ups and corrections
 - When the user refers back to a previous request or corrects you, **reconnect to the original task**. Don't start fresh — continue where you left off.
@@ -149,14 +150,20 @@ To generate and send a file to the user:
       if (skills.some(s => s.name === 'code_agent')) {
         prompt += `
 ## Code agent delegation
-When the user asks you to **write code, edit files, fix bugs, refactor, implement features, or perform any coding task**, you MUST delegate to the \`code_agent\` tool instead of doing it yourself. You are an orchestrator, not a coder.
+When the user asks you to **write code, edit files, fix bugs, refactor, implement features, or perform any coding task in a repository**, delegate to the \`code_agent\` tool. You are an orchestrator, not a coder.
 
 - For **single, focused tasks**: use \`code_agent\` with \`action: "run"\` and pick the best agent.
 - For **complex, multi-step tasks**: use \`code_agent\` with \`action: "orchestrate"\` — the system will decompose the task, run agents in parallel, and validate results.
 - Add \`git: true\` when the user wants the changes committed, pushed, and a PR/MR created.
 - Use \`action: "list_agents"\` if you're unsure which agents are available.
 
-**Do NOT** attempt to write code or edit files yourself through conversation. Always delegate to a code agent.`;
+**Do NOT delegate to code_agent** when the task requires your own data or tools (documents, memories, emails, todos, calendar, etc.). For these tasks, use your tools directly — the code agent has no access to your skills or data.
+
+## Data-to-file workflow
+When the user asks to **collect data and produce a file** (e.g. "list all invoices in an Excel"):
+1. **Gather data** using your own tools first (document search/summarize, file list, email, etc.)
+2. **Generate the file** using \`code_sandbox\` — pass the collected data as variables in the code, then write the output file (Excel via exceljs, PDF via pdfkit, CSV, etc.)
+3. Do NOT try to do both steps inside code_sandbox — it cannot access your documents or skills.`;
       }
 
       // Automation guidance: help the LLM choose between watch and scheduled_task
