@@ -234,11 +234,11 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   }
 
   /**
-   * Search with proper Microsoft Graph date filtering.
-   * Graph API does NOT allow $search + $filter together, so:
-   * - If only keywords: use $search
-   * - If only dates: use $filter with receivedDateTime
-   * - If both: use $filter for dates, then filter by keywords client-side
+   * Search with Microsoft Graph KQL date filtering.
+   * Uses $search with KQL "received" property for date ranges:
+   *   $search="received:01/01/2026..12/31/2026 AND (rechnung OR invoice)"
+   * This keeps everything in a single $search — no $filter needed.
+   * See: https://learn.microsoft.com/en-us/graph/search-query-parameter
    */
   private async searchWithDateFilter(
     query: string,
@@ -246,56 +246,57 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     dateFrom?: string,
     dateTo?: string,
   ): Promise<EmailMessage[]> {
-    const hasDateFilter = !!(dateFrom || dateTo);
-    const hasQuery = !!query;
     const pageSize = Math.min(Math.max(1, maxResults), 50);
+
+    // Build KQL search expression
+    const parts: string[] = [];
+
+    // Date range using KQL "received" property with MM/DD/YYYY format
+    if (dateFrom || dateTo) {
+      const from = dateFrom ? this.toKqlDate(dateFrom) : '01/01/2000';
+      const to = dateTo ? this.toKqlDate(dateTo) : '12/31/2099';
+      parts.push(`received:${from}..${to}`);
+    }
+
+    // Keywords
+    if (query) {
+      // Wrap multi-term query in parentheses to combine with AND
+      parts.push(query.includes(' ') ? `(${query})` : query);
+    }
+
+    const searchExpr = parts.join(' AND ');
 
     const params = new URLSearchParams({
       $top: String(pageSize),
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
-    if (hasDateFilter) {
-      // Use $filter for dates — cannot combine with $search
-      const filters: string[] = [];
-      if (dateFrom) filters.push(`receivedDateTime ge ${dateFrom}T00:00:00Z`);
-      if (dateTo) filters.push(`receivedDateTime lt ${dateTo}T23:59:59Z`);
-      params.set('$filter', filters.join(' and '));
+    if (searchExpr) {
+      params.set('$search', `"${searchExpr}"`);
+    } else {
+      // No search criteria — just list recent messages
       params.set('$orderby', 'receivedDateTime desc');
-    } else if (hasQuery) {
-      // No date filter: use $search for keywords
-      params.set('$search', `"${query}"`);
     }
 
-    // Fetch with pagination — if we have both date+query, fetch more to allow for client-side filtering
-    const fetchLimit = (hasDateFilter && hasQuery) ? maxResults * 3 : maxResults;
-
     const data = await this.graphRequest(`/me/messages?${params}`);
-    let results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
+    const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
 
     // Follow pagination
     let nextLink = data['@odata.nextLink'] as string | undefined;
-    while (nextLink && results.length < fetchLimit) {
+    while (nextLink && results.length < maxResults) {
       const nextData = await this.graphRequest(nextLink.replace('https://graph.microsoft.com/v1.0', ''));
       const page = (nextData.value ?? []).map((item: any) => this.mapMessage(item));
       results.push(...page);
       nextLink = nextData['@odata.nextLink'] as string | undefined;
     }
 
-    // Client-side keyword filtering when we used $filter for dates
-    if (hasDateFilter && hasQuery) {
-      const keywords = query
-        .split(/\s+(?:OR|AND)\s+/i)
-        .map(k => k.replace(/["']/g, '').trim().toLowerCase())
-        .filter(k => k.length > 0);
-
-      results = results.filter(msg => {
-        const text = `${msg.from} ${msg.subject} ${msg.preview ?? ''}`.toLowerCase();
-        return keywords.some(kw => text.includes(kw));
-      });
-    }
-
     return results.slice(0, maxResults);
+  }
+
+  /** Convert YYYY-MM-DD to KQL date format MM/DD/YYYY */
+  private toKqlDate(isoDate: string): string {
+    const [year, month, day] = isoDate.split('-');
+    return `${month}/${day}/${year}`;
   }
 
   /**
