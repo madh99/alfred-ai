@@ -43,7 +43,6 @@ export class ImageGenerator implements ImageGeneratorInterface {
       n: 1,
       size: options.size ?? '1024x1024',
       quality: options.quality ?? 'medium',
-      response_format: 'b64_json',
     } as any);
 
     const b64 = (response.data?.[0] as any)?.b64_json;

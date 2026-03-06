@@ -90,6 +90,8 @@ export class CodeExecutor {
                   : f.endsWith('.txt') ? 'text/plain'
                   : f.endsWith('.md') ? 'text/markdown'
                   : f.endsWith('.xml') ? 'application/xml'
+                  : f.endsWith('.xlsx') ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                  : f.endsWith('.xls') ? 'application/vnd.ms-excel'
                   : f.endsWith('.pdf') ? 'application/pdf'
                   : 'application/octet-stream';
                 files.push({ name: f, data, mimeType });
