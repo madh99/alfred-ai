@@ -6,7 +6,7 @@ const CATEGORY_KEYWORDS: Record<Exclude<SkillCategory, 'core'>, RegExp> = {
   productivity: /\b(todo|note|remind|calendar|termin|event|email|e-mail|mail|contact|kontakt)\b/i,
   information:  /\b(search|such|weather|wetter|calculat|rechn|time|date|zeit|datum|uhrzeit|system.?info|transit|bahn|zug|bus|tram|u.?bahn|s.?bahn|abfahrt|verbindung|haltestelle|öffi|fahrplan|strom|energy|preis|price|kwh|awattar|marktpreis|spot|günstig|cheapest|netzentgelt)\b/i,
   media:        /\b(voice|stimme|tts|speak|sprech|sprich|screenshot|clipboard|zwischenablage|brows)\b/i,
-  automation:   /\b(background|hintergrund|shell|bash|cron|schedul|code.?agent|sandbox|automat)\b/i,
+  automation:   /\b(background|hintergrund|shell|bash|cron|schedul|code.?agent|sandbox|automat|watch|alert|benachrichtig|bescheid|meld|überwach|monitor)\b/i,
   files:        /\b(file|datei|document|dokument|pdf|http|download|upload)\b/i,
   infrastructure: /\b(proxmox|vm|container|docker|unifi|wifi|wlan|homeassistant|home.?assistant|smarthome|smart.?home|licht|light|schalter|switch)\b/i,
   identity:     /\b(link|verknüpf|cross.?platform|identity|identität)\b/i,

@@ -158,6 +158,15 @@ When the user asks you to **write code, edit files, fix bugs, refactor, implemen
 
 **Do NOT** attempt to write code or edit files yourself through conversation. Always delegate to a code agent.`;
       }
+
+      // Automation guidance: help the LLM choose between watch and scheduled_task
+      if (skills.some(s => s.name === 'watch') && skills.some(s => s.name === 'scheduled_task')) {
+        prompt += `
+## Automation: watch vs. scheduled_task
+- **"Alert me when X happens"** → use \`watch\` (polls a skill, evaluates condition, no LLM cost per check)
+- **"Do X every day at 9 AM"** / **"Check X and report"** → use \`scheduled_task\` (time-based, can use LLM via prompt_template)
+- For infrastructure monitoring on a schedule, use \`scheduled_task\` with \`prompt_template\` that instructs you to run the \`monitor\` tool and report only problems.`;
+      }
     }
 
     // User profile section

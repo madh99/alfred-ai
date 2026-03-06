@@ -15,9 +15,16 @@ export class WatchSkill extends Skill {
     category: 'automation',
     description:
       'Create and manage condition-based alerts (watches). ' +
-      'A watch polls a skill at regular intervals and sends a notification when a condition is met. ' +
-      'Example: alert when electricity price drops below 20ct, when a new email arrives, or when BMW battery is low. ' +
-      'Operators: lt, gt, lte, gte, eq, neq, contains, not_contains, changed, increased, decreased.',
+      'A watch polls a skill at regular intervals, extracts a field from the result, and sends a notification when a condition is met — no LLM involved. ' +
+      'Operators: lt, gt, lte, gte (numeric), eq, neq (string), contains, not_contains (substring), changed, increased, decreased (vs. last value). ' +
+      'The first check stores a baseline and never triggers. ' +
+      'Common condition_field paths by skill: ' +
+      'energy_prices → "bruttoCt" (current price ct/kWh); ' +
+      'bmw {action:"status"} → "telematic.CHARGING_STATUS.value", "telematic.BATTERY_SIZE_MAX.value"; ' +
+      'todo {action:"list",list:"..."} → use "length" for item count; ' +
+      'email {action:"inbox"} → "unreadCount" or "messages.length"; ' +
+      'monitor → returns alerts array, use "length" with gt 0. ' +
+      'Use scheduled_task instead when you need to run a prompt through the LLM or when the user asks for a time-based report rather than a condition-based alert.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {

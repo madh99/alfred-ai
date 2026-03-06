@@ -12,7 +12,9 @@ export class ScheduledTaskSkill extends Skill {
     description:
       'Create, list, enable, disable, or delete scheduled actions that run automatically on a recurring basis. ' +
       'Supports cron expressions (e.g. "0 9 * * *" for daily at 9 AM), intervals (in minutes), and one-time schedules. ' +
-      'Each scheduled action executes a skill or sends a prompt to the LLM at the configured time.',
+      'Each scheduled action executes a skill or sends a prompt to the LLM at the configured time. ' +
+      'Use this for time-based tasks (reports, periodic checks, reminders). ' +
+      'For condition-based alerts ("notify me WHEN X happens"), use the watch tool instead.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
