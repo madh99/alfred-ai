@@ -28,7 +28,7 @@ const ALL_MODULES: BriefingModule[] = [
   { name: 'todo',       skill: 'todo',            input: { action: 'list' },                     label: 'Lokale Todos' },
   { name: 'mstodo',     skill: 'microsoft_todo',  input: { action: 'list_tasks' },               label: 'Microsoft To Do' },
   { name: 'email',      skill: 'email',           input: { action: 'inbox' },                    label: 'E-Mail' },
-  { name: 'energy',     skill: 'energy_price',    input: { action: 'today' },                    label: 'Strompreise' },
+  { name: 'energy',     skill: 'energy_price',    input: { action: 'current' },                  label: 'Strompreise' },
   { name: 'bmw',        skill: 'bmw',             input: { action: 'status' },                   label: 'BMW Status' },
   { name: 'home',       skill: 'homeassistant',   input: { action: 'states' },                   label: 'Smart Home' },
   { name: 'infra',      skill: 'monitor',         input: {},                                     label: 'Infrastruktur' },
@@ -103,21 +103,24 @@ export class BriefingSkill extends Skill {
       return `${active ? '✅' : '❌'} ${m.name} (${m.label}) → ${m.skill}`;
     });
 
-    const commute = this.alfredConfig.briefing?.homeAddress && this.alfredConfig.briefing?.officeAddress;
+    const hasRouting = this.skillRegistry.has('routing');
+    const configuredCommute = !!(this.alfredConfig.briefing?.homeAddress && this.alfredConfig.briefing?.officeAddress);
 
     return {
       success: true,
       data: {
         available: available.map(m => m.name),
         all: ALL_MODULES.map(m => m.name),
-        commuteConfigured: !!commute,
+        commuteAvailable: hasRouting,
+        commuteConfigured: configuredCommute,
       },
-      display: `Briefing-Module:\n${allNames.join('\n')}\n\nPendler-Check (Mo–Fr): ${commute ? '✅ konfiguriert' : '❌ ALFRED_BRIEFING_HOME_ADDRESS / ALFRED_BRIEFING_OFFICE_ADDRESS setzen'}`,
+      display: `Briefing-Module:\n${allNames.join('\n')}\n\nPendler-Check (Mo–Fr): ${!hasRouting ? '❌ Routing-Skill nicht verfügbar' : configuredCommute ? '✅ konfiguriert (Config)' : '⏳ Adressen werden aus Memories gelesen (oder ALFRED_BRIEFING_HOME/OFFICE_ADDRESS setzen)'}`,
     };
   }
 
   private async runBriefing(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const location = (input.location as string | undefined) ?? this.alfredConfig.briefing?.location ?? 'Vienna';
+    const { home } = this.resolveAddresses(context);
+    const location = (input.location as string | undefined) ?? this.alfredConfig.briefing?.location ?? home ?? 'Vienna';
     const requestedModules = input.modules as string[] | undefined;
 
     let modules = this.getAvailableModules();
