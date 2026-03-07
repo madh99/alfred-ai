@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.10.38] - 2026-03-08
+## [0.10.39] - 2026-03-08
+
+### Added
+- **Home Assistant — `briefing_summary` Action** — Neue kompakte HA-Übersicht speziell für das Morgenbriefing. Smart Defaults: offene Kontaktmelder, eingeschaltete Lichter, Batterie-/SoC-Sensoren, Energieverbrauch, Klima, Anwesenheit. Konfigurierbar über `briefing.homeAssistant.entities[]` / `domains[]` in YAML-Config oder via User-Memories (`briefing_ha_entities`). Statt 500+ Entities werden nur relevante Daten geliefert
 
 ### Fixed
 - **Briefing — Review-Fixes** — Energy-Modul nutzt `current` statt `today` (kompakter für Briefing), Wetter-Location fällt auf Heimadresse aus Memories zurück bevor "Vienna" als Default greift, `modules`-Anzeige zeigt korrekten Status für Memory-basierte Adressen

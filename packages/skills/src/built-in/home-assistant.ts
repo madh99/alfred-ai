@@ -26,7 +26,8 @@ type Action =
   | 'create_script'
   | 'delete_script'
   | 'create_scene'
-  | 'delete_scene';
+  | 'delete_scene'
+  | 'briefing_summary';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -54,9 +55,11 @@ export class HomeAssistantSkill extends Skill {
       'Also: "areas" for rooms/zones, "presence" for who is home, "activate_scene"/"trigger_automation"/"run_script" ' +
       'for automations, "notify" for notifications, "calendar_events" for calendars, "template" for Jinja2 queries, "error_log" for HA logs. ' +
       'Config API: "create_automation"/"delete_automation", "create_script"/"delete_script", "create_scene"/"delete_scene" — ' +
-      'create persistent automations, scripts, and scenes in HA. Use configData (JSON) with the HA automation/script/scene schema.',
+      'create persistent automations, scripts, and scenes in HA. Use configData (JSON) with the HA automation/script/scene schema. ' +
+      '"briefing_summary" for a compact smart home overview (open contacts, lights on, battery/SoC, energy, climate, presence). ' +
+      'Optionally pass entities[] or domains[] to filter.',
     riskLevel: 'write',
-    version: '2.0.0',
+    version: '2.1.0',
     inputSchema: {
       type: 'object',
       properties: {
@@ -88,6 +91,7 @@ export class HomeAssistantSkill extends Skill {
             'delete_script',
             'create_scene',
             'delete_scene',
+            'briefing_summary',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -155,6 +159,16 @@ export class HomeAssistantSkill extends Skill {
         configData: {
           type: 'string',
           description: 'JSON string with the HA config object for create actions. For automations: {alias, description, trigger[], condition[], action[], mode}. For scripts: {alias, sequence[], mode}. For scenes: {name, entities: {entity_id: state}}.',
+        },
+        entities: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Specific entity IDs for briefing_summary (e.g. ["sensor.victron_soc", "sensor.power_consumption"])',
+        },
+        domains: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Domain filters for briefing_summary (e.g. ["binary_sensor", "light", "climate"])',
         },
       },
       required: ['action'],
@@ -254,6 +268,11 @@ export class HomeAssistantSkill extends Skill {
           return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined);
         case 'delete_scene':
           return await this.deleteConfig('scene', input.configId as string | undefined);
+        case 'briefing_summary':
+          return await this.getBriefingSummary(
+            input.entities as string[] | undefined,
+            input.domains as string[] | undefined,
+          );
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -928,6 +947,146 @@ export class HomeAssistantSkill extends Skill {
         '```',
       ].join('\n'),
     };
+  }
+
+  // ── Briefing summary ─────────────────────────────────────────
+
+  /**
+   * Compact smart home summary for the daily briefing.
+   * If specific entities/domains are provided, shows only those.
+   * Otherwise uses smart defaults: open contacts, lights on, battery/SoC sensors,
+   * energy/power sensors, climate entities, person presence.
+   */
+  private async getBriefingSummary(
+    entities?: string[],
+    domains?: string[],
+  ): Promise<SkillResult> {
+    const allStates = await this.api<any[]>('GET', '/api/states');
+
+    // If specific entities requested, filter to those
+    if (entities?.length) {
+      const entitySet = new Set(entities.map(e => e.toLowerCase()));
+      const filtered = allStates.filter(e => entitySet.has(e.entity_id.toLowerCase()));
+      return this.formatBriefingSummary(filtered);
+    }
+
+    // If specific domains requested, filter to those
+    if (domains?.length) {
+      const domainSet = new Set(domains.map(d => d.toLowerCase()));
+      const filtered = allStates.filter(e => {
+        const domain = e.entity_id.split('.')[0];
+        return domainSet.has(domain);
+      });
+      return this.formatBriefingSummary(filtered);
+    }
+
+    // Smart defaults — only show what's relevant
+    const relevant: any[] = [];
+
+    for (const entity of allStates) {
+      const eid = entity.entity_id as string;
+      const domain = eid.split('.')[0];
+      const state = entity.state as string;
+      const attrs = entity.attributes ?? {};
+      const deviceClass = (attrs.device_class ?? '') as string;
+
+      // Binary sensors: only open/on contacts, doors, windows, motion
+      if (domain === 'binary_sensor') {
+        const contactClasses = ['door', 'window', 'opening', 'garage_door', 'lock', 'motion', 'occupancy', 'smoke', 'gas', 'moisture'];
+        if (contactClasses.includes(deviceClass) && state === 'on') {
+          relevant.push(entity);
+        }
+        continue;
+      }
+
+      // Lights: only those that are on
+      if (domain === 'light') {
+        if (state === 'on') relevant.push(entity);
+        continue;
+      }
+
+      // Sensors: battery, SoC, energy, power
+      if (domain === 'sensor') {
+        const eidLower = eid.toLowerCase();
+        const nameCheck = `${eidLower} ${(attrs.friendly_name ?? '').toLowerCase()}`;
+        if (
+          deviceClass === 'battery' ||
+          deviceClass === 'energy' ||
+          deviceClass === 'power' ||
+          /soc|battery|akku|ladezustand/.test(nameCheck) ||
+          /energy_consumption|power_consumption|stromverbrauch|gesamtverbrauch|total_energy/.test(nameCheck)
+        ) {
+          if (state !== 'unavailable' && state !== 'unknown') {
+            relevant.push(entity);
+          }
+        }
+        continue;
+      }
+
+      // Climate: always show
+      if (domain === 'climate') {
+        relevant.push(entity);
+        continue;
+      }
+
+      // Person: always show
+      if (domain === 'person') {
+        relevant.push(entity);
+        continue;
+      }
+    }
+
+    return this.formatBriefingSummary(relevant);
+  }
+
+  private formatBriefingSummary(entities: any[]): SkillResult {
+    if (entities.length === 0) {
+      return {
+        success: true,
+        data: [],
+        display: 'Keine relevanten Smart-Home-Daten gefunden.',
+      };
+    }
+
+    // Group by domain
+    const groups = new Map<string, any[]>();
+    for (const e of entities) {
+      const domain = e.entity_id.split('.')[0];
+      if (!groups.has(domain)) groups.set(domain, []);
+      groups.get(domain)!.push(e);
+    }
+
+    const domainLabels: Record<string, string> = {
+      binary_sensor: 'Kontakte & Melder',
+      light: 'Lichter (an)',
+      sensor: 'Sensoren',
+      climate: 'Klima',
+      person: 'Anwesenheit',
+    };
+
+    const lines: string[] = [];
+
+    for (const [domain, items] of groups) {
+      const label = domainLabels[domain] ?? domain;
+      lines.push(`**${label}:**`);
+      for (const e of items) {
+        const name = e.attributes?.friendly_name ?? e.entity_id;
+        const unit = e.attributes?.unit_of_measurement ?? '';
+        const state = e.state;
+        lines.push(`- ${name}: ${state}${unit ? ` ${unit}` : ''}`);
+      }
+      lines.push('');
+    }
+
+    const data = entities.map((e: any) => ({
+      entity_id: e.entity_id,
+      state: e.state,
+      friendly_name: e.attributes?.friendly_name,
+      unit: e.attributes?.unit_of_measurement,
+      device_class: e.attributes?.device_class,
+    }));
+
+    return { success: true, data, display: lines.join('\n').trim() };
   }
 
   // ── Config API (create/delete automations, scripts, scenes) ──

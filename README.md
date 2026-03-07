@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.38-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.39-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -157,7 +157,7 @@ You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
 
 #### Home Assistant
 
-Smart home control via the Home Assistant REST API — 25 actions:
+Smart home control via the Home Assistant REST API — 26 actions:
 
 - List all entities or filter by domain (lights, sensors, switches)
 - Turn on, turn off, toggle devices
@@ -171,6 +171,7 @@ Smart home control via the Home Assistant REST API — 25 actions:
 - **Notifications** — Send notifications to mobile apps or other targets
 - **Calendar Events** — Query HA calendar entities with time range
 - **Templates** — Execute arbitrary Jinja2 queries for maximum flexibility
+- **Briefing Summary** — Kompakte Übersicht für Morgenbriefing: offene Kontakte, Lichter an, Batterie/SoC, Energie, Klima, Anwesenheit. Konfigurierbar per Entity-/Domain-Filter
 - **Error Log** — View the Home Assistant error log
 
 Uses **Long-Lived Access Tokens** for authentication (Settings → Security → Long-Lived Access Tokens).
@@ -307,7 +308,7 @@ You: "Suche iPhone 16 Pro auf eBay und willhaben"
 
 Parallel morning briefing that gathers data from all available skills in a single call. Auto-detects which modules are available based on your configuration.
 
-- Calendar, weather, todos, emails, energy prices, BMW status, smart home, infrastructure
+- Calendar, weather, todos, emails, energy prices, BMW status, smart home (kompakte Übersicht), infrastructure
 - All data fetched in parallel (~5s instead of ~30s with sequential tool calls)
 - LLM synthesizes a coherent, prioritized summary in one pass
 - **Mo–Fr automatic commute check**: Routes home → office, checks BMW battery, warns if low

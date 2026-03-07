@@ -30,7 +30,7 @@ const ALL_MODULES: BriefingModule[] = [
   { name: 'email',      skill: 'email',           input: { action: 'inbox' },                    label: 'E-Mail' },
   { name: 'energy',     skill: 'energy_price',    input: { action: 'current' },                  label: 'Strompreise' },
   { name: 'bmw',        skill: 'bmw',             input: { action: 'status' },                   label: 'BMW Status' },
-  { name: 'home',       skill: 'homeassistant',   input: { action: 'states' },                   label: 'Smart Home' },
+  { name: 'home',       skill: 'homeassistant',   input: { action: 'briefing_summary' },         label: 'Smart Home' },
   { name: 'infra',      skill: 'monitor',         input: {},                                     label: 'Infrastruktur' },
 ];
 
@@ -128,10 +128,17 @@ export class BriefingSkill extends Skill {
       modules = modules.filter(m => requestedModules.includes(m.name));
     }
 
+    // Resolve HA briefing preferences from config + memories
+    const haPrefs = this.resolveHaPreferences(context);
+
     // Build inputs with overrides
     const tasks = modules.map(m => {
       const moduleInput = { ...m.input };
       if (m.name === 'weather') moduleInput.location = location;
+      if (m.name === 'home') {
+        if (haPrefs.entities?.length) moduleInput.entities = haPrefs.entities;
+        if (haPrefs.domains?.length) moduleInput.domains = haPrefs.domains;
+      }
       return { module: m, input: moduleInput };
     });
 
@@ -293,6 +300,40 @@ export class BriefingSkill extends Skill {
     }
 
     return { home, office };
+  }
+
+  /**
+   * Resolve HA briefing preferences: config first, then memories.
+   * Users can store preferences like "briefing_ha_entities" = "sensor.victron_soc, sensor.power"
+   * or "briefing_ha_domains" = "binary_sensor, light, climate".
+   */
+  private resolveHaPreferences(context: SkillContext): { entities?: string[]; domains?: string[] } {
+    const configEntities = this.alfredConfig.briefing?.homeAssistant?.entities;
+    const configDomains = this.alfredConfig.briefing?.homeAssistant?.domains;
+
+    if (configEntities?.length || configDomains?.length) {
+      return { entities: configEntities, domains: configDomains };
+    }
+
+    if (!this.memoryRepo) return {};
+
+    // Search memories for HA briefing preferences
+    for (const uid of allUserIds(context)) {
+      const memories = this.memoryRepo.search(uid, 'briefing');
+      for (const m of memories) {
+        const key = m.key.toLowerCase();
+        if (/ha_entit|home.?assistant.*entit|briefing.*entit/.test(key)) {
+          const entities = m.value.split(/[,;]\s*/).map(e => e.trim()).filter(Boolean);
+          if (entities.length) return { entities };
+        }
+        if (/ha_domain|home.?assistant.*domain|briefing.*domain/.test(key)) {
+          const domains = m.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
+          if (domains.length) return { domains };
+        }
+      }
+    }
+
+    return {};
   }
 
   /**

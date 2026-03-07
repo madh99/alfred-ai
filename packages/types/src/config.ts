@@ -263,6 +263,10 @@ export interface BriefingConfig {
   location?: string;
   homeAddress?: string;
   officeAddress?: string;
+  homeAssistant?: {
+    entities?: string[];
+    domains?: string[];
+  };
 }
 
 export interface MarketplaceConfig {
