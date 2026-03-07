@@ -16,7 +16,7 @@ export class CodeExecutionSkill extends Skill {
         action: { type: 'string', enum: ['run', 'run_with_data'], description: 'Action to perform' },
         code: { type: 'string', description: 'Code to execute' },
         language: { type: 'string', enum: ['javascript', 'python'], description: 'Programming language' },
-        data: { type: 'string', description: 'Input data to pass (available as DATA env var or stdin)' },
+        data: { type: 'string', description: 'Input data (available as variable INPUT_DATA, already parsed if JSON). Do NOT use os.environ or process.env — use INPUT_DATA directly.' },
         timeout: { type: 'number', description: 'Timeout in ms (max 120000)' },
       },
       required: ['action', 'code', 'language'],
