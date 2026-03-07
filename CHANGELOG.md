@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.40] - 2026-03-08
+
+### Fixed
+- **BMW — Token-Cache verhindert Re-Autorisierung** — `loadTokens()` cached Token-Daten im Speicher. Nach einem fehlgeschlagenen Refresh wurde der Cache zwar auf `null` gesetzt, aber ein nachfolgender `pollToken`-Aufruf las die Datei (noch ohne `codeVerifier`) und cachedte sie erneut. Wenn danach `authorize` Schritt 1 den `codeVerifier` in die Datei schrieb, las Schritt 2 weiterhin den veralteten Cache → `Kein code_verifier gefunden`. Fix: Cache-Invalidierung nach `savePartialTokens`
+
 ## [0.10.39] - 2026-03-08
 
 ### Added

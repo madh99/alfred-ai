@@ -208,6 +208,7 @@ export class BMWSkill extends Skill {
       deviceCode: data.device_code as string,
     };
     await this.savePartialTokens(partial);
+    this.tokens = null; // Invalidate cache so pollToken reads fresh file with codeVerifier
 
     return {
       success: true,
