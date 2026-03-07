@@ -327,6 +327,13 @@ export class Alfred {
       this.logger.info({ grid: this.config.energy?.gridName }, 'Energy price skill registered');
     }
 
+    // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
+    {
+      const { MarketplaceSkill } = await import('@alfred/skills');
+      skillRegistry.register(new MarketplaceSkill(this.config.marketplace));
+      this.logger.info('Marketplace skill registered');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

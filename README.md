@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.33-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.34-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (39+)
+### Built-in Skills (40+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -96,6 +96,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
 | **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
+| **Marketplace** | `marketplace` | Marktplatz-Suche auf willhaben.at und eBay — alle Inserate als Tabelle, Preisvergleich mit Statistik |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
@@ -286,6 +287,20 @@ Real-time electricity prices based on EPEX Spot AT market data via aWATTar API. 
 You: "Was kostet Strom gerade?"
 You: "Wann ist Strom heute am günstigsten?"
 You: "Zeig mir die Strompreise für morgen"
+```
+
+#### Marketplace (willhaben.at + eBay)
+
+Structured marketplace search on willhaben.at and eBay. willhaben works without credentials (parses `__NEXT_DATA__` from HTML), eBay requires API keys (Browse API, OAuth Client Credentials).
+
+- **search**: Lists ALL matching listings as a structured table with price, location, and direct links
+- **compare**: Price statistics (min, max, median, avg) + cheapest 5 listings
+- Dramatically reduces token usage vs. browser-based scraping (~2k vs ~59k input tokens)
+
+```
+You: "Zeig mir alle RTX 5090 auf willhaben"
+You: "Vergleich RTX 5090 Preise auf willhaben"
+You: "Suche iPhone 16 Pro auf eBay und willhaben"
 ```
 
 ### Cross-Platform Identity
@@ -662,6 +677,10 @@ ALFRED_ENERGY_GRID_USAGE_CT=        # Netznutzungsentgelt ct/kWh netto (e.g. 8.7
 ALFRED_ENERGY_GRID_LOSS_CT=         # Netzverlustentgelt ct/kWh netto (e.g. 0.38)
 ALFRED_ENERGY_GRID_CAPACITY_FEE=    # Leistungspauschale €/Monat netto (e.g. 4.59)
 ALFRED_ENERGY_GRID_METER_FEE=       # Messentgelt €/Monat netto (e.g. 2.22)
+
+# Marketplace / eBay (optional — willhaben works without credentials)
+ALFRED_EBAY_APP_ID=                 # eBay Developer App ID (Client ID)
+ALFRED_EBAY_CERT_ID=                # eBay Developer Cert ID (Client Secret)
 
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=

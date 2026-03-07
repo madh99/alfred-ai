@@ -259,6 +259,13 @@ export interface EnergyPriceConfig {
   gridMeterFee?: number;      // Messentgelt €/Monat netto
 }
 
+export interface MarketplaceConfig {
+  ebay?: {
+    appId: string;
+    certId: string;
+  };
+}
+
 export interface MicrosoftTodoConfig {
   clientId: string;
   clientSecret: string;
@@ -295,6 +302,7 @@ export interface AlfredConfig {
   routing?: RoutingConfig;
   todo?: MicrosoftTodoConfig;
   energy?: EnergyPriceConfig;
+  marketplace?: MarketplaceConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

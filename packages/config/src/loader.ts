@@ -130,6 +130,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_ENERGY_GRID_LOSS_CT: ['energy', 'gridLossCt'],
   ALFRED_ENERGY_GRID_CAPACITY_FEE: ['energy', 'gridCapacityFee'],
   ALFRED_ENERGY_GRID_METER_FEE: ['energy', 'gridMeterFee'],
+  // Marketplace (eBay)
+  ALFRED_EBAY_APP_ID: ['marketplace', 'ebay', 'appId'],
+  ALFRED_EBAY_CERT_ID: ['marketplace', 'ebay', 'certId'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {
