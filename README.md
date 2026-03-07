@@ -54,9 +54,9 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 
 | Provider | Models | API Key Required |
 |----------|--------|:---:|
-| **Anthropic** | Claude Opus, Sonnet, Haiku | Yes |
-| **OpenAI** | GPT-4o, GPT-4, GPT-3.5 | Yes |
-| **Google** | Gemini 3.1 Pro, Gemini 2.5 Flash, Gemini Pro | Yes |
+| **Anthropic** | Claude Opus 4.6, Sonnet 4.6, Haiku 4.5 | Yes |
+| **OpenAI** | GPT-5, GPT-4.5, GPT-4o, o3 | Yes |
+| **Google** | Gemini 3.1 Pro, Gemini 2.5 Flash | Yes |
 | **Mistral** | Mistral Large, Medium, Small, Codestral | Yes |
 | **OpenRouter** | 200+ models via unified API | Yes |
 | **Ollama** | Llama, Mistral, Phi, any local model | No |
@@ -68,19 +68,19 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 llm:
   default:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20260320
   strong:
     provider: anthropic
-    model: claude-opus-4-0-20250115
+    model: claude-opus-4-6-20260320
   fast:
-    provider: openai
-    model: gpt-4o-mini
+    provider: google
+    model: gemini-2.5-flash
   local:
     provider: ollama
     model: llama3.2
 ```
 
-### Built-in Skills (36+)
+### Built-in Skills (39+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -91,7 +91,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
 | **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
-| **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV — RAG with semantic search |
+| **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
@@ -156,7 +156,7 @@ You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
 
 #### Home Assistant
 
-Smart home control via the Home Assistant REST API — 19 actions:
+Smart home control via the Home Assistant REST API — 25 actions:
 
 - List all entities or filter by domain (lights, sensors, switches)
 - Turn on, turn off, toggle devices
@@ -166,6 +166,7 @@ Smart home control via the Home Assistant REST API — 19 actions:
 - **Areas** — List rooms/zones and their entities (via Jinja2 templates)
 - **Presence** — Who is home? Person entity status at a glance
 - **Scenes & Automations** — Activate scenes, trigger/enable/disable automations, run scripts
+- **Config API** — Create, update, and delete automations, scripts, and scenes directly via chat
 - **Notifications** — Send notifications to mobile apps or other targets
 - **Calendar Events** — Query HA calendar entities with time range
 - **Templates** — Execute arbitrary Jinja2 queries for maximum flexibility
@@ -179,6 +180,7 @@ You: "Turn off light.wohnzimmer"
 You: "Who is home?"
 You: "What's going on in the living room?"
 You: "Activate movie night scene"
+You: "Create an automation that turns on the porch light at sunset"
 You: "Show me calendar events for tomorrow"
 ```
 
@@ -330,7 +332,7 @@ You: "What's the termination clause?"
 Alfred: "According to section 8.2..."
 ```
 
-Supported formats: PDF, DOCX, XLSX, PPTX, TXT, CSV, MD, HTML, JSON, XML, and more.
+Supported formats: PDF, DOCX, TXT, CSV, Markdown. Additional formats (XLSX, HTML, JSON) can be processed via the code sandbox.
 
 ### MCP (Model Context Protocol)
 
@@ -488,7 +490,7 @@ matrix:
 llm:
   default:
     provider: anthropic
-    model: claude-sonnet-4-20250514
+    model: claude-sonnet-4-6-20260320
 
 storage:
   path: ./data/alfred.db
@@ -845,6 +847,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 ## Roadmap
 
 - [ ] Web chat UI (HTTP API backend is ready)
+- [ ] Marketplace search & price comparison (willhaben.at, eBay)
 - [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms
