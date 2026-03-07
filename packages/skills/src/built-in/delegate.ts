@@ -218,7 +218,11 @@ export class DelegateSkill extends Skill {
           let resultContent = result.content;
           if (!result.isError && resultContent.length > 500) {
             const refId = `result_${++dataStoreCounter}`;
-            dataStore.set(refId, resultContent);
+            // Store raw JSON data (for code_sandbox injection), fall back to content
+            const storeValue = result.rawData != null
+              ? JSON.stringify(result.rawData)
+              : resultContent;
+            dataStore.set(refId, storeValue);
             resultContent +=
               `\n\n[Data stored as "${refId}" — use code_sandbox action "run_with_data" ` +
               `with data="${refId}" to process this data. Do NOT copy data into code.]`;
@@ -259,7 +263,7 @@ export class DelegateSkill extends Skill {
   private async executeSubAgentTool(
     toolCall: ToolCall,
     context: SkillContext,
-  ): Promise<{ content: string; isError?: boolean }> {
+  ): Promise<{ content: string; isError?: boolean; rawData?: unknown }> {
     const skill = this.skillRegistry?.get(toolCall.name);
     if (!skill) {
       return { content: `Error: Unknown tool "${toolCall.name}"`, isError: true };
@@ -290,6 +294,7 @@ export class DelegateSkill extends Skill {
       return {
         content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
         isError: !result.success,
+        rawData: result.data,
       };
     }
 
@@ -299,6 +304,7 @@ export class DelegateSkill extends Skill {
       return {
         content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
         isError: !result.success,
+        rawData: result.data,
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);

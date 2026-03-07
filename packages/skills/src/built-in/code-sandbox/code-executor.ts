@@ -24,12 +24,17 @@ export class CodeExecutor {
       } catch { /* not available */ }
     }
 
-    // 2. Fallback: node_modules next to the running script (bundle deploy)
-    const scriptDir = path.dirname(process.argv[1] ?? '');
-    if (scriptDir) {
+    // 2. Fallback: node_modules next to the running script (resolve symlinks)
+    try {
+      const realScript = fs.realpathSync(process.argv[1] ?? '');
+      const scriptDir = path.dirname(realScript);
+      // Check node_modules next to bundle (e.g. /tmp/node_modules)
       const candidate = path.join(scriptDir, 'node_modules');
       if (fs.existsSync(candidate)) dirs.add(candidate);
-    }
+      // Check parent node_modules (global npm install: .../bundle/../node_modules)
+      const parentCandidate = path.join(scriptDir, '..', 'node_modules');
+      if (fs.existsSync(parentCandidate)) dirs.add(fs.realpathSync(parentCandidate));
+    } catch { /* argv[1] not resolvable */ }
 
     // 3. Fallback: node_modules in cwd
     const cwdCandidate = path.join(process.cwd(), 'node_modules');
@@ -69,9 +74,7 @@ export class CodeExecutor {
           cwd: tmpDir,
           timeout,
           env: {
-            PATH: process.env.PATH ?? '',
-            HOME: process.env.HOME ?? process.env.USERPROFILE ?? '',
-            LANG: process.env.LANG ?? 'en_US.UTF-8',
+            ...process.env,
             NODE_ENV: 'sandbox',
             PYTHONDONTWRITEBYTECODE: '1',
             ...options?.env,
