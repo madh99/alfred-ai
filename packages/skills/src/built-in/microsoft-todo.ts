@@ -131,7 +131,7 @@ export class MicrosoftTodoSkill extends Skill {
     const data = await this.graphRequest('/me/todo/lists');
     const lists = (data.value ?? []) as Array<{ id: string; displayName: string; isOwner: boolean; wellknownListName?: string }>;
 
-    const display = lists.map(l => `• **${l.displayName}**${l.wellknownListName === 'defaultList' ? ' (Standard)' : ''}`).join('\n');
+    const display = lists.map(l => `• **${l.displayName}**${l.wellknownListName === 'defaultList' ? ' (Standard)' : ''} [listId=${l.id}]`).join('\n');
 
     return { success: true, data: lists, display: display || 'Keine Listen gefunden.' };
   }
@@ -156,13 +156,15 @@ export class MicrosoftTodoSkill extends Skill {
       const check = t.status === 'completed' ? '☑' : '☐';
       const imp = t.importance === 'high' ? ' ❗' : '';
       const due = t.dueDateTime ? ` (fällig: ${t.dueDateTime.dateTime.slice(0, 10)})` : '';
-      return `${check} ${t.title}${imp}${due}`;
+      return `${check} ${t.title}${imp}${due} [taskId=${t.id}]`;
     });
 
     return {
       success: true,
       data: tasks,
-      display: lines.length > 0 ? lines.join('\n') : 'Keine Aufgaben in dieser Liste.',
+      display: lines.length > 0
+        ? `listId=${listId}\n${lines.join('\n')}`
+        : 'Keine Aufgaben in dieser Liste.',
     };
   }
 
