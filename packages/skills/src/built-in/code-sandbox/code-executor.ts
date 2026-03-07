@@ -14,15 +14,17 @@ export interface ExecutionResult {
 
 export class CodeExecutor {
   private resolveNodePath(): string {
-    const paths: string[] = [];
-    try {
-      const resolved = require.resolve('pdf-parse/package.json');
-      paths.push(path.dirname(path.dirname(resolved)));
-    } catch { /* pdf-parse not available in parent */ }
-    if (process.env.NODE_PATH) {
-      paths.push(process.env.NODE_PATH);
+    const dirs = new Set<string>();
+    for (const pkg of ['pdf-parse', 'exceljs', 'pdfkit']) {
+      try {
+        const resolved = require.resolve(`${pkg}/package.json`);
+        dirs.add(path.dirname(path.dirname(resolved)));
+      } catch { /* not available */ }
     }
-    return paths.filter(Boolean).join(path.delimiter);
+    if (process.env.NODE_PATH) {
+      dirs.add(process.env.NODE_PATH);
+    }
+    return [...dirs].join(path.delimiter);
   }
 
   async execute(

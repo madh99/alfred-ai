@@ -121,7 +121,18 @@ export class DelegateSkill extends Skill {
       'You are a sub-agent of Alfred, a personal AI assistant. ' +
       'Complete the assigned task using the tools available to you. ' +
       'Work step by step: use tools to gather information, then synthesize a clear result. ' +
-      'Be concise and return only the final answer when done.';
+      'Be concise and return only the final answer when done.\n\n' +
+      'DATA-TO-FILE WORKFLOW (Excel, PDF, CSV from extracted data):\n' +
+      '1. Use the appropriate extract tool (e.g. email.extract) to get structured data.\n' +
+      '2. Pass the FULL JSON result to code_sandbox via run_with_data — NEVER hardcode or copy data into code. ' +
+      'The data is available as INPUT_DATA (already parsed as array/object).\n' +
+      '3. code_sandbox auto-attaches generated files — do NOT call the file skill afterwards.\n' +
+      'Available libraries in code_sandbox (JS only, no install needed): exceljs, pdfkit, pdf-parse.\n' +
+      'Always prefer JavaScript over Python for file generation.\n\n' +
+      'Example — Email to Excel:\n' +
+      '  Step 1: email.extract({query: "invoices", fields: ["date","sender","amount","subject"]})\n' +
+      '  Step 2: code_sandbox.run_with_data({data: <extract result JSON>, language: "javascript", code: "...use exceljs to build .xlsx from INPUT_DATA..."})\n' +
+      'CRITICAL: Never re-type or summarize extracted data in code. INPUT_DATA contains the complete dataset.';
 
     let userContent = task;
     if (additionalContext && typeof additionalContext === 'string') {

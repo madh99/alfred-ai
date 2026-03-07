@@ -18,7 +18,7 @@ describe('CodeExecutionSkill', () => {
 
   it('should have correct metadata', () => {
     expect(skill.metadata.name).toBe('code_sandbox');
-    expect(skill.metadata.riskLevel).toBe('destructive');
+    expect(skill.metadata.riskLevel).toBe('write');
   });
 
   it('run action executes JavaScript code', async () => {

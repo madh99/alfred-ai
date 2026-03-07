@@ -48,11 +48,17 @@ export class CodeExecutionSkill extends Skill {
 
     let finalCode = code;
     if (action === 'run_with_data' && data) {
-      // Inject data as environment variable
+      let isJson = false;
+      try { JSON.parse(data); isJson = true; } catch { /* not JSON */ }
+
       if (language === 'javascript') {
-        finalCode = `const INPUT_DATA = ${JSON.stringify(data)};\n${code}`;
+        finalCode = isJson
+          ? `const INPUT_DATA = ${data};\n${code}`
+          : `const INPUT_DATA = ${JSON.stringify(data)};\n${code}`;
       } else {
-        finalCode = `INPUT_DATA = ${JSON.stringify(data)}\n${code}`;
+        finalCode = isJson
+          ? `import json as _json\nINPUT_DATA = _json.loads(${JSON.stringify(data)})\n${code}`
+          : `INPUT_DATA = ${JSON.stringify(data)}\n${code}`;
       }
     }
 
