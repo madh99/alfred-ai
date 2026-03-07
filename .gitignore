@@ -12,3 +12,4 @@ coverage/
 .vscode/
 .DS_Store
 ssh_debug.js
+.claude/
