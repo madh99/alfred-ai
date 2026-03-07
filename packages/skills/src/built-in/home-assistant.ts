@@ -20,7 +20,13 @@ type Action =
   | 'trigger_automation'
   | 'run_script'
   | 'calendar_events'
-  | 'error_log';
+  | 'error_log'
+  | 'create_automation'
+  | 'delete_automation'
+  | 'create_script'
+  | 'delete_script'
+  | 'create_scene'
+  | 'delete_scene';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -46,7 +52,9 @@ export class HomeAssistantSkill extends Skill {
       'Use "states" to list entities, "turn_on"/"turn_off"/"toggle" to control devices, ' +
       '"call_service" for advanced service calls, "history" for entity state history. ' +
       'Also: "areas" for rooms/zones, "presence" for who is home, "activate_scene"/"trigger_automation"/"run_script" ' +
-      'for automations, "notify" for notifications, "calendar_events" for calendars, "template" for Jinja2 queries, "error_log" for HA logs.',
+      'for automations, "notify" for notifications, "calendar_events" for calendars, "template" for Jinja2 queries, "error_log" for HA logs. ' +
+      'Config API: "create_automation"/"delete_automation", "create_script"/"delete_script", "create_scene"/"delete_scene" — ' +
+      'create persistent automations, scripts, and scenes in HA. Use configData (JSON) with the HA automation/script/scene schema.',
     riskLevel: 'write',
     version: '2.0.0',
     inputSchema: {
@@ -74,6 +82,12 @@ export class HomeAssistantSkill extends Skill {
             'run_script',
             'calendar_events',
             'error_log',
+            'create_automation',
+            'delete_automation',
+            'create_script',
+            'delete_script',
+            'create_scene',
+            'delete_scene',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -133,6 +147,14 @@ export class HomeAssistantSkill extends Skill {
         variables: {
           type: 'string',
           description: 'JSON string with script variables (for run_script)',
+        },
+        configId: {
+          type: 'string',
+          description: 'Unique ID for create/delete automation, script, or scene (e.g. "notify_garage_light"). Used as the HA config entry ID.',
+        },
+        configData: {
+          type: 'string',
+          description: 'JSON string with the HA config object for create actions. For automations: {alias, description, trigger[], condition[], action[], mode}. For scripts: {alias, sequence[], mode}. For scenes: {name, entities: {entity_id: state}}.',
         },
       },
       required: ['action'],
@@ -220,6 +242,18 @@ export class HomeAssistantSkill extends Skill {
           );
         case 'error_log':
           return await this.getErrorLog();
+        case 'create_automation':
+          return await this.createConfig('automation', input.configId as string | undefined, input.configData as string | undefined);
+        case 'delete_automation':
+          return await this.deleteConfig('automation', input.configId as string | undefined);
+        case 'create_script':
+          return await this.createConfig('script', input.configId as string | undefined, input.configData as string | undefined);
+        case 'delete_script':
+          return await this.deleteConfig('script', input.configId as string | undefined);
+        case 'create_scene':
+          return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined);
+        case 'delete_scene':
+          return await this.deleteConfig('scene', input.configId as string | undefined);
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -894,5 +928,125 @@ export class HomeAssistantSkill extends Skill {
         '```',
       ].join('\n'),
     };
+  }
+
+  // ── Config API (create/delete automations, scripts, scenes) ──
+
+  private async createConfig(
+    type: 'automation' | 'script' | 'scene',
+    configId?: string,
+    configDataStr?: string,
+  ): Promise<SkillResult> {
+    if (!configId) {
+      return { success: false, error: `Missing required "configId" for create_${type}` };
+    }
+    if (!configDataStr) {
+      return { success: false, error: `Missing required "configData" for create_${type}` };
+    }
+
+    let configData: Record<string, unknown>;
+    try {
+      configData = JSON.parse(configDataStr);
+    } catch {
+      return { success: false, error: 'Invalid "configData" — must be valid JSON' };
+    }
+
+    // HA Config API: PUT /api/config/{type}/config/{id}
+    const result = await this.apiPut(`/api/config/${type}/config/${configId}`, configData);
+
+    return {
+      success: true,
+      data: result,
+      display: `**${type} created:** \`${configId}\`\n\n${configData.alias ?? configData.name ?? configId}`,
+    };
+  }
+
+  private async deleteConfig(
+    type: 'automation' | 'script' | 'scene',
+    configId?: string,
+  ): Promise<SkillResult> {
+    if (!configId) {
+      return { success: false, error: `Missing required "configId" for delete_${type}` };
+    }
+
+    await this.apiDelete(`/api/config/${type}/config/${configId}`);
+
+    return {
+      success: true,
+      data: { deleted: configId },
+      display: `**${type} deleted:** \`${configId}\``,
+    };
+  }
+
+  private async apiPut<T = unknown>(path: string, body: unknown): Promise<T> {
+    const url = `${this.config.baseUrl.replace(/\/+$/, '')}${path}`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.config.accessToken}`,
+      'Content-Type': 'application/json',
+    };
+
+    const skipTls = this.config.verifyTls === false;
+    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      });
+    } finally {
+      if (skipTls) {
+        if (prev === undefined) {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        } else {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+        }
+      }
+    }
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 500); } catch { /* ignore */ }
+      throw new Error(`HTTP ${res.status} ${res.statusText} — ${detail}`);
+    }
+
+    return (await res.json()) as T;
+  }
+
+  private async apiDelete(path: string): Promise<void> {
+    const url = `${this.config.baseUrl.replace(/\/+$/, '')}${path}`;
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.config.accessToken}`,
+    };
+
+    const skipTls = this.config.verifyTls === false;
+    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'DELETE',
+        headers,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } finally {
+      if (skipTls) {
+        if (prev === undefined) {
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+        } else {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
+        }
+      }
+    }
+
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 500); } catch { /* ignore */ }
+      throw new Error(`HTTP ${res.status} ${res.statusText} — ${detail}`);
+    }
   }
 }
