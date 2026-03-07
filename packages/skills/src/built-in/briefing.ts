@@ -11,6 +11,15 @@ interface BriefingModule {
   label: string;
 }
 
+interface ModuleResult {
+  module: string;
+  label: string;
+  success: boolean;
+  data?: unknown;
+  display?: string;
+  error?: string;
+}
+
 const ALL_MODULES: BriefingModule[] = [
   { name: 'calendar',   skill: 'calendar',       input: { action: 'list_events' },              label: 'Kalender' },
   { name: 'weather',    skill: 'weather',         input: {},                                     label: 'Wetter' },
@@ -23,6 +32,11 @@ const ALL_MODULES: BriefingModule[] = [
   { name: 'infra',      skill: 'monitor',         input: {},                                     label: 'Infrastruktur' },
 ];
 
+function isWeekday(): boolean {
+  const day = new Date().getDay();
+  return day >= 1 && day <= 5;
+}
+
 export class BriefingSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'briefing',
@@ -30,10 +44,11 @@ export class BriefingSkill extends Skill {
     description:
       'Tägliches Morgenbriefing — sammelt Daten aus mehreren Skills parallel und liefert ' +
       'ein strukturiertes Ergebnis: Kalender, Wetter, Todos, E-Mails, Strompreise, Auto-Status, Smart Home, Infrastruktur. ' +
+      'Mo–Fr automatisch: Pendelzeit Heim→Büro + BMW-Akkucheck (wenn kein auswärtiger Termin). ' +
       '"run" führt das Briefing aus (optional mit location für Wetter). ' +
       '"modules" zeigt verfügbare und aktive Module.',
     riskLevel: 'read',
-    version: '1.0.0',
+    version: '1.1.0',
     timeoutMs: 60_000,
     inputSchema: {
       type: 'object',
@@ -85,10 +100,16 @@ export class BriefingSkill extends Skill {
       return `${active ? '✅' : '❌'} ${m.name} (${m.label}) → ${m.skill}`;
     });
 
+    const commute = this.alfredConfig.briefing?.homeAddress && this.alfredConfig.briefing?.officeAddress;
+
     return {
       success: true,
-      data: { available: available.map(m => m.name), all: ALL_MODULES.map(m => m.name) },
-      display: `Briefing-Module:\n${allNames.join('\n')}`,
+      data: {
+        available: available.map(m => m.name),
+        all: ALL_MODULES.map(m => m.name),
+        commuteConfigured: !!commute,
+      },
+      display: `Briefing-Module:\n${allNames.join('\n')}\n\nPendler-Check (Mo–Fr): ${commute ? '✅ konfiguriert' : '❌ ALFRED_BRIEFING_HOME_ADDRESS / ALFRED_BRIEFING_OFFICE_ADDRESS setzen'}`,
     };
   }
 
@@ -108,32 +129,16 @@ export class BriefingSkill extends Skill {
       return { module: m, input: moduleInput };
     });
 
-    // Execute all in parallel with individual error handling
+    // Execute all modules in parallel
     const results = await Promise.all(
-      tasks.map(async ({ module, input: moduleInput }) => {
-        try {
-          const skill = this.skillRegistry.get(module.skill);
-          if (!skill) return { module: module.name, label: module.label, success: false, error: 'Skill nicht gefunden' };
-
-          const result = await skill.execute(moduleInput, context);
-          return {
-            module: module.name,
-            label: module.label,
-            success: result.success,
-            data: result.data,
-            display: result.display,
-            error: result.error,
-          };
-        } catch (err) {
-          return {
-            module: module.name,
-            label: module.label,
-            success: false,
-            error: String(err instanceof Error ? err.message : err),
-          };
-        }
-      }),
+      tasks.map(t => this.executeModule(t.module, t.input, context)),
     );
+
+    // Phase 2: Weekday commute check (Mon–Fri, needs home+office+routing)
+    const commuteResult = await this.runCommuteCheck(results, context);
+    if (commuteResult) {
+      results.push(commuteResult);
+    }
 
     // Build structured output for LLM synthesis
     const sections: string[] = [];
@@ -154,5 +159,131 @@ export class BriefingSkill extends Skill {
       data: results,
       display: sections.join('\n'),
     };
+  }
+
+  private async executeModule(
+    module: BriefingModule,
+    moduleInput: Record<string, unknown>,
+    context: SkillContext,
+  ): Promise<ModuleResult> {
+    try {
+      const skill = this.skillRegistry.get(module.skill);
+      if (!skill) return { module: module.name, label: module.label, success: false, error: 'Skill nicht gefunden' };
+
+      const result = await skill.execute(moduleInput, context);
+      return {
+        module: module.name,
+        label: module.label,
+        success: result.success,
+        data: result.data,
+        display: result.display,
+        error: result.error,
+      };
+    } catch (err) {
+      return {
+        module: module.name,
+        label: module.label,
+        success: false,
+        error: String(err instanceof Error ? err.message : err),
+      };
+    }
+  }
+
+  /**
+   * Mo–Fr commute check: Route home → office + BMW battery assessment.
+   * Skipped if calendar shows an external appointment (location-based event).
+   */
+  private async runCommuteCheck(
+    moduleResults: ModuleResult[],
+    context: SkillContext,
+  ): Promise<ModuleResult | null> {
+    if (!isWeekday()) return null;
+
+    const homeAddress = this.alfredConfig.briefing?.homeAddress;
+    const officeAddress = this.alfredConfig.briefing?.officeAddress;
+    if (!homeAddress || !officeAddress) return null;
+    if (!this.skillRegistry.has('routing')) return null;
+
+    // Check calendar for external appointments (events with a location)
+    const calendarResult = moduleResults.find(r => r.module === 'calendar');
+    if (calendarResult?.success && calendarResult.data) {
+      const hasExternalAppointment = this.detectExternalAppointment(calendarResult.data);
+      if (hasExternalAppointment) return null;
+    }
+
+    // Parallel: routing + BMW status (if not already fetched)
+    const commutePromises: Promise<ModuleResult>[] = [];
+
+    // Route: home → office
+    commutePromises.push(
+      this.executeModule(
+        { name: 'commute', skill: 'routing', input: {}, label: 'Pendelzeit' },
+        { action: 'route', origin: homeAddress, destination: officeAddress },
+        context,
+      ),
+    );
+
+    const results = await Promise.all(commutePromises);
+    const routeResult = results[0];
+
+    // Combine routing + BMW data into commute summary
+    const bmwResult = moduleResults.find(r => r.module === 'bmw');
+    const lines: string[] = [];
+
+    if (routeResult.success && routeResult.display) {
+      lines.push(`**Route Heim → Büro:**\n${routeResult.display}`);
+    } else if (routeResult.error) {
+      lines.push(`**Route:** ⚠️ ${routeResult.error}`);
+    }
+
+    if (bmwResult?.success && bmwResult.data) {
+      const battery = this.extractBatteryLevel(bmwResult.data);
+      if (battery != null && battery < 30) {
+        lines.push(`\n⚠️ **BMW Akku niedrig (${battery}%)** — Laden vor der Fahrt empfohlen!`);
+      } else if (battery != null) {
+        lines.push(`\n🔋 BMW Akku: ${battery}% — ausreichend für den Arbeitsweg`);
+      }
+    }
+
+    if (lines.length === 0) return null;
+
+    return {
+      module: 'commute',
+      label: 'Arbeitsweg (Mo–Fr)',
+      success: true,
+      data: { route: routeResult.data, bmwBattery: this.extractBatteryLevel(bmwResult?.data) },
+      display: lines.join('\n'),
+    };
+  }
+
+  /**
+   * Check if any calendar event has a physical location (= external appointment).
+   */
+  private detectExternalAppointment(calendarData: unknown): boolean {
+    if (!Array.isArray(calendarData)) return false;
+    return calendarData.some((event: any) => {
+      const loc = event.location ?? event.loc ?? '';
+      // Ignore virtual meetings (Teams, Zoom, Google Meet, etc.)
+      if (!loc || typeof loc !== 'string') return false;
+      if (/teams|zoom|meet\.google|webex|skype/i.test(loc)) return false;
+      return loc.trim().length > 0;
+    });
+  }
+
+  /**
+   * Extract battery/SoC percentage from BMW status data.
+   */
+  private extractBatteryLevel(bmwData: unknown): number | null {
+    if (!bmwData || typeof bmwData !== 'object') return null;
+    const data = bmwData as Record<string, unknown>;
+    // BMW skill returns various formats
+    const soc = data.chargingLevelPercent ?? data.batterySoc ?? data.soc
+      ?? (data as any).chargingState?.chargingLevelPercent;
+    if (typeof soc === 'number') return soc;
+    if (typeof soc === 'string') {
+      const parsed = parseFloat(soc);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
   }
 }

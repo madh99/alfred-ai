@@ -310,7 +310,9 @@ Parallel morning briefing that gathers data from all available skills in a singl
 - Calendar, weather, todos, emails, energy prices, BMW status, smart home, infrastructure
 - All data fetched in parallel (~5s instead of ~30s with sequential tool calls)
 - LLM synthesizes a coherent, prioritized summary in one pass
-- Configurable: choose which modules to include, set default weather location
+- **Mo–Fr automatic commute check**: Routes home → office, checks BMW battery, warns if low
+- Skips commute routing when calendar shows an external appointment (physical location)
+- Virtual meetings (Teams, Zoom, Meet) are not treated as external appointments
 
 ```
 You: "Morgenbriefing"
@@ -699,6 +701,8 @@ ALFRED_EBAY_CERT_ID=                # eBay Developer Cert ID (Client Secret)
 
 # Briefing (optional)
 ALFRED_BRIEFING_LOCATION=           # Default weather location (e.g. "Altlengbach")
+ALFRED_BRIEFING_HOME_ADDRESS=       # Home address for commute routing (e.g. "Altlengbach 42")
+ALFRED_BRIEFING_OFFICE_ADDRESS=     # Office address for commute routing (e.g. "Mariahilfer Straße 1, Wien")
 
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=

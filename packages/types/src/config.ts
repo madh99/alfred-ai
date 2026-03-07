@@ -261,6 +261,8 @@ export interface EnergyPriceConfig {
 
 export interface BriefingConfig {
   location?: string;
+  homeAddress?: string;
+  officeAddress?: string;
 }
 
 export interface MarketplaceConfig {
