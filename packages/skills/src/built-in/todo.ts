@@ -139,8 +139,7 @@ export class TodoSkill extends Skill {
       .map(t => {
         const check = t.completed ? '\u2611' : '\u2610';
         const due = t.dueDate ?? '';
-        const shortId = t.id.slice(0, 8);
-        return `| ${check} | ${t.priority} | ${t.title} | ${due} | ${shortId} |`;
+        return `| ${check} | ${t.priority} | ${t.title} | ${due} | ${t.id} |`;
       })
       .join('\n');
 
