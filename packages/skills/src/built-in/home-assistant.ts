@@ -951,8 +951,8 @@ export class HomeAssistantSkill extends Skill {
       return { success: false, error: 'Invalid "configData" — must be valid JSON' };
     }
 
-    // HA Config API: PUT /api/config/{type}/config/{id}
-    const result = await this.apiPut(`/api/config/${type}/config/${configId}`, configData);
+    // HA Config API: POST /api/config/{type}/config/{id}
+    const result = await this.apiPost(`/api/config/${type}/config/${configId}`, configData);
 
     return {
       success: true,
@@ -978,7 +978,7 @@ export class HomeAssistantSkill extends Skill {
     };
   }
 
-  private async apiPut<T = unknown>(path: string, body: unknown): Promise<T> {
+  private async apiPost<T = unknown>(path: string, body: unknown): Promise<T> {
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}${path}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.config.accessToken}`,
@@ -992,7 +992,7 @@ export class HomeAssistantSkill extends Skill {
     let res: Response;
     try {
       res = await fetch(url, {
-        method: 'PUT',
+        method: 'POST',
         headers,
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(15_000),
