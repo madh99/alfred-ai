@@ -334,10 +334,10 @@ export class Alfred {
       this.logger.info('Marketplace skill registered');
     }
 
-    // 4q. Briefing (always available — gathers data from registered skills)
+    // 4q. Briefing (always available — gathers data from registered skills, reads memories for addresses)
     {
       const { BriefingSkill } = await import('@alfred/skills');
-      skillRegistry.register(new BriefingSkill(skillRegistry, this.config));
+      skillRegistry.register(new BriefingSkill(skillRegistry, this.config, memoryRepo));
       this.logger.info('Briefing skill registered');
     }
 

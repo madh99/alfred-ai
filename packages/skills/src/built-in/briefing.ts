@@ -1,6 +1,8 @@
 import type { SkillMetadata, SkillContext, SkillResult, AlfredConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
+import type { MemoryRepository } from '@alfred/storage';
+import { allUserIds } from '../user-utils.js';
 
 type BriefingAction = 'run' | 'modules';
 
@@ -75,6 +77,7 @@ export class BriefingSkill extends Skill {
   constructor(
     private readonly skillRegistry: SkillRegistry,
     private readonly alfredConfig: AlfredConfig,
+    private readonly memoryRepo?: MemoryRepository,
   ) {
     super();
   }
@@ -191,6 +194,7 @@ export class BriefingSkill extends Skill {
 
   /**
    * Mo–Fr commute check: Route home → office + BMW battery assessment.
+   * Addresses are resolved from user memories first, then config fallback.
    * Skipped if calendar shows an external appointment (location-based event).
    */
   private async runCommuteCheck(
@@ -198,11 +202,10 @@ export class BriefingSkill extends Skill {
     context: SkillContext,
   ): Promise<ModuleResult | null> {
     if (!isWeekday()) return null;
-
-    const homeAddress = this.alfredConfig.briefing?.homeAddress;
-    const officeAddress = this.alfredConfig.briefing?.officeAddress;
-    if (!homeAddress || !officeAddress) return null;
     if (!this.skillRegistry.has('routing')) return null;
+
+    const { home: homeAddress, office: officeAddress } = this.resolveAddresses(context);
+    if (!homeAddress || !officeAddress) return null;
 
     // Check calendar for external appointments (events with a location)
     const calendarResult = moduleResults.find(r => r.module === 'calendar');
@@ -254,6 +257,39 @@ export class BriefingSkill extends Skill {
       data: { route: routeResult.data, bmwBattery: this.extractBatteryLevel(bmwResult?.data) },
       display: lines.join('\n'),
     };
+  }
+
+  /**
+   * Resolve home and office addresses: memories first, config fallback.
+   * Searches for keys like "heimadresse", "home_address", "wohnadresse",
+   * "büroadresse", "office_address", "arbeit_adresse" etc.
+   */
+  private resolveAddresses(context: SkillContext): { home: string | undefined; office: string | undefined } {
+    const configHome = this.alfredConfig.briefing?.homeAddress;
+    const configOffice = this.alfredConfig.briefing?.officeAddress;
+
+    if (!this.memoryRepo) return { home: configHome, office: configOffice };
+
+    let home = configHome;
+    let office = configOffice;
+
+    // Search memories for addresses across all linked user IDs
+    for (const uid of allUserIds(context)) {
+      const memories = this.memoryRepo.search(uid, 'adresse');
+      for (const m of memories) {
+        const key = m.key.toLowerCase();
+        const val = m.value;
+        if (!home && /heim|home|wohn|zuhause|privat/.test(key)) {
+          home = val;
+        }
+        if (!office && /büro|office|arbeit|firma|work/.test(key)) {
+          office = val;
+        }
+      }
+      if (home && office) break;
+    }
+
+    return { home, office };
   }
 
   /**
