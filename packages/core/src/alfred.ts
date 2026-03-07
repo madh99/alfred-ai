@@ -334,6 +334,13 @@ export class Alfred {
       this.logger.info('Marketplace skill registered');
     }
 
+    // 4q. Briefing (always available — gathers data from registered skills)
+    {
+      const { BriefingSkill } = await import('@alfred/skills');
+      skillRegistry.register(new BriefingSkill(skillRegistry, this.config));
+      this.logger.info('Briefing skill registered');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

@@ -3,7 +3,7 @@ import type { SkillCategory, SkillMetadata } from '@alfred/types';
 // Regex-based keyword map per category.
 // 'core' is always active and not listed here.
 const CATEGORY_KEYWORDS: Record<Exclude<SkillCategory, 'core'>, RegExp> = {
-  productivity: /\b(todo|note|remind|calendar|termin|event|email|e-mail|mail|contact|kontakt)\b/i,
+  productivity: /\b(todo|note|remind|calendar|termin|event|email|e-mail|mail|contact|kontakt|briefing|morgenbriefing|tagesbriefing)\b/i,
   information:  /\b(search|such|weather|wetter|calculat|rechn|time|date|zeit|datum|uhrzeit|system.?info|transit|bahn|zug|bus|tram|u.?bahn|s.?bahn|abfahrt|verbindung|haltestelle|öffi|fahrplan|strom|energy|preis|price|kwh|awattar|marktpreis|spot|günstig|cheapest|netzentgelt)\b/i,
   media:        /\b(voice|stimme|tts|speak|sprech|sprich|screenshot|clipboard|zwischenablage|brows)\b/i,
   automation:   /\b(background|hintergrund|shell|bash|cron|schedul|code.?agent|sandbox|automat|watch|alert|benachrichtig|bescheid|meld|überwach|monitor|tägliche?r?s?|stündliche?r?s?|wöchentliche?r?s?|monatliche?r?s?|jeden\s+(tag|morgen|abend|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)|um\s+\d{1,2}\s*(uhr|:|h)|alle\s+\d+\s*(min|stund|sekund)|daily|hourly|weekly|every\s+(day|hour|morning|evening|night|\d+\s*min))\b/i,

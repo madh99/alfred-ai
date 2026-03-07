@@ -259,6 +259,10 @@ export interface EnergyPriceConfig {
   gridMeterFee?: number;      // Messentgelt €/Monat netto
 }
 
+export interface BriefingConfig {
+  location?: string;
+}
+
 export interface MarketplaceConfig {
   ebay?: {
     appId: string;
@@ -303,6 +307,7 @@ export interface AlfredConfig {
   todo?: MicrosoftTodoConfig;
   energy?: EnergyPriceConfig;
   marketplace?: MarketplaceConfig;
+  briefing?: BriefingConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

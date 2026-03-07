@@ -133,6 +133,8 @@ const ENV_MAP: Record<string, string[]> = {
   // Marketplace (eBay)
   ALFRED_EBAY_APP_ID: ['marketplace', 'ebay', 'appId'],
   ALFRED_EBAY_CERT_ID: ['marketplace', 'ebay', 'certId'],
+  // Briefing
+  ALFRED_BRIEFING_LOCATION: ['briefing', 'location'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

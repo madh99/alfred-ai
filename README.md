@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.36-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.37-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (40+)
+### Built-in Skills (41+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -89,7 +89,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts |
+| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `briefing` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts, Morgenbriefing (parallele Datensammlung aus allen Skills) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
@@ -301,6 +301,21 @@ Structured marketplace search on willhaben.at and eBay. willhaben works without 
 You: "Zeig mir alle RTX 5090 auf willhaben"
 You: "Vergleich RTX 5090 Preise auf willhaben"
 You: "Suche iPhone 16 Pro auf eBay und willhaben"
+```
+
+#### Daily Briefing
+
+Parallel morning briefing that gathers data from all available skills in a single call. Auto-detects which modules are available based on your configuration.
+
+- Calendar, weather, todos, emails, energy prices, BMW status, smart home, infrastructure
+- All data fetched in parallel (~5s instead of ~30s with sequential tool calls)
+- LLM synthesizes a coherent, prioritized summary in one pass
+- Configurable: choose which modules to include, set default weather location
+
+```
+You: "Morgenbriefing"
+You: "Erstelle ein tägliches Briefing um 7 Uhr"
+You: "Briefing nur mit Kalender, Wetter und Todos"
 ```
 
 ### Cross-Platform Identity
@@ -681,6 +696,9 @@ ALFRED_ENERGY_GRID_METER_FEE=       # Messentgelt €/Monat netto (e.g. 2.22)
 # Marketplace / eBay (optional — willhaben works without credentials)
 ALFRED_EBAY_APP_ID=                 # eBay Developer App ID (Client ID)
 ALFRED_EBAY_CERT_ID=                # eBay Developer Cert ID (Client Secret)
+
+# Briefing (optional)
+ALFRED_BRIEFING_LOCATION=           # Default weather location (e.g. "Altlengbach")
 
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=
