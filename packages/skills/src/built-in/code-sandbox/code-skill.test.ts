@@ -132,6 +132,31 @@ describe('CodeExecutionSkill', () => {
     expect(result.display).toContain('Errors:');
   });
 
+  it('rejects oversized code with action "run"', async () => {
+    const result = await skill.execute(
+      { action: 'run', code: 'x'.repeat(5000), language: 'javascript' },
+      ctx,
+    );
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('too large');
+    expect(result.error).toContain('run_with_data');
+  });
+
+  it('allows large data with run_with_data', async () => {
+    const bigData = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: i })));
+    const result = await skill.execute(
+      {
+        action: 'run_with_data',
+        code: 'console.log(INPUT_DATA.length);',
+        language: 'javascript',
+        data: bigData,
+      },
+      ctx,
+    );
+    expect(result.success).toBe(true);
+    expect((result.data as Record<string, unknown>).stdout).toContain('100');
+  });
+
   it('run_with_data without data still runs code', async () => {
     const result = await skill.execute(
       {

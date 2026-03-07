@@ -46,6 +46,18 @@ export class CodeExecutionSkill extends Skill {
       return { success: false, error: `Language "${language}" is not allowed. Allowed: ${[...this.allowedLanguages].join(', ')}` };
     }
 
+    if (action === 'run' && code.length > 4000) {
+      return {
+        success: false,
+        error:
+          `Code too large (${code.length} chars, limit 4000 for action "run"). ` +
+          'This usually means data is hardcoded in the code. ' +
+          'Use action "run_with_data" with the data parameter instead. ' +
+          'The data will be available as INPUT_DATA (already parsed). ' +
+          'If you received a data reference like "result_1", pass it as the data parameter.',
+      };
+    }
+
     let finalCode = code;
     if (action === 'run_with_data' && data) {
       let isJson = false;

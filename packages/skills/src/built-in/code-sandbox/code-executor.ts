@@ -15,15 +15,33 @@ export interface ExecutionResult {
 export class CodeExecutor {
   private resolveNodePath(): string {
     const dirs = new Set<string>();
+
+    // 1. Try require.resolve (works in dev, fails in bundle)
     for (const pkg of ['pdf-parse', 'exceljs', 'pdfkit']) {
       try {
         const resolved = require.resolve(`${pkg}/package.json`);
         dirs.add(path.dirname(path.dirname(resolved)));
       } catch { /* not available */ }
     }
-    if (process.env.NODE_PATH) {
-      dirs.add(process.env.NODE_PATH);
+
+    // 2. Fallback: node_modules next to the running script (bundle deploy)
+    const scriptDir = path.dirname(process.argv[1] ?? '');
+    if (scriptDir) {
+      const candidate = path.join(scriptDir, 'node_modules');
+      if (fs.existsSync(candidate)) dirs.add(candidate);
     }
+
+    // 3. Fallback: node_modules in cwd
+    const cwdCandidate = path.join(process.cwd(), 'node_modules');
+    if (fs.existsSync(cwdCandidate)) dirs.add(cwdCandidate);
+
+    // 4. Preserve existing NODE_PATH entries (split by delimiter)
+    if (process.env.NODE_PATH) {
+      for (const p of process.env.NODE_PATH.split(path.delimiter)) {
+        if (p) dirs.add(p);
+      }
+    }
+
     return [...dirs].join(path.delimiter);
   }
 

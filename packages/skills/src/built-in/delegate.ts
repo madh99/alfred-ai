@@ -117,22 +117,18 @@ export class DelegateSkill extends Skill {
     // Build tools list — exclude 'delegate' to prevent recursion
     const tools = this.buildSubAgentTools();
 
+    const dataStore = new Map<string, string>();
+    let dataStoreCounter = 0;
+
     const systemPrompt =
       'You are a sub-agent of Alfred, a personal AI assistant. ' +
       'Complete the assigned task using the tools available to you. ' +
       'Work step by step: use tools to gather information, then synthesize a clear result. ' +
       'Be concise and return only the final answer when done.\n\n' +
-      'DATA-TO-FILE WORKFLOW (Excel, PDF, CSV from extracted data):\n' +
-      '1. Use the appropriate extract tool (e.g. email.extract) to get structured data.\n' +
-      '2. Pass the FULL JSON result to code_sandbox via run_with_data — NEVER hardcode or copy data into code. ' +
-      'The data is available as INPUT_DATA (already parsed as array/object).\n' +
-      '3. code_sandbox auto-attaches generated files — do NOT call the file skill afterwards.\n' +
-      'Available libraries in code_sandbox (JS only, no install needed): exceljs, pdfkit, pdf-parse.\n' +
-      'Always prefer JavaScript over Python for file generation.\n\n' +
-      'Example — Email to Excel:\n' +
-      '  Step 1: email.extract({query: "invoices", fields: ["date","sender","amount","subject"]})\n' +
-      '  Step 2: code_sandbox.run_with_data({data: <extract result JSON>, language: "javascript", code: "...use exceljs to build .xlsx from INPUT_DATA..."})\n' +
-      'CRITICAL: Never re-type or summarize extracted data in code. INPUT_DATA contains the complete dataset.';
+      'When tool results contain "[Data stored as result_N]", use code_sandbox with ' +
+      'action "run_with_data" and data="result_N" to process the data. ' +
+      'The data will be injected as INPUT_DATA (parsed array/object). Never hardcode data in code.\n' +
+      'Available JS libraries in code_sandbox (no install needed): exceljs, pdfkit, pdf-parse.';
 
     let userContent = task;
     if (additionalContext && typeof additionalContext === 'string') {
@@ -204,11 +200,34 @@ export class DelegateSkill extends Skill {
         for (const toolCall of response.toolCalls) {
           tracker.ping('tool_call', { iteration, maxIterations, tool: toolCall.name });
 
-          const result = await this.executeSubAgentTool(toolCall, context);
+          // Resolve data-store references for code_sandbox
+          let execInput = toolCall.input;
+          if (toolCall.name === 'code_sandbox' && toolCall.input.data) {
+            const ref = String(toolCall.input.data);
+            if (dataStore.has(ref)) {
+              execInput = { ...toolCall.input, data: dataStore.get(ref)! };
+              if (execInput.action === 'run') execInput.action = 'run_with_data';
+            }
+          }
+
+          const result = await this.executeSubAgentTool(
+            { ...toolCall, input: execInput }, context,
+          );
+
+          // Store large successful results with auto-ID
+          let resultContent = result.content;
+          if (!result.isError && resultContent.length > 500) {
+            const refId = `result_${++dataStoreCounter}`;
+            dataStore.set(refId, resultContent);
+            resultContent +=
+              `\n\n[Data stored as "${refId}" — use code_sandbox action "run_with_data" ` +
+              `with data="${refId}" to process this data. Do NOT copy data into code.]`;
+          }
+
           toolResultBlocks.push({
             type: 'tool_result',
             tool_use_id: toolCall.id,
-            content: result.content,
+            content: resultContent,
             is_error: result.isError,
           });
         }
