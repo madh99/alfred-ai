@@ -45,6 +45,13 @@ describe('selectCategories', () => {
     }
   });
 
+  it('matches German time-interval inflections for automation', () => {
+    for (const msg of ['Tägliche Strompreise aWATTar kann gelöscht werden', 'stündlicher Report', 'wöchentliches Backup', 'monatlicher Check']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('automation'), `"${msg}" should match automation`).toBe(true);
+    }
+  });
+
   it('matches files keywords', () => {
     for (const msg of ['read the file', 'ingest this document', 'download pdf', 'http request']) {
       const result = selectCategories(msg, available(...ALL_CATEGORIES));
