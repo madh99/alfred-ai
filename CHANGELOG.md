@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.56] - 2026-03-08
+
+### Added
+- **Home Assistant — Energieverbrauch-Statistiken** — Neue Action `energy_stats` im HA-Skill: Auto-Discovery aller Energie-Sensoren (`state_class: total_increasing`, `device_class: energy`), Verbrauchsberechnung über History-API (Differenz erster/letzter Wert), Einheiten-Normalisierung (Wh/MWh → kWh), freundliche Zeiträume (`today`/`heute`, `yesterday`/`gestern`, `this_week`, `last_week`, `this_month`, `last_month`). Fallback auf aktuelle Zählerstände wenn History-Retention überschritten
+- **Skill-Filter — Energy-Keywords für Infrastructure** — Begriffe wie `solar`, `photovoltaik`, `stromverbrauch`, `energieverbrauch`, `einspeisung`, `wallbox` aktivieren jetzt die Infrastructure-Kategorie, damit der HA-Skill bei Energiefragen sichtbar wird
+
 ## [0.10.55] - 2026-03-08
 
 ### Fixed

@@ -27,7 +27,8 @@ type Action =
   | 'delete_script'
   | 'create_scene'
   | 'delete_scene'
-  | 'briefing_summary';
+  | 'briefing_summary'
+  | 'energy_stats';
 
 function parsePeriod(period: string): string {
   const m = period.match(/^(\d+)\s*(h|d|m|w)$/i);
@@ -57,7 +58,8 @@ export class HomeAssistantSkill extends Skill {
       'Config API: "create_automation"/"delete_automation", "create_script"/"delete_script", "create_scene"/"delete_scene" — ' +
       'create persistent automations, scripts, and scenes in HA. Use configData (JSON) with the HA automation/script/scene schema. ' +
       '"briefing_summary" for a compact smart home overview (open contacts, lights on, battery/SoC, energy, climate, presence). ' +
-      'Optionally pass entities[] or domains[] to filter.',
+      'Optionally pass entities[] or domains[] to filter. ' +
+      '"energy_stats" for energy consumption statistics over a period (today, yesterday, last_week, etc.) — auto-discovers all energy sensors and calculates kWh consumed.',
     riskLevel: 'write',
     version: '2.1.0',
     inputSchema: {
@@ -92,6 +94,7 @@ export class HomeAssistantSkill extends Skill {
             'create_scene',
             'delete_scene',
             'briefing_summary',
+            'energy_stats',
           ],
           description: 'The Home Assistant action to perform',
         },
@@ -113,7 +116,7 @@ export class HomeAssistantSkill extends Skill {
         },
         period: {
           type: 'string',
-          description: 'Time period for history/logbook, e.g. 1h, 24h, 7d (default: 1h)',
+          description: 'Time period for history/logbook/energy_stats. Formats: "1h", "24h", "7d" or friendly names "today", "yesterday", "this_week", "last_week", "this_month", "last_month" (default for energy_stats: "today")',
         },
         area: {
           type: 'string',
@@ -272,6 +275,11 @@ export class HomeAssistantSkill extends Skill {
           return await this.getBriefingSummary(
             input.entities as string[] | undefined,
             input.domains as string[] | undefined,
+          );
+        case 'energy_stats':
+          return await this.getEnergyStats(
+            input.period as string | undefined,
+            input.entityId as string | undefined,
           );
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
@@ -1087,6 +1095,235 @@ export class HomeAssistantSkill extends Skill {
     }));
 
     return { success: true, data, display: lines.join('\n').trim() };
+  }
+
+  // ── Energy statistics ─────────────────────────────────────────
+
+  /**
+   * Calculate energy consumption for a time period.
+   * Auto-discovers energy entities (state_class: total_increasing / total,
+   * device_class: energy) and computes kWh consumed by comparing the first
+   * and last history values in the period.
+   *
+   * Falls back to Jinja2 template for periods beyond history retention.
+   */
+  private async getEnergyStats(period?: string, entityId?: string): Promise<SkillResult> {
+    const { start, end, label } = this.parseEnergyPeriod(period ?? 'today');
+
+    // 1. Discover energy entities (or use specific one)
+    let energyEntityIds: string[];
+    if (entityId) {
+      energyEntityIds = [entityId];
+    } else {
+      const allStates = await this.api<any[]>('GET', '/api/states');
+      energyEntityIds = allStates
+        .filter(e => {
+          const attrs = e.attributes ?? {};
+          const stateClass = attrs.state_class as string | undefined;
+          const deviceClass = attrs.device_class as string | undefined;
+          const unit = (attrs.unit_of_measurement ?? '').toLowerCase();
+          // Must be an energy accumulator sensor
+          return (
+            e.entity_id.startsWith('sensor.') &&
+            (stateClass === 'total_increasing' || stateClass === 'total') &&
+            (deviceClass === 'energy' || unit === 'kwh' || unit === 'wh' || unit === 'mwh')
+          );
+        })
+        .map(e => e.entity_id);
+    }
+
+    if (energyEntityIds.length === 0) {
+      return {
+        success: true,
+        data: [],
+        display: 'Keine Energie-Sensoren gefunden (benötigt state_class: total_increasing und device_class: energy).',
+      };
+    }
+
+    // 2. Query history for each entity and compute consumption
+    const results: { entityId: string; name: string; consumption: number; unit: string }[] = [];
+    const errors: string[] = [];
+
+    // Batch query: history API supports multiple entity_ids comma-separated
+    const filterIds = energyEntityIds.join(',');
+    const historyUrl = `/api/history/period/${start}?end=${encodeURIComponent(end)}&filter_entity_id=${encodeURIComponent(filterIds)}&minimal_response&no_attributes`;
+
+    let historyData: any[][];
+    try {
+      historyData = await this.api<any[][]>('GET', historyUrl);
+    } catch (err) {
+      // History API might fail for long periods — fall back to template approach
+      return this.getEnergyStatsViaTemplate(energyEntityIds, start, end, label);
+    }
+
+    for (const entityHistory of historyData) {
+      if (!entityHistory || entityHistory.length < 2) continue;
+
+      const eid = entityHistory[0]?.entity_id;
+      if (!eid) continue;
+
+      // Find first and last valid numeric states
+      let firstValue: number | null = null;
+      let lastValue: number | null = null;
+
+      for (const entry of entityHistory) {
+        const val = parseFloat(entry.state);
+        if (!isNaN(val)) {
+          if (firstValue === null) firstValue = val;
+          lastValue = val;
+        }
+      }
+
+      if (firstValue !== null && lastValue !== null) {
+        let consumption = lastValue - firstValue;
+        // total_increasing sensors can reset (e.g. meter replacement).
+        // Negative diff means a reset happened — skip or show 0.
+        if (consumption < 0) consumption = 0;
+
+        // Get friendly name from a separate state query (attributes stripped in minimal_response)
+        const stateData = await this.api<any>('GET', `/api/states/${eid}`).catch(() => null);
+        const name = stateData?.attributes?.friendly_name ?? eid;
+        const unit = stateData?.attributes?.unit_of_measurement ?? 'kWh';
+
+        // Normalize to kWh if unit is Wh or MWh
+        let displayConsumption = consumption;
+        let displayUnit = unit;
+        if (unit.toLowerCase() === 'wh') {
+          displayConsumption = consumption / 1000;
+          displayUnit = 'kWh';
+        } else if (unit.toLowerCase() === 'mwh') {
+          displayConsumption = consumption * 1000;
+          displayUnit = 'kWh';
+        }
+
+        results.push({
+          entityId: eid,
+          name,
+          consumption: Math.round(displayConsumption * 100) / 100,
+          unit: displayUnit,
+        });
+      }
+    }
+
+    if (results.length === 0 && errors.length === 0) {
+      return {
+        success: true,
+        data: [],
+        display: `Keine Verbrauchsdaten für Zeitraum "${label}" gefunden. Möglicherweise liegt der Zeitraum außerhalb der History-Retention.`,
+      };
+    }
+
+    // 3. Format output
+    const totalKwh = results.reduce((sum, r) => sum + (r.unit === 'kWh' ? r.consumption : 0), 0);
+    const lines = [
+      `## Energieverbrauch: ${label}`,
+      '',
+      '| Sensor | Verbrauch |',
+      '|--------|-----------|',
+    ];
+
+    for (const r of results.sort((a, b) => b.consumption - a.consumption)) {
+      lines.push(`| ${r.name} | ${r.consumption} ${r.unit} |`);
+    }
+
+    if (results.length > 1) {
+      lines.push(`| **Gesamt** | **${Math.round(totalKwh * 100) / 100} kWh** |`);
+    }
+
+    if (errors.length > 0) {
+      lines.push('', `Fehler bei: ${errors.join(', ')}`);
+    }
+
+    return { success: true, data: results, display: lines.join('\n') };
+  }
+
+  /**
+   * Fallback: use Jinja2 template to get energy stats when history API
+   * doesn't have data (period beyond retention).
+   */
+  private async getEnergyStatsViaTemplate(
+    entityIds: string[],
+    _start: string,
+    _end: string,
+    label: string,
+  ): Promise<SkillResult> {
+    // Use Jinja2 to read current state values — for cumulative sensors
+    // we can at least show the current total and let the user understand
+    // that historical aggregation isn't available via REST API.
+    const lines = [
+      `## Energie-Sensoren: ${label}`,
+      '',
+      '*Hinweis: Für diesen Zeitraum sind keine History-Daten verfügbar. Zeige aktuelle Zählerstände.*',
+      '',
+      '| Sensor | Aktueller Stand | Einheit |',
+      '|--------|----------------|---------|',
+    ];
+
+    for (const eid of entityIds) {
+      try {
+        const state = await this.api<any>('GET', `/api/states/${eid}`);
+        const name = state.attributes?.friendly_name ?? eid;
+        const unit = state.attributes?.unit_of_measurement ?? '';
+        const val = state.state;
+        lines.push(`| ${name} | ${val} | ${unit} |`);
+      } catch {
+        lines.push(`| ${eid} | Fehler | - |`);
+      }
+    }
+
+    return { success: true, data: [], display: lines.join('\n') };
+  }
+
+  /**
+   * Parse friendly period names into ISO start/end timestamps.
+   */
+  private parseEnergyPeriod(period: string): { start: string; end: string; label: string } {
+    const now = new Date();
+
+    switch (period.toLowerCase().replace(/\s+/g, '_')) {
+      case 'today':
+      case 'heute': {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return { start: start.toISOString(), end: now.toISOString(), label: 'Heute' };
+      }
+      case 'yesterday':
+      case 'gestern': {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        return { start: start.toISOString(), end: end.toISOString(), label: 'Gestern' };
+      }
+      case 'this_week':
+      case 'diese_woche': {
+        const day = now.getDay();
+        const mondayOffset = day === 0 ? -6 : 1 - day;
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset);
+        return { start: start.toISOString(), end: now.toISOString(), label: 'Diese Woche' };
+      }
+      case 'last_week':
+      case 'letzte_woche': {
+        const day = now.getDay();
+        const mondayOffset = day === 0 ? -6 : 1 - day;
+        const thisMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + mondayOffset);
+        const lastMonday = new Date(thisMonday.getTime() - 7 * 86_400_000);
+        return { start: lastMonday.toISOString(), end: thisMonday.toISOString(), label: 'Letzte Woche' };
+      }
+      case 'this_month':
+      case 'dieser_monat': {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        return { start: start.toISOString(), end: now.toISOString(), label: 'Dieser Monat' };
+      }
+      case 'last_month':
+      case 'letzter_monat': {
+        const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const end = new Date(now.getFullYear(), now.getMonth(), 1);
+        return { start: start.toISOString(), end: end.toISOString(), label: 'Letzter Monat' };
+      }
+      default: {
+        // Fall back to parsePeriod-style: "24h", "7d", etc.
+        const startTs = parsePeriod(period);
+        return { start: startTs, end: now.toISOString(), label: period };
+      }
+    }
   }
 
   // ── Config API (create/delete automations, scripts, scenes) ──

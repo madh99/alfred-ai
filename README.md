@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.55-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.56-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -157,7 +157,7 @@ You: "Block the device with MAC aa:bb:cc:dd:ee:ff"
 
 #### Home Assistant
 
-Smart home control via the Home Assistant REST API — 26 actions:
+Smart home control via the Home Assistant REST API — 27 actions:
 
 - List all entities or filter by domain (lights, sensors, switches)
 - Turn on, turn off, toggle devices
@@ -172,6 +172,7 @@ Smart home control via the Home Assistant REST API — 26 actions:
 - **Calendar Events** — Query HA calendar entities with time range
 - **Templates** — Execute arbitrary Jinja2 queries for maximum flexibility
 - **Briefing Summary** — Kompakte Übersicht für Morgenbriefing: offene Kontakte, Lichter an, Batterie/SoC, Energie, Klima, Anwesenheit. Konfigurierbar per Entity-/Domain-Filter
+- **Energy Stats** — Energieverbrauch-Statistiken: Auto-Discovery aller Energie-Sensoren, Verbrauchsberechnung über History-API, freundliche Zeiträume (heute, gestern, diese/letzte Woche/Monat)
 - **Error Log** — View the Home Assistant error log
 
 Uses **Long-Lived Access Tokens** for authentication (Settings → Security → Long-Lived Access Tokens).
