@@ -150,9 +150,11 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
       // Automation guidance: help the LLM choose between watch and scheduled_task
       if (skills.some(s => s.name === 'watch') && skills.some(s => s.name === 'scheduled_task')) {
         prompt += `
-## Automation: watch vs. scheduled_task
+## Automation: watch vs. scheduled_task vs. reminder
 - **"Alert me when X happens"** → use \`watch\` (polls a skill, evaluates condition, no LLM cost per check)
-- **"Do X every day at 9 AM"** / **"Check X and report"** → use \`scheduled_task\` (time-based, can use LLM via prompt_template)
+- **"Do X every day at 9 AM"** / **"Check X and report"** / **"Do X in 5 minutes"** → use \`scheduled_task\` (time-based, can use LLM via prompt_template, can execute any skill)
+- **"Remind me to X"** → use \`reminder\` ONLY for simple text reminders that just send a notification message
+- **IMPORTANT:** When the user asks to **execute a task** at a future time (e.g. "führe ein Briefing in 2 Minuten aus", "run a backup at 9 PM"), ALWAYS use \`scheduled_task\` with \`prompt_template\`, NOT \`reminder\`. Reminders cannot execute skills or call the LLM.
 - For infrastructure monitoring on a schedule, use \`scheduled_task\` with \`prompt_template\` that instructs you to run the \`monitor\` tool and report only problems.`;
       }
 

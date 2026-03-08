@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.53] - 2026-03-08
+
+### Fixed
+- **Skill-Filter — „in X Minuten" aktiviert jetzt Automation-Kategorie** — Zeitangaben wie „in 2 Minuten" matchten keines der Automation-Keywords, dadurch wurde `scheduled_task` rausgefiltert und das LLM konnte nur `reminder` anbieten. Neues Pattern `in\s+\d+\s*(min|stund|...)` ergänzt
+- **Prompt — scheduled_task vs. reminder Abgrenzung** — Klare Anweisung im System-Prompt: „Task ausführen zu Zeitpunkt X" → `scheduled_task` mit `prompt_template`, nicht `reminder`. Reminder sind nur für einfache Texterinnerungen
+
 ## [0.10.52] - 2026-03-08
 
 ### Changed
