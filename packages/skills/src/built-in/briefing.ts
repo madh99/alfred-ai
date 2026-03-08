@@ -28,7 +28,7 @@ const ALL_MODULES: BriefingModule[] = [
   { name: 'todo',       skill: 'todo',            input: { action: 'list' },                     label: 'Lokale Todos' },
   { name: 'mstodo',     skill: 'microsoft_todo',  input: { action: 'list_tasks' },               label: 'Microsoft To Do' },
   { name: 'email',      skill: 'email',           input: { action: 'inbox' },                    label: 'E-Mail' },
-  { name: 'energy',     skill: 'energy_price',    input: { action: 'current' },                  label: 'Strompreise' },
+  { name: 'energy',     skill: 'energy_price',    input: { action: 'briefing' },                 label: 'Strompreise' },
   { name: 'bmw',        skill: 'bmw',             input: { action: 'status' },                   label: 'BMW Status' },
   { name: 'home',       skill: 'homeassistant',   input: { action: 'briefing_summary' },         label: 'Smart Home' },
   { name: 'infra',      skill: 'monitor',         input: {},                                     label: 'Infrastruktur' },

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.49] - 2026-03-08
+
+### Added
+- **Strompreis — Briefing-Übersicht** — Neue Action `briefing` im Energy-Skill: zeigt aktuellen Preis, Tagesdurchschnitt, Min/Max, die 3 günstigsten und 3 teuersten verbleibenden Stunden. Morgenbriefing nutzt jetzt diese kompakte Übersicht statt nur die aktuelle Stunde
+
 ## [0.10.48] - 2026-03-08
 
 ### Fixed

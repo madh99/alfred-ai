@@ -1,7 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, EnergyPriceConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-type Action = 'current' | 'today' | 'tomorrow' | 'cheapest' | 'average';
+type Action = 'current' | 'today' | 'tomorrow' | 'cheapest' | 'average' | 'briefing';
 
 interface MarketDataEntry {
   start_timestamp: number;
@@ -53,8 +53,8 @@ export class EnergyPriceSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['current', 'today', 'tomorrow', 'cheapest', 'average'],
-          description: 'Aktion',
+          enum: ['current', 'today', 'tomorrow', 'cheapest', 'average', 'briefing'],
+          description: 'Aktion (briefing = kompakte Tagesübersicht für Morgenbriefing)',
         },
         hours: {
           type: 'number',
@@ -87,6 +87,7 @@ export class EnergyPriceSkill extends Skill {
         case 'tomorrow':  return await this.dayPrices('tomorrow');
         case 'cheapest':  return await this.cheapest(input.hours as number | undefined);
         case 'average':   return await this.average(input.date as string | undefined);
+        case 'briefing':  return await this.briefingSummary();
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -230,6 +231,81 @@ export class EnergyPriceSkill extends Skill {
     ];
 
     return { success: true, data: { date: dateLabel, avgSpotCt: avgSpot, avgBruttoCt: avgBrutto, hours: data.length }, display: lines.join('\n') };
+  }
+
+  /**
+   * Compact briefing summary: current price, remaining hours today,
+   * 3 cheapest, 3 most expensive, and daily average.
+   */
+  private async briefingSummary(): Promise<SkillResult> {
+    const now = Date.now();
+    const dayStart = new Date();
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    const data = await this.fetchMarketData(dayStart.getTime(), dayEnd.getTime());
+    if (data.length === 0) {
+      return { success: false, error: 'Keine Preisdaten für heute verfügbar.' };
+    }
+
+    const all = data.map(entry => ({
+      time: this.formatHourRange(entry.start_timestamp, entry.end_timestamp),
+      bruttoCt: this.calculatePrice(entry.marketprice).bruttoCt,
+      start: entry.start_timestamp,
+      isCurrent: entry.start_timestamp <= now && entry.end_timestamp > now,
+      isPast: entry.end_timestamp <= now,
+    }));
+
+    // Current hour
+    const current = all.find(h => h.isCurrent);
+
+    // Remaining hours (including current)
+    const remaining = all.filter(h => !h.isPast);
+
+    // Day stats
+    const allPrices = all.map(h => h.bruttoCt);
+    const avg = allPrices.reduce((s, p) => s + p, 0) / allPrices.length;
+    const min = Math.min(...allPrices);
+    const max = Math.max(...allPrices);
+
+    // 3 cheapest & 3 most expensive from remaining hours
+    const sorted = [...remaining].sort((a, b) => a.bruttoCt - b.bruttoCt);
+    const cheapest = sorted.slice(0, 3);
+    const expensive = sorted.slice(-3).reverse();
+
+    const lines: string[] = [];
+
+    if (current) {
+      lines.push(`**Aktuell (${current.time}):** ${current.bruttoCt.toFixed(2)} ct/kWh brutto`);
+    }
+
+    lines.push(`**Tagesdurchschnitt:** ${avg.toFixed(2)} ct/kWh | **Min:** ${min.toFixed(2)} | **Max:** ${max.toFixed(2)}`);
+
+    lines.push('');
+    lines.push('**Günstigste 3 Stunden (Rest des Tages):**');
+    for (const h of cheapest) {
+      lines.push(`- ${h.time}: ${h.bruttoCt.toFixed(2)} ct/kWh`);
+    }
+
+    lines.push('');
+    lines.push('**Teuerste 3 Stunden (Rest des Tages):**');
+    for (const h of expensive) {
+      lines.push(`- ${h.time}: ${h.bruttoCt.toFixed(2)} ct/kWh`);
+    }
+
+    return {
+      success: true,
+      data: {
+        currentCt: current?.bruttoCt,
+        avgCt: avg,
+        minCt: min,
+        maxCt: max,
+        cheapest: cheapest.map(h => ({ time: h.time, bruttoCt: h.bruttoCt })),
+        expensive: expensive.map(h => ({ time: h.time, bruttoCt: h.bruttoCt })),
+      },
+      display: lines.join('\n'),
+    };
   }
 
   // ── Price calculation ──────────────────────────────────────
