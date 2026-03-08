@@ -76,7 +76,9 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       $top: '50',
     });
 
-    const data = await this.graphRequest(`/me/calendarView?${params}`);
+    const data = await this.graphRequest(`/me/calendarView?${params}`, {
+      headers: { Prefer: 'outlook.timezone="UTC"' },
+    });
     return (data.value ?? []).map((item: any) => this.mapEvent(item));
   }
 
@@ -161,32 +163,14 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
 
   /**
    * Parse a Microsoft Graph dateTime object ({ dateTime, timeZone }) into a proper Date.
-   * Graph returns dateTime WITHOUT offset (e.g. "2026-03-08T18:00:00.0000000").
-   * Without correction, `new Date()` treats it as UTC, shifting times by the local offset.
-   * We use the provider's timezone to interpret the datetime correctly.
+   * We request UTC via Prefer header, so dateTime is always in UTC.
+   * Graph returns it WITHOUT 'Z' suffix (e.g. "2026-03-08T17:00:00.0000000"),
+   * so we append 'Z' to ensure correct parsing.
    */
   private parseGraphDateTime(dt: { dateTime?: string; timeZone?: string }): Date {
     if (!dt?.dateTime) return new Date();
-    // Strip trailing fractional zeros and build an unambiguous local-time string.
-    // Use Intl to find the UTC offset for the provider's timezone at that moment,
-    // then append it so `new Date()` interprets it correctly.
-    const raw = dt.dateTime.replace(/\.?\d*$/, ''); // "2026-03-08T18:00:00"
-    // Create a temp date assuming UTC to find the offset at that point in time
-    const tempUtc = new Date(raw + 'Z');
-    const tz = this.timezone;
-    // Get the local representation in the target timezone
-    const local = new Intl.DateTimeFormat('en-CA', {
-      timeZone: tz,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      hour12: false,
-    }).formatToParts(tempUtc);
-    const g = (t: string) => local.find(p => p.type === t)?.value ?? '00';
-    const localStr = `${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}`;
-    // The difference between tempUtc and localStr tells us the offset
-    const localAsUtc = new Date(localStr + 'Z');
-    const offsetMs = localAsUtc.getTime() - tempUtc.getTime();
-    // The raw datetime IS in local time, so subtract the offset to get true UTC
-    return new Date(tempUtc.getTime() - offsetMs);
+    // Strip excessive fractional digits (keep max 3 for ms) and append Z
+    const clean = dt.dateTime.replace(/(\.\d{3})\d*$/, '$1');
+    return new Date(clean + 'Z');
   }
 }

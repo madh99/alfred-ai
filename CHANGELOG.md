@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.51] - 2026-03-08
+
+### Fixed
+- **Kalender — Zeitzonen-Fix korrigiert** — Der v0.10.48 Fix hatte einen Logikfehler (Offset wurde subtrahiert statt korrekt behandelt). Neuer Ansatz: `Prefer: outlook.timezone="UTC"` Header an Microsoft Graph senden, so liefert die API garantiert UTC-Zeiten. `dateTime` wird mit `Z`-Suffix geparst und korrekt in lokale Zeit konvertiert
+
 ## [0.10.50] - 2026-03-08
 
 ### Fixed
