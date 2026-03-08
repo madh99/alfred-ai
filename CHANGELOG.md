@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.50] - 2026-03-08
+
+### Fixed
+- **Briefing — Kalender zeigte Events der nächsten 7 Tage** — `list_events` wurde ohne Start/End aufgerufen, der Default war „ab jetzt + 7 Tage". Dadurch erschienen zukünftige Termine (z.B. vom 13. März) fälschlich im heutigen Briefing. Briefing schränkt jetzt explizit auf den heutigen Tag ein
+
 ## [0.10.49] - 2026-03-08
 
 ### Added

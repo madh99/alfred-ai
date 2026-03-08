@@ -22,6 +22,14 @@ interface ModuleResult {
   error?: string;
 }
 
+/** Return today's start/end as ISO strings for calendar queries. */
+function todayRange(): { start: string; end: string } {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+  return { start: start.toISOString(), end: end.toISOString() };
+}
+
 const ALL_MODULES: BriefingModule[] = [
   { name: 'calendar',   skill: 'calendar',       input: { action: 'list_events' },              label: 'Kalender' },
   { name: 'weather',    skill: 'weather',         input: {},                                     label: 'Wetter' },
@@ -155,6 +163,11 @@ export class BriefingSkill extends Skill {
     // Build inputs with overrides
     const tasks = modules.map(m => {
       const moduleInput = { ...m.input };
+      if (m.name === 'calendar') {
+        const { start, end } = todayRange();
+        moduleInput.start = start;
+        moduleInput.end = end;
+      }
       if (m.name === 'weather') moduleInput.location = location;
       if (m.name === 'home') {
         if (haPrefs.entities?.length) moduleInput.entities = haPrefs.entities;
