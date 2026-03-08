@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.54] - 2026-03-08
+
+### Fixed
+- **Skill-Filter — Word-Boundary-Bug bei „in X Minuten"** — Die Regex `in\s+\d+\s*min` scheiterte am `\b` (Word-Boundary) weil „min" mitten im Wort „Minuten" steht. Alternation auf vollständige Wortformen geändert (`minuten?|stunden?|sekunden?|hours?|minutes?|seconds?|min`)
+
 ## [0.10.53] - 2026-03-08
 
 ### Fixed
