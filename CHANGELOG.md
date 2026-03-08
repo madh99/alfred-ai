@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.59] - 2026-03-08
+
+### Fixed
+- **Scheduled Tasks — HTML-Tags als Rohtext auf Telegram** — Der ProactiveScheduler hat den `parseMode` vom ResponseFormatter ignoriert und Nachrichten ohne `parse_mode` an Telegram gesendet. Dadurch wurden `<b>`, `<i>` etc. als sichtbarer Text angezeigt statt als Formatierung gerendert. Fix: `parseMode` wird jetzt vom Formatter bis zum `adapter.sendMessage()` durchgereicht
+
 ## [0.10.58] - 2026-03-08
 
 ### Fixed

@@ -61,6 +61,7 @@ export class ProactiveScheduler {
     this.logger.info({ actionId: action.id, name: action.name }, 'Executing scheduled action');
 
     let resultText: string;
+    let resultParseMode: 'text' | 'markdown' | 'html' = 'text';
 
     if (action.promptTemplate && this.pipeline) {
       // Route through the full message pipeline so the LLM can use all tools.
@@ -92,6 +93,7 @@ export class ProactiveScheduler {
           : { text: result.text, parseMode: 'text' as const };
 
         resultText = formatted.text;
+        resultParseMode = formatted.parseMode;
 
         // Send file attachments if any — to the USER's original chatId
         const adapter = this.adapters.get(action.platform as Platform);
@@ -178,7 +180,9 @@ export class ProactiveScheduler {
       const adapter = this.adapters.get(action.platform as Platform);
       if (adapter) {
         try {
-          await adapter.sendMessage(action.chatId, resultText);
+          await adapter.sendMessage(action.chatId, resultText, {
+            parseMode: resultParseMode !== 'text' ? resultParseMode : undefined,
+          });
 
           // For prompt_template tasks running in an isolated conversation:
           // inject the alert into the USER's conversation so they can reply
