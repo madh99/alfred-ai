@@ -76,7 +76,7 @@ export class ProactiveScheduler {
           chatType: 'dm',
           userId: action.userId,
           userName: action.userId,
-          text: action.promptTemplate,
+          text: action.promptTemplate + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
           timestamp: new Date(),
           metadata: { scheduled: true, skipHistory: true, tier: 'fast' },
         };

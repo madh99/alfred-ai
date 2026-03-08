@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.55] - 2026-03-08
+
+### Fixed
+- **Response-Formatter — Markdown/HTML-Mix Rendering** — LLMs (insbesondere Haiku) mischen Markdown (`##`, `**`) mit HTML-Tags (`<b>`, `<code>`). Der Formatter normalisiert jetzt zuerst HTML-Tags zurück zu Markdown und konvertiert dann einheitlich ins Zielformat. Zusätzlich: `## Headers` → `<b>` für Telegram/Matrix, `---` Trennlinien entfernt, überschüssige Leerzeilen kollabiert
+- **Scheduled Tasks — Markdown-Format-Hinweis** — Synthetische Messages an das LLM enthalten jetzt einen Format-Hinweis der reines Markdown verlangt (kein HTML-Mix)
+
 ## [0.10.54] - 2026-03-08
 
 ### Fixed
