@@ -34,7 +34,13 @@ export class AnthropicProvider extends LLMProvider {
       model: this.config.model,
       max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
       temperature: request.temperature ?? this.config.temperature,
-      system: request.system,
+      system: request.system ? [
+        {
+          type: 'text' as const,
+          text: request.system,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ] : undefined,
       messages,
       tools,
     };
@@ -52,7 +58,13 @@ export class AnthropicProvider extends LLMProvider {
       model: this.config.model,
       max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
       temperature: request.temperature ?? this.config.temperature,
-      system: request.system,
+      system: request.system ? [
+        {
+          type: 'text' as const,
+          text: request.system,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ] : undefined,
       messages,
       tools,
     });
@@ -134,11 +146,16 @@ export class AnthropicProvider extends LLMProvider {
   }
 
   private mapTools(tools: ToolDefinition[]): Anthropic.Tool[] {
-    return tools.map((tool) => ({
+    const mapped = tools.map((tool) => ({
       name: tool.name,
       description: tool.description,
       input_schema: tool.inputSchema as Anthropic.Tool.InputSchema,
     }));
+    // Cache all tool definitions — Anthropic caches everything up to the last breakpoint
+    if (mapped.length > 0) {
+      (mapped[mapped.length - 1] as any).cache_control = { type: 'ephemeral' };
+    }
+    return mapped;
   }
 
   private mapResponse(response: Anthropic.Message): LLMResponse {
@@ -163,6 +180,8 @@ export class AnthropicProvider extends LLMProvider {
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
+        cacheCreationTokens: (response.usage as any).cache_creation_input_tokens ?? 0,
+        cacheReadTokens: (response.usage as any).cache_read_input_tokens ?? 0,
       },
       stopReason: response.stop_reason as LLMResponse['stopReason'],
     };

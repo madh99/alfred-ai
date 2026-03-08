@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.52] - 2026-03-08
+
+### Changed
+- **Token-Kostenoptimierung für Scheduled Tasks** — Synthetische Messages vom ProactiveScheduler setzen `skipHistory: true` (spart ~2.000-5.000 Tokens History-Loading) und `tier: 'fast'` (nutzt Fast-Tier statt Default für reine Formatierungsaufgaben). Briefing-Kosten sinken von ~$0,33 auf ~$0,02-0,05 pro Aufruf
+- **Anthropic Prompt Caching** — System-Prompt und Tool-Definitionen werden mit `cache_control: { type: 'ephemeral' }` markiert. Im agentic Tool-Loop (mehrere LLM-Calls pro Pipeline-Run) sind diese bei jeder Iteration identisch → 90% Rabatt auf gecachte Tokens. Cache-Metriken (`cacheCreationTokens`, `cacheReadTokens`) werden in `LLMUsage` getrackt
+- **OpenAI Prefix-Optimierung** — Statische Prompt-Sektionen (Core Principles, Tools, User Profile) werden vor dynamische (Datum/Uhrzeit, Kalender, Memories) gestellt. Maximiert den stabilen Prefix für OpenAIs automatisches Caching (50% Rabatt)
+
 ## [0.10.51] - 2026-03-08
 
 ### Fixed

@@ -91,6 +91,8 @@ export interface ToolResult {
 export interface LLMUsage {
   inputTokens: number;
   outputTokens: number;
+  cacheCreationTokens?: number;
+  cacheReadTokens?: number;
 }
 
 export interface LLMStreamEvent {

@@ -133,7 +133,10 @@ export class MessagePipeline {
       );
 
       // 3. Load conversation history (fetch generously, we'll trim by tokens later)
-      const history = this.conversationManager.getHistory(conversation.id, this.maxHistoryMessages);
+      // Skip history for scheduled tasks — they're independent and don't need prior context
+      const history = message.metadata?.skipHistory
+        ? []
+        : this.conversationManager.getHistory(conversation.id, this.maxHistoryMessages);
 
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
@@ -269,6 +272,7 @@ export class MessagePipeline {
             messages,
             system,
             tools: tools && tools.length > 0 ? tools : undefined,
+            tier: message.metadata?.tier,
           });
           totalInputTokens += response.usage?.inputTokens ?? 0;
           totalOutputTokens += response.usage?.outputTokens ?? 0;
@@ -296,6 +300,7 @@ export class MessagePipeline {
           response = await this.abortToolLoop(
             messages, response, conversation.id, system,
             `Das Zeitlimit von ${elapsedMin} Minuten für Tool-Aufrufe wurde erreicht.`,
+            false, message.metadata?.tier,
           );
           break;
         }
@@ -306,6 +311,7 @@ export class MessagePipeline {
           response = await this.abortToolLoop(
             messages, response, conversation.id, system,
             `Das Iterationslimit von ${MAX_TOOL_ITERATIONS} Tool-Aufrufen wurde erreicht.`,
+            false, message.metadata?.tier,
           );
           break;
         }
@@ -365,7 +371,7 @@ export class MessagePipeline {
             response = await this.abortToolLoop(
               messages, response, conversation.id, system,
               `Der gleiche Tool-Fehler ist ${consecutiveErrors}x hintereinander aufgetreten: "${lastErrorSignature.slice(0, 200)}". Erkläre dem User kurz was nicht funktioniert hat und schlage eine Alternative vor.`,
-              true,
+              true, message.metadata?.tier,
             );
             break;
           }
@@ -443,6 +449,7 @@ export class MessagePipeline {
     system: string,
     reason: string,
     assistantAlreadyPushed = false,
+    tier?: import('@alfred/types').ModelTier,
   ): Promise<LLMResponse> {
     if (!assistantAlreadyPushed) {
       const assistantContent: LLMContentBlock[] = [];
@@ -490,7 +497,7 @@ export class MessagePipeline {
         content: `[System: ${reason} Fasse dem User kurz zusammen was du bisher geschafft hast und was noch offen ist.]`,
       });
     }
-    return await this.llm.complete({ messages, system });
+    return await this.llm.complete({ messages, system, tier });
   }
 
   /**

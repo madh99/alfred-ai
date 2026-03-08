@@ -17,6 +17,11 @@ export interface NormalizedMessage {
   replyToMessageId?: string;
   attachments?: Attachment[];
   raw?: unknown;
+  metadata?: {
+    scheduled?: boolean;
+    skipHistory?: boolean;
+    tier?: import('./llm.js').ModelTier;
+  };
 }
 
 export interface Attachment {

@@ -78,6 +78,7 @@ export class ProactiveScheduler {
           userName: action.userId,
           text: action.promptTemplate,
           timestamp: new Date(),
+          metadata: { scheduled: true, skipHistory: true, tier: 'fast' },
         };
 
         const result = await this.pipeline.process(syntheticMessage);
