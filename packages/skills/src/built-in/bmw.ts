@@ -613,8 +613,8 @@ export class BMWSkill extends Skill {
     const lines = [
       `## BMW Lade-Sessions (${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)})`,
       '',
-      '| Datum | Dauer | Energie | Start-SoC | End-SoC |',
-      '|-------|-------|---------|-----------|---------|',
+      '| Datum | Dauer | Energie | Start-SoC | End-SoC | km-Stand | Ort |',
+      '|-------|-------|---------|-----------|---------|----------|-----|',
     ];
 
     for (const s of sessions.slice(0, 20)) {
@@ -625,11 +625,14 @@ export class BMWSkill extends Skill {
       const energy = s.energyConsumedFromPowerGridKwh ?? '-';
       const startSoc = s.displayedStartSoc ?? '-';
       const endSoc = s.displayedSoc ?? '-';
-      lines.push(`| ${date} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% |`);
+      const mileage = s.mileage != null ? `${s.mileage}` : '-';
+      const loc = (s.chargingLocation as Record<string, unknown> | undefined);
+      const address = (loc?.formattedAddress as string | undefined) ?? (loc?.streetAddress as string | undefined) ?? '-';
+      lines.push(`| ${date} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% | ${mileage} | ${address} |`);
     }
 
     if (sessions.length === 0) {
-      lines.push('| - | Keine Sessions gefunden | - | - | - |');
+      lines.push('| - | Keine Sessions gefunden | - | - | - | - | - |');
     }
 
     return { success: true, data, display: lines.join('\n') };

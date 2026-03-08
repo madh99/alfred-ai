@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.42] - 2026-03-08
+
+### Added
+- **BMW — Kilometerstand und Ladeort in Lade-Sessions** — Tabelle zeigt jetzt km-Stand und Adresse (z.B. Ladestations-Standort) pro Session
+
 ## [0.10.41] - 2026-03-08
 
 ### Fixed
