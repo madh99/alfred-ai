@@ -316,10 +316,12 @@ export class MonitorSkill extends Skill {
         }
       }
 
-      // Low battery
-      if (eid.startsWith('sensor.') && eid.includes('battery')) {
+      // Low battery — only actual battery % sensors (device_class: battery, unit: %)
+      const dc = (entity.attributes?.device_class ?? '') as string;
+      const unit = (entity.attributes?.unit_of_measurement ?? '') as string;
+      if (eid.startsWith('sensor.') && dc === 'battery' && unit === '%') {
         const val = parseFloat(entity.state);
-        if (!isNaN(val) && val < 20) {
+        if (!isNaN(val) && val >= 0 && val < 20) {
           const name = entity.attributes?.friendly_name ?? eid;
           alerts.push({
             source: 'homeassistant',

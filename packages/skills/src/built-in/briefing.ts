@@ -404,8 +404,8 @@ export class BriefingSkill extends Skill {
   private cleanDisplay(module: string, display: string): string {
     let cleaned = display;
 
-    // Remove internal IDs: [AAMkAD...AAA=] or [id:AAMkAD...AAA=]
-    cleaned = cleaned.replace(/\s*\[(?:id:)?[A-Za-z0-9+/=]{20,}\]/g, '');
+    // Remove internal IDs: [AAMkAD...AAA=] or [id:AAMkAD...AAA=] (includes hyphens in IDs)
+    cleaned = cleaned.replace(/\s*\[(?:id:)?[A-Za-z0-9+/=\-]{20,}\]/g, '');
 
     // Remove email numbering prefix like "1. " at start of lines (already has subject)
     if (module === 'email') {
@@ -421,6 +421,32 @@ export class BriefingSkill extends Skill {
     if (module === 'calendar') {
       // Remove "X event(s):" header (redundant, we already have the label)
       cleaned = cleaned.replace(/^\d+\s+event\(s\):\n?/i, '');
+    }
+
+    if (module === 'todo') {
+      // Remove markdown table format, convert to simple list
+      // Remove table header and separator rows
+      cleaned = cleaned.replace(/^\|.*\|$/gm, (line) => {
+        // Skip header/separator rows
+        if (/^[\|\s\-:]+$/.test(line)) return '';
+        // Parse data rows: | ☐ | priority | title | due | id |
+        const cells = line.split('|').map(c => c.trim()).filter(Boolean);
+        if (cells.length >= 3) {
+          const check = cells[0];
+          const priority = cells[1] && cells[1] !== '' ? ` [${cells[1]}]` : '';
+          const title = cells[2];
+          return `${check}${priority} ${title}`;
+        }
+        return line;
+      });
+      // Remove empty lines from stripped rows and "X todo(s):" header
+      cleaned = cleaned.replace(/^\d+\s+todo\(s\):\n?/i, '');
+      cleaned = cleaned.replace(/\n{2,}/g, '\n');
+    }
+
+    if (module === 'mstodo') {
+      // Remove internal task/list IDs
+      cleaned = cleaned.replace(/\s*\[(?:taskId|listId)=[^\]]+\]/g, '');
     }
 
     // Remove account label wrapper like "[default] ..." or "[work] ..."

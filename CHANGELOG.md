@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.65] - 2026-03-08
+
+### Fixed
+- **Briefing Display — 7 Bereinigungen für LLM-freien Output** —
+  - Kalender: ID-Regex erkennt jetzt Bindestriche in Microsoft-Graph-IDs (`AAO-1WxcAAA=`)
+  - Todos: Markdown-Tabellen mit UUIDs → einfache Liste (`☐ [high] Titel`)
+  - Microsoft To Do: `[taskId=...]` und `[listId=...]` entfernt
+  - HA Lichter: Zigbee-Hardware-IDs (`0xa4c1...`) und Netzwerk-LEDs (UniFi AP/Switch) ausgeblendet
+  - HA Akkus: Nur noch `device_class: battery` statt name-basierter Regex — filtert Victron-System-Sensoren (Ströme, Spannungen, History-Zähler) korrekt raus
+  - HA Leistung: Sensoren mit nicht-numerischen States (Forecast-Timestamps) werden übersprungen
+  - Monitor: Battery-Check nur für echte Batterie-%-Sensoren (`device_class: battery`, `unit: %`, Wert ≥ 0) — eliminiert ~50 falsche Victron-Alerts
+
 ## [0.10.64] - 2026-03-08
 
 ### Fixed

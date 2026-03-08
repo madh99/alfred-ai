@@ -1009,9 +1009,16 @@ export class HomeAssistantSkill extends Skill {
         continue;
       }
 
-      // Lights: only those that are on
+      // Lights: only real lights that are on (skip Zigbee raw IDs and network device LEDs)
       if (domain === 'light') {
-        if (state === 'on') relevant.push(entity);
+        if (state === 'on') {
+          const fname = (attrs.friendly_name ?? eid) as string;
+          // Skip Zigbee hardware IDs (e.g. "0xa4c13800ac483d44")
+          if (/^0x[a-f0-9]+$/i.test(fname)) continue;
+          // Skip network equipment LEDs (UniFi APs, switches)
+          if (/\bLED\b/i.test(fname)) continue;
+          relevant.push(entity);
+        }
         continue;
       }
 
@@ -1021,11 +1028,9 @@ export class HomeAssistantSkill extends Skill {
         const eidLower = eid.toLowerCase();
         const nameCheck = `${eidLower} ${(attrs.friendly_name ?? '').toLowerCase()}`;
 
-        // Battery / SoC sensors
-        if (
-          deviceClass === 'battery' ||
-          /soc|battery|akku|ladezustand/.test(nameCheck)
-        ) {
+        // Battery / SoC sensors — only device_class: battery (avoids Victron
+        // system sensors with "battery" in the name that aren't actual SoC %)
+        if (deviceClass === 'battery') {
           batterySensors.push(entity);
           continue;
         }
@@ -1064,13 +1069,14 @@ export class HomeAssistantSkill extends Skill {
     });
     const topBatteries = batterySensors.slice(0, 5);
 
-    // Power: top 5 by absolute value (most significant)
-    powerSensors.sort((a, b) => {
+    // Power: filter out non-numeric states (e.g. forecast timestamps), top 5 by absolute value
+    const numericPower = powerSensors.filter(e => !isNaN(parseFloat(e.state)));
+    numericPower.sort((a, b) => {
       const aVal = Math.abs(parseFloat(a.state) || 0);
       const bVal = Math.abs(parseFloat(b.state) || 0);
       return bVal - aVal;
     });
-    const topPower = powerSensors.slice(0, 5);
+    const topPower = numericPower.slice(0, 5);
 
     return this.formatBriefingSummary(relevant, topBatteries, topPower);
   }
