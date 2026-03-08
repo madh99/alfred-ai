@@ -83,7 +83,7 @@ export class BriefingSkill extends Skill {
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const action = input.action as BriefingAction;
+    const action = (input.action as BriefingAction | undefined) ?? 'run';
 
     switch (action) {
       case 'run': return this.runBriefing(input, context);

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.45] - 2026-03-08
+
+### Fixed
+- **Briefing — Scheduled Task fehlgeschlagen** — Scheduled Tasks rufen den Skill mit leerem Input `{}` auf (ohne `action`). Briefing-Skill nutzt jetzt `run` als Default-Action wenn keine angegeben ist
+
 ## [0.10.44] - 2026-03-08
 
 ### Added
