@@ -32,7 +32,7 @@ const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 
 const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
 const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
 const TOOL_LOOP_KEEP_RECENT = 3; // Keep last N tool pairs uncompressed during re-trimming
-const HISTORY_WITH_SUMMARY = 6;  // When summary exists, load only 6 recent messages
+const HISTORY_WITH_SUMMARY = 10; // When summary exists, load 10 recent messages (tool pairs consume 2 slots each)
 
 export type ProgressCallback = (status: string) => void;
 
@@ -306,6 +306,8 @@ export class MessagePipeline {
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       const pendingAttachments: SkillResultAttachment[] = [];
+      const accumulatedToolCalls: ToolCall[] = [];
+      const accumulatedToolResults: LLMContentBlock[] = [];
       onProgress?.('Thinking...');
 
       while (true) {
@@ -392,13 +394,11 @@ export class MessagePipeline {
           pendingAttachments.push(...toolExecResult.attachments);
         }
 
-        // Save intermediate tool interaction to DB so follow-up questions have context.
-        this.conversationManager.addMessage(
-          conversation.id, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
-        );
-        this.conversationManager.addMessage(
-          conversation.id, 'user', '', JSON.stringify(toolResultBlocks),
-        );
+        // Accumulate tool interactions — saved as a single consolidated pair after the loop
+        // to avoid bloating the DB with 2 messages per iteration (which quickly exhausts
+        // the history window, especially with HISTORY_WITH_SUMMARY = 6).
+        accumulatedToolCalls.push(...response.toolCalls);
+        accumulatedToolResults.push(...toolResultBlocks);
 
         // Detect repeated identical errors: build a signature from error results
         const errorSignature = this.buildErrorSignature(toolResultBlocks);
@@ -451,7 +451,18 @@ export class MessagePipeline {
       }
       if (!responseText) responseText = '(no response)';
 
-      // 8. Save final assistant response
+      // 8. Save accumulated tool interactions as a single consolidated pair
+      //    (instead of 2 messages per iteration, this stores at most 2 total)
+      if (accumulatedToolCalls.length > 0) {
+        this.conversationManager.addMessage(
+          conversation.id, 'assistant', '', JSON.stringify(accumulatedToolCalls),
+        );
+        this.conversationManager.addMessage(
+          conversation.id, 'user', '', JSON.stringify(accumulatedToolResults),
+        );
+      }
+
+      // 9. Save final assistant response
       this.conversationManager.addMessage(
         conversation.id,
         'assistant',

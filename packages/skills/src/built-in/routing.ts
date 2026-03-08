@@ -33,7 +33,7 @@ export class RoutingSkill extends Skill {
       'Routenberechnung mit Live-Traffic via Google Routes API. ' +
       '"route" berechnet Route mit Distanz, Dauer und Dauer im aktuellen Verkehr. ' +
       '"departure_time" empfiehlt wann man losfahren soll, um zu einer bestimmten Zeit anzukommen. ' +
-      'Orte als Adresse oder "lat,lng" angeben.',
+      'Orte als Adresse, "lat,lng", oder Alias ("home"/"zuhause", "work"/"büro") angeben.',
     riskLevel: 'read',
     version: '1.0.0',
     inputSchema: {
@@ -46,11 +46,11 @@ export class RoutingSkill extends Skill {
         },
         origin: {
           type: 'string',
-          description: 'Start-Adresse oder "lat,lng"',
+          description: 'Start-Adresse, "lat,lng", oder Alias wie "home"/"zuhause"/"work"/"büro"',
         },
         destination: {
           type: 'string',
-          description: 'Ziel-Adresse oder "lat,lng"',
+          description: 'Ziel-Adresse, "lat,lng", oder Alias wie "home"/"zuhause"/"work"/"büro"',
         },
         departure_time: {
           type: 'string',
@@ -207,8 +207,27 @@ export class RoutingSkill extends Skill {
 
   // ── Helpers ───────────────────────────────────────────────
 
+  /**
+   * Resolve common address aliases like "home"/"zuhause" and "work"/"büro"
+   * to the actual addresses configured in routing config.
+   */
+  private resolveAddressAlias(place: string): string {
+    const lower = place.toLowerCase().trim();
+    const homeAliases = ['home', 'zuhause', 'von zuhause', 'nach hause', 'daheim'];
+    const workAliases = ['work', 'arbeit', 'büro', 'office', 'firma'];
+
+    if (this.config.homeAddress && homeAliases.some(a => lower === a || lower.startsWith(a + ' '))) {
+      return this.config.homeAddress;
+    }
+    if (this.config.workAddress && workAliases.some(a => lower === a || lower.startsWith(a + ' '))) {
+      return this.config.workAddress;
+    }
+    return place;
+  }
+
   private buildWaypoint(place: string): Waypoint | { address: string } {
-    const latLng = place.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
+    const resolved = this.resolveAddressAlias(place);
+    const latLng = resolved.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
     if (latLng) {
       return {
         location: {
@@ -216,7 +235,7 @@ export class RoutingSkill extends Skill {
         },
       };
     }
-    return { address: place };
+    return { address: resolved };
   }
 
   /**

@@ -19,10 +19,12 @@ export class Database {
       const backupPath = path.join(backupDir, `alfred-${new Date().toISOString().slice(0, 10)}.db`);
       if (!fs.existsSync(backupPath)) {
         try {
+          // WAL checkpoint via temp connection, then copy file
+          // (better-sqlite3's backup() returns a Promise — cannot use in sync constructor)
           const tmpDb = new BetterSqlite3(dbPath, { readonly: true });
-          tmpDb.pragma('wal_checkpoint(TRUNCATE)');
-          tmpDb.backup(backupPath);
+          try { tmpDb.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
           tmpDb.close();
+          fs.copyFileSync(dbPath, backupPath);
         } catch {}
       }
     }

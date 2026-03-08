@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.69] - 2026-03-09
+
+### Fixed
+- **Startup-Crash in v0.10.68** — `better-sqlite3.backup()` gibt ein Promise zurück und wurde im synchronen Constructor ohne await aufgerufen → Unhandled Rejection beim Start. Backup nutzt jetzt `fs.copyFileSync()` nach WAL-Checkpoint
+- **Übermäßige Bestätigungsanfragen** — System-Prompt überarbeitet: Kalender-Einträge, Reminder, Todos, E-Mail-Suche, Routenberechnung und andere read/write-Tool-Aktionen erfordern keine explizite Bestätigung mehr, wenn der User die Aktion klar anfordert
+- **Tool-Message DB-Bloat** — Jede Tool-Loop-Iteration speicherte 2 separate Messages (leerer Content) in der DB → bei 5 Tool-Calls pro Anfrage 10 Messages statt 1 Antwort. Jetzt werden alle Tool-Interaktionen konsolidiert als ein einzelnes Paar gespeichert
+- **Kontextverlust bei Zusammenfassung** — `HISTORY_WITH_SUMMARY` von 6 auf 10 erhöht, damit nach Summary genug Messages für Tool-Paare + echte Konversation bleiben
+
+### Added
+- **Routing Adress-Aliase** — `routing` Skill löst "home"/"zuhause"/"work"/"büro" automatisch auf konfigurierte Adressen auf (`routing.homeAddress`/`routing.workAddress` in config.yaml)
+- **Memory-Nutzung im System-Prompt** — LLM wird explizit angewiesen, gespeicherte Fakten (Adresse, Präferenzen) proaktiv zu nutzen statt nachzufragen
+
 ## [0.10.68] - 2026-03-09
 
 ### Added
