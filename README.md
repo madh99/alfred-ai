@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.60-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.61-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -311,7 +311,8 @@ Parallel morning briefing that gathers data from all available skills in a singl
 
 - Calendar, weather, todos, emails, energy prices, BMW status, smart home (kompakte Übersicht), infrastructure
 - All data fetched in parallel (~5s instead of ~30s with sequential tool calls)
-- LLM synthesizes a coherent, prioritized summary in one pass
+- **LLM-frei als Scheduled Task** — Briefing wird direkt ausgeführt ohne LLM-Overhead ($0.00 statt ~$0.016 pro Ausführung)
+- Regelbasierte Actionable Highlights (BMW-Akku, Infrastruktur, Strompreise, Termine)
 - **Mo–Fr automatic commute check**: Routes home → office, checks BMW battery, warns if low
 - Skips commute routing when calendar shows an external appointment (physical location)
 - Virtual meetings (Teams, Zoom, Meet) are not treated as external appointments
@@ -571,7 +572,7 @@ api:
   host: 127.0.0.1
 
 conversation:
-  maxHistoryMessages: 100   # 10–500, default 100
+  maxHistoryMessages: 30    # 10–500, default 30
 
 codeAgents:
   agents:

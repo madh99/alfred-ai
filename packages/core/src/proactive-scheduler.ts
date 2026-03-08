@@ -152,9 +152,18 @@ export class ProactiveScheduler {
           });
 
           const result = await this.skillSandbox.execute(skill, input, context);
-          resultText = result.success
-            ? `\uD83D\uDD14 Scheduled: ${action.name}\n\n${result.display ?? JSON.stringify(result.data)}`
-            : `\u274C Scheduled action "${action.name}" failed: ${result.error}`;
+          if (result.success) {
+            const rawText = result.display ?? JSON.stringify(result.data);
+            if (this.formatter) {
+              const formatted = this.formatter.format(rawText, action.platform as Platform);
+              resultText = formatted.text;
+              resultParseMode = formatted.parseMode;
+            } else {
+              resultText = rawText;
+            }
+          } else {
+            resultText = `\u274C Scheduled action "${action.name}" failed: ${result.error}`;
+          }
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           resultText = `\u274C Scheduled action "${action.name}" failed: ${errorMsg}`;

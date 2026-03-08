@@ -76,14 +76,19 @@ describe('selectCategories', () => {
     expect(result.has('mcp')).toBe(true);
   });
 
-  it('falls back to ALL categories when no keyword matches', () => {
+  it('falls back to common categories when no keyword matches', () => {
     const result = selectCategories('hello, how are you?', available(...ALL_CATEGORIES));
-    for (const cat of ALL_CATEGORIES) {
-      expect(result.has(cat), `fallback should include ${cat}`).toBe(true);
-    }
+    // Should include core + common categories (productivity, information, media)
+    expect(result.has('core')).toBe(true);
+    expect(result.has('productivity')).toBe(true);
+    expect(result.has('information')).toBe(true);
+    expect(result.has('media')).toBe(true);
+    // Should NOT include heavy categories like infrastructure/automation
+    expect(result.has('infrastructure')).toBe(false);
+    expect(result.has('automation')).toBe(false);
   });
 
-  it('only includes available categories in fallback', () => {
+  it('only includes available common categories in fallback', () => {
     const result = selectCategories('hello', available('core', 'productivity'));
     expect(result.has('core')).toBe(true);
     expect(result.has('productivity')).toBe(true);

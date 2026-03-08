@@ -190,24 +190,33 @@ export class BriefingSkill extends Skill {
       results.push(commuteResult);
     }
 
-    // Build structured output for LLM synthesis
+    // Build structured output — designed to look good without LLM paraphrasing
+    const dateStr = new Date().toLocaleDateString('de-AT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     const sections: string[] = [];
-    sections.push(`**Morgenbriefing** — ${new Date().toLocaleDateString('de-AT', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}\n`);
+    sections.push(`**☀️ Morgenbriefing – ${dateStr}**\n`);
 
     for (const r of results) {
       if (r.success && r.display) {
-        sections.push(`### ${r.label}\n${r.display}\n`);
+        sections.push(`**${r.label}**\n${r.display}`);
       } else if (r.success && r.data) {
-        sections.push(`### ${r.label}\n${typeof r.data === 'string' ? r.data : JSON.stringify(r.data, null, 2)}\n`);
+        sections.push(`**${r.label}**\n${typeof r.data === 'string' ? r.data : JSON.stringify(r.data, null, 2)}`);
       } else if (!r.success && r.error) {
-        sections.push(`### ${r.label}\n⚠️ ${r.error}\n`);
+        sections.push(`**${r.label}**\n⚠️ ${r.error}`);
       }
+    }
+
+    // Actionable highlights (rule-based, no LLM needed)
+    const highlights = this.buildHighlights(results);
+    if (highlights.length > 0) {
+      sections.push('---');
+      sections.push('**Highlights:**');
+      sections.push(highlights.join('\n'));
     }
 
     return {
       success: true,
       data: results,
-      display: sections.join('\n'),
+      display: sections.join('\n\n'),
     };
   }
 
@@ -385,6 +394,46 @@ export class BriefingSkill extends Skill {
       if (/teams|zoom|meet\.google|webex|skype/i.test(loc)) return false;
       return loc.trim().length > 0;
     });
+  }
+
+  /**
+   * Build actionable highlights from module results (rule-based, no LLM).
+   */
+  private buildHighlights(results: ModuleResult[]): string[] {
+    const highlights: string[] = [];
+
+    // BMW low battery
+    const bmwData = results.find(r => r.module === 'bmw')?.data as Record<string, unknown> | undefined;
+    if (bmwData) {
+      const soc = this.extractBatteryLevel(bmwData);
+      if (soc != null && soc < 30) {
+        highlights.push(`🚗 BMW Akku bei ${soc}% — laden empfohlen`);
+      }
+    }
+
+    // Infrastructure warnings
+    const infraResult = results.find(r => r.module === 'infra');
+    if (infraResult && (!infraResult.success || infraResult.display?.includes('⚠️'))) {
+      highlights.push('🔴 Infrastruktur-Warnung vorhanden');
+    }
+
+    // Cheap energy prices
+    const energyData = results.find(r => r.module === 'energy')?.data as Record<string, unknown> | undefined;
+    if (energyData) {
+      const currentCt = energyData.currentCt as number | undefined;
+      const avgCt = energyData.avgCt as number | undefined;
+      if (currentCt != null && avgCt != null && currentCt < avgCt) {
+        highlights.push(`⚡ Aktuell günstiger Strom (${currentCt} ct/kWh)`);
+      }
+    }
+
+    // Calendar events today
+    const calData = results.find(r => r.module === 'calendar')?.data;
+    if (Array.isArray(calData) && calData.length > 0) {
+      highlights.push(`📅 ${calData.length} Termin(e) heute`);
+    }
+
+    return highlights;
   }
 
   /**

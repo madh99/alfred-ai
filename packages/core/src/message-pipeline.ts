@@ -102,7 +102,7 @@ export class MessagePipeline {
     this.embeddingService = options.embeddingService;
     this.activeLearning = options.activeLearning;
     this.memoryRetriever = options.memoryRetriever;
-    this.maxHistoryMessages = options.maxHistoryMessages ?? 100;
+    this.maxHistoryMessages = options.maxHistoryMessages ?? 30;
     this.documentProcessor = options.documentProcessor;
     this.promptBuilder = new PromptBuilder();
   }

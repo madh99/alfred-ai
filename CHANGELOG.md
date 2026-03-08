@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.61] - 2026-03-08
+
+### Changed
+- **Briefing LLM-frei als Scheduled Task** — Geplante Briefings werden jetzt direkt als Skill ausgeführt ohne LLM-Overhead ($0.00 statt ~$0.016 pro Ausführung). Der ProactiveScheduler wendet den ResponseFormatter auch auf den direkten Skill-Execution-Pfad an (korrekter `parseMode` für Telegram). System-Prompt enthält Guidance für `skill_name: "briefing"` statt `prompt_template`
+- **Briefing Display-Verbesserung** — Verbesserter Briefing-Output: Emoji-Header, `**label**` statt `### label`, regelbasierte Actionable Highlights am Ende (BMW-Akku niedrig, Infrastruktur-Warnungen, günstige Strompreise, Kalender-Termine). Kein LLM nötig für ansprechende Darstellung
+- **Token-Reduktion für interaktive Nachrichten** — Skill-Filter Fallback reduziert: bei generischen Nachrichten werden nur noch `productivity`, `information`, `media` statt aller 45+ Tools mitgeschickt (~3.000–4.000 Tokens gespart). Default History-Limit von 100 auf 30 Nachrichten reduziert. Geschätzte Einsparung: ~50% weniger Input-Tokens pro Nachricht
+
 ## [0.10.60] - 2026-03-08
 
 ### Fixed
