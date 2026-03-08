@@ -990,6 +990,8 @@ export class HomeAssistantSkill extends Skill {
 
     // Smart defaults — only show what's relevant
     const relevant: any[] = [];
+    const batterySensors: any[] = [];
+    const powerSensors: any[] = [];
 
     for (const entity of allStates) {
       const eid = entity.entity_id as string;
@@ -1013,21 +1015,31 @@ export class HomeAssistantSkill extends Skill {
         continue;
       }
 
-      // Sensors: battery, SoC, energy, power
+      // Sensors: split into battery/SoC vs power (skip energy — use energy_stats for that)
       if (domain === 'sensor') {
+        if (state === 'unavailable' || state === 'unknown') continue;
         const eidLower = eid.toLowerCase();
         const nameCheck = `${eidLower} ${(attrs.friendly_name ?? '').toLowerCase()}`;
+
+        // Battery / SoC sensors
         if (
           deviceClass === 'battery' ||
-          deviceClass === 'energy' ||
-          deviceClass === 'power' ||
-          /soc|battery|akku|ladezustand/.test(nameCheck) ||
-          /energy_consumption|power_consumption|stromverbrauch|gesamtverbrauch|total_energy/.test(nameCheck)
+          /soc|battery|akku|ladezustand/.test(nameCheck)
         ) {
-          if (state !== 'unavailable' && state !== 'unknown') {
-            relevant.push(entity);
-          }
+          batterySensors.push(entity);
+          continue;
         }
+
+        // Power sensors (W/kW — instantaneous, useful for briefing)
+        if (
+          deviceClass === 'power' ||
+          /power_consumption|stromverbrauch|leistung/.test(nameCheck)
+        ) {
+          powerSensors.push(entity);
+          continue;
+        }
+
+        // Skip energy sensors (cumulative kWh — not useful in morning snapshot)
         continue;
       }
 
@@ -1044,11 +1056,32 @@ export class HomeAssistantSkill extends Skill {
       }
     }
 
-    return this.formatBriefingSummary(relevant);
+    // Battery: top 5, sorted by lowest SoC first (most actionable)
+    batterySensors.sort((a, b) => {
+      const aVal = parseFloat(a.state) || 999;
+      const bVal = parseFloat(b.state) || 999;
+      return aVal - bVal;
+    });
+    const topBatteries = batterySensors.slice(0, 5);
+
+    // Power: top 5 by absolute value (most significant)
+    powerSensors.sort((a, b) => {
+      const aVal = Math.abs(parseFloat(a.state) || 0);
+      const bVal = Math.abs(parseFloat(b.state) || 0);
+      return bVal - aVal;
+    });
+    const topPower = powerSensors.slice(0, 5);
+
+    return this.formatBriefingSummary(relevant, topBatteries, topPower);
   }
 
-  private formatBriefingSummary(entities: any[]): SkillResult {
-    if (entities.length === 0) {
+  private formatBriefingSummary(
+    entities: any[],
+    batterySensors?: any[],
+    powerSensors?: any[],
+  ): SkillResult {
+    const allEntities = [...entities, ...(batterySensors ?? []), ...(powerSensors ?? [])];
+    if (allEntities.length === 0) {
       return {
         success: true,
         data: [],
@@ -1056,7 +1089,7 @@ export class HomeAssistantSkill extends Skill {
       };
     }
 
-    // Group by domain
+    // Group non-sensor entities by domain
     const groups = new Map<string, any[]>();
     for (const e of entities) {
       const domain = e.entity_id.split('.')[0];
@@ -1067,7 +1100,6 @@ export class HomeAssistantSkill extends Skill {
     const domainLabels: Record<string, string> = {
       binary_sensor: 'Kontakte & Melder',
       light: 'Lichter (an)',
-      sensor: 'Sensoren',
       climate: 'Klima',
       person: 'Anwesenheit',
     };
@@ -1086,7 +1118,29 @@ export class HomeAssistantSkill extends Skill {
       lines.push('');
     }
 
-    const data = entities.map((e: any) => ({
+    // Battery/SoC — compact list
+    if (batterySensors && batterySensors.length > 0) {
+      const parts = batterySensors.map(e => {
+        const name = (e.attributes?.friendly_name ?? e.entity_id).replace(/\s*(battery|akku|soc|ladezustand)\s*/gi, ' ').trim();
+        return `${name}: ${e.state}%`;
+      });
+      lines.push(`**🔋 Akkus:** ${parts.join(' | ')}`);
+      lines.push('');
+    }
+
+    // Power — compact one-liner
+    if (powerSensors && powerSensors.length > 0) {
+      const parts = powerSensors.map(e => {
+        const name = (e.attributes?.friendly_name ?? e.entity_id)
+          .replace(/\s*(power|leistung|stromverbrauch)\s*/gi, ' ').trim();
+        const unit = e.attributes?.unit_of_measurement ?? 'W';
+        return `${name}: ${e.state} ${unit}`;
+      });
+      lines.push(`**⚡ Leistung:** ${parts.join(' | ')}`);
+      lines.push('');
+    }
+
+    const data = allEntities.map((e: any) => ({
       entity_id: e.entity_id,
       state: e.state,
       friendly_name: e.attributes?.friendly_name,

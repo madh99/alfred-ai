@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.62] - 2026-03-08
+
+### Changed
+- **HA Briefing Summary — kompakter Smart-Home-Überblick** — Energy-Sensoren (kumulativ, kWh) werden nicht mehr im Briefing angezeigt (dafür gibt es `energy_stats`). Battery/SoC-Sensoren auf max. 5 begrenzt, sortiert nach niedrigstem Stand. Power-Sensoren auf max. 5 begrenzt, sortiert nach höchstem Absolutwert. Kompaktes Einzeiler-Format: `🔋 Akkus: Victron: 85% | Handy: 42%` und `⚡ Leistung: PV: 3.2 kW | Verbrauch: 1.1 kW` statt einer Zeile pro Sensor
+
 ## [0.10.61] - 2026-03-08
 
 ### Changed
