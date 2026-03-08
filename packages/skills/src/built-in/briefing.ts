@@ -146,9 +146,12 @@ export class BriefingSkill extends Skill {
 
   private async runBriefing(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const { home } = this.resolveAddresses(context);
-    const location = (input.location as string | undefined)
+    // Prefer resolved home address over LLM-provided location — the LLM often
+    // guesses a generic city (e.g. "Vienna") when no explicit location is given.
+    const resolvedLocation = home ? extractCity(home) : undefined;
+    const location = resolvedLocation
       ?? this.alfredConfig.briefing?.location
-      ?? (home ? extractCity(home) : undefined)
+      ?? (input.location as string | undefined)
       ?? 'Vienna';
     const requestedModules = input.modules as string[] | undefined;
 

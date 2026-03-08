@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.60] - 2026-03-08
+
+### Fixed
+- **Briefing Wetter-Location — Memory-Adresse hat jetzt Vorrang** — Das LLM (Haiku) übergab bei Scheduled Tasks `location: "Vienna"` an den Briefing-Skill, was die korrekte Heim-Adresse aus den Memories überschrieb. Location-Priorität geändert: aufgelöste Heim-Adresse → Config → LLM-Input → Fallback „Vienna"
+
 ## [0.10.59] - 2026-03-08
 
 ### Fixed
