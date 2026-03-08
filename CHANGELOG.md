@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.68] - 2026-03-09
+
+### Added
+- **HTTP API Authentication** — Optionaler Bearer-Token-Auth via `api.token` in config.yaml. Ohne Token bleibt die API offen (Rückwärtskompatibilität für localhost-only Setups), mit Token erfordert jeder Request `Authorization: Bearer <token>`
+- **HTTP API Security Headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, konfigurierbare CORS-Origin (`api.corsOrigin`), Request Size Limit (1 MB)
+- **Health Check erweitert** — `/api/health` liefert jetzt DB-Status, Uptime, Adapter-Status und Timestamp; gibt HTTP 503 bei degradiertem Status zurück
+- **Pipeline Metrics** — In-Memory-Counters für requestsTotal/Success/Failed/avgDurationMs/lastRequestAt, abrufbar via `pipeline.getMetrics()`
+- **Secret Redaction im Logger** — Pino Redaction für apiKey, token, password, secret, accessToken, refreshToken, clientSecret, Authorization — Secrets erscheinen als `[REDACTED]` in Logs
+- **Auto-Backup bei Startup** — SQLite-DB wird automatisch vor dem Start gesichert (1x pro Tag, nur wenn > 100 KB). Backups landen in `data/backups/`, manuelles Backup-Script unter `scripts/backup.sh` mit 7-Tage-Retention
+- **Graceful Shutdown Timeout** — 15s Timeout für `alfred.stop()`, Adapter-Disconnect mit je 5s Timeout, WAL Checkpoint vor DB-Close
+- **Docker Support** — Dockerfile + docker-compose.yml mit Health Check, Volume-Mount und Production-Defaults
+- **Tests** — 4 neue Test-Suites: ConversationSummarizer (6 Tests), SummaryRepository (4 Tests), ProactiveScheduler (4 Tests), WatchEngine (5 Tests)
+
+### Fixed
+- **Watch Engine Context-Bug** — `buildSkillContext` wurde ohne User-ID aufgerufen und crashte bei jedem Watch-Check. Jetzt wird `platformUserId` korrekt übergeben
+- **Memory Leak** — `extractionTimestamps` Map in ActiveLearningService wuchs unbegrenzt — leere Arrays für inaktive User werden jetzt gelöscht
+
+### Changed
+- **Shell Skill Blocklist** — 4 neue Patterns: `bash -c`/`sh -c`, `dd of=/dev/`, `chmod 777 /`, `chown /`
+
 ## [0.10.67] - 2026-03-08
 
 ### Added

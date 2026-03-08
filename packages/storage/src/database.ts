@@ -11,6 +11,22 @@ export class Database {
     const dir = path.dirname(dbPath);
     fs.mkdirSync(dir, { recursive: true });
 
+    // Auto-backup on startup (if DB exists and is > 100KB)
+    const stats = fs.statSync(dbPath, { throwIfNoEntry: false });
+    if (stats && stats.size > 100_000) {
+      const backupDir = path.join(path.dirname(dbPath), 'backups');
+      fs.mkdirSync(backupDir, { recursive: true });
+      const backupPath = path.join(backupDir, `alfred-${new Date().toISOString().slice(0, 10)}.db`);
+      if (!fs.existsSync(backupPath)) {
+        try {
+          const tmpDb = new BetterSqlite3(dbPath, { readonly: true });
+          tmpDb.pragma('wal_checkpoint(TRUNCATE)');
+          tmpDb.backup(backupPath);
+          tmpDb.close();
+        } catch {}
+      }
+    }
+
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');

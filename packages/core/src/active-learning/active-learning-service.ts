@@ -95,6 +95,10 @@ export class ActiveLearningService {
 
     // Remove old timestamps
     const recent = timestamps.filter(t => t > oneMinuteAgo);
+    if (recent.length === 0) {
+      this.extractionTimestamps.delete(userId);
+      return true;
+    }
     this.extractionTimestamps.set(userId, recent);
 
     if (recent.length >= this.maxExtractionsPerMinute) {

@@ -519,7 +519,20 @@ export class Alfred {
       const { HttpAdapter } = await import('@alfred/messaging');
       const port = config.api?.port ?? 3420;
       const host = config.api?.host ?? '127.0.0.1';
-      this.adapters.set('api', new HttpAdapter(port, host));
+      if (config.api?.token) {
+        this.logger.info('HTTP API authentication enabled');
+      } else {
+        this.logger.warn('HTTP API has no authentication token configured (api.token). API is open.');
+      }
+      this.adapters.set('api', new HttpAdapter(port, host, {
+        apiToken: config.api?.token,
+        corsOrigin: config.api?.corsOrigin,
+        healthCheck: () => ({
+          db: !!this.database,
+          uptime: Math.floor(process.uptime()),
+          adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
+        }),
+      }));
       this.logger.info({ port, host }, 'HTTP API adapter registered');
     }
   }
@@ -576,15 +589,22 @@ export class Alfred {
       await this.mcpManager.shutdown();
     }
 
+    // Disconnect adapters with individual timeouts
+    const adapterTimeout = 5_000;
     for (const [platform, adapter] of this.adapters) {
       try {
-        await adapter.disconnect();
+        await Promise.race([
+          adapter.disconnect(),
+          new Promise(resolve => setTimeout(resolve, adapterTimeout)),
+        ]);
         this.logger.info({ platform }, 'Adapter disconnected');
       } catch (error) {
         this.logger.error({ platform, err: error }, 'Failed to disconnect adapter');
       }
     }
 
+    // WAL checkpoint before close
+    try { this.database.getDb().pragma('wal_checkpoint(TRUNCATE)'); } catch {}
     this.database.close();
     this.logger.info('Alfred stopped');
   }

@@ -11,11 +11,15 @@ export function setupGracefulShutdown(alfred: Alfred, logger: Logger): void {
     logger.info({ signal }, 'Received shutdown signal');
 
     try {
-      await alfred.stop();
+      const SHUTDOWN_TIMEOUT = 15_000;
+      await Promise.race([
+        alfred.stop(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Shutdown timeout after 15s')), SHUTDOWN_TIMEOUT)),
+      ]);
       logger.info('Graceful shutdown complete');
       process.exit(0);
     } catch (error) {
-      logger.error({ error }, 'Error during shutdown');
+      logger.error({ error }, 'Error during shutdown, forcing exit');
       process.exit(1);
     }
   };

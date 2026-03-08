@@ -152,6 +152,8 @@ export interface ApiConfig {
   enabled: boolean;
   port: number;
   host: string;
+  token?: string;
+  corsOrigin?: string;
 }
 
 export interface CodeAgentDefinitionConfig {

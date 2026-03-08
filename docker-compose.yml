@@ -1,0 +1,16 @@
+services:
+  alfred:
+    build: .
+    ports:
+      - "3420:3420"
+    volumes:
+      - alfred-data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - ALFRED_LOG_LEVEL=info
+
+volumes:
+  alfred-data:

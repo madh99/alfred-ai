@@ -3,6 +3,16 @@ import crypto from 'node:crypto';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
+export interface HttpAdapterOptions {
+  port: number;
+  host: string;
+  apiToken?: string;
+  corsOrigin?: string;
+  healthCheck?: () => Record<string, unknown>;
+}
+
+const MAX_BODY_SIZE = 1_048_576; // 1 MB
+
 /**
  * HTTP API adapter — exposes Alfred as an HTTP server with SSE streaming.
  * Accepts POST /api/message and streams responses back via Server-Sent Events.
@@ -12,12 +22,19 @@ export class HttpAdapter extends MessagingAdapter {
   private server: http.Server | null = null;
   private readonly streams = new Map<string, http.ServerResponse>();
   private messageCounter = 0;
+  private readonly port: number;
+  private readonly host: string;
+  private readonly apiToken?: string;
+  private readonly corsOrigin: string;
+  private readonly healthCheckFn?: () => Record<string, unknown>;
 
-  constructor(
-    private readonly port: number,
-    private readonly host: string,
-  ) {
+  constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
+    this.port = port;
+    this.host = host;
+    this.apiToken = options?.apiToken;
+    this.corsOrigin = options?.corsOrigin ?? 'http://localhost:3420';
+    this.healthCheckFn = options?.healthCheck;
   }
 
   async connect(): Promise<void> {
@@ -128,10 +145,14 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // CORS headers for future web UI
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Security headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+
+    // CORS headers
+    res.setHeader('Access-Control-Allow-Origin', this.corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -143,6 +164,8 @@ export class HttpAdapter extends MessagingAdapter {
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res);
+    } else if (url.pathname === '/api/metrics' && req.method === 'GET') {
+      this.handleHealth(res);
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
       this.handleMessage(req, res);
     } else {
@@ -151,18 +174,48 @@ export class HttpAdapter extends MessagingAdapter {
     }
   }
 
+  private checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (!this.apiToken) return true;
+    const authHeader = req.headers['authorization'];
+    if (!authHeader || authHeader !== `Bearer ${this.apiToken}`) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return false;
+    }
+    return true;
+  }
+
   private handleHealth(res: http.ServerResponse): void {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok' }));
+    const health = this.healthCheckFn?.() ?? {};
+    const status = (health.db !== false) ? 'ok' : 'degraded';
+    const code = status === 'ok' ? 200 : 503;
+    res.writeHead(code, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status, ...health, timestamp: new Date().toISOString() }));
   }
 
   private handleMessage(req: http.IncomingMessage, res: http.ServerResponse): void {
+    // Auth check
+    if (!this.checkAuth(req, res)) return;
+
     let body = '';
+    let bodySize = 0;
+    let aborted = false;
+
     req.on('data', (chunk: Buffer) => {
+      if (aborted) return;
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        aborted = true;
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload too large' }));
+        req.destroy();
+        return;
+      }
       body += chunk.toString();
     });
 
     req.on('end', () => {
+      if (aborted) return;
       try {
         const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string };
         const text = parsed.text;

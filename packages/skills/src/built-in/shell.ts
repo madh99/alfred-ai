@@ -72,6 +72,10 @@ export class ShellSkill extends Skill {
       /\bnode\s+-e\b/,                    // node -e
       /\b(bash|sh)\s+-i\b.*\/dev\/tcp/,  // reverse shell via /dev/tcp
       /\bnc\s+.*-e\b/,                   // netcat reverse shell
+      /\b(bash|sh)\s+-c\b/,              // arbitrary command execution via bash -c / sh -c
+      /\bdd\b.*\bof=\/dev\//,            // dd to block devices
+      /\bchmod\s+777\s+\//,              // chmod 777 on root
+      /\bchown\s+.*\s+\/(?:\s|$)/,       // chown on root
     ];
     for (const pattern of dangerous) {
       if (pattern.test(command)) {

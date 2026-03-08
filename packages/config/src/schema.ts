@@ -164,6 +164,8 @@ export const ApiConfigSchema = z.object({
   enabled: z.boolean(),
   port: z.coerce.number().int().min(1).max(65535),
   host: z.string(),
+  token: z.string().optional(),
+  corsOrigin: z.string().optional(),
 });
 
 export const CodeAgentDefinitionSchema = z.object({

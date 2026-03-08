@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.67-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.68-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -470,13 +470,14 @@ If `alfred start` is running, `alfred chat` automatically connects to the server
 `alfred start` exposes an HTTP API on port 3420 (localhost only by default):
 
 ```bash
-# Health check
+# Health check (includes DB status, uptime, adapter status)
 curl http://localhost:3420/api/health
-# → {"status":"ok"}
+# → {"status":"ok","db":true,"uptime":3600,"adapters":{"telegram":"connected"},"timestamp":"..."}
 
 # Send a message (returns SSE stream)
 curl -N -X POST http://localhost:3420/api/message \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
   -d '{"text": "Hello Alfred", "chatId": "my-chat", "userId": "my-user"}'
 ```
 
@@ -488,7 +489,9 @@ Configure in `config.yaml`:
 api:
   enabled: true
   port: 3420
-  host: 127.0.0.1   # localhost only; use 0.0.0.0 to expose
+  host: 127.0.0.1    # localhost only; use 0.0.0.0 to expose
+  token: my-secret    # optional — enables Bearer token auth
+  corsOrigin: http://localhost:3000  # optional — restricts CORS origin
 ```
 
 ### Other Commands
@@ -872,15 +875,20 @@ WantedBy=multi-user.target
 
 ### Docker
 
-```dockerfile
-FROM node:20-slim
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --prod
-COPY . .
-RUN pnpm build && pnpm --filter @madh-io/alfred-ai bundle
-CMD ["node", "packages/cli/bundle/index.js", "start"]
+A `Dockerfile` and `docker-compose.yml` are included:
+
+```bash
+# Build and start
+docker compose up -d
+
+# View logs
+docker compose logs -f alfred
+
+# Health check is built into the container
+docker inspect --format='{{.State.Health.Status}}' alfred-alfred-1
 ```
+
+The container mounts `config.yaml` and `.env` as read-only and persists data in a named volume.
 
 ### macOS (launchd)
 
@@ -893,7 +901,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 ## Roadmap
 
 - [ ] Web chat UI (HTTP API backend is ready)
-- [ ] Marketplace search & price comparison (willhaben.at, eBay)
+- [x] Marketplace search & price comparison (willhaben.at, eBay)
 - [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms

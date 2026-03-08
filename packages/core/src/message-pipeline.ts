@@ -41,6 +41,14 @@ export interface PipelineResult {
   attachments?: SkillResultAttachment[];
 }
 
+export interface PipelineMetrics {
+  requestsTotal: number;
+  requestsSuccess: number;
+  requestsFailed: number;
+  avgDurationMs: number;
+  lastRequestAt?: string;
+}
+
 export interface PipelineOptions {
   llm: LLMProvider;
   conversationManager: ConversationManager;
@@ -90,6 +98,29 @@ export class MessagePipeline {
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
   private agentIdCounter = 0;
+
+  private readonly metrics: PipelineMetrics = {
+    requestsTotal: 0,
+    requestsSuccess: 0,
+    requestsFailed: 0,
+    avgDurationMs: 0,
+  };
+
+  getMetrics(): PipelineMetrics { return { ...this.metrics }; }
+
+  private recordMetric(success: boolean, durationMs: number): void {
+    this.metrics.requestsTotal++;
+    if (success) {
+      this.metrics.requestsSuccess++;
+    } else {
+      this.metrics.requestsFailed++;
+    }
+    // Running average
+    this.metrics.avgDurationMs = Math.round(
+      this.metrics.avgDurationMs + (durationMs - this.metrics.avgDurationMs) / this.metrics.requestsTotal,
+    );
+    this.metrics.lastRequestAt = new Date().toISOString();
+  }
 
   constructor(options: PipelineOptions) {
     this.llm = options.llm;
@@ -459,11 +490,13 @@ export class MessagePipeline {
         'Message processed',
       );
 
+      this.recordMetric(true, Date.now() - startTime);
       return {
         text: responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
       };
     } catch (error) {
+      this.recordMetric(false, Date.now() - startTime);
       this.logger.error({ err: error }, 'Failed to process message');
       throw error;
     }

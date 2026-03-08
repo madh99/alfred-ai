@@ -69,6 +69,7 @@ export class WatchEngine {
     }
 
     const { context } = buildSkillContext(this.users, {
+      platformUserId: watch.chatId,
       platform: watch.platform as Platform,
       chatId: watch.chatId,
       chatType: 'dm',
