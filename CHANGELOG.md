@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.47] - 2026-03-08
+
+### Fixed
+- **Briefing — Wetter-Location PLZ-Parsing** — `extractCity()` nahm den letzten Komma-Teil der Adresse, bei „Alleestraße 6, 3033 Altlengbach, Niederösterreich" also das Bundesland statt den Ort. Jetzt wird gezielt der Teil mit Postleitzahl gesucht und der Ortsname daraus extrahiert (3033 → „Altlengbach")
+
 ## [0.10.46] - 2026-03-08
 
 ### Fixed

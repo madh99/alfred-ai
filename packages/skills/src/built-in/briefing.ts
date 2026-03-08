@@ -35,14 +35,21 @@ const ALL_MODULES: BriefingModule[] = [
 ];
 
 /**
- * Extract city/town name from a full address like "Alleestraße 6, 3033 Altlengbach".
- * Splits on comma, takes last part, strips leading postal code (4-5 digits).
+ * Extract city/town name from a full address like "Alleestraße 6, 3033 Altlengbach, Niederösterreich".
+ * Looks for the part containing a postal code (4-5 digits) and extracts the city name after it.
+ * Falls back to the second-to-last or last comma-separated part.
  */
 function extractCity(address: string): string {
   const parts = address.split(',').map(p => p.trim());
+  // Find the part with a postal code (e.g. "3033 Altlengbach")
+  for (const part of parts) {
+    const match = part.match(/^\d{4,5}\s+(.+)/);
+    if (match) return match[1].trim();
+  }
+  // No postal code found — use second-to-last part if available (skip region/state at end)
+  if (parts.length >= 3) return parts[parts.length - 2];
   const last = parts[parts.length - 1];
-  const city = last.replace(/^\d{4,5}\s*/, '').trim();
-  return city || last;
+  return last;
 }
 
 function isWeekday(): boolean {
