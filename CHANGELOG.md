@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.48] - 2026-03-08
+
+### Fixed
+- **Kalender — Zeitzonen-Verschiebung bei Microsoft Graph** — Microsoft Graph API liefert `dateTime` ohne Offset (z.B. `"18:00:00"`), `new Date()` interpretierte das als UTC statt Lokalzeit. Termine wurden dadurch um 1 Stunde verschoben angezeigt (18:00 → 17:00 in CET). Neues `parseGraphDateTime()` berücksichtigt die Provider-Timezone korrekt
+
 ## [0.10.47] - 2026-03-08
 
 ### Fixed
