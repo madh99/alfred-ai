@@ -78,14 +78,14 @@ describe('selectCategories', () => {
 
   it('falls back to common categories when no keyword matches', () => {
     const result = selectCategories('hello, how are you?', available(...ALL_CATEGORIES));
-    // Should include core + common categories (productivity, information, media)
+    // Should include core + common categories (productivity, information, media, automation)
     expect(result.has('core')).toBe(true);
     expect(result.has('productivity')).toBe(true);
     expect(result.has('information')).toBe(true);
     expect(result.has('media')).toBe(true);
-    // Should NOT include heavy categories like infrastructure/automation
+    expect(result.has('automation')).toBe(true);
+    // Should NOT include heavy categories like infrastructure
     expect(result.has('infrastructure')).toBe(false);
-    expect(result.has('automation')).toBe(false);
   });
 
   it('only includes available common categories in fallback', () => {

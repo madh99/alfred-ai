@@ -8,7 +8,7 @@ const CATEGORY_KEYWORDS: Record<Exclude<SkillCategory, 'core'>, RegExp> = {
   media:        /\b(voice|stimme|tts|speak|sprech|sprich|screenshot|clipboard|zwischenablage|brows)\b/i,
   automation:   /\b(background|hintergrund|shell|bash|cron|schedul|code.?agent|sandbox|automat|watch|alert|benachrichtig|bescheid|meld|überwach|monitor|tägliche?r?s?|stündliche?r?s?|wöchentliche?r?s?|monatliche?r?s?|jeden\s+(tag|morgen|abend|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)|um\s+\d{1,2}\s*(uhr|:|h)|alle\s+\d+\s*(min|stund|sekund)|in\s+\d+\s*(minuten?|stunden?|sekunden?|hours?|minutes?|seconds?|min)|daily|hourly|weekly|every\s+(day|hour|morning|evening|night|\d+\s*min)|führ.{0,5}aus|execut|ausführ)\b/i,
   files:        /\b(file|datei|document|dokument|pdf|http|download|upload)\b/i,
-  infrastructure: /\b(proxmox|vm|container|docker|unifi|wifi|wlan|homeassistant|home.?assistant|smarthome|smart.?home|licht|light|schalter|switch|solar|photovoltaik|pv|wechselrichter|inverter|batterie.?speicher|wallbox|energieverbrauch|stromverbrauch|verbrauch.{0,5}kwh|einspeis|netzeinspeis|autarkie|eigenverbrauch)\b/i,
+  infrastructure: /\b(proxmox|vm|container|docker|unifi|wifi|wlan|homeassistant|home.?assistant|smarthome|smart.?home|licht|light|schalter|switch|solar|photovoltaik|pv|wechselrichter|inverter|batterie.?speicher|wallbox|energieverbrauch|stromverbrauch|verbrauch.{0,5}kwh|einspeis|netzeinspeis|autarkie|eigenverbrauch|bmw|auto|fahrzeug|ladestand|reichweite|laden(?!e)|charging|vehicle|soc)\b/i,
   identity:     /\b(link|verknüpf|cross.?platform|identity|identität)\b/i,
   mcp:          /\bmcp\b/i,
 };
@@ -37,7 +37,7 @@ export function selectCategories(
   // This avoids sending all 45+ tool schemas (infrastructure, automation, etc.)
   // for generic messages, saving ~3000-4000 tokens per request.
   if (!anyMatch) {
-    const commonCategories: SkillCategory[] = ['productivity', 'information', 'media'];
+    const commonCategories: SkillCategory[] = ['productivity', 'information', 'media', 'automation'];
     for (const cat of commonCategories) {
       if (availableCategories.has(cat)) selected.add(cat);
     }

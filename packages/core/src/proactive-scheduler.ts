@@ -63,16 +63,43 @@ export class ProactiveScheduler {
     let resultText: string;
     let resultParseMode: 'text' | 'markdown' | 'html' = 'text';
 
-    if (action.promptTemplate && this.pipeline) {
+    if (action.skillName && this.skillRegistry.has(action.skillName)) {
+      // Execute skill directly — preferred path (no LLM overhead).
+      // Checked BEFORE promptTemplate so tasks with both fields use the
+      // cheaper direct path (e.g. old briefing tasks with legacy prompt_template).
+      const skill = this.skillRegistry.get(action.skillName)!;
+      try {
+        let input: Record<string, unknown>;
+        try { input = JSON.parse(action.skillInput); }
+        catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
+        const { context } = buildSkillContext(this.users, {
+          userId: action.userId,
+          platform: action.platform as Platform,
+          chatId: action.chatId,
+          chatType: 'dm',
+        });
+
+        const result = await this.skillSandbox.execute(skill, input, context);
+        if (result.success) {
+          const rawText = result.display ?? JSON.stringify(result.data);
+          if (this.formatter) {
+            const formatted = this.formatter.format(rawText, action.platform as Platform);
+            resultText = formatted.text;
+            resultParseMode = formatted.parseMode;
+          } else {
+            resultText = rawText;
+          }
+        } else {
+          resultText = `\u274C Scheduled action "${action.name}" failed: ${result.error}`;
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        resultText = `\u274C Scheduled action "${action.name}" failed: ${errorMsg}`;
+      }
+    } else if (action.promptTemplate && this.pipeline) {
       // Route through the full message pipeline so the LLM can use all tools.
-      // Use an isolated chatId so scheduled prompts/responses don't pollute the
-      // user's main conversation (which would grow unbounded and cause LLM
-      // hallucinations from irrelevant context).
       try {
         const isolatedChatId = `scheduled-${action.id}`;
-        // Resolve actual platform user ID — action.userId is the internal UUID
-        // (masterUserId), but the pipeline expects a platform-specific ID so it
-        // can properly resolve linked users and find memories.
         const resolvedUser = this.users.findById(action.userId);
         const platformUserId = resolvedUser?.platformUserId ?? action.userId;
         const syntheticMessage: NormalizedMessage = {
@@ -134,41 +161,8 @@ export class ProactiveScheduler {
         resultText = `Scheduled action "${action.name}" failed: ${errorMsg}`;
       }
     } else {
-      // Execute skill directly
-      const skill = this.skillRegistry.get(action.skillName);
-      if (!skill) {
-        this.logger.warn({ actionId: action.id, skillName: action.skillName }, 'Unknown skill for scheduled action');
-        resultText = `Scheduled action "${action.name}" failed: unknown skill "${action.skillName}"`;
-      } else {
-        try {
-          let input: Record<string, unknown>;
-          try { input = JSON.parse(action.skillInput); }
-          catch { input = {}; this.logger.warn({ actionId: action.id }, 'Invalid skillInput JSON, using empty input'); }
-          const { context } = buildSkillContext(this.users, {
-            userId: action.userId,
-            platform: action.platform as Platform,
-            chatId: action.chatId,
-            chatType: 'dm',
-          });
-
-          const result = await this.skillSandbox.execute(skill, input, context);
-          if (result.success) {
-            const rawText = result.display ?? JSON.stringify(result.data);
-            if (this.formatter) {
-              const formatted = this.formatter.format(rawText, action.platform as Platform);
-              resultText = formatted.text;
-              resultParseMode = formatted.parseMode;
-            } else {
-              resultText = rawText;
-            }
-          } else {
-            resultText = `\u274C Scheduled action "${action.name}" failed: ${result.error}`;
-          }
-        } catch (err) {
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          resultText = `\u274C Scheduled action "${action.name}" failed: ${errorMsg}`;
-        }
-      }
+      this.logger.warn({ actionId: action.id, skillName: action.skillName }, 'Unknown skill for scheduled action');
+      resultText = `Scheduled action "${action.name}" failed: unknown skill "${action.skillName}"`;
     }
 
     // Send result to user — for prompt_template tasks whose prompt contains

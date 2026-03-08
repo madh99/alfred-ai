@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.64] - 2026-03-08
+
+### Fixed
+- **Skill-Filter — Bestätigungen verloren Skill-Kontext** — "ok"/"ja" nach einem Scheduled-Task-Plan führte dazu, dass das LLM den `scheduled_task`-Skill nicht mehr hatte (Fallback enthielt `automation` nicht). LLM wich auf `reminder` aus oder gab auf. Fix: `automation` in die Fallback-Common-Categories aufgenommen
+- **Skill-Filter — BMW/Auto-Keywords fehlten** — "Wie ist der Ladestand meines Autos?" erreichte den BMW-Skill nicht, weil `auto`, `ladestand`, `fahrzeug`, `bmw`, `reichweite`, `soc` etc. in der Infrastructure-Regex fehlten. LLM halluzinierte stattdessen Daten aus der History. Fix: Keywords ergänzt
+- **ProactiveScheduler — skillName vor promptTemplate priorisiert** — Tasks mit beiden Feldern (z.B. alter Morgenbriefing-Task) liefen weiterhin durch die LLM-Pipeline statt den kostenlosen direkten Skill-Pfad zu nutzen. Fix: `skillName`-Check wird vor `promptTemplate` geprüft
+
 ## [0.10.63] - 2026-03-08
 
 ### Fixed
