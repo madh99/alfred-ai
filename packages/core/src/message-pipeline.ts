@@ -12,7 +12,7 @@ import type {
 } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
-import { PromptBuilder, estimateTokens, estimateMessageTokens } from '@alfred/llm';
+import { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults } from '@alfred/llm';
 import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
@@ -234,7 +234,15 @@ export class MessagePipeline {
 
       // Collapse repeated tool-error loops (e.g. 68x the same file.write failure)
       // into a single representative pair + a note, to avoid wasting the context window.
-      const allMessages = this.collapseRepeatedToolErrors(rawMessages);
+      const collapsed = this.collapseRepeatedToolErrors(rawMessages);
+
+      // Trim old, large tool results to short summaries (keeps last 3 pairs full)
+      const allMessages = trimOldToolResults(collapsed);
+      const savedTokens = collapsed.reduce((s, m) => s + estimateMessageTokens(m), 0)
+        - allMessages.reduce((s, m) => s + estimateMessageTokens(m), 0);
+      if (savedTokens > 100) {
+        this.logger.debug(`Tool result trimming saved ~${savedTokens} tokens`);
+      }
 
       // Build user message with attachments (images, transcribed audio)
       const userContent = await this.buildUserContent(message, onProgress);

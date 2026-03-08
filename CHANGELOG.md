@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.66] - 2026-03-08
+
+### Changed
+- **Tool Result Trimming — Token-Reduktion für Konversationshistorie** — Alte, große Tool-Ergebnisse (≥ 300 Zeichen) in der History werden beim LLM-Send auf eine kurze Zusammenfassung gekürzt (`[Ergebnis: <tool_name> — <erste Zeile>]`). Die letzten 3 Tool-Paare bleiben immer voll erhalten, kleine Ergebnisse (BMW-Status, Wetter, Licht) werden nie gekürzt. Spart ~2.500–3.500 Tokens pro Request bei typischer Nutzung. Volle Daten bleiben in der DB erhalten
+
 ## [0.10.65] - 2026-03-08
 
 ### Fixed

@@ -69,6 +69,76 @@ export function estimateMessageTokens(msg: LLMMessage): number {
   return tokens;
 }
 
+export interface ToolResultTrimOptions {
+  keepRecentPairs?: number;    // Default: 3
+  maxTrimmedLength?: number;   // Default: 120 characters
+  minContentLength?: number;   // Default: 300 — only trim when content ≥ this length
+}
+
+/**
+ * Trim old, large tool_result blocks to a short summary.
+ * The last `keepRecentPairs` tool pairs stay untouched.
+ * Small results (< minContentLength) are never trimmed.
+ * Pure function — does not mutate the input array.
+ */
+export function trimOldToolResults(
+  messages: LLMMessage[],
+  options?: ToolResultTrimOptions,
+): LLMMessage[] {
+  const keepRecent = options?.keepRecentPairs ?? 3;
+  const maxLen = options?.maxTrimmedLength ?? 120;
+  const minLen = options?.minContentLength ?? 300;
+
+  // Build a map of tool_use_id → tool name from assistant messages
+  const toolNames = new Map<string, string>();
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'tool_use') {
+          toolNames.set(block.id, block.name);
+        }
+      }
+    }
+  }
+
+  // Count tool pairs backwards to find which ones are "recent"
+  // A tool pair = user message containing tool_result blocks
+  const toolResultMsgIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      if (msg.content.some(b => b.type === 'tool_result')) {
+        toolResultMsgIndices.push(i);
+      }
+    }
+  }
+
+  // The last `keepRecent` tool-result messages are protected
+  const protectedIndices = new Set(toolResultMsgIndices.slice(-keepRecent));
+
+  // Build new array, trimming old large tool results
+  return messages.map((msg, idx) => {
+    if (protectedIndices.has(idx) || msg.role !== 'user' || !Array.isArray(msg.content)) {
+      return msg;
+    }
+
+    let changed = false;
+    const newContent = msg.content.map(block => {
+      if (block.type !== 'tool_result') return block;
+      const content = block.content;
+      if (typeof content !== 'string' || content.length < minLen) return block;
+
+      changed = true;
+      const toolName = toolNames.get(block.tool_use_id) || 'unknown';
+      const firstLine = content.split('\n')[0].slice(0, maxLen);
+      const prefix = block.is_error ? 'Fehler' : 'Ergebnis';
+      return { ...block, content: `[${prefix}: ${toolName} — ${firstLine}]` };
+    });
+
+    return changed ? { ...msg, content: newContent } : msg;
+  });
+}
+
 export class PromptBuilder {
   buildSystemPrompt(context: SystemPromptContext = {}): string {
     const { memories, skills, userProfile, todayEvents } = context;
