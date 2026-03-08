@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.44] - 2026-03-08
+
+### Added
+- **BMW — Verbrauchsstatistik** — Neue Action `consumption` berechnet kWh/100km aus Lade-Sessions (km-Stand-Differenz × SoC-Differenz × Batteriekapazität). Perioden: `last` (letzte Fahrt), `week`, `month` (default), `year`, `all`. Zeigt Durchschnitt, Min, Max, Median und Einzelfahrten-Tabelle
+
 ## [0.10.43] - 2026-03-08
 
 ### Added

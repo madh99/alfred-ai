@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 
-type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions';
+type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions' | 'consumption';
 
 // ── BMW CarData Customer API ──────────────────────────────
 const DEVICE_CODE_URL = 'https://customer.bmwgroup.com/gcdm/oauth/device/code';
@@ -103,15 +103,17 @@ export class BMWSkill extends Skill {
       '"authorize" startet den Device-Auth-Flow (einmalig). ' +
       '"status" zeigt SoC, Reichweite, Modell, Batterie-Gesundheit. ' +
       '"charging" zeigt Ladestatus, Leistung, Restzeit, Ziel-SoC, Stecker. ' +
-      '"charging_sessions" listet Lade-Sessions (from/to Zeitraum).',
+      '"charging_sessions" listet Lade-Sessions (from/to Zeitraum). ' +
+      '"consumption" berechnet Durchschnittsverbrauch (kWh/100km) aus Lade-Sessions — ' +
+      'optional mit period: "last" (letzte Fahrt), "week", "month", "year", "all" (default: month).',
     riskLevel: 'read',
-    version: '2.0.0',
+    version: '2.1.0',
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['authorize', 'status', 'charging', 'charging_sessions'],
+          enum: ['authorize', 'status', 'charging', 'charging_sessions', 'consumption'],
           description: 'BMW CarData action',
         },
         vin: {
@@ -129,6 +131,11 @@ export class BMWSkill extends Skill {
         to: {
           type: 'string',
           description: 'ISO date-time end for charging_sessions (required for that action)',
+        },
+        period: {
+          type: 'string',
+          enum: ['last', 'week', 'month', 'year', 'all'],
+          description: 'Zeitraum für consumption: last (letzte Fahrt), week, month, year, all (default: month)',
         },
       },
       required: ['action'],
@@ -161,6 +168,11 @@ export class BMWSkill extends Skill {
             input.vin as string | undefined,
             input.from as string | undefined,
             input.to as string | undefined,
+          );
+        case 'consumption':
+          return await this.getConsumption(
+            input.vin as string | undefined,
+            input.period as string | undefined,
           );
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
@@ -639,5 +651,155 @@ export class BMWSkill extends Skill {
     }
 
     return { success: true, data, display: lines.join('\n') };
+  }
+
+  // ── Consumption calculation from charging sessions ──────
+
+  private async getConsumption(inputVin?: string, period?: string): Promise<SkillResult> {
+    const vin = await this.resolveVin(inputVin);
+    const containerId = await this.resolveContainerId();
+
+    // Determine time range
+    const now = new Date();
+    const periodDays: Record<string, number> = {
+      last: 7,     // fetch last 7 days, then pick last segment
+      week: 7,
+      month: 30,
+      year: 365,
+      all: 730,
+    };
+    const days = periodDays[period ?? 'month'] ?? 30;
+    const fromDate = new Date(now.getTime() - days * 86_400_000).toISOString();
+    const toDate = now.toISOString();
+
+    // Fetch charging sessions + battery capacity in parallel
+    const [historyData, telematicRaw] = await Promise.all([
+      this.apiGet<Record<string, unknown>>(
+        `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
+      ),
+      this.apiGet<{ telematicData: TelematicResponse }>(
+        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+      ),
+    ]);
+
+    const sessions = (historyData.data ?? historyData.chargingSessions ?? []) as Array<Record<string, unknown>>;
+    const batteryCapacity = parseFloat(tv(telematicRaw.telematicData ?? {}, 'vehicle.drivetrain.batteryManagement.maxEnergy')) || 63;
+
+    if (sessions.length < 2) {
+      return { success: true, data: { sessions: sessions.length }, display: 'Nicht genügend Lade-Sessions für Verbrauchsberechnung (min. 2 nötig).' };
+    }
+
+    // Sort by mileage ascending
+    const sorted = sessions
+      .filter(s => typeof s.mileage === 'number' && typeof s.displayedStartSoc === 'number' && typeof s.displayedSoc === 'number')
+      .sort((a, b) => (a.mileage as number) - (b.mileage as number));
+
+    if (sorted.length < 2) {
+      return { success: true, data: { sessions: sorted.length }, display: 'Nicht genügend Lade-Sessions mit vollständigen Daten.' };
+    }
+
+    // Calculate segments between consecutive charging sessions
+    interface Segment {
+      fromKm: number;
+      toKm: number;
+      distance: number;
+      socUsed: number;
+      kWhUsed: number;
+      consumption: number;
+      date: string;
+    }
+    const segments: Segment[] = [];
+
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const fromKm = prev.mileage as number;
+      const toKm = curr.mileage as number;
+      const distance = toKm - fromKm;
+
+      if (distance <= 0) continue;
+
+      // SoC after previous charge (endSoC) → SoC before current charge (startSoC) = energy used
+      const prevEndSoc = prev.displayedSoc as number;
+      const currStartSoc = curr.displayedStartSoc as number;
+      const socUsed = prevEndSoc - currStartSoc;
+
+      if (socUsed <= 0) continue;
+
+      const kWhUsed = (socUsed / 100) * batteryCapacity;
+      const consumption = (kWhUsed / distance) * 100;
+
+      const startSec = curr.startTime as number | undefined;
+      const date = startSec ? new Date(startSec * 1000).toLocaleDateString('de-AT') : '-';
+
+      segments.push({ fromKm, toKm, distance, socUsed, kWhUsed, consumption, date });
+    }
+
+    if (segments.length === 0) {
+      return { success: true, data: {}, display: 'Keine auswertbaren Fahrtabschnitte gefunden.' };
+    }
+
+    // For "last" period, only show the most recent segment
+    if (period === 'last') {
+      const last = segments[segments.length - 1];
+      return {
+        success: true,
+        data: last,
+        display: [
+          '## Letzte Fahrt (geschätzt)',
+          '',
+          `**Datum:** ${last.date}`,
+          `**Strecke:** ${last.distance} km`,
+          `**Verbrauch:** ${last.consumption.toFixed(1)} kWh/100km`,
+          `**Energie:** ${last.kWhUsed.toFixed(1)} kWh (${last.socUsed}% SoC)`,
+          `**km-Stand:** ${last.fromKm} → ${last.toKm}`,
+        ].join('\n'),
+      };
+    }
+
+    // Aggregate statistics
+    const totalDistance = segments.reduce((sum, s) => sum + s.distance, 0);
+    const totalKwh = segments.reduce((sum, s) => sum + s.kWhUsed, 0);
+    const avgConsumption = (totalKwh / totalDistance) * 100;
+    const consumptions = segments.map(s => s.consumption).sort((a, b) => a - b);
+    const minC = consumptions[0];
+    const maxC = consumptions[consumptions.length - 1];
+    const medianC = consumptions[Math.floor(consumptions.length / 2)];
+
+    const periodLabel: Record<string, string> = {
+      week: 'Letzte Woche',
+      month: 'Letzter Monat',
+      year: 'Letztes Jahr',
+      all: 'Gesamt',
+    };
+
+    const lines = [
+      `## BMW Verbrauchsstatistik — ${periodLabel[period ?? 'month'] ?? 'Letzter Monat'}`,
+      '',
+      `**Batteriekapazität:** ${batteryCapacity} kWh`,
+      `**Ausgewertete Fahrten:** ${segments.length}`,
+      `**Gesamtstrecke:** ${totalDistance.toLocaleString('de-AT')} km`,
+      `**Gesamtverbrauch:** ${totalKwh.toFixed(1)} kWh`,
+      '',
+      `**Durchschnitt:** ${avgConsumption.toFixed(1)} kWh/100km`,
+      `**Min:** ${minC.toFixed(1)} kWh/100km`,
+      `**Max:** ${maxC.toFixed(1)} kWh/100km`,
+      `**Median:** ${medianC.toFixed(1)} kWh/100km`,
+      '',
+      '### Einzelne Fahrten',
+      '',
+      '| Datum | Strecke | Verbrauch | Energie |',
+      '|-------|---------|-----------|---------|',
+    ];
+
+    for (const s of segments) {
+      lines.push(`| ${s.date} | ${s.distance} km | ${s.consumption.toFixed(1)} kWh/100km | ${s.kWhUsed.toFixed(1)} kWh |`);
+    }
+
+    return {
+      success: true,
+      data: { avgConsumption, totalDistance, totalKwh, segments },
+      display: lines.join('\n'),
+    };
   }
 }
