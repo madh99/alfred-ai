@@ -613,13 +613,16 @@ export class BMWSkill extends Skill {
     const lines = [
       `## BMW Lade-Sessions (${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)})`,
       '',
-      '| Datum | Dauer | Energie | Start-SoC | End-SoC | km-Stand | Ort |',
-      '|-------|-------|---------|-----------|---------|----------|-----|',
+      '| Start | Ende | Dauer | Energie | Start-SoC | End-SoC | km-Stand | Ort |',
+      '|-------|------|-------|---------|-----------|---------|----------|-----|',
     ];
 
     for (const s of sessions.slice(0, 20)) {
       const startSec = s.startTime as number | undefined;
-      const date = startSec ? new Date(startSec * 1000).toLocaleDateString('de-AT') : '-';
+      const endSec = s.endTime as number | undefined;
+      const fmtDateTime = (sec: number) => new Date(sec * 1000).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+      const start = startSec ? fmtDateTime(startSec) : '-';
+      const end = endSec ? fmtDateTime(endSec) : '-';
       const durationSec = s.totalChargingDurationSec as number | undefined;
       const duration = durationSec != null ? Math.round(durationSec / 60) : '-';
       const energy = s.energyConsumedFromPowerGridKwh ?? '-';
@@ -628,11 +631,11 @@ export class BMWSkill extends Skill {
       const mileage = s.mileage != null ? `${s.mileage}` : '-';
       const loc = (s.chargingLocation as Record<string, unknown> | undefined);
       const address = (loc?.formattedAddress as string | undefined) ?? (loc?.streetAddress as string | undefined) ?? '-';
-      lines.push(`| ${date} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% | ${mileage} | ${address} |`);
+      lines.push(`| ${start} | ${end} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% | ${mileage} | ${address} |`);
     }
 
     if (sessions.length === 0) {
-      lines.push('| - | Keine Sessions gefunden | - | - | - | - | - |');
+      lines.push('| - | - | Keine Sessions gefunden | - | - | - | - | - |');
     }
 
     return { success: true, data, display: lines.join('\n') };
