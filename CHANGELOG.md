@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.57] - 2026-03-08
+
+### Fixed
+- **Response-Formatter — Verschachtelte HTML-Tags** — LLMs (Haiku) erzeugen verschachtelte Bold-Tags wie `<b>📅 <b>Kalender</b></b>` die auf Telegram kaputt rendern. Neuer Ansatz: Markdown→HTML Konvertierung, dann `flattenNestedTag()` entfernt redundante verschachtelte Tags gleichen Typs. Kein fragiler HTML→MD→HTML Roundtrip mehr. Auch `<strong>`→`<b>`, `<em>`→`<i>` Normalisierung und Stripping nicht-unterstützter HTML-Tags
+
 ## [0.10.56] - 2026-03-08
 
 ### Added

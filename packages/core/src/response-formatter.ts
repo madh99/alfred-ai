@@ -11,9 +11,9 @@ export class ResponseFormatter {
       case 'telegram':
         return { text: this.toTelegramHTML(text), parseMode: 'html' };
       case 'discord':
-        return { text, parseMode: 'markdown' };
+        return { text: this.toMarkdown(text), parseMode: 'markdown' };
       case 'matrix':
-        return { text: this.toMatrixHTML(text), parseMode: 'html' };
+        return { text: this.toTelegramHTML(text), parseMode: 'html' };
       case 'whatsapp':
         return { text: this.toWhatsApp(text), parseMode: 'text' };
       case 'signal':
@@ -23,83 +23,152 @@ export class ResponseFormatter {
     }
   }
 
-  private toTelegramHTML(md: string): string {
-    let html = md;
+  /**
+   * Convert mixed Markdown+HTML input to clean Telegram-compatible HTML.
+   *
+   * Strategy: Convert Markdown constructs to HTML first, then clean up
+   * any nesting/duplication issues in the final HTML. This avoids the
+   * fragile HTML→MD→HTML roundtrip that breaks on nested tags.
+   */
+  private toTelegramHTML(input: string): string {
+    let html = input;
 
-    // Strip existing HTML tags that the LLM might have emitted (except in code blocks).
-    // We'll re-create formatting from Markdown only, so mixed HTML+MD doesn't break.
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match) => `\x00CODEBLOCK${match}\x00`);
-    html = html.replace(/<\/?(?:b|i|s|u|em|strong|strike|del)>/gi, (tag) => {
-      // Map HTML formatting tags back to Markdown equivalents
-      const t = tag.toLowerCase();
-      if (/<b>|<strong>/i.test(t)) return '**';
-      if (/<\/b>|<\/strong>/i.test(t)) return '**';
-      if (/<i>|<em>/i.test(t)) return '*';
-      if (/<\/i>|<\/em>/i.test(t)) return '*';
-      if (/<s>|<del>|<strike>/i.test(t)) return '~~';
-      if (/<\/s>|<\/del>|<\/strike>/i.test(t)) return '~~';
-      return '';
-    });
-    html = html.replace(/\x00CODEBLOCK([\s\S]*?)\x00/g, '$1');
-
-    // Code blocks (``` ... ```) → <pre>...</pre>
+    // 1. Protect code blocks from any processing
+    const codeBlocks: string[] = [];
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_match, _lang, code) => {
-      return `<pre>${this.escapeHTML(code.trimEnd())}</pre>`;
+      codeBlocks.push(`<pre>${this.escapeHTML(code.trimEnd())}</pre>`);
+      return `\x00CB${codeBlocks.length - 1}\x00`;
     });
 
-    // Inline code (`...`) → <code>...</code>
+    // 2. Protect inline code
+    const inlineCodes: string[] = [];
     html = html.replace(/`([^`]+)`/g, (_match, code) => {
-      return `<code>${this.escapeHTML(code)}</code>`;
+      inlineCodes.push(`<code>${this.escapeHTML(code)}</code>`);
+      return `\x00IC${inlineCodes.length - 1}\x00`;
     });
 
-    // Headers (## ...) → <b>...</b> (Telegram has no header tags)
+    // 3. Convert Markdown constructs to HTML
+    // Headers → bold
     html = html.replace(/^#{1,6}\s+(.+)$/gm, '<b>$1</b>');
 
-    // Horizontal rules (--- or ***) → empty line
+    // Horizontal rules → empty line
     html = html.replace(/^[-*_]{3,}\s*$/gm, '');
 
-    // Bold (**...**) → <b>...</b>
+    // Bold Markdown → HTML (but don't touch already-HTML bold)
     html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
-    // Italic (*...*) — careful not to match bold
+    // Italic Markdown → HTML
     html = html.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<i>$1</i>');
 
-    // Strikethrough (~~...~~) → <s>...</s>
+    // Strikethrough
     html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
 
-    // Links [text](url) → <a href="url">text</a>
+    // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
 
-    // Escape stray < in non-tag content (e.g. "<3s" or "x<y").
-    // Keep only known Telegram HTML tags: b, i, s, u, a, pre, code, tg-spoiler, tg-emoji, blockquote
+    // 4. Normalize HTML tags: <strong> → <b>, <em> → <i>, <del>/<strike> → <s>
+    html = html.replace(/<(\/?)(?:strong)>/gi, '<$1b>');
+    html = html.replace(/<(\/?)(?:em)>/gi, '<$1i>');
+    html = html.replace(/<(\/?)(?:del|strike)>/gi, '<$1s>');
+
+    // 5. Fix nested same-type tags: <b>...<b>inner</b>...</b> → <b>...inner...</b>
+    for (const tag of ['b', 'i', 's', 'u']) {
+      // Remove opening tags that are already inside the same tag type
+      // Repeatedly apply until stable (handles multiple nesting levels)
+      let prev = '';
+      while (prev !== html) {
+        prev = html;
+        // Track tag depth and remove redundant opens/closes
+        html = this.flattenNestedTag(html, tag);
+      }
+    }
+
+    // 6. Strip HTML tags not supported by Telegram
+    // Keep: b, i, s, u, a (with href), pre, code, tg-spoiler, tg-emoji, blockquote
+    html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))[^>]*>/gi, '');
+
+    // 7. Escape stray < that aren't part of valid tags
     html = html.replace(/<(?!\/?(?:b|i|s|u|a|pre|code|tg-spoiler|tg-emoji|blockquote)(?:[\s>\/]|$))/gi, '&lt;');
 
-    // Collapse excessive blank lines (3+ → 2)
+    // 8. Restore code blocks and inline code
+    html = html.replace(/\x00CB(\d+)\x00/g, (_match, idx) => codeBlocks[parseInt(idx)]);
+    html = html.replace(/\x00IC(\d+)\x00/g, (_match, idx) => inlineCodes[parseInt(idx)]);
+
+    // 9. Collapse excessive blank lines (3+ → 2)
     html = html.replace(/\n{3,}/g, '\n\n');
 
     return html;
   }
 
-  private toMatrixHTML(md: string): string {
-    // Matrix uses the same HTML subset as Telegram
-    return this.toTelegramHTML(md);
+  /**
+   * Remove redundant nested tags of the same type.
+   * e.g. <b>text <b>inner</b> more</b> → <b>text inner more</b>
+   */
+  private flattenNestedTag(html: string, tag: string): string {
+    const openTag = `<${tag}>`;
+    const closeTag = `</${tag}>`;
+    let depth = 0;
+    let result = '';
+    let i = 0;
+
+    while (i < html.length) {
+      // Check for opening tag
+      if (html.slice(i, i + openTag.length).toLowerCase() === openTag) {
+        depth++;
+        if (depth === 1) {
+          result += openTag;
+        }
+        // Skip redundant nested opens
+        i += openTag.length;
+        continue;
+      }
+
+      // Check for closing tag
+      if (html.slice(i, i + closeTag.length).toLowerCase() === closeTag) {
+        depth--;
+        if (depth <= 0) {
+          result += closeTag;
+          depth = 0; // safety: don't go negative
+        }
+        // Skip redundant nested closes
+        i += closeTag.length;
+        continue;
+      }
+
+      result += html[i];
+      i++;
+    }
+
+    return result;
   }
 
-  private toWhatsApp(md: string): string {
-    let text = md;
+  /**
+   * Convert mixed input to clean Markdown (for Discord).
+   * Strips HTML tags back to Markdown equivalents.
+   */
+  private toMarkdown(input: string): string {
+    let text = input;
 
-    // Strip HTML tags the LLM might have emitted
-    text = text.replace(/<\/?(?:b|i|s|u|em|strong|strike|del)>/gi, (tag) => {
-      const t = tag.toLowerCase();
-      if (/<b>|<strong>/i.test(t)) return '**';
-      if (/<\/b>|<\/strong>/i.test(t)) return '**';
-      if (/<i>|<em>/i.test(t)) return '*';
-      if (/<\/i>|<\/em>/i.test(t)) return '*';
-      if (/<s>|<del>|<strike>/i.test(t)) return '~~';
-      if (/<\/s>|<\/del>|<\/strike>/i.test(t)) return '~~';
-      return '';
-    });
-    text = text.replace(/<[^>]+>/g, ''); // strip remaining HTML tags
+    // Convert HTML to Markdown
+    text = text.replace(/<\/?(?:b|strong)>/gi, '**');
+    text = text.replace(/<\/?(?:i|em)>/gi, '*');
+    text = text.replace(/<\/?(?:s|del|strike)>/gi, '~~');
+    text = text.replace(/<code>([^<]*)<\/code>/gi, '`$1`');
+    text = text.replace(/<pre>([^<]*)<\/pre>/gi, '```\n$1\n```');
+    text = text.replace(/<a\s+href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '[$2]($1)');
+    text = text.replace(/<[^>]+>/g, ''); // strip remaining HTML
+
+    return text;
+  }
+
+  private toWhatsApp(input: string): string {
+    let text = input;
+
+    // Convert HTML tags to Markdown first
+    text = text.replace(/<\/?(?:b|strong)>/gi, '**');
+    text = text.replace(/<\/?(?:i|em)>/gi, '*');
+    text = text.replace(/<\/?(?:s|del|strike)>/gi, '~~');
+    text = text.replace(/<[^>]+>/g, ''); // strip remaining HTML
 
     // Headers → bold text
     text = text.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
@@ -107,13 +176,10 @@ export class ResponseFormatter {
     // Horizontal rules → empty line
     text = text.replace(/^[-*_]{3,}\s*$/gm, '');
 
-    // Code blocks — WhatsApp uses triple backticks natively, keep as-is
     // Bold (**...**) → *...*
     text = text.replace(/\*\*(.+?)\*\*/g, '*$1*');
 
-    // Italic — single * already means italic in WhatsApp, but markdown uses *...*
-    // After converting bold, remaining single * should be _ for WhatsApp italic
-    // Actually, markdown italic *text* → WhatsApp _text_
+    // Italic *...* → _..._
     text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '_$1_');
 
     // Strikethrough (~~...~~) → ~...~
@@ -125,8 +191,8 @@ export class ResponseFormatter {
     return text;
   }
 
-  private stripFormatting(md: string): string {
-    let text = md;
+  private stripFormatting(input: string): string {
+    let text = input;
 
     // Strip HTML tags
     text = text.replace(/<[^>]+>/g, '');
