@@ -69,13 +69,18 @@ export class ProactiveScheduler {
       // hallucinations from irrelevant context).
       try {
         const isolatedChatId = `scheduled-${action.id}`;
+        // Resolve actual platform user ID — action.userId is the internal UUID
+        // (masterUserId), but the pipeline expects a platform-specific ID so it
+        // can properly resolve linked users and find memories.
+        const resolvedUser = this.users.findById(action.userId);
+        const platformUserId = resolvedUser?.platformUserId ?? action.userId;
         const syntheticMessage: NormalizedMessage = {
           id: `scheduled-${crypto.randomUUID()}`,
           platform: action.platform as Platform,
           chatId: isolatedChatId,
           chatType: 'dm',
-          userId: action.userId,
-          userName: action.userId,
+          userId: platformUserId,
+          userName: resolvedUser?.username ?? platformUserId,
           text: action.promptTemplate + '\n\n[Format: Use only Markdown (**, *, ~~, `, ```). Do NOT use HTML tags like <b>, <i>, <code>. The system converts Markdown to platform-specific formatting automatically.]',
           timestamp: new Date(),
           metadata: { scheduled: true, skipHistory: true, tier: 'fast' },

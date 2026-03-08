@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.58] - 2026-03-08
+
+### Fixed
+- **Briefing Wetter-Location — Scheduled Task User-Auflösung** — Geplante Aufgaben (Briefing) zeigten „Wien" statt „Altlengbach" als Wetter-Standort. Ursache: Der ProactiveScheduler übergab die interne User-UUID als `userId` an die Pipeline, die diese als Platform-User-ID interpretierte. Dadurch wurden keine verknüpften User-IDs aufgelöst und Erinnerungen (Heim-Adresse) nicht gefunden → Fallback auf „Vienna". Fix: User wird vor der synthetischen Nachricht via `findById()` aufgelöst und die tatsächliche Platform-User-ID verwendet
+
 ## [0.10.57] - 2026-03-08
 
 ### Fixed
