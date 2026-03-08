@@ -618,9 +618,8 @@ export class BMWSkill extends Skill {
     ];
 
     for (const s of sessions.slice(0, 20)) {
-      // startTime/endTime are milliseconds timestamps per API spec
-      const startMs = s.startTime as number | undefined;
-      const date = startMs ? new Date(startMs).toLocaleDateString('de-AT') : '-';
+      const startSec = s.startTime as number | undefined;
+      const date = startSec ? new Date(startSec * 1000).toLocaleDateString('de-AT') : '-';
       const durationSec = s.totalChargingDurationSec as number | undefined;
       const duration = durationSec != null ? Math.round(durationSec / 60) : '-';
       const energy = s.energyConsumedFromPowerGridKwh ?? '-';

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.41] - 2026-03-08
+
+### Fixed
+- **BMW — Lade-Sessions Datum 21.1.1970** — `startTime`/`endTime` der BMW CarData API sind Unix-Timestamps in Sekunden, nicht Millisekunden. `new Date(seconds)` ergab Januar 1970 statt dem korrekten Datum
+
 ## [0.10.40] - 2026-03-08
 
 ### Fixed
