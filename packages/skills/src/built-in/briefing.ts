@@ -197,7 +197,7 @@ export class BriefingSkill extends Skill {
 
     for (const r of results) {
       if (r.success && r.display) {
-        sections.push(`**${r.label}**\n${r.display}`);
+        sections.push(`**${r.label}**\n${this.cleanDisplay(r.module, r.display)}`);
       } else if (r.success && r.data) {
         sections.push(`**${r.label}**\n${typeof r.data === 'string' ? r.data : JSON.stringify(r.data, null, 2)}`);
       } else if (!r.success && r.error) {
@@ -394,6 +394,42 @@ export class BriefingSkill extends Skill {
       if (/teams|zoom|meet\.google|webex|skype/i.test(loc)) return false;
       return loc.trim().length > 0;
     });
+  }
+
+  /**
+   * Clean up skill display text for briefing context.
+   * Removes internal IDs and technical details that are only useful for
+   * interactive LLM tool calls but clutter the briefing output.
+   */
+  private cleanDisplay(module: string, display: string): string {
+    let cleaned = display;
+
+    // Remove internal IDs: [AAMkAD...AAA=] or [id:AAMkAD...AAA=]
+    cleaned = cleaned.replace(/\s*\[(?:id:)?[A-Za-z0-9+/=]{20,}\]/g, '');
+
+    // Remove email numbering prefix like "1. " at start of lines (already has subject)
+    if (module === 'email') {
+      // Simplify email lines: remove index + ID, keep subject/from/date
+      // "1. [ID] [UNREAD] Subject\n   From: ...\n   Date: ..." → "- Subject [UNREAD]\n  Von: ..."
+      cleaned = cleaned
+        .replace(/^\d+\.\s*/gm, '- ')
+        .replace(/\[UNREAD\]/g, '📩')
+        .replace(/\[ATT\]/g, '📎')
+        .replace(/\n\s+Date:\s+\S+/g, ''); // Drop ISO date (clutters display)
+    }
+
+    if (module === 'calendar') {
+      // Remove "X event(s):" header (redundant, we already have the label)
+      cleaned = cleaned.replace(/^\d+\s+event\(s\):\n?/i, '');
+    }
+
+    // Remove account label wrapper like "[default] ..." or "[work] ..."
+    cleaned = cleaned.replace(/^\[[\w-]+\]\s*/gm, '');
+
+    // Collapse multiple blank lines
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+
+    return cleaned.trim();
   }
 
   /**

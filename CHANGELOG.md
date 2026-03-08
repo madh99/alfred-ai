@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.63] - 2026-03-08
+
+### Fixed
+- **Briefing Display — interne IDs und technische Details entfernt** — E-Mail- und Kalender-Module gaben im Briefing rohe interne IDs (lange Base64-Strings) und ISO-Datumsformate aus. Neuer `cleanDisplay()`-Bereiniger im Briefing-Skill: entfernt interne IDs, ersetzt `[UNREAD]`→📩 und `[ATT]`→📎, entfernt ISO-Dates und redundante Headers. Original-Skills bleiben für interaktive Nutzung unverändert
+
 ## [0.10.62] - 2026-03-08
 
 ### Changed
