@@ -34,6 +34,17 @@ const ALL_MODULES: BriefingModule[] = [
   { name: 'infra',      skill: 'monitor',         input: {},                                     label: 'Infrastruktur' },
 ];
 
+/**
+ * Extract city/town name from a full address like "Alleestraße 6, 3033 Altlengbach".
+ * Splits on comma, takes last part, strips leading postal code (4-5 digits).
+ */
+function extractCity(address: string): string {
+  const parts = address.split(',').map(p => p.trim());
+  const last = parts[parts.length - 1];
+  const city = last.replace(/^\d{4,5}\s*/, '').trim();
+  return city || last;
+}
+
 function isWeekday(): boolean {
   const day = new Date().getDay();
   return day >= 1 && day <= 5;
@@ -120,7 +131,10 @@ export class BriefingSkill extends Skill {
 
   private async runBriefing(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const { home } = this.resolveAddresses(context);
-    const location = (input.location as string | undefined) ?? this.alfredConfig.briefing?.location ?? home ?? 'Vienna';
+    const location = (input.location as string | undefined)
+      ?? this.alfredConfig.briefing?.location
+      ?? (home ? extractCity(home) : undefined)
+      ?? 'Vienna';
     const requestedModules = input.modules as string[] | undefined;
 
     let modules = this.getAvailableModules();

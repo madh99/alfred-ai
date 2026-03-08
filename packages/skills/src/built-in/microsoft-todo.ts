@@ -112,17 +112,25 @@ export class MicrosoftTodoSkill extends Skill {
 
   private async resolveListId(input: Record<string, unknown>): Promise<string> {
     if (input.listId) return input.listId as string;
-    if (!input.list) throw new Error('Either listId or list (display name) is required.');
 
-    const listName = (input.list as string).toLowerCase();
     const data = await this.graphRequest('/me/todo/lists');
-    const lists = (data.value ?? []) as Array<{ id: string; displayName: string }>;
-    const match = lists.find(l => l.displayName.toLowerCase() === listName);
-    if (!match) {
-      const available = lists.map(l => l.displayName).join(', ');
-      throw new Error(`List "${input.list}" not found. Available lists: ${available}`);
+    const lists = (data.value ?? []) as Array<{ id: string; displayName: string; wellknownListName?: string }>;
+
+    if (input.list) {
+      const listName = (input.list as string).toLowerCase();
+      const match = lists.find(l => l.displayName.toLowerCase() === listName);
+      if (!match) {
+        const available = lists.map(l => l.displayName).join(', ');
+        throw new Error(`List "${input.list}" not found. Available lists: ${available}`);
+      }
+      return match.id;
     }
-    return match.id;
+
+    // Fall back to default list (Aufgaben / Tasks)
+    const defaultList = lists.find(l => l.wellknownListName === 'defaultList');
+    if (defaultList) return defaultList.id;
+    if (lists.length > 0) return lists[0].id;
+    throw new Error('No To Do lists found.');
   }
 
   // ── Actions ───────────────────────────────────────────────────────

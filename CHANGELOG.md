@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.46] - 2026-03-08
+
+### Fixed
+- **Briefing — Wetter-Location** — Briefing nutzte die vollständige Heimadresse (z.B. „Alleestraße 6, 3033 Altlengbach") als Wetter-Ort. Open-Meteo Geocoding kann keine Straßenadressen auflösen. Jetzt wird automatisch der Ortsname extrahiert (PLZ + Stadtname → „Altlengbach")
+- **Briefing — Microsoft To Do** — `list_tasks` wurde ohne `listId` aufgerufen und schlug fehl. Microsoft To Do Skill nutzt jetzt automatisch die Standard-Liste (Aufgaben/Tasks) wenn keine Liste angegeben ist
+
 ## [0.10.45] - 2026-03-08
 
 ### Fixed
