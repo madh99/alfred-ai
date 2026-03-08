@@ -23,3 +23,4 @@ export { MemoryExtractor } from './active-learning/memory-extractor.js';
 export { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 export { scanSignal } from './active-learning/signal-scanner.js';
 export type { SignalResult } from './active-learning/signal-scanner.js';
+export { ConversationSummarizer } from './conversation-summarizer.js';

@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -57,6 +57,7 @@ import { ProactiveScheduler } from './proactive-scheduler.js';
 import { WatchEngine } from './watch-engine.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
+import { ConversationSummarizer } from './conversation-summarizer.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -142,6 +143,15 @@ export class Alfred {
 
       this.logger.info('Active learning & memory retriever initialized');
     }
+
+    // 3c. Conversation summarizer
+    const summaryRepo = new SummaryRepository(db);
+    const conversationSummarizer = new ConversationSummarizer(
+      llmProvider,
+      summaryRepo,
+      this.logger.child({ component: 'summarizer' }),
+    );
+    this.logger.info('Conversation summarizer initialized');
 
     // 4. Initialize skills
     const skillSandbox = new SkillSandbox(
@@ -400,6 +410,7 @@ export class Alfred {
       memoryRetriever,
       maxHistoryMessages: this.config.conversation?.maxHistoryMessages ?? 100,
       documentProcessor,
+      conversationSummarizer,
     });
 
     // 6. Initialize reminder scheduler

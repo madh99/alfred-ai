@@ -356,4 +356,20 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 16,
+    description: 'Running conversation summaries for long conversations',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_summaries (
+          conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+          summary TEXT NOT NULL,
+          message_count INTEGER NOT NULL DEFAULT 0,
+          last_user_message TEXT,
+          last_assistant_message TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];

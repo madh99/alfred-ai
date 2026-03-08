@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.67] - 2026-03-08
+
+### Added
+- **Running Summary — Arbeitsgedächtnis für lange Konversationen** — Ab 6 Nachrichten wird automatisch eine strukturierte Zusammenfassung des Gesprächsverlaufs erstellt und alle 3 Nachrichten aktualisiert (Ziel/Thema/Fakten/Entscheidungen/Offen). Die Summary ersetzt alte History-Messages im Prompt: statt 30 werden nur noch 6 aktuelle Messages geladen, ergänzt durch ~200 Tokens Summary. Spart ~3.500 Tokens pro Request ab Turn 7. Fire-and-forget-Update nach jedem relevanten Turn, kein Blocking der Pipeline. Neue DB-Tabelle `conversation_summaries` mit CASCADE-Delete
+
 ## [0.10.66] - 2026-03-08
 
 ### Changed

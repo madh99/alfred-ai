@@ -35,6 +35,7 @@ export interface SystemPromptContext {
   skills?: SkillMetadata[];
   userProfile?: UserProfile;
   todayEvents?: CalendarEvent[];
+  conversationSummary?: string;
 }
 
 /**
@@ -141,7 +142,7 @@ export function trimOldToolResults(
 
 export class PromptBuilder {
   buildSystemPrompt(context: SystemPromptContext = {}): string {
-    const { memories, skills, userProfile, todayEvents } = context;
+    const { memories, skills, userProfile, todayEvents, conversationSummary } = context;
     const os = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
     const homeDir = process.env['HOME'] || process.env['USERPROFILE'] || '~';
 
@@ -299,6 +300,12 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         const location = event.location ? ` @ ${event.location}` : '';
         prompt += `\n- ${startTime}${endTime}: ${event.title}${location}`;
       }
+    }
+
+    if (conversationSummary) {
+      prompt += '\n\n## Conversation context\n';
+      prompt += conversationSummary;
+      prompt += '\n\nThis summarizes the earlier conversation. Use it to maintain continuity. The most recent messages follow below.';
     }
 
     if (memories && memories.length > 0) {

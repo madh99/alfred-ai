@@ -32,6 +32,7 @@ const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 
 const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
 const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
 const TOOL_LOOP_KEEP_RECENT = 3; // Keep last N tool pairs uncompressed during re-trimming
+const HISTORY_WITH_SUMMARY = 6;  // When summary exists, load only 6 recent messages
 
 export type ProgressCallback = (status: string) => void;
 
@@ -56,6 +57,7 @@ export interface PipelineOptions {
   memoryRetriever?: MemoryRetriever;
   maxHistoryMessages?: number;
   documentProcessor?: import('./document-processor.js').DocumentProcessor;
+  conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
 }
 
 /** Tracks a running delegate agent so other messages can query its status. */
@@ -83,6 +85,7 @@ export class MessagePipeline {
   private readonly memoryRetriever?: MemoryRetriever;
   private readonly maxHistoryMessages: number;
   private readonly documentProcessor?: import('./document-processor.js').DocumentProcessor;
+  private readonly conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -104,6 +107,7 @@ export class MessagePipeline {
     this.memoryRetriever = options.memoryRetriever;
     this.maxHistoryMessages = options.maxHistoryMessages ?? 30;
     this.documentProcessor = options.documentProcessor;
+    this.conversationSummarizer = options.conversationSummarizer;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -132,11 +136,14 @@ export class MessagePipeline {
         user.id,
       );
 
-      // 3. Load conversation history (fetch generously, we'll trim by tokens later)
-      // Skip history for scheduled tasks — they're independent and don't need prior context
+      // 3. Load conversation summary & history
+      const summary = (!message.metadata?.skipHistory && this.conversationSummarizer)
+        ? this.conversationSummarizer.getSummary(conversation.id)
+        : undefined;
+      const historyLimit = summary ? HISTORY_WITH_SUMMARY : this.maxHistoryMessages;
       const history = message.metadata?.skipHistory
         ? []
-        : this.conversationManager.getHistory(conversation.id, this.maxHistoryMessages);
+        : this.conversationManager.getHistory(conversation.id, historyLimit);
 
       // 4. Save user message
       this.conversationManager.addMessage(conversation.id, 'user', message.text);
@@ -223,6 +230,7 @@ export class MessagePipeline {
         memories,
         skills: skillMetas,
         userProfile,
+        conversationSummary: summary?.summary,
       });
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"
@@ -422,6 +430,21 @@ export class MessagePipeline {
       // 9. Active learning: extract memories from conversation (fire-and-forget)
       if (this.activeLearning) {
         this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
+      }
+
+      // 10. Update conversation summary (fire-and-forget)
+      if (this.conversationSummarizer && !message.metadata?.skipHistory) {
+        const summaryHistory = history.slice(-8).map(m => ({
+          role: m.role,
+          content: m.content,
+        }));
+        this.conversationSummarizer.onMessageProcessed(
+          conversation.id,
+          history.length + 2,
+          message.text,
+          responseText,
+          summaryHistory,
+        );
       }
 
       const duration = Date.now() - startTime;

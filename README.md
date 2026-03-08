@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.66-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.67-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -749,7 +749,8 @@ User Message (Telegram, Discord, Matrix, Signal, WhatsApp, HTTP API, CLI)
     │
     ├── Normalize → Unified message format
     ├── User Lookup → Cross-platform identity resolution
-    ├── Context Load → Conversation history + token budgeting
+    ├── Context Load → Conversation history + running summary
+    ├── Running Summary → Replaces old history with ~200-token structured summary
     ├── Tool Result Trimming → Old large results → short summaries
     ├── Memory Retrieval → Semantic search on stored memories
     ├── Active Learning → Extract new memories (async)
