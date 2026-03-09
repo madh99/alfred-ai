@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.73] - 2026-03-09
+
+### Fixed
+- **Kalender +1h Bug endgültig behoben** — Microsoft Graph API ignoriert den `Prefer: outlook.timezone="UTC"` Header bei POST/PATCH Responses und liefert Zeiten in der Event-Timezone zurück. `parseGraphDateTime()` prüft jetzt `dt.timeZone` und konvertiert Non-UTC-Zeiten korrekt via Intl.DateTimeFormat Offset-Berechnung. Damit stimmt das Feedback nach Erstellen/Aktualisieren endlich mit der tatsächlichen Kalenderzeit überein
+
 ## [0.10.72] - 2026-03-09
 
 ### Added

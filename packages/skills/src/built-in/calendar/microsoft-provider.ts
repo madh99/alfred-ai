@@ -164,14 +164,47 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
 
   /**
    * Parse a Microsoft Graph dateTime object ({ dateTime, timeZone }) into a proper Date.
-   * We request UTC via Prefer header, so dateTime is always in UTC.
-   * Graph returns it WITHOUT 'Z' suffix (e.g. "2026-03-08T17:00:00.0000000"),
-   * so we append 'Z' to ensure correct parsing.
+   * We request UTC via Prefer header, but Graph does NOT always respect it for
+   * create/update responses — those may return times in the event's local timezone.
+   * So we must check dt.timeZone and convert accordingly.
    */
   private parseGraphDateTime(dt: { dateTime?: string; timeZone?: string }): Date {
     if (!dt?.dateTime) return new Date();
-    // Strip excessive fractional digits (keep max 3 for ms) and append Z
     const clean = dt.dateTime.replace(/(\.\d{3})\d*$/, '$1');
-    return new Date(clean + 'Z');
+    const tz = dt.timeZone;
+
+    // UTC response — just append Z
+    if (!tz || tz === 'UTC' || tz.includes('Utc')) {
+      return new Date(clean + 'Z');
+    }
+
+    // Non-UTC: datetime is in the given timezone, convert to proper UTC Date
+    return this.parseDateInTimezone(clean, tz);
+  }
+
+  /**
+   * Convert a datetime string (without timezone suffix) that represents a time
+   * in a specific timezone into a proper UTC Date object.
+   * Uses the "UTC guess + offset" trick via Intl.DateTimeFormat.
+   */
+  private parseDateInTimezone(dateTimeStr: string, tz: string): Date {
+    // 1. Treat the datetime as UTC (initial guess)
+    const utcGuess = new Date(dateTimeStr + 'Z');
+
+    // 2. Format this UTC time in the target timezone
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    }).formatToParts(utcGuess);
+    const g = (t: string) => parts.find(p => p.type === t)?.value ?? '00';
+    const inTzDate = new Date(`${g('year')}-${g('month')}-${g('day')}T${g('hour')}:${g('minute')}:${g('second')}Z`);
+
+    // 3. Offset = how the target TZ shifts from UTC
+    const offsetMs = inTzDate.getTime() - utcGuess.getTime();
+
+    // 4. Actual UTC = guess minus the offset
+    return new Date(utcGuess.getTime() - offsetMs);
   }
 }
