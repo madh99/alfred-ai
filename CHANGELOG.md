@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.77] - 2026-03-09
+
+### Fixed
+- **Marketplace Detail — Scam-Analyse fehlte** — Das `display`-Feld der Detail-Aktion enthielt nur Titel, Preis und Beschreibung. Jetzt werden alle für die Seriosität-Bewertung relevanten Felder ans LLM übergeben: Verkäufer-Name, Account-Alter, Foto-Anzahl, Zustand, Veröffentlichungsdatum, alle Attribute. Skill-Description instruiert das LLM, bei jeder Detail-Abfrage automatisch eine Risikobewertung abzugeben
+
 ## [0.10.76] - 2026-03-09
 
 ### Fixed

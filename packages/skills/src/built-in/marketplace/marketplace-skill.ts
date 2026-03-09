@@ -26,7 +26,7 @@ export class MarketplaceSkill extends Skill {
       'Marktplatz-Suche auf willhaben.at und eBay. ' +
       '"search" liefert Inseratliste mit Preisstatistik. ' +
       '"compare" liefert Preisvergleich + günstigste 5. ' +
-      '"detail" zeigt Einzelinserat mit Beschreibung, Fotos, Verkäufer. ' +
+      '"detail" zeigt Einzelinserat mit Beschreibung, Fotos, Verkäufer-Info — bewerte bei detail immer Seriosität (Preis vs. Markt, Account-Alter, Foto-Anzahl, Beschreibungsqualität, Zahlungsmethode). ' +
       'Filter: priceMin/priceMax, sort, condition (new/used), postcode. ' +
       'Watch-kompatibel: search→"count"/"minPrice", compare→"minPrice"/"avgPrice".',
     riskLevel: 'read',
@@ -252,6 +252,23 @@ export class MarketplaceSkill extends Skill {
 
     const detail = await provider.getDetail(listingId);
 
+    // Build display with all fields the LLM needs for analysis/scam assessment
+    const displayLines: string[] = [];
+    displayLines.push(`**${detail.title}** — ${formatPrice(detail.price, detail.currency)}`);
+    displayLines.push(`📍 ${detail.location ?? 'k.A.'}`);
+    if (detail.condition) displayLines.push(`Zustand: ${detail.condition}`);
+    displayLines.push(`Verkäufer: ${detail.seller ?? 'k.A.'}${detail.sellerSince ? ` (registriert seit ${detail.sellerSince.split('T')[0]})` : ''}`);
+    displayLines.push(`Fotos: ${detail.imageUrls.length}`);
+    if (detail.publishedAt) displayLines.push(`Veröffentlicht: ${detail.publishedAt.split('T')[0]}`);
+    // Structured attributes (Übergabe, etc.)
+    const skipAttrs = new Set(['DESCRIPTION', 'PRICE', 'PRICE/AMOUNT', 'PRICE_FOR_DISPLAY', 'AREA_ID', 'REGION_AREA_ID', 'SHOW_MAP', 'SHOW_SHADOWMAP', 'ISPRIVATE', 'DEALER', 'ORG_TYPE', 'LOCATION/ADDRESS_2', 'LOCATION/ADDRESS_3', 'LOCATION/ADDRESS_4']);
+    const relevantAttrs = Object.entries(detail.attributes).filter(([k]) => !skipAttrs.has(k));
+    if (relevantAttrs.length > 0) {
+      displayLines.push(`Attribute: ${relevantAttrs.map(([k, v]) => `${k}=${v}`).join(', ')}`);
+    }
+    displayLines.push(`\n${detail.description.slice(0, 500)}`);
+    displayLines.push(`\nLink: ${detail.url}`);
+
     return {
       success: true,
       data: {
@@ -271,7 +288,7 @@ export class MarketplaceSkill extends Skill {
         attributes: detail.attributes,
         platform: detail.platform,
       },
-      display: `**${detail.title}** — ${formatPrice(detail.price, detail.currency)}\n📍 ${detail.location ?? 'k.A.'}\n${detail.description.slice(0, 500)}`,
+      display: displayLines.join('\n'),
     };
   }
 
