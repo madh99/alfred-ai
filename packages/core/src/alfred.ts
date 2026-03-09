@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -74,6 +74,7 @@ export class Alfred {
   private skillRegistry!: SkillRegistry;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
+  private usageRepo?: UsageRepository;
 
   constructor(private config: AlfredConfig) {
     this.logger = createLogger('alfred', config.logger.level);
@@ -113,6 +114,13 @@ export class Alfred {
     const llmProvider = createModelRouter(this.config.llm, this.logger.child({ component: 'llm' }));
     await llmProvider.initialize();
     this.llmProvider = llmProvider;
+
+    // Wire SQLite usage persistence
+    const usageRepo = new UsageRepository(db);
+    this.usageRepo = usageRepo;
+    llmProvider.setPersist((model, inp, out, cacheR, cacheW, cost) => {
+      usageRepo.record(model, inp, out, cacheR, cacheW, cost);
+    });
 
     // Create embedding service
     const embeddingService = new EmbeddingService(
@@ -535,7 +543,9 @@ export class Alfred {
           adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
           metrics: this.pipeline.getMetrics(),
           costs: this.llmProvider.getCostSummary(),
+          todayUsage: this.usageRepo?.getDaily(new Date().toISOString().slice(0, 10)),
         }),
+        metricsCallback: () => this.buildPrometheusMetrics(),
       }));
       this.logger.info({ port, host }, 'HTTP API adapter registered');
     }
@@ -683,6 +693,81 @@ export class Alfred {
       this.logger.error({ err, service }, 'Failed to hot-reload service');
       return { success: false, error: message };
     }
+  }
+
+  private buildPrometheusMetrics(): string {
+    const lines: string[] = [];
+    const uptime = Math.floor(process.uptime());
+
+    // Process info
+    lines.push('# HELP alfred_uptime_seconds Process uptime in seconds');
+    lines.push('# TYPE alfred_uptime_seconds gauge');
+    lines.push(`alfred_uptime_seconds ${uptime}`);
+
+    // Pipeline metrics (in-memory, current session)
+    const m = this.pipeline.getMetrics();
+    lines.push('# HELP alfred_requests_total Total messages processed');
+    lines.push('# TYPE alfred_requests_total counter');
+    lines.push(`alfred_requests_total ${m.requestsTotal}`);
+    lines.push('# HELP alfred_requests_success_total Successful requests');
+    lines.push('# TYPE alfred_requests_success_total counter');
+    lines.push(`alfred_requests_success_total ${m.requestsSuccess}`);
+    lines.push('# HELP alfred_requests_failed_total Failed requests');
+    lines.push('# TYPE alfred_requests_failed_total counter');
+    lines.push(`alfred_requests_failed_total ${m.requestsFailed}`);
+    lines.push('# HELP alfred_request_duration_avg_ms Average request duration');
+    lines.push('# TYPE alfred_request_duration_avg_ms gauge');
+    lines.push(`alfred_request_duration_avg_ms ${m.avgDurationMs}`);
+
+    // Session token/cost metrics
+    const costs = this.llmProvider.getCostSummary();
+    lines.push('# HELP alfred_llm_input_tokens_total Total LLM input tokens (session)');
+    lines.push('# TYPE alfred_llm_input_tokens_total counter');
+    lines.push(`alfred_llm_input_tokens_total ${costs.totalInputTokens}`);
+    lines.push('# HELP alfred_llm_output_tokens_total Total LLM output tokens (session)');
+    lines.push('# TYPE alfred_llm_output_tokens_total counter');
+    lines.push(`alfred_llm_output_tokens_total ${costs.totalOutputTokens}`);
+    lines.push('# HELP alfred_llm_cost_usd_total Total LLM cost in USD (session)');
+    lines.push('# TYPE alfred_llm_cost_usd_total counter');
+    lines.push(`alfred_llm_cost_usd_total ${costs.totalCostUsd}`);
+
+    // Per-model breakdown
+    lines.push('# HELP alfred_llm_calls_total LLM calls by model');
+    lines.push('# TYPE alfred_llm_calls_total counter');
+    for (const [model, entry] of Object.entries(costs.byModel)) {
+      const label = `model="${model}"`;
+      lines.push(`alfred_llm_calls_total{${label}} ${entry.calls}`);
+    }
+    lines.push('# HELP alfred_llm_cost_usd LLM cost by model');
+    lines.push('# TYPE alfred_llm_cost_usd counter');
+    for (const [model, entry] of Object.entries(costs.byModel)) {
+      lines.push(`alfred_llm_cost_usd{model="${model}"} ${entry.costUsd}`);
+    }
+    lines.push('# HELP alfred_llm_input_tokens LLM input tokens by model');
+    lines.push('# TYPE alfred_llm_input_tokens counter');
+    for (const [model, entry] of Object.entries(costs.byModel)) {
+      lines.push(`alfred_llm_input_tokens{model="${model}"} ${entry.inputTokens}`);
+    }
+    lines.push('# HELP alfred_llm_output_tokens LLM output tokens by model');
+    lines.push('# TYPE alfred_llm_output_tokens counter');
+    for (const [model, entry] of Object.entries(costs.byModel)) {
+      lines.push(`alfred_llm_output_tokens{model="${model}"} ${entry.outputTokens}`);
+    }
+
+    // Persisted daily totals from SQLite
+    if (this.usageRepo) {
+      const today = new Date().toISOString().slice(0, 10);
+      const daily = this.usageRepo.getDaily(today);
+      lines.push('# HELP alfred_llm_today_cost_usd Total LLM cost today (persisted)');
+      lines.push('# TYPE alfred_llm_today_cost_usd gauge');
+      lines.push(`alfred_llm_today_cost_usd ${daily.totalCostUsd}`);
+      lines.push('# HELP alfred_llm_today_calls Total LLM calls today (persisted)');
+      lines.push('# TYPE alfred_llm_today_calls gauge');
+      lines.push(`alfred_llm_today_calls ${daily.totalCalls}`);
+    }
+
+    lines.push('');
+    return lines.join('\n');
   }
 
   private autoLinkApiUser(message: NormalizedMessage): void {

@@ -11,5 +11,5 @@ export { createLLMProvider } from './provider-factory.js';
 export { ModelRouter, createModelRouter } from './model-router.js';
 export { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults } from './prompt-builder.js';
 export { TokenCostTracker, calculateCost, getModelPricing } from './token-costs.js';
-export type { ModelPricing, TokenCostSummary, ModelCostEntry } from './token-costs.js';
+export type { ModelPricing, TokenCostSummary, ModelCostEntry, UsagePersistFn } from './token-costs.js';
 export type { MemoryForPrompt, UserProfile, CalendarEvent, SystemPromptContext, ToolResultTrimOptions } from './prompt-builder.js';

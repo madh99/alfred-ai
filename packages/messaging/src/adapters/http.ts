@@ -9,6 +9,7 @@ export interface HttpAdapterOptions {
   apiToken?: string;
   corsOrigin?: string;
   healthCheck?: () => Record<string, unknown>;
+  metricsCallback?: () => string;
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -27,6 +28,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly apiToken?: string;
   private readonly corsOrigin: string;
   private readonly healthCheckFn?: () => Record<string, unknown>;
+  private readonly metricsFn?: () => string;
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
@@ -35,6 +37,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.apiToken = options?.apiToken;
     this.corsOrigin = options?.corsOrigin ?? 'http://localhost:3420';
     this.healthCheckFn = options?.healthCheck;
+    this.metricsFn = options?.metricsCallback;
   }
 
   async connect(): Promise<void> {
@@ -165,7 +168,7 @@ export class HttpAdapter extends MessagingAdapter {
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res);
     } else if (url.pathname === '/api/metrics' && req.method === 'GET') {
-      this.handleHealth(res);
+      this.handleMetrics(res);
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
       this.handleMessage(req, res);
     } else {
@@ -191,6 +194,16 @@ export class HttpAdapter extends MessagingAdapter {
     const code = status === 'ok' ? 200 : 503;
     res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status, ...health, timestamp: new Date().toISOString() }));
+  }
+
+  private handleMetrics(res: http.ServerResponse): void {
+    if (this.metricsFn) {
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+      res.end(this.metricsFn());
+    } else {
+      // Fallback: return health as JSON
+      this.handleHealth(res);
+    }
   }
 
   private handleMessage(req: http.IncomingMessage, res: http.ServerResponse): void {

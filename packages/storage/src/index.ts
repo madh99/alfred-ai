@@ -22,3 +22,5 @@ export type { TodoEntry } from './repositories/todo-repository.js';
 export { WatchRepository } from './repositories/watch-repository.js';
 export { SummaryRepository } from './repositories/summary-repository.js';
 export type { ConversationSummary } from './repositories/summary-repository.js';
+export { UsageRepository } from './repositories/usage-repository.js';
+export type { UsageRecord, DailyUsageSummary } from './repositories/usage-repository.js';

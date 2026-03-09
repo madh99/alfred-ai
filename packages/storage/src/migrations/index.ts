@@ -372,4 +372,25 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 17,
+    description: 'LLM usage tracking with daily aggregation',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_usage (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          date TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          UNIQUE(date, model)
+        );
+        CREATE INDEX IF NOT EXISTS idx_llm_usage_date ON llm_usage(date);
+      `);
+    },
+  },
 ];

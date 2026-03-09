@@ -9,7 +9,7 @@ import { LLMProvider } from './provider.js';
 import type { ContextWindow, EmbeddingResult } from './provider.js';
 import { createLLMProvider } from './provider-factory.js';
 import { TokenCostTracker } from './token-costs.js';
-import type { TokenCostSummary } from './token-costs.js';
+import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
 const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local'];
 
@@ -102,6 +102,11 @@ export class ModelRouter extends LLMProvider {
 
   getCostSummary(): TokenCostSummary {
     return this.costTracker.getSummary();
+  }
+
+  /** Wire SQLite persistence for usage tracking. */
+  setPersist(fn: UsagePersistFn): void {
+    this.costTracker.setPersist(fn);
   }
 }
 

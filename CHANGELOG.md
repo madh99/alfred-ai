@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.72] - 2026-03-09
+
+### Added
+- **SQLite-persistentes Kosten-Tracking** — LLM-Nutzungsdaten werden jetzt in der `llm_usage`-Tabelle persistiert (Migration v17) und überleben Neustarts. Tägliche Aggregation pro Modell mit Upsert (calls, tokens, costs)
+- **`/api/metrics` Prometheus-Endpoint** — Separater Endpoint im Prometheus-Textformat mit Metriken: `alfred_uptime_seconds`, `alfred_requests_total`, `alfred_llm_cost_usd_total`, `alfred_llm_calls_total{model=...}`, `alfred_llm_today_cost_usd` (aus SQLite)
+- **UsageRepository** — Neues Repository für LLM-Nutzungsdaten mit `record()`, `getDaily()`, `getRange()` und `getTotal()` Methoden
+- **Health Endpoint erweitert** — `todayUsage` Feld zeigt persistierte Tageskosten aus SQLite
+
 ## [0.10.71] - 2026-03-09
 
 ### Fixed

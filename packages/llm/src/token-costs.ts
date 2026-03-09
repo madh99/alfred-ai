@@ -114,6 +114,9 @@ export interface ModelCostEntry {
   costUsd: number;
 }
 
+/** Callback to persist a single LLM call to storage. */
+export type UsagePersistFn = (model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number) => void;
+
 export class TokenCostTracker {
   private data: TokenCostSummary = {
     totalInputTokens: 0,
@@ -123,6 +126,13 @@ export class TokenCostTracker {
     totalCostUsd: 0,
     byModel: {},
   };
+
+  private persistFn?: UsagePersistFn;
+
+  /** Set a callback to persist each record to SQLite. */
+  setPersist(fn: UsagePersistFn): void {
+    this.persistFn = fn;
+  }
 
   record(model: string, usage: LLMUsage): number {
     const cost = calculateCost(model, usage);
@@ -146,6 +156,13 @@ export class TokenCostTracker {
     entry.cacheReadTokens += cacheRead;
     entry.cacheWriteTokens += cacheWrite;
     entry.costUsd += cost;
+
+    // Persist to SQLite if callback is set
+    try {
+      this.persistFn?.(model, usage.inputTokens, usage.outputTokens, cacheRead, cacheWrite, cost);
+    } catch {
+      // Don't let persistence errors break LLM calls
+    }
 
     return cost;
   }
