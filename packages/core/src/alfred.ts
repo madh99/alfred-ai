@@ -469,7 +469,7 @@ export class Alfred {
 
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(db);
-    skillRegistry.register(new WatchSkill(watchRepo));
+    skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
     this.watchEngine = new WatchEngine(
       watchRepo,
       skillRegistry,

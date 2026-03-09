@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.75] - 2026-03-09
+
+### Fixed
+- **Watch + Marketplace Bug** — WatchEngine rief den Marketplace-Skill mit leeren `skill_params` auf (`input: {}`), weil das LLM die Parameter nicht korrekt in `skill_params` verschachtelt hat. Fix: WatchSkill validiert jetzt bei `create` die `skill_params` gegen die `required`-Felder des Ziel-Skills und gibt eine klare Fehlermeldung mit den erwarteten Feldern zurück
+- **Watch Skill Description** — Marketplace-Beispiel und deutlicher Hinweis ergänzt, dass `skill_params` ALLE Parameter des Ziel-Skills enthalten muss (action, query, platform etc.)
+
 ## [0.10.74] - 2026-03-09
 
 ### Added

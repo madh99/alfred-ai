@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, WatchCondition } from '@alfred/types';
 import { Skill } from '../skill.js';
+import type { SkillRegistry } from '../skill-registry.js';
 import type { WatchRepository } from '@alfred/storage';
 
 type WatchAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
@@ -18,7 +19,9 @@ export class WatchSkill extends Skill {
       'A watch polls a skill at regular intervals, extracts a field from the result, and sends a notification when a condition is met — no LLM involved. ' +
       'Operators: lt, gt, lte, gte (numeric), eq, neq (string), contains, not_contains (substring), changed, increased, decreased (vs. last value). ' +
       'The first check stores a baseline and never triggers. ' +
+      'IMPORTANT: skill_params must contain ALL parameters the target skill needs (action, query, etc.). The watch engine calls the skill with ONLY skill_params as input. ' +
       'Common condition_field paths by skill: ' +
+      'marketplace {action:"search", query:"...", platform:"willhaben"} → "minPrice" (lt for price drop), "count" (increased for new listings); ' +
       'energy_prices → "bruttoCt" (current price ct/kWh); ' +
       'bmw {action:"status"} → "telematic.CHARGING_STATUS.value", "telematic.BATTERY_SIZE_MAX.value"; ' +
       'todo {action:"list",list:"..."} → use "length" for item count; ' +
@@ -45,7 +48,7 @@ export class WatchSkill extends Skill {
         },
         skill_params: {
           type: 'object',
-          description: 'Parameters to pass to the skill (for create)',
+          description: 'COMPLETE parameters object passed to the skill. Must include ALL required fields (e.g. {action:"search", query:"RTX 5090", platform:"willhaben"} for marketplace). The watch engine calls the skill with ONLY this object.',
         },
         condition_field: {
           type: 'string',
@@ -81,8 +84,16 @@ export class WatchSkill extends Skill {
     },
   };
 
-  constructor(private readonly watchRepo: WatchRepository) {
+  private skillRegistry: SkillRegistry | null = null;
+
+  constructor(private readonly watchRepo: WatchRepository, skillRegistry?: SkillRegistry) {
     super();
+    this.skillRegistry = skillRegistry ?? null;
+  }
+
+  /** Allow late binding when registry isn't available at construction time. */
+  setSkillRegistry(registry: SkillRegistry): void {
+    this.skillRegistry = registry;
   }
 
   async execute(
@@ -132,6 +143,26 @@ export class WatchSkill extends Skill {
     }
     if (intervalMinutes < 1) return { success: false, error: 'interval_minutes must be >= 1' };
     if (cooldownMinutes < 0) return { success: false, error: 'cooldown_minutes must be >= 0' };
+
+    // Validate skill_params against target skill's required fields
+    if (this.skillRegistry) {
+      const targetSkill = this.skillRegistry.get(skillName);
+      if (!targetSkill) {
+        return { success: false, error: `Unknown skill "${skillName}". The skill must be registered before creating a watch.` };
+      }
+      const schema = targetSkill.metadata.inputSchema;
+      if (schema && Array.isArray(schema.required)) {
+        const missing = schema.required.filter((field: string) => !(field in skillParams));
+        if (missing.length > 0) {
+          return {
+            success: false,
+            error: `skill_params is missing required fields for "${skillName}": ${missing.join(', ')}. ` +
+              `skill_params must contain the COMPLETE input for the skill. ` +
+              `Expected: ${JSON.stringify(schema.required)}`,
+          };
+        }
+      }
+    }
 
     const watch = this.watchRepo.create({
       chatId: context.chatId,
