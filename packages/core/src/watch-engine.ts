@@ -97,9 +97,14 @@ export class WatchEngine {
     const newLastValue = JSON.stringify(currentValue);
 
     if (triggered && this.isCooldownExpired(watch)) {
-      // Send alert
-      const alertText = watch.messageTemplate
+      // Send alert — append context even when using a custom template
+      let alertText = watch.messageTemplate
         ?? this.formatAlert(watch, displayValue, result.data);
+
+      if (watch.messageTemplate && result.data && typeof result.data === 'object') {
+        const context = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
+        if (context) alertText += '\n\n' + context;
+      }
 
       const adapter = this.adapters.get(watch.platform as Platform);
       if (adapter) {

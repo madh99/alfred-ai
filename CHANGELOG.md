@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.80] - 2026-03-09
+
+### Fixed
+- **Watch-Alerts: Kontext auch bei custom messageTemplate** — Das LLM setzte bei Watch-Erstellung eigene `messageTemplate`-Texte (z.B. "DDR4 ECC RAM unter 250 € gefunden"), wodurch die Kontext-Anreicherung aus v0.10.79 nicht griff. Jetzt werden günstigste Inserate auch bei custom Templates angehängt
+
 ## [0.10.79] - 2026-03-09
 
 ### Improved
