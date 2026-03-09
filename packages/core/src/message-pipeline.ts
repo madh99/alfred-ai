@@ -12,7 +12,7 @@ import type {
 } from '@alfred/types';
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
-import { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults } from '@alfred/llm';
+import { PromptBuilder, estimateTokens, estimateMessageTokens, trimOldToolResults, calculateCost } from '@alfred/llm';
 import type { UserRepository, MemoryRepository } from '@alfred/storage';
 import type { SecurityManager } from '@alfred/security';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
@@ -47,6 +47,9 @@ export interface PipelineMetrics {
   requestsFailed: number;
   avgDurationMs: number;
   lastRequestAt?: string;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
 }
 
 export interface PipelineOptions {
@@ -104,11 +107,14 @@ export class MessagePipeline {
     requestsSuccess: 0,
     requestsFailed: 0,
     avgDurationMs: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostUsd: 0,
   };
 
   getMetrics(): PipelineMetrics { return { ...this.metrics }; }
 
-  private recordMetric(success: boolean, durationMs: number): void {
+  private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
     this.metrics.requestsTotal++;
     if (success) {
       this.metrics.requestsSuccess++;
@@ -120,6 +126,11 @@ export class MessagePipeline {
       this.metrics.avgDurationMs + (durationMs - this.metrics.avgDurationMs) / this.metrics.requestsTotal,
     );
     this.metrics.lastRequestAt = new Date().toISOString();
+    if (tokenData) {
+      this.metrics.totalInputTokens += tokenData.input;
+      this.metrics.totalOutputTokens += tokenData.output;
+      this.metrics.totalCostUsd += tokenData.costUsd;
+    }
   }
 
   constructor(options: PipelineOptions) {
@@ -490,18 +501,23 @@ export class MessagePipeline {
       }
 
       const duration = Date.now() - startTime;
+      const model = response.model ?? 'unknown';
+      const requestCostUsd = calculateCost(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens });
       this.logger.info(
         {
-          duration,
+          duration, model,
           tokens: response.usage,
           totalTokens: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+          costUsd: Math.round(requestCostUsd * 1_000_000) / 1_000_000,
           stopReason: response.stopReason,
           toolIterations: iteration,
         },
         'Message processed',
       );
 
-      this.recordMetric(true, Date.now() - startTime);
+      this.recordMetric(true, Date.now() - startTime, {
+        input: totalInputTokens, output: totalOutputTokens, costUsd: requestCostUsd,
+      });
       return {
         text: responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,

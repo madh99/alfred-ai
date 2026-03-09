@@ -125,6 +125,7 @@ export class GoogleProvider extends LLMProvider {
       type: 'message_complete',
       response: {
         content: fullContent,
+        model: this.config.model,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         usage: { inputTokens: promptTokens, outputTokens: completionTokens },
         stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
@@ -400,6 +401,7 @@ export class GoogleProvider extends LLMProvider {
 
     return {
       content: text,
+      model: this.config.model,
       toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         inputTokens: response.usageMetadata?.promptTokenCount ?? 0,

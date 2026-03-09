@@ -65,6 +65,7 @@ export interface LLMRequest {
 
 export interface LLMResponse {
   content: string;
+  model?: string;
   toolCalls?: ToolCall[];
   usage: LLMUsage;
   stopReason: 'end_turn' | 'tool_use' | 'max_tokens' | 'stop_sequence';

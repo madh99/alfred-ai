@@ -176,6 +176,7 @@ export class AnthropicProvider extends LLMProvider {
 
     return {
       content: textContent,
+      model: response.model ?? this.config.model,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         inputTokens: response.usage.input_tokens,

@@ -193,6 +193,7 @@ export class OllamaProvider extends LLMProvider {
               type: 'message_complete',
               response: {
                 content: fullContent,
+                model: this.config.model,
                 toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
                 usage: {
                   inputTokens: promptEvalCount,
@@ -406,6 +407,7 @@ export class OllamaProvider extends LLMProvider {
 
     return {
       content: data.message.content,
+      model: this.config.model,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         inputTokens: data.prompt_eval_count ?? 0,

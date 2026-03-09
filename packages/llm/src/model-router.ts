@@ -8,6 +8,8 @@ import type {
 import { LLMProvider } from './provider.js';
 import type { ContextWindow, EmbeddingResult } from './provider.js';
 import { createLLMProvider } from './provider-factory.js';
+import { TokenCostTracker } from './token-costs.js';
+import type { TokenCostSummary } from './token-costs.js';
 
 const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local'];
 
@@ -25,6 +27,7 @@ export class ModelRouter extends LLMProvider {
   private readonly providers = new Map<ModelTier, LLMProvider>();
   private readonly multiConfig: MultiModelConfig;
   private readonly logger?: RouterLogger;
+  private readonly costTracker = new TokenCostTracker();
 
   constructor(config: MultiModelConfig, logger?: RouterLogger) {
     super(config.default);
@@ -62,8 +65,15 @@ export class ModelRouter extends LLMProvider {
       'LLM routing request',
     );
     const response = await provider.complete(request);
+    const model = response.model ?? tierConfig?.model ?? 'unknown';
+    if (!response.model) response.model = model;
+    const costUsd = this.costTracker.record(model, response.usage);
     this.logger?.info(
-      { tier: resolvedTier, model: tierConfig?.model, inputTokens: response.usage?.inputTokens, outputTokens: response.usage?.outputTokens },
+      {
+        tier: resolvedTier, model, costUsd: Math.round(costUsd * 1_000_000) / 1_000_000,
+        inputTokens: response.usage?.inputTokens, outputTokens: response.usage?.outputTokens,
+        cacheReadTokens: response.usage?.cacheReadTokens, cacheWriteTokens: response.usage?.cacheCreationTokens,
+      },
       'LLM call completed',
     );
     return response;
@@ -88,6 +98,10 @@ export class ModelRouter extends LLMProvider {
 
   getContextWindow(): ContextWindow {
     return this.resolve().provider.getContextWindow();
+  }
+
+  getCostSummary(): TokenCostSummary {
+    return this.costTracker.getSummary();
   }
 }
 

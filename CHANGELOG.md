@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.70] - 2026-03-09
+
+### Added
+- **Token Cost Tracking** — Vollständiges LLM-Kosten-Tracking mit Preistabelle für OpenAI (GPT-5.4, GPT-4.1, o3/o4), Anthropic (Opus 4.6, Sonnet 4.6, Haiku 4.5), Google (Gemini 3.x, 2.5, 2.0) und Mistral. Jeder LLM-Call loggt jetzt `model`, `costUsd`, Cache-Read/Write-Tokens
+- **Cost Tracking pro Request** — "Message processed" Log enthält jetzt `model`, `costUsd` und kumulative Token-Summen. `PipelineMetrics` erweitert um `totalInputTokens`, `totalOutputTokens`, `totalCostUsd`
+- **Health Endpoint mit Kosten** — `/api/health` liefert jetzt `costs` (Gesamt-Token-Verbrauch + Kosten aufgeschlüsselt nach Modell) und `metrics` (Pipeline-Statistiken)
+- **Model-Feld in LLM-Response** — Alle Provider (OpenAI, Anthropic, Google, Ollama) setzen jetzt `model` in der Response, sodass Kosten korrekt zugeordnet werden können
+
 ## [0.10.69] - 2026-03-09
 
 ### Fixed

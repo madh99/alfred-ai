@@ -63,6 +63,7 @@ export class Alfred {
   private readonly logger: Logger;
   private database!: Database;
   private pipeline!: MessagePipeline;
+  private llmProvider!: import('@alfred/llm').ModelRouter;
   private reminderScheduler?: ReminderScheduler;
   private backgroundTaskRunner?: BackgroundTaskRunner;
   private proactiveScheduler?: ProactiveScheduler;
@@ -111,6 +112,7 @@ export class Alfred {
     // 3. Initialize LLM provider (multi-model router)
     const llmProvider = createModelRouter(this.config.llm, this.logger.child({ component: 'llm' }));
     await llmProvider.initialize();
+    this.llmProvider = llmProvider;
 
     // Create embedding service
     const embeddingService = new EmbeddingService(
@@ -531,6 +533,8 @@ export class Alfred {
           db: !!this.database,
           uptime: Math.floor(process.uptime()),
           adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
+          metrics: this.pipeline.getMetrics(),
+          costs: this.llmProvider.getCostSummary(),
         }),
       }));
       this.logger.info({ port, host }, 'HTTP API adapter registered');

@@ -143,6 +143,7 @@ export class OpenAIProvider extends LLMProvider {
       type: 'message_complete',
       response: {
         content: fullContent,
+        model: this.config.model,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         usage: {
           inputTokens: promptTokens,
@@ -315,6 +316,7 @@ export class OpenAIProvider extends LLMProvider {
 
     return {
       content,
+      model: response.model ?? this.config.model,
       toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
       usage: {
         inputTokens: response.usage?.prompt_tokens ?? 0,
