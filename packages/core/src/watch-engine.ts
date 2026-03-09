@@ -99,7 +99,7 @@ export class WatchEngine {
     if (triggered && this.isCooldownExpired(watch)) {
       // Send alert
       const alertText = watch.messageTemplate
-        ?? this.formatAlert(watch, displayValue);
+        ?? this.formatAlert(watch, displayValue, result.data);
 
       const adapter = this.adapters.get(watch.platform as Platform);
       if (adapter) {
@@ -131,9 +131,67 @@ export class WatchEngine {
     return elapsed >= cooldownMs;
   }
 
-  private formatAlert(watch: Watch, displayValue: string): string {
+  private formatAlert(watch: Watch, displayValue: string, resultData?: unknown): string {
     const op = OPERATOR_LABELS[watch.condition.operator] ?? watch.condition.operator;
     const thresholdStr = watch.condition.value != null ? ` ${op} ${watch.condition.value}` : ` ${op}`;
-    return `\u26A1 Watch Alert: ${watch.name}\nBedingung erf\u00FCllt: ${watch.condition.field}${thresholdStr}\nAktueller Wert: ${displayValue}`;
+    const lines = [
+      `\u26A1 Watch Alert: ${watch.name}`,
+      `Bedingung erf\u00FCllt: ${watch.condition.field}${thresholdStr}`,
+      `Aktueller Wert: ${displayValue}`,
+    ];
+
+    // Enrich alert with context from result data
+    if (resultData && typeof resultData === 'object') {
+      const data = resultData as Record<string, unknown>;
+      const detail = this.formatResultContext(data, watch.condition.field);
+      if (detail) lines.push('', detail);
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Build human-readable context from structured result data.
+   * Recognizes common patterns (marketplace listings, arrays with items, etc.)
+   */
+  private formatResultContext(data: Record<string, unknown>, conditionField: string): string | null {
+    // Marketplace-style: has listings array
+    if (Array.isArray(data.listings) && data.listings.length > 0) {
+      const listings = data.listings as Array<Record<string, unknown>>;
+      // Sort by price ascending, show cheapest 3
+      const withPrice = listings
+        .filter(l => typeof l.price === 'number')
+        .sort((a, b) => (a.price as number) - (b.price as number));
+      const top = withPrice.slice(0, 3);
+      if (top.length === 0) return null;
+
+      const lines = [`G\u00FCnstigste ${top.length}:`];
+      for (const l of top) {
+        const title = String(l.title ?? '').slice(0, 60);
+        const price = typeof l.price === 'number' ? `${l.price}\u00A0\u20AC` : 'k.A.';
+        const loc = l.location ? ` \u2014 ${l.location}` : '';
+        const url = l.url ? `\n  ${l.url}` : '';
+        lines.push(`\u2022 ${title} \u2014 ${price}${loc}${url}`);
+      }
+      if (typeof data.count === 'number') {
+        lines.push(`\nInsgesamt: ${data.count} Inserate`);
+      }
+      return lines.join('\n');
+    }
+
+    // Marketplace compare-style: has cheapest array
+    if (Array.isArray(data.cheapest) && data.cheapest.length > 0) {
+      const cheapest = data.cheapest as Array<Record<string, unknown>>;
+      const lines = [`G\u00FCnstigste ${Math.min(cheapest.length, 3)}:`];
+      for (const l of cheapest.slice(0, 3)) {
+        const title = String(l.title ?? '').slice(0, 60);
+        const price = typeof l.price === 'number' ? `${l.price}\u00A0\u20AC` : 'k.A.';
+        const url = l.url ? `\n  ${l.url}` : '';
+        lines.push(`\u2022 ${title} \u2014 ${price}${url}`);
+      }
+      return lines.join('\n');
+    }
+
+    return null;
   }
 }

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.79] - 2026-03-09
+
+### Improved
+- **Watch-Alerts mit Kontext** — Alerts zeigen jetzt nicht nur den nackten Wert (z.B. "minPrice: 2700"), sondern auch die günstigsten 3 Inserate mit Titel, Preis, Ort und Link. Erkennt automatisch Marketplace-Datenstrukturen (listings, cheapest). Funktioniert generisch für alle Skills mit strukturierten Arrays
+
 ## [0.10.78] - 2026-03-09
 
 ### Changed
