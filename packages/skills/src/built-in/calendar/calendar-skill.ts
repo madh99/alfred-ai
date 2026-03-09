@@ -22,11 +22,11 @@ export class CalendarSkill extends Skill {
         },
         start: {
           type: 'string',
-          description: 'Start date/time in ISO 8601 format',
+          description: 'Start date/time in ISO 8601 format WITHOUT timezone suffix (e.g. "2026-03-09T14:00:00", NOT "2026-03-09T14:00:00Z"). Times are interpreted in the user\'s local timezone.',
         },
         end: {
           type: 'string',
-          description: 'End date/time in ISO 8601 format',
+          description: 'End date/time in ISO 8601 format WITHOUT timezone suffix (e.g. "2026-03-09T14:30:00"). Times are interpreted in the user\'s local timezone.',
         },
         title: {
           type: 'string',
@@ -118,6 +118,15 @@ export class CalendarSkill extends Skill {
     }
   }
 
+  /**
+   * Strip trailing 'Z' from ISO strings to ensure they're parsed as local time.
+   * LLMs sometimes send "2026-03-09T14:00:00Z" even though we tell them not to.
+   * The Z would cause JavaScript to parse it as UTC instead of user-local time.
+   */
+  private parseLocalTime(iso: string): Date {
+    return new Date(iso.replace(/Z$/i, ''));
+  }
+
   private async createEvent(input: Record<string, unknown>): Promise<SkillResult> {
     const title = input.title as string;
     const start = input.start as string;
@@ -130,8 +139,8 @@ export class CalendarSkill extends Skill {
     try {
       const event = await this.calendarProvider.createEvent({
         title,
-        start: new Date(start),
-        end: new Date(end),
+        start: this.parseLocalTime(start),
+        end: this.parseLocalTime(end),
         location: input.location as string | undefined,
         description: input.description as string | undefined,
         allDay: input.all_day as boolean | undefined,
@@ -154,8 +163,8 @@ export class CalendarSkill extends Skill {
     try {
       const event = await this.calendarProvider.updateEvent(eventId, {
         title: input.title as string | undefined,
-        start: input.start ? new Date(input.start as string) : undefined,
-        end: input.end ? new Date(input.end as string) : undefined,
+        start: input.start ? this.parseLocalTime(input.start as string) : undefined,
+        end: input.end ? this.parseLocalTime(input.end as string) : undefined,
         location: input.location as string | undefined,
         description: input.description as string | undefined,
         allDay: input.all_day as boolean | undefined,
@@ -201,10 +210,12 @@ export class CalendarSkill extends Skill {
   }
 
   private formatEvent(event: CalendarEvent): string {
+    // Use provider timezone (updated per-request from context) over constructor timezone
+    const tz = this.calendarProvider.timezone || this.timezone;
     const opts: Intl.DateTimeFormatOptions = {
       hour: '2-digit',
       minute: '2-digit',
-      ...(this.timezone ? { timeZone: this.timezone } : {}),
+      ...(tz ? { timeZone: tz } : {}),
     };
 
     const loc = event.location ? ` @ ${event.location}` : '';

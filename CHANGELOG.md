@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.71] - 2026-03-09
+
+### Fixed
+- **Kalender Zeitzonen-Bug** — Erstellen/Aktualisieren von Terminen zeigte in der Antwort die falsche Uhrzeit (+1h Offset). Ursache: Microsoft Graph API lieferte Zeiten in Kalender-Zeitzone zurück, `parseGraphDateTime()` interpretierte sie aber als UTC. Fix: `Prefer: outlook.timezone="UTC"` Header global für alle Graph-Requests gesetzt (nicht nur für listEvents)
+- **Kalender formatEvent() Timezone** — Event-Formatierung nutzte den statischen Konstruktor-Timezone (immer `undefined`) statt den pro-Request aktualisierten Provider-Timezone. Jetzt wird `calendarProvider.timezone` bevorzugt
+- **Kalender Input-Parsing** — LLMs senden manchmal ISO-Zeiten mit `Z`-Suffix (UTC), obwohl Lokalzeit gemeint ist. Neuer `parseLocalTime()` Helfer entfernt das `Z` und die Input-Schema-Beschreibung weist explizit darauf hin, keine Timezone-Suffixe zu senden
+
 ## [0.10.70] - 2026-03-09
 
 ### Added

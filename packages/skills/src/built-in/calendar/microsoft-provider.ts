@@ -40,24 +40,27 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   private async graphRequest(path: string, options: RequestInit = {}): Promise<any> {
+    // Always request UTC responses so parseGraphDateTime() can reliably append 'Z'.
+    // Without this, create/update responses return times in the calendar's local timezone
+    // which parseGraphDateTime() would wrongly interpret as UTC (causing 1h offset).
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${this.accessToken}`,
+      'Content-Type': 'application/json',
+      Prefer: 'outlook.timezone="UTC"',
+      ...(options.headers as Record<string, string> ?? {}),
+    };
+
     const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
       ...options,
-      headers: {
-        Authorization: `Bearer ${this.accessToken}`,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
     });
 
     if (res.status === 401) {
       await this.refreshAccessToken();
+      headers.Authorization = `Bearer ${this.accessToken}`;
       const retry = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
         ...options,
-        headers: {
-          Authorization: `Bearer ${this.accessToken}`,
-          'Content-Type': 'application/json',
-          ...options.headers,
-        },
+        headers,
       });
       if (!retry.ok) throw new Error(`Graph API error: ${retry.status}`);
       return retry.json();
@@ -76,9 +79,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       $top: '50',
     });
 
-    const data = await this.graphRequest(`/me/calendarView?${params}`, {
-      headers: { Prefer: 'outlook.timezone="UTC"' },
-    });
+    const data = await this.graphRequest(`/me/calendarView?${params}`);
     return (data.value ?? []).map((item: any) => this.mapEvent(item));
   }
 
