@@ -251,10 +251,6 @@ export interface BMWCarDataConfig {
 
 export interface RoutingConfig {
   apiKey: string;
-  /** Default home address for resolving "home"/"zuhause" in routing queries */
-  homeAddress?: string;
-  /** Default work address for resolving "work"/"arbeit"/"büro" */
-  workAddress?: string;
 }
 
 export interface EnergyPriceConfig {

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.78] - 2026-03-09
+
+### Changed
+- **Routing: Alias-Auflösung entfernt** — `resolveAddressAlias()` und die nie konfigurierbaren Config-Felder `routing.homeAddress`/`workAddress` entfernt. Das LLM löst Aliase wie "zuhause", "Büro", "bei mir" jetzt selbst über Memory/Kontext auf und sendet immer konkrete Adressen. Verhindert den Fehler "konnte mit Alias home keine Route berechnen". Briefing-Skill unverändert (eigener `resolveAddresses()` mit Memory + Config-Fallback)
+
 ## [0.10.77] - 2026-03-09
 
 ### Fixed

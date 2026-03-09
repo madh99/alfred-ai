@@ -263,8 +263,6 @@ export const BMWCarDataConfigSchema = z.object({
 
 export const RoutingConfigSchema = z.object({
   apiKey: z.string(),
-  homeAddress: z.string().optional(),
-  workAddress: z.string().optional(),
 });
 
 export const EnergyPriceConfigSchema = z.object({

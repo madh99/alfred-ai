@@ -254,6 +254,7 @@ Route calculation with live traffic data:
 - Departure time recommendation for a desired arrival time
 - Supports addresses and lat/lng coordinates
 - Travel modes: DRIVE, BICYCLE, WALK, TRANSIT
+- Address aliases ("zuhause", "Büro") are resolved by the LLM from memory — no config needed
 
 ```
 You: "Wie weit ist es von Altlengbach nach Wien?"
