@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.74] - 2026-03-09
+
+### Added
+- **MarketplaceSkill v2 — Strukturierte Rückgabe** — `search` und `compare` liefern jetzt strukturiertes JSON in `data` (für WatchEngine + LLM) und Markdown in `display` (für User-Anzeige). ~60% weniger Tokens im LLM-Kontext
+- **Watch-Integration** — Marketplace-Suchen sind jetzt Watch-kompatibel: `condition_field: "count"` für neue Inserate, `"minPrice"` für Preisdrops
+- **Detail-Aktion** — Neue `detail`-Aktion zeigt Einzelinserat mit Beschreibung, Fotos, Verkäufer-Info und Attributen (Willhaben)
+- **Erweiterte Filter** — Neue Suchparameter: `sort` (price_asc/price_desc/date_desc), `condition` (new/used), `postcode` (PLZ-Filter) für Willhaben und eBay
+
 ## [0.10.73] - 2026-03-09
 
 ### Fixed

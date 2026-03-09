@@ -49,16 +49,22 @@ export class EbayProvider extends MarketplaceProvider {
     const url = new URL('https://api.ebay.com/buy/browse/v1/item_summary/search');
     url.searchParams.set('q', params.query);
     url.searchParams.set('limit', String(limit));
+
+    if (params.sort) {
+      const sortMap: Record<string, string> = { price_asc: 'price', price_desc: '-price', date_desc: 'newlyListed' };
+      url.searchParams.set('sort', sortMap[params.sort]);
+    }
+
+    const filterParts: string[] = [];
     if (params.priceMin != null || params.priceMax != null) {
-      const parts: string[] = [];
-      if (params.priceMin != null) parts.push(`price:[${params.priceMin}..`);
-      if (params.priceMax != null) {
-        if (parts.length) parts[0] += `${params.priceMax}]`;
-        else parts.push(`price:[..${params.priceMax}]`);
-      } else {
-        parts[0] += ']';
-      }
-      url.searchParams.set('filter', parts.join(','));
+      const from = params.priceMin != null ? String(params.priceMin) : '';
+      const to = params.priceMax != null ? String(params.priceMax) : '';
+      filterParts.push(`price:[${from}..${to}]`);
+    }
+    if (params.condition === 'new') filterParts.push('conditionIds:{1000}');
+    if (params.condition === 'used') filterParts.push('conditionIds:{3000}');
+    if (filterParts.length > 0) {
+      url.searchParams.set('filter', filterParts.join(','));
     }
 
     const res = await fetch(url.toString(), {

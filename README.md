@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.68-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.10.74-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -96,7 +96,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
 | **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
-| **Marketplace** | `marketplace` | Marktplatz-Suche auf willhaben.at und eBay — alle Inserate als Tabelle, Preisvergleich mit Statistik |
+| **Marketplace** | `marketplace` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
@@ -295,14 +295,18 @@ You: "Zeig mir die Strompreise für morgen"
 
 Structured marketplace search on willhaben.at and eBay. willhaben works without credentials (parses `__NEXT_DATA__` from HTML), eBay requires API keys (Browse API, OAuth Client Credentials).
 
-- **search**: Lists ALL matching listings as a structured table with price, location, and direct links
+- **search**: Lists matching listings with structured JSON data (watch-compatible) + Markdown display
 - **compare**: Price statistics (min, max, median, avg) + cheapest 5 listings
-- Dramatically reduces token usage vs. browser-based scraping (~2k vs ~59k input tokens)
+- **detail**: Single listing deep-dive — description, photos, seller info, attributes
+- **Filters**: `sort` (price_asc/price_desc/date_desc), `condition` (new/used), `postcode`
+- **Watch-kompatibel**: `search→"count"/"minPrice"`, `compare→"minPrice"/"avgPrice"` — Alerts bei neuen Inseraten oder Preisdrops
 
 ```
 You: "Zeig mir alle RTX 5090 auf willhaben"
 You: "Vergleich RTX 5090 Preise auf willhaben"
 You: "Suche iPhone 16 Pro auf eBay und willhaben"
+You: "Zeig mir Details zum Inserat 123456"
+You: "Beobachte RTX 4070 unter 400€ auf Willhaben"
 ```
 
 #### Daily Briefing
