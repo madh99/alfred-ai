@@ -41,6 +41,7 @@ export class WillhabenProvider extends MarketplaceProvider {
     const url = `https://www.willhaben.at/iad/object?adId=${id}`;
     const res = await fetch(url, {
       headers: { 'User-Agent': USER_AGENT, 'Accept': 'text/html' },
+      redirect: 'follow',
     });
     if (!res.ok) throw new Error(`willhaben detail HTTP ${res.status}`);
 
@@ -49,11 +50,12 @@ export class WillhabenProvider extends MarketplaceProvider {
     if (!match) throw new Error('willhaben detail: __NEXT_DATA__ not found');
 
     const nextData = JSON.parse(match[1]);
-    const adDetail = nextData?.props?.pageProps?.advertDetail
-      ?? nextData?.props?.pageProps?.ad
-      ?? nextData?.props?.pageProps;
+    // Detail pages use "advertDetails" (plural), NOT "advertDetail"
+    const ad = nextData?.props?.pageProps?.advertDetails;
+    if (!ad) throw new Error('willhaben detail: advertDetails not found in page data');
 
-    const attrs: any[] = adDetail?.attributes?.attribute ?? [];
+    // Flat attributes (PRICE, DESCRIPTION, LOCATION/ADDRESS_*, etc.)
+    const attrs: any[] = ad.attributes?.attribute ?? [];
     const attr = (name: string): string | undefined => {
       const found = attrs.find((a: any) => a.name === name);
       return found?.values?.[0] ?? undefined;
@@ -66,25 +68,50 @@ export class WillhabenProvider extends MarketplaceProvider {
       }
     }
 
-    const images: string[] = (adDetail?.advertImageList?.advertImage ?? [])
+    // Structured attributes (Zustand, Übergabe, etc.) from attributeInformation
+    const attrInfo: any[] = ad.attributeInformation ?? [];
+    for (const ai of attrInfo) {
+      const label = ai.treeAttributeElement?.label;
+      const value = ai.values?.[0]?.label;
+      if (label && value) {
+        allAttributes[label] = value;
+      }
+    }
+
+    // Images
+    const images: string[] = (ad.advertImageList?.advertImage ?? [])
       .map((img: any) => img.mainImageUrl ?? img.referenceImageUrl)
       .filter(Boolean);
 
+    // Location from advertAddressDetails
+    const addr = ad.advertAddressDetails;
+    const location = addr
+      ? [addr.postalName, addr.postCode, addr.district, addr.province].filter(Boolean).join(', ')
+      : [attr('LOCATION/ADDRESS_2'), attr('LOCATION/ADDRESS_3')].filter(Boolean).join(', ');
+
+    // Seller from sellerProfileUserData
+    const sellerData = ad.sellerProfileUserData;
+
+    // Description: strip HTML tags
+    const rawDesc = attr('DESCRIPTION') ?? ad.description ?? '';
+    const description = rawDesc.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
     const priceStr = attr('PRICE');
+    const condition = attrInfo.find((ai: any) => ai.treeAttributeElement?.code === 'Zustand')?.values?.[0]?.label;
 
     return {
       id,
-      title: attr('HEADING') ?? adDetail?.description ?? 'Kein Titel',
+      title: ad.description ?? 'Kein Titel',
       price: priceStr ? parseFloat(priceStr) : null,
       currency: 'EUR',
-      condition: attr('CONDITION'),
-      location: [attr('LOCATION'), attr('POSTCODE')].filter(Boolean).join(' '),
-      url,
+      condition,
+      location,
+      url: res.url || url,
       imageUrls: images,
-      seller: attr('ORGANIZER') ?? undefined,
-      sellerSince: attr('ORGANIZER_SINCE') ?? undefined,
-      publishedAt: attr('PUBLISHED_String') ?? undefined,
-      description: attr('BODY') ?? attr('DESCRIPTION') ?? adDetail?.body ?? '',
+      seller: sellerData?.name ?? undefined,
+      sellerSince: sellerData?.registerDate ?? undefined,
+      publishedAt: ad.publishedDate ?? undefined,
+      description,
       attributes: allAttributes,
       platform: 'willhaben',
     };

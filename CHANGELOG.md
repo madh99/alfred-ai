@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.76] - 2026-03-09
+
+### Fixed
+- **Marketplace Detail-Aktion lieferte leere Daten** — Willhaben-Detailseiten nutzen eine andere JSON-Struktur als Suchergebnisse (`advertDetails` statt `advertDetail`, Titel in `description`, Beschreibung in Attribut `DESCRIPTION`, Verkäufer in `sellerProfileUserData`, Adresse in `advertAddressDetails`, Zustand in `attributeInformation`). `getDetail()` komplett auf die tatsächliche Seitenstruktur angepasst. HTML-Tags werden aus der Beschreibung entfernt
+
 ## [0.10.75] - 2026-03-09
 
 ### Fixed
