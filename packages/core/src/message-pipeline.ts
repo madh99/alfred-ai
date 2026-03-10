@@ -407,15 +407,20 @@ export class MessagePipeline {
 
         // If no tool calls, check if output was truncated by max_tokens
         if (!response.toolCalls || response.toolCalls.length === 0) {
-          if (response.stopReason === 'max_tokens' && response.content) {
+          if (response.stopReason === 'max_tokens') {
             // Output was truncated — ask LLM to continue
             let continuationRounds = 0;
-            let fullText = response.content;
+            let fullText = response.content ?? '';
             while (response.stopReason === 'max_tokens' && continuationRounds < MAX_CONTINUATION_ROUNDS) {
               continuationRounds++;
               this.logger.info({ continuationRounds, textLength: fullText.length }, 'Output truncated, requesting continuation');
-              messages.push({ role: 'assistant', content: fullText });
-              messages.push({ role: 'user', content: 'Fahre exakt dort fort wo du aufgehört hast. Keine Wiederholung, nur der Rest.' });
+              if (fullText) {
+                messages.push({ role: 'assistant', content: fullText });
+                messages.push({ role: 'user', content: 'Fahre exakt dort fort wo du aufgehört hast. Keine Wiederholung, nur der Rest.' });
+              } else {
+                // Content was empty despite max_tokens — ask for a shorter answer
+                messages.push({ role: 'user', content: 'Deine Antwort war zu lang und wurde abgeschnitten. Bitte antworte kürzer und kompakter. Fasse zusammen statt alles aufzulisten.' });
+              }
               try {
                 response = await this.llm.complete({
                   messages,
