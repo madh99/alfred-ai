@@ -246,7 +246,7 @@ export class BMWSkill extends Skill {
         `1. Öffne: **${(data.verification_uri_complete as string) ?? (data.verification_uri as string)}**`,
         `2. Gib diesen Code ein: **${data.user_code as string}**`,
         '',
-        `Danach ruf diese Action erneut auf mit \`device_code: "${data.device_code as string}"\` um den Token abzuholen.`,
+        'Danach rufe einfach `authorize` erneut auf (ohne Parameter) — der Token wird automatisch abgeholt.',
       ].join('\n'),
     };
   }
