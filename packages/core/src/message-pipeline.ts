@@ -27,7 +27,38 @@ import { selectCategories, filterSkills } from './skill-filter.js';
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
+const MAX_TOOL_RESULT_CHARS = 12_000; // Truncate tool results exceeding this length
+const MAX_CONTINUATION_ROUNDS = 3; // Max continuation rounds when LLM hits max_tokens
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
+
+/**
+ * Truncate large tool results to keep LLM input manageable.
+ * Preserves the beginning and end of the content so the LLM sees the structure
+ * and knows how many entries were omitted.
+ */
+function truncateToolResult(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  const lines = content.split('\n');
+  if (lines.length <= 10) {
+    // Few lines but very long — just hard-truncate
+    return content.slice(0, maxChars) + '\n\n[... truncated, total ' + content.length + ' chars]';
+  }
+  // Keep ~70% head, ~20% tail, omit middle
+  const headCount = Math.floor(lines.length * 0.7);
+  const tailCount = Math.max(Math.floor(lines.length * 0.2), 5);
+  const omitted = lines.length - headCount - tailCount;
+  // Check if head+tail already fits
+  const headLines = lines.slice(0, headCount);
+  const tailLines = lines.slice(lines.length - tailCount);
+  const marker = `\n[... ${omitted} Zeilen ausgelassen, insgesamt ${lines.length} Zeilen ...]\n`;
+  const result = headLines.join('\n') + marker + tailLines.join('\n');
+  // If still too long, reduce head
+  if (result.length > maxChars) {
+    const halfMax = Math.floor(maxChars * 0.7);
+    return content.slice(0, halfMax) + '\n\n[... truncated, total ' + content.length + ' chars]\n\n' + content.slice(content.length - Math.floor(maxChars * 0.2));
+  }
+  return result;
+}
 const MAX_INLINE_FILE_SIZE = 100_000; // Include text file content inline up to 100KB
 const MEMORY_TOKEN_BUDGET = 2000; // Max tokens for all memories in system prompt
 const MIN_MEMORY_SCORE = 0.1; // Minimum relevance score for memory inclusion
@@ -374,8 +405,35 @@ export class MessagePipeline {
           throw err;
         }
 
-        // If no tool calls, we're done
+        // If no tool calls, check if output was truncated by max_tokens
         if (!response.toolCalls || response.toolCalls.length === 0) {
+          if (response.stopReason === 'max_tokens' && response.content) {
+            // Output was truncated — ask LLM to continue
+            let continuationRounds = 0;
+            let fullText = response.content;
+            while (response.stopReason === 'max_tokens' && continuationRounds < MAX_CONTINUATION_ROUNDS) {
+              continuationRounds++;
+              this.logger.info({ continuationRounds, textLength: fullText.length }, 'Output truncated, requesting continuation');
+              messages.push({ role: 'assistant', content: fullText });
+              messages.push({ role: 'user', content: 'Fahre exakt dort fort wo du aufgehört hast. Keine Wiederholung, nur der Rest.' });
+              try {
+                response = await this.llm.complete({
+                  messages,
+                  system,
+                  tools: tools && tools.length > 0 ? tools : undefined,
+                  tier: message.metadata?.tier,
+                });
+                totalInputTokens += response.usage?.inputTokens ?? 0;
+                totalOutputTokens += response.usage?.outputTokens ?? 0;
+                if (response.content) {
+                  fullText += response.content;
+                }
+              } catch {
+                break;
+              }
+            }
+            response = { ...response, content: fullText, stopReason: 'end_turn' };
+          }
           break;
         }
 
@@ -722,6 +780,7 @@ export class MessagePipeline {
         const names = result.attachments.map(a => a.fileName).join(', ');
         content += `\n\n[${result.attachments.length} Datei(en) werden dem User gesendet: ${names}]`;
       }
+      content = truncateToolResult(content, MAX_TOOL_RESULT_CHARS);
       return {
         type: 'tool_result' as const,
         tool_use_id: tc.id,

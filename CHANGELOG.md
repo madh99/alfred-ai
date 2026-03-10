@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-03-10
+
+### Fixed
+- **Tool-Result-Truncation** — Große Skill-Ergebnisse (z.B. HA Entity-Listen mit 500+ Einträgen) werden intelligent gekürzt bevor sie ans LLM gehen. Anfang und Ende bleiben erhalten, Mitte wird mit Hinweis auf ausgelassene Zeilen ersetzt. Verhindert dass das LLM an Output-Limits scheitert
+- **max_tokens-Continuation** — Wenn das LLM das Output-Limit erreicht, startet die Pipeline automatisch Fortsetzungs-Runden (max 3) statt die Antwort abzuschneiden oder stumm zu verschlucken. Lange Antworten kommen vollständig beim User an
+
 ## [0.11.3] - 2026-03-10
 
 ### Fixed
