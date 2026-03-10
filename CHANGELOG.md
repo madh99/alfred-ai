@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.81] - 2026-03-10
+
+### Fixed
+- **BMW Authorize: Auto-Resume bei wiederholtem Aufruf** — Wenn das LLM `authorize` mehrfach ohne `device_code` aufruft, wird jetzt automatisch der gespeicherte pending Device-Code gepollt statt einen neuen zu generieren (der den vorherigen ungültig macht). Verhindert die Endlosschleife aus 5× Step-1-Wiederholung. Skill-Description expliziter zum 2-Schritt-Flow
+
 ## [0.10.80] - 2026-03-09
 
 ### Fixed

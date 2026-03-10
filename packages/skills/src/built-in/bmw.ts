@@ -101,13 +101,18 @@ export class BMWSkill extends Skill {
     description:
       'BMW CarData — Fahrzeugdaten abrufen. ' +
       '"authorize" startet den Device-Auth-Flow (einmalig). ' +
+      'WICHTIG: authorize ist ein 2-Schritt-Prozess. ' +
+      'Schritt 1 (ohne device_code) liefert einen User-Code + URL. ' +
+      'Schritt 2: Nachdem der User im Browser bestätigt hat, rufe authorize ERNEUT auf — ' +
+      'entweder mit dem device_code aus Schritt 1, oder einfach ohne Parameter (auto-resume). ' +
+      'NIEMALS Schritt 1 wiederholen wenn bereits ein Code ausgegeben wurde! ' +
       '"status" zeigt SoC, Reichweite, Modell, Batterie-Gesundheit. ' +
       '"charging" zeigt Ladestatus, Leistung, Restzeit, Ziel-SoC, Stecker. ' +
       '"charging_sessions" listet Lade-Sessions (from/to Zeitraum). ' +
       '"consumption" berechnet Durchschnittsverbrauch (kWh/100km) aus Lade-Sessions — ' +
       'optional mit period: "last" (letzte Fahrt), "week", "month", "year", "all" (default: month).',
     riskLevel: 'read',
-    version: '2.1.0',
+    version: '2.2.0',
     inputSchema: {
       type: 'object',
       properties: {
@@ -122,7 +127,7 @@ export class BMWSkill extends Skill {
         },
         device_code: {
           type: 'string',
-          description: 'Device code from authorize step 1 (for polling token in step 2)',
+          description: 'Device code from authorize step 1 (optional — if omitted, auto-resumes pending authorization)',
         },
         from: {
           type: 'string',
@@ -188,6 +193,16 @@ export class BMWSkill extends Skill {
   private async authorize(deviceCode?: string): Promise<SkillResult> {
     if (deviceCode) {
       return await this.pollToken(deviceCode);
+    }
+
+    // Auto-resume: if a pending device code exists, poll it instead of generating a new one
+    const pending = await this.loadTokensFromDisk();
+    if (pending?.deviceCode && pending?.codeVerifier) {
+      try {
+        return await this.pollToken(pending.deviceCode);
+      } catch {
+        // Pending code expired or invalid — fall through to generate a new one
+      }
     }
 
     // Step 1: Request device code with PKCE
@@ -434,10 +449,16 @@ export class BMWSkill extends Skill {
 
   private async loadTokens(): Promise<BMWTokens | null> {
     if (this.tokens) return this.tokens;
+    return await this.loadTokensFromDisk();
+  }
+
+  /** Read tokens from disk, bypassing in-memory cache */
+  private async loadTokensFromDisk(): Promise<BMWTokens | null> {
     try {
       const raw = await readFile(TOKEN_PATH, 'utf-8');
-      this.tokens = JSON.parse(raw) as BMWTokens;
-      return this.tokens;
+      const tokens = JSON.parse(raw) as BMWTokens;
+      this.tokens = tokens;
+      return tokens;
     } catch {
       return null;
     }
