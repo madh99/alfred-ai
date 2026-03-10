@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-03-10
+
+### Fixed
+- **max_tokens-Continuation bei leerem Content** — GPT-5.4 liefert bei Output-Limit manchmal `content: null` statt den abgeschnittenen Text. Continuation greift jetzt auch bei leerem Content und fordert das LLM auf, kürzer zu antworten statt stumm `(no response)` zu liefern
+
 ## [0.11.4] - 2026-03-10
 
 ### Fixed
