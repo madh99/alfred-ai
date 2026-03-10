@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-03-10
+
+### Fixed
+- **HA History/Logbook — fehlender `end_time` Parameter** — Home Assistant API `/api/history/period/{start}` und `/api/logbook/{start}` lieferten ohne `end_time` nur ~24h Daten statt des angeforderten Zeitraums. Behoben durch explizites `end_time=now` in beiden Aufrufen
+
 ## [0.11.2] - 2026-03-10
 
 ### Added

@@ -471,7 +471,10 @@ export class HomeAssistantSkill extends Skill {
 
   private async getHistory(entityId?: string, period?: string): Promise<SkillResult> {
     const ts = parsePeriod(period ?? '1h');
-    const params = entityId ? `?filter_entity_id=${entityId}` : '';
+    const now = new Date().toISOString();
+    const params = entityId
+      ? `?filter_entity_id=${entityId}&end_time=${now}`
+      : `?end_time=${now}`;
     const data = await this.api<any[][]>('GET', `/api/history/period/${ts}${params}`);
 
     const lines = ['## History', ''];
@@ -503,7 +506,10 @@ export class HomeAssistantSkill extends Skill {
 
   private async getLogbook(entityId?: string, period?: string): Promise<SkillResult> {
     const ts = parsePeriod(period ?? '1h');
-    const params = entityId ? `?entity=${entityId}` : '';
+    const now = new Date().toISOString();
+    const params = entityId
+      ? `?entity=${entityId}&end_time=${now}`
+      : `?end_time=${now}`;
     const data = await this.api<any[]>('GET', `/api/logbook/${ts}${params}`);
 
     const lines = ['## Logbook', ''];
