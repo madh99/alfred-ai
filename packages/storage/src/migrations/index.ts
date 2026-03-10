@@ -456,4 +456,31 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 22,
+    description: 'Activity log for comprehensive audit trail',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS activity_log (
+          id TEXT PRIMARY KEY,
+          timestamp TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_id TEXT,
+          user_id TEXT,
+          platform TEXT,
+          chat_id TEXT,
+          action TEXT NOT NULL,
+          outcome TEXT NOT NULL,
+          error_message TEXT,
+          duration_ms INTEGER,
+          details TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity_log(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_activity_type ON activity_log(event_type, timestamp);
+        CREATE INDEX IF NOT EXISTS idx_activity_source ON activity_log(source, source_id);
+        CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_log(user_id, timestamp);
+      `);
+    },
+  },
 ];

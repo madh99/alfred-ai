@@ -99,6 +99,7 @@ export class MessagePipeline {
   private readonly conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
 
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
+  private activityLogger?: import('./activity-logger.js').ActivityLogger;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -118,6 +119,10 @@ export class MessagePipeline {
 
   setConfirmationQueue(queue: import('./confirmation-queue.js').ConfirmationQueue): void {
     this.confirmationQueue = queue;
+  }
+
+  setActivityLogger(logger: import('./activity-logger.js').ActivityLogger): void {
+    this.activityLogger = logger;
   }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
@@ -824,6 +829,10 @@ export class MessagePipeline {
           { tool: toolCall.name, reason: evaluation.reason, rule: evaluation.matchedRule?.id },
           'Skill execution denied by security rules',
         );
+        this.activityLogger?.logSkillExec({
+          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          skillName: toolCall.name, outcome: 'denied', error: evaluation.reason,
+        });
         return {
           content: `Access denied: ${evaluation.reason}`,
           isError: true,
@@ -857,13 +866,27 @@ export class MessagePipeline {
           ? { ...context, onProgress }
           : context;
 
+      const execStart = Date.now();
       try {
         const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, undefined, tracker);
+        this.activityLogger?.logSkillExec({
+          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          skillName: toolCall.name, outcome: result.success ? 'success' : 'error',
+          durationMs: Date.now() - execStart, error: result.error,
+        });
         return {
           content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
           isError: !result.success,
           attachments: result.attachments,
         };
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        this.activityLogger?.logSkillExec({
+          userId: context.userId, platform: context.platform, chatId: context.chatId,
+          skillName: toolCall.name, outcome: 'error',
+          durationMs: Date.now() - execStart, error: errorMsg,
+        });
+        throw err;
       } finally {
         if (agentId) {
           this.activeAgents.delete(agentId);

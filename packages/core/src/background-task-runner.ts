@@ -4,6 +4,7 @@ import type { BackgroundTaskRepository, UserRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, BackgroundTask } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
+import type { ActivityLogger } from './activity-logger.js';
 
 export class BackgroundTaskRunner {
   private pollTimer?: ReturnType<typeof setInterval>;
@@ -19,6 +20,7 @@ export class BackgroundTaskRunner {
     private readonly adapters: Map<Platform, MessagingAdapter>,
     private readonly users: UserRepository,
     private readonly logger: Logger,
+    private readonly activityLogger?: ActivityLogger,
   ) {}
 
   start(): void {
@@ -52,6 +54,7 @@ export class BackgroundTaskRunner {
 
   private async runTask(task: BackgroundTask): Promise<void> {
     this.taskRepo.updateStatus(task.id, 'running');
+    const startMs = Date.now();
 
     try {
       const skill = this.skillRegistry.get(task.skillName);
@@ -90,6 +93,12 @@ export class BackgroundTaskRunner {
         resultJson,
         result.error,
       );
+      this.activityLogger?.logBackgroundTask({
+        taskId: task.id, skillName: task.skillName,
+        platform: task.platform, chatId: task.chatId, userId: task.userId,
+        outcome: result.success ? 'success' : 'error',
+        durationMs: Date.now() - startMs, error: result.error,
+      });
 
       const adapter = this.adapters.get(task.platform as Platform);
       if (adapter) {
@@ -102,6 +111,11 @@ export class BackgroundTaskRunner {
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.taskRepo.updateStatus(task.id, 'failed', undefined, errorMsg);
       this.logger.error({ taskId: task.id, err }, 'Background task failed');
+      this.activityLogger?.logBackgroundTask({
+        taskId: task.id, skillName: task.skillName,
+        platform: task.platform, chatId: task.chatId, userId: task.userId,
+        outcome: 'error', durationMs: Date.now() - startMs, error: errorMsg,
+      });
 
       const adapter = this.adapters.get(task.platform as Platform);
       if (adapter) {

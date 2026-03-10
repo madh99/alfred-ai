@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -60,6 +60,7 @@ import { ActiveLearningService } from './active-learning/active-learning-service
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
+import { ActivityLogger } from './activity-logger.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -101,6 +102,8 @@ export class Alfred {
     const linkTokenRepo = new LinkTokenRepository(db);
     const backgroundTaskRepo = new BackgroundTaskRepository(db);
     const scheduledActionRepo = new ScheduledActionRepository(db);
+    const activityRepo = new ActivityRepository(db);
+    const activityLogger = new ActivityLogger(activityRepo, this.logger.child({ component: 'activity' }));
     this.logger.info('Storage initialized');
 
     // 2. Initialize security — load rules from YAML files
@@ -255,6 +258,7 @@ export class Alfred {
           'telegram' as Platform,
           this.config.calendar.vorlauf,
           this.logger.child({ component: 'calendar-watcher' }),
+          activityLogger,
         );
       }
     }
@@ -473,6 +477,7 @@ export class Alfred {
       this.adapters,
       userRepo,
       this.logger.child({ component: 'background-tasks' }),
+      activityLogger,
     );
 
     // 7c. Initialize proactive scheduler
@@ -487,6 +492,7 @@ export class Alfred {
       this.pipeline,
       this.formatter,
       conversationManager,
+      activityLogger,
     );
 
     // 7d. Initialize watch engine (condition-based alerts)
@@ -501,6 +507,7 @@ export class Alfred {
       skillSandbox,
       this.adapters,
       this.logger.child({ component: 'confirmation-queue' }),
+      activityLogger,
     );
 
     this.watchEngine = new WatchEngine(
@@ -511,10 +518,12 @@ export class Alfred {
       userRepo,
       this.logger.child({ component: 'watch-engine' }),
       this.confirmationQueue,
+      activityLogger,
     );
 
-    // Wire confirmation queue into pipeline for message interception
+    // Wire confirmation queue and activity logger into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
+    this.pipeline.setActivityLogger(activityLogger);
 
     // 8. Initialize messaging adapters
     await this.initializeAdapters();

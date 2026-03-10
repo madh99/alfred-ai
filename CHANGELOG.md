@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-03-10
+
+### Added
+- **Activity Log** — Vollständiger Audit-Trail für alle autonomen Aktionen. Neue `activity_log`-Tabelle erfasst Skill-Ausführungen, Watch-Trigger, Watch-Actions, Bestätigungs-Entscheidungen, Scheduled Tasks, Background Tasks und Kalender-Benachrichtigungen mit Zeitstempel, Dauer, Outcome und Details
+- **CLI: `alfred logs --activity`** — Activity-Log abfragen mit Filtern (`--type`, `--source`, `--outcome`, `--since`) und Statistik-Ansicht (`--stats`)
+
 ## [0.11.1] - 2026-03-10
 
 ### Fixed

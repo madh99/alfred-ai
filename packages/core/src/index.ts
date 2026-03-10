@@ -27,3 +27,4 @@ export { ConversationSummarizer } from './conversation-summarizer.js';
 export { evaluateCondition, evaluateCompositeCondition, extractField } from './condition-evaluator.js';
 export { ConfirmationQueue } from './confirmation-queue.js';
 export { CalendarWatcher } from './calendar-watcher.js';
+export { ActivityLogger } from './activity-logger.js';

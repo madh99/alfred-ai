@@ -3,6 +3,7 @@ import type { CalendarNotificationRepository } from '@alfred/storage';
 import type { CalendarProvider, CalendarEvent } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, CalendarConfig } from '@alfred/types';
+import type { ActivityLogger } from './activity-logger.js';
 
 export class CalendarWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -18,6 +19,7 @@ export class CalendarWatcher {
     private readonly defaultPlatform: Platform,
     private readonly config: NonNullable<CalendarConfig['vorlauf']>,
     private readonly logger: Logger,
+    private readonly activityLogger?: ActivityLogger,
   ) {
     this.minutesBefore = config.minutesBefore ?? 15;
   }
@@ -94,8 +96,17 @@ export class CalendarWatcher {
         await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
         this.notifRepo.markNotified(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
         this.logger.info({ eventId: event.id, title: event.title }, 'Calendar vorlauf notification sent');
+        this.activityLogger?.logCalendarNotify({
+          eventId: event.id, eventTitle: event.title,
+          platform: this.defaultPlatform, chatId: this.defaultChatId, outcome: 'success',
+        });
       } catch (err) {
         this.logger.error({ err, eventId: event.id }, 'Failed to send calendar notification');
+        this.activityLogger?.logCalendarNotify({
+          eventId: event.id, eventTitle: event.title,
+          platform: this.defaultPlatform, chatId: this.defaultChatId, outcome: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

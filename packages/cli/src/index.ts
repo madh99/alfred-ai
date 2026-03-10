@@ -40,6 +40,12 @@ Commands:
   status         Show status overview (adapters, LLM, rules)
   auth <provider>  OAuth token setup (e.g., alfred auth microsoft)
   logs [--tail N] Show recent audit log entries (default: 20)
+                   --activity          Show activity log instead of security audit log
+                   --type <type>       Filter by event type (skill_exec, watch_trigger, etc.)
+                   --source <source>   Filter by source (user, watch, scheduled, background, system)
+                   --outcome <outcome> Filter by outcome (success, error, denied, approved, etc.)
+                   --since <date>      Show entries since date (ISO format)
+                   --stats             Show summary statistics
 
 Options:
   --help, -h     Show this help message
@@ -168,7 +174,14 @@ async function main(): Promise<void> {
         tail = tailNum;
       }
       const { logsCommand } = await import('./commands/logs.js');
-      await logsCommand(tail);
+      await logsCommand(tail, {
+        activity: !!parsed.flags['activity'],
+        type: typeof parsed.flags['type'] === 'string' ? parsed.flags['type'] : undefined,
+        source: typeof parsed.flags['source'] === 'string' ? parsed.flags['source'] : undefined,
+        outcome: typeof parsed.flags['outcome'] === 'string' ? parsed.flags['outcome'] : undefined,
+        since: typeof parsed.flags['since'] === 'string' ? parsed.flags['since'] : undefined,
+        stats: !!parsed.flags['stats'],
+      });
       break;
     }
 

@@ -3,6 +3,7 @@ import type { ConfirmationRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, SkillContext } from '@alfred/types';
+import type { ActivityLogger } from './activity-logger.js';
 
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
@@ -13,6 +14,7 @@ export class ConfirmationQueue {
     private readonly skillSandbox: SkillSandbox,
     private readonly adapters: Map<Platform, MessagingAdapter>,
     private readonly logger: Logger,
+    private readonly activityLogger?: ActivityLogger,
   ) {}
 
   start(): void {
@@ -88,11 +90,22 @@ export class ConfirmationQueue {
           if (adapter) {
             await adapter.sendMessage(chatId, `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`);
           }
+          this.activityLogger?.logConfirmation({
+            confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
+            source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
+            userId: context.userId, platform, chatId,
+          });
         } catch (err) {
           this.logger.error({ err, confirmationId: pending.id }, 'Confirmed action failed');
           if (adapter) {
             await adapter.sendMessage(chatId, `\u274C Aktion fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`);
           }
+          this.activityLogger?.logConfirmation({
+            confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
+            source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
+            userId: context.userId, platform, chatId,
+            error: err instanceof Error ? err.message : String(err),
+          });
         }
       } else {
         if (adapter) {
@@ -104,6 +117,11 @@ export class ConfirmationQueue {
       if (adapter) {
         await adapter.sendMessage(chatId, `\u274C Aktion abgelehnt: ${pending.description}`);
       }
+      this.activityLogger?.logConfirmation({
+        confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
+        source: pending.source, sourceId: pending.sourceId, outcome: 'rejected',
+        userId: context.userId, platform, chatId,
+      });
     }
 
     return true;
@@ -113,6 +131,11 @@ export class ConfirmationQueue {
     try {
       const expired = this.confirmRepo.expireOld();
       for (const conf of expired) {
+        this.activityLogger?.logConfirmation({
+          confirmationId: conf.id, skillName: conf.skillName, description: conf.description,
+          source: conf.source, sourceId: conf.sourceId, outcome: 'expired',
+          platform: conf.platform, chatId: conf.chatId,
+        });
         const adapter = this.adapters.get(conf.platform as Platform);
         if (adapter) {
           try {

@@ -7,6 +7,7 @@ import type { UserRepository } from '@alfred/storage';
 import { extractField, evaluateCondition, evaluateCompositeCondition } from './condition-evaluator.js';
 import { buildSkillContext } from './context-factory.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
+import type { ActivityLogger } from './activity-logger.js';
 
 const OPERATOR_LABELS: Record<string, string> = {
   lt: '<', gt: '>', lte: '<=', gte: '>=',
@@ -27,6 +28,7 @@ export class WatchEngine {
     private readonly users: UserRepository,
     private readonly logger: Logger,
     private readonly confirmationQueue?: ConfirmationQueue,
+    private readonly activityLogger?: ActivityLogger,
   ) {}
 
   start(): void {
@@ -180,10 +182,18 @@ export class WatchEngine {
           try {
             await this.skillSandbox.execute(actionSkill, watch.actionSkillParams ?? {}, context);
             this.watchRepo.updateActionError(watch.id, null);
+            this.activityLogger?.logWatchAction({
+              watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
+              platform: watch.platform, chatId: watch.chatId, outcome: 'success',
+            });
           } catch (err) {
             actionError = err instanceof Error ? err.message : String(err);
             this.watchRepo.updateActionError(watch.id, actionError);
             this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
+            this.activityLogger?.logWatchAction({
+              watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
+              platform: watch.platform, chatId: watch.chatId, outcome: 'error', error: actionError,
+            });
           }
         } else {
           actionError = `Action skill "${watch.actionSkillName}" not found`;
@@ -211,8 +221,17 @@ export class WatchEngine {
           try {
             await adapter.sendMessage(watch.chatId, alertText);
             this.logger.info({ watchId: watch.id, name: watch.name, value: displayValue }, 'Watch alert sent');
+            this.activityLogger?.logWatchTrigger({
+              watchId: watch.id, watchName: watch.name, value: displayValue,
+              platform: watch.platform, chatId: watch.chatId, outcome: 'success',
+            });
           } catch (err) {
             this.logger.error({ err, watchId: watch.id }, 'Failed to send watch alert');
+            this.activityLogger?.logWatchTrigger({
+              watchId: watch.id, watchName: watch.name, value: displayValue,
+              platform: watch.platform, chatId: watch.chatId, outcome: 'error',
+              error: err instanceof Error ? err.message : String(err),
+            });
           }
         }
       }

@@ -9,6 +9,7 @@ import type { MessagePipeline } from './message-pipeline.js';
 import type { ResponseFormatter } from './response-formatter.js';
 import type { ConversationManager } from './conversation-manager.js';
 import { buildSkillContext } from './context-factory.js';
+import type { ActivityLogger } from './activity-logger.js';
 
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
@@ -25,6 +26,7 @@ export class ProactiveScheduler {
     private readonly pipeline?: MessagePipeline,
     private readonly formatter?: ResponseFormatter,
     private readonly conversationManager?: ConversationManager,
+    private readonly activityLogger?: ActivityLogger,
   ) {}
 
   start(): void {
@@ -58,6 +60,7 @@ export class ProactiveScheduler {
 
   private async executeAction(action: ScheduledAction): Promise<void> {
     const now = new Date().toISOString();
+    const startMs = Date.now();
     this.logger.info({ actionId: action.id, name: action.name }, 'Executing scheduled action');
 
     let resultText: string;
@@ -164,6 +167,17 @@ export class ProactiveScheduler {
       this.logger.warn({ actionId: action.id, skillName: action.skillName }, 'Unknown skill for scheduled action');
       resultText = `Scheduled action "${action.name}" failed: unknown skill "${action.skillName}"`;
     }
+
+    // Log activity
+    const isError = resultText.startsWith('\u274C');
+    this.activityLogger?.logScheduledExec({
+      actionId: action.id, actionName: action.name,
+      skillName: action.skillName ?? undefined,
+      platform: action.platform, chatId: action.chatId, userId: action.userId,
+      outcome: isError ? 'error' : 'success',
+      durationMs: Date.now() - startMs,
+      error: isError ? resultText : undefined,
+    });
 
     // Send result to user — for prompt_template tasks whose prompt contains
     // "antworte NICHTS" or similar, use whitelist logic: only send if the
