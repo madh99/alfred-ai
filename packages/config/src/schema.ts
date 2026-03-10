@@ -132,6 +132,12 @@ export const CalendarConfigSchema = z.object({
   caldav: CalDAVConfigSchema.optional(),
   google: GoogleCalendarConfigSchema.optional(),
   microsoft: MicrosoftCalendarConfigSchema.optional(),
+  vorlauf: z.object({
+    enabled: z.boolean(),
+    minutesBefore: z.coerce.number().min(1).max(120).default(15),
+    enrichWithRoute: z.boolean().optional(),
+    enrichWithMemories: z.boolean().optional(),
+  }).optional(),
 });
 
 export const MCPServerConfigSchema = z.object({

@@ -1,6 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import type { Watch, WatchCondition } from '@alfred/types';
+import type { Watch, WatchCondition, CompositeCondition } from '@alfred/types';
 
 export class WatchRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
@@ -13,8 +13,10 @@ export class WatchRepository {
       INSERT INTO watches
         (id, chat_id, platform, name, skill_name, skill_params,
          condition_field, condition_operator, condition_value,
-         interval_minutes, cooldown_minutes, enabled, created_at, message_template)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         interval_minutes, cooldown_minutes, enabled, created_at, message_template,
+         action_skill_name, action_skill_params, action_on_trigger, conditions_json,
+         requires_confirmation)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       watch.chatId,
@@ -30,6 +32,11 @@ export class WatchRepository {
       watch.enabled ? 1 : 0,
       now,
       watch.messageTemplate ?? null,
+      watch.actionSkillName ?? null,
+      watch.actionSkillParams ? JSON.stringify(watch.actionSkillParams) : null,
+      watch.actionOnTrigger ?? 'alert',
+      watch.compositeCondition ? JSON.stringify(watch.compositeCondition) : null,
+      watch.requiresConfirmation ? 1 : 0,
     );
 
     return {
@@ -48,6 +55,11 @@ export class WatchRepository {
       lastValue: null,
       createdAt: now,
       messageTemplate: watch.messageTemplate,
+      compositeCondition: watch.compositeCondition,
+      actionSkillName: watch.actionSkillName,
+      actionSkillParams: watch.actionSkillParams,
+      actionOnTrigger: watch.actionOnTrigger ?? 'alert',
+      requiresConfirmation: watch.requiresConfirmation,
     };
   }
 
@@ -105,6 +117,12 @@ export class WatchRepository {
     return result.changes > 0;
   }
 
+  updateActionError(id: string, error: string | null): void {
+    this.db.prepare(
+      `UPDATE watches SET last_action_error = ? WHERE id = ?`,
+    ).run(error, id);
+  }
+
   getById(id: string): Watch | undefined {
     const row = this.db.prepare(
       `SELECT * FROM watches WHERE id = ?`,
@@ -126,6 +144,11 @@ export class WatchRepository {
       condition.value = isNaN(num) ? row.condition_value as string : num;
     }
 
+    let compositeCondition: CompositeCondition | undefined;
+    if (row.conditions_json) {
+      try { compositeCondition = JSON.parse(row.conditions_json as string) as CompositeCondition; } catch { /* empty */ }
+    }
+
     return {
       id: row.id as string,
       chatId: row.chat_id as string,
@@ -142,6 +165,14 @@ export class WatchRepository {
       lastValue: (row.last_value as string) ?? null,
       createdAt: row.created_at as string,
       messageTemplate: row.message_template as string | undefined,
+      compositeCondition,
+      actionSkillName: row.action_skill_name as string | undefined,
+      actionSkillParams: row.action_skill_params
+        ? (() => { try { return JSON.parse(row.action_skill_params as string); } catch { return undefined; } })()
+        : undefined,
+      actionOnTrigger: (row.action_on_trigger as Watch['actionOnTrigger']) ?? 'alert',
+      lastActionError: row.last_action_error as string | undefined,
+      requiresConfirmation: (row.requires_confirmation as number) === 1,
     };
   }
 }

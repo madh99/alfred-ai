@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult, WatchCondition } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, WatchCondition, CompositeCondition } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type { WatchRepository } from '@alfred/storage';
@@ -75,6 +75,41 @@ export class WatchSkill extends Skill {
           type: 'string',
           description: 'Custom alert message (for create)',
         },
+        action_skill_name: {
+          type: 'string',
+          description: 'Skill to execute when condition triggers (for create). Enables automation: watch detects condition → executes action.',
+        },
+        action_skill_params: {
+          type: 'object',
+          description: 'Parameters for the action skill (for create)',
+        },
+        action_on_trigger: {
+          type: 'string',
+          enum: ['alert', 'action_only', 'alert_and_action'],
+          description: 'What to do on trigger: alert (default), action_only, or alert_and_action (for create)',
+        },
+        requires_confirmation: {
+          type: 'boolean',
+          description: 'If true, action requires user confirmation before execution (for create)',
+        },
+        conditions: {
+          type: 'array',
+          description: 'Array of conditions for composite logic (alternative to single condition_field/operator/value). Each: {field, operator, value?}',
+          items: {
+            type: 'object',
+            properties: {
+              field: { type: 'string' },
+              operator: { type: 'string', enum: ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased'] },
+              value: { type: ['string', 'number'] },
+            },
+            required: ['field', 'operator'],
+          },
+        },
+        conditions_logic: {
+          type: 'string',
+          enum: ['and', 'or'],
+          description: 'Logic for composite conditions: "and" (all must match) or "or" (any must match). Default: "and"',
+        },
         watch_id: {
           type: 'string',
           description: 'Watch ID (for enable, disable, delete)',
@@ -134,11 +169,46 @@ export class WatchSkill extends Skill {
     const intervalMinutes = (input.interval_minutes as number) ?? 15;
     const cooldownMinutes = (input.cooldown_minutes as number) ?? 30;
     const messageTemplate = input.message_template as string | undefined;
+    const actionSkillName = input.action_skill_name as string | undefined;
+    const actionSkillParams = input.action_skill_params as Record<string, unknown> | undefined;
+    const actionOnTrigger = (input.action_on_trigger as 'alert' | 'action_only' | 'alert_and_action') ?? 'alert';
+    const requiresConfirmation = input.requires_confirmation as boolean | undefined;
+    const conditionsArray = input.conditions as Array<{ field: string; operator: string; value?: string | number }> | undefined;
+    const conditionsLogic = (input.conditions_logic as 'and' | 'or') ?? 'and';
 
     if (!name) return { success: false, error: 'Missing required field "name"' };
     if (!skillName) return { success: false, error: 'Missing required field "skill_name"' };
-    if (!conditionField) return { success: false, error: 'Missing required field "condition_field"' };
-    if (!conditionOperator || !VALID_OPERATORS.includes(conditionOperator as WatchCondition['operator'])) {
+
+    // Validate: either single condition or conditions array must be provided
+    const hasComposite = Array.isArray(conditionsArray) && conditionsArray.length > 0;
+    const hasSingle = !!conditionField && !!conditionOperator;
+
+    if (!hasComposite && !hasSingle) {
+      return { success: false, error: 'Missing conditions: provide either "condition_field"+"condition_operator" or a "conditions" array' };
+    }
+
+    // Validate composite conditions
+    let compositeCondition: CompositeCondition | undefined;
+    if (hasComposite) {
+      for (const cond of conditionsArray!) {
+        if (!cond.field || !cond.operator) {
+          return { success: false, error: 'Each condition must have "field" and "operator"' };
+        }
+        if (!VALID_OPERATORS.includes(cond.operator as WatchCondition['operator'])) {
+          return { success: false, error: `Invalid operator "${cond.operator}" in conditions. Must be one of: ${VALID_OPERATORS.join(', ')}` };
+        }
+      }
+      compositeCondition = {
+        logic: conditionsLogic,
+        conditions: conditionsArray!.map((c) => ({
+          field: c.field,
+          operator: c.operator as WatchCondition['operator'],
+          value: c.value,
+        })),
+      };
+    }
+
+    if (hasSingle && !VALID_OPERATORS.includes(conditionOperator as WatchCondition['operator'])) {
       return { success: false, error: `Invalid "condition_operator". Must be one of: ${VALID_OPERATORS.join(', ')}` };
     }
     if (intervalMinutes < 1) return { success: false, error: 'interval_minutes must be >= 1' };
@@ -164,6 +234,11 @@ export class WatchSkill extends Skill {
       }
     }
 
+    // Build the primary condition — use first composite condition as fallback for the required single condition
+    const primaryField = conditionField ?? (compositeCondition ? compositeCondition.conditions[0].field : '');
+    const primaryOperator = (conditionOperator ?? (compositeCondition ? compositeCondition.conditions[0].operator : 'changed')) as WatchCondition['operator'];
+    const primaryValue = conditionValue ?? (compositeCondition ? compositeCondition.conditions[0].value : undefined);
+
     const watch = this.watchRepo.create({
       chatId: context.chatId,
       platform: context.platform,
@@ -171,20 +246,29 @@ export class WatchSkill extends Skill {
       skillName,
       skillParams,
       condition: {
-        field: conditionField,
-        operator: conditionOperator as WatchCondition['operator'],
-        value: conditionValue,
+        field: primaryField,
+        operator: primaryOperator,
+        value: primaryValue,
       },
       intervalMinutes,
       cooldownMinutes,
       enabled: true,
       messageTemplate,
+      compositeCondition,
+      actionSkillName,
+      actionSkillParams,
+      actionOnTrigger,
+      requiresConfirmation,
     });
+
+    const condDisplay = compositeCondition
+      ? `${compositeCondition.logic.toUpperCase()}(${compositeCondition.conditions.map((c) => `${c.field} ${c.operator}${c.value != null ? ' ' + c.value : ''}`).join(', ')})`
+      : `${primaryField} ${primaryOperator}${primaryValue != null ? ' ' + primaryValue : ''}`;
 
     return {
       success: true,
-      data: { watchId: watch.id, name, skillName, conditionField, conditionOperator, conditionValue, intervalMinutes },
-      display: `Watch erstellt (${watch.id}): "${name}" — pollt "${skillName}" alle ${intervalMinutes}min, Bedingung: ${conditionField} ${conditionOperator}${conditionValue != null ? ' ' + conditionValue : ''}`,
+      data: { watchId: watch.id, name, skillName, conditionField: primaryField, conditionOperator: primaryOperator, conditionValue: primaryValue, intervalMinutes, compositeCondition },
+      display: `Watch erstellt (${watch.id}): "${name}" — pollt "${skillName}" alle ${intervalMinutes}min, Bedingung: ${condDisplay}${actionSkillName ? ` → Aktion: ${actionSkillName} (${actionOnTrigger})` : ''}`,
     };
   }
 
@@ -199,7 +283,8 @@ export class WatchSkill extends Skill {
       const status = w.enabled ? '\u2705' : '\u23F8\uFE0F';
       const condStr = `${w.condition.field} ${w.condition.operator}${w.condition.value != null ? ' ' + w.condition.value : ''}`;
       const lastCheck = w.lastCheckedAt ? ` | letzter Check: ${w.lastCheckedAt}` : '';
-      return `- ${status} ${w.id}: "${w.name}" [${w.skillName}, ${w.intervalMinutes}min] ${condStr}${lastCheck}`;
+      const actionInfo = w.actionSkillName ? ` → Aktion: ${w.actionSkillName}` : '';
+      return `- ${status} ${w.id}: "${w.name}" [${w.skillName}, ${w.intervalMinutes}min] ${condStr}${actionInfo}${lastCheck}`;
     });
 
     return {

@@ -82,6 +82,11 @@ export interface WatchCondition {
   value?: string | number;
 }
 
+export interface CompositeCondition {
+  logic: 'and' | 'or';
+  conditions: WatchCondition[];
+}
+
 export interface Watch {
   id: string;
   chatId: string;
@@ -98,6 +103,27 @@ export interface Watch {
   lastValue: string | null;
   createdAt: string;
   messageTemplate?: string;
+  compositeCondition?: CompositeCondition;
+  actionSkillName?: string;
+  actionSkillParams?: Record<string, unknown>;
+  actionOnTrigger: 'alert' | 'action_only' | 'alert_and_action';
+  lastActionError?: string;
+  requiresConfirmation?: boolean;
+}
+
+export interface PendingConfirmation {
+  id: string;
+  chatId: string;
+  platform: string;
+  source: 'watch' | 'scheduled';
+  sourceId: string;
+  description: string;
+  skillName: string;
+  skillParams: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+  resolvedAt?: string;
 }
 
 export interface Document {

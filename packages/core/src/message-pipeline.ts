@@ -98,6 +98,8 @@ export class MessagePipeline {
   private readonly documentProcessor?: import('./document-processor.js').DocumentProcessor;
   private readonly conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
 
+  private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
+
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
   private agentIdCounter = 0;
@@ -113,6 +115,10 @@ export class MessagePipeline {
   };
 
   getMetrics(): PipelineMetrics { return { ...this.metrics }; }
+
+  setConfirmationQueue(queue: import('./confirmation-queue.js').ConfirmationQueue): void {
+    this.confirmationQueue = queue;
+  }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
     this.metrics.requestsTotal++;
@@ -156,6 +162,22 @@ export class MessagePipeline {
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
+
+    // Check for pending confirmation response
+    if (this.confirmationQueue && message.text) {
+      const { context: confContext } = buildSkillContext(this.users, {
+        platformUserId: message.userId,
+        platform: message.platform,
+        chatId: message.chatId,
+        chatType: message.chatType,
+        userName: message.userName,
+        displayName: message.displayName,
+      });
+      const handled = await this.confirmationQueue.checkForConfirmation(
+        message.chatId, message.platform, message.text, confContext,
+      );
+      if (handled) return { text: '' }; // confirmation queue already sent its response via adapter
+    }
 
     try {
       // 1. Resolve user, master ID, and linked platform IDs via central factory

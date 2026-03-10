@@ -24,3 +24,6 @@ export { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 export { scanSignal } from './active-learning/signal-scanner.js';
 export type { SignalResult } from './active-learning/signal-scanner.js';
 export { ConversationSummarizer } from './conversation-summarizer.js';
+export { evaluateCondition, evaluateCompositeCondition, extractField } from './condition-evaluator.js';
+export { ConfirmationQueue } from './confirmation-queue.js';
+export { CalendarWatcher } from './calendar-watcher.js';

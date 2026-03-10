@@ -120,6 +120,12 @@ export interface CalendarConfig {
   caldav?: CalDAVConfig;
   google?: GoogleCalendarConfig;
   microsoft?: MicrosoftCalendarConfig;
+  vorlauf?: {
+    enabled: boolean;
+    minutesBefore: number;
+    enrichWithRoute?: boolean;
+    enrichWithMemories?: boolean;
+  };
 }
 
 export interface MCPServerConfig {

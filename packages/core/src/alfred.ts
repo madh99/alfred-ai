@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -55,9 +55,11 @@ import { DocumentProcessor } from './document-processor.js';
 import { BackgroundTaskRunner } from './background-task-runner.js';
 import { ProactiveScheduler } from './proactive-scheduler.js';
 import { WatchEngine } from './watch-engine.js';
+import { ConfirmationQueue } from './confirmation-queue.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
+import { CalendarWatcher } from './calendar-watcher.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -68,12 +70,14 @@ export class Alfred {
   private backgroundTaskRunner?: BackgroundTaskRunner;
   private proactiveScheduler?: ProactiveScheduler;
   private watchEngine?: WatchEngine;
+  private confirmationQueue?: ConfirmationQueue;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
   private userRepo!: UserRepository;
   private skillRegistry!: SkillRegistry;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
+  private calendarWatcher?: CalendarWatcher;
   private usageRepo?: UsageRepository;
 
   constructor(private config: AlfredConfig) {
@@ -225,9 +229,10 @@ export class Alfred {
 
     // 4b. Initialize calendar (optional)
     let calendarSkill: CalendarSkill | undefined;
+    let calendarProvider: import('@alfred/skills').CalendarProvider | undefined;
     if (this.config.calendar) {
       try {
-        const calendarProvider = await createCalendarProvider(this.config.calendar);
+        calendarProvider = await createCalendarProvider(this.config.calendar);
         calendarSkill = new CalendarSkill(calendarProvider);
         skillRegistry.register(calendarSkill);
         this.logger.info({ provider: this.config.calendar.provider }, 'Calendar initialized');
@@ -236,6 +241,23 @@ export class Alfred {
       }
     }
     this.calendarSkill = calendarSkill;
+
+    // 4b2. Initialize calendar vorlauf watcher (optional)
+    if (calendarProvider && this.config.calendar?.vorlauf?.enabled) {
+      const calNotifRepo = new CalendarNotificationRepository(db);
+      const ownerUserId = this.config.security?.ownerUserId;
+      if (ownerUserId) {
+        this.calendarWatcher = new CalendarWatcher(
+          calendarProvider,
+          calNotifRepo,
+          this.adapters,
+          ownerUserId,
+          'telegram' as Platform,
+          this.config.calendar.vorlauf,
+          this.logger.child({ component: 'calendar-watcher' }),
+        );
+      }
+    }
 
     // 4c. Initialize MCP servers (optional)
     if (this.config.mcp?.servers?.length) {
@@ -470,6 +492,17 @@ export class Alfred {
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(db);
     skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
+
+    // 7e. Initialize confirmation queue (human-in-the-loop for watch actions)
+    const confirmRepo = new ConfirmationRepository(db);
+    this.confirmationQueue = new ConfirmationQueue(
+      confirmRepo,
+      skillRegistry,
+      skillSandbox,
+      this.adapters,
+      this.logger.child({ component: 'confirmation-queue' }),
+    );
+
     this.watchEngine = new WatchEngine(
       watchRepo,
       skillRegistry,
@@ -477,7 +510,11 @@ export class Alfred {
       this.adapters,
       userRepo,
       this.logger.child({ component: 'watch-engine' }),
+      this.confirmationQueue,
     );
+
+    // Wire confirmation queue into pipeline for message interception
+    this.pipeline.setConfirmationQueue(this.confirmationQueue);
 
     // 8. Initialize messaging adapters
     await this.initializeAdapters();
@@ -565,6 +602,8 @@ export class Alfred {
     this.backgroundTaskRunner?.start();
     this.proactiveScheduler?.start();
     this.watchEngine?.start();
+    this.confirmationQueue?.start();
+    this.calendarWatcher?.start();
 
     if (this.adapters.size === 0) {
       this.logger.warn('No messaging adapters enabled. Configure at least one platform.');
@@ -597,6 +636,8 @@ export class Alfred {
     this.backgroundTaskRunner?.stop();
     this.proactiveScheduler?.stop();
     this.watchEngine?.stop();
+    this.confirmationQueue?.stop();
+    this.calendarWatcher?.stop();
 
     // Shutdown MCP servers
     if (this.mcpManager) {
@@ -817,29 +858,34 @@ export class Alfred {
         };
 
         const result = await this.pipeline.process(message, onProgress);
-        const formatted = this.formatter.format(result.text, message.platform);
-        const sendOpts = formatted.parseMode !== 'text'
-          ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
-          : undefined;
 
-        // Replace status message with final response, or send new if no status was shown.
-        // For the API adapter, always use sendMessage so the client receives a 'response' event.
-        try {
-          if (statusMessageId && platform !== 'api') {
-            try {
-              await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
-            } catch (err) {
-              this.logger.debug({ err, chatId: message.chatId }, 'Final response edit failed, sending as new message');
+        // Empty text means the message was handled internally (e.g. confirmation response)
+        // — skip sending to avoid empty Telegram messages
+        if (result.text) {
+          const formatted = this.formatter.format(result.text, message.platform);
+          const sendOpts = formatted.parseMode !== 'text'
+            ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
+            : undefined;
+
+          // Replace status message with final response, or send new if no status was shown.
+          // For the API adapter, always use sendMessage so the client receives a 'response' event.
+          try {
+            if (statusMessageId && platform !== 'api') {
+              try {
+                await adapter.editMessage(message.chatId, statusMessageId, formatted.text, sendOpts);
+              } catch (err) {
+                this.logger.debug({ err, chatId: message.chatId }, 'Final response edit failed, sending as new message');
+                await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+              }
+            } else {
               await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
             }
-          } else {
-            await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+          } catch (fmtErr) {
+            // HTML/Markdown parsing failed (e.g. stray < in text) — retry as plain text
+            this.logger.warn({ err: fmtErr, chatId: message.chatId }, 'Formatted send failed, retrying as plain text');
+            const plain = this.formatter.format(result.text, 'signal'); // strips all formatting
+            await adapter.sendMessage(message.chatId, plain.text);
           }
-        } catch (fmtErr) {
-          // HTML/Markdown parsing failed (e.g. stray < in text) — retry as plain text
-          this.logger.warn({ err: fmtErr, chatId: message.chatId }, 'Formatted send failed, retrying as plain text');
-          const plain = this.formatter.format(result.text, 'signal'); // strips all formatting
-          await adapter.sendMessage(message.chatId, plain.text);
         }
 
         // Send file attachments (e.g. from code_sandbox) after the text reply

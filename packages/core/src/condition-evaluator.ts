@@ -1,4 +1,4 @@
-import type { WatchCondition } from '@alfred/types';
+import type { WatchCondition, CompositeCondition } from '@alfred/types';
 
 /**
  * Extract a value from nested data using a dot-path.
@@ -96,6 +96,46 @@ export function evaluateCondition(
     default:
       return { triggered: false, displayValue };
   }
+}
+
+/**
+ * Evaluate a composite condition (AND/OR logic over multiple conditions).
+ * Returns whether the composite triggered, display values per field, and new last-values.
+ */
+export function evaluateCompositeCondition(
+  data: unknown,
+  composite: CompositeCondition,
+  lastValues: Record<string, unknown> | null,
+): {
+  triggered: boolean;
+  displayValues: Record<string, string>;
+  newLastValues: Record<string, unknown>;
+} {
+  const displayValues: Record<string, string> = {};
+  const newLastValues: Record<string, unknown> = {};
+  const results: boolean[] = [];
+
+  for (const cond of composite.conditions) {
+    const currentValue = extractField(data, cond.field);
+    const lastValue = lastValues?.[cond.field] ?? null;
+
+    const { triggered, displayValue } = evaluateCondition(
+      currentValue,
+      cond.operator,
+      cond.value,
+      lastValue,
+    );
+
+    results.push(triggered);
+    displayValues[cond.field] = displayValue;
+    newLastValues[cond.field] = currentValue;
+  }
+
+  const triggered = composite.logic === 'and'
+    ? results.every(Boolean)
+    : results.some(Boolean);
+
+  return { triggered, displayValues, newLastValues };
 }
 
 function toNumber(value: unknown): number | null {

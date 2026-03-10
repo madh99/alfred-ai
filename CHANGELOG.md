@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-03-10
+
+### Added
+- **Watch-Actions** — Watches können jetzt Skills ausführen wenn Bedingungen eintreten. `action_skill_name` + `action_skill_params` definieren die Aktion, `action_on_trigger` steuert ob nur Alert, nur Aktion oder beides. Beispiel: Strompreis < 15ct → Wallbox via Home Assistant einschalten
+- **Composite Watch-Conditions** — AND/OR-Logik über mehrere Bedingungen pro Watch. `conditions` Array als Alternative zur Einzel-Condition. Beispiel: Strompreis < 15ct UND BMW SoC < 80%
+- **Kalender-Vorlauf** — Automatische Erinnerung vor Kalender-Events. Konfigurierbar via `calendar.vorlauf.enabled` und `minutesBefore` (default 15). Ganztägige Events werden übersprungen, Dedup verhindert Doppel-Benachrichtigungen
+- **Human-in-the-Loop Bestätigungen** — Watches mit `requires_confirmation: true` führen Aktionen nicht direkt aus, sondern fragen den User per Chat ("ja"/"nein"). 30 Min Timeout, Alert wird trotzdem gesendet
+
+### Improved
+- **Watch-Alert bei Action-Fehler** — Bei `alert_and_action` wird der Alert auch bei fehlgeschlagener Aktion gesendet, inkl. Fehlermeldung
+- **Prompt-Guidance** — LLM-Anleitung für "Wenn X dann Y"-Muster mit Watch-Actions ergänzt
+
 ## [0.10.82] - 2026-03-10
 
 ### Fixed

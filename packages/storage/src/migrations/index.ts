@@ -393,4 +393,67 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 18,
+    description: 'Watch actions — skill execution on trigger',
+    up(db) {
+      db.exec(`
+        ALTER TABLE watches ADD COLUMN action_skill_name TEXT DEFAULT NULL;
+        ALTER TABLE watches ADD COLUMN action_skill_params TEXT DEFAULT NULL;
+        ALTER TABLE watches ADD COLUMN action_on_trigger TEXT NOT NULL DEFAULT 'alert';
+        ALTER TABLE watches ADD COLUMN last_action_error TEXT DEFAULT NULL;
+      `);
+    },
+  },
+  {
+    version: 19,
+    description: 'Composite watch conditions (AND/OR)',
+    up(db) {
+      db.exec(`
+        ALTER TABLE watches ADD COLUMN conditions_json TEXT DEFAULT NULL;
+      `);
+    },
+  },
+  {
+    version: 20,
+    description: 'Calendar notification dedup table',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS calendar_notifications (
+          event_id TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          notified_at TEXT NOT NULL,
+          event_start TEXT NOT NULL,
+          PRIMARY KEY (event_id, chat_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_cal_notif_cleanup ON calendar_notifications(event_start);
+      `);
+    },
+  },
+  {
+    version: 21,
+    description: 'Human-in-the-loop confirmation queue for watch actions',
+    up(db) {
+      db.exec(`
+        ALTER TABLE watches ADD COLUMN requires_confirmation INTEGER NOT NULL DEFAULT 0;
+
+        CREATE TABLE IF NOT EXISTS pending_confirmations (
+          id TEXT PRIMARY KEY,
+          chat_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          description TEXT NOT NULL,
+          skill_name TEXT NOT NULL,
+          skill_params TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_pending_conf ON pending_confirmations(chat_id, platform, status);
+      `);
+    },
+  },
 ];

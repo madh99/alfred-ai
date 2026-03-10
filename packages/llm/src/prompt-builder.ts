@@ -225,6 +225,7 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         prompt += `
 ## Automation: watch vs. scheduled_task vs. reminder
 - **"Alert me when X happens"** → use \`watch\` (polls a skill, evaluates condition, no LLM cost per check)
+- **"If X then do Y"** → use \`watch\` with \`action_skill_name\` + \`action_skill_params\` (e.g. price < 15ct → switch on wallbox via home_assistant)
 - **"Do X every day at 9 AM"** / **"Check X and report"** / **"Do X in 5 minutes"** → use \`scheduled_task\` (time-based, can use LLM via prompt_template, can execute any skill)
 - **"Remind me to X"** → use \`reminder\` ONLY for simple text reminders that just send a notification message
 - **IMPORTANT:** When the user asks to **execute a task** at a future time (e.g. "führe ein Briefing in 2 Minuten aus", "run a backup at 9 PM"), ALWAYS use \`scheduled_task\` with \`prompt_template\`, NOT \`reminder\`. Reminders cannot execute skills or call the LLM.

@@ -4,8 +4,9 @@ import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, Watch } from '@alfred/types';
 import type { UserRepository } from '@alfred/storage';
-import { extractField, evaluateCondition } from './condition-evaluator.js';
+import { extractField, evaluateCondition, evaluateCompositeCondition } from './condition-evaluator.js';
 import { buildSkillContext } from './context-factory.js';
+import type { ConfirmationQueue } from './confirmation-queue.js';
 
 const OPERATOR_LABELS: Record<string, string> = {
   lt: '<', gt: '>', lte: '<=', gte: '>=',
@@ -25,6 +26,7 @@ export class WatchEngine {
     private readonly adapters: Map<Platform, MessagingAdapter>,
     private readonly users: UserRepository,
     private readonly logger: Logger,
+    private readonly confirmationQueue?: ConfirmationQueue,
   ) {}
 
   start(): void {
@@ -83,36 +85,135 @@ export class WatchEngine {
       return;
     }
 
-    // Extract field and evaluate condition
-    const currentValue = extractField(result.data, watch.condition.field);
-    const lastValue = watch.lastValue !== null ? JSON.parse(watch.lastValue) : null;
+    // Evaluate condition(s)
+    let triggered: boolean;
+    let displayValue: string;
+    let newLastValue: string;
 
-    const { triggered, displayValue } = evaluateCondition(
-      currentValue,
-      watch.condition.operator,
-      watch.condition.value,
-      lastValue,
-    );
-
-    const newLastValue = JSON.stringify(currentValue);
-
-    if (triggered && this.isCooldownExpired(watch)) {
-      // Send alert — append context even when using a custom template
-      let alertText = watch.messageTemplate
-        ?? this.formatAlert(watch, displayValue, result.data);
-
-      if (watch.messageTemplate && result.data && typeof result.data === 'object') {
-        const context = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
-        if (context) alertText += '\n\n' + context;
+    if (watch.compositeCondition) {
+      // Composite condition: AND/OR over multiple fields
+      let lastValues: Record<string, unknown> | null = null;
+      if (watch.lastValue !== null) {
+        try {
+          const parsed = JSON.parse(watch.lastValue);
+          lastValues = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : null; // non-object lastValue (e.g. leftover from single-condition) → treat as baseline
+        } catch { /* malformed JSON → treat as baseline */ }
       }
 
-      const adapter = this.adapters.get(watch.platform as Platform);
-      if (adapter) {
-        try {
-          await adapter.sendMessage(watch.chatId, alertText);
-          this.logger.info({ watchId: watch.id, name: watch.name, value: displayValue }, 'Watch alert sent');
-        } catch (err) {
-          this.logger.error({ err, watchId: watch.id }, 'Failed to send watch alert');
+      const composite = evaluateCompositeCondition(
+        result.data,
+        watch.compositeCondition,
+        lastValues,
+      );
+
+      triggered = composite.triggered;
+      newLastValue = JSON.stringify(composite.newLastValues);
+      displayValue = Object.entries(composite.displayValues)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ');
+    } else {
+      // Single condition
+      const currentValue = extractField(result.data, watch.condition.field);
+      const lastValue = watch.lastValue !== null ? JSON.parse(watch.lastValue) : null;
+
+      const evalResult = evaluateCondition(
+        currentValue,
+        watch.condition.operator,
+        watch.condition.value,
+        lastValue,
+      );
+
+      triggered = evalResult.triggered;
+      displayValue = evalResult.displayValue;
+      newLastValue = JSON.stringify(currentValue);
+    }
+
+    if (triggered && this.isCooldownExpired(watch)) {
+      const actionMode = watch.actionOnTrigger ?? 'alert';
+
+      // Confirmation gate: enqueue action instead of executing directly
+      if (watch.requiresConfirmation && this.confirmationQueue
+          && (actionMode === 'action_only' || actionMode === 'alert_and_action') && watch.actionSkillName) {
+        await this.confirmationQueue.enqueue({
+          chatId: watch.chatId,
+          platform: watch.platform,
+          source: 'watch',
+          sourceId: watch.id,
+          description: `Watch "${watch.name}": ${watch.actionSkillName} ausf\u00FChren`,
+          skillName: watch.actionSkillName,
+          skillParams: watch.actionSkillParams ?? {},
+        });
+
+        // Still send alert if mode includes it
+        if (actionMode === 'alert_and_action') {
+          let alertText = watch.messageTemplate
+            ?? this.formatAlert(watch, displayValue, result.data);
+
+          if (watch.messageTemplate && result.data && typeof result.data === 'object') {
+            const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
+            if (resultContext) alertText += '\n\n' + resultContext;
+          }
+
+          alertText += '\n\n(Aktion wartet auf Best\u00E4tigung)';
+
+          const adapter = this.adapters.get(watch.platform as Platform);
+          if (adapter) {
+            try { await adapter.sendMessage(watch.chatId, alertText); } catch { /* */ }
+          }
+        }
+
+        this.watchRepo.updateAfterCheck(watch.id, {
+          lastCheckedAt: now,
+          lastValue: newLastValue,
+          lastTriggeredAt: now,
+        });
+        return; // Don't execute action directly
+      }
+
+      // Execute action skill if configured
+      let actionError: string | null = null;
+      if ((actionMode === 'action_only' || actionMode === 'alert_and_action') && watch.actionSkillName) {
+        const actionSkill = this.skillRegistry.get(watch.actionSkillName);
+        if (actionSkill) {
+          try {
+            await this.skillSandbox.execute(actionSkill, watch.actionSkillParams ?? {}, context);
+            this.watchRepo.updateActionError(watch.id, null);
+          } catch (err) {
+            actionError = err instanceof Error ? err.message : String(err);
+            this.watchRepo.updateActionError(watch.id, actionError);
+            this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
+          }
+        } else {
+          actionError = `Action skill "${watch.actionSkillName}" not found`;
+          this.watchRepo.updateActionError(watch.id, actionError);
+          this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Unknown action skill for watch');
+        }
+      }
+
+      // Send alert if mode includes alerting
+      if (actionMode === 'alert' || actionMode === 'alert_and_action') {
+        let alertText = watch.messageTemplate
+          ?? this.formatAlert(watch, displayValue, result.data);
+
+        if (watch.messageTemplate && result.data && typeof result.data === 'object') {
+          const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
+          if (resultContext) alertText += '\n\n' + resultContext;
+        }
+
+        if (actionError) {
+          alertText += '\n\n\u26A0\uFE0F Aktion fehlgeschlagen: ' + actionError;
+        }
+
+        const adapter = this.adapters.get(watch.platform as Platform);
+        if (adapter) {
+          try {
+            await adapter.sendMessage(watch.chatId, alertText);
+            this.logger.info({ watchId: watch.id, name: watch.name, value: displayValue }, 'Watch alert sent');
+          } catch (err) {
+            this.logger.error({ err, watchId: watch.id }, 'Failed to send watch alert');
+          }
         }
       }
 

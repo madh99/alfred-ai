@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.10.74-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.11.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -89,7 +89,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `briefing` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts, Morgenbriefing (parallele Datensammlung aus allen Skills) |
+| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `briefing` | Timed reminders, cron jobs, long-running tasks, local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation), calendar lead-time notifications, Morgenbriefing |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
@@ -326,6 +326,43 @@ Parallel morning briefing that gathers data from all available skills in a singl
 You: "Morgenbriefing"
 You: "Erstelle ein tägliches Briefing um 7 Uhr"
 You: "Briefing nur mit Kalender, Wetter und Todos"
+```
+
+### Autonomous Automation
+
+Alfred doesn't just alert — it acts. Watches monitor conditions and execute skills automatically.
+
+**Watch-Actions** — "If X then do Y" without LLM involvement:
+```
+You: "Wenn Strompreis unter 15ct, schalte Wallbox ein"
+Alfred → watch:
+  - Polls energy_prices every 15 min
+  - Condition: bruttoCt < 15
+  - Action: home_assistant turn_on switch.wallbox
+  - Mode: alert_and_action (notify + execute)
+```
+
+**Composite Conditions** — AND/OR logic over multiple fields:
+```
+You: "Wenn Strom günstig UND Auto unter 80%, lade"
+Alfred → watch with conditions:
+  - AND(energy.bruttoCt < 15, bmw.soc < 80)
+  - Action: home_assistant turn_on switch.wallbox
+```
+
+**Human-in-the-Loop** — Confirmation before risky actions:
+```
+Alfred: "⚡ Strompreis unter 15ct. Soll ich die Wallbox einschalten?"
+You: "ja"
+Alfred: "✅ Aktion ausgeführt: Wallbox eingeschaltet"
+```
+
+**Calendar Lead-Time** — Proactive reminders before events:
+```yaml
+calendar:
+  vorlauf:
+    enabled: true
+    minutesBefore: 15
 ```
 
 ### Cross-Platform Identity
