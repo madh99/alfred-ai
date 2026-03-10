@@ -233,13 +233,23 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
 - **IMPORTANT:** When creating a scheduled briefing task, use \`skill_name: "briefing"\` with \`skill_input: {"action":"run"}\` instead of \`prompt_template\`. This executes the briefing directly without LLM overhead.`;
       }
 
-      // Background task vs delegate guidance
-      if (skills.some(s => s.name === 'background_task') && skills.some(s => s.name === 'delegate')) {
+      // Direct skill calls vs delegate guidance
+      if (skills.some(s => s.name === 'delegate')) {
         prompt += `
-## background_task vs. delegate
+## IMPORTANT: Direct skill calls vs. delegate
+- **Always prefer calling a skill DIRECTLY** when a single skill call can answer the user's request.
+- Example WRONG: User asks "Zeig Ladevorgänge" → delegate with BMW skill. Example RIGHT: Call BMW skill directly.
+- Example WRONG: User asks "Wie ist das Wetter?" → delegate with weather skill. Example RIGHT: Call weather skill directly.
+- **\`delegate\`**: ONLY use when the task requires **iterative work** — multiple rounds of tool calls with intermediate reasoning (e.g. research → analyze → synthesize, or searching emails across multiple queries).
+- A single data lookup, status check, or simple action is NEVER a reason to delegate.`;
+      }
+
+      // Background task guidance
+      if (skills.some(s => s.name === 'background_task')) {
+        prompt += `
+## background_task
 - **\`background_task\`**: Runs a **single skill call** asynchronously (e.g. schedule one email send, one file download). It does NOT support multi-step workflows.
-- **\`delegate\`**: Runs a **multi-step sub-agent** with full tool access. Use for any task that requires multiple tool calls (search → read → process → generate).
-- **NEVER use \`background_task\` for complex tasks** like "search emails and create a report" — use \`delegate\` instead.`;
+- For complex tasks requiring multiple different skill calls in sequence, use \`delegate\` instead.`;
       }
     }
 

@@ -30,11 +30,11 @@ export class DelegateSkill extends Skill {
     name: 'delegate',
     category: 'core',
     description:
-      'Delegate a complex sub-task to an autonomous sub-agent that has full tool access. ' +
-      'The sub-agent can use shell, web search, calculator, memory, email, and all other tools. ' +
-      'Use when a task is independent enough to run in parallel or when it requires a focused, ' +
-      'multi-step workflow (e.g. "research X and summarize", "find all TODO files and list them", ' +
-      '"check the weather and draft a packing list"). ' +
+      'Delegate a sub-task to an autonomous sub-agent that requires ITERATIVE work — ' +
+      'multiple rounds of tool calls with intermediate reasoning ' +
+      '(e.g. "research X across multiple sources and synthesize", "search emails for invoices and compile a list"). ' +
+      'Do NOT use for simple lookups or single-skill queries — call those skills directly. ' +
+      'The sub-agent has full tool access (shell, web search, memory, email, etc.). ' +
       'Control depth with max_iterations (default 15, max 25).',
     riskLevel: 'write',
     version: '3.0.0',

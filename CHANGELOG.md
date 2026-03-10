@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-03-10
+
+### Fixed
+- **Delegate-Übernutzung** — LLM ruft einfache Skill-Abfragen (z.B. "Zeig Ladevorgänge") jetzt direkt auf statt unnötig an Sub-Agenten zu delegieren. Prompt-Guidance und Delegate-Beschreibung präzisiert: Delegation nur bei iterativer Arbeit mit mehreren Durchläufen
+
 ## [0.11.0] - 2026-03-10
 
 ### Added
