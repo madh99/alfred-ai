@@ -62,6 +62,7 @@ import { ActiveLearningService } from './active-learning/active-learning-service
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
+import { TodoWatcher } from './todo-watcher.js';
 import { ActivityLogger } from './activity-logger.js';
 import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
@@ -83,6 +84,7 @@ export class Alfred {
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: any; // CalendarSkill instance for today's events
   private calendarWatcher?: CalendarWatcher;
+  private todoWatcher?: TodoWatcher;
   private usageRepo?: UsageRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -272,6 +274,24 @@ export class Alfred {
           'telegram' as Platform,
           this.config.calendar.vorlauf,
           this.logger.child({ component: 'calendar-watcher' }),
+          activityLogger,
+        );
+      }
+    }
+
+    // 4b3. Initialize todo watcher — reminds about upcoming/overdue todos
+    {
+      const ownerUserId = this.config.security?.ownerUserId;
+      if (ownerUserId) {
+        const calNotifRepo = new CalendarNotificationRepository(db);
+        this.todoWatcher = new TodoWatcher(
+          todoRepo,
+          calNotifRepo,
+          this.adapters,
+          ownerUserId,
+          'telegram' as Platform,
+          { minutesBefore: 30 },
+          this.logger.child({ component: 'todo-watcher' }),
           activityLogger,
         );
       }
@@ -658,6 +678,7 @@ export class Alfred {
     this.watchEngine?.start();
     this.confirmationQueue?.start();
     this.calendarWatcher?.start();
+    this.todoWatcher?.start();
 
     // Skill health: periodic re-enable check (every 5 minutes)
     if (this.skillHealthTracker) {
@@ -697,6 +718,7 @@ export class Alfred {
     this.watchEngine?.stop();
     this.confirmationQueue?.stop();
     this.calendarWatcher?.stop();
+    this.todoWatcher?.stop();
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;

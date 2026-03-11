@@ -105,6 +105,29 @@ export class TodoRepository {
     }));
   }
 
+  /** Returns open todos with a due_date between now and windowEndIso (ISO strings). */
+  getDueInWindow(windowEndIso: string): TodoEntry[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.db.prepare(
+      `SELECT * FROM todos
+       WHERE completed = 0 AND due_date IS NOT NULL
+         AND due_date >= ? AND due_date <= ?
+       ORDER BY due_date ASC`,
+    ).all(nowIso, windowEndIso) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
+  /** Returns open todos where due_date has already passed (overdue). */
+  getOverdue(): TodoEntry[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.db.prepare(
+      `SELECT * FROM todos
+       WHERE completed = 0 AND due_date IS NOT NULL AND due_date < ?
+       ORDER BY due_date ASC`,
+    ).all(nowIso) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   private mapRow(row: Record<string, unknown>): TodoEntry {
     return {
       id: row.id as string,
