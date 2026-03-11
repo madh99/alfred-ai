@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-03-12
+
+### Fixed
+- **ENV-Overrides: Boolean-Koerzierung** — `"true"`/`"false"` Strings aus ENV-Variablen werden jetzt automatisch zu echten Booleans konvertiert. Behebt Problem dass `verifyTls=false` als String `"false"` statt Boolean `false` gesetzt wurde und TLS-Validierung nicht deaktiviert werden konnte
+- **ENV-Overrides: verifyTls** — `ALFRED_UNIFI_VERIFY_TLS` und `ALFRED_PROXMOX_VERIFY_TLS` hinzugefügt. Ermöglicht TLS-Verifizierung für selbst-signierte Zertifikate per ENV zu deaktivieren
+
 ## [0.13.0] - 2026-03-12
 
 ### Added
