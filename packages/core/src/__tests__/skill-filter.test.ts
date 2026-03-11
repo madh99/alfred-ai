@@ -78,14 +78,48 @@ describe('selectCategories', () => {
 
   it('falls back to common categories when no keyword matches', () => {
     const result = selectCategories('hello, how are you?', available(...ALL_CATEGORIES));
-    // Should include core + common categories (productivity, information, media, automation)
+    // Should include core + common categories (productivity, information, media, automation, files)
     expect(result.has('core')).toBe(true);
     expect(result.has('productivity')).toBe(true);
     expect(result.has('information')).toBe(true);
     expect(result.has('media')).toBe(true);
     expect(result.has('automation')).toBe(true);
+    expect(result.has('files')).toBe(true);
     // Should NOT include heavy categories like infrastructure
     expect(result.has('infrastructure')).toBe(false);
+  });
+
+  it('matches German keywords for productivity', () => {
+    for (const msg of ['erstelle eine Notiz', 'erinner mich morgen', 'was steht im Kalender']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('productivity'), `"${msg}" should match productivity`).toBe(true);
+    }
+  });
+
+  it('matches German keywords for automation', () => {
+    for (const msg of ['schreib ein Skript', 'führe diesen Befehl aus', 'Kommando ausführen']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('automation'), `"${msg}" should match automation`).toBe(true);
+    }
+  });
+
+  it('matches German keywords for media', () => {
+    for (const msg of ['generiere ein Bild', 'erstelle ein Foto']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('media'), `"${msg}" should match media`).toBe(true);
+    }
+  });
+
+  it('matches German keywords for files', () => {
+    for (const msg of ['lade die Seite herunter', 'den Anhang speichern']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('files'), `"${msg}" should match files`).toBe(true);
+    }
+  });
+
+  it('matches German keywords for infrastructure', () => {
+    const result = selectCategories('zeig den Netzwerk Status', available(...ALL_CATEGORIES));
+    expect(result.has('infrastructure')).toBe(true);
   });
 
   it('only includes available common categories in fallback', () => {

@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager } from '@alfred/security';
@@ -35,6 +35,7 @@ import {
   BackgroundTaskSkill,
   ScheduledTaskSkill,
   WatchSkill,
+  WorkflowSkill,
   DocumentSkill,
   TTSSkill,
   ImageGenerateSkill,
@@ -53,6 +54,7 @@ import { ResponseFormatter } from './response-formatter.js';
 import { EmbeddingService } from './embedding-service.js';
 import { DocumentProcessor } from './document-processor.js';
 import { BackgroundTaskRunner } from './background-task-runner.js';
+import { PersistentAgentRunner } from './persistent-agent-runner.js';
 import { ProactiveScheduler } from './proactive-scheduler.js';
 import { WatchEngine } from './watch-engine.js';
 import { ConfirmationQueue } from './confirmation-queue.js';
@@ -61,6 +63,8 @@ import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { ActivityLogger } from './activity-logger.js';
+import { SkillHealthTracker } from './skill-health-tracker.js';
+import { WorkflowRunner } from './workflow-runner.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -80,6 +84,8 @@ export class Alfred {
   private calendarSkill?: any; // CalendarSkill instance for today's events
   private calendarWatcher?: CalendarWatcher;
   private usageRepo?: UsageRepository;
+  private skillHealthTracker?: SkillHealthTracker;
+  private healthCheckTimer?: ReturnType<typeof setInterval>;
 
   constructor(private config: AlfredConfig) {
     this.logger = createLogger('alfred', config.logger.level);
@@ -104,6 +110,13 @@ export class Alfred {
     const scheduledActionRepo = new ScheduledActionRepository(db);
     const activityRepo = new ActivityRepository(db);
     const activityLogger = new ActivityLogger(activityRepo, this.logger.child({ component: 'activity' }));
+    const skillHealthRepo = new SkillHealthRepository(db);
+    const skillHealthTracker = new SkillHealthTracker(
+      skillHealthRepo,
+      this.logger.child({ component: 'skill-health' }),
+      activityLogger,
+    );
+    this.skillHealthTracker = skillHealthTracker;
     this.logger.info('Storage initialized');
 
     // 2. Initialize security — load rules from YAML files
@@ -222,7 +235,8 @@ export class Alfred {
     skillRegistry.register(new BrowserSkill());
     skillRegistry.register(new ProfileSkill(userRepo));
     skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters, (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId)));
-    skillRegistry.register(new BackgroundTaskSkill(backgroundTaskRepo));
+    const backgroundTaskSkill = new BackgroundTaskSkill(backgroundTaskRepo);
+    skillRegistry.register(backgroundTaskSkill);
     skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
 
     // 4a. Document intelligence
@@ -478,7 +492,21 @@ export class Alfred {
       userRepo,
       this.logger.child({ component: 'background-tasks' }),
       activityLogger,
+      skillHealthTracker,
     );
+
+    // 7b2. Initialize persistent agent runner (checkpoint/resume for long-running tasks)
+    const persistentRunner = new PersistentAgentRunner(
+      skillRegistry,
+      skillSandbox,
+      backgroundTaskRepo,
+      this.adapters,
+      userRepo,
+      this.logger.child({ component: 'persistent-agents' }),
+      activityLogger,
+    );
+    this.backgroundTaskRunner.setPersistentRunner(persistentRunner);
+    backgroundTaskSkill.setPersistentRunner(persistentRunner);
 
     // 7c. Initialize proactive scheduler
     this.proactiveScheduler = new ProactiveScheduler(
@@ -519,11 +547,27 @@ export class Alfred {
       this.logger.child({ component: 'watch-engine' }),
       this.confirmationQueue,
       activityLogger,
+      skillHealthTracker,
     );
 
-    // Wire confirmation queue and activity logger into pipeline
+    // 7f. Initialize workflow chains
+    const workflowRepo = new WorkflowRepository(db);
+    const workflowSkill = new WorkflowSkill(workflowRepo);
+    skillRegistry.register(workflowSkill);
+    const workflowRunner = new WorkflowRunner(
+      workflowRepo,
+      skillRegistry,
+      skillSandbox,
+      this.logger.child({ component: 'workflow-runner' }),
+      activityLogger,
+      skillHealthTracker,
+    );
+    workflowSkill.setRunner(workflowRunner);
+
+    // Wire confirmation queue, activity logger, and skill health tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
+    this.pipeline.setSkillHealthTracker(skillHealthTracker);
 
     // 8. Initialize messaging adapters
     await this.initializeAdapters();
@@ -614,6 +658,11 @@ export class Alfred {
     this.confirmationQueue?.start();
     this.calendarWatcher?.start();
 
+    // Skill health: periodic re-enable check (every 5 minutes)
+    if (this.skillHealthTracker) {
+      this.healthCheckTimer = setInterval(() => this.skillHealthTracker!.checkReEnables(), 5 * 60_000);
+    }
+
     if (this.adapters.size === 0) {
       this.logger.warn('No messaging adapters enabled. Configure at least one platform.');
     }
@@ -647,6 +696,10 @@ export class Alfred {
     this.watchEngine?.stop();
     this.confirmationQueue?.stop();
     this.calendarWatcher?.stop();
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = undefined;
+    }
 
     // Shutdown MCP servers
     if (this.mcpManager) {

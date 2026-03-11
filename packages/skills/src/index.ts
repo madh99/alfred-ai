@@ -55,6 +55,7 @@ export type { MonitorCheckConfig } from './built-in/monitor.js';
 export type { DocumentProcessorInterface, EmbeddingSearchService } from './built-in/document.js';
 export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-platform.js';
 export { WatchSkill } from './built-in/watch.js';
+export { WorkflowSkill } from './built-in/workflow.js';
 export { MarketplaceSkill } from './built-in/marketplace/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl } from './built-in/code-agent/index.js';

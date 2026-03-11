@@ -50,12 +50,28 @@ export interface BackgroundTask {
   description: string;
   skillName: string;
   skillInput: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'checkpointed' | 'resuming' | 'cancelled';
   result?: string;
   error?: string;
   createdAt: string;
   startedAt?: string;
   completedAt?: string;
+  agentState?: string;
+  checkpointAt?: string;
+  resumeCount?: number;
+  maxDurationHours?: number;
+}
+
+export interface AgentCheckpoint {
+  conversationHistory: Array<{ role: string; content: string }>;
+  partialResults: unknown[];
+  currentIteration: number;
+  totalIterations: number;
+  startedAt: string;
+  lastActivityAt: string;
+  /** Serialized data store entries from DelegateSkill (large tool results). */
+  dataStore?: Record<string, string>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface ScheduledAction {
@@ -144,4 +160,36 @@ export interface DocumentChunk {
   content: string;
   embeddingId?: string;
   createdAt: string;
+}
+
+export interface WorkflowStep {
+  skillName: string;
+  inputMapping: Record<string, unknown>;  // Key → Template "{{prev.field}}" or nested objects with templates
+  onError: 'stop' | 'skip' | 'retry';
+  maxRetries?: number;
+}
+
+export interface WorkflowChain {
+  id: string;
+  name: string;
+  userId: string;
+  chatId: string;
+  platform: string;
+  steps: WorkflowStep[];
+  triggerType: 'manual' | 'watch' | 'scheduled';
+  triggerConfig?: Record<string, unknown>;
+  enabled: boolean;
+  createdAt: string;
+}
+
+export interface WorkflowExecution {
+  id: string;
+  chainId: string;
+  status: 'running' | 'completed' | 'failed' | 'partial';
+  stepsCompleted: number;
+  totalSteps: number;
+  stepResults?: string;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
 }

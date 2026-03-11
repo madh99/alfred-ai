@@ -117,8 +117,20 @@ export class DelegateSkill extends Skill {
     // Build tools list — exclude 'delegate' to prevent recursion
     const tools = this.buildSubAgentTools();
 
+    // Restore data store from checkpoint or start fresh
     const dataStore = new Map<string, string>();
     let dataStoreCounter = 0;
+
+    if (context.resumeState?.dataStore) {
+      for (const [key, value] of Object.entries(context.resumeState.dataStore)) {
+        dataStore.set(key, value);
+        // Track highest counter to avoid ID collisions
+        const match = key.match(/^result_(\d+)$/);
+        if (match) {
+          dataStoreCounter = Math.max(dataStoreCounter, Number(match[1]));
+        }
+      }
+    }
 
     const systemPrompt =
       'You are a sub-agent of Alfred, a personal AI assistant. ' +
@@ -135,16 +147,46 @@ export class DelegateSkill extends Skill {
       userContent = `${task}\n\nAdditional context: ${additionalContext}`;
     }
 
-    const messages: LLMMessage[] = [
-      { role: 'user', content: userContent },
-    ];
+    // Restore from checkpoint if resuming, otherwise start fresh
+    let messages: LLMMessage[];
+    let startIteration: number;
+
+    if (context.resumeState?.conversationHistory?.length) {
+      messages = context.resumeState.conversationHistory as LLMMessage[];
+      startIteration = context.resumeState.currentIteration;
+    } else {
+      messages = [{ role: 'user', content: userContent }];
+      startIteration = 0;
+    }
 
     try {
-      let iteration = 0;
+      let iteration = startIteration;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
 
       while (true) {
+        // Check for cooperative abort (pause/cancel)
+        if (context.abortSignal?.aborted) {
+          // Force a final checkpoint with latest state before returning
+          context.onIteration?.({
+            iteration,
+            maxIterations,
+            messages: [...messages],
+            dataStore: Object.fromEntries(dataStore),
+          });
+          tracker.ping('done', { iteration, maxIterations });
+          return {
+            success: true,
+            data: {
+              response: 'Task paused — can be resumed later.',
+              iterations: iteration,
+              paused: true,
+              usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+            },
+            display: 'Task paused — can be resumed later.',
+          };
+        }
+
         tracker.ping('llm_call', { iteration, maxIterations });
 
         const response = await this.llm.complete({
@@ -237,6 +279,14 @@ export class DelegateSkill extends Skill {
         }
 
         messages.push({ role: 'user', content: toolResultBlocks });
+
+        // Checkpoint callback for persistent agents
+        context.onIteration?.({
+          iteration,
+          maxIterations,
+          messages: [...messages],
+          dataStore: Object.fromEntries(dataStore),
+        });
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);

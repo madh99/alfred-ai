@@ -131,6 +131,7 @@ export class MessagePipeline {
 
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
+  private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -154,6 +155,10 @@ export class MessagePipeline {
 
   setActivityLogger(logger: import('./activity-logger.js').ActivityLogger): void {
     this.activityLogger = logger;
+  }
+
+  setSkillHealthTracker(tracker: import('./skill-health-tracker.js').SkillHealthTracker): void {
+    this.skillHealthTracker = tracker;
   }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
@@ -877,6 +882,22 @@ export class MessagePipeline {
       return { content: `Error: Unknown tool "${toolCall.name}"`, isError: true };
     }
 
+    // Skill health check — auto-disabled skills are blocked
+    if (this.skillHealthTracker) {
+      const disabled = this.skillHealthTracker.isDisabled(toolCall.name);
+      if (disabled) {
+        const until = disabled.disabledUntil ? new Date(disabled.disabledUntil).toISOString() : 'unknown';
+        this.logger.warn(
+          { tool: toolCall.name, disabledUntil: until, consecutiveFails: disabled.consecutiveFails },
+          'Skill is auto-disabled due to repeated failures',
+        );
+        return {
+          content: `Skill "${toolCall.name}" is temporarily disabled due to repeated failures (${disabled.consecutiveFails} consecutive). Re-enabled at ${until}.`,
+          isError: true,
+        };
+      }
+    }
+
     // Security check
     if (this.securityManager) {
       const evaluation = this.securityManager.evaluate({
@@ -938,6 +959,14 @@ export class MessagePipeline {
           skillName: toolCall.name, outcome: result.success ? 'success' : 'error',
           durationMs: Date.now() - execStart, error: result.error,
         });
+        // Record skill health
+        if (this.skillHealthTracker) {
+          if (result.success) {
+            this.skillHealthTracker.recordSuccess(toolCall.name);
+          } else {
+            this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
+          }
+        }
         return {
           content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
           isError: !result.success,
@@ -950,6 +979,7 @@ export class MessagePipeline {
           skillName: toolCall.name, outcome: 'error',
           durationMs: Date.now() - execStart, error: errorMsg,
         });
+        this.skillHealthTracker?.recordFailure(toolCall.name, errorMsg);
         throw err;
       } finally {
         if (agentId) {
@@ -961,6 +991,11 @@ export class MessagePipeline {
     // Fallback: direct execution without sandbox
     try {
       const result = await skill.execute(toolCall.input, context);
+      if (result.success) {
+        this.skillHealthTracker?.recordSuccess(toolCall.name);
+      } else {
+        this.skillHealthTracker?.recordFailure(toolCall.name, result.error ?? 'Unknown error');
+      }
       return {
         content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
         isError: !result.success,
@@ -968,6 +1003,7 @@ export class MessagePipeline {
       };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
+      this.skillHealthTracker?.recordFailure(toolCall.name, msg);
       return { content: `Skill execution failed: ${msg}`, isError: true };
     }
   }

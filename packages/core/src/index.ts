@@ -9,6 +9,7 @@ export { ResponseFormatter } from './response-formatter.js';
 export type { FormattedResponse } from './response-formatter.js';
 export { EmbeddingService } from './embedding-service.js';
 export { BackgroundTaskRunner } from './background-task-runner.js';
+export { PersistentAgentRunner } from './persistent-agent-runner.js';
 export { ProactiveScheduler } from './proactive-scheduler.js';
 export { buildSkillContext } from './context-factory.js';
 export type { ContextSource, ContextResult } from './context-factory.js';
@@ -28,3 +29,7 @@ export { evaluateCondition, evaluateCompositeCondition, extractField } from './c
 export { ConfirmationQueue } from './confirmation-queue.js';
 export { CalendarWatcher } from './calendar-watcher.js';
 export { ActivityLogger } from './activity-logger.js';
+export { resolveTemplates, resolveTemplatesInObject } from './template-resolver.js';
+export { SkillHealthTracker } from './skill-health-tracker.js';
+export { WorkflowRunner } from './workflow-runner.js';
+export type { WorkflowRunResult } from './workflow-runner.js';

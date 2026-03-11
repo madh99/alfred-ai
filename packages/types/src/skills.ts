@@ -42,6 +42,19 @@ export interface SkillContext {
   tracker?: unknown;
   /** Progress callback for reporting status updates. */
   onProgress?: (status: string) => void;
+  /** Iteration callback for checkpoint support in persistent agents.
+   *  Called by DelegateSkill after each tool-use iteration. */
+  onIteration?: (data: { iteration: number; maxIterations: number; messages: unknown[]; dataStore?: Record<string, string> }) => void;
+  /** Saved checkpoint state for resuming a persistent agent from where it left off.
+   *  When set, DelegateSkill restores conversation history, iteration counter, and data store. */
+  resumeState?: {
+    conversationHistory: unknown[];
+    currentIteration: number;
+    totalIterations: number;
+    dataStore?: Record<string, string>;
+  };
+  /** AbortSignal for cooperative cancellation (e.g. pause). */
+  abortSignal?: AbortSignal;
 }
 
 export interface SkillResultAttachment {
@@ -56,4 +69,15 @@ export interface SkillResult {
   error?: string;
   display?: string;
   attachments?: SkillResultAttachment[];
+}
+
+export interface SkillHealth {
+  skillName: string;
+  successCount: number;
+  failCount: number;
+  consecutiveFails: number;
+  lastError?: string;
+  lastErrorAt?: string;
+  disabledUntil?: string;
+  updatedAt: string;
 }

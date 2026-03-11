@@ -5,9 +5,11 @@ import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, Watch } from '@alfred/types';
 import type { UserRepository } from '@alfred/storage';
 import { extractField, evaluateCondition, evaluateCompositeCondition } from './condition-evaluator.js';
+import { resolveTemplates, resolveTemplatesInObject } from './template-resolver.js';
 import { buildSkillContext } from './context-factory.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import type { ActivityLogger } from './activity-logger.js';
+import type { SkillHealthTracker } from './skill-health-tracker.js';
 
 const OPERATOR_LABELS: Record<string, string> = {
   lt: '<', gt: '>', lte: '<=', gte: '>=',
@@ -29,6 +31,7 @@ export class WatchEngine {
     private readonly logger: Logger,
     private readonly confirmationQueue?: ConfirmationQueue,
     private readonly activityLogger?: ActivityLogger,
+    private readonly skillHealthTracker?: SkillHealthTracker,
   ) {}
 
   start(): void {
@@ -72,6 +75,13 @@ export class WatchEngine {
       return;
     }
 
+    // Skip if poll skill is auto-disabled
+    if (this.skillHealthTracker?.isDisabled(watch.skillName)) {
+      this.logger.debug({ watchId: watch.id, skillName: watch.skillName }, 'Watch poll skill is auto-disabled, skipping');
+      this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
+      return;
+    }
+
     const { context } = buildSkillContext(this.users, {
       platformUserId: watch.chatId,
       platform: watch.platform as Platform,
@@ -83,9 +93,12 @@ export class WatchEngine {
 
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');
+      this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
       this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
     }
+
+    this.skillHealthTracker?.recordSuccess(watch.skillName);
 
     // Evaluate condition(s)
     let triggered: boolean;
@@ -135,6 +148,21 @@ export class WatchEngine {
     if (triggered && this.isCooldownExpired(watch)) {
       const actionMode = watch.actionOnTrigger ?? 'alert';
 
+      // Build template context for {{...}} resolution
+      const templateContext: Record<string, unknown> = {
+        result: result.data,
+        currentValue: displayValue,
+        watchName: watch.name,
+      };
+
+      // Resolve template variables in action params and message template
+      const resolvedParams = watch.actionSkillParams
+        ? resolveTemplatesInObject(watch.actionSkillParams as Record<string, unknown>, templateContext)
+        : {};
+      const resolvedTemplate = watch.messageTemplate
+        ? resolveTemplates(watch.messageTemplate, templateContext)
+        : undefined;
+
       // Confirmation gate: enqueue action instead of executing directly
       if (watch.requiresConfirmation && this.confirmationQueue
           && (actionMode === 'action_only' || actionMode === 'alert_and_action') && watch.actionSkillName) {
@@ -145,15 +173,15 @@ export class WatchEngine {
           sourceId: watch.id,
           description: `Watch "${watch.name}": ${watch.actionSkillName} ausf\u00FChren`,
           skillName: watch.actionSkillName,
-          skillParams: watch.actionSkillParams ?? {},
+          skillParams: resolvedParams,
         });
 
         // Still send alert if mode includes it
         if (actionMode === 'alert_and_action') {
-          let alertText = watch.messageTemplate
+          let alertText = resolvedTemplate
             ?? this.formatAlert(watch, displayValue, result.data);
 
-          if (watch.messageTemplate && result.data && typeof result.data === 'object') {
+          if (resolvedTemplate && result.data && typeof result.data === 'object') {
             const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
             if (resultContext) alertText += '\n\n' + resultContext;
           }
@@ -177,37 +205,46 @@ export class WatchEngine {
       // Execute action skill if configured
       let actionError: string | null = null;
       if ((actionMode === 'action_only' || actionMode === 'alert_and_action') && watch.actionSkillName) {
-        const actionSkill = this.skillRegistry.get(watch.actionSkillName);
-        if (actionSkill) {
-          try {
-            await this.skillSandbox.execute(actionSkill, watch.actionSkillParams ?? {}, context);
-            this.watchRepo.updateActionError(watch.id, null);
-            this.activityLogger?.logWatchAction({
-              watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
-              platform: watch.platform, chatId: watch.chatId, outcome: 'success',
-            });
-          } catch (err) {
-            actionError = err instanceof Error ? err.message : String(err);
-            this.watchRepo.updateActionError(watch.id, actionError);
-            this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
-            this.activityLogger?.logWatchAction({
-              watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
-              platform: watch.platform, chatId: watch.chatId, outcome: 'error', error: actionError,
-            });
-          }
-        } else {
-          actionError = `Action skill "${watch.actionSkillName}" not found`;
+        // Skip if action skill is auto-disabled
+        if (this.skillHealthTracker?.isDisabled(watch.actionSkillName)) {
+          actionError = `Action skill "${watch.actionSkillName}" is temporarily disabled due to repeated failures`;
           this.watchRepo.updateActionError(watch.id, actionError);
-          this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Unknown action skill for watch');
+          this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Watch action skill is auto-disabled');
+        } else {
+          const actionSkill = this.skillRegistry.get(watch.actionSkillName);
+          if (actionSkill) {
+            try {
+              await this.skillSandbox.execute(actionSkill, resolvedParams, context);
+              this.watchRepo.updateActionError(watch.id, null);
+              this.skillHealthTracker?.recordSuccess(watch.actionSkillName!);
+              this.activityLogger?.logWatchAction({
+                watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
+                platform: watch.platform, chatId: watch.chatId, outcome: 'success',
+              });
+            } catch (err) {
+              actionError = err instanceof Error ? err.message : String(err);
+              this.watchRepo.updateActionError(watch.id, actionError);
+              this.skillHealthTracker?.recordFailure(watch.actionSkillName!, actionError);
+              this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
+              this.activityLogger?.logWatchAction({
+                watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
+                platform: watch.platform, chatId: watch.chatId, outcome: 'error', error: actionError,
+              });
+            }
+          } else {
+            actionError = `Action skill "${watch.actionSkillName}" not found`;
+            this.watchRepo.updateActionError(watch.id, actionError);
+            this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Unknown action skill for watch');
+          }
         }
       }
 
       // Send alert if mode includes alerting
       if (actionMode === 'alert' || actionMode === 'alert_and_action') {
-        let alertText = watch.messageTemplate
+        let alertText = resolvedTemplate
           ?? this.formatAlert(watch, displayValue, result.data);
 
-        if (watch.messageTemplate && result.data && typeof result.data === 'object') {
+        if (resolvedTemplate && result.data && typeof result.data === 'object') {
           const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
           if (resultContext) alertText += '\n\n' + resultContext;
         }

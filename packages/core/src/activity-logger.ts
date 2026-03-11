@@ -175,6 +175,67 @@ export class ActivityLogger {
     }));
   }
 
+  logWorkflowExec(opts: {
+    chainId: string;
+    chainName: string;
+    executionId: string;
+    platform: string;
+    chatId: string;
+    userId: string;
+    outcome: 'success' | 'error';
+    error?: string;
+    details?: Record<string, unknown>;
+  }): void {
+    this.safe(() => this.repo.log({
+      eventType: 'workflow_exec',
+      source: 'workflow',
+      sourceId: opts.chainId,
+      userId: opts.userId,
+      platform: opts.platform,
+      chatId: opts.chatId,
+      action: opts.chainName,
+      outcome: opts.outcome,
+      errorMessage: opts.error,
+      details: { executionId: opts.executionId, ...opts.details },
+    }));
+  }
+
+  logAgentLifecycle(opts: {
+    taskId: string;
+    skillName: string;
+    event: string;
+    platform: string;
+    chatId: string;
+    userId: string;
+    details?: Record<string, unknown>;
+  }): void {
+    this.safe(() => this.repo.log({
+      eventType: 'agent_lifecycle',
+      source: 'background',
+      sourceId: opts.taskId,
+      userId: opts.userId,
+      platform: opts.platform,
+      chatId: opts.chatId,
+      action: opts.event,
+      outcome: 'success',
+      details: { skillName: opts.skillName, ...opts.details },
+    }));
+  }
+
+  logSkillHealth(opts: {
+    skillName: string;
+    outcome: 'disabled' | 're-enabled' | 'degraded';
+    details?: Record<string, unknown>;
+  }): void {
+    this.safe(() => this.repo.log({
+      eventType: 'skill_health',
+      source: 'system',
+      action: opts.skillName,
+      outcome: opts.outcome,
+      details: opts.details,
+    }));
+  }
+
   private safe(fn: () => void): void {
     try {
       fn();

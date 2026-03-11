@@ -483,4 +483,69 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 23,
+    description: 'Skill health tracking for self-healing',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_health (
+          skill_name TEXT PRIMARY KEY,
+          success_count INTEGER NOT NULL DEFAULT 0,
+          fail_count INTEGER NOT NULL DEFAULT 0,
+          consecutive_fails INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          last_error_at TEXT,
+          disabled_until TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
+  {
+    version: 24,
+    description: 'Workflow chains and executions',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workflow_chains (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          chat_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          steps TEXT NOT NULL,
+          trigger_type TEXT NOT NULL DEFAULT 'manual',
+          trigger_config TEXT,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_workflow_chains_user ON workflow_chains(user_id);
+        CREATE INDEX IF NOT EXISTS idx_workflow_chains_chat ON workflow_chains(chat_id, platform);
+
+        CREATE TABLE IF NOT EXISTS workflow_executions (
+          id TEXT PRIMARY KEY,
+          chain_id TEXT NOT NULL REFERENCES workflow_chains(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'running',
+          steps_completed INTEGER NOT NULL DEFAULT 0,
+          total_steps INTEGER NOT NULL,
+          step_results TEXT,
+          error TEXT,
+          started_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_workflow_exec_chain ON workflow_executions(chain_id);
+      `);
+    },
+  },
+  {
+    version: 25,
+    description: 'Persistent agent checkpoint/resume support',
+    up(db) {
+      db.exec(`
+        ALTER TABLE background_tasks ADD COLUMN agent_state TEXT DEFAULT NULL;
+        ALTER TABLE background_tasks ADD COLUMN checkpoint_at TEXT DEFAULT NULL;
+        ALTER TABLE background_tasks ADD COLUMN resume_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE background_tasks ADD COLUMN max_duration_hours REAL DEFAULT NULL;
+      `);
+    },
+  },
 ];

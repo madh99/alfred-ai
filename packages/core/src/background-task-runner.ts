@@ -5,6 +5,8 @@ import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, BackgroundTask } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
+import type { SkillHealthTracker } from './skill-health-tracker.js';
+import type { PersistentAgentRunner } from './persistent-agent-runner.js';
 
 export class BackgroundTaskRunner {
   private pollTimer?: ReturnType<typeof setInterval>;
@@ -12,6 +14,7 @@ export class BackgroundTaskRunner {
   private readonly maxConcurrent = 3;
   private readonly pollIntervalMs = 5000;
   private readonly taskTimeoutMs = 5 * 60_000; // 5 minutes max per task
+  private persistentRunner?: PersistentAgentRunner;
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -21,11 +24,20 @@ export class BackgroundTaskRunner {
     private readonly users: UserRepository,
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
+    private readonly skillHealthTracker?: SkillHealthTracker,
   ) {}
+
+  setPersistentRunner(runner: PersistentAgentRunner): void {
+    this.persistentRunner = runner;
+  }
 
   start(): void {
     this.pollTimer = setInterval(() => this.poll(), this.pollIntervalMs);
     this.logger.info('Background task runner started');
+    // Recover interrupted persistent tasks from previous process
+    this.persistentRunner?.recoverInterrupted().catch(err => {
+      this.logger.error({ err }, 'Failed to recover interrupted persistent tasks');
+    });
   }
 
   stop(): void {
@@ -53,6 +65,12 @@ export class BackgroundTaskRunner {
   }
 
   private async runTask(task: BackgroundTask): Promise<void> {
+    // Delegate to persistent runner if task has max_duration_hours set
+    if (task.maxDurationHours && this.persistentRunner) {
+      await this.persistentRunner.runPersistent(task);
+      return;
+    }
+
     this.taskRepo.updateStatus(task.id, 'running');
     const startMs = Date.now();
 
@@ -60,6 +78,12 @@ export class BackgroundTaskRunner {
       const skill = this.skillRegistry.get(task.skillName);
       if (!skill) {
         this.taskRepo.updateStatus(task.id, 'failed', undefined, `Unknown skill: ${task.skillName}`);
+        return;
+      }
+
+      // Skip if skill is auto-disabled
+      if (this.skillHealthTracker?.isDisabled(task.skillName)) {
+        this.taskRepo.updateStatus(task.id, 'failed', undefined, `Skill "${task.skillName}" is temporarily disabled due to repeated failures`);
         return;
       }
 
@@ -99,6 +123,14 @@ export class BackgroundTaskRunner {
         outcome: result.success ? 'success' : 'error',
         durationMs: Date.now() - startMs, error: result.error,
       });
+      // Record skill health
+      if (this.skillHealthTracker) {
+        if (result.success) {
+          this.skillHealthTracker.recordSuccess(task.skillName);
+        } else {
+          this.skillHealthTracker.recordFailure(task.skillName, result.error ?? 'Unknown error');
+        }
+      }
 
       const adapter = this.adapters.get(task.platform as Platform);
       if (adapter) {
@@ -116,6 +148,7 @@ export class BackgroundTaskRunner {
         platform: task.platform, chatId: task.chatId, userId: task.userId,
         outcome: 'error', durationMs: Date.now() - startMs, error: errorMsg,
       });
+      this.skillHealthTracker?.recordFailure(task.skillName, errorMsg);
 
       const adapter = this.adapters.get(task.platform as Platform);
       if (adapter) {

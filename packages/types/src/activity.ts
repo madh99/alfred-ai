@@ -2,13 +2,13 @@ export interface ActivityEntry {
   id: string;
   timestamp: string;
   eventType: string;
-  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system';
+  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system' | 'workflow';
   sourceId?: string;
   userId?: string;
   platform?: string;
   chatId?: string;
   action: string;
-  outcome: 'success' | 'error' | 'denied' | 'approved' | 'rejected' | 'expired' | 'skipped';
+  outcome: 'success' | 'error' | 'denied' | 'approved' | 'rejected' | 'expired' | 'skipped' | 'disabled' | 're-enabled' | 'degraded';
   errorMessage?: string;
   durationMs?: number;
   details?: Record<string, unknown>;

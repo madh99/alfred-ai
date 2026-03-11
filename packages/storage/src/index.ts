@@ -27,3 +27,5 @@ export { UsageRepository } from './repositories/usage-repository.js';
 export type { UsageRecord, DailyUsageSummary } from './repositories/usage-repository.js';
 export { CalendarNotificationRepository } from './repositories/calendar-notification-repository.js';
 export { ActivityRepository } from './repositories/activity-repository.js';
+export { SkillHealthRepository } from './repositories/skill-health-repository.js';
+export { WorkflowRepository } from './repositories/workflow-repository.js';

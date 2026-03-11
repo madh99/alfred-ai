@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-03-11
+
+### Added
+- **Fehler-Lernen / Self-Healing (Phase 6)** — Skills die wiederholt fehlschlagen werden automatisch temporär deaktiviert (5 Fehler → 30min, 10 → 2h, 20 → 24h). Neue `skill_health`-Tabelle (Migration v23), `SkillHealthTracker` prüft und re-enabled automatisch. Integriert in Pipeline, Watch-Engine und Background-Task-Runner
+- **Template-Variablen (Phase 5a)** — `{{result.field}}` Auflösung in Watch-Action-Parametern und Message-Templates. Dot-Path-Traversal für verschachtelte Objekte, Arrays und `.length`
+- **Workflow-Chains (Phase 5b)** — Mehrstufige Skill-Pipelines mit `{{prev.field}}`/`{{steps.N.field}}` Template-Passing. Sequentielle Ausführung mit Fehlerbehandlung (stop/skip/retry). Neue `workflow_chains`/`workflow_executions`-Tabellen (Migration v24), `WorkflowRunner`, `WorkflowSkill`
+- **Persistente Agenten (Phase 7)** — Checkpoint/Resume für langlebige Background-Tasks. Conversation-History + DataStore werden alle 5 Iterationen in SQLite gespeichert. Bei Prozess-Neustart automatische Recovery ab letztem Checkpoint. Kooperativer Pause/Cancel-Mechanismus via AbortController. Neue Spalten in `background_tasks` (Migration v25)
+- **Skill-Filter: Deutsche Keywords** — Ergänzt um `notiz`, `erinner`, `kalender`, `bild`, `generier`, `foto`, `script`, `skript`, `befehl`, `kommando`, `herunterlad`, `anhang`, `netzwerk` u.a. für zuverlässigere Kategorie-Erkennung. `files`-Kategorie im Fallback ergänzt
+
 ## [0.11.5] - 2026-03-10
 
 ### Fixed
