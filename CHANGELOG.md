@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-03-11
+
+### Fixed
+- **Watch-Alert Formatter dynamisch** — Anzahl der angezeigten Listings im Watch-Alert ist nicht mehr auf 3 hardcoded. Der Formatter zeigt alle vom Skill zurückgegebenen Ergebnisse — die Anzahl wird über die Skill-Parameter gesteuert (z.B. `limit` im Marketplace-Skill)
+
 ## [0.12.0] - 2026-03-11
 
 ### Added

@@ -320,22 +320,21 @@ export class WatchEngine {
     // Marketplace-style: has listings array
     if (Array.isArray(data.listings) && data.listings.length > 0) {
       const listings = data.listings as Array<Record<string, unknown>>;
-      // Sort by price ascending, show cheapest 3
+      // Sort by price ascending, show all returned listings (skill controls the count)
       const withPrice = listings
         .filter(l => typeof l.price === 'number')
         .sort((a, b) => (a.price as number) - (b.price as number));
-      const top = withPrice.slice(0, 3);
-      if (top.length === 0) return null;
+      if (withPrice.length === 0) return null;
 
-      const lines = [`G\u00FCnstigste ${top.length}:`];
-      for (const l of top) {
+      const lines = [`G\u00FCnstigste ${withPrice.length}:`];
+      for (const l of withPrice) {
         const title = String(l.title ?? '').slice(0, 60);
         const price = typeof l.price === 'number' ? `${l.price}\u00A0\u20AC` : 'k.A.';
         const loc = l.location ? ` \u2014 ${l.location}` : '';
         const url = l.url ? `\n  ${l.url}` : '';
         lines.push(`\u2022 ${title} \u2014 ${price}${loc}${url}`);
       }
-      if (typeof data.count === 'number') {
+      if (typeof data.count === 'number' && data.count > withPrice.length) {
         lines.push(`\nInsgesamt: ${data.count} Inserate`);
       }
       return lines.join('\n');
@@ -344,8 +343,8 @@ export class WatchEngine {
     // Marketplace compare-style: has cheapest array
     if (Array.isArray(data.cheapest) && data.cheapest.length > 0) {
       const cheapest = data.cheapest as Array<Record<string, unknown>>;
-      const lines = [`G\u00FCnstigste ${Math.min(cheapest.length, 3)}:`];
-      for (const l of cheapest.slice(0, 3)) {
+      const lines = [`G\u00FCnstigste ${cheapest.length}:`];
+      for (const l of cheapest) {
         const title = String(l.title ?? '').slice(0, 60);
         const price = typeof l.price === 'number' ? `${l.price}\u00A0\u20AC` : 'k.A.';
         const url = l.url ? `\n  ${l.url}` : '';
