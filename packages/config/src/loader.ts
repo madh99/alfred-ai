@@ -93,11 +93,13 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_PROXMOX_BASE_URL: ['proxmox', 'baseUrl'],
   ALFRED_PROXMOX_TOKEN_ID: ['proxmox', 'tokenId'],
   ALFRED_PROXMOX_TOKEN_SECRET: ['proxmox', 'tokenSecret'],
+  ALFRED_PROXMOX_VERIFY_TLS: ['proxmox', 'verifyTls'],
   ALFRED_UNIFI_BASE_URL: ['unifi', 'baseUrl'],
   ALFRED_UNIFI_API_KEY: ['unifi', 'apiKey'],
   ALFRED_UNIFI_USERNAME: ['unifi', 'username'],
   ALFRED_UNIFI_PASSWORD: ['unifi', 'password'],
   ALFRED_UNIFI_SITE: ['unifi', 'site'],
+  ALFRED_UNIFI_VERIFY_TLS: ['unifi', 'verifyTls'],
   ALFRED_HOMEASSISTANT_URL: ['homeassistant', 'baseUrl'],
   ALFRED_HOMEASSISTANT_TOKEN: ['homeassistant', 'accessToken'],
   // Contacts
@@ -143,6 +145,15 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_REASONING_TIER: ['reasoning', 'tier'],
 };
 
+/** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
+ *  (Zod schemas and downstream code handle string→number conversion). */
+function coerceEnvValue(value: string): string | boolean {
+  const lower = value.toLowerCase();
+  if (lower === 'true') return true;
+  if (lower === 'false') return false;
+  return value;
+}
+
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {
   const result = { ...config };
   for (const [envVar, keyPath] of Object.entries(ENV_MAP)) {
@@ -158,7 +169,7 @@ function applyEnvOverrides(config: Record<string, unknown>): Record<string, unkn
       current[key] = { ...(current[key] as Record<string, unknown>) };
       current = current[key] as Record<string, unknown>;
     }
-    current[keyPath[keyPath.length - 1]] = value;
+    current[keyPath[keyPath.length - 1]] = coerceEnvValue(value);
   }
   return result;
 }
