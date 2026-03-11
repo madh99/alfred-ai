@@ -319,8 +319,14 @@ export class WatchEngine {
       let dataForLLM = resultData;
       if (resultData && typeof resultData === 'object' && !Array.isArray(resultData)) {
         const rd = resultData as Record<string, unknown>;
-        if (Array.isArray(rd.listings) && rd.listings.length > 15) {
-          dataForLLM = { ...rd, listings: (rd.listings as unknown[]).slice(0, 15) };
+        if (Array.isArray(rd.listings) && rd.listings.length > 0) {
+          // Extract requested count from template (e.g. "5 günstigsten" → 5), default 10, minimum 10
+          const countMatch = messageTemplate.match(/(\d+)\s*(günstigst|teuerst|billigst|Angebot|Listing|Ergebnis)/i);
+          const requested = countMatch ? Math.max(parseInt(countMatch[1], 10), 10) : 10;
+          const limit = Math.max(requested, 10); // at least 10 to give LLM enough context
+          if (rd.listings.length > limit) {
+            dataForLLM = { ...rd, listings: (rd.listings as unknown[]).slice(0, limit) };
+          }
         }
       }
       const dataStr = JSON.stringify(dataForLLM, null, 2);
