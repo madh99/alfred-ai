@@ -248,6 +248,22 @@ export class ConfigLoader {
       }
     }
 
+    // Validate storage path against forbidden directories
+    const storage = validated.storage as Record<string, unknown> | undefined;
+    if (storage?.path && typeof storage.path === 'string') {
+      validateStoragePath(storage.path);
+    }
+
     return validated as unknown as AlfredConfig;
+  }
+}
+
+function validateStoragePath(p: string): void {
+  const resolved = path.resolve(p);
+  const forbidden = ['/etc', '/bin', '/proc', '/sys', '/dev', '/boot'];
+  for (const f of forbidden) {
+    if (resolved.startsWith(f + '/') || resolved === f) {
+      throw new Error(`Storage path "${resolved}" is in forbidden directory ${f}`);
+    }
   }
 }

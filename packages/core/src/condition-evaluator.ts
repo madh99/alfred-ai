@@ -61,11 +61,19 @@ export function evaluateCondition(
       return { triggered, displayValue };
     }
 
-    case 'eq':
+    case 'eq': {
+      const numC = toNumber(currentValue);
+      const numT = toNumber(threshold);
+      if (numC !== null && numT !== null) return { triggered: numC === numT, displayValue };
       return { triggered: String(currentValue) === String(threshold), displayValue };
+    }
 
-    case 'neq':
+    case 'neq': {
+      const numC = toNumber(currentValue);
+      const numT = toNumber(threshold);
+      if (numC !== null && numT !== null) return { triggered: numC !== numT, displayValue };
       return { triggered: String(currentValue) !== String(threshold), displayValue };
+    }
 
     case 'contains':
       return { triggered: String(currentValue).includes(String(threshold ?? '')), displayValue };

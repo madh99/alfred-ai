@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-03-11
+
+### Fixed
+- **Calculator: Code-Injection** — `new Function()`-basierte Auswertung durch sicheren Recursive-Descent-Parser ersetzt. Unterstützt Arithmetik, Klammern, `Math.*`-Funktionen und -Konstanten ohne dynamische Code-Ausführung
+- **Log-Redaktion: Tiefe Pfade** — Pino-Redaktion nutzt jetzt `**`-Prefix (Deep-Matching) statt `*` (1 Ebene). Verschachtelte Keys wie `config.llm.apiKey` werden korrekt als `[REDACTED]` ausgegeben
+- **Confirmation-Queue: Falsches Outcome** — Fehlgeschlagene Confirmed-Actions wurden im Audit-Trail als `approved` statt `error` geloggt
+- **LLM-Router: Null-Guard** — `resolve()` crashte mit Non-Null-Assertion wenn kein Default-Tier konfiguriert war. Jetzt mit klarer Fehlermeldung und Validierung in `initialize()`
+- **Abgeschnittene Tool-Calls** — Wenn das LLM `max_tokens` mit Tool-Calls zurückgab, wurden potenziell unvollständige Aufrufe ausgeführt. Tool-Calls werden jetzt bei `max_tokens` verworfen und die Continuation-Logik greift
+- **Telegram: Bot-Token in Logs** — Error-Objekte mit URL (enthält Bot-Token) wurden in `console.error` ausgegeben. Jetzt wird nur `err.message` geloggt
+- **Shell-Blocklist erweitert** — 12 zusätzliche gefährliche Patterns: `base64|bash`, `perl -e`, `ruby -e`, `php -r`, `tee /etc/...`, `crontab`, `mount`, `strace`, `gdb`, `sudo`, `chroot`, `eval`
+- **Task-Runner: Race Conditions** — Atomisches Task-Claiming via SQLite-Transactions (`claimPending()`, `claimTask()`). Verhindert doppelte Ausführung bei parallelen Runnern
+- **Task cancel() bewahrt History** — `cancel()` macht jetzt `UPDATE SET status='cancelled'` statt `DELETE`. Task-History bleibt für Audit erhalten
+- **Checkpoint-Fehler: Retry + Abort** — Persistente Agenten brechen jetzt bei wiederholtem Checkpoint-Fehler den Task als `failed` ab statt ohne Checkpoint weiterzulaufen
+- **Condition-Evaluator: eq/neq numerisch** — `"05" eq 5` ergab `false` weil nur String-Vergleich. Jetzt wird erst numerisch verglichen, dann String-Fallback
+- **ENV-Pfad-Validierung** — `ALFRED_STORAGE_PATH` wird gegen Forbidden-Verzeichnisse (`/etc`, `/bin`, `/proc`, `/sys`, `/dev`, `/boot`) geprüft
+- **SecurityRule-Schema** — YAML-Security-Rules werden jetzt über den bestehenden `RuleLoader` validiert statt blind als `SecurityRule[]` gecastet
+
 ## [0.12.2] - 2026-03-11
 
 ### Fixed

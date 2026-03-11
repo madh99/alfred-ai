@@ -46,7 +46,11 @@ export class PersistentAgentRunner {
 
   /** Run a task with periodic checkpointing. */
   async runPersistent(task: BackgroundTask): Promise<void> {
-    this.taskRepo.updateStatus(task.id, 'running');
+    // Atomically claim: only proceed if this instance wins the race
+    if (!this.taskRepo.claimTask(task.id)) {
+      this.logger.info({ taskId: task.id }, 'Task already claimed by another runner, skipping');
+      return;
+    }
     const maxDurationMs = (task.maxDurationHours ?? 24) * 3600_000;
 
     // AbortController for cooperative pause/cancel — declared before try so catch can check it
@@ -129,7 +133,15 @@ export class PersistentAgentRunner {
               this.logLifecycle(task, 'checkpoint');
               this.logger.debug({ taskId: task.id, iteration: data.iteration }, 'Persistent task checkpointed');
             } catch (err) {
-              this.logger.warn({ err, taskId: task.id }, 'Failed to write checkpoint');
+              this.logger.warn({ err, taskId: task.id }, 'Failed to write checkpoint, retrying once');
+              try {
+                this.taskRepo.checkpoint(task.id, JSON.stringify(checkpoint));
+                this.logger.info({ taskId: task.id }, 'Checkpoint retry succeeded');
+              } catch (retryErr) {
+                this.logger.error({ err: retryErr, taskId: task.id }, 'Checkpoint retry failed, aborting task');
+                this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Checkpoint write failed after retry');
+                abortController.abort();
+              }
             }
           }
         },

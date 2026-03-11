@@ -76,6 +76,18 @@ export class ShellSkill extends Skill {
       /\bdd\b.*\bof=\/dev\//,            // dd to block devices
       /\bchmod\s+777\s+\//,              // chmod 777 on root
       /\bchown\s+.*\s+\/(?:\s|$)/,       // chown on root
+      /\bbase64\b.*\|\s*\b(bash|sh)\b/,  // base64 decode to shell
+      /\bperl\s+-e\b/,                    // perl one-liner
+      /\bruby\s+-e\b/,                    // ruby one-liner
+      /\bphp\s+-r\b/,                     // php one-liner
+      /\btee\s+\/(etc|root|boot|sys|proc)\//, // tee to sensitive paths
+      /\bcrontab\b/,                      // crontab manipulation
+      /\bmount\b/,                        // mount operations
+      /\bstrace\b/,                       // process tracing
+      /\bgdb\b/,                          // debugger
+      /\bsudo\b/,                         // privilege escalation
+      /\bchroot\b/,                       // chroot
+      /\beval\s/,                         // eval execution
     ];
     for (const pattern of dangerous) {
       if (pattern.test(command)) {

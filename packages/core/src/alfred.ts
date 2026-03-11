@@ -8,7 +8,7 @@ import { createLogger } from '@alfred/logger';
 import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
-import { RuleEngine, SecurityManager } from '@alfred/security';
+import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
 import {
   SkillRegistry,
   SkillSandbox,
@@ -1033,10 +1033,12 @@ export class Alfred {
       try {
         const filePath = path.join(rulesPath, file);
         const content = fs.readFileSync(filePath, 'utf-8');
-        const parsed = yaml.load(content) as { rules?: SecurityRule[] };
+        const parsed = yaml.load(content) as { rules?: unknown[] };
         if (parsed?.rules && Array.isArray(parsed.rules)) {
-          rules.push(...parsed.rules);
-          this.logger.info({ file, count: parsed.rules.length }, 'Loaded security rules');
+          const ruleLoader = new RuleLoader();
+          const validated = ruleLoader.loadFromObject({ rules: parsed.rules });
+          rules.push(...validated);
+          this.logger.info({ file, count: validated.length }, 'Loaded security rules');
         }
       } catch (err) {
         this.logger.error({ err, file }, 'Failed to load security rules file');

@@ -410,6 +410,13 @@ export class MessagePipeline {
           throw err;
         }
 
+        // Discard potentially truncated tool calls when output hit max_tokens
+        if (response.stopReason === 'max_tokens' && response.toolCalls?.length) {
+          this.logger.warn({ toolCallCount: response.toolCalls.length },
+            'Discarding truncated tool calls due to max_tokens');
+          response = { ...response, toolCalls: [] };
+        }
+
         // If no tool calls, check if output was truncated by max_tokens
         if (!response.toolCalls || response.toolCalls.length === 0) {
           if (response.stopReason === 'max_tokens') {

@@ -269,7 +269,7 @@ export class TelegramAdapter extends MessagingAdapter {
         data: buffer,
       };
     } catch (err) {
-      console.error('[telegram] Failed to download file', fileId, err);
+      console.error('[telegram] Failed to download file', fileId, err instanceof Error ? err.message : 'Unknown error');
       return undefined;
     }
   }

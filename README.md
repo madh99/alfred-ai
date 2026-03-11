@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.12.2-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.12.3-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -947,6 +947,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 - [x] Workflow chains (multi-step skill pipelines)
 - [x] Persistent agents (checkpoint/resume for long-running tasks)
 - [x] Self-healing (auto-disable failing skills)
+- [x] Security audit — hardened shell blocklist, safe calculator parser, deep log redaction, race condition fixes
 - [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms

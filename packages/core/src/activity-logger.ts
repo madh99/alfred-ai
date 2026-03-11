@@ -85,7 +85,7 @@ export class ActivityLogger {
     description: string;
     source: 'watch' | 'scheduled';
     sourceId: string;
-    outcome: 'approved' | 'rejected' | 'expired';
+    outcome: 'approved' | 'rejected' | 'expired' | 'error';
     userId?: string;
     platform?: string;
     chatId?: string;

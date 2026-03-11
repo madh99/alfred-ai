@@ -37,7 +37,7 @@ describe('CalculatorSkill', () => {
   it('should reject invalid expressions', async () => {
     const result = await skill.execute({ expression: 'process.exit()' }, ctx);
     expect(result.success).toBe(false);
-    expect(result.error).toContain('disallowed');
+    expect(result.error).toContain('Unexpected character');
   });
 
   it('should reject empty input', async () => {

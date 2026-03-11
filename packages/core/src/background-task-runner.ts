@@ -53,7 +53,7 @@ export class BackgroundTaskRunner {
 
     try {
       const available = this.maxConcurrent - this.running;
-      const tasks = this.taskRepo.getPending(available);
+      const tasks = this.taskRepo.claimPending(available);
 
       for (const task of tasks) {
         this.running++;
@@ -71,7 +71,7 @@ export class BackgroundTaskRunner {
       return;
     }
 
-    this.taskRepo.updateStatus(task.id, 'running');
+    // Status already set to 'running' by claimPending()
     const startMs = Date.now();
 
     try {

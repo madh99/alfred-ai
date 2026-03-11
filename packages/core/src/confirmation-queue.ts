@@ -102,7 +102,7 @@ export class ConfirmationQueue {
           }
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
-            source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
+            source: pending.source, sourceId: pending.sourceId, outcome: 'error',
             userId: context.userId, platform, chatId,
             error: err instanceof Error ? err.message : String(err),
           });

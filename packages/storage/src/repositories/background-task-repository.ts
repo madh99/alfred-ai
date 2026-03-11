@@ -79,6 +79,34 @@ export class BackgroundTaskRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  /** Atomically claim pending tasks: SELECT + UPDATE to 'running' in a single transaction. */
+  claimPending(limit = 10): BackgroundTask[] {
+    const txn = this.db.transaction(() => {
+      const rows = this.db.prepare(
+        `SELECT * FROM background_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
+      ).all(limit) as Record<string, unknown>[];
+
+      const now = new Date().toISOString();
+      const updateStmt = this.db.prepare(
+        `UPDATE background_tasks SET status = 'running', started_at = ? WHERE id = ?`,
+      );
+      for (const row of rows) {
+        updateStmt.run(now, row.id as string);
+      }
+
+      return rows.map((row) => this.mapRow({ ...row, status: 'running', started_at: now }));
+    });
+    return txn();
+  }
+
+  /** Atomically claim a single task by ID (only if still pending). Returns true if claimed. */
+  claimTask(id: string): boolean {
+    const result = this.db.prepare(
+      `UPDATE background_tasks SET status = 'running', started_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+    ).run(id);
+    return result.changes > 0;
+  }
+
   getById(id: string): BackgroundTask | undefined {
     const row = this.db.prepare('SELECT * FROM background_tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
@@ -97,7 +125,9 @@ export class BackgroundTaskRepository {
 
   cancel(id: string): boolean {
     const result = this.db.prepare(
-      `DELETE FROM background_tasks WHERE id = ? AND status IN ('pending', 'running')`,
+      `UPDATE background_tasks
+       SET status = 'cancelled', completed_at = datetime('now')
+       WHERE id = ? AND status IN ('pending', 'running')`,
     ).run(id);
     return result.changes > 0;
   }

@@ -48,13 +48,25 @@ export class ModelRouter extends LLMProvider {
         );
       }
     }
+    if (!this.providers.has('default')) {
+      throw new Error(
+        'ModelRouter: no "default" tier configured. ' +
+        `Available tiers: [${[...this.providers.keys()].join(', ')}]`,
+      );
+    }
   }
 
   private resolve(tier?: ModelTier): { provider: LLMProvider; resolvedTier: ModelTier } {
     if (tier && this.providers.has(tier)) {
       return { provider: this.providers.get(tier)!, resolvedTier: tier };
     }
-    return { provider: this.providers.get('default')!, resolvedTier: 'default' };
+    const defaultProvider = this.providers.get('default');
+    if (!defaultProvider) {
+      throw new Error(
+        'ModelRouter: no "default" tier available. Was initialize() called?',
+      );
+    }
+    return { provider: defaultProvider, resolvedTier: 'default' };
   }
 
   async complete(request: LLMRequest): Promise<LLMResponse> {

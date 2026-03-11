@@ -2,9 +2,9 @@ import pino from 'pino';
 
 const redactOpts = {
   paths: [
-    '*.apiKey', '*.token', '*.password', '*.secret',
-    '*.accessToken', '*.refreshToken', '*.clientSecret',
-    '*.Authorization', '*.authorization',
+    '**.apiKey', '**.token', '**.password', '**.secret',
+    '**.accessToken', '**.refreshToken', '**.clientSecret',
+    '**.Authorization', '**.authorization',
   ],
   censor: '[REDACTED]',
 };
