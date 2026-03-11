@@ -325,7 +325,15 @@ export class MessagePipeline {
       let skillMetas = allSkillMetas;
       if (allSkillMetas && message.text) {
         const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
-        const selectedCategories = selectCategories(message.text, availableCategories);
+        // Include recent user messages from conversation history so follow-up
+        // questions retain the skill category context of earlier messages.
+        const recentUserTexts = history
+          .filter(m => m.role === 'user')
+          .slice(-3)
+          .map(m => m.content)
+          .join(' ');
+        const categoryInput = recentUserTexts ? `${message.text} ${recentUserTexts}` : message.text;
+        const selectedCategories = selectCategories(categoryInput, availableCategories);
         skillMetas = filterSkills(allSkillMetas, selectedCategories);
       }
       const tools = skillMetas

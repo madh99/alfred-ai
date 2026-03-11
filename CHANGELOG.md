@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-03-12
+
+### Fixed
+- **Skill-Filter: Konversationskontext** — Follow-up-Fragen verlieren nicht mehr den Skill-Kategorie-Kontext. Die letzten 3 User-Nachrichten aus der Konversationshistorie werden bei der Kategorie-Auswahl berücksichtigt. Behebt Problem dass z.B. nach einer BMW-Ladestatus-Frage die Anschlussfrage "km-Stand?" den BMW-Skill nicht mehr fand
+- **Skill-Filter: Fahrzeug-Keywords** — `km`, `kilometer`, `kilometerstand`, `mileage`, `tachostand` als Infrastructure-Keywords hinzugefügt
+
 ## [0.13.1] - 2026-03-12
 
 ### Fixed
