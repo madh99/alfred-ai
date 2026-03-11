@@ -53,33 +53,72 @@ export function evaluateCondition(
       const num = toNumber(currentValue);
       const thresh = toNumber(threshold);
       if (num === null || thresh === null) return { triggered: false, displayValue };
-      const triggered =
+      const met =
         operator === 'lt' ? num < thresh :
         operator === 'gt' ? num > thresh :
         operator === 'lte' ? num <= thresh :
         num >= thresh;
-      return { triggered, displayValue };
+      if (!met) return { triggered: false, displayValue };
+      // Only trigger on state change: previous value must NOT have met the condition
+      const prev = toNumber(lastValue);
+      if (prev !== null) {
+        const wasMet =
+          operator === 'lt' ? prev < thresh :
+          operator === 'gt' ? prev > thresh :
+          operator === 'lte' ? prev <= thresh :
+          prev >= thresh;
+        if (wasMet) return { triggered: false, displayValue };
+      }
+      return { triggered: true, displayValue };
     }
 
     case 'eq': {
       const numC = toNumber(currentValue);
       const numT = toNumber(threshold);
-      if (numC !== null && numT !== null) return { triggered: numC === numT, displayValue };
-      return { triggered: String(currentValue) === String(threshold), displayValue };
+      if (numC !== null && numT !== null) {
+        if (numC !== numT) return { triggered: false, displayValue };
+        const prevNum = toNumber(lastValue);
+        if (prevNum !== null && prevNum === numT) return { triggered: false, displayValue };
+        return { triggered: true, displayValue };
+      }
+      const currStr = String(currentValue);
+      const threshStr = String(threshold);
+      if (currStr !== threshStr) return { triggered: false, displayValue };
+      if (String(lastValue) === threshStr) return { triggered: false, displayValue };
+      return { triggered: true, displayValue };
     }
 
     case 'neq': {
       const numC = toNumber(currentValue);
       const numT = toNumber(threshold);
-      if (numC !== null && numT !== null) return { triggered: numC !== numT, displayValue };
-      return { triggered: String(currentValue) !== String(threshold), displayValue };
+      if (numC !== null && numT !== null) {
+        if (numC === numT) return { triggered: false, displayValue };
+        const prevNum = toNumber(lastValue);
+        if (prevNum !== null && prevNum !== numT) return { triggered: false, displayValue };
+        return { triggered: true, displayValue };
+      }
+      const currStr = String(currentValue);
+      const threshStr = String(threshold);
+      if (currStr === threshStr) return { triggered: false, displayValue };
+      if (String(lastValue) !== threshStr) return { triggered: false, displayValue };
+      return { triggered: true, displayValue };
     }
 
-    case 'contains':
-      return { triggered: String(currentValue).includes(String(threshold ?? '')), displayValue };
+    case 'contains': {
+      const met = String(currentValue).includes(String(threshold ?? ''));
+      if (!met) return { triggered: false, displayValue };
+      const wasMet = String(lastValue).includes(String(threshold ?? ''));
+      if (wasMet) return { triggered: false, displayValue };
+      return { triggered: true, displayValue };
+    }
 
-    case 'not_contains':
-      return { triggered: !String(currentValue).includes(String(threshold ?? '')), displayValue };
+    case 'not_contains': {
+      const met = !String(currentValue).includes(String(threshold ?? ''));
+      if (!met) return { triggered: false, displayValue };
+      const wasMet = !String(lastValue).includes(String(threshold ?? ''));
+      if (wasMet) return { triggered: false, displayValue };
+      return { triggered: true, displayValue };
+    }
 
     case 'changed':
       return {

@@ -315,7 +315,15 @@ export class WatchEngine {
     if (!this.llmProvider) return null;
 
     try {
-      const dataStr = JSON.stringify(resultData, null, 2);
+      // Pre-filter marketplace listings to avoid LLM sorting/selection errors
+      let dataForLLM = resultData;
+      if (resultData && typeof resultData === 'object' && !Array.isArray(resultData)) {
+        const rd = resultData as Record<string, unknown>;
+        if (Array.isArray(rd.listings) && rd.listings.length > 15) {
+          dataForLLM = { ...rd, listings: (rd.listings as unknown[]).slice(0, 15) };
+        }
+      }
+      const dataStr = JSON.stringify(dataForLLM, null, 2);
       // Truncate if too large to avoid excessive token usage
       const truncated = dataStr.length > 8000 ? dataStr.slice(0, 8000) + '\n... (truncated)' : dataStr;
 
