@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-03-11
+
+### Fixed
+- **System-Prompt: Tool-Pflicht** — Explizite Anweisung im System-Prompt, dass das LLM keine Fakten schätzen/halluzinieren darf, die ein Tool liefern kann (Fahrzeiten, Preise, Wetter, etc.). Verhindert falsche Antworten wenn der passende Skill vorhanden ist
+
 ## [0.12.4] - 2026-03-11
 
 ### Added

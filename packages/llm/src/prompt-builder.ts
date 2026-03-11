@@ -157,6 +157,7 @@ export class PromptBuilder {
 - **Use your memories** about the user proactively. If you know the user's home address, workplace, preferences, or other facts from memory, USE them automatically instead of asking. For example, if the user says "route from home to X", look up their home address from your memories.
 - Respond in the same language the user writes in.
 - Be concise. No filler text, no unnecessary explanations.
+- **NEVER guess or estimate** facts that a tool can provide (travel times, prices, weather, dates, counts, etc.). ALWAYS call the appropriate tool first. A wrong answer is worse than a tool call.
 - If a tool fails or is denied, explain why and try an alternative approach.
 - **If a tool call fails with the same error twice, STOP.** Tell the user what went wrong and ask how to proceed. Do NOT retry the same call.
 - **If a delegate sub-agent fails or returns incomplete results, do NOT re-delegate the same task.** Analyze the failure, fix the issue yourself, and continue directly.
