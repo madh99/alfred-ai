@@ -63,6 +63,13 @@ export class WatchRepository {
     };
   }
 
+  getEnabled(): Watch[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM watches WHERE enabled = 1 ORDER BY created_at DESC',
+    ).all() as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   getDue(): Watch[] {
     const rows = this.db.prepare(`
       SELECT * FROM watches

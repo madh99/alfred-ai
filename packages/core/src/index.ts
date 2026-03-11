@@ -34,3 +34,4 @@ export { resolveTemplates, resolveTemplatesInObject } from './template-resolver.
 export { SkillHealthTracker } from './skill-health-tracker.js';
 export { WorkflowRunner } from './workflow-runner.js';
 export type { WorkflowRunResult } from './workflow-runner.js';
+export { ReasoningEngine } from './reasoning-engine.js';

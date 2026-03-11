@@ -267,6 +267,16 @@ export interface EnergyPriceConfig {
   gridMeterFee?: number;      // Messentgelt €/Monat netto
 }
 
+export interface ReasoningConfig {
+  enabled?: boolean;
+  /** 'morning_noon_evening' = 3×/Tag (7h,12h,18h), 'hourly', 'half_hourly' */
+  schedule?: 'morning_noon_evening' | 'hourly' | 'half_hourly';
+  /** LLM tier to use (default: 'fast' = Haiku, cheapest) */
+  tier?: 'fast' | 'default';
+  /** Hours to suppress duplicate insights (default: 12) */
+  deduplicationHours?: number;
+}
+
 export interface BriefingConfig {
   location?: string;
   homeAddress?: string;
@@ -322,6 +332,7 @@ export interface AlfredConfig {
   energy?: EnergyPriceConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
+  reasoning?: ReasoningConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-03-12
+
+### Added
+- **Reasoning Engine** — Proaktives Denk-Modul das periodisch alle verfügbaren Daten (Kalender, Todos, Watches, Memories, Aktivität, Wetter, Energiepreise, Skill-Health) aggregiert und dem LLM zur cross-domain Analyse übergibt. Erkennt Zusammenhänge, Konflikte und Optimierungen und benachrichtigt den User nur bei echten, nicht-offensichtlichen Erkenntnissen
+  - **3 Schedule-Modi**: `morning_noon_evening` (Standard, 3×/Tag um 7h, 12h, 18h), `hourly`, `half_hourly`
+  - **Kosteneffizient**: Ein einzelner LLM-Call pro Pass (~5.500 Input-Tokens), kein Tool-Loop. ~$0.80/Monat mit Haiku bei 3×/Tag
+  - **Dedup-Mechanismus**: Gleicher Insight wird innerhalb von 12h nicht wiederholt (SHA-256 Hash in `calendar_notifications`)
+  - **Graceful Degradation**: Fehlende Datenquellen werden übersprungen ohne den gesamten Pass zu blockieren
+  - Konfiguration via ENV: `ALFRED_REASONING_ENABLED`, `ALFRED_REASONING_SCHEDULE`, `ALFRED_REASONING_TIER`
+
 ## [0.12.5] - 2026-03-11
 
 ### Fixed

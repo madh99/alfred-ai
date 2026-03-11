@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.12.5-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.13.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -364,6 +364,17 @@ calendar:
     enabled: true
     minutesBefore: 15
 ```
+
+**Reasoning Engine** — Cross-domain analysis for proactive insights:
+```
+Alfred: "💡 Du hast um 14:00 einen Termin in Linz, aber die RTX 5090 Watch
+zeigt ein Angebot in Wien — Abholung wäre auf dem Rückweg möglich."
+
+Alfred: "💡 Strompreis ist bis 15:00 unter 5 ct/kWh — BMW laden wäre jetzt
+günstig (Akku war beim letzten Check bei 45%)."
+```
+Aggregates calendar, todos, watches, memories, weather, energy prices, and activity.
+Runs 3x/day (configurable), one LLM call per pass (~$0.80/month with Haiku).
 
 ### Cross-Platform Identity
 
@@ -752,6 +763,11 @@ ALFRED_BRIEFING_LOCATION=           # Default weather location (e.g. "Altlengbac
 ALFRED_BRIEFING_HOME_ADDRESS=       # Home address for commute routing (e.g. "Altlengbach 42")
 ALFRED_BRIEFING_OFFICE_ADDRESS=     # Office address for commute routing (e.g. "Mariahilfer Straße 1, Wien")
 
+# Reasoning Engine (optional, enabled by default)
+ALFRED_REASONING_ENABLED=true       # true/false (default: true)
+ALFRED_REASONING_SCHEDULE=morning_noon_evening  # morning_noon_evening | hourly | half_hourly
+ALFRED_REASONING_TIER=fast          # fast (Haiku, ~$0.80/mo) | default (Sonnet, ~$2.40/mo)
+
 # Microsoft To Do (set automatically by `alfred auth microsoft`)
 ALFRED_MICROSOFT_TODO_CLIENT_ID=
 ALFRED_MICROSOFT_TODO_CLIENT_SECRET=
@@ -943,6 +959,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 ## Roadmap
 
 - [ ] Web chat UI (HTTP API backend is ready)
+- [x] Reasoning Engine (cross-domain proactive insights)
 - [x] Marketplace search & price comparison (willhaben.at, eBay)
 - [x] Workflow chains (multi-step skill pipelines)
 - [x] Persistent agents (checkpoint/resume for long-running tasks)

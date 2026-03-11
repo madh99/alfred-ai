@@ -137,6 +137,10 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_BRIEFING_LOCATION: ['briefing', 'location'],
   ALFRED_BRIEFING_HOME_ADDRESS: ['briefing', 'homeAddress'],
   ALFRED_BRIEFING_OFFICE_ADDRESS: ['briefing', 'officeAddress'],
+  // Reasoning Engine
+  ALFRED_REASONING_ENABLED: ['reasoning', 'enabled'],
+  ALFRED_REASONING_SCHEDULE: ['reasoning', 'schedule'],
+  ALFRED_REASONING_TIER: ['reasoning', 'tier'],
 };
 
 function applyEnvOverrides(config: Record<string, unknown>): Record<string, unknown> {

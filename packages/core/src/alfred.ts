@@ -66,6 +66,7 @@ import { TodoWatcher } from './todo-watcher.js';
 import { ActivityLogger } from './activity-logger.js';
 import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
+import { ReasoningEngine } from './reasoning-engine.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -85,6 +86,7 @@ export class Alfred {
   private calendarSkill?: any; // CalendarSkill instance for today's events
   private calendarWatcher?: CalendarWatcher;
   private todoWatcher?: TodoWatcher;
+  private reasoningEngine?: ReasoningEngine;
   private usageRepo?: UsageRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -296,6 +298,7 @@ export class Alfred {
         );
       }
     }
+
 
     // 4c. Initialize MCP servers (optional)
     if (this.config.mcp?.servers?.length) {
@@ -585,6 +588,33 @@ export class Alfred {
     );
     workflowSkill.setRunner(workflowRunner);
 
+    // 7g. Initialize reasoning engine — proactive cross-domain insights
+    {
+      const ownerUserId = this.config.security?.ownerUserId;
+      if (ownerUserId && this.config.reasoning?.enabled !== false) {
+        const reasoningNotifRepo = new CalendarNotificationRepository(db);
+        this.reasoningEngine = new ReasoningEngine(
+          calendarProvider,
+          todoRepo,
+          watchRepo,
+          memoryRepo,
+          activityRepo,
+          skillHealthRepo,
+          reasoningNotifRepo,
+          skillRegistry,
+          skillSandbox,
+          llmProvider,
+          this.adapters,
+          userRepo,
+          ownerUserId,
+          'telegram' as Platform,
+          this.config.reasoning,
+          this.logger.child({ component: 'reasoning-engine' }),
+          activityLogger,
+        );
+      }
+    }
+
     // Wire confirmation queue, activity logger, and skill health tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
@@ -679,6 +709,7 @@ export class Alfred {
     this.confirmationQueue?.start();
     this.calendarWatcher?.start();
     this.todoWatcher?.start();
+    this.reasoningEngine?.start();
 
     // Skill health: periodic re-enable check (every 5 minutes)
     if (this.skillHealthTracker) {
@@ -719,6 +750,7 @@ export class Alfred {
     this.confirmationQueue?.stop();
     this.calendarWatcher?.stop();
     this.todoWatcher?.stop();
+    this.reasoningEngine?.stop();
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;
