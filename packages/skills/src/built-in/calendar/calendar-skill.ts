@@ -212,21 +212,29 @@ export class CalendarSkill extends Skill {
   private formatEvent(event: CalendarEvent): string {
     // Use provider timezone (updated per-request from context) over constructor timezone
     const tz = this.calendarProvider.timezone || this.timezone;
-    const opts: Intl.DateTimeFormatOptions = {
+    const timeOpts: Intl.DateTimeFormatOptions = {
       hour: '2-digit',
       minute: '2-digit',
+      ...(tz ? { timeZone: tz } : {}),
+    };
+    const dateOpts: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
       ...(tz ? { timeZone: tz } : {}),
     };
 
     const loc = event.location ? ` @ ${event.location}` : '';
     const idTag = event.id ? ` [id:${event.id}]` : '';
+    const dateStr = event.start.toLocaleDateString('de-AT', dateOpts);
 
     if (event.allDay) {
-      return `- All day: ${event.title}${loc}${idTag}`;
+      return `- ${dateStr} ganztägig: ${event.title}${loc}${idTag}`;
     }
 
-    const startTime = event.start.toLocaleTimeString('en-GB', opts);
-    const endTime = event.end.toLocaleTimeString('en-GB', opts);
-    return `- ${startTime}-${endTime}: ${event.title}${loc}${idTag}`;
+    const startTime = event.start.toLocaleTimeString('en-GB', timeOpts);
+    const endTime = event.end.toLocaleTimeString('en-GB', timeOpts);
+    return `- ${dateStr} ${startTime}-${endTime}: ${event.title}${loc}${idTag}`;
   }
 }

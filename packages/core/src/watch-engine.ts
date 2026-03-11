@@ -4,6 +4,7 @@ import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, Watch } from '@alfred/types';
 import type { UserRepository } from '@alfred/storage';
+import type { LLMProvider } from '@alfred/llm';
 import { extractField, evaluateCondition, evaluateCompositeCondition } from './condition-evaluator.js';
 import { resolveTemplates, resolveTemplatesInObject } from './template-resolver.js';
 import { buildSkillContext } from './context-factory.js';
@@ -32,6 +33,7 @@ export class WatchEngine {
     private readonly confirmationQueue?: ConfirmationQueue,
     private readonly activityLogger?: ActivityLogger,
     private readonly skillHealthTracker?: SkillHealthTracker,
+    private readonly llmProvider?: LLMProvider,
   ) {}
 
   start(): void {
@@ -178,13 +180,7 @@ export class WatchEngine {
 
         // Still send alert if mode includes it
         if (actionMode === 'alert_and_action') {
-          let alertText = resolvedTemplate
-            ?? this.formatAlert(watch, displayValue, result.data);
-
-          if (resolvedTemplate && result.data && typeof result.data === 'object') {
-            const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
-            if (resultContext) alertText += '\n\n' + resultContext;
-          }
+          let alertText = await this.buildAlertText(watch, displayValue, result.data, resolvedTemplate);
 
           alertText += '\n\n(Aktion wartet auf Best\u00E4tigung)';
 
@@ -241,13 +237,7 @@ export class WatchEngine {
 
       // Send alert if mode includes alerting
       if (actionMode === 'alert' || actionMode === 'alert_and_action') {
-        let alertText = resolvedTemplate
-          ?? this.formatAlert(watch, displayValue, result.data);
-
-        if (resolvedTemplate && result.data && typeof result.data === 'object') {
-          const resultContext = this.formatResultContext(result.data as Record<string, unknown>, watch.condition.field);
-          if (resultContext) alertText += '\n\n' + resultContext;
-        }
+        let alertText = await this.buildAlertText(watch, displayValue, result.data, resolvedTemplate);
 
         if (actionError) {
           alertText += '\n\n\u26A0\uFE0F Aktion fehlgeschlagen: ' + actionError;
@@ -310,6 +300,85 @@ export class WatchEngine {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Use LLM to intelligently format watch alert based on messageTemplate + result data.
+   * The messageTemplate acts as instruction (e.g. "zeige die 5 günstigsten RTX 5090 Angebote"),
+   * and the LLM filters/formats the raw data accordingly.
+   */
+  private async formatAlertWithLLM(
+    messageTemplate: string,
+    resultData: unknown,
+    watchName: string,
+  ): Promise<string | null> {
+    if (!this.llmProvider) return null;
+
+    try {
+      const dataStr = JSON.stringify(resultData, null, 2);
+      // Truncate if too large to avoid excessive token usage
+      const truncated = dataStr.length > 8000 ? dataStr.slice(0, 8000) + '\n... (truncated)' : dataStr;
+
+      const response = await this.llmProvider.complete({
+        messages: [{
+          role: 'user',
+          content: `Du bist ein Watch-Alert-Formatter. Formatiere die folgenden Daten als kurze, übersichtliche Benachrichtigung für den User.
+
+Anweisung des Users: "${messageTemplate}"
+
+Watch: "${watchName}"
+
+Rohdaten:
+${truncated}
+
+Regeln:
+- Folge der Anweisung des Users (z.B. Anzahl, Filter, Sortierung)
+- Filtere irrelevante Ergebnisse heraus (z.B. Zubehör wenn nach einem Produkt gesucht wird)
+- Kompaktes Format: Titel, Preis, Standort, Link pro Eintrag
+- Antworte NUR mit der formatierten Nachricht, keine Erklärungen
+- Sprache: Deutsch`,
+        }],
+        tier: 'fast',
+        maxTokens: 1024,
+        temperature: 0.1,
+      });
+
+      return response.content?.trim() || null;
+    } catch (err) {
+      this.logger.warn({ err, watchName }, 'LLM alert formatting failed, falling back to static formatter');
+      return null;
+    }
+  }
+
+  /**
+   * Build alert text: uses LLM formatting when messageTemplate is set and LLM is available,
+   * otherwise falls back to static formatResultContext.
+   */
+  private async buildAlertText(
+    watch: Watch,
+    displayValue: string,
+    resultData: unknown,
+    resolvedTemplate: string | undefined,
+  ): Promise<string> {
+    // When messageTemplate exists and LLM is available, use intelligent formatting
+    if (resolvedTemplate && resultData && this.llmProvider) {
+      const llmFormatted = await this.formatAlertWithLLM(
+        watch.messageTemplate!,
+        resultData,
+        watch.name,
+      );
+      if (llmFormatted) return llmFormatted;
+    }
+
+    // Fallback: static formatting
+    let alertText = resolvedTemplate ?? this.formatAlert(watch, displayValue, resultData);
+
+    if (resolvedTemplate && resultData && typeof resultData === 'object') {
+      const resultContext = this.formatResultContext(resultData as Record<string, unknown>, watch.condition.field);
+      if (resultContext) alertText += '\n\n' + resultContext;
+    }
+
+    return alertText;
   }
 
   /**

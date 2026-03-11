@@ -122,6 +122,13 @@ describe('selectCategories', () => {
     expect(result.has('infrastructure')).toBe(true);
   });
 
+  it('matches charging compound words for infrastructure', () => {
+    for (const msg of ['zeig mir die ladehistorie dieses monats', 'letzte ladesession', 'ladevorgang anzeigen', 'ladezyklus der batterie', 'ladekurve']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('infrastructure'), `"${msg}" should match infrastructure`).toBe(true);
+    }
+  });
+
   it('only includes available common categories in fallback', () => {
     const result = selectCategories('hello', available('core', 'productivity'));
     expect(result.has('core')).toBe(true);

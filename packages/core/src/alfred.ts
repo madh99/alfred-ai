@@ -548,6 +548,7 @@ export class Alfred {
       this.confirmationQueue,
       activityLogger,
       skillHealthTracker,
+      llmProvider,
     );
 
     // 7f. Initialize workflow chains

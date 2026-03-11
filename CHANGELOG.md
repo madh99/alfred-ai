@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-03-11
+
+### Fixed
+- **Kalender-Events ohne Datum** — `formatEvent()` zeigte nur die Uhrzeit (z.B. "18:33-20:30") ohne Datum. Bei Abfragen über mehrere Tage/Wochen war nicht erkennbar, an welchem Tag ein Termin stattfindet. Format jetzt: "So., 22.03.2026 18:33-20:30: ..."
+- **Skill-Filter: Lade-Keywords** — `ladehistorie`, `ladesession`, `ladevorgang`, `ladezyklus`, `ladekurve` matchen jetzt korrekt auf Infrastructure-Kategorie. Verhindert dass BMW/Batterie-Anfragen den Delegate-Umweg nehmen
+
+### Added
+- **Watch-Alerts: LLM-Formatierung** — Wenn ein Watch eine `messageTemplate` hat, werden die Rohdaten vom LLM (fast tier) intelligent formatiert statt vom statischen Formatter. Das LLM filtert irrelevante Ergebnisse (z.B. Zubehör bei GPU-Suche) und respektiert die Anweisung im Template (z.B. "5 günstigsten"). Fallback auf statischen Formatter wenn kein LLM verfügbar
+
 ## [0.12.1] - 2026-03-11
 
 ### Fixed
