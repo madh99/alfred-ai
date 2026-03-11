@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-03-11
+
+### Added
+- **Todo-Watcher** — Proaktive Erinnerungen für fällige Todos. Benachrichtigt 30 Minuten vor Fälligkeit und prüft stündlich auf überfällige offene Todos. Dedup über bestehende `calendar_notifications`-Tabelle, keine Migration nötig
+
+### Fixed
+- **Watch-Alerts: Nur bei Zustandswechsel** — Schwellwert-Operatoren (`lt`, `gt`, `lte`, `gte`, `eq`, `neq`, `contains`, `not_contains`) triggern jetzt nur noch beim Übergang false→true. Verhindert wiederholte Benachrichtigungen solange eine Bedingung dauerhaft erfüllt ist (z.B. Preis-Watch)
+- **Watch LLM-Formatter: Sortierung** — Marketplace-Listings werden vor der LLM-Formatierung auf die angeforderte Anzahl begrenzt (aus messageTemplate extrahiert, min. 10). Verhindert falsche Sortierung bei großen Ergebnismengen
+
 ## [0.12.3] - 2026-03-11
 
 ### Fixed
