@@ -29,6 +29,7 @@ export interface MemoryEntry {
   accessCount: number;
   createdAt: string;
   updatedAt: string;
+  expiresAt?: string | null;
 }
 
 export class MemoryRepository {
@@ -59,13 +60,37 @@ export class MemoryRepository {
          type = excluded.type,
          confidence = excluded.confidence,
          source = excluded.source,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at,
+         expires_at = NULL`,
     ).run(id, userId, key, value, category, type, confidence, source, now, now);
 
     const row = this.db.prepare(
       'SELECT * FROM memories WHERE user_id = ? AND key = ?',
     ).get(userId, key) as Record<string, unknown>;
     return this.mapRow(row);
+  }
+
+  saveWithTTL(
+    userId: string,
+    key: string,
+    value: string,
+    category: string,
+    ttlMinutes: number,
+  ): MemoryEntry {
+    const entry = this.saveWithMetadata(userId, key, value, category, 'general', 1.0, 'manual');
+    const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+    this.db.prepare(
+      'UPDATE memories SET expires_at = ? WHERE user_id = ? AND key = ?',
+    ).run(expiresAt, userId, key);
+    entry.expiresAt = expiresAt;
+    return entry;
+  }
+
+  cleanupExpired(): number {
+    const result = this.db.prepare(
+      `DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')`,
+    ).run();
+    return result.changes;
   }
 
   recall(userId: string, key: string): MemoryEntry | undefined {
@@ -202,6 +227,7 @@ export class MemoryRepository {
       accessCount: (row.access_count as number) ?? 0,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
+      expiresAt: (row.expires_at as string) ?? null,
     };
   }
 }

@@ -49,6 +49,15 @@ export class WatchEngine {
     this.logger.info('Watch engine stopped');
   }
 
+  /** Trigger a specific watch immediately (used by inbound webhooks). */
+  async triggerWatch(watchId: string): Promise<void> {
+    const watch = this.watchRepo.getById(watchId);
+    if (!watch) throw new Error(`Watch ${watchId} not found`);
+    if (!watch.enabled) throw new Error(`Watch ${watchId} is disabled`);
+    this.logger.info({ watchId, name: watch.name }, 'Watch triggered via webhook');
+    await this.checkWatch(watch);
+  }
+
   private async tick(): Promise<void> {
     try {
       const dueWatches = this.watchRepo.getDue();
@@ -133,7 +142,10 @@ export class WatchEngine {
     } else {
       // Single condition
       const currentValue = extractField(result.data, watch.condition.field);
-      const lastValue = watch.lastValue !== null ? JSON.parse(watch.lastValue) : null;
+      let lastValue: unknown = null;
+      if (watch.lastValue !== null) {
+        try { lastValue = JSON.parse(watch.lastValue); } catch { /* treat as baseline */ }
+      }
 
       const evalResult = evaluateCondition(
         currentValue,

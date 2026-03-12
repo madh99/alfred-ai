@@ -88,6 +88,8 @@ export class ShellSkill extends Skill {
       /\bsudo\b/,                         // privilege escalation
       /\bchroot\b/,                       // chroot
       /\beval\s/,                         // eval execution
+      /\bsource\s/,                      // source execution
+      /\b\.\s+\//,                       // dot-source (. /path)
     ];
     for (const pattern of dangerous) {
       if (pattern.test(command)) {

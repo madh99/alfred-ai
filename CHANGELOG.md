@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-03-12
+
+### Added
+- **RSS/Feed Reader Skill** — Neuer Skill `feed_reader` zum Abonnieren und Überwachen von RSS/Atom-Feeds. Aktionen: `subscribe`, `unsubscribe`, `list_feeds`, `check`. Neue Einträge werden erkannt und zurückgegeben. Voll kompatibel mit Watch-Engine für automatische Feed-Alerts
+- **LLM Provider Fallback** — Automatischer Wechsel auf alternative LLM-Tiers bei Provider-Ausfällen (5xx, Netzwerkfehler, Rate-Limits). Happy-Path unverändert, Fallback nur bei Fehler. Stream-Fallback nur vor erstem Chunk (kein gesplicter Output)
+- **Health-Endpoint Erweiterung** — Neue Felder: `startedAt`, `watchesActive`, `schedulersActive`, `llmProviders` (Status pro Tier), `diskUsage`. Prometheus-Metriken für Watches und Scheduled Actions
+- **DB-Retention/Cleanup** — Automatischer Cleanup bei Startup: Audit-Log (>90 Tage), Summaries (>180 Tage), Activity-Log (>90 Tage), Usage-Tracking (>365 Tage). Unbegrenztes DB-Wachstum verhindert
+- **E-Mail Intelligence** — Neue Aktionen `summarize_inbox` (LLM-generierte Zusammenfassung ungelesener Mails) und `categorize` (Klassifizierung in urgent/action_required/fyi/newsletter). Benötigt konfiguriertes LLM, funktioniert ohne LLM weiterhin normal
+- **Kalender Intelligence** — Neue Aktionen `find_free_slot` (algorithmische Lückensuche mit Working-Hours-Filter 08-18 Uhr, Wochenend-Skip) und `check_conflicts` (Konfliktprüfung mit angereichertem Display)
+- **Inline Keyboards (Telegram)** — Bestätigungsanfragen nutzen jetzt Inline-Buttons `[✅ Approve] [❌ Reject]` statt Textprompts. Callback-Query-Handler für Telegram. Andere Plattformen unverändert
+- **Thread/Topic Support** — `threadId` in `NormalizedMessage` und `SendMessageOptions`. Telegram: `message_thread_id` Support. Discord: Thread-Erkennung via `isThread()`
+- **Inbound Webhooks** — Neue HTTP-Route `POST /api/webhook/:name` mit HMAC-SHA256 Signaturvalidierung. Webhooks können Watches sofort triggern statt auf den nächsten Poll-Zyklus zu warten. Konfiguration via YAML
+- **Memory TTL** — Optionales Ablaufdatum für kurzlebige Erinnerungen (Migration v26). `saveWithTTL()` für zeitlich begrenzte Infos, `cleanupExpired()` beim Startup. Permanente Memories (Default) werden nie automatisch gelöscht
+- **Proxmox Backup Server Monitoring** — Neuer Health-Check `proxmox_backup` im Monitor-Skill. Prüft PBS-API auf letztes erfolgreiches Backup und kürzliche Fehler. Separate Konfiguration mit eigener Authentifizierung
+- **Setup-Wizard: PBS-Konfiguration** — Proxmox Backup Server im interaktiven Setup inkl. ENV-Variablen (`ALFRED_PBS_*`)
+- **Zod-Schemas** für `marketplace`, `briefing`, `reasoning` — Config-Sektionen werden bei Validierung nicht mehr gestripped
+
+### Fixed
+- **Stream-Fallback: Kein gesplicter Output** — LLM-Stream-Fallback feuert nur vor dem ersten Chunk, nicht mid-stream
+- **Memory UPSERT: TTL-Reset** — Normaler Save setzt `expires_at` auf NULL zurück, sodass alte TTL-Werte nicht fälschlich persistieren
+- **Bearer-Token Timing-Safety** — HTTP-API Bearer-Token-Check nutzt jetzt `timingSafeEqual` (konsistent mit Webhook-HMAC)
+- **Calendar Timezone-Konsistenz** — `checkAvailability` nutzt jetzt `parseLocalTime()` wie alle anderen Calendar-Aktionen
+- **Email Attachment Path Traversal** — `path.basename()` Sanitisierung verhindert Directory Traversal bei Attachment-Dateinamen
+- **Monitor Source-Attribution** — Fehlgeschlagene Health-Checks werden korrekt ihrer Quelle zugeordnet statt pauschal "proxmox"
+- **ENV_MAP: verifyTls** — `ALFRED_HOMEASSISTANT_VERIFY_TLS` und `ALFRED_DOCKER_VERIFY_TLS` hinzugefügt
+
+### Changed
+- **Migration v26** — `memories` Tabelle um `expires_at` Column erweitert mit partiellem Index
+
 ## [0.13.4] - 2026-03-12
 
 ### Fixed

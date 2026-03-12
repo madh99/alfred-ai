@@ -301,6 +301,22 @@ export interface MicrosoftTodoConfig {
   refreshToken: string;
 }
 
+export interface WebhookConfig {
+  name: string;
+  secret: string;
+  watchId?: string;
+  chatId?: string;
+  platform?: string;
+}
+
+export interface ProxmoxBackupConfig {
+  baseUrl: string;
+  tokenId: string;
+  tokenSecret: string;
+  maxAgeHours?: number;
+  verifyTls?: boolean;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -333,6 +349,8 @@ export interface AlfredConfig {
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;
+  webhooks?: WebhookConfig[];
+  proxmoxBackup?: ProxmoxBackupConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

@@ -548,4 +548,12 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 26,
+    description: 'Memory TTL — optional expiration for short-lived memories',
+    up(db) {
+      db.exec(`ALTER TABLE memories ADD COLUMN expires_at TEXT DEFAULT NULL`);
+      db.exec(`CREATE INDEX idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL`);
+    },
+  },
 ];

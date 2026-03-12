@@ -41,7 +41,7 @@ export class ConfirmationQueue {
   }): Promise<void> {
     const expiresAt = new Date(Date.now() + (opts.timeoutMinutes ?? 30) * 60_000).toISOString();
 
-    this.confirmRepo.create({
+    const confirmation = this.confirmRepo.create({
       chatId: opts.chatId,
       platform: opts.platform,
       source: opts.source,
@@ -54,9 +54,22 @@ export class ConfirmationQueue {
 
     const adapter = this.adapters.get(opts.platform as Platform);
     if (adapter) {
+      const confirmId = confirmation.id;
       const msg = `\u2753 Best\u00E4tigung erforderlich:\n${opts.description}\n\nAntworte "ja" oder "nein".`;
       try {
-        await adapter.sendMessage(opts.chatId, msg);
+        // Use inline buttons for Telegram
+        if (opts.platform === 'telegram' && confirmId) {
+          await adapter.sendMessage(opts.chatId, msg, {
+            replyMarkup: {
+              inlineKeyboard: [[
+                { text: '\u2705 Approve', callbackData: `confirm:${confirmId}:approve` },
+                { text: '\u274C Reject', callbackData: `confirm:${confirmId}:reject` },
+              ]],
+            },
+          });
+        } else {
+          await adapter.sendMessage(opts.chatId, msg);
+        }
       } catch (err) {
         this.logger.error({ err }, 'Failed to send confirmation request');
       }
@@ -69,8 +82,11 @@ export class ConfirmationQueue {
    */
   async checkForConfirmation(chatId: string, platform: string, text: string, context: SkillContext): Promise<boolean> {
     const normalized = text.trim().toLowerCase();
-    const isYes = ['ja', 'ok', 'yes', 'best\u00E4tigen', 'j'].includes(normalized);
-    const isNo = ['nein', 'no', 'abbrechen', 'n', 'n\u00F6'].includes(normalized);
+
+    // Handle inline keyboard callback data: confirm:<id>:approve / confirm:<id>:reject
+    const callbackMatch = /^confirm:([^:]+):(approve|reject)$/.exec(normalized);
+    const isYes = callbackMatch ? callbackMatch[2] === 'approve' : ['ja', 'ok', 'yes', 'best\u00E4tigen', 'j'].includes(normalized);
+    const isNo = callbackMatch ? callbackMatch[2] === 'reject' : ['nein', 'no', 'abbrechen', 'n', 'n\u00F6'].includes(normalized);
 
     if (!isYes && !isNo) return false;
 

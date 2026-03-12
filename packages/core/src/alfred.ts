@@ -42,6 +42,7 @@ import {
   TransitSkill,
   ConfigureSkill,
   TodoSkill,
+  FeedReaderSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -88,8 +89,15 @@ export class Alfred {
   private todoWatcher?: TodoWatcher;
   private reasoningEngine?: ReasoningEngine;
   private usageRepo?: UsageRepository;
+  private auditRepo?: AuditRepository;
+  private summaryRepo?: SummaryRepository;
+  private activityRepo?: ActivityRepository;
+  private memoryRepo?: MemoryRepository;
+  private watchRepo?: WatchRepository;
+  private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
+  private readonly startedAt = new Date().toISOString();
 
   constructor(private config: AlfredConfig) {
     this.logger = createLogger('alfred', config.logger.level);
@@ -105,14 +113,18 @@ export class Alfred {
     const userRepo = new UserRepository(db);
     this.userRepo = userRepo;
     const auditRepo = new AuditRepository(db);
+    this.auditRepo = auditRepo;
     const memoryRepo = new MemoryRepository(db);
+    this.memoryRepo = memoryRepo;
     const reminderRepo = new ReminderRepository(db);
     const noteRepo = new NoteRepository(db);
     const embeddingRepo = new EmbeddingRepository(db);
     const linkTokenRepo = new LinkTokenRepository(db);
     const backgroundTaskRepo = new BackgroundTaskRepository(db);
     const scheduledActionRepo = new ScheduledActionRepository(db);
+    this.scheduledActionRepo = scheduledActionRepo;
     const activityRepo = new ActivityRepository(db);
+    this.activityRepo = activityRepo;
     const activityLogger = new ActivityLogger(activityRepo, this.logger.child({ component: 'activity' }));
     const skillHealthRepo = new SkillHealthRepository(db);
     const skillHealthTracker = new SkillHealthTracker(
@@ -180,6 +192,7 @@ export class Alfred {
 
     // 3c. Conversation summarizer
     const summaryRepo = new SummaryRepository(db);
+    this.summaryRepo = summaryRepo;
     const conversationSummarizer = new ConversationSummarizer(
       llmProvider,
       summaryRepo,
@@ -225,9 +238,13 @@ export class Alfred {
           this.logger.warn({ err, account: account.name }, 'Email account initialization failed, skipping');
         }
       }
-      skillRegistry.register(providers.size > 0 ? new EmailSkill(providers) : new EmailSkill());
+      const emailSkill = providers.size > 0 ? new EmailSkill(providers) : new EmailSkill();
+      emailSkill.setLLM(llmProvider);
+      skillRegistry.register(emailSkill);
     } else {
-      skillRegistry.register(new EmailSkill());
+      const emailSkill = new EmailSkill();
+      emailSkill.setLLM(llmProvider);
+      skillRegistry.register(emailSkill);
     }
     skillRegistry.register(new HttpSkill());
     skillRegistry.register(new FileSkill());
@@ -393,12 +410,13 @@ export class Alfred {
     }
 
     // 4n. Infrastructure Monitor (auto-enabled when any infra skill is configured)
-    if (this.config.proxmox || this.config.unifi || this.config.homeassistant) {
+    if (this.config.proxmox || this.config.unifi || this.config.homeassistant || this.config.proxmoxBackup) {
       const { MonitorSkill } = await import('@alfred/skills');
       skillRegistry.register(new MonitorSkill({
         proxmox: this.config.proxmox,
         unifi: this.config.unifi,
         homeassistant: this.config.homeassistant,
+        proxmoxBackup: this.config.proxmoxBackup,
       }));
       this.logger.info('Infrastructure monitor skill enabled');
     }
@@ -423,6 +441,10 @@ export class Alfred {
       skillRegistry.register(new BriefingSkill(skillRegistry, this.config, memoryRepo));
       this.logger.info('Briefing skill registered');
     }
+
+    // 4s. Feed reader (always available — stores subscriptions in memory)
+    skillRegistry.register(new FeedReaderSkill(memoryRepo));
+    this.logger.info('Feed reader skill registered');
 
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
@@ -548,6 +570,7 @@ export class Alfred {
 
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(db);
+    this.watchRepo = watchRepo;
     skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
 
     // 7e. Initialize confirmation queue (human-in-the-loop for watch actions)
@@ -678,14 +701,28 @@ export class Alfred {
       this.adapters.set('api', new HttpAdapter(port, host, {
         apiToken: config.api?.token,
         corsOrigin: config.api?.corsOrigin,
-        healthCheck: () => ({
-          db: !!this.database,
-          uptime: Math.floor(process.uptime()),
-          adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
-          metrics: this.pipeline.getMetrics(),
-          costs: this.llmProvider.getCostSummary(),
-          todayUsage: this.usageRepo?.getDaily(new Date().toISOString().slice(0, 10)),
-        }),
+        healthCheck: () => {
+          let diskUsage: { path: string; sizeBytes: number } | undefined;
+          try {
+            const dbPath = this.config.storage.path;
+            const stat = fs.statSync(dbPath);
+            diskUsage = { path: dbPath, sizeBytes: stat.size };
+          } catch { /* ignore */ }
+
+          return {
+            db: !!this.database,
+            uptime: Math.floor(process.uptime()),
+            startedAt: this.startedAt,
+            adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
+            metrics: this.pipeline.getMetrics(),
+            costs: this.llmProvider.getCostSummary(),
+            todayUsage: this.usageRepo?.getDaily(new Date().toISOString().slice(0, 10)),
+            watchesActive: this.watchRepo?.countEnabled() ?? 0,
+            schedulersActive: this.scheduledActionRepo?.countEnabled() ?? 0,
+            llmProviders: this.llmProvider.getProviderStatuses(),
+            diskUsage,
+          };
+        },
         metricsCallback: () => this.buildPrometheusMetrics(),
       }));
       this.logger.info({ port, host }, 'HTTP API adapter registered');
@@ -697,8 +734,12 @@ export class Alfred {
 
     for (const [platform, adapter] of this.adapters) {
       this.setupAdapterHandlers(platform, adapter);
-      await adapter.connect();
-      this.logger.info({ platform }, 'Adapter connected');
+      try {
+        await adapter.connect();
+        this.logger.info({ platform }, 'Adapter connected');
+      } catch (err) {
+        this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
+      }
     }
 
     // Start schedulers
@@ -710,6 +751,50 @@ export class Alfred {
     this.calendarWatcher?.start();
     this.todoWatcher?.start();
     this.reasoningEngine?.start();
+
+    // Wire inbound webhooks (if configured)
+    if (this.config.webhooks?.length && this.watchEngine) {
+      const apiAdapter = this.adapters.get('api');
+      if (apiAdapter && 'addWebhook' in apiAdapter) {
+        const httpAdapter = apiAdapter as import('@alfred/messaging').HttpAdapter;
+        for (const wh of this.config.webhooks) {
+          httpAdapter.addWebhook({
+            name: wh.name,
+            secret: wh.secret,
+            callback: async (payload) => {
+              if (wh.watchId && this.watchEngine) {
+                await this.watchEngine.triggerWatch(wh.watchId);
+              }
+              // Optionally send payload info to chat
+              if (wh.chatId && wh.platform) {
+                const adapter = this.adapters.get(wh.platform as Platform);
+                if (adapter) {
+                  const summary = `🔔 Webhook "${wh.name}" triggered` + (payload.action ? `: ${payload.action}` : '');
+                  await adapter.sendMessage(wh.chatId, summary);
+                }
+              }
+            },
+          });
+          this.logger.info({ name: wh.name, watchId: wh.watchId }, 'Webhook registered');
+        }
+      }
+    }
+
+    // Startup cleanup — retain audit/summary/activity/usage data
+    try {
+      const cleaned = {
+        audit: this.auditRepo?.cleanup(90) ?? 0,
+        summaries: this.summaryRepo?.cleanup(180) ?? 0,
+        activity: this.activityRepo?.cleanup(90) ?? 0,
+        usage: this.usageRepo?.cleanup(365) ?? 0,
+        expiredMemories: this.memoryRepo?.cleanupExpired() ?? 0,
+      };
+      if (cleaned.audit || cleaned.summaries || cleaned.activity || cleaned.usage) {
+        this.logger.info(cleaned, 'Startup DB cleanup completed');
+      }
+    } catch (err) {
+      this.logger.warn({ err }, 'Startup DB cleanup failed');
+    }
 
     // Skill health: periodic re-enable check (every 5 minutes)
     if (this.skillHealthTracker) {
@@ -732,7 +817,6 @@ export class Alfred {
     const { CLIAdapter } = await import('@alfred/messaging');
     const cli = new CLIAdapter();
     this.adapters.set('cli', cli);
-    this.setupAdapterHandlers('cli', cli);
     cli.on('disconnected', () => {
       this.stop().then(() => process.exit(0));
     });
@@ -776,8 +860,12 @@ export class Alfred {
     }
 
     // WAL checkpoint before close
-    try { this.database.getDb().pragma('wal_checkpoint(TRUNCATE)'); } catch {}
-    this.database.close();
+    try {
+      if (this.database) {
+        this.database.getDb().pragma('wal_checkpoint(TRUNCATE)');
+        this.database.close();
+      }
+    } catch {}
     this.logger.info('Alfred stopped');
   }
 
@@ -912,6 +1000,18 @@ export class Alfred {
       lines.push(`alfred_llm_output_tokens{model="${model}"} ${entry.outputTokens}`);
     }
 
+    // Watches & scheduled actions
+    if (this.watchRepo) {
+      lines.push('# HELP alfred_watches_active Number of enabled watches');
+      lines.push('# TYPE alfred_watches_active gauge');
+      lines.push(`alfred_watches_active ${this.watchRepo.countEnabled()}`);
+    }
+    if (this.scheduledActionRepo) {
+      lines.push('# HELP alfred_schedulers_active Number of enabled scheduled actions');
+      lines.push('# TYPE alfred_schedulers_active gauge');
+      lines.push(`alfred_schedulers_active ${this.scheduledActionRepo.countEnabled()}`);
+    }
+
     // Persisted daily totals from SQLite
     if (this.usageRepo) {
       const today = new Date().toISOString().slice(0, 10);
@@ -1009,7 +1109,7 @@ export class Alfred {
         if (result.attachments) {
           for (const att of result.attachments) {
             try {
-              const isImage = att.mimeType.startsWith('image/');
+              const isImage = att.mimeType?.startsWith('image/') ?? false;
               const isVoice = att.mimeType === 'audio/ogg' || att.mimeType === 'audio/opus';
               if (isImage) {
                 await adapter.sendPhoto(message.chatId, att.data, att.fileName);

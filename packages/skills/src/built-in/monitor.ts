@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig, UniFiConfig, HomeAssistantConfig } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig, UniFiConfig, HomeAssistantConfig, ProxmoxBackupConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 
 // ---------------------------------------------------------------------------
@@ -9,9 +9,10 @@ export interface MonitorCheckConfig {
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;
+  proxmoxBackup?: ProxmoxBackupConfig;
 }
 
-type CheckName = 'proxmox' | 'unifi' | 'homeassistant';
+type CheckName = 'proxmox' | 'unifi' | 'homeassistant' | 'proxmox_backup';
 
 interface Alert {
   source: CheckName;
@@ -38,7 +39,7 @@ export class MonitorSkill extends Skill {
       properties: {
         checks: {
           type: 'array',
-          items: { type: 'string', enum: ['proxmox', 'unifi', 'homeassistant'] },
+          items: { type: 'string', enum: ['proxmox', 'unifi', 'homeassistant', 'proxmox_backup'] },
           description: 'Which checks to run (default: all configured)',
         },
       },
@@ -57,35 +58,38 @@ export class MonitorSkill extends Skill {
     _context: SkillContext,
   ): Promise<SkillResult> {
     const requested = input.checks as CheckName[] | undefined;
-    const checks: Array<Promise<Alert[]>> = [];
+    const checks: Array<{ name: CheckName; promise: Promise<Alert[]> }> = [];
 
     const shouldRun = (name: CheckName) =>
       !requested || requested.length === 0 || requested.includes(name);
 
     if (this.config.proxmox && shouldRun('proxmox')) {
-      checks.push(this.checkProxmox());
+      checks.push({ name: 'proxmox', promise: this.checkProxmox() });
     }
     if (this.config.unifi && shouldRun('unifi')) {
-      checks.push(this.checkUnifi());
+      checks.push({ name: 'unifi', promise: this.checkUnifi() });
     }
     if (this.config.homeassistant && shouldRun('homeassistant')) {
-      checks.push(this.checkHomeAssistant());
+      checks.push({ name: 'homeassistant', promise: this.checkHomeAssistant() });
+    }
+    if (this.config.proxmoxBackup && shouldRun('proxmox_backup')) {
+      checks.push({ name: 'proxmox_backup', promise: this.checkProxmoxBackup() });
     }
 
     if (checks.length === 0) {
       return { success: true, display: '' };
     }
 
-    const results = await Promise.allSettled(checks);
+    const results = await Promise.allSettled(checks.map(c => c.promise));
     const alerts: Alert[] = [];
 
-    for (const r of results) {
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
       if (r.status === 'fulfilled') {
         alerts.push(...r.value);
       } else {
-        // Check itself failed — that's an alert
         const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-        alerts.push({ source: 'proxmox', message: `Health check failed: ${msg}` });
+        alerts.push({ source: checks[i].name, message: `Health check failed: ${msg}` });
       }
     }
 
@@ -361,6 +365,70 @@ export class MonitorSkill extends Skill {
     }
 
     return (await res.json()) as T;
+  }
+
+  // -----------------------------------------------------------------------
+  // Proxmox Backup Server check
+  // -----------------------------------------------------------------------
+
+  private async checkProxmoxBackup(): Promise<Alert[]> {
+    const cfg = this.config.proxmoxBackup!;
+    const alerts: Alert[] = [];
+    const maxAgeHours = cfg.maxAgeHours ?? 24;
+
+    const url = `${cfg.baseUrl.replace(/\/+$/, '')}/api2/json/nodes/localhost/tasks`;
+    const headers: Record<string, string> = {
+      Authorization: `PBSAPIToken=${cfg.tokenId}:${cfg.tokenSecret}`,
+    };
+
+    const res = await this.apiFetch(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15_000),
+    }, cfg.verifyTls);
+
+    if (!res.ok) {
+      alerts.push({ source: 'proxmox_backup', message: `PBS unreachable: HTTP ${res.status}` });
+      return alerts;
+    }
+
+    const json = (await res.json()) as { data: Array<{ worker_type: string; status: string; starttime: number; endtime?: number }> };
+    const tasks = json.data ?? [];
+
+    // Filter backup tasks
+    const backupTasks = tasks.filter(t => t.worker_type === 'backup');
+    const now = Date.now() / 1000;
+
+    // Find most recent successful backup
+    const successful = backupTasks
+      .filter(t => t.status === 'OK')
+      .sort((a, b) => (b.endtime ?? b.starttime) - (a.endtime ?? a.starttime));
+
+    if (successful.length === 0) {
+      alerts.push({ source: 'proxmox_backup', message: 'No successful backups found' });
+    } else {
+      const lastBackupTime = successful[0].endtime ?? successful[0].starttime;
+      const ageHours = (now - lastBackupTime) / 3600;
+      if (ageHours > maxAgeHours) {
+        alerts.push({
+          source: 'proxmox_backup',
+          message: `Last successful backup is ${ageHours.toFixed(1)}h old (threshold: ${maxAgeHours}h)`,
+        });
+      }
+    }
+
+    // Check for recent failures
+    const recentFailures = backupTasks.filter(t =>
+      t.status !== 'OK' && (now - (t.endtime ?? t.starttime)) < maxAgeHours * 3600,
+    );
+    if (recentFailures.length > 0) {
+      alerts.push({
+        source: 'proxmox_backup',
+        message: `${recentFailures.length} failed backup(s) in the last ${maxAgeHours}h`,
+      });
+    }
+
+    return alerts;
   }
 
   // -----------------------------------------------------------------------

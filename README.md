@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.13.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.14.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (42+)
+### Built-in Skills (46+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -90,16 +90,16 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
 | **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables), workflow chains (multi-step skill pipelines), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills) |
-| **Information** | `web_search`, `weather`, `system_info`, `calculator` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info |
+| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server) |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
 | **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
 | **Marketplace** | `marketplace` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
-| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar |
+| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot` und `check_conflicts` |
 | **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
 
 ### Code Agent Orchestration
@@ -350,12 +350,22 @@ Alfred → watch with conditions:
   - Action: home_assistant turn_on switch.wallbox
 ```
 
-**Human-in-the-Loop** — Confirmation before risky actions:
+**Human-in-the-Loop** — Confirmation before risky actions (Telegram: Inline Buttons):
 ```
 Alfred: "⚡ Strompreis unter 15ct. Soll ich die Wallbox einschalten?"
-You: "ja"
+       [✅ Approve] [❌ Reject]
+You: *clicks Approve*
 Alfred: "✅ Aktion ausgeführt: Wallbox eingeschaltet"
 ```
+
+**Inbound Webhooks** — Trigger watches in real-time via HTTP:
+```yaml
+webhooks:
+  - name: github-deploy
+    secret: "your-hmac-secret"
+    watchId: "watch-id-to-trigger"
+```
+External systems send `POST /api/webhook/github-deploy` with HMAC-SHA256 signature → watch executes immediately.
 
 **Calendar Lead-Time** — Proactive reminders before events:
 ```yaml

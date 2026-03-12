@@ -17,10 +17,12 @@ export interface NormalizedMessage {
   replyToMessageId?: string;
   attachments?: Attachment[];
   raw?: unknown;
+  threadId?: string;
   metadata?: {
     scheduled?: boolean;
     skipHistory?: boolean;
     tier?: import('./llm.js').ModelTier;
+    callbackQuery?: boolean;
   };
 }
 
@@ -33,9 +35,18 @@ export interface Attachment {
   data?: Buffer;
 }
 
+export interface InlineButton {
+  text: string;
+  callbackData: string;
+}
+
 export interface SendMessageOptions {
   replyToMessageId?: string;
   parseMode?: 'text' | 'markdown' | 'html';
+  threadId?: string;
+  replyMarkup?: {
+    inlineKeyboard?: InlineButton[][];
+  };
 }
 
 export type MessagingAdapterStatus = 'disconnected' | 'connecting' | 'connected' | 'error';

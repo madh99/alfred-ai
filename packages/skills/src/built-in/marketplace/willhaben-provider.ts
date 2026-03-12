@@ -29,8 +29,14 @@ export class WillhabenProvider extends MarketplaceProvider {
 
     const listings: MarketplaceListing[] = adverts.map((ad: any) => this.mapAdvert(ad));
 
+    // Post-filter: keep only listings whose title contains all query terms
+    const queryTerms = params.query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
+    const filtered = queryTerms.length > 0
+      ? listings.filter(l => queryTerms.every(term => l.title.toLowerCase().includes(term)))
+      : listings;
+
     return {
-      listings,
+      listings: filtered,
       totalCount: this.extractTotalCount(html) ?? listings.length,
       query: params.query,
       platform: 'willhaben',

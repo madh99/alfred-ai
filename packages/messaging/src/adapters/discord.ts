@@ -44,6 +44,7 @@ export class DiscordAdapter extends MessagingAdapter {
           text,
           timestamp: message.createdAt,
           replyToMessageId: message.reference?.messageId ?? undefined,
+          threadId: message.channel.isThread() ? message.channelId : undefined,
           attachments: attachments.length > 0 ? attachments : undefined,
         };
         this.emit('message', normalized);
@@ -177,8 +178,10 @@ export class DiscordAdapter extends MessagingAdapter {
     const discordAttachments = message.attachments;
     if (!discordAttachments || discordAttachments.size === 0) return result;
 
+    const MAX_ATTACHMENT_SIZE = 25 * 1024 * 1024; // 25 MB
     for (const [, att] of discordAttachments) {
       try {
+        if (att.size && att.size > MAX_ATTACHMENT_SIZE) continue;
         const res = await fetch(att.url);
         if (!res.ok) continue;
 

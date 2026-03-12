@@ -3,6 +3,12 @@ import crypto from 'node:crypto';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
+export interface WebhookHandler {
+  name: string;
+  secret: string;
+  callback: (payload: Record<string, unknown>) => Promise<void>;
+}
+
 export interface HttpAdapterOptions {
   port: number;
   host: string;
@@ -10,6 +16,7 @@ export interface HttpAdapterOptions {
   corsOrigin?: string;
   healthCheck?: () => Record<string, unknown>;
   metricsCallback?: () => string;
+  webhooks?: WebhookHandler[];
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -29,6 +36,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly corsOrigin: string;
   private readonly healthCheckFn?: () => Record<string, unknown>;
   private readonly metricsFn?: () => string;
+  private readonly webhooks: Map<string, WebhookHandler> = new Map();
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
@@ -38,6 +46,15 @@ export class HttpAdapter extends MessagingAdapter {
     this.corsOrigin = options?.corsOrigin ?? 'http://localhost:3420';
     this.healthCheckFn = options?.healthCheck;
     this.metricsFn = options?.metricsCallback;
+    if (options?.webhooks) {
+      for (const wh of options.webhooks) {
+        this.webhooks.set(wh.name, wh);
+      }
+    }
+  }
+
+  addWebhook(handler: WebhookHandler): void {
+    this.webhooks.set(handler.name, handler);
   }
 
   async connect(): Promise<void> {
@@ -171,6 +188,9 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMetrics(res);
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
       this.handleMessage(req, res);
+    } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
+      const name = url.pathname.slice('/api/webhook/'.length);
+      this.handleWebhook(req, res, name);
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -180,7 +200,9 @@ export class HttpAdapter extends MessagingAdapter {
   private checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
     if (!this.apiToken) return true;
     const authHeader = req.headers['authorization'];
-    if (!authHeader || authHeader !== `Bearer ${this.apiToken}`) {
+    const expected = `Bearer ${this.apiToken}`;
+    if (!authHeader || authHeader.length !== expected.length ||
+        !crypto.timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
       return false;
@@ -280,6 +302,62 @@ export class HttpAdapter extends MessagingAdapter {
       } catch {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      }
+    });
+  }
+
+  private handleWebhook(req: http.IncomingMessage, res: http.ServerResponse, name: string): void {
+    const handler = this.webhooks.get(name);
+    if (!handler) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `Webhook "${name}" not found` }));
+      return;
+    }
+
+    let body = '';
+    let bodySize = 0;
+    let aborted = false;
+
+    req.on('data', (chunk: Buffer) => {
+      if (aborted) return;
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        aborted = true;
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Payload too large' }));
+        req.destroy();
+        return;
+      }
+      body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+      if (aborted) return;
+
+      // HMAC-SHA256 signature validation
+      const signature = req.headers['x-webhook-signature'] as string | undefined;
+      if (!signature) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing X-Webhook-Signature header' }));
+        return;
+      }
+
+      const expectedBuf = crypto.createHmac('sha256', handler.secret).update(body).digest();
+      const signatureBuf = Buffer.from(signature, 'hex');
+      if (signatureBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(signatureBuf, expectedBuf)) {
+        res.writeHead(403, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid signature' }));
+        return;
+      }
+
+      try {
+        const payload = JSON.parse(body) as Record<string, unknown>;
+        await handler.callback(payload);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Internal error' }));
       }
     });
   }

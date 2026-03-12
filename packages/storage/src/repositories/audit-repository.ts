@@ -76,6 +76,13 @@ export class AuditRepository {
     return row.count;
   }
 
+  cleanup(olderThanDays: number = 90): number {
+    const result = this.db.prepare(
+      `DELETE FROM audit_log WHERE timestamp < datetime('now', '-' || ? || ' days')`
+    ).run(olderThanDays);
+    return result.changes;
+  }
+
   private mapRow(row: Record<string, string>): AuditEntry {
     return {
       id: row.id,

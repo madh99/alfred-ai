@@ -329,6 +329,7 @@ interface ExistingConfig {
   codeAgents?: { enabled?: boolean; agents?: { name: string; command: string; argsTemplate: string[]; promptVia?: string }[]; forge?: { provider?: string; github?: { token?: string }; gitlab?: { token?: string } } };
   calendar?: { provider?: string; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
   proxmox?: { baseUrl?: string; tokenId?: string; tokenSecret?: string; verifyTls?: boolean; defaultNode?: string };
+  proxmoxBackup?: { baseUrl?: string; tokenId?: string; tokenSecret?: string; maxAgeHours?: number; verifyTls?: boolean };
   unifi?: { baseUrl?: string; apiKey?: string; username?: string; password?: string; site?: string; verifyTls?: boolean };
   homeassistant?: { baseUrl?: string; accessToken?: string; verifyTls?: boolean };
   contacts?: { provider?: string; carddav?: { serverUrl?: string; username?: string; password?: string }; google?: { clientId?: string; clientSecret?: string; refreshToken?: string }; microsoft?: { clientId?: string; clientSecret?: string; tenantId?: string; refreshToken?: string } };
@@ -1270,6 +1271,46 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Proxmox disabled.')}`);
     }
 
+    // Proxmox Backup Server
+    const existingPbs = existing.config.proxmoxBackup;
+    const existingPbsUrl = existing.env['ALFRED_PBS_BASE_URL'] ?? existingPbs?.baseUrl ?? '';
+    const enablePbsDefault = existingPbsUrl ? 'Y/n' : 'y/N';
+    const enablePbsInput = (
+      await rl.question(`\n  ${BOLD}Enable Proxmox Backup Server?${RESET} ${dim(`[${enablePbsDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingPbsUrl ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enablePbs = enablePbsInput === 'y' || enablePbsInput === 'yes';
+
+    let pbsBaseUrl = '';
+    let pbsTokenId = '';
+    let pbsTokenSecret = '';
+    let pbsMaxAgeHours = 24;
+    let pbsVerifyTls = true;
+
+    if (enablePbs) {
+      pbsBaseUrl = await askWithDefault(rl, '  PBS URL (e.g. https://pbs.local:8007)', existingPbsUrl || 'https://pbs.local:8007');
+      const existingPbsTokenId = existing.env['ALFRED_PBS_TOKEN_ID'] ?? existingPbs?.tokenId ?? '';
+      if (existingPbsTokenId) console.log(`  ${dim(`Current token ID: ${existingPbsTokenId}`)}`);
+      console.log(`  ${dim('Create: Configuration → Access Control → API Token')}`);
+      pbsTokenId = await askWithDefault(rl, '  API Token ID (user@realm!name)', existingPbsTokenId);
+      const existingPbsSecret = existing.env['ALFRED_PBS_TOKEN_SECRET'] ?? existingPbs?.tokenSecret ?? '';
+      if (existingPbsSecret) console.log(`  ${dim(`Current secret: ${maskKey(existingPbsSecret)}`)}`);
+      pbsTokenSecret = (await rl.question(`  ${BOLD}API Token Secret${RESET}: ${YELLOW}`)).trim();
+      process.stdout.write(RESET);
+      if (!pbsTokenSecret && existingPbsSecret) pbsTokenSecret = existingPbsSecret;
+      const existingMaxAge = existing.env['ALFRED_PBS_MAX_AGE_HOURS'] ?? existingPbs?.maxAgeHours?.toString() ?? '24';
+      pbsMaxAgeHours = parseInt(await askWithDefault(rl, '  Max backup age (hours, alert if older)', existingMaxAge), 10) || 24;
+      const pbsTlsDefault = existingPbs?.verifyTls === false ? 'y/N' : 'Y/n';
+      const pbsTlsInput = (
+        await rl.question(`  ${BOLD}Verify TLS?${RESET} ${dim(`(self-signed? → no) [${pbsTlsDefault}]`)}: ${YELLOW}`)
+      ).trim().toLowerCase() || (existingPbs?.verifyTls === false ? 'n' : 'y');
+      process.stdout.write(RESET);
+      pbsVerifyTls = pbsTlsInput === 'y' || pbsTlsInput === 'yes';
+      console.log(`  ${green('>')} PBS: ${bold(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h, TLS verify: ${pbsVerifyTls ? 'yes' : 'no'})`)}`);
+    } else {
+      console.log(`  ${dim('Proxmox Backup Server disabled.')}`);
+    }
+
     // UniFi
     const existingUnifi = existing.config.unifi;
     const existingUnifiUrl = existing.env['ALFRED_UNIFI_BASE_URL'] ?? existingUnifi?.baseUrl ?? '';
@@ -1729,6 +1770,18 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_PROXMOX_TOKEN_SECRET=');
     }
 
+    if (enablePbs) {
+      envLines.push(`ALFRED_PBS_BASE_URL=${pbsBaseUrl}`);
+      envLines.push(`ALFRED_PBS_TOKEN_ID=${pbsTokenId}`);
+      envLines.push(`ALFRED_PBS_TOKEN_SECRET=${pbsTokenSecret}`);
+      envLines.push(`ALFRED_PBS_MAX_AGE_HOURS=${pbsMaxAgeHours}`);
+      if (!pbsVerifyTls) envLines.push('ALFRED_PBS_VERIFY_TLS=false');
+    } else {
+      envLines.push('# ALFRED_PBS_BASE_URL=');
+      envLines.push('# ALFRED_PBS_TOKEN_ID=');
+      envLines.push('# ALFRED_PBS_TOKEN_SECRET=');
+    }
+
     if (enableUnifi && unifiApiKey) {
       envLines.push(`ALFRED_UNIFI_BASE_URL=${unifiBaseUrl}`);
       envLines.push(`ALFRED_UNIFI_API_KEY=${unifiApiKey}`);
@@ -1835,6 +1888,7 @@ export async function setupCommand(): Promise<void> {
       codeSandbox?: { enabled: boolean; allowedLanguages: string[] };
       codeAgents?: { enabled: boolean; agents: SelectedAgent[]; forge?: { provider: string; github?: { token: string }; gitlab?: { token: string } } };
       proxmox?: { baseUrl: string; tokenId: string; tokenSecret: string; verifyTls: boolean };
+      proxmoxBackup?: { baseUrl: string; tokenId: string; tokenSecret: string; maxAgeHours: number; verifyTls: boolean };
       unifi?: { baseUrl: string; apiKey?: string; username?: string; password?: string; site: string; verifyTls: boolean };
       homeassistant?: { baseUrl: string; accessToken: string; verifyTls: boolean };
       contacts?: { provider: string; carddav?: Record<string, string>; google?: Record<string, string>; microsoft?: Record<string, string> };
@@ -1956,6 +2010,15 @@ export async function setupCommand(): Promise<void> {
           tokenId: proxmoxTokenId,
           tokenSecret: proxmoxTokenSecret,
           verifyTls: proxmoxVerifyTls,
+        },
+      } : {}),
+      ...(enablePbs ? {
+        proxmoxBackup: {
+          baseUrl: pbsBaseUrl,
+          tokenId: pbsTokenId,
+          tokenSecret: pbsTokenSecret,
+          maxAgeHours: pbsMaxAgeHours,
+          verifyTls: pbsVerifyTls,
         },
       } : {}),
       ...(enableUnifi ? {
@@ -2201,6 +2264,7 @@ ${ownerAdminRule}
     }
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
+    if (enablePbs) console.log(`  ${bold('PBS:')}           ${green(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h)`)}`);
     if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);
     if (enableHa) console.log(`  ${bold('Home Assist.:')} ${green(haBaseUrl)}`);
     if (enableContacts) console.log(`  ${bold('Contacts:')}      ${green(contactsProvider)}`);

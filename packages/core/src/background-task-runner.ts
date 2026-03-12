@@ -11,6 +11,7 @@ import type { PersistentAgentRunner } from './persistent-agent-runner.js';
 export class BackgroundTaskRunner {
   private pollTimer?: ReturnType<typeof setInterval>;
   private running = 0;
+  private polling = false;
   private readonly maxConcurrent = 3;
   private readonly pollIntervalMs = 5000;
   private readonly taskTimeoutMs = 5 * 60_000; // 5 minutes max per task
@@ -49,7 +50,8 @@ export class BackgroundTaskRunner {
   }
 
   private async poll(): Promise<void> {
-    if (this.running >= this.maxConcurrent) return;
+    if (this.polling || this.running >= this.maxConcurrent) return;
+    this.polling = true;
 
     try {
       const available = this.maxConcurrent - this.running;
@@ -61,6 +63,8 @@ export class BackgroundTaskRunner {
       }
     } catch (err) {
       this.logger.error({ err }, 'Error polling for background tasks');
+    } finally {
+      this.polling = false;
     }
   }
 

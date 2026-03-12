@@ -107,8 +107,13 @@ class Parser {
       this.advance();
       const right = this.unary();
       if (op === '*') left = left * right;
-      else if (op === '/') left = left / right;
-      else left = left % right;
+      else if (op === '/') {
+        if (right === 0) throw new Error('Division by zero');
+        left = left / right;
+      } else {
+        if (right === 0) throw new Error('Division by zero');
+        left = left % right;
+      }
     }
     return left;
   }

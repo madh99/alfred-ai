@@ -63,6 +63,13 @@ export class WatchRepository {
     };
   }
 
+  countEnabled(): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) as cnt FROM watches WHERE enabled = 1'
+    ).get() as { cnt: number };
+    return row.cnt;
+  }
+
   getEnabled(): Watch[] {
     const rows = this.db.prepare(
       'SELECT * FROM watches WHERE enabled = 1 ORDER BY created_at DESC',

@@ -8,7 +8,8 @@ import { MessagingAdapter } from '../adapter.js';
  */
 export class SignalAdapter extends MessagingAdapter {
   readonly platform = 'signal' as const;
-  private pollingInterval: ReturnType<typeof setInterval> | undefined;
+  private pollingInterval: ReturnType<typeof setTimeout> | undefined;
+  private consecutiveErrors = 0;
 
   constructor(
     private readonly apiUrl: string,
@@ -32,11 +33,7 @@ export class SignalAdapter extends MessagingAdapter {
         }
 
         // Start polling for new messages
-        this.pollingInterval = setInterval(() => {
-          this.pollMessages().catch((err) => {
-            this.emit('error', err instanceof Error ? err : new Error(String(err)));
-          });
-        }, 2000);
+        this.schedulePoll();
 
         this.status = 'connected';
         this.emit('connected');
@@ -54,9 +51,24 @@ export class SignalAdapter extends MessagingAdapter {
     this.emit('error', lastError!);
   }
 
+  private schedulePoll(delayMs = 2000): void {
+    this.pollingInterval = setTimeout(async () => {
+      try {
+        await this.pollMessages();
+        this.consecutiveErrors = 0;
+        this.schedulePoll(2000);
+      } catch (err) {
+        this.consecutiveErrors++;
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        const backoff = Math.min(this.consecutiveErrors * 2000, 60_000);
+        this.schedulePoll(backoff);
+      }
+    }, delayMs);
+  }
+
   async disconnect(): Promise<void> {
     if (this.pollingInterval) {
-      clearInterval(this.pollingInterval);
+      clearTimeout(this.pollingInterval);
       this.pollingInterval = undefined;
     }
     this.status = 'disconnected';

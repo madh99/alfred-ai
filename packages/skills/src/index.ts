@@ -58,5 +58,6 @@ export { WatchSkill } from './built-in/watch.js';
 export { WorkflowSkill } from './built-in/workflow.js';
 export { MarketplaceSkill } from './built-in/marketplace/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
+export { FeedReaderSkill } from './built-in/feed-reader.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl } from './built-in/code-agent/index.js';
 export type { CodeAgentSkillConfig, AgentExecutionResult, OrchestrationPlan, SubTask, SubTaskResult, OrchestrationResult, GitOrchestrationResult, GitOrchestrationOptions, GitInfo, RepoIdentifier, PullRequestInput, PullRequestResult, PipelineStatus, CreateProjectInput, CreateProjectResult, RemoteInfo } from './built-in/code-agent/index.js';

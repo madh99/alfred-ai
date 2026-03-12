@@ -4,9 +4,14 @@ export { createEmailProvider } from './factory.js';
 export { StandardEmailProvider } from './standard-provider.js';
 export { MicrosoftGraphEmailProvider } from './microsoft-provider.js';
 
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, LLMRequest, LLMResponse } from '@alfred/types';
 import { Skill } from '../../skill.js';
 import type { EmailProvider } from './email-provider.js';
+
+/** Minimal LLM interface to avoid hard dependency on @alfred/llm. */
+interface EmailLLM {
+  complete(request: LLMRequest): Promise<LLMResponse>;
+}
 
 export class EmailSkill extends Skill {
   readonly metadata: SkillMetadata;
@@ -15,6 +20,7 @@ export class EmailSkill extends Skill {
   private readonly accountNames: string[];
   private readonly defaultAccount: string;
   private readonly multiAccount: boolean;
+  private llm?: EmailLLM;
 
   constructor(providers?: Map<string, EmailProvider> | EmailProvider) {
     super();
@@ -36,7 +42,7 @@ export class EmailSkill extends Skill {
           account: {
             type: 'string' as const,
             enum: this.accountNames,
-            description: `Email account to use (available: ${this.accountNames.join(', ')})`,
+            description: `Email account to use (available: ${this.accountNames.join(', ')}). Required for multi-account setups.`,
           },
         }
       : {};
@@ -57,8 +63,8 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract'],
-            description: 'The email action to perform. Use "extract" for bulk invoice/receipt extraction from large mailboxes — it searches with pagination, reads bodies server-side, and returns structured data with amounts.',
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract', 'summarize_inbox', 'categorize'],
+            description: 'The email action to perform. Use "extract" for bulk invoice/receipt extraction. Use "summarize_inbox" for an AI-generated summary of recent unread emails. Use "categorize" to classify unread emails by priority.',
           },
           ...accountProp,
           count: {
@@ -128,6 +134,10 @@ export class EmailSkill extends Skill {
     };
   }
 
+  setLLM(llm: EmailLLM): void {
+    this.llm = llm;
+  }
+
   async execute(
     input: Record<string, unknown>,
     _context: SkillContext,
@@ -165,8 +175,12 @@ export class EmailSkill extends Skill {
           return await this.handleAttachment(input);
         case 'extract':
           return await this.handleExtract(input);
+        case 'summarize_inbox':
+          return await this.handleSummarizeInbox(input);
+        case 'categorize':
+          return await this.handleCategorize(input);
         default:
-          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment` };
+          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment, summarize_inbox, categorize` };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -509,7 +523,8 @@ export class EmailSkill extends Skill {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
       }
-      const filePath = path.join(dir, fileName);
+      const safeFileName = path.basename(fileName);
+      const filePath = path.join(dir, safeFileName);
       fs.writeFileSync(filePath, data);
       return {
         success: true,
@@ -584,6 +599,110 @@ export class EmailSkill extends Skill {
       }
       throw err;
     }
+  }
+
+  private async handleSummarizeInbox(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.llm) {
+      return { success: false, error: 'LLM not configured. Email intelligence requires an LLM provider.' };
+    }
+
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
+    const limit = Math.min(Math.max(1, (input.count as number | undefined) ?? 20), 50);
+    const messages = await provider.fetchInbox(limit);
+    const unread = messages.filter(m => !m.read);
+
+    if (unread.length === 0) {
+      return { success: true, data: { summary: 'No unread emails.' }, display: this.accountLabel(account, 'No unread emails to summarize.') };
+    }
+
+    const emailList = unread.map((m, i) =>
+      `${i + 1}. From: ${m.from} | Subject: ${m.subject} | Date: ${m.date.toISOString()}${m.hasAttachments ? ' [has attachments]' : ''}`
+    ).join('\n');
+
+    const response = await this.llm.complete({
+      messages: [{
+        role: 'user',
+        content: `Summarize these ${unread.length} unread emails concisely. Highlight anything urgent or requiring action.\n\n${emailList}`,
+      }],
+      system: 'You are an email assistant. Provide a brief, actionable summary in the user\'s language. Group by priority if applicable.',
+      tier: 'fast',
+    });
+
+    const summary = response.content;
+    return {
+      success: true,
+      data: { summary, unreadCount: unread.length },
+      display: this.accountLabel(account, `Inbox Summary (${unread.length} unread):\n\n${summary}`),
+    };
+  }
+
+  private async handleCategorize(input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.llm) {
+      return { success: false, error: 'LLM not configured. Email intelligence requires an LLM provider.' };
+    }
+
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
+    const limit = Math.min(Math.max(1, (input.count as number | undefined) ?? 20), 50);
+    const messages = await provider.fetchInbox(limit);
+    const unread = messages.filter(m => !m.read);
+
+    if (unread.length === 0) {
+      return { success: true, data: { categories: {} }, display: this.accountLabel(account, 'No unread emails to categorize.') };
+    }
+
+    const emailList = unread.map((m, i) =>
+      `${i + 1}. From: ${m.from} | Subject: ${m.subject} | Date: ${m.date.toISOString()}`
+    ).join('\n');
+
+    const response = await this.llm.complete({
+      messages: [{
+        role: 'user',
+        content: `Categorize each email into one of: urgent, action_required, fyi, newsletter. Return ONLY valid JSON like: {"1":"urgent","2":"fyi",...}\n\n${emailList}`,
+      }],
+      system: 'You are an email classifier. Return only a JSON object mapping email number to category. No other text.',
+      tier: 'fast',
+    });
+
+    // Parse LLM response
+    let categories: Record<string, string> = {};
+    try {
+      const jsonMatch = response.content.match(/\{[^}]+\}/);
+      if (jsonMatch) categories = JSON.parse(jsonMatch[0]);
+    } catch { /* fallback to empty */ }
+
+    const grouped: Record<string, Array<{ from: string; subject: string }>> = {
+      urgent: [], action_required: [], fyi: [], newsletter: [],
+    };
+
+    for (const [idx, cat] of Object.entries(categories)) {
+      const i = parseInt(idx, 10) - 1;
+      if (i >= 0 && i < unread.length && grouped[cat]) {
+        grouped[cat].push({ from: unread[i].from, subject: unread[i].subject });
+      }
+    }
+
+    const lines: string[] = [];
+    for (const [cat, items] of Object.entries(grouped)) {
+      if (items.length > 0) {
+        const emoji = cat === 'urgent' ? '🔴' : cat === 'action_required' ? '🟡' : cat === 'fyi' ? '🔵' : '📰';
+        lines.push(`${emoji} ${cat.toUpperCase()} (${items.length}):`);
+        for (const item of items) {
+          lines.push(`  • ${item.from}: ${item.subject}`);
+        }
+      }
+    }
+
+    return {
+      success: true,
+      data: { categories: grouped, totalCategorized: Object.keys(categories).length },
+      display: this.accountLabel(account, lines.length > 0 ? lines.join('\n') : 'Could not categorize emails.'),
+    };
   }
 
   private async extractText(data: Buffer, mimeType: string, fileName: string): Promise<string | null> {

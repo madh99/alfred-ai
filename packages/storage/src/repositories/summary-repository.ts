@@ -53,6 +53,13 @@ export class SummaryRepository {
     );
   }
 
+  cleanup(olderThanDays: number = 180): number {
+    const result = this.db.prepare(
+      `DELETE FROM conversation_summaries WHERE updated_at < datetime('now', '-' || ? || ' days')`
+    ).run(olderThanDays);
+    return result.changes;
+  }
+
   delete(conversationId: string): void {
     this.db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(conversationId);
   }

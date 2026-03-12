@@ -90,6 +90,13 @@ export class UsageRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  cleanup(olderThanDays: number = 365): number {
+    const result = this.db.prepare(
+      `DELETE FROM llm_usage WHERE date < date('now', '-' || ? || ' days')`
+    ).run(olderThanDays);
+    return result.changes;
+  }
+
   private buildSummary(date: string, rows: Record<string, unknown>[]): DailyUsageSummary {
     const models = rows.map(r => this.mapRow(r));
     return {

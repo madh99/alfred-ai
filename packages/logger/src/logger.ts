@@ -5,6 +5,8 @@ const redactOpts = {
     '**.apiKey', '**.token', '**.password', '**.secret',
     '**.accessToken', '**.refreshToken', '**.clientSecret',
     '**.Authorization', '**.authorization',
+    '**.bearer', '**.credential', '**.jwt',
+    '**.x-api-key', '**.x-auth-token',
   ],
   censor: '[REDACTED]',
 };

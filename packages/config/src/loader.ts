@@ -102,6 +102,7 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_UNIFI_VERIFY_TLS: ['unifi', 'verifyTls'],
   ALFRED_HOMEASSISTANT_URL: ['homeassistant', 'baseUrl'],
   ALFRED_HOMEASSISTANT_TOKEN: ['homeassistant', 'accessToken'],
+  ALFRED_HOMEASSISTANT_VERIFY_TLS: ['homeassistant', 'verifyTls'],
   // Contacts
   ALFRED_CONTACTS_PROVIDER: ['contacts', 'provider'],
   ALFRED_CARDDAV_CONTACTS_SERVER_URL: ['contacts', 'carddav', 'serverUrl'],
@@ -117,6 +118,7 @@ const ENV_MAP: Record<string, string[]> = {
   // Docker
   ALFRED_DOCKER_SOCKET_PATH: ['docker', 'socketPath'],
   ALFRED_DOCKER_HOST: ['docker', 'host'],
+  ALFRED_DOCKER_VERIFY_TLS: ['docker', 'verifyTls'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
   // Google Routing
@@ -132,6 +134,12 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_ENERGY_GRID_LOSS_CT: ['energy', 'gridLossCt'],
   ALFRED_ENERGY_GRID_CAPACITY_FEE: ['energy', 'gridCapacityFee'],
   ALFRED_ENERGY_GRID_METER_FEE: ['energy', 'gridMeterFee'],
+  // Proxmox Backup Server
+  ALFRED_PBS_BASE_URL: ['proxmoxBackup', 'baseUrl'],
+  ALFRED_PBS_TOKEN_ID: ['proxmoxBackup', 'tokenId'],
+  ALFRED_PBS_TOKEN_SECRET: ['proxmoxBackup', 'tokenSecret'],
+  ALFRED_PBS_MAX_AGE_HOURS: ['proxmoxBackup', 'maxAgeHours'],
+  ALFRED_PBS_VERIFY_TLS: ['proxmoxBackup', 'verifyTls'],
   // Marketplace (eBay)
   ALFRED_EBAY_APP_ID: ['marketplace', 'ebay', 'appId'],
   ALFRED_EBAY_CERT_ID: ['marketplace', 'ebay', 'certId'],
@@ -275,7 +283,9 @@ export class ConfigLoader {
 
 function validateStoragePath(p: string): void {
   const resolved = path.resolve(p);
-  const forbidden = ['/etc', '/bin', '/proc', '/sys', '/dev', '/boot'];
+  const forbidden = process.platform === 'win32'
+    ? ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)']
+    : ['/etc', '/bin', '/proc', '/sys', '/dev', '/boot'];
   for (const f of forbidden) {
     if (resolved.startsWith(f + '/') || resolved === f) {
       throw new Error(`Storage path "${resolved}" is in forbidden directory ${f}`);

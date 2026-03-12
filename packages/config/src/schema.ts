@@ -290,6 +290,46 @@ export const ConversationConfigSchema = z.object({
   maxHistoryMessages: z.number().min(10).max(500).optional(),
 }).optional();
 
+export const WebhookConfigSchema = z.object({
+  name: z.string(),
+  secret: z.string(),
+  watchId: z.string().optional(),
+  chatId: z.string().optional(),
+  platform: z.string().optional(),
+});
+
+export const MarketplaceConfigSchema = z.object({
+  ebay: z.object({
+    appId: z.string(),
+    certId: z.string(),
+  }).optional(),
+});
+
+export const BriefingConfigSchema = z.object({
+  location: z.string().optional(),
+  homeAddress: z.string().optional(),
+  officeAddress: z.string().optional(),
+  homeAssistant: z.object({
+    entities: z.array(z.string()).optional(),
+    domains: z.array(z.string()).optional(),
+  }).optional(),
+});
+
+export const ReasoningConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  schedule: z.enum(['morning_noon_evening', 'hourly', 'half_hourly']).optional(),
+  tier: z.enum(['fast', 'default']).optional(),
+  deduplicationHours: z.number().optional(),
+});
+
+export const ProxmoxBackupConfigSchema = z.object({
+  baseUrl: z.string(),
+  tokenId: z.string(),
+  tokenSecret: z.string(),
+  maxAgeHours: z.number().optional(),
+  verifyTls: z.boolean().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -319,5 +359,10 @@ export const AlfredConfigSchema = z.object({
   routing: RoutingConfigSchema.optional(),
   todo: MicrosoftTodoConfigSchema.optional(),
   energy: EnergyPriceConfigSchema.optional(),
+  marketplace: MarketplaceConfigSchema.optional(),
+  briefing: BriefingConfigSchema.optional(),
+  reasoning: ReasoningConfigSchema.optional(),
+  webhooks: z.array(WebhookConfigSchema).optional(),
+  proxmoxBackup: ProxmoxBackupConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

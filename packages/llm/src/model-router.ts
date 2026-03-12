@@ -16,6 +16,7 @@ const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local'];
 /** Minimal logger interface to avoid hard pino dependency. */
 interface RouterLogger {
   info(obj: Record<string, unknown>, msg: string): void;
+  warn(obj: Record<string, unknown>, msg: string): void;
   debug(obj: Record<string, unknown>, msg: string): void;
 }
 
@@ -76,6 +77,20 @@ export class ModelRouter extends LLMProvider {
       { requestedTier: request.tier ?? 'default', resolvedTier, model: tierConfig?.model },
       'LLM routing request',
     );
+    try {
+      return await this.executeComplete(provider, resolvedTier, request);
+    } catch (err) {
+      if (!this.isRetryableError(err)) throw err;
+      this.logger?.warn(
+        { err, tier: resolvedTier },
+        'Provider failed, attempting fallback',
+      );
+      return this.completeWithFallback(request, resolvedTier, err);
+    }
+  }
+
+  private async executeComplete(provider: LLMProvider, resolvedTier: ModelTier, request: LLMRequest): Promise<LLMResponse> {
+    const tierConfig = this.multiConfig[resolvedTier];
     const response = await provider.complete(request);
     const model = response.model ?? tierConfig?.model ?? 'unknown';
     if (!response.model) response.model = model;
@@ -91,9 +106,68 @@ export class ModelRouter extends LLMProvider {
     return response;
   }
 
+  private isRetryableError(err: unknown): boolean {
+    if (err instanceof Error) {
+      const msg = err.message.toLowerCase();
+      // Network errors, 5xx, rate limits → retryable
+      if (msg.includes('econnrefused') || msg.includes('enotfound') ||
+          msg.includes('etimedout') || msg.includes('econnreset') ||
+          msg.includes('socket hang up') || msg.includes('fetch failed')) return true;
+      // HTTP status-based
+      if (msg.includes('500') || msg.includes('502') || msg.includes('503') ||
+          msg.includes('504') || msg.includes('529') || msg.includes('rate limit') ||
+          msg.includes('overloaded') || msg.includes('too many requests')) return true;
+    }
+    // Check for status code on error object
+    const status = (err as Record<string, unknown>)?.status ?? (err as Record<string, unknown>)?.statusCode;
+    if (typeof status === 'number' && (status >= 500 || status === 429)) return true;
+    return false;
+  }
+
+  private async completeWithFallback(request: LLMRequest, failedTier: ModelTier, originalErr: unknown): Promise<LLMResponse> {
+    const fallbackOrder = (['default', 'strong', 'fast'] as ModelTier[]).filter(t => t !== failedTier);
+    for (const tier of fallbackOrder) {
+      const provider = this.providers.get(tier);
+      if (!provider) continue;
+      try {
+        this.logger?.info({ tier }, 'Fallback to tier');
+        return await this.executeComplete(provider, tier, request);
+      } catch {
+        continue;
+      }
+    }
+    throw originalErr;
+  }
+
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
-    const { provider } = this.resolve(request.tier);
-    yield* provider.stream(request);
+    const { provider, resolvedTier } = this.resolve(request.tier);
+    let hasYielded = false;
+    try {
+      for await (const event of provider.stream(request)) {
+        hasYielded = true;
+        yield event;
+      }
+    } catch (err) {
+      // If we already yielded chunks, fallback would produce a spliced/garbled stream
+      if (hasYielded || !this.isRetryableError(err)) throw err;
+      this.logger?.warn(
+        { err, tier: resolvedTier },
+        'Stream provider failed before first chunk, attempting fallback',
+      );
+      const fallbackOrder = (['default', 'strong', 'fast'] as ModelTier[]).filter(t => t !== resolvedTier);
+      for (const tier of fallbackOrder) {
+        const fbProvider = this.providers.get(tier);
+        if (!fbProvider) continue;
+        try {
+          this.logger?.info({ tier }, 'Stream fallback to tier');
+          yield* fbProvider.stream(request);
+          return;
+        } catch {
+          continue;
+        }
+      }
+      throw err;
+    }
   }
 
   async embed(text: string): Promise<EmbeddingResult | undefined> {
@@ -110,6 +184,21 @@ export class ModelRouter extends LLMProvider {
 
   getContextWindow(): ContextWindow {
     return this.resolve().provider.getContextWindow();
+  }
+
+  getProviderStatuses(): Record<string, { model: string; available: boolean }> {
+    const result: Record<string, { model: string; available: boolean }> = {};
+    for (const tier of TIERS) {
+      const provider = this.providers.get(tier);
+      if (provider) {
+        const tierConfig = this.multiConfig[tier];
+        result[tier] = {
+          model: tierConfig?.model ?? 'unknown',
+          available: provider.isAvailable(),
+        };
+      }
+    }
+    return result;
   }
 
   getCostSummary(): TokenCostSummary {

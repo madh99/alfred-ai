@@ -18,6 +18,13 @@ export interface CreateScheduledActionInput {
 export class ScheduledActionRepository {
   constructor(private readonly db: BetterSqlite3.Database) {}
 
+  countEnabled(): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) as cnt FROM scheduled_actions WHERE enabled = 1'
+    ).get() as { cnt: number };
+    return row.cnt;
+  }
+
   create(data: CreateScheduledActionInput): ScheduledAction {
     const now = new Date().toISOString();
     const id = randomUUID();

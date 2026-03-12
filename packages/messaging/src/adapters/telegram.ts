@@ -128,6 +128,31 @@ export class TelegramAdapter extends MessagingAdapter {
       this.emit('message', this.normalizeMessage(msg, `[Sticker: ${emoji}]`));
     });
 
+    // Handle callback queries (inline keyboard button presses)
+    this.bot.on('callback_query:data', (ctx) => {
+      const cb = ctx.callbackQuery;
+      const from = cb.from;
+      const chatId = cb.message?.chat?.id;
+      if (!chatId) return;
+
+      // Acknowledge the callback to remove the loading spinner
+      ctx.answerCallbackQuery().catch(() => {});
+
+      const normalized: NormalizedMessage = {
+        id: String(cb.id),
+        platform: 'telegram',
+        chatId: String(chatId),
+        chatType: cb.message?.chat?.type === 'private' ? 'dm' : 'group',
+        userId: String(from.id),
+        userName: from.username ?? String(from.id),
+        displayName: [from.first_name, from.last_name].filter(Boolean).join(' '),
+        text: cb.data,
+        timestamp: new Date(),
+        metadata: { callbackQuery: true },
+      };
+      this.emit('message', normalized);
+    });
+
     this.bot.catch((err) => {
       this.emit('error', err.error as Error);
     });
@@ -153,12 +178,23 @@ export class TelegramAdapter extends MessagingAdapter {
   ): Promise<string> {
     const chunks = this.splitText(text, 4096);
     let lastMessageId = '';
-    for (const chunk of chunks) {
-      const result = await this.bot.api.sendMessage(Number(chatId), chunk, {
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const replyMarkup = isLast && options?.replyMarkup?.inlineKeyboard
+        ? {
+            inline_keyboard: options.replyMarkup.inlineKeyboard.map(row =>
+              row.map(btn => ({ text: btn.text, callback_data: btn.callbackData }))
+            ),
+          }
+        : undefined;
+
+      const result = await this.bot.api.sendMessage(Number(chatId), chunks[i], {
         reply_to_message_id: options?.replyToMessageId
           ? Number(options.replyToMessageId)
           : undefined,
         parse_mode: mapParseMode(options?.parseMode),
+        message_thread_id: options?.threadId ? Number(options.threadId) : undefined,
+        reply_markup: replyMarkup,
       });
       lastMessageId = String(result.message_id);
     }
@@ -241,6 +277,7 @@ export class TelegramAdapter extends MessagingAdapter {
       replyToMessageId: msg.reply_to_message
         ? String(msg.reply_to_message.message_id)
         : undefined,
+      threadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
     };
   }
 
