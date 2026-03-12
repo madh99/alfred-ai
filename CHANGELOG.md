@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-03-12
+
+### Security
+- **esbuild** 0.24.2 → 0.25.12 — Dev-Server Vulnerability behoben (GHSA-67mh-4wv8-2f99)
+- **@google/genai** 1.44.0 → 1.45.0 — Neueste Version
+
 ## [0.14.0] - 2026-03-12
 
 ### Added
