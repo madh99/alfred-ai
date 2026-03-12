@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-03-12
+
+### Fixed
+- **Deploy: rss-parser als Runtime-Dependency** — `rss-parser` fehlte in den CLI-Dependencies (`packages/cli/package.json`), wodurch der Feed-Reader-Skill nach Deploy nicht funktionierte. Wird jetzt bei `npm install` automatisch mit installiert
+- **Deploy: @google/genai Version** — CLI-Package auf `^1.45.0` angehoben (konsistent mit `@alfred/llm`)
+
 ## [0.14.1] - 2026-03-12
 
 ### Security
