@@ -21,7 +21,7 @@
     "@alfred/logger": "workspace:*",
     "@alfred/types": "workspace:*",
     "@anthropic-ai/sdk": "^0.39.0",
-    "@google/genai": "^1.44.0",
+    "@google/genai": "^1.45.0",
     "openai": "^4.80.0"
   }
 }
