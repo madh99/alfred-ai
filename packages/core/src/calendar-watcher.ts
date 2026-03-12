@@ -86,8 +86,18 @@ export class CalendarWatcher {
       lines.push(`Ort: ${event.location}`);
     }
     if (event.description) {
-      const shortDesc = event.description.slice(0, 200);
-      lines.push(`\n${shortDesc}`);
+      const plain = event.description
+        .replace(/<[^>]*>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&#\d+;/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (plain.length > 0) {
+        lines.push(`\n${plain.slice(0, 200)}`);
+      }
     }
 
     const adapter = this.adapters.get(this.defaultPlatform);

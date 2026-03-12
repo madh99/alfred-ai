@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.4] - 2026-03-12
+
+### Fixed
+- **Kalender-Vorlauf: HTML-Stripping** — Kalender-Erinnerungen enthielten rohen HTML-Body aus Exchange/Microsoft-Kalendereinträgen. Description wird jetzt von HTML-Tags und Entities bereinigt bevor sie in die Benachrichtigung eingefügt wird. Wirkt für alle Calendar-Provider
+
 ## [0.13.3] - 2026-03-12
 
 ### Fixed
