@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-03-12
+
+### Fixed
+- **Feed Reader: Links und Snippets** — Feed-Check zeigt jetzt Artikel-Links und Teaser-Text (contentSnippet/description, max 200 Zeichen) bei allen Feed-Prüfungen an. Vorher fehlten Links beim Prüfen aller Feeds und Teaser wurden komplett ignoriert
+
 ## [0.14.2] - 2026-03-12
 
 ### Fixed

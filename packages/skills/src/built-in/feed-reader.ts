@@ -114,7 +114,7 @@ export class FeedReaderSkill extends Skill {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
       let totalNew = 0;
-      const results: Array<{ label: string; newCount: number; items: Array<{ title: string; link?: string }> }> = [];
+      const results: Array<{ label: string; newCount: number; items: Array<{ title: string; link?: string; snippet?: string }> }> = [];
       for (const mem of memories) {
         try {
           const entry = JSON.parse(mem.value) as FeedEntry;
@@ -125,7 +125,7 @@ export class FeedReaderSkill extends Skill {
           }
         } catch { /* skip broken entries */ }
       }
-      const lines = results.map(r => `${r.label}: ${r.newCount} new\n${r.items.map(i => `  • ${i.title}`).join('\n')}`);
+      const lines = results.map(r => `${r.label}: ${r.newCount} new\n${r.items.map(i => `  • ${i.title}${i.link ? ` — ${i.link}` : ''}${i.snippet ? `\n    ${i.snippet}` : ''}`).join('\n')}`);
       return {
         success: true,
         data: { newCount: totalNew, feeds: results },
@@ -142,7 +142,7 @@ export class FeedReaderSkill extends Skill {
 
     const entry = JSON.parse(mem.value) as FeedEntry;
     const result = await this.checkSingleFeed(userId, entry);
-    const lines = result.items.map(i => `• ${i.title}${i.link ? ` — ${i.link}` : ''}`);
+    const lines = result.items.map(i => `• ${i.title}${i.link ? ` — ${i.link}` : ''}${i.snippet ? `\n  ${i.snippet}` : ''}`);
     return {
       success: true,
       data: { newCount: result.newCount, items: result.items },
@@ -155,7 +155,7 @@ export class FeedReaderSkill extends Skill {
   private async checkSingleFeed(
     userId: string,
     entry: FeedEntry,
-  ): Promise<{ label: string; newCount: number; items: Array<{ title: string; link?: string; pubDate?: string }> }> {
+  ): Promise<{ label: string; newCount: number; items: Array<{ title: string; link?: string; pubDate?: string; snippet?: string }> }> {
     const RSSParser = (await import('rss-parser')).default;
     const parser = new RSSParser({ timeout: 15_000 });
     const feed = await parser.parseURL(entry.url);
@@ -184,11 +184,19 @@ export class FeedReaderSkill extends Skill {
     return {
       label: entry.label,
       newCount: newItems.length,
-      items: newItems.map(i => ({
-        title: i.title ?? '(untitled)',
-        link: i.link,
-        pubDate: i.pubDate,
-      })),
+      items: newItems.map(i => {
+        // Extract snippet from contentSnippet, description, or content
+        let snippet = (i.contentSnippet ?? i.summary ?? '') as string;
+        if (!snippet && typeof i.content === 'string') {
+          snippet = i.content.replace(/<[^>]*>/g, '').slice(0, 200);
+        }
+        return {
+          title: i.title ?? '(untitled)',
+          link: i.link,
+          pubDate: i.pubDate,
+          snippet: snippet ? snippet.slice(0, 200).trim() : undefined,
+        };
+      }),
     };
   }
 }
