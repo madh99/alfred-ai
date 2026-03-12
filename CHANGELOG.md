@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.13.3] - 2026-03-12
+
+### Fixed
+- **Todo-Watcher: Überfällige Todos nur 1×/Tag** — Überfällige Todo-Erinnerungen wurden stündlich wiederholt gesendet statt nur einmal. Ursache: Calendar-Cleanup löschte die Dedup-Einträge weil `event_start` das originale (vergangene) Fälligkeitsdatum enthielt. Fix: Dedup-Key enthält jetzt das aktuelle Datum und `event_start` wird auf jetzt gesetzt, sodass Cleanup den Eintrag erst nach 24h entfernt
+
 ## [0.13.2] - 2026-03-12
 
 ### Fixed

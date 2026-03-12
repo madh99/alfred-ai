@@ -74,7 +74,12 @@ export class TodoWatcher {
     todoId: string, title: string, dueDate: string,
     list: string, priority: string, kind: 'upcoming' | 'overdue',
   ): Promise<void> {
-    const notifKey = `todo:${kind}:${todoId}`;
+    // For overdue todos: use today's date as dedup anchor so cleanup (which
+    // deletes entries older than 24h) won't remove the entry before the day
+    // is over.  This limits overdue reminders to at most once per day.
+    const notifKey = kind === 'overdue'
+      ? `todo:${kind}:${todoId}:${new Date().toISOString().slice(0, 10)}`
+      : `todo:${kind}:${todoId}`;
     if (this.notifRepo.wasNotified(notifKey, this.defaultChatId)) return;
 
     const due = new Date(dueDate);
@@ -95,9 +100,13 @@ export class TodoWatcher {
     const adapter = this.adapters.get(this.defaultPlatform);
     if (!adapter) return;
 
+    // For overdue todos store current timestamp as event_start so that
+    // cleanup (>24h) won't delete the entry during the same day.
+    const storedEventStart = kind === 'overdue' ? new Date().toISOString() : dueDate;
+
     try {
       await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
-      this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, dueDate);
+      this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
       this.logger.info({ todoId, title, kind }, 'Todo reminder sent');
       this.activityLogger?.logCalendarNotify({
         eventId: notifKey, eventTitle: `[Todo] ${title}`,
