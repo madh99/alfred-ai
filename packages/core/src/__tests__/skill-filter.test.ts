@@ -103,6 +103,21 @@ describe('selectCategories', () => {
     }
   });
 
+  it('matches RSS/feed keywords for information', () => {
+    for (const msg of ['check my RSS feeds', 'prüfe meinen Feed', 'zeig mir die Nachrichten', 'ORF Schlagzeilen', 'Atom feed abonnieren']) {
+      const result = selectCategories(msg, available(...ALL_CATEGORIES));
+      expect(result.has('information'), `"${msg}" should match information`).toBe(true);
+    }
+  });
+
+  it('includes all categories when automation matches (watches can reference any skill)', () => {
+    const result = selectCategories('Erstelle einen Watch für den RSS Feed', available(...ALL_CATEGORIES));
+    expect(result.has('automation')).toBe(true);
+    expect(result.has('information')).toBe(true);
+    expect(result.has('infrastructure')).toBe(true);
+    expect(result.has('productivity')).toBe(true);
+  });
+
   it('matches German keywords for media', () => {
     for (const msg of ['generiere ein Bild', 'erstelle ein Foto']) {
       const result = selectCategories(msg, available(...ALL_CATEGORIES));

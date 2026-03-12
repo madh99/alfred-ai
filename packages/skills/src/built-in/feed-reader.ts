@@ -21,7 +21,7 @@ export class FeedReaderSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['subscribe', 'unsubscribe', 'list_feeds', 'check'],
+          enum: ['subscribe', 'unsubscribe', 'list_feeds', 'check', 'check_all'],
           description: 'The action to perform',
         },
         url: {
@@ -57,6 +57,7 @@ export class FeedReaderSkill extends Skill {
       case 'list_feeds':
         return this.listFeeds(userId);
       case 'check':
+      case 'check_all':
         return this.check(userId, url);
       default:
         return { success: false, error: `Unknown action: ${action}` };

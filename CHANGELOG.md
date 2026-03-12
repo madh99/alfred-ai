@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.4] - 2026-03-12
+
+### Fixed
+- **Skill-Filter: Automation inkludiert alle Categories** — Watches und Schedules können jeden beliebigen Skill referenzieren (z.B. "Watch für RSS Feed" braucht `automation` + `information`). Wenn `automation` matcht, werden jetzt alle Skill-Categories dem LLM zur Verfügung gestellt
+- **Skill-Filter: RSS/Feed Keywords** — `rss`, `feed`, `atom`, `news`, `nachricht`, `schlagzeil`, `headline` als Keywords für die `information`-Category hinzugefügt
+- **Feed Reader: `check_all` Alias** — LLM generiert teils `check_all` statt `check` als Action. Wird jetzt als Alias akzeptiert
+
 ## [0.14.3] - 2026-03-12
 
 ### Fixed
