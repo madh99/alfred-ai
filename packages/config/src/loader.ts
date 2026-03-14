@@ -31,12 +31,16 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 
 const ENV_MAP: Record<string, string[]> = {
   ALFRED_TELEGRAM_TOKEN: ['telegram', 'token'],
+  ALFRED_TELEGRAM_ENABLED: ['telegram', 'enabled'],
   ALFRED_DISCORD_TOKEN: ['discord', 'token'],
+  ALFRED_DISCORD_ENABLED: ['discord', 'enabled'],
   ALFRED_MATRIX_HOMESERVER_URL: ['matrix', 'homeserverUrl'],
   ALFRED_MATRIX_ACCESS_TOKEN: ['matrix', 'accessToken'],
   ALFRED_MATRIX_USER_ID: ['matrix', 'userId'],
+  ALFRED_MATRIX_ENABLED: ['matrix', 'enabled'],
   ALFRED_SIGNAL_API_URL: ['signal', 'apiUrl'],
   ALFRED_SIGNAL_PHONE_NUMBER: ['signal', 'phoneNumber'],
+  ALFRED_SIGNAL_ENABLED: ['signal', 'enabled'],
   ALFRED_ANTHROPIC_API_KEY: ['llm', 'apiKey'],
   ALFRED_OPENAI_API_KEY: ['llm', 'apiKey'],
   ALFRED_GOOGLE_API_KEY: ['llm', 'apiKey'],
