@@ -222,12 +222,16 @@ export class MessagePipeline {
 
     try {
       // 1. Resolve user, master ID, and linked platform IDs via central factory
+      // For scheduled tasks, use the real user chatId for skill context (reminders, etc.)
+      // but keep the isolated chatId for conversation management.
+      const skillChatId = (message.metadata?.originalChatId as string) ?? message.chatId;
+
       const { user, masterUserId, linkedPlatformUserIds, context: baseContext } = buildSkillContext(
         this.users,
         {
           platformUserId: message.userId,
           platform: message.platform,
-          chatId: message.chatId,
+          chatId: skillChatId,
           chatType: message.chatType,
           userName: message.userName,
           displayName: message.displayName,

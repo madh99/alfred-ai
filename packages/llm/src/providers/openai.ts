@@ -170,7 +170,9 @@ export class OpenAIProvider extends LLMProvider {
         model: 'text-embedding-3-small',
         dimensions: data.embedding.length,
       };
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[OpenAIProvider] embed() failed: ${msg}`);
       return undefined;
     }
   }

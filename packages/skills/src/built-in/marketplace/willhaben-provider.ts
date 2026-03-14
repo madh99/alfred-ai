@@ -55,7 +55,9 @@ export class WillhabenProvider extends MarketplaceProvider {
     const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (!match) throw new Error('willhaben detail: __NEXT_DATA__ not found');
 
-    const nextData = JSON.parse(match[1]);
+    let nextData: any;
+    try { nextData = JSON.parse(match[1]); }
+    catch { throw new Error('willhaben detail: __NEXT_DATA__ contains invalid JSON'); }
     // Detail pages use "advertDetails" (plural), NOT "advertDetail"
     const ad = nextData?.props?.pageProps?.advertDetails;
     if (!ad) throw new Error('willhaben detail: advertDetails not found in page data');
@@ -126,14 +128,18 @@ export class WillhabenProvider extends MarketplaceProvider {
   private parseNextData(html: string): any[] {
     const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (!match) throw new Error('willhaben: __NEXT_DATA__ not found — page structure may have changed');
-    const nextData = JSON.parse(match[1]);
+    let nextData: any;
+    try { nextData = JSON.parse(match[1]); }
+    catch { throw new Error('willhaben: __NEXT_DATA__ contains invalid JSON'); }
     return nextData?.props?.pageProps?.searchResult?.advertSummaryList?.advertSummary ?? [];
   }
 
   private extractTotalCount(html: string): number | undefined {
     const match = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
     if (!match) return undefined;
-    const nextData = JSON.parse(match[1]);
+    let nextData: any;
+    try { nextData = JSON.parse(match[1]); }
+    catch { return undefined; }
     return nextData?.props?.pageProps?.searchResult?.rowsFound;
   }
 

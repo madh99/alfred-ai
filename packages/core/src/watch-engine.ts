@@ -198,7 +198,9 @@ export class WatchEngine {
 
           const adapter = this.adapters.get(watch.platform as Platform);
           if (adapter) {
-            try { await adapter.sendMessage(watch.chatId, alertText); } catch { /* */ }
+            try { await adapter.sendMessage(watch.chatId, alertText); } catch (err) {
+              this.logger.error({ err, watchId: watch.id, chatId: watch.chatId }, 'Failed to send watch alert message');
+            }
           }
         }
 

@@ -186,9 +186,9 @@ export function evaluateCompositeCondition(
 }
 
 function toNumber(value: unknown): number | null {
-  if (typeof value === 'number') return value;
+  if (typeof value === 'number') return isFinite(value) ? value : null;
   const n = parseFloat(String(value));
-  return isNaN(n) ? null : n;
+  return isNaN(n) || !isFinite(n) ? null : n;
 }
 
 function formatValue(value: unknown): string {

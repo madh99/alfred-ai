@@ -106,13 +106,14 @@ export class BackgroundTaskRunner {
       });
 
       // Enforce task timeout
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Background task timed out')), this.taskTimeoutMs),
-      );
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('Background task timed out')), this.taskTimeoutMs);
+      });
       const result = await Promise.race([
         this.skillSandbox.execute(skill, input, context),
         timeoutPromise,
-      ]);
+      ]).finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); });
       const resultJson = JSON.stringify(result.data ?? result.display ?? result.error);
 
       this.taskRepo.updateStatus(

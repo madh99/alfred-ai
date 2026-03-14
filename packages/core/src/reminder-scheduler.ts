@@ -14,6 +14,9 @@ export interface LinkedUserResolver {
 export class ReminderScheduler {
   private intervalId?: ReturnType<typeof setInterval>;
   private readonly checkIntervalMs: number;
+  /** Track consecutive send failures per reminder to avoid infinite retry loops. */
+  private readonly failCounts = new Map<string, number>();
+  private static readonly MAX_SEND_RETRIES = 5;
 
   constructor(
     private readonly reminderRepo: ReminderRepository,
@@ -72,9 +75,25 @@ export class ReminderScheduler {
           }
 
           this.reminderRepo.markFired(reminder.id);
+          this.failCounts.delete(reminder.id);
           this.logger.info({ reminderId: reminder.id }, 'Reminder fired');
         } catch (err) {
-          this.logger.error({ err, reminderId: reminder.id }, 'Failed to send reminder');
+          const fails = (this.failCounts.get(reminder.id) ?? 0) + 1;
+          this.failCounts.set(reminder.id, fails);
+
+          if (fails >= ReminderScheduler.MAX_SEND_RETRIES) {
+            this.reminderRepo.markFired(reminder.id);
+            this.failCounts.delete(reminder.id);
+            this.logger.error(
+              { reminderId: reminder.id, attempts: fails, chatId: reminder.chatId },
+              'Reminder abandoned after max retries — marked as fired',
+            );
+          } else {
+            this.logger.warn(
+              { err, reminderId: reminder.id, attempt: fails, maxRetries: ReminderScheduler.MAX_SEND_RETRIES },
+              'Failed to send reminder, will retry',
+            );
+          }
         }
       }
     } catch (err) {

@@ -78,7 +78,7 @@ export function calculateCost(model: string, usage: LLMUsage): number {
   // Cache read tokens are charged at cacheRead rate instead of input rate
   const cacheRead = usage.cacheReadTokens ?? 0;
   const cacheWrite = usage.cacheCreationTokens ?? 0;
-  const regularInput = usage.inputTokens - cacheRead;
+  const regularInput = Math.max(0, usage.inputTokens - cacheRead);
 
   cost += (regularInput / m) * pricing.input;
   cost += (usage.outputTokens / m) * pricing.output;

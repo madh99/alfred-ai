@@ -23,6 +23,8 @@ export interface NormalizedMessage {
     skipHistory?: boolean;
     tier?: import('./llm.js').ModelTier;
     callbackQuery?: boolean;
+    /** Real user chatId for scheduled tasks (which use isolated chatIds for conversation). */
+    originalChatId?: string;
   };
 }
 

@@ -56,7 +56,16 @@ export class CalendarWatcher {
         await this.processEvent(event);
       }
     } catch (err) {
-      this.logger.error({ err }, 'Calendar watcher tick failed');
+      // Transient network errors (timeouts, 5xx) are expected — log as warn, not error
+      const isTransient = err instanceof Error && (
+        err.message.includes('Timeout') || err.message.includes('fetch failed') ||
+        err.message.includes('503') || err.message.includes('502') || err.message.includes('504')
+      );
+      if (isTransient) {
+        this.logger.warn({ err }, 'Calendar watcher tick failed (transient)');
+      } else {
+        this.logger.error({ err }, 'Calendar watcher tick failed');
+      }
     }
   }
 

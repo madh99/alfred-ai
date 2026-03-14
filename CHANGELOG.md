@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-03-14
+
+### Fixed
+- **Reminder-Scheduler: Retry-Limit** — Maximal 5 Zustellversuche pro Reminder. Danach wird der Reminder als gefeuert markiert und nicht mehr wiederholt. Verhindert endlose Fehler-Schleifen bei unzustellbaren Erinnerungen (vorher: 6.000+ Fehler in 5 Stunden)
+- **Proactive Scheduler: ChatId für Skills** — Scheduled Tasks übergeben jetzt die echte User-ChatId (`originalChatId`) an Skills. Vorher erhielten Skills die isolierte `scheduled-<id>` ChatId, was z.B. Reminder an ungültige Chats schickte
+- **Calendar Watcher: Transiente Fehler als Warn** — Netzwerk-Timeouts, 502/503/504-Fehler werden als WARN statt ERROR geloggt. Reduziert Log-Noise bei normalen Netzwerk-Schwankungen
+- **Watch-Engine: Alert-Fehlermeldungen** — Fehler beim Senden von Watch-Alert-Nachrichten werden jetzt geloggt (vorher: silentes `catch {}`)
+- **Token-Kosten: Negative Werte verhindert** — `regularInput` kann nicht mehr negativ werden wenn `cacheReadTokens > inputTokens` (Race-Condition bei Provider-Reporting)
+- **Willhaben: JSON.parse abgesichert** — `__NEXT_DATA__`-Parsing in allen drei Methoden mit try-catch geschützt. Verhindert unkontrollierte Crashes bei geändertem Page-Format
+- **Condition Evaluator: Infinity-Guard** — `toNumber()` gibt `null` zurück bei `Infinity`/`-Infinity` statt den Wert als gültige Zahl zu behandeln
+- **OpenAI Embeddings: Fehler-Logging** — `embed()` loggt jetzt Fehlermeldungen statt sie komplett zu verschlucken
+- **Background Tasks: Timeout-Cleanup** — Timeout-Timer wird nach erfolgreicher Task-Ausführung korrekt aufgeräumt (vorher: Timer lief weiter bis Ablauf)
+
 ## [0.14.4] - 2026-03-12
 
 ### Fixed
