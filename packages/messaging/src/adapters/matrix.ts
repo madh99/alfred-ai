@@ -1,3 +1,5 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import type { NormalizedMessage, SendMessageOptions, Attachment } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
@@ -7,12 +9,14 @@ export class MatrixAdapter extends MessagingAdapter {
   private readonly homeserverUrl: string;
   private readonly accessToken: string;
   private readonly botUserId: string;
+  private readonly storagePath: string;
 
-  constructor(homeserverUrl: string, accessToken: string, botUserId: string) {
+  constructor(homeserverUrl: string, accessToken: string, botUserId: string, storagePath?: string) {
     super();
     this.homeserverUrl = homeserverUrl.replace(/\/+$/, '');
     this.accessToken = accessToken;
     this.botUserId = botUserId;
+    this.storagePath = storagePath ?? join(homedir(), '.alfred', 'matrix-storage');
   }
 
   async connect(): Promise<void> {
@@ -25,7 +29,7 @@ export class MatrixAdapter extends MessagingAdapter {
     } = await import('matrix-bot-sdk');
 
     const storageProvider = new SimpleFsStorageProvider(
-      './data/matrix-storage',
+      this.storagePath,
     );
     this.client = new MatrixClient(
       this.homeserverUrl,

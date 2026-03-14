@@ -283,20 +283,12 @@ export class UniFiSkill extends Skill {
    * Low-level fetch with TLS override scoped to this call.
    */
   private async rawFetch(url: string, init: RequestInit): Promise<Response> {
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-    if (this.config.verifyTls === false) {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-    }
+    const skipTls = this.config.verifyTls === false;
+    if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     try {
       return await fetch(url, init);
     } finally {
-      if (this.config.verifyTls === false) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
+      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     }
   }
 

@@ -258,6 +258,9 @@ export class GoogleProvider extends LLMProvider {
         const cacheKey = this.buildCacheKeyFromBlocks(toolUseBlocks);
         const cached = this.rawContentCache.get(cacheKey);
         if (cached) {
+          // LRU: move to end by re-inserting
+          this.rawContentCache.delete(cacheKey);
+          this.rawContentCache.set(cacheKey, cached);
           contents.push(cached);
         } else {
           // No cache hit — reconstruct (with sentinel thoughtSignature for Gemini 3+)

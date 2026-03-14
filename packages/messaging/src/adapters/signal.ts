@@ -60,6 +60,11 @@ export class SignalAdapter extends MessagingAdapter {
       } catch (err) {
         this.consecutiveErrors++;
         this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        if (this.consecutiveErrors >= 50) {
+          this.status = 'error';
+          this.emit('error', new Error(`Signal polling stopped after ${this.consecutiveErrors} consecutive errors`));
+          return; // Stop polling — requires explicit reconnect
+        }
         const backoff = Math.min(this.consecutiveErrors * 2000, 60_000);
         this.schedulePoll(backoff);
       }

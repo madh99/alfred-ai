@@ -72,11 +72,12 @@ export class ShellSkill extends Skill {
       /\bnode\s+-e\b/,                    // node -e
       /\b(bash|sh)\s+-i\b.*\/dev\/tcp/,  // reverse shell via /dev/tcp
       /\bnc\s+.*-e\b/,                   // netcat reverse shell
-      /\b(bash|sh)\s+-c\b/,              // arbitrary command execution via bash -c / sh -c
+      /\b(bash|sh|zsh|dash|ksh|csh|tcsh|fish)\s+-[a-z]*c\b/, // arbitrary command execution via any shell -c
       /\bdd\b.*\bof=\/dev\//,            // dd to block devices
+      /\bdd\b.*\bof=\//,                 // dd to arbitrary paths
       /\bchmod\s+777\s+\//,              // chmod 777 on root
       /\bchown\s+.*\s+\/(?:\s|$)/,       // chown on root
-      /\bbase64\b.*\|\s*\b(bash|sh)\b/,  // base64 decode to shell
+      /\bbase64\b.*\|/,                  // base64 decode piped anywhere
       /\bperl\s+-e\b/,                    // perl one-liner
       /\bruby\s+-e\b/,                    // ruby one-liner
       /\bphp\s+-r\b/,                     // php one-liner
@@ -90,6 +91,9 @@ export class ShellSkill extends Skill {
       /\beval\s/,                         // eval execution
       /\bsource\s/,                      // source execution
       /\b\.\s+\//,                       // dot-source (. /path)
+      /`[^`]+`/,                         // backtick command substitution
+      /\$\([^)]+\)/,                     // $() command substitution
+      /\/bin\/\w+\s+-rf?\s+\//,          // absolute path to destructive commands
     ];
     for (const pattern of dangerous) {
       if (pattern.test(command)) {

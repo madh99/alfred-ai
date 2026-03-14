@@ -1,6 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult, BMWCarDataConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
@@ -467,6 +467,7 @@ export class BMWSkill extends Skill {
   private async saveTokens(tokens: BMWTokens): Promise<void> {
     await mkdir(join(homedir(), '.alfred'), { recursive: true });
     await writeFile(TOKEN_PATH, JSON.stringify(tokens, null, 2), 'utf-8');
+    try { await chmod(TOKEN_PATH, 0o600); } catch { /* Windows has no chmod */ }
   }
 
   private async savePartialTokens(partial: Partial<BMWTokens>): Promise<void> {

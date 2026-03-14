@@ -149,13 +149,14 @@ export class PersistentAgentRunner {
 
       // Enforce remaining time as execution timeout
       const remainingMs = maxDurationMs - elapsedMs;
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Max duration of ${task.maxDurationHours}h exceeded`)), remainingMs),
-      );
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(`Max duration of ${task.maxDurationHours}h exceeded`)), remainingMs);
+      });
       const result = await Promise.race([
         this.skillSandbox.execute(skill, input, execContext),
         timeoutPromise,
-      ]);
+      ]).finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); });
       this.activeAbortControllers.delete(task.id);
 
       // If paused via abort, don't overwrite 'checkpointed' status

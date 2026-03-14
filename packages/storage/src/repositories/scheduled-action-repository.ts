@@ -1,6 +1,6 @@
 import type BetterSqlite3 from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import type { ScheduledAction } from '@alfred/types';
+import { getNextCronDate, type ScheduledAction } from '@alfred/types';
 
 export interface CreateScheduledActionInput {
   userId: string;
@@ -135,63 +135,14 @@ export class ScheduledActionRepository {
         return new Date(scheduleValue).toISOString();
       }
       case 'cron': {
-        return this.getNextCronDate(scheduleValue, now)?.toISOString() ?? null;
+        return getNextCronDate(scheduleValue, now)?.toISOString() ?? null;
       }
       default:
         return null;
     }
   }
 
-  private getNextCronDate(cronExpr: string, after: Date): Date | null {
-    const parts = cronExpr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-
-    // Try up to 1440 minutes (24 hours) forward to find next match
-    const candidate = new Date(after.getTime() + 60_000); // start 1 minute ahead
-    candidate.setSeconds(0, 0);
-
-    for (let i = 0; i < 1440; i++) {
-      if (this.matchesCron(parts, candidate)) {
-        return candidate;
-      }
-      candidate.setTime(candidate.getTime() + 60_000);
-    }
-
-    return null;
-  }
-
-  private matchesCron(parts: string[], date: Date): boolean {
-    const minute = date.getMinutes();
-    const hour = date.getHours();
-    const dayOfMonth = date.getDate();
-    const month = date.getMonth() + 1;
-    const dayOfWeek = date.getDay();
-
-    return (
-      this.matchCronField(parts[0], minute) &&
-      this.matchCronField(parts[1], hour) &&
-      this.matchCronField(parts[2], dayOfMonth) &&
-      this.matchCronField(parts[3], month) &&
-      this.matchCronField(parts[4], dayOfWeek)
-    );
-  }
-
-  private matchCronField(field: string, value: number): boolean {
-    if (field === '*') return true;
-
-    // */N — every N
-    const stepMatch = /^\*\/(\d+)$/.exec(field);
-    if (stepMatch) {
-      const step = parseInt(stepMatch[1], 10);
-      return value % step === 0;
-    }
-
-    // Specific number
-    const num = parseInt(field, 10);
-    if (!isNaN(num)) return value === num;
-
-    return false;
-  }
+  // Cron matching delegated to shared @alfred/types cron utilities
 
   private mapRow(row: Record<string, unknown>): ScheduledAction {
     return {

@@ -291,7 +291,7 @@ function validateStoragePath(p: string): void {
     ? ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)']
     : ['/etc', '/bin', '/proc', '/sys', '/dev', '/boot'];
   for (const f of forbidden) {
-    if (resolved.startsWith(f + '/') || resolved === f) {
+    if (resolved.startsWith(f + path.sep) || resolved.startsWith(f + '/') || resolved === f) {
       throw new Error(`Storage path "${resolved}" is in forbidden directory ${f}`);
     }
   }

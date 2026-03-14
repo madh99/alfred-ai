@@ -274,6 +274,8 @@ export class WatchEngine {
               error: err instanceof Error ? err.message : String(err),
             });
           }
+        } else {
+          this.logger.warn({ watchId: watch.id, platform: watch.platform }, 'Watch alert skipped — no adapter for platform');
         }
       }
 

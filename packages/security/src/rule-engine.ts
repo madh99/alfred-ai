@@ -68,13 +68,8 @@ export class RuleEngine {
     const scopeKey = this.getScopeKey(rule.scope, context);
     const key = `${rule.id}:${scopeKey}`;
 
-    const result = this.rateLimiter.check(key, rule.rateLimit);
-    if (!result.allowed) {
-      return false;
-    }
-
-    this.rateLimiter.increment(key, rule.rateLimit);
-    return true;
+    const result = this.rateLimiter.checkAndIncrement(key, rule.rateLimit);
+    return result.allowed;
   }
 
   /**
@@ -122,7 +117,7 @@ export class RuleEngine {
         }
       }
 
-      if (rule.conditions.chatType && context.chatType) {
+      if (rule.conditions.chatType) {
         if (rule.conditions.chatType !== context.chatType) {
           return false;
         }

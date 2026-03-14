@@ -326,7 +326,7 @@ export const ProxmoxBackupConfigSchema = z.object({
   baseUrl: z.string(),
   tokenId: z.string(),
   tokenSecret: z.string(),
-  maxAgeHours: z.number().optional(),
+  maxAgeHours: z.coerce.number().optional(),
   verifyTls: z.boolean().optional(),
 });
 

@@ -40,6 +40,7 @@ export class ReminderScheduler {
       clearInterval(this.intervalId);
       this.intervalId = undefined;
     }
+    this.failCounts.clear();
     this.logger.info('Reminder scheduler stopped');
   }
 
@@ -49,13 +50,19 @@ export class ReminderScheduler {
       for (const reminder of due) {
         try {
           const text = `\u23F0 Reminder: ${reminder.message}`;
+          let delivered = false;
 
           // Send to the original platform
-          await this.sendMessage(
-            reminder.platform as Platform,
-            reminder.chatId,
-            text,
-          );
+          try {
+            await this.sendMessage(
+              reminder.platform as Platform,
+              reminder.chatId,
+              text,
+            );
+            delivered = true;
+          } catch (primaryErr) {
+            this.logger.warn({ err: primaryErr, reminderId: reminder.id }, 'Primary platform delivery failed, trying cross-platform');
+          }
 
           // Also send to all other linked platforms
           if (this.linkedUsers) {
@@ -66,12 +73,22 @@ export class ReminderScheduler {
                 if (user.platform === reminder.platform) continue;
                 const conv = this.linkedUsers.findConversation(user.platform, user.id);
                 if (conv) {
-                  await this.sendMessage(user.platform as Platform, conv.chatId, text);
+                  try {
+                    await this.sendMessage(user.platform as Platform, conv.chatId, text);
+                    delivered = true;
+                  } catch (xErr) {
+                    this.logger.debug({ err: xErr, reminderId: reminder.id, platform: user.platform }, 'Cross-platform delivery failed');
+                  }
                 }
               }
             } catch (err) {
-              this.logger.debug({ err, reminderId: reminder.id }, 'Cross-platform reminder delivery failed');
+              this.logger.debug({ err, reminderId: reminder.id }, 'Cross-platform user lookup failed');
             }
+          }
+
+          if (!delivered) {
+            // No platform could deliver — treat as failure for retry
+            throw new Error('No platform could deliver reminder');
           }
 
           this.reminderRepo.markFired(reminder.id);

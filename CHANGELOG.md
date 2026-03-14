@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.6] - 2026-03-14
+
+### Security
+- **Shell Skill: Erweiterte Blocklist** — Zusätzliche Bypass-Vektoren blockiert: alle Shell-Varianten (`zsh`, `dash`, `ksh`), Backtick-Substitution, `$()` Command-Substitution, base64-Pipes, absolute Pfade zu destruktiven Befehlen
+- **SSRF: DNS-Resolution** — HTTP- und Browser-Skill lösen Hostnames vor dem Request auf und prüfen die IP gegen Private-Ranges. Verhindert DNS-Rebinding-Angriffe. IPv4-mapped IPv6 und Link-Local erkannt
+- **Security Rule Engine: chatType Bypass** — Rules mit `conditions.chatType` greifen jetzt korrekt wenn der Request-Context keinen chatType hat
+- **Config: Windows Pfad-Validierung** — `validateStoragePath` prüft mit `path.sep` statt nur `/`
+- **Home Assistant: Jinja2 Injection** — Area-Parameter wird gegen Whitelist-Muster validiert
+- **BMW Token Permissions** — Token-Datei wird mit `chmod 600` gesichert
+- **Audit-Log Redaction** — Audit-Logger redaktiert Secrets wie der Haupt-Logger
+
+### Fixed
+- **Cron-Parser: Listen und Ranges** — Unterstützt `1,15`, `1-5`, `1-5/2`. Schedules wie `0 9 * * 1-5` (Mo-Fr) funktionieren korrekt
+- **Cron-Parser: Deduplizierung** — Gemeinsame Utility in `@alfred/types`
+- **PersistentAgentRunner: Timeout-Leak** — Timer wird nach Erfolg aufgeräumt
+- **Watch-Engine: Fehlender Adapter** — Warnung statt stiller Datenverlust
+- **Reminder: Cross-Platform Fallback** — Zustellung auf anderen Plattformen wenn Primär-Plattform down
+- **Reminder: failCounts Cleanup** — Map wird bei `stop()` geleert
+- **Google Provider: LRU-Cache** — LRU statt FIFO-Eviction für rawContentCache
+- **ReasoningEngine: half_hourly Toleranz** — ±1 Minute Toleranz für Event-Loop-Delays
+- **Rate-Limiter: Atomare Prüfung** — `checkAndIncrement()` verhindert Race-Conditions
+- **Rate-Limiter: Dynamisches Cleanup-Window** — Nutzt tatsächliches Bucket-Window statt hardcoded 1h
+- **Rule Loader: Conditions-Validierung** — Validierung bei Laden statt Runtime-Crash
+- **Zod: Numerische ENV-Coercion** — `maxAgeHours` mit `z.coerce.number()`
+- **DB Backup: Fehler-Logging** — Backup-Fehler als Warning statt still verschluckt
+- **Skill Sandbox: Timeout-Cleanup** — Timer bei Erfolg aufgeräumt
+- **Matrix Adapter: Storage-Pfad** — `~/.alfred/matrix-storage` statt CWD-relativ
+- **Signal Adapter: Error-Limit** — Polling stoppt nach 50 konsekutiven Fehlern
+
 ## [0.14.5] - 2026-03-14
 
 ### Fixed

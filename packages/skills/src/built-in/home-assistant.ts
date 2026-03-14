@@ -647,6 +647,10 @@ export class HomeAssistantSkill extends Skill {
 
   private async getAreas(area?: string): Promise<SkillResult> {
     if (area) {
+      // Validate area name to prevent Jinja2 injection (allow alphanumeric, spaces, hyphens, underscores, umlauts)
+      if (!/^[\w\s\-äöüÄÖÜß]+$/u.test(area)) {
+        return { success: false, error: `Invalid area name: "${area}"` };
+      }
       const tpl = `{% for eid in area_entities('${area.replace(/'/g, "\\'")}') %}{{ eid }}||{{ states(eid) }}||{{ state_attr(eid, 'friendly_name') }}\n{% endfor %}`;
       const text = await this.apiText('POST', '/api/template', { template: tpl });
       const rows = text.trim().split('\n').filter(Boolean);

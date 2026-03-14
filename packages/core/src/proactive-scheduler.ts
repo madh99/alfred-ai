@@ -8,6 +8,7 @@ import type { LLMProvider } from '@alfred/llm';
 import type { MessagePipeline } from './message-pipeline.js';
 import type { ResponseFormatter } from './response-formatter.js';
 import type { ConversationManager } from './conversation-manager.js';
+import { matchesCron, getNextCronDate } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 
@@ -263,61 +264,12 @@ export class ProactiveScheduler {
         return null;
       }
       case 'cron': {
-        return this.getNextCronDate(action.scheduleValue, now)?.toISOString() ?? null;
+        return getNextCronDate(action.scheduleValue, now)?.toISOString() ?? null;
       }
       default:
         return null;
     }
   }
 
-  private getNextCronDate(cronExpr: string, after: Date): Date | null {
-    const parts = cronExpr.trim().split(/\s+/);
-    if (parts.length !== 5) return null;
-
-    // Start 1 minute ahead and scan up to 24 hours forward
-    const candidate = new Date(after.getTime() + 60_000);
-    candidate.setSeconds(0, 0);
-
-    for (let i = 0; i < 1440; i++) {
-      if (this.matchesCron(parts, candidate)) {
-        return candidate;
-      }
-      candidate.setTime(candidate.getTime() + 60_000);
-    }
-
-    return null;
-  }
-
-  private matchesCron(parts: string[], date: Date): boolean {
-    const minute = date.getMinutes();
-    const hour = date.getHours();
-    const dayOfMonth = date.getDate();
-    const month = date.getMonth() + 1;
-    const dayOfWeek = date.getDay();
-
-    return (
-      this.matchCronField(parts[0], minute) &&
-      this.matchCronField(parts[1], hour) &&
-      this.matchCronField(parts[2], dayOfMonth) &&
-      this.matchCronField(parts[3], month) &&
-      this.matchCronField(parts[4], dayOfWeek)
-    );
-  }
-
-  private matchCronField(field: string, value: number): boolean {
-    if (field === '*') return true;
-
-    // */N — every N
-    const stepMatch = /^\*\/(\d+)$/.exec(field);
-    if (stepMatch) {
-      const step = parseInt(stepMatch[1], 10);
-      return value % step === 0;
-    }
-
-    // Specific number
-    const num = parseInt(field, 10);
-    if (!isNaN(num)) return value === num;
-
-    return false;
-  }
+  // Cron matching delegated to shared cron-utils
 }

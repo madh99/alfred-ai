@@ -268,20 +268,13 @@ export class ProxmoxSkill extends Skill {
     }
 
     const skipTls = this.config.verifyTls === false;
-    const prev = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     if (skipTls) process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
     let res: Response;
     try {
       res = await fetch(url, fetchOpts);
     } finally {
-      if (skipTls) {
-        if (prev === undefined) {
-          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
-        } else {
-          process.env.NODE_TLS_REJECT_UNAUTHORIZED = prev;
-        }
-      }
+      if (skipTls) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     }
 
     if (!res.ok) {

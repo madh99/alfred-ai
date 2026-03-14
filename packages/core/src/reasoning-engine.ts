@@ -102,7 +102,8 @@ export class ReasoningEngine {
         return false;
 
       case 'half_hourly':
-        if ((minute === 0 || minute === 30) && this.lastRunHour !== hour * 100 + minute) return true;
+        // Tolerance window: fire at :00/:30 or :01/:31 (event loop delay tolerance)
+        if ((minute <= 1 || (minute >= 30 && minute <= 31)) && this.lastRunHour !== hour * 100 + (minute < 2 ? 0 : 30)) return true;
         return false;
 
       default:

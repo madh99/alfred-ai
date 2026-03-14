@@ -164,15 +164,16 @@ export class SkillSandbox {
     timeoutMs: number,
   ): Promise<SkillResult> {
     try {
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
       const result = await Promise.race<SkillResult>([
         skill.execute(input, context),
         new Promise<SkillResult>((_resolve, reject) => {
-          setTimeout(
+          timeoutHandle = setTimeout(
             () => reject(new Error(`Skill "${name}" timed out after ${timeoutMs}ms`)),
             timeoutMs,
           );
         }),
-      ]);
+      ]).finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); });
 
       this.logger.info({ skill: name, success: result.success, ...(result.success ? {} : { error: result.error }) }, 'Skill execution completed');
 

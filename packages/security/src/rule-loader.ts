@@ -81,6 +81,33 @@ export class RuleLoader {
       if (typeof rule.conditions !== 'object' || rule.conditions === null) {
         throw new Error(`Rule "${rule.id}" has invalid "conditions": expected an object`);
       }
+      const cond = rule.conditions as Record<string, unknown>;
+      if (cond.users !== undefined && !Array.isArray(cond.users)) {
+        throw new Error(`Rule "${rule.id}" has invalid "conditions.users": expected an array`);
+      }
+      if (cond.platforms !== undefined && !Array.isArray(cond.platforms)) {
+        throw new Error(`Rule "${rule.id}" has invalid "conditions.platforms": expected an array`);
+      }
+      if (cond.chatType !== undefined && typeof cond.chatType !== 'string') {
+        throw new Error(`Rule "${rule.id}" has invalid "conditions.chatType": expected a string`);
+      }
+      if (cond.timeWindow !== undefined) {
+        const tw = cond.timeWindow as Record<string, unknown>;
+        if (typeof tw !== 'object' || tw === null) {
+          throw new Error(`Rule "${rule.id}" has invalid "conditions.timeWindow": expected an object`);
+        }
+        if (tw.startHour !== undefined && (typeof tw.startHour !== 'number' || tw.startHour < 0 || tw.startHour > 23)) {
+          throw new Error(`Rule "${rule.id}" has invalid "conditions.timeWindow.startHour": expected 0-23`);
+        }
+        if (tw.endHour !== undefined && (typeof tw.endHour !== 'number' || tw.endHour < 0 || tw.endHour > 23)) {
+          throw new Error(`Rule "${rule.id}" has invalid "conditions.timeWindow.endHour": expected 0-23`);
+        }
+        if (tw.daysOfWeek !== undefined) {
+          if (!Array.isArray(tw.daysOfWeek) || !tw.daysOfWeek.every((d: unknown) => typeof d === 'number' && d >= 0 && d <= 6)) {
+            throw new Error(`Rule "${rule.id}" has invalid "conditions.timeWindow.daysOfWeek": expected array of 0-6`);
+          }
+        }
+      }
       validated.conditions = rule.conditions as SecurityRule['conditions'];
     }
 

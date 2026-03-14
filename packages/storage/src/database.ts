@@ -25,7 +25,9 @@ export class Database {
           try { tmpDb.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
           tmpDb.close();
           fs.copyFileSync(dbPath, backupPath);
-        } catch {}
+        } catch (err) {
+          console.warn(`[Database] Backup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
 

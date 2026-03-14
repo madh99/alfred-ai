@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 
@@ -62,8 +63,8 @@ export class HttpSkill extends Skill {
       return { success: false, error: `Unsupported URL scheme "${parsed.protocol}". Only http: and https: are allowed.` };
     }
 
-    // Block requests to private/internal network addresses (SSRF protection)
-    if (this.isPrivateHost(parsed.hostname)) {
+    // Block requests to private/internal network addresses (SSRF protection with DNS resolution)
+    if (await this.resolveAndCheckHost(parsed.hostname)) {
       return { success: false, error: `Access to private/internal network address "${parsed.hostname}" is blocked.` };
     }
 
@@ -125,17 +126,17 @@ export class HttpSkill extends Skill {
     }
   }
 
-  private isPrivateHost(hostname: string): boolean {
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-      return true;
-    }
-    // IPv6 private (fc00::/7)
-    const clean = hostname.replace(/[\[\]]/g, '').toLowerCase();
-    if (clean.startsWith('fc') || clean.startsWith('fd') || clean === '::1') {
-      return true;
-    }
+  private isPrivateIp(ip: string): boolean {
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d)
+    const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(ip);
+    if (mapped) return this.isPrivateIp(mapped[1]);
+
+    // IPv6 private (fc00::/7, ::1)
+    const clean = ip.replace(/[\[\]]/g, '').toLowerCase();
+    if (clean === '::1' || clean.startsWith('fc') || clean.startsWith('fd') || clean.startsWith('fe80')) return true;
+
     // IPv4 private ranges
-    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
     if (ipv4Match) {
       const [, a, b] = ipv4Match.map(Number);
       if (a === 10) return true;
@@ -145,6 +146,21 @@ export class HttpSkill extends Skill {
       if (a === 169 && b === 254) return true;
       if (a === 0) return true;
     }
+    return false;
+  }
+
+  private isPrivateHost(hostname: string): boolean {
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+    return this.isPrivateIp(hostname);
+  }
+
+  private async resolveAndCheckHost(hostname: string): Promise<boolean> {
+    if (this.isPrivateHost(hostname)) return true;
+    // Resolve DNS to catch rebinding attacks
+    try {
+      const { address } = await lookup(hostname);
+      if (this.isPrivateIp(address)) return true;
+    } catch { /* DNS resolution failed — allow, let fetch handle it */ }
     return false;
   }
 

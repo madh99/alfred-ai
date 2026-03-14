@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import path from 'node:path';
 import os from 'node:os';
+import { lookup } from 'node:dns/promises';
 import { Skill } from '../skill.js';
 
 // Inline types — avoids compile-time dependency on puppeteer
@@ -174,7 +175,7 @@ export class BrowserSkill extends Skill {
     }
 
     // Validate URL: block non-http(s) protocols and private/internal IPs
-    const urlError = this.validateUrl(url);
+    const urlError = await this.validateUrl(url);
     if (urlError) {
       return { success: false, error: urlError };
     }
@@ -322,7 +323,7 @@ export class BrowserSkill extends Skill {
     }
   }
 
-  private validateUrl(url: string): string | null {
+  private async validateUrl(url: string): Promise<string | null> {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -339,36 +340,42 @@ export class BrowserSkill extends Skill {
     }
 
     const hostname = parsed.hostname;
-    if (this.isPrivateHost(hostname)) {
+    if (await this.resolveAndCheckHost(hostname)) {
       return `Access to private/internal network address "${hostname}" is blocked.`;
     }
 
     return null;
   }
 
-  private isPrivateHost(hostname: string): boolean {
-    // Localhost
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
-      return true;
-    }
-    // IPv6 private (fc00::/7)
-    if (hostname.startsWith('[') || hostname.toLowerCase().startsWith('fc') || hostname.toLowerCase().startsWith('fd')) {
-      const clean = hostname.replace(/[\[\]]/g, '').toLowerCase();
-      if (clean.startsWith('fc') || clean.startsWith('fd') || clean === '::1') {
-        return true;
-      }
-    }
-    // IPv4 private ranges
-    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
+  private isPrivateIp(ip: string): boolean {
+    const mapped = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(ip);
+    if (mapped) return this.isPrivateIp(mapped[1]);
+    const clean = ip.replace(/[\[\]]/g, '').toLowerCase();
+    if (clean === '::1' || clean.startsWith('fc') || clean.startsWith('fd') || clean.startsWith('fe80')) return true;
+    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
     if (ipv4Match) {
       const [, a, b] = ipv4Match.map(Number);
-      if (a === 10) return true;                              // 10.0.0.0/8
-      if (a === 172 && b >= 16 && b <= 31) return true;       // 172.16.0.0/12
-      if (a === 192 && b === 168) return true;                 // 192.168.0.0/16
-      if (a === 127) return true;                              // 127.0.0.0/8
-      if (a === 169 && b === 254) return true;                 // 169.254.0.0/16
-      if (a === 0) return true;                                // 0.0.0.0/8
+      if (a === 10) return true;
+      if (a === 172 && b >= 16 && b <= 31) return true;
+      if (a === 192 && b === 168) return true;
+      if (a === 127) return true;
+      if (a === 169 && b === 254) return true;
+      if (a === 0) return true;
     }
+    return false;
+  }
+
+  private isPrivateHost(hostname: string): boolean {
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true;
+    return this.isPrivateIp(hostname);
+  }
+
+  private async resolveAndCheckHost(hostname: string): Promise<boolean> {
+    if (this.isPrivateHost(hostname)) return true;
+    try {
+      const { address } = await lookup(hostname);
+      if (this.isPrivateIp(address)) return true;
+    } catch { /* DNS failed — allow, let browser handle it */ }
     return false;
   }
 
