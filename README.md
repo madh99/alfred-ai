@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.14.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.14.5-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -691,11 +691,15 @@ mcp: []
 ### Environment Variables
 
 ```bash
-# Platform tokens
+# Platform tokens (set ENABLED=true to activate without config.yaml)
 ALFRED_TELEGRAM_TOKEN=
+ALFRED_TELEGRAM_ENABLED=true
 ALFRED_DISCORD_TOKEN=
+ALFRED_DISCORD_ENABLED=true
 ALFRED_MATRIX_ACCESS_TOKEN=
+ALFRED_MATRIX_ENABLED=true
 ALFRED_SIGNAL_PHONE_NUMBER=
+ALFRED_SIGNAL_ENABLED=true
 
 # LLM API keys
 ALFRED_ANTHROPIC_API_KEY=
