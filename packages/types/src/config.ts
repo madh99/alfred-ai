@@ -196,6 +196,22 @@ export interface CodeAgentsConfig {
   forge?: ForgeConfig;
 }
 
+export interface ProjectAgentTemplateConfig {
+  name: string;
+  buildCommands: string[];
+  testCommands: string[];
+  description?: string;
+}
+
+export interface ProjectAgentsConfig {
+  enabled: boolean;
+  templates?: ProjectAgentTemplateConfig[];
+  defaultMaxDurationHours?: number;
+  defaultProgressEveryN?: number;
+  maxFixAttemptsPerIteration?: number;
+  buildCommandTimeoutMs?: number;
+}
+
 export interface ProxmoxConfig {
   baseUrl: string;
   tokenId: string;
@@ -338,6 +354,7 @@ export interface AlfredConfig {
   activeLearning?: ActiveLearningConfig;
   api?: ApiConfig;
   codeAgents?: CodeAgentsConfig;
+  projectAgents?: ProjectAgentsConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;

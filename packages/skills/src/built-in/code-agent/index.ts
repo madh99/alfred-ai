@@ -8,3 +8,8 @@ export { gitStatus, gitCreateBranch, gitStageAll, gitCommit, gitPush, slugifyBra
 export type { GitStatus, GitCommitResult, GitCmdOptions, RemoteInfo } from './git-ops.js';
 export { ForgeClient, createForgeClient } from './forge-client.js';
 export type { RepoIdentifier, PullRequestInput, PullRequestResult, PipelineStatus, CreateProjectInput, CreateProjectResult } from './forge-client.js';
+export { ProjectAgentSkill, pushInterjection, drainInterjections } from './project-agent-skill.js';
+export { validateBuild } from './build-validator.js';
+export type { BuildValidationResult, CommandResult } from './build-validator.js';
+export { createProjectPlan } from './project-planner.js';
+export type { ProjectPlan } from './project-planner.js';

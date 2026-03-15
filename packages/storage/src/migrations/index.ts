@@ -583,4 +583,29 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 29,
+    description: 'Project Agent — session tracking table',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_sessions (
+          id TEXT PRIMARY KEY,
+          task_id TEXT NOT NULL UNIQUE,
+          goal TEXT NOT NULL,
+          cwd TEXT NOT NULL,
+          agent_name TEXT NOT NULL,
+          current_phase TEXT NOT NULL DEFAULT 'planning',
+          current_iteration INTEGER NOT NULL DEFAULT 0,
+          total_files_changed INTEGER NOT NULL DEFAULT 0,
+          last_build_passed INTEGER NOT NULL DEFAULT 0,
+          last_commit_sha TEXT,
+          last_progress_at TEXT,
+          milestones TEXT NOT NULL DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_sessions_task ON project_agent_sessions(task_id);
+      `);
+    },
+  },
 ];

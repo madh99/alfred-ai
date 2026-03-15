@@ -208,6 +208,22 @@ export const CodeAgentsConfigSchema = z.object({
   forge: ForgeConfigSchema.optional(),
 });
 
+export const ProjectAgentTemplateSchema = z.object({
+  name: z.string(),
+  buildCommands: z.array(z.string()),
+  testCommands: z.array(z.string()),
+  description: z.string().optional(),
+});
+
+export const ProjectAgentsConfigSchema = z.object({
+  enabled: z.boolean(),
+  templates: z.array(ProjectAgentTemplateSchema).optional(),
+  defaultMaxDurationHours: z.number().optional(),
+  defaultProgressEveryN: z.number().optional(),
+  maxFixAttemptsPerIteration: z.number().optional(),
+  buildCommandTimeoutMs: z.number().optional(),
+});
+
 export const ProxmoxConfigSchema = z.object({
   baseUrl: z.string(),
   tokenId: z.string(),
@@ -351,6 +367,7 @@ export const AlfredConfigSchema = z.object({
   activeLearning: ActiveLearningConfigSchema.optional(),
   api: ApiConfigSchema.optional(),
   codeAgents: CodeAgentsConfigSchema.optional(),
+  projectAgents: ProjectAgentsConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),

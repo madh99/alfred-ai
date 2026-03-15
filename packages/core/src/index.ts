@@ -29,6 +29,7 @@ export { evaluateCondition, evaluateCompositeCondition, extractField } from './c
 export { evaluateWorkflowCondition } from './workflow-condition-evaluator.js';
 export { ConfirmationQueue } from './confirmation-queue.js';
 export { FeedbackService } from './feedback/index.js';
+export { ProjectAgentRunner } from './project-agent-runner.js';
 export { scanCorrectionSignal } from './feedback/index.js';
 export { CalendarWatcher } from './calendar-watcher.js';
 export { TodoWatcher } from './todo-watcher.js';

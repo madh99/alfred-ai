@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-03-15
+
+### Added
+- **Project Agent** — Autonomer Coding-Agent der Software-Projekte end-to-end erstellt und entwickelt, gesteuert via Telegram/Chat. State Machine mit Phasen: Planning → Coding → Validating → Fixing → Committing. Unbegrenzte Iterationen bis Ziel erreicht oder User stoppt. Features:
+  - LLM-basierte Projekt-Planung (zerlegt Ziel in Build-Phasen)
+  - Code-Agent-Ausführung (Claude Code, Codex) pro Phase
+  - Automatische Build-Validierung (`npm install`, `npm run build`, `npm test`)
+  - Fehler-Recovery: Build-Output wird dem Code-Agent als Fix-Kontext gegeben (max 3 Versuche)
+  - User-Interjections: Anforderungen jederzeit per Chat einschleusen
+  - Progress-Updates via Telegram (throttled, Milestones sofort)
+  - Git-Integration: Auto-Commit nach jedem erfolgreichen Build
+  - Checkpoint/Resume via PersistentAgentRunner (überlebt Prozess-Neustarts)
+  - Konfigurierbar: Build-Commands, Test-Commands, Templates, Max Duration
+  - Session-Tracking in DB für Status-Abfragen
+  - Aktionen: `start`, `status`, `interject`, `stop`
+
 ## [0.15.0] - 2026-03-15
 
 ### Added

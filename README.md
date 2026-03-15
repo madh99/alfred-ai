@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.15.0-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.15.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -92,7 +92,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
-| **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
+| **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration, **autonomous project agent** (plan → code → validate → fix → commit loop, Telegram-controlled) |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server) |
 | **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
 | **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
@@ -118,6 +118,42 @@ Alfred → code_agent orchestrate:
 Supported agents are auto-detected during setup: **Claude Code**, **Codex**, **Aider**, **Gemini CLI**, or any custom CLI tool.
 
 **Forge Integration** — Automatically creates branches, commits, pushes, and opens Pull Requests (GitHub) or Merge Requests (GitLab). Owner/repo is detected from `git remote` at runtime — no manual config needed.
+
+### Project Agent (Autonomous Software Development)
+
+Build entire software projects via chat. Alfred plans, codes, validates, fixes, and commits — autonomously.
+
+```
+You: "Erstelle eine REST API für Todo-Items mit Express und TypeScript in ~/projects/api"
+Alfred: "🚀 Project Agent gestartet."
+Alfred: "📋 Plan: 1) Setup 2) Models+Routes 3) Auth 4) Tests"
+Alfred: "🔨 Phase 1: claude-code arbeitet..."
+Alfred: "✅ Build passed. 4 Dateien. Commit: a3f21b7"
+Alfred: "🔨 Phase 2..."
+You: "Füge JWT Auth hinzu"
+Alfred: "📝 Eingereiht. Wird in der nächsten Phase berücksichtigt."
+You: "Stopp"
+Alfred: "⏹ Gestoppt. 12 Dateien, 5 Commits, Build: passing."
+```
+
+**How it works:**
+1. LLM decomposes the goal into ordered build phases
+2. For each phase: code agent (Claude Code/Codex) implements, build validator checks (`npm install && build && test`)
+3. On failure: error output fed back to code agent for automatic fix (up to 3 attempts)
+4. On success: auto-commit + progress update via Telegram
+5. User can interject requirements mid-execution or stop at any time
+6. Survives process restarts via checkpoint/resume
+
+```yaml
+projectAgents:
+  enabled: true
+  defaultMaxDurationHours: 8
+  maxFixAttemptsPerIteration: 3
+  templates:
+    - name: nextjs
+      buildCommands: ["npm install", "npm run build"]
+      testCommands: ["npm test"]
+```
 
 ### Infrastructure Management
 

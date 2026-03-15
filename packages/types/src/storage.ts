@@ -74,6 +74,22 @@ export interface AgentCheckpoint {
   metadata?: Record<string, unknown>;
 }
 
+export interface ProjectAgentMeta {
+  projectPhase: 'planning' | 'coding' | 'validating' | 'fixing' | 'committing' | 'awaiting_user' | 'done';
+  projectIteration: number;
+  projectGoal: string;
+  buildCommands: string[];
+  testCommands: string[];
+  projectCwd: string;
+  lastBuildOutput: string;
+  lastCommitSha?: string;
+  injectedMessages: string[];
+  totalFilesChanged: number;
+  milestonesReached: string[];
+  consecutiveFixFailures: number;
+  agentName: string;
+}
+
 export interface ScheduledAction {
   id: string;
   userId: string;

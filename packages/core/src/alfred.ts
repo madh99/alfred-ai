@@ -97,6 +97,7 @@ export class Alfred {
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
+  private projectAgentRunner?: import('./project-agent-runner.js').ProjectAgentRunner;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly startedAt = new Date().toISOString();
@@ -349,6 +350,31 @@ export class Alfred {
         llmProvider,
       ));
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
+    }
+
+    // 4e2. Project agent (optional, requires code agents)
+    if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
+      const { ProjectAgentSkill } = await import('@alfred/skills');
+      const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+      const projectSessionRepo = new ProjectAgentSessionRepository(db);
+      const projectAgentSkill = new ProjectAgentSkill(
+        { ...this.config.projectAgents, agents: this.config.codeAgents.agents },
+        llmProvider,
+        backgroundTaskRepo,
+        projectSessionRepo,
+      );
+      skillRegistry.register(projectAgentSkill);
+      this.logger.info('Project agent skill enabled');
+
+      // Wire the runner (needs adapters, so store for later)
+      this.projectAgentRunner = new (await import('./project-agent-runner.js')).ProjectAgentRunner(
+        new Map(this.config.codeAgents.agents.map(a => [a.name, a])),
+        llmProvider,
+        backgroundTaskRepo,
+        projectSessionRepo,
+        this.adapters,
+        this.logger.child({ component: 'project-agent' }),
+      );
     }
 
     // 4f. Proxmox (optional)
