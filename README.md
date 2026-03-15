@@ -89,7 +89,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables), workflow chains (multi-step skill pipelines), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills) |
+| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration |
@@ -358,6 +358,26 @@ You: *clicks Approve*
 Alfred: "✅ Aktion ausgeführt: Wallbox eingeschaltet"
 ```
 
+**Watch Chains** — Multi-step automations by chaining watches:
+```
+You: "Wenn Strom günstig, prüfe BMW Akku — wenn unter 80%, Wallbox ein"
+Alfred → Watch A (energy check) triggers Watch B (BMW check):
+  - Watch A: energy_prices bruttoCt < 10 → trigger_watch → Watch B
+  - Watch B: bmw battery < 80 → action: turn_on switch.wallbox
+  - Each watch keeps its own cooldown
+  - Chain depth limited to 5 (prevents cycles)
+```
+
+**Workflow Branching** — If/else logic in multi-step workflows:
+```
+You: "Erstelle Workflow: Wetter prüfen, wenn Regen → Schirm-Erinnerung, sonst → Fahrradroute"
+Alfred → workflow with condition step:
+  - Step 0: weather (get conditions)
+  - Step 1: condition (prev.rain eq "true") → then: 2, else: 3
+  - Step 2: reminder ("Regenschirm!") → jumpTo: end
+  - Step 3: routing (mode: bike) → jumpTo: end
+```
+
 **Inbound Webhooks** — Trigger watches in real-time via HTTP:
 ```yaml
 webhooks:
@@ -375,16 +395,27 @@ calendar:
     minutesBefore: 15
 ```
 
-**Reasoning Engine** — Cross-domain analysis for proactive insights:
+**Reasoning Engine** — Cross-domain analysis with proactive insights AND actions:
 ```
-Alfred: "💡 Du hast um 14:00 einen Termin in Linz, aber die RTX 5090 Watch
-zeigt ein Angebot in Wien — Abholung wäre auf dem Rückweg möglich."
-
 Alfred: "💡 Strompreis ist bis 15:00 unter 5 ct/kWh — BMW laden wäre jetzt
-günstig (Akku war beim letzten Check bei 45%)."
+günstig (Akku war beim letzten Check bei 45%).
+Soll ich die Wallbox einschalten?"
+       [✅ Approve] [❌ Reject]
 ```
-Aggregates calendar, todos, watches, memories, weather, energy prices, and activity.
+Aggregates calendar, todos, watches, memories, weather, energy prices, activity, and user feedback.
 Runs 3x/day (configurable), one LLM call per pass (~$0.80/month with Haiku).
+Can propose structured actions (skill execution, reminders) — always with human confirmation.
+
+**Learning Feedback Loop** — Alfred learns from corrections and rejections:
+```
+User rejects "Wallbox einschalten" 3x → Alfred stores behavioral feedback:
+  "Watch 'Wallbox' wurde 3× abgelehnt. Schwellenwert überprüfen."
+  → Feedback appears in LLM system prompt as "Behavior Feedback"
+  → Reasoning Engine considers feedback in future passes
+
+User: "Nein, nicht so — beim nächsten Mal nur benachrichtigen"
+  → Correction detected → stored as feedback memory
+```
 
 ### Cross-Platform Identity
 
@@ -504,7 +535,8 @@ The interactive wizard guides you through:
 4. **Optional features** — Speech, email, calendar, web search, code sandbox
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
-7. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker, BMW CarData, Google Routing
+7. **Web Chat UI** — Enable/disable the built-in browser chat interface
+8. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker, BMW CarData, Google Routing
 
 This generates `config.yaml` and `.env` in your working directory. Model lists are cached locally (`~/.alfred/model-cache.json`, TTL 24h) for fast subsequent runs.
 
@@ -546,6 +578,12 @@ curl -N -X POST http://localhost:3420/api/message \
 
 SSE events: `status` (progress), `response` (final answer), `attachment` (files/images), `done` (stream end), `error`.
 
+```bash
+# Dashboard data (watches, scheduled tasks, skill health)
+curl http://localhost:3420/api/dashboard \
+  -H "Authorization: Bearer YOUR_TOKEN"
+```
+
 Configure in `config.yaml`:
 
 ```yaml
@@ -555,7 +593,28 @@ api:
   host: 127.0.0.1    # localhost only; use 0.0.0.0 to expose
   token: my-secret    # optional — enables Bearer token auth
   corsOrigin: http://localhost:3000  # optional — restricts CORS origin
+  webUi: true         # serves web chat UI at /alfred/ (default: true)
 ```
+
+### Web Chat UI
+
+Alfred includes a browser-based chat interface with dashboard, served automatically at `http://host:3420/alfred/`.
+
+**Features:**
+- **Chat** — SSE streaming, Markdown rendering, code blocks, attachment preview (images, files, voice)
+- **Dashboard** — Active watches with last value/trigger, scheduled tasks with next run, skill health grid (green/amber/red)
+- **Settings** — API URL + token configuration, connection test
+
+**Configuration:**
+```yaml
+api:
+  enabled: true
+  port: 3420
+  host: 127.0.0.1
+  webUi: true          # set to false to disable built-in web UI
+```
+
+The web UI can also be deployed externally (nginx, CDN, Vercel) — it's a pure static site. Set `api.corsOrigin` to the external URL in that case.
 
 ### Other Commands
 
@@ -636,6 +695,7 @@ api:
   enabled: true
   port: 3420
   host: 127.0.0.1
+  webUi: true           # serves web chat UI at /alfred/
 
 conversation:
   maxHistoryMessages: 30    # 10–500, default 30
