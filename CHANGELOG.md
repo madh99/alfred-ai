@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-03-15
+
+### Fixed
+- **Web Chat: crypto.randomUUID Fehler** — `crypto.randomUUID()` ist in HTTP-Kontexten (ohne TLS) nicht verfügbar. Ersetzt durch `Math.random()` + `Date.now()` basierte ID-Generierung
+
 ## [0.16.4] - 2026-03-15
 
 ### Added

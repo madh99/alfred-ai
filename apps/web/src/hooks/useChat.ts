@@ -71,13 +71,18 @@ function reducer(state: ChatState, action: Action): ChatState {
   }
 }
 
+/** Generate a random ID without crypto.randomUUID (not available in insecure HTTP contexts). */
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+}
+
 /** Get or create a persistent user ID stored in localStorage. */
 function getPersistentUserId(): string {
   if (typeof window === 'undefined') return 'web-user';
   const key = 'alfred-user-id';
   let userId = localStorage.getItem(key);
   if (!userId) {
-    userId = `web-${crypto.randomUUID().slice(0, 8)}`;
+    userId = `web-${randomId()}`;
     localStorage.setItem(key, userId);
   }
   return userId;
@@ -89,7 +94,7 @@ function getPersistentChatId(): string {
   const key = 'alfred-chat-id';
   let chatId = localStorage.getItem(key);
   if (!chatId) {
-    chatId = `web-chat-${crypto.randomUUID().slice(0, 8)}`;
+    chatId = `web-chat-${randomId()}`;
     localStorage.setItem(key, chatId);
   }
   return chatId;
