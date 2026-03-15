@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.7] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: API-URL Default** — Leerer Default statt `http://localhost:3420` — fetch nutzt relative Pfade (same origin), funktioniert lokal und remote ohne manuelle Konfiguration
+
 ## [0.15.6] - 2026-03-15
 
 ### Fixed

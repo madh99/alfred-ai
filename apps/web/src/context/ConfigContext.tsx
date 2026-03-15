@@ -15,7 +15,7 @@ interface ConfigContextValue {
 }
 
 const defaults: Config = {
-  apiUrl: process.env.NEXT_PUBLIC_ALFRED_API_URL ?? 'http://localhost:3420',
+  apiUrl: process.env.NEXT_PUBLIC_ALFRED_API_URL ?? '',
   apiToken: '',
 };
 
