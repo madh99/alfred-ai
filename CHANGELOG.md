@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.3] - 2026-03-15
+
+### Fixed
+- **HTTP API SSE: Stream sofort gelöscht** — `req.on('close')` feuert nach dem Request-Body-Read, nicht bei Client-Disconnect. Stream wurde sofort gelöscht bevor die Response geschrieben werden konnte. Fix: `res.on('close')` statt `req.on('close')`. Behebt den Web Chat der keine Antworten zeigte
+
 ## [0.16.2] - 2026-03-15
 
 ### Added

@@ -375,8 +375,8 @@ export class HttpAdapter extends MessagingAdapter {
 
         this.streams.set(chatId, res);
 
-        // Clean up on client disconnect
-        req.on('close', () => {
+        // Clean up on client disconnect (use res, not req — req closes after body is read)
+        res.on('close', () => {
           this.streams.delete(chatId);
         });
 
