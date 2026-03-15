@@ -183,7 +183,25 @@ Watch-compatible: query action returns rowCount and first row data for condition
 
     try {
       const result = await provider.query(sql);
-      return { success: true, data: { rowCount: result.rowCount, columns: result.columns, rows: result.rows, truncated: result.truncated, firstRow: result.rows[0] }, display: this.formatResult(result, name) };
+      const isLarge = result.rows.length > 10 || result.columns.length > 6;
+
+      const skillResult: SkillResult = {
+        success: true,
+        data: { rowCount: result.rowCount, columns: result.columns, rows: result.rows, truncated: result.truncated, firstRow: result.rows[0] },
+        display: this.formatResult(result, name),
+      };
+
+      // Large results: attach as CSV file
+      if (isLarge && result.rows.length > 0) {
+        const csv = this.toCsv(result);
+        skillResult.attachments = [{
+          data: Buffer.from(csv, 'utf-8'),
+          mimeType: 'text/csv',
+          fileName: `query-${name}-${Date.now()}.csv`,
+        }];
+      }
+
+      return skillResult;
     } catch (err) {
       return { success: false, error: `Query fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -203,25 +221,38 @@ Watch-compatible: query action returns rowCount and first row data for condition
   private formatResult(result: QueryResult, connName: string): string {
     if (result.rows.length === 0) return `**${connName}:** Keine Ergebnisse.`;
 
-    const header = `**${connName}:** ${result.rowCount} Zeilen${result.truncated ? ' (gekürzt)' : ''}\n\n`;
+    const isLarge = result.rows.length > 10 || result.columns.length > 6;
+    const header = `**${connName}:** ${result.rowCount} Zeilen, ${result.columns.length} Spalten${result.truncated ? ' (Row-Limit erreicht)' : ''}`;
 
-    if (result.columns.length <= 6 && result.rows.length <= 20) {
-      // Markdown table
-      const table = '| ' + result.columns.join(' | ') + ' |\n' +
-        '|' + result.columns.map(() => '---').join('|') + '|\n' +
-        result.rows.map(row =>
-          '| ' + result.columns.map(c => {
-            const v = row[c];
-            return v == null ? '—' : String(v).slice(0, 50);
-          }).join(' | ') + ' |',
-        ).join('\n');
-      return header + table;
+    if (isLarge) {
+      // Large results: summary + CSV attached
+      const preview = result.rows.slice(0, 3).map((row, i) =>
+        `  ${i + 1}. ${result.columns.slice(0, 4).map(c => `${c}=${row[c] ?? '—'}`).join(', ')}${result.columns.length > 4 ? ', ...' : ''}`,
+      ).join('\n');
+      return `${header}\n📎 Vollständige Ergebnisse als CSV-Datei angehängt.\n\nVorschau:\n${preview}`;
     }
 
-    // Too many columns — show as list
-    return header + result.rows.slice(0, 10).map((row, i) =>
-      `**#${i + 1}:** ${result.columns.map(c => `${c}=${row[c] ?? '—'}`).join(', ')}`,
-    ).join('\n');
+    // Small results: markdown table
+    const table = '| ' + result.columns.join(' | ') + ' |\n' +
+      '|' + result.columns.map(() => '---').join('|') + '|\n' +
+      result.rows.map(row =>
+        '| ' + result.columns.map(c => {
+          const v = row[c];
+          return v == null ? '—' : String(v).slice(0, 50);
+        }).join(' | ') + ' |',
+      ).join('\n');
+    return `${header}\n\n${table}`;
+  }
+
+  private toCsv(result: QueryResult): string {
+    const escape = (v: unknown): string => {
+      if (v == null) return '';
+      const s = String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = result.columns.map(escape).join(',');
+    const rows = result.rows.map(row => result.columns.map(c => escape(row[c])).join(','));
+    return [header, ...rows].join('\n');
   }
 
   private async getProviderByName(name: string): Promise<DbProvider | null> {

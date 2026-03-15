@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-03-15
+
+### Added
+- **Database Skill: CSV-Export** — Query-Ergebnisse mit >10 Zeilen oder >6 Spalten werden automatisch als CSV-Datei angehängt. Chat zeigt Zusammenfassung + 3-Zeilen-Vorschau. Kleine Ergebnisse bleiben als Markdown-Tabelle
+
 ## [0.18.0] - 2026-03-15
 
 ### Added
