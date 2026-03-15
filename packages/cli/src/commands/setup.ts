@@ -346,6 +346,7 @@ function loadExistingConfig(projectRoot: string): {
   writeInGroups: boolean;
   rateLimit: number;
   codeSandboxEnabled: boolean;
+  webUiEnabled: boolean;
   multiModelTiers: Record<string, TierConfig>;
 } {
   const config: ExistingConfig = {};
@@ -409,6 +410,7 @@ function loadExistingConfig(projectRoot: string): {
   }
 
   const codeSandboxEnabled = !!(config as any).codeSandbox?.enabled;
+  const webUiEnabled = (config as any).api?.webUi !== false;
 
   // Detect existing multi-model tiers
   const llm = config.llm as Record<string, any> | undefined;
@@ -425,7 +427,7 @@ function loadExistingConfig(projectRoot: string): {
     }
   }
 
-  return { config, env, shellEnabled, writeInGroups, rateLimit, codeSandboxEnabled, multiModelTiers };
+  return { config, env, shellEnabled, writeInGroups, rateLimit, codeSandboxEnabled, webUiEnabled, multiModelTiers };
 }
 
 // ── Main setup command ────────────────────────────────────────────────
@@ -1230,6 +1232,20 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Forge integration disabled — you can enable it later in config/default.yml.')}`);
     }
 
+    // ── 8d2. Web Chat UI ───────────────────────────────────────
+    const webUiDefault = existing.webUiEnabled !== false ? 'Y/n' : 'y/N';
+    console.log(`\n${bold('Web Chat UI (browser-based chat interface)?')}`);
+    console.log(`${dim('Serves a web UI at http://host:port/alfred/ — chat, dashboard, skill health.')}`);
+    const webUiAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim(`[${webUiDefault}] `)}`)
+    ).trim().toLowerCase();
+    const enableWebUi = webUiAnswer === '' ? (existing.webUiEnabled !== false) : (webUiAnswer === 'y' || webUiAnswer === 'yes');
+    if (enableWebUi) {
+      console.log(`  ${green('>')} Web Chat UI ${bold('enabled')} — accessible at /alfred/`);
+    } else {
+      console.log(`  ${dim('Web Chat UI disabled.')}`);
+    }
+
     // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
     console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi / Home Assistant)?')}`);
     console.log(`${dim('Control VMs, containers, network devices, and smart home through Alfred.')}`);
@@ -1895,6 +1911,8 @@ export async function setupCommand(): Promise<void> {
       docker?: { socketPath?: string; host?: string };
       bmw?: { clientId: string };
       routing?: { apiKey: string };
+      energy?: Record<string, unknown>;
+      api: { enabled: boolean; port: number; host: string; webUi: boolean };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -2077,6 +2095,12 @@ export async function setupCommand(): Promise<void> {
           ...(energyGridMeterFee ? { gridMeterFee: parseFloat(energyGridMeterFee) } : {}),
         },
       } : {}),
+      api: {
+        enabled: true,
+        port: 3420,
+        host: '127.0.0.1',
+        webUi: enableWebUi,
+      },
       storage: {
         path: './data/alfred.db',
       },
@@ -2263,6 +2287,7 @@ ${ownerAdminRule}
       console.log(`  ${bold('Voice:')}          ${dim('disabled')}`);
     }
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
+    console.log(`  ${bold('Web Chat UI:')}   ${enableWebUi ? green('enabled (/alfred/)') : dim('disabled')}`);
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
     if (enablePbs) console.log(`  ${bold('PBS:')}           ${green(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h)`)}`);
     if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);

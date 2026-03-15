@@ -556,4 +556,31 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX idx_memories_expires ON memories(expires_at) WHERE expires_at IS NOT NULL`);
     },
   },
+  {
+    version: 27,
+    description: 'Watch Chains — trigger_watch_id for chained watch execution',
+    up(db) {
+      db.exec(`ALTER TABLE watches ADD COLUMN trigger_watch_id TEXT DEFAULT NULL`);
+    },
+  },
+  {
+    version: 28,
+    description: 'Feedback Loop — feedback_events table for rejection/correction tracking',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_events (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          feedback_type TEXT NOT NULL,
+          source_id TEXT,
+          context_key TEXT NOT NULL,
+          description TEXT NOT NULL,
+          raw_context TEXT,
+          occurred_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_feedback_events_user_key ON feedback_events(user_id, context_key, occurred_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_feedback_events_user_type ON feedback_events(user_id, feedback_type, occurred_at DESC);
+      `);
+    },
+  },
 ];

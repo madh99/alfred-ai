@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.14.7-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.15.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -972,7 +972,11 @@ alfred start > /tmp/alfred.log 2>&1 &
 
 ## Roadmap
 
-- [ ] Web chat UI (HTTP API backend is ready)
+- [x] Web Chat UI (Next.js, Dark Theme, SSE streaming, Dashboard mit Watches/Skills/Scheduled Tasks)
+- [x] Watch Chains (Watch A triggers Watch B, depth-limited recursive execution)
+- [x] Workflow Branching (if/else conditions, jumpTo, cycle guard)
+- [x] Learning Feedback Loop (rejection tracking, behavioral memory, correction signals)
+- [x] Reasoning with Actions (structured skill/reminder proposals via confirmation queue)
 - [x] Reasoning Engine (cross-domain proactive insights)
 - [x] Marketplace search & price comparison (willhaben.at, eBay)
 - [x] Workflow chains (multi-step skill pipelines)

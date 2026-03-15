@@ -4,6 +4,8 @@ import type { MemoryRepository } from '@alfred/storage';
 import type { EmbeddingService } from '../embedding-service.js';
 import { scanSignal } from './signal-scanner.js';
 import { MemoryExtractor } from './memory-extractor.js';
+import { scanCorrectionSignal } from '../feedback/correction-signal-scanner.js';
+import type { FeedbackService } from '../feedback/feedback-service.js';
 
 export interface ActiveLearningOptions {
   llm: LLMProvider;
@@ -23,6 +25,11 @@ export class ActiveLearningService {
 
   // Rate limiting: track extraction timestamps per user
   private readonly extractionTimestamps = new Map<string, number[]>();
+  private feedbackService?: FeedbackService;
+
+  setFeedbackService(service: FeedbackService): void {
+    this.feedbackService = service;
+  }
 
   constructor(options: ActiveLearningOptions) {
     this.logger = options.logger;
@@ -50,6 +57,18 @@ export class ActiveLearningService {
     // Skip too-short messages
     if (!userMessage || userMessage.length < this.minMessageLength) {
       return;
+    }
+
+    // Correction signal scan (independent of memory extraction)
+    if (this.feedbackService) {
+      const correctionSignal = scanCorrectionSignal(userMessage);
+      if (correctionSignal.level === 'high') {
+        this.feedbackService.onConversationCorrection({
+          userId,
+          userMessage,
+          assistantResponse,
+        });
+      }
     }
 
     // Signal scan (pure function, ~1ms)

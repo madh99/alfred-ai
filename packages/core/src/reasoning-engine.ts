@@ -11,16 +11,35 @@ import type {
   SkillHealthRepository,
   CalendarNotificationRepository,
   UserRepository,
+  FeedbackRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
+import type { ConfirmationQueue } from './confirmation-queue.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
 
 /** Maximum tokens for reasoning response. */
-const MAX_OUTPUT_TOKENS = 1024;
+const MAX_OUTPUT_TOKENS = 1536;
+
+/** Marker separating text insights from structured actions in LLM response. */
+const ACTION_MARKER = '---ACTIONS---';
+
+type ReasoningActionType = 'execute_skill' | 'create_reminder';
+
+interface ProposedAction {
+  type: ReasoningActionType;
+  description: string;
+  skillName: string;
+  skillParams: Record<string, unknown>;
+}
+
+interface ParsedReasoningResponse {
+  insights: string[];
+  actions: ProposedAction[];
+}
 
 interface ReasoningContext {
   dateTime: string;
@@ -32,6 +51,7 @@ interface ReasoningContext {
   weather: string;
   energy: string;
   skillHealth: string;
+  feedback: string;
 }
 
 export class ReasoningEngine {
@@ -61,6 +81,8 @@ export class ReasoningEngine {
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
     private readonly defaultLocation?: string,
+    private readonly feedbackRepo?: FeedbackRepository,
+    private readonly confirmationQueue?: ConfirmationQueue,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'morning_noon_evening';
@@ -151,25 +173,31 @@ export class ReasoningEngine {
         return;
       }
 
-      // Dedup: hash the insight text
-      const insights = this.parseInsights(text);
-      const newInsights = insights.filter(insight => !this.wasRecentlySent(insight));
+      // Parse insights and optional actions
+      const parsed = this.parseReasoningResponse(text);
+      const newInsights = parsed.insights.filter(insight => !this.wasRecentlySent(insight));
 
-      if (newInsights.length === 0) {
-        this.logger.info({ durationMs, total: insights.length }, 'Reasoning pass: all insights deduplicated');
+      if (newInsights.length === 0 && parsed.actions.length === 0) {
+        this.logger.info({ durationMs, total: parsed.insights.length }, 'Reasoning pass: all deduplicated');
         return;
       }
 
-      // Send to user
-      const message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
-      const adapter = this.adapters.get(this.defaultPlatform);
-      if (adapter) {
-        await adapter.sendMessage(this.defaultChatId, message);
-        // Mark as sent
-        for (const insight of newInsights) {
-          this.markSent(insight);
+      // Send text insights to user
+      if (newInsights.length > 0) {
+        const message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
+        const adapter = this.adapters.get(this.defaultPlatform);
+        if (adapter) {
+          await adapter.sendMessage(this.defaultChatId, message);
+          for (const insight of newInsights) {
+            this.markSent(insight);
+          }
+          this.logger.info({ durationMs, insights: newInsights.length }, 'Reasoning pass: insights sent');
         }
-        this.logger.info({ durationMs, insights: newInsights.length }, 'Reasoning pass: insights sent');
+      }
+
+      // Process proposed actions (confirmation queue)
+      if (parsed.actions.length > 0) {
+        await this.processActions(parsed.actions);
       }
 
       this.activityLogger?.logScheduledExec({
@@ -210,8 +238,9 @@ export class ReasoningEngine {
     const memories = this.fetchMemories();
     const activity = this.fetchActivity();
     const skillHealth = this.fetchSkillHealth();
+    const feedback = this.fetchFeedback();
 
-    return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth };
+    return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth, feedback };
   }
 
   private async fetchCalendar(now: Date): Promise<string> {
@@ -338,6 +367,20 @@ export class ReasoningEngine {
     }
   }
 
+  private fetchFeedback(): string {
+    if (!this.feedbackRepo) return '';
+    try {
+      const events = this.feedbackRepo.getRecentEvents(this.defaultChatId, 20);
+      if (events.length === 0) return 'Kein Feedback zu Watches oder Korrekturen.';
+      return events.map(e =>
+        `- [${e.feedbackType}] ${e.description} (${e.occurredAt.slice(0, 10)})`,
+      ).join('\n');
+    } catch (err) {
+      this.logger.warn({ err }, 'Reasoning: feedback fetch failed');
+      return '';
+    }
+  }
+
   // ── Prompt Building ─────────────────────────────────────────
 
   private buildPrompt(ctx: ReasoningContext): string {
@@ -387,7 +430,17 @@ ${ctx.weather}
 ${ctx.energy}
 
 === Skill-Status ===
-${ctx.skillHealth}`;
+${ctx.skillHealth}
+${ctx.feedback ? `\n=== Nutzer-Feedback & Korrekturen ===\n${ctx.feedback}` : ''}
+${this.confirmationQueue ? `
+=== AKTIONEN ===
+Wenn du eine sinnvolle, sofort ausführbare Aktion erkennst, kannst du sie vorschlagen.
+Regeln: Max 2 Aktionen, nur wenn JETZT sinnvoll (nicht hypothetisch).
+Aktionstypen: "execute_skill" (Skill ausführen) oder "create_reminder" (Erinnerung anlegen).
+Format: nach deinen Text-Insights, trenne mit "${ACTION_MARKER}", dann ein JSON-Array:
+${ACTION_MARKER}
+[{"type":"execute_skill","description":"Wallbox ein (Strom <5ct, BMW 45%)","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}]
+Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
   }
 
   // ── Dedup & Parsing ─────────────────────────────────────────
@@ -418,5 +471,78 @@ ${ctx.skillHealth}`;
     // Use event_start as expiry marker (dedup window)
     const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
     this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
+  }
+
+  // ── Action Support ──────────────────────────────────────────
+
+  private parseReasoningResponse(text: string): ParsedReasoningResponse {
+    const markerIdx = text.indexOf(ACTION_MARKER);
+    if (markerIdx === -1) {
+      return { insights: this.parseInsights(text), actions: [] };
+    }
+    const insightText = text.slice(0, markerIdx).trim();
+    const actionText = text.slice(markerIdx + ACTION_MARKER.length).trim();
+    const insights = insightText ? this.parseInsights(insightText) : [];
+    let actions: ProposedAction[] = [];
+    try {
+      const parsed = JSON.parse(actionText);
+      if (Array.isArray(parsed)) {
+        actions = parsed.filter(a =>
+          a && typeof a === 'object' &&
+          typeof a.type === 'string' &&
+          typeof a.description === 'string' &&
+          typeof a.skillName === 'string' &&
+          typeof a.skillParams === 'object' && a.skillParams !== null,
+        ) as ProposedAction[];
+      }
+    } catch {
+      this.logger.warn('Reasoning: failed to parse actions JSON, ignoring');
+    }
+    return { insights, actions };
+  }
+
+  private actionHash(action: ProposedAction): string {
+    const normalized = `${action.type}:${action.skillName}:${JSON.stringify(action.skillParams)}`
+      .slice(0, 150).toLowerCase().replace(/\s+/g, ' ');
+    return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  }
+
+  private actionWasRecentlyProposed(action: ProposedAction): boolean {
+    const hash = this.actionHash(action);
+    return this.notifRepo.wasNotified(`reasoning-action:${hash}`, this.defaultChatId);
+  }
+
+  private markActionProposed(action: ProposedAction): void {
+    const hash = this.actionHash(action);
+    const key = `reasoning-action:${hash}`;
+    const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
+    this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
+  }
+
+  private async processActions(actions: ProposedAction[]): Promise<void> {
+    if (!this.confirmationQueue || actions.length === 0) return;
+    const limit = actions.slice(0, 2); // max 2 actions per pass
+    for (const action of limit) {
+      if (this.actionWasRecentlyProposed(action)) {
+        this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
+        continue;
+      }
+      try {
+        await this.confirmationQueue.enqueue({
+          chatId: this.defaultChatId,
+          platform: this.defaultPlatform,
+          source: 'reasoning',
+          sourceId: 'reasoning-engine',
+          description: action.description,
+          skillName: action.skillName,
+          skillParams: action.skillParams,
+          timeoutMinutes: 60,
+        });
+        this.markActionProposed(action);
+        this.logger.info({ action: action.description }, 'Reasoning: action enqueued for confirmation');
+      } catch (err) {
+        this.logger.error({ err, action: action.description }, 'Reasoning: failed to enqueue action');
+      }
+    }
   }
 }

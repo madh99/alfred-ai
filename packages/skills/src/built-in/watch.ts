@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult, WatchCondition, CompositeCondition } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, WatchCondition, CompositeCondition, Watch } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type { WatchRepository } from '@alfred/storage';
@@ -85,8 +85,12 @@ export class WatchSkill extends Skill {
         },
         action_on_trigger: {
           type: 'string',
-          enum: ['alert', 'action_only', 'alert_and_action'],
-          description: 'What to do on trigger: alert (default), action_only, or alert_and_action (for create)',
+          enum: ['alert', 'action_only', 'alert_and_action', 'trigger_watch'],
+          description: 'What to do on trigger: alert (default), action_only, alert_and_action, or trigger_watch to chain watches (for create)',
+        },
+        trigger_watch_id: {
+          type: 'string',
+          description: 'ID of another watch to trigger when this watch fires. Use with action_on_trigger: "trigger_watch" to create watch chains (A fires → immediately evaluates B).',
         },
         requires_confirmation: {
           type: 'boolean',
@@ -171,8 +175,9 @@ export class WatchSkill extends Skill {
     const messageTemplate = input.message_template as string | undefined;
     const actionSkillName = input.action_skill_name as string | undefined;
     const actionSkillParams = input.action_skill_params as Record<string, unknown> | undefined;
-    const actionOnTrigger = (input.action_on_trigger as 'alert' | 'action_only' | 'alert_and_action') ?? 'alert';
+    const actionOnTrigger = (input.action_on_trigger as Watch['actionOnTrigger']) ?? 'alert';
     const requiresConfirmation = input.requires_confirmation as boolean | undefined;
+    const triggerWatchId = input.trigger_watch_id as string | undefined;
     const conditionsArray = input.conditions as Array<{ field: string; operator: string; value?: string | number }> | undefined;
     const conditionsLogic = (input.conditions_logic as 'and' | 'or') ?? 'and';
 
@@ -213,6 +218,14 @@ export class WatchSkill extends Skill {
     }
     if (intervalMinutes < 1) return { success: false, error: 'interval_minutes must be >= 1' };
     if (cooldownMinutes < 0) return { success: false, error: 'cooldown_minutes must be >= 0' };
+
+    // Validate trigger_watch chain
+    if (actionOnTrigger === 'trigger_watch' && !triggerWatchId) {
+      return { success: false, error: 'Missing "trigger_watch_id" — required when action_on_trigger is "trigger_watch"' };
+    }
+    if (triggerWatchId && !this.watchRepo.getById(triggerWatchId)) {
+      return { success: false, error: `Chained watch "${triggerWatchId}" does not exist` };
+    }
 
     // Validate skill_params against target skill's required fields
     if (this.skillRegistry) {
@@ -259,16 +272,21 @@ export class WatchSkill extends Skill {
       actionSkillParams,
       actionOnTrigger,
       requiresConfirmation,
+      triggerWatchId,
     });
 
     const condDisplay = compositeCondition
       ? `${compositeCondition.logic.toUpperCase()}(${compositeCondition.conditions.map((c) => `${c.field} ${c.operator}${c.value != null ? ' ' + c.value : ''}`).join(', ')})`
       : `${primaryField} ${primaryOperator}${primaryValue != null ? ' ' + primaryValue : ''}`;
 
+    const actionDisplay = triggerWatchId
+      ? ` → Chain → Watch ${triggerWatchId}`
+      : actionSkillName ? ` → Aktion: ${actionSkillName} (${actionOnTrigger})` : '';
+
     return {
       success: true,
-      data: { watchId: watch.id, name, skillName, conditionField: primaryField, conditionOperator: primaryOperator, conditionValue: primaryValue, intervalMinutes, compositeCondition },
-      display: `Watch erstellt (${watch.id}): "${name}" — pollt "${skillName}" alle ${intervalMinutes}min, Bedingung: ${condDisplay}${actionSkillName ? ` → Aktion: ${actionSkillName} (${actionOnTrigger})` : ''}`,
+      data: { watchId: watch.id, name, skillName, conditionField: primaryField, conditionOperator: primaryOperator, conditionValue: primaryValue, intervalMinutes, compositeCondition, triggerWatchId },
+      display: `Watch erstellt (${watch.id}): "${name}" — pollt "${skillName}" alle ${intervalMinutes}min, Bedingung: ${condDisplay}${actionDisplay}`,
     };
   }
 

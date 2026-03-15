@@ -2,7 +2,7 @@ export interface ActivityEntry {
   id: string;
   timestamp: string;
   eventType: string;
-  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system' | 'workflow';
+  source: 'user' | 'watch' | 'scheduled' | 'background' | 'system' | 'workflow' | 'reasoning';
   sourceId?: string;
   userId?: string;
   platform?: string;

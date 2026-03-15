@@ -12,6 +12,8 @@ import type { ConfirmationQueue } from './confirmation-queue.js';
 import type { ActivityLogger } from './activity-logger.js';
 import type { SkillHealthTracker } from './skill-health-tracker.js';
 
+const MAX_CHAIN_DEPTH = 5;
+
 const OPERATOR_LABELS: Record<string, string> = {
   lt: '<', gt: '>', lte: '<=', gte: '>=',
   eq: '=', neq: '!=',
@@ -74,7 +76,7 @@ export class WatchEngine {
     }
   }
 
-  private async checkWatch(watch: Watch): Promise<void> {
+  private async checkWatch(watch: Watch, chainDepth = 0): Promise<void> {
     const now = new Date().toISOString();
     this.logger.debug({ watchId: watch.id, name: watch.name, skill: watch.skillName }, 'Checking watch');
 
@@ -210,6 +212,62 @@ export class WatchEngine {
           lastTriggeredAt: now,
         });
         return; // Don't execute action directly
+      }
+
+      // Trigger chained watch
+      if (actionMode === 'trigger_watch' && watch.triggerWatchId) {
+        if (chainDepth >= MAX_CHAIN_DEPTH) {
+          this.logger.warn(
+            { watchId: watch.id, targetId: watch.triggerWatchId, chainDepth },
+            'Watch chain depth limit reached, aborting chain',
+          );
+          this.activityLogger?.logWatchChain({
+            watchId: watch.id, watchName: watch.name,
+            targetWatchId: watch.triggerWatchId,
+            platform: watch.platform, chatId: watch.chatId,
+            outcome: 'depth_limit', chainDepth,
+          });
+          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          return;
+        }
+
+        const target = this.watchRepo.getById(watch.triggerWatchId);
+        if (!target) {
+          this.logger.warn({ watchId: watch.id, targetId: watch.triggerWatchId }, 'Chained watch not found');
+          this.watchRepo.updateActionError(watch.id, `Chained watch "${watch.triggerWatchId}" not found`);
+          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          return;
+        }
+
+        if (!target.enabled) {
+          this.logger.warn({ watchId: watch.id, targetId: target.id }, 'Chained watch is disabled, skipping');
+          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          return;
+        }
+
+        this.activityLogger?.logWatchChain({
+          watchId: watch.id, watchName: watch.name,
+          targetWatchId: target.id, targetWatchName: target.name,
+          platform: watch.platform, chatId: watch.chatId,
+          outcome: 'success', chainDepth,
+        });
+
+        this.logger.info(
+          { watchId: watch.id, targetId: target.id, targetName: target.name, chainDepth: chainDepth + 1 },
+          'Watch chain: triggering downstream watch',
+        );
+
+        try {
+          await this.checkWatch(target, chainDepth + 1);
+          this.watchRepo.updateActionError(watch.id, null);
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          this.watchRepo.updateActionError(watch.id, errMsg);
+          this.logger.warn({ watchId: watch.id, targetId: target.id, err }, 'Watch chain execution failed');
+        }
+
+        this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+        return;
       }
 
       // Execute action skill if configured

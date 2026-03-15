@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -60,6 +60,7 @@ import { ProactiveScheduler } from './proactive-scheduler.js';
 import { WatchEngine } from './watch-engine.js';
 import { ConfirmationQueue } from './confirmation-queue.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
+import { FeedbackService } from './feedback/feedback-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
@@ -95,6 +96,7 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
+  private skillHealthRepo?: SkillHealthRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly startedAt = new Date().toISOString();
@@ -127,6 +129,7 @@ export class Alfred {
     this.activityRepo = activityRepo;
     const activityLogger = new ActivityLogger(activityRepo, this.logger.child({ component: 'activity' }));
     const skillHealthRepo = new SkillHealthRepository(db);
+    this.skillHealthRepo = skillHealthRepo;
     const skillHealthTracker = new SkillHealthTracker(
       skillHealthRepo,
       this.logger.child({ component: 'skill-health' }),
@@ -584,6 +587,18 @@ export class Alfred {
       activityLogger,
     );
 
+    // 7e2. Initialize feedback service (rejection/correction tracking)
+    const feedbackRepo = new FeedbackRepository(db);
+    const feedbackService = new FeedbackService(
+      feedbackRepo,
+      memoryRepo,
+      this.logger.child({ component: 'feedback' }),
+    );
+    this.confirmationQueue.setFeedbackService(feedbackService);
+    if (activeLearning) {
+      activeLearning.setFeedbackService(feedbackService);
+    }
+
     this.watchEngine = new WatchEngine(
       watchRepo,
       skillRegistry,
@@ -635,6 +650,8 @@ export class Alfred {
           this.logger.child({ component: 'reasoning-engine' }),
           activityLogger,
           this.config.briefing?.location,
+          feedbackRepo,
+          this.confirmationQueue,
         );
       }
     }
@@ -725,8 +742,14 @@ export class Alfred {
           };
         },
         metricsCallback: () => this.buildPrometheusMetrics(),
+        dashboardCallback: () => ({
+          watches: this.watchRepo?.getEnabled() ?? [],
+          scheduled: this.scheduledActionRepo?.getAll() ?? [],
+          skillHealth: this.skillHealthRepo?.getAll() ?? [],
+        }),
+        webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,
       }));
-      this.logger.info({ port, host }, 'HTTP API adapter registered');
+      this.logger.info({ port, host, webUi: config.api?.webUi !== false }, 'HTTP API adapter registered');
     }
   }
 
@@ -940,6 +963,27 @@ export class Alfred {
       this.logger.error({ err, service }, 'Failed to hot-reload service');
       return { success: false, error: message };
     }
+  }
+
+  private resolveWebUiPath(): string | undefined {
+    // Look for web UI files relative to common installation paths
+    const candidates = [
+      path.join(process.cwd(), 'web-ui'),                    // CWD/web-ui (manual deploy)
+      path.join(__dirname, '..', '..', 'web-ui'),            // relative to core dist
+      path.join(__dirname, '..', '..', '..', 'web-ui'),      // relative to bundle
+      path.join(__dirname, '..', '..', 'apps', 'web', 'out'), // monorepo dev
+    ];
+    for (const candidate of candidates) {
+      try {
+        const resolved = path.resolve(candidate);
+        if (fs.existsSync(path.join(resolved, 'index.html'))) {
+          this.logger.info({ path: resolved }, 'Web UI found');
+          return resolved;
+        }
+      } catch { /* skip */ }
+    }
+    this.logger.debug('Web UI not found — serving API only');
+    return undefined;
   }
 
   private buildPrometheusMetrics(): string {

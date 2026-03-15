@@ -12,6 +12,7 @@ export type MemoryType =
   | 'commitment'
   | 'moment'
   | 'skill'
+  | 'feedback'
   | 'general';
 
 export type MemorySource = 'manual' | 'auto';

@@ -79,11 +79,39 @@ export class ActivityLogger {
     }));
   }
 
+  logWatchChain(opts: {
+    watchId: string;
+    watchName: string;
+    targetWatchId: string;
+    targetWatchName?: string;
+    platform: string;
+    chatId: string;
+    outcome: 'success' | 'depth_limit' | 'error';
+    chainDepth?: number;
+    error?: string;
+  }): void {
+    this.safe(() => this.repo.log({
+      eventType: 'watch_chain',
+      source: 'watch',
+      sourceId: opts.watchId,
+      platform: opts.platform,
+      chatId: opts.chatId,
+      action: `${opts.watchName} -> ${opts.targetWatchName ?? opts.targetWatchId}`,
+      outcome: opts.outcome === 'success' ? 'success' : 'error',
+      errorMessage: opts.error ?? (opts.outcome === 'depth_limit' ? 'Chain depth limit reached' : undefined),
+      details: {
+        targetWatchId: opts.targetWatchId,
+        targetWatchName: opts.targetWatchName,
+        chainDepth: opts.chainDepth,
+      },
+    }));
+  }
+
   logConfirmation(opts: {
     confirmationId: string;
     skillName: string;
     description: string;
-    source: 'watch' | 'scheduled';
+    source: 'watch' | 'scheduled' | 'reasoning';
     sourceId: string;
     outcome: 'approved' | 'rejected' | 'expired' | 'error';
     userId?: string;

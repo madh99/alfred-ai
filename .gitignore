@@ -13,3 +13,7 @@ coverage/
 .DS_Store
 ssh_debug.js
 .claude/
+docs/superpowers/
+.next/
+out/
+packages/cli/bundle/web-ui/

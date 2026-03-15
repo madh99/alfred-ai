@@ -160,6 +160,7 @@ export interface ApiConfig {
   host: string;
   token?: string;
   corsOrigin?: string;
+  webUi?: boolean;
 }
 
 export interface CodeAgentDefinitionConfig {

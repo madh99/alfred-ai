@@ -4,9 +4,11 @@ import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, SkillContext } from '@alfred/types';
 import type { ActivityLogger } from './activity-logger.js';
+import type { FeedbackService } from './feedback/feedback-service.js';
 
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
+  private feedbackService?: FeedbackService;
 
   constructor(
     private readonly confirmRepo: ConfirmationRepository,
@@ -16,6 +18,10 @@ export class ConfirmationQueue {
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
   ) {}
+
+  setFeedbackService(service: FeedbackService): void {
+    this.feedbackService = service;
+  }
 
   start(): void {
     // Check for expired confirmations every 60s
@@ -32,7 +38,7 @@ export class ConfirmationQueue {
   async enqueue(opts: {
     chatId: string;
     platform: string;
-    source: 'watch' | 'scheduled';
+    source: 'watch' | 'scheduled' | 'reasoning';
     sourceId: string;
     description: string;
     skillName: string;
@@ -137,6 +143,15 @@ export class ConfirmationQueue {
         confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
         source: pending.source, sourceId: pending.sourceId, outcome: 'rejected',
         userId: context.userId, platform, chatId,
+      });
+      // Fire-and-forget feedback capture
+      this.feedbackService?.onWatchRejected({
+        userId: context.userId,
+        watchId: pending.sourceId,
+        watchName: pending.description,
+        skillName: pending.skillName,
+        skillParams: (pending as unknown as Record<string, unknown>).skillParams as Record<string, unknown> ?? {},
+        description: pending.description,
       });
     }
 

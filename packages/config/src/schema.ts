@@ -172,6 +172,7 @@ export const ApiConfigSchema = z.object({
   host: z.string(),
   token: z.string().optional(),
   corsOrigin: z.string().optional(),
+  webUi: z.boolean().optional(),
 });
 
 export const CodeAgentDefinitionSchema = z.object({

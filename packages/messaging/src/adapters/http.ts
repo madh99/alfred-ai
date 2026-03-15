@@ -1,7 +1,23 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import crypto from 'node:crypto';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
+
+const MIME_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+};
 
 export interface WebhookHandler {
   name: string;
@@ -17,6 +33,8 @@ export interface HttpAdapterOptions {
   healthCheck?: () => Record<string, unknown>;
   metricsCallback?: () => string;
   webhooks?: WebhookHandler[];
+  dashboardCallback?: () => Record<string, unknown>;
+  webUiPath?: string;  // path to static web UI files (apps/web/out/)
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -36,6 +54,8 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly corsOrigin: string;
   private readonly healthCheckFn?: () => Record<string, unknown>;
   private readonly metricsFn?: () => string;
+  private readonly dashboardFn?: () => Record<string, unknown>;
+  private readonly webUiPath?: string;
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
@@ -46,6 +66,8 @@ export class HttpAdapter extends MessagingAdapter {
     this.corsOrigin = options?.corsOrigin ?? 'http://localhost:3420';
     this.healthCheckFn = options?.healthCheck;
     this.metricsFn = options?.metricsCallback;
+    this.dashboardFn = options?.dashboardCallback;
+    this.webUiPath = options?.webUiPath;
     if (options?.webhooks) {
       for (const wh of options.webhooks) {
         this.webhooks.set(wh.name, wh);
@@ -188,9 +210,16 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMetrics(res);
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
       this.handleMessage(req, res);
+    } else if (url.pathname === '/api/dashboard' && req.method === 'GET') {
+      this.handleDashboard(req, res);
     } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
       const name = url.pathname.slice('/api/webhook/'.length);
       this.handleWebhook(req, res, name);
+    } else if (this.webUiPath && url.pathname.startsWith('/alfred/') && req.method === 'GET') {
+      this.serveStaticFile(url.pathname, res);
+    } else if (this.webUiPath && url.pathname === '/alfred' && req.method === 'GET') {
+      res.writeHead(302, { Location: '/alfred/' });
+      res.end();
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -208,6 +237,63 @@ export class HttpAdapter extends MessagingAdapter {
       return false;
     }
     return true;
+  }
+
+  private handleDashboard(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (!this.checkAuth(req, res)) return;
+    if (!this.dashboardFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dashboard not configured' }));
+      return;
+    }
+    try {
+      const data = this.dashboardFn();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dashboard data fetch failed' }));
+    }
+  }
+
+  private serveStaticFile(pathname: string, res: http.ServerResponse): void {
+    if (!this.webUiPath) { res.writeHead(404); res.end(); return; }
+
+    // Strip basePath prefix
+    let filePath = pathname.replace(/^\/alfred/, '');
+    if (!filePath || filePath === '/') filePath = '/index.html';
+
+    // Security: prevent directory traversal
+    const resolved = path.resolve(this.webUiPath, '.' + filePath);
+    if (!resolved.startsWith(path.resolve(this.webUiPath))) {
+      res.writeHead(403); res.end(); return;
+    }
+
+    // Try exact file, then with .html, then index.html in directory
+    let target = resolved;
+    if (!fs.existsSync(target)) {
+      if (fs.existsSync(target + '.html')) target = target + '.html';
+      else if (fs.existsSync(path.join(target, 'index.html'))) target = path.join(target, 'index.html');
+      else { res.writeHead(404, { 'Content-Type': 'text/html' }); res.end('Not found'); return; }
+    }
+
+    const stat = fs.statSync(target);
+    if (stat.isDirectory()) {
+      const indexPath = path.join(target, 'index.html');
+      if (fs.existsSync(indexPath)) target = indexPath;
+      else { res.writeHead(404); res.end(); return; }
+    }
+
+    const ext = path.extname(target).toLowerCase();
+    const contentType = MIME_TYPES[ext] ?? 'application/octet-stream';
+    const cacheControl = ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable';
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Cache-Control': cacheControl,
+    });
+    fs.createReadStream(target).pipe(res);
   }
 
   private handleHealth(res: http.ServerResponse): void {

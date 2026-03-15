@@ -54,7 +54,7 @@ export class ConfirmationRepository {
       id: row.id as string,
       chatId: row.chat_id as string,
       platform: row.platform as string,
-      source: row.source as 'watch' | 'scheduled',
+      source: row.source as PendingConfirmation['source'],
       sourceId: row.source_id as string,
       description: row.description as string,
       skillName: row.skill_name as string,

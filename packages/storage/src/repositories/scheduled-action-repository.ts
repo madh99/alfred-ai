@@ -78,6 +78,13 @@ export class ScheduledActionRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  getAll(): ScheduledAction[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM scheduled_actions WHERE enabled = 1 ORDER BY next_run_at ASC`,
+    ).all() as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   getByUser(userId: string): ScheduledAction[] {
     const rows = this.db.prepare(
       `SELECT * FROM scheduled_actions WHERE user_id = ? ORDER BY created_at DESC`,

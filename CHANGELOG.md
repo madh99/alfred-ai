@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-03-15
+
+### Added
+- **Web Chat UI** — Browser-basierte Chat-Oberfläche mit Next.js 15 und Tailwind CSS. Dark Theme, SSE-Streaming, Markdown-Rendering, Attachment-Preview. Dashboard mit aktiven Watches, Scheduled Tasks und Skill-Health-Grid. Settings-Seite für API-Verbindung. Statischer Export, integriert in Alfred (`/alfred/`) oder extern deploybar. Konfigurierbar via `api.webUi` im Setup
+- **Watch Chains** — Watches können andere Watches triggern (`action_on_trigger: "trigger_watch"` + `trigger_watch_id`). Ermöglicht mehrstufige Automationen (A feuert → B evaluiert → B führt Aktion aus). Rekursiv mit Depth-Limit (max 5), jede Watch behält eigene Cooldown. Activity-Logging für Chain-Events
+- **Workflow Branching** — If/Else-Logik in Workflows via `type: "condition"` Steps. Conditions referenzieren vorherige Ergebnisse (`prev.field`, `steps.0.field`). Jump-Targets: Step-Index, `"end"`, oder `null` (nächster Step). `jumpTo` auf Action-Steps für Branch-Terminierung. Cycle-Guard verhindert Endlosschleifen
+- **Lern-Feedback-Loop** — Alfred merkt sich Ablehnungen und Korrekturen. Watch-Rejections werden nach Threshold (3×) zu Behavior-Feedback-Memories promoted. Korrektur-Erkennung via Muster-Scanner (deutsch/englisch). Feedback erscheint als eigene Sektion im System-Prompt. Reasoning Engine berücksichtigt Feedback-Events
+- **Reasoning mit Aktionen** — Reasoning Engine kann strukturierte Aktionen vorschlagen (Skills ausführen, Reminder anlegen). Aktionen gehen durch Confirmation Queue (Human-in-the-Loop). Action-Deduplication verhindert Wiederholungen. Graceful Fallback auf Text-only bei Parse-Fehlern
+- **Dashboard API** — `GET /api/dashboard` Endpoint liefert aktive Watches, Scheduled Tasks und Skill-Health-Daten als JSON
+
+### Fixed
+- **Codex CLI: Non-Interactive Modus** — Setup generiert `codex exec` statt interaktivem `codex`
+- **Reasoning Engine: Weather Location** — Übergibt `action` und `location` an Weather-Skill
+
 ## [0.14.7] - 2026-03-15
 
 ### Fixed

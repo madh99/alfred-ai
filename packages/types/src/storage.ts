@@ -122,16 +122,17 @@ export interface Watch {
   compositeCondition?: CompositeCondition;
   actionSkillName?: string;
   actionSkillParams?: Record<string, unknown>;
-  actionOnTrigger: 'alert' | 'action_only' | 'alert_and_action';
+  actionOnTrigger: 'alert' | 'action_only' | 'alert_and_action' | 'trigger_watch';
   lastActionError?: string;
   requiresConfirmation?: boolean;
+  triggerWatchId?: string;
 }
 
 export interface PendingConfirmation {
   id: string;
   chatId: string;
   platform: string;
-  source: 'watch' | 'scheduled';
+  source: 'watch' | 'scheduled' | 'reasoning';
   sourceId: string;
   description: string;
   skillName: string;
@@ -162,12 +163,30 @@ export interface DocumentChunk {
   createdAt: string;
 }
 
-export interface WorkflowStep {
+export interface WorkflowActionStep {
+  type?: 'action';  // optional for backward compat — undefined treated as 'action'
   skillName: string;
   inputMapping: Record<string, unknown>;  // Key → Template "{{prev.field}}" or nested objects with templates
   onError: 'stop' | 'skip' | 'retry';
   maxRetries?: number;
+  jumpTo?: number | 'end';  // override next step: index or 'end' to terminate workflow
 }
+
+export interface WorkflowConditionExpr {
+  field: string;             // dot-path into template context: "prev.rain", "steps.0.temp"
+  operator: WatchCondition['operator'];
+  value?: string | number;
+}
+
+export interface WorkflowConditionStep {
+  type: 'condition';
+  condition: WorkflowConditionExpr;
+  then: number | 'end' | null;   // step index, 'end', or null (next step)
+  else: number | 'end' | null;
+  label?: string;
+}
+
+export type WorkflowStep = WorkflowActionStep | WorkflowConditionStep;
 
 export interface WorkflowChain {
   id: string;

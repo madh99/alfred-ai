@@ -43,16 +43,9 @@ export class WorkflowSkill extends Skill {
         },
         steps: {
           type: 'array',
-          description: 'Workflow steps (for create). Each step: { skillName, inputMapping: { paramName: "{{prev.field}}" }, onError: "stop"|"skip"|"retry", maxRetries?: number }',
+          description: 'Workflow steps (for create). Action step: { skillName, inputMapping: { paramName: "{{prev.field}}" }, onError: "stop"|"skip"|"retry", jumpTo?: stepIndex|"end" }. Condition step: { type: "condition", condition: { field: "prev.rain", operator: "eq", value: "true" }, then: stepIndex|"end"|null, else: stepIndex|"end"|null, label?: "Regen?" }. Jump targets are 0-based step indices, "end" finishes the workflow, null proceeds to next step.',
           items: {
             type: 'object',
-            properties: {
-              skillName: { type: 'string' },
-              inputMapping: { type: 'object' },
-              onError: { type: 'string', enum: ['stop', 'skip', 'retry'] },
-              maxRetries: { type: 'number' },
-            },
-            required: ['skillName', 'inputMapping', 'onError'],
           },
         },
         workflow_id: {
@@ -97,14 +90,38 @@ export class WorkflowSkill extends Skill {
     }
 
     // Validate steps
+    const validOperators = ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased'];
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
-      if (!s.skillName) return { success: false, error: `Step ${i}: missing skillName` };
-      if (!s.inputMapping || typeof s.inputMapping !== 'object') {
-        return { success: false, error: `Step ${i}: missing inputMapping` };
-      }
-      if (!['stop', 'skip', 'retry'].includes(s.onError)) {
-        return { success: false, error: `Step ${i}: onError must be stop|skip|retry` };
+      if (s.type === 'condition') {
+        // Condition step validation
+        if (!s.condition || typeof s.condition !== 'object') {
+          return { success: false, error: `Step ${i}: condition step missing "condition" object` };
+        }
+        if (!s.condition.field || typeof s.condition.field !== 'string') {
+          return { success: false, error: `Step ${i}: condition.field must be a non-empty string` };
+        }
+        if (!validOperators.includes(s.condition.operator)) {
+          return { success: false, error: `Step ${i}: condition.operator must be one of: ${validOperators.join(', ')}` };
+        }
+        for (const branch of ['then', 'else'] as const) {
+          const target = s[branch];
+          if (target !== null && target !== 'end' && (typeof target !== 'number' || target < 0 || target >= steps.length)) {
+            return { success: false, error: `Step ${i}: "${branch}" must be null, "end", or a step index (0-${steps.length - 1})` };
+          }
+        }
+      } else {
+        // Action step validation (default)
+        if (!s.skillName) return { success: false, error: `Step ${i}: missing skillName` };
+        if (!s.inputMapping || typeof s.inputMapping !== 'object') {
+          return { success: false, error: `Step ${i}: missing inputMapping` };
+        }
+        if (!['stop', 'skip', 'retry'].includes(s.onError)) {
+          return { success: false, error: `Step ${i}: onError must be stop|skip|retry` };
+        }
+        if (s.jumpTo !== undefined && s.jumpTo !== 'end' && (typeof s.jumpTo !== 'number' || s.jumpTo < 0 || s.jumpTo >= steps.length)) {
+          return { success: false, error: `Step ${i}: jumpTo must be "end" or a step index (0-${steps.length - 1})` };
+        }
       }
     }
 

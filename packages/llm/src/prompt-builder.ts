@@ -350,6 +350,7 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           commitment: 'Commitments',
           moment: 'Moments',
           skill: 'Skills',
+          feedback: 'Behavior Feedback',
           general: 'General',
         };
 

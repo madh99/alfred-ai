@@ -15,8 +15,8 @@ export class WatchRepository {
          condition_field, condition_operator, condition_value,
          interval_minutes, cooldown_minutes, enabled, created_at, message_template,
          action_skill_name, action_skill_params, action_on_trigger, conditions_json,
-         requires_confirmation)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         requires_confirmation, trigger_watch_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       watch.chatId,
@@ -37,6 +37,7 @@ export class WatchRepository {
       watch.actionOnTrigger ?? 'alert',
       watch.compositeCondition ? JSON.stringify(watch.compositeCondition) : null,
       watch.requiresConfirmation ? 1 : 0,
+      watch.triggerWatchId ?? null,
     );
 
     return {
@@ -60,6 +61,7 @@ export class WatchRepository {
       actionSkillParams: watch.actionSkillParams,
       actionOnTrigger: watch.actionOnTrigger ?? 'alert',
       requiresConfirmation: watch.requiresConfirmation,
+      triggerWatchId: watch.triggerWatchId,
     };
   }
 
@@ -187,6 +189,7 @@ export class WatchRepository {
       actionOnTrigger: (row.action_on_trigger as Watch['actionOnTrigger']) ?? 'alert',
       lastActionError: row.last_action_error as string | undefined,
       requiresConfirmation: (row.requires_confirmation as number) === 1,
+      triggerWatchId: row.trigger_watch_id as string | undefined,
     };
   }
 }

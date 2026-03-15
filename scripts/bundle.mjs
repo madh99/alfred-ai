@@ -4,7 +4,7 @@
  * External npm dependencies are kept as imports (resolved from node_modules at runtime).
  */
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, cpSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -50,3 +50,13 @@ code = '#!/usr/bin/env node\n' + code;
 writeFileSync(outfile, code);
 
 console.log('✓ Bundle created: packages/cli/bundle/index.js');
+
+// Copy web UI static files if built
+const webUiSrc = resolve(root, 'apps/web/out');
+const webUiDest = resolve(root, 'packages/cli/bundle/web-ui');
+if (existsSync(webUiSrc)) {
+  cpSync(webUiSrc, webUiDest, { recursive: true });
+  console.log('✓ Web UI copied to: packages/cli/bundle/web-ui/');
+} else {
+  console.log('ℹ Web UI not built (apps/web/out/ not found) — skipping');
+}
