@@ -36,6 +36,7 @@ Watch-compatible: query action returns rowCount and first row data for condition
         readOnly: { type: 'boolean', description: 'Read-only mode (default true)' },
         table: { type: 'string', description: 'Table name (for describe)' },
         sql: { type: 'string', description: 'SQL query, Flux query, MongoDB query, or Redis command (for query)' },
+        format: { type: 'string', enum: ['auto', 'table', 'csv'], description: 'Output format (for query). auto: table for small results, csv for large. Default: auto' },
       },
       required: ['action'],
     },
@@ -183,16 +184,21 @@ Watch-compatible: query action returns rowCount and first row data for condition
 
     try {
       const result = await provider.query(sql);
-      const isLarge = result.rows.length > 10 || result.columns.length > 6;
+      const format = (input.format as string) ?? 'auto';
+      const isLarge = result.rows.length > 20 || result.columns.length > 8;
+      const sendCsv = format === 'csv' || (format === 'auto' && isLarge);
+
+      // For LLM context: keep only first 20 rows in data (prevents pipeline truncation)
+      const dataRows = result.rows.length > 20 ? result.rows.slice(0, 20) : result.rows;
 
       const skillResult: SkillResult = {
         success: true,
-        data: { rowCount: result.rowCount, columns: result.columns, rows: result.rows, truncated: result.truncated, firstRow: result.rows[0] },
-        display: this.formatResult(result, name),
+        data: { rowCount: result.rowCount, columns: result.columns, rows: dataRows, truncated: result.truncated || result.rows.length > 20, firstRow: result.rows[0] },
+        display: this.formatResult(result, name, sendCsv),
       };
 
-      // Large results: attach as CSV file
-      if (isLarge && result.rows.length > 0) {
+      // CSV attachment
+      if (sendCsv && result.rows.length > 0) {
         const csv = this.toCsv(result);
         skillResult.attachments = [{
           data: Buffer.from(csv, 'utf-8'),
@@ -218,21 +224,20 @@ Watch-compatible: query action returns rowCount and first row data for condition
     return { success: true, data: { connection: name, reachable: ok }, display: ok ? `✅ "${name}" erreichbar.` : `❌ "${name}" nicht erreichbar.` };
   }
 
-  private formatResult(result: QueryResult, connName: string): string {
+  private formatResult(result: QueryResult, connName: string, asCsv = false): string {
     if (result.rows.length === 0) return `**${connName}:** Keine Ergebnisse.`;
 
-    const isLarge = result.rows.length > 10 || result.columns.length > 6;
     const header = `**${connName}:** ${result.rowCount} Zeilen, ${result.columns.length} Spalten${result.truncated ? ' (Row-Limit erreicht)' : ''}`;
 
-    if (isLarge) {
-      // Large results: summary + CSV attached
+    if (asCsv) {
+      // CSV mode: summary + preview
       const preview = result.rows.slice(0, 3).map((row, i) =>
         `  ${i + 1}. ${result.columns.slice(0, 4).map(c => `${c}=${row[c] ?? '—'}`).join(', ')}${result.columns.length > 4 ? ', ...' : ''}`,
       ).join('\n');
       return `${header}\n📎 Vollständige Ergebnisse als CSV-Datei angehängt.\n\nVorschau:\n${preview}`;
     }
 
-    // Small results: markdown table
+    // Markdown table
     const table = '| ' + result.columns.join(' | ') + ' |\n' +
       '|' + result.columns.map(() => '---').join('|') + '|\n' +
       result.rows.map(row =>

@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-03-16
+
+### Fixed
+- **Database Skill: Intelligenterer CSV-Schwellwert** — CSV ab >20 Zeilen oder >8 Spalten (vorher: >10/>6). Kleinere Ergebnisse wie 18 Zeilen × 5 Spalten bleiben als Markdown-Tabelle im Chat
+- **Database Skill: Format-Parameter** — `format: "table"` erzwingt Markdown, `format: "csv"` erzwingt CSV, `format: "auto"` (Default) entscheidet automatisch
+- **Database Skill: LLM-Weiterverarbeitung** — `data.rows` wird auf maximal 20 Zeilen gekürzt um Pipeline-Truncation zu vermeiden. Vollständige Daten nur in der CSV-Datei
+
 ## [0.18.1] - 2026-03-15
 
 ### Added
