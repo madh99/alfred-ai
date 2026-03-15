@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: Dashboard scrollbar** — `main` Container nutzt `overflow-y-auto` statt `overflow-hidden`. Dashboard und Settings sind jetzt scrollbar
+
 ## [0.16.0] - 2026-03-15
 
 ### Fixed
