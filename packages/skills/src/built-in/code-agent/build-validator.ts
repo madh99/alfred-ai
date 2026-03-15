@@ -105,7 +105,7 @@ export async function validateBuild(
 
   const passed = commands.every(c => c.exitCode === 0);
   const combinedOutput = commands
-    .map(c => `$ ${c.command} (exit ${c.exitCode}, ${c.durationMs}ms)\n${c.stderr || c.stdout}`)
+    .map(c => `$ ${c.command} (exit ${c.exitCode}, ${c.durationMs}ms)\n${[c.stderr, c.stdout].filter(Boolean).join('\n')}`)
     .join('\n\n');
 
   return {

@@ -1,10 +1,13 @@
 import type { SkillMetadata, SkillContext, SkillResult, CodeAgentDefinitionConfig, ProjectAgentsConfig } from '@alfred/types';
 import { Skill } from '../../skill.js';
-import type { BackgroundTaskRepository, ProjectAgentSessionRepository } from '@alfred/storage';
+import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 
 /** In-memory interjection inbox keyed by task ID. */
 const interjectionInbox = new Map<string, string[]>();
+
+/** Active runner abort controllers keyed by session ID. */
+const activeAbortControllers = new Map<string, AbortController>();
 
 export function pushInterjection(taskId: string, message: string): void {
   const inbox = interjectionInbox.get(taskId) ?? [];
@@ -16,6 +19,14 @@ export function drainInterjections(taskId: string): string[] {
   const messages = interjectionInbox.get(taskId) ?? [];
   interjectionInbox.delete(taskId);
   return messages;
+}
+
+export function registerAbortController(sessionId: string, controller: AbortController): void {
+  activeAbortControllers.set(sessionId, controller);
+}
+
+export function removeAbortController(sessionId: string): void {
+  activeAbortControllers.delete(sessionId);
 }
 
 export class ProjectAgentSkill extends Skill {
@@ -60,16 +71,21 @@ Actions:
 
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
   private readonly config: ProjectAgentsConfig;
+  /** Set by alfred.ts after construction — the runner that executes the loop. */
+  private runner?: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> };
 
   constructor(
     config: ProjectAgentsConfig & { agents: CodeAgentDefinitionConfig[] },
     private readonly llm: LLMProvider,
-    private readonly taskRepo: BackgroundTaskRepository,
     private readonly sessionRepo: ProjectAgentSessionRepository,
   ) {
     super();
     this.config = config;
     this.agents = new Map(config.agents.map(a => [a.name, a]));
+  }
+
+  setRunner(runner: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> }): void {
+    this.runner = runner;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -96,6 +112,7 @@ Actions:
 
     if (!goal) return { success: false, error: 'Missing required field "goal"' };
     if (!cwd) return { success: false, error: 'Missing required field "cwd"' };
+    if (!this.runner) return { success: false, error: 'Project agent runner not configured' };
 
     const agentDef = this.agents.get(agentName);
     if (!agentDef) {
@@ -107,34 +124,28 @@ Actions:
     const buildCommands = (input.buildCommands as string[]) ?? template?.buildCommands ?? ['npm install', 'npm run build'];
     const testCommands = (input.testCommands as string[]) ?? template?.testCommands ?? [];
 
-    const maxDurationHours = this.config.defaultMaxDurationHours ?? 8;
-
-    // Create background task
-    const task = this.taskRepo.create(
-      context.userId,
-      context.platform,
-      context.chatId,
-      `Project Agent: ${goal.slice(0, 100)}`,
-      'project_agent',
-      JSON.stringify({
-        goal, cwd, agentName, buildCommands, testCommands, maxDurationHours,
-        maxFixAttempts: this.config.maxFixAttemptsPerIteration ?? 3,
-        buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 300_000,
-      }),
-    );
-
     // Create session tracking
-    this.sessionRepo.create({
-      taskId: task.id,
+    const session = this.sessionRepo.create({
+      taskId: crypto.randomUUID(),
       goal,
       cwd,
       agentName,
     });
 
+    const config = {
+      goal, cwd, agentName, buildCommands, testCommands,
+      maxDurationHours: this.config.defaultMaxDurationHours ?? 8,
+      maxFixAttempts: this.config.maxFixAttemptsPerIteration ?? 3,
+      buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 300_000,
+    };
+
+    // Fire-and-forget: start the runner loop asynchronously
+    this.runner.run(session.taskId, config, context.platform, context.chatId).catch(() => {});
+
     return {
       success: true,
-      data: { taskId: task.id, goal, cwd, agentName, buildCommands, testCommands },
-      display: `🚀 Project Agent gestartet (${task.id})\n` +
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands },
+      display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
@@ -150,8 +161,6 @@ Actions:
     const session = this.sessionRepo.getByTaskId(taskId);
     if (!session) return { success: false, error: `No project agent session found for task ${taskId}` };
 
-    const task = this.taskRepo.getById(taskId);
-
     return {
       success: true,
       data: session,
@@ -161,7 +170,6 @@ Actions:
         `Dateien geändert: ${session.totalFilesChanged}\n` +
         `Letzter Build: ${session.lastBuildPassed ? '✅ passed' : '❌ failed'}\n` +
         `Letzter Commit: ${session.lastCommitSha ?? '—'}\n` +
-        `Task-Status: ${task?.status ?? 'unknown'}\n` +
         (session.milestones.length > 0 ? `Milestones: ${session.milestones.join(', ')}` : ''),
     };
   }
@@ -184,7 +192,12 @@ Actions:
     const taskId = input.task_id as string | undefined;
     if (!taskId) return { success: false, error: 'Missing "task_id"' };
 
+    // Push stop signal to inbox
     pushInterjection(taskId, '__STOP__');
+    // Also abort via controller if available
+    const controller = activeAbortControllers.get(taskId);
+    if (controller) controller.abort();
+
     return {
       success: true,
       data: { taskId, stopped: true },

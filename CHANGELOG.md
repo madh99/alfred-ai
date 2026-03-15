@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-03-15
+
+### Fixed
+- **Project Agent: Runner-Anbindung** — Runner wird jetzt direkt vom Skill gestartet (fire-and-forget async). Vorher: Dead Code, BackgroundTaskRunner konnte den Runner nie aufrufen
+- **Project Agent: Shell-Injection** — Git-Commits nutzen `execFile` Array-Form statt Shell-String (verhindert Injection via LLM-generierter Phase-Beschreibung)
+- **Project Agent: Event-Loop-Blocking** — Git-Operationen nutzen async `execFile` statt blockierendem `execSync`
+- **Project Agent: Build-Output** — Zeigt stderr UND stdout (vorher: nur eines von beiden)
+- **Project Agent: Build-Status** — `lastBuildPassed` wird erst nach tatsächlichem Build gesetzt (vorher: false positive vor Validierung)
+- **Project Agent: Milestones** — `addMilestone()` wird bei Plan-Erstellung und nach jeder Phase aufgerufen (vorher: nie aufgerufen, DB immer leer)
+- **Project Agent: Stop-Signal** — AbortController als Backup für in-memory Interjection-Inbox
+- **Project Agent: Exports** — `pushInterjection`, `registerAbortController`, `removeAbortController` im Top-Level Export
+- **Project Agent: Timeout** — Max-Duration wird im Runner selbst geprüft (unabhängig von BackgroundTaskRunner)
+
 ## [0.15.1] - 2026-03-15
 
 ### Added
