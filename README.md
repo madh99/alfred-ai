@@ -346,6 +346,24 @@ You: "Zeig mir Details zum Inserat 123456"
 You: "Beobachte RTX 4070 unter 400€ auf Willhaben"
 ```
 
+#### YouTube
+
+YouTube video search, transcripts, and channel monitoring via YouTube Data API v3.
+
+- **search**: Suche nach Videos (Top N Ergebnisse mit Titel, Channel, Datum)
+- **info**: Video-Details (Titel, Dauer, Views, Likes, Beschreibung)
+- **transcript**: Transkript-Extraktion mit Timestamps (self-hosted via `youtube-transcript` npm, Supadata als optionaler Fallback)
+- **channel**: Letzte Videos eines Channels (Watch-kompatibel: `newCount`)
+
+```
+You: "Suche YouTube Videos über TypeScript Patterns"
+You: "Fasse dieses Video zusammen: https://youtube.com/watch?v=abc123"
+You: "Zeig mir die neuesten Videos von Fireship"
+You: "Erstelle einen Watch: Prüfe den YouTube Channel Fireship alle 2 Stunden auf neue Videos"
+```
+
+Requires a YouTube Data API v3 key (free, 10,000 units/day). Transcripts are extracted locally without API key. Optional Supadata fallback for AI-generated transcripts.
+
 #### Daily Briefing
 
 Parallel morning briefing that gathers data from all available skills in a single call. Auto-detects which modules are available based on your configuration.
@@ -572,7 +590,8 @@ The interactive wizard guides you through:
 5. **Code Agents** — Auto-detects installed CLI tools (Claude Code, Codex, Aider, Gemini CLI)
 6. **Forge Integration** — GitHub or GitLab token for automatic PR/MR creation
 7. **Web Chat UI** — Enable/disable the built-in browser chat interface
-8. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker, BMW CarData, Google Routing
+8. **YouTube** — YouTube Data API v3 key for search, video info, transcripts
+9. **Infrastructure** — Proxmox VE, UniFi Network, Home Assistant, Contacts, Docker, BMW CarData, Google Routing
 
 This generates `config.yaml` and `.env` in your working directory. Model lists are cached locally (`~/.alfred/model-cache.json`, TTL 24h) for fast subsequent runs.
 
@@ -773,6 +792,12 @@ bmw:
 routing:
   # apiKey via ALFRED_ROUTING_API_KEY
 
+youtube:
+  # apiKey via ALFRED_YOUTUBE_API_KEY
+  # supadata:
+  #   enabled: true
+  #   apiKey: via ALFRED_SUPADATA_API_KEY
+
 energy:
   # Grid fees from your electricity bill (set via `alfred setup` or ENV)
   # gridName via ALFRED_ENERGY_GRID_NAME
@@ -856,6 +881,10 @@ ALFRED_BMW_CLIENT_ID=               # from bmw-cardata.bmwgroup.com/customer
 
 # Google Routing
 ALFRED_ROUTING_API_KEY=             # Google Routes API key
+
+# YouTube
+ALFRED_YOUTUBE_API_KEY=             # YouTube Data API v3 key (free, 10K units/day)
+ALFRED_SUPADATA_API_KEY=            # optional — Supadata transcript fallback (100 free/month)
 
 # Energy / aWATTar (optional — grid fees from your electricity bill)
 ALFRED_ENERGY_GRID_NAME=            # e.g. "Netz Niederösterreich"

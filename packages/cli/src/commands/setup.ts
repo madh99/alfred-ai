@@ -336,6 +336,7 @@ interface ExistingConfig {
   docker?: { socketPath?: string; host?: string };
   bmw?: { clientId?: string };
   routing?: { apiKey?: string };
+  youtube?: { apiKey?: string; supadata?: { enabled?: boolean; apiKey?: string } };
   energy?: { gridName?: string; gridUsageCt?: number; gridLossCt?: number; gridCapacityFee?: number; gridMeterFee?: number };
 }
 
@@ -1569,6 +1570,38 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Routing disabled.')}`);
     }
 
+    // YouTube
+    const existingYoutube = existing.config.youtube as Record<string, unknown> | undefined;
+    const existingYoutubeKey = existing.env['ALFRED_YOUTUBE_API_KEY'] ?? (existingYoutube?.apiKey as string) ?? '';
+    const existingSupadataKey = existing.env['ALFRED_SUPADATA_API_KEY'] ?? ((existingYoutube?.supadata as Record<string, unknown>)?.apiKey as string) ?? '';
+    const enableYoutubeDefault = existingYoutubeKey ? 'Y/n' : 'y/N';
+    const enableYoutubeInput = (
+      await rl.question(`\n  ${BOLD}Enable YouTube (search, video info, transcripts)?${RESET} ${dim(`[${enableYoutubeDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingYoutubeKey ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableYoutube = enableYoutubeInput === 'y' || enableYoutubeInput === 'yes';
+
+    let youtubeApiKey = '';
+    let supadataApiKey = '';
+
+    if (enableYoutube) {
+      console.log(`  ${dim('Setup:')}`);
+      console.log(`  ${dim('  1. Öffne https://console.cloud.google.com')}`);
+      console.log(`  ${dim('  2. YouTube Data API v3 aktivieren')}`);
+      console.log(`  ${dim('  3. API Key erstellen (gleicher Key wie für Routing möglich)')}`);
+      youtubeApiKey = await askWithDefault(rl, '  YouTube API Key', existingYoutubeKey);
+
+      const supadataInput = (
+        await rl.question(`  ${BOLD}Supadata API Key (optional, Transkript-Fallback)?${RESET} ${dim('[Enter to skip]')}: ${YELLOW}`)
+      ).trim();
+      process.stdout.write(RESET);
+      supadataApiKey = supadataInput || existingSupadataKey;
+
+      console.log(`  ${green('>')} YouTube: ${bold('enabled')}${supadataApiKey ? ' + Supadata Fallback' : ''}`);
+    } else {
+      console.log(`  ${dim('YouTube disabled.')}`);
+    }
+
     // Energy / aWATTar
     const existingEnergy = existing.config.energy;
     const existingGridName = existing.env['ALFRED_ENERGY_GRID_NAME'] ?? existingEnergy?.gridName ?? '';
@@ -1868,6 +1901,16 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_ROUTING_API_KEY=');
     }
 
+    envLines.push('', '# === YouTube ===', '');
+
+    if (enableYoutube) {
+      envLines.push(`ALFRED_YOUTUBE_API_KEY=${youtubeApiKey}`);
+      if (supadataApiKey) envLines.push(`ALFRED_SUPADATA_API_KEY=${supadataApiKey}`);
+    } else {
+      envLines.push('# ALFRED_YOUTUBE_API_KEY=');
+      envLines.push('# ALFRED_SUPADATA_API_KEY=');
+    }
+
     envLines.push('', '# === Energy / aWATTar ===', '');
 
     if (enableEnergy && energyGridUsageCt) {
@@ -1925,6 +1968,7 @@ export async function setupCommand(): Promise<void> {
       docker?: { socketPath?: string; host?: string };
       bmw?: { clientId: string };
       routing?: { apiKey: string };
+      youtube?: { apiKey: string; supadata?: { enabled: boolean; apiKey: string } };
       energy?: Record<string, unknown>;
       api: { enabled: boolean; port: number; host: string; webUi: boolean; tls?: { enabled: boolean; cert?: string; key?: string } };
       storage: { path: string };
@@ -2099,6 +2143,12 @@ export async function setupCommand(): Promise<void> {
       } : {}),
       ...(enableRouting ? {
         routing: { apiKey: routingApiKey },
+      } : {}),
+      ...(enableYoutube ? {
+        youtube: {
+          apiKey: youtubeApiKey,
+          ...(supadataApiKey ? { supadata: { enabled: true, apiKey: supadataApiKey } } : {}),
+        },
       } : {}),
       ...(enableEnergy && energyGridUsageCt ? {
         energy: {
@@ -2304,6 +2354,7 @@ ${ownerAdminRule}
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     console.log(`  ${bold('Web Chat UI:')}   ${enableWebUi ? green('enabled (/alfred/)') : dim('disabled')}`);
     console.log(`  ${bold('TLS/HTTPS:')}    ${enableTls ? green('enabled (self-signed)') : dim('disabled')}`);
+    if (enableYoutube) console.log(`  ${bold('YouTube:')}       ${green('enabled')}${supadataApiKey ? ' + Supadata' : ''}`);
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
     if (enablePbs) console.log(`  ${bold('PBS:')}           ${green(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h)`)}`);
     if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);
