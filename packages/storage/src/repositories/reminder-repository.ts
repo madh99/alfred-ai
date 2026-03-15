@@ -68,6 +68,13 @@ export class ReminderRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  getAllPending(): ReminderEntry[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM reminders WHERE fired = 0 ORDER BY trigger_at ASC`,
+    ).all() as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   markFired(id: string): void {
     this.db.prepare(`UPDATE reminders SET fired = 1 WHERE id = ?`).run(id);
   }

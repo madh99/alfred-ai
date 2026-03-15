@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.5] - 2026-03-15
+
+### Added
+- **Dashboard: Offene Reminder** — Zeigt alle ausstehenden Erinnerungen mit Fälligkeitsdatum, Nachricht und Plattform. Überfällige Reminder werden rot markiert
+- **Setup: API Host + Token** — Frage ob API remote erreichbar sein soll (0.0.0.0 vs localhost). Bei Remote: TLS-Frage (Default Y) und optionaler API Token. Config enthält jetzt korrekte Host/Token-Werte
+
 ## [0.17.4] - 2026-03-15
 
 ### Fixed

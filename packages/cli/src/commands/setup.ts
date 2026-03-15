@@ -1247,18 +1247,43 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Web Chat UI disabled.')}`);
     }
 
-    // ── 8d3. TLS ─────────────────────────────────────────────
+    // ── 8d3. API Host + TLS + Token ────────────────────────
+    let apiHost = '127.0.0.1';
     let enableTls = false;
-    console.log(`\n${bold('TLS/HTTPS für die HTTP API?')}`);
-    console.log(`${dim('Verschlüsselt die Verbindung. Selbstsigniertes Zertifikat wird automatisch generiert.')}`);
-    const tlsAnswer = (
-      await rl.question(`${YELLOW}> ${RESET}${dim('[y/N] ')}`)
+    let apiToken = '';
+
+    const hostAnswer = (
+      await rl.question(`\n${bold('API von anderen Geräten erreichbar machen?')}\n${dim('Setzt host auf 0.0.0.0 statt localhost.')}\n${YELLOW}> ${RESET}${dim('[y/N] ')}`)
     ).trim().toLowerCase();
-    enableTls = tlsAnswer === 'y' || tlsAnswer === 'yes';
-    if (enableTls) {
-      console.log(`  ${green('>')} TLS ${bold('enabled')} — selbstsigniertes Zertifikat in ~/.alfred/tls/`);
+    if (hostAnswer === 'y' || hostAnswer === 'yes') {
+      apiHost = '0.0.0.0';
+      console.log(`  ${green('>')} API Host: ${bold('0.0.0.0')} (alle Interfaces)`);
+
+      // TLS recommended for remote access
+      console.log(`\n${bold('TLS/HTTPS aktivieren?')}`);
+      console.log(`${dim('Empfohlen bei Remote-Zugriff. Selbstsigniertes Zertifikat wird automatisch generiert.')}`);
+      const tlsAnswer = (
+        await rl.question(`${YELLOW}> ${RESET}${dim('[Y/n] ')}`)
+      ).trim().toLowerCase();
+      enableTls = tlsAnswer === '' || tlsAnswer === 'y' || tlsAnswer === 'yes';
+      if (enableTls) {
+        console.log(`  ${green('>')} TLS ${bold('enabled')}`);
+      } else {
+        console.log(`  ${dim('TLS disabled — API läuft über HTTP.')}`);
+      }
+
+      // API Token recommended for remote access
+      console.log(`\n${bold('API Token setzen?')}`);
+      console.log(`${dim('Schützt die API mit Bearer-Token-Authentifizierung.')}`);
+      apiToken = (
+        await rl.question(`  ${BOLD}API Token${RESET} ${dim('[Enter to skip]')}: ${YELLOW}`)
+      ).trim();
+      process.stdout.write(RESET);
+      if (apiToken) {
+        console.log(`  ${green('>')} API Token gesetzt`);
+      }
     } else {
-      console.log(`  ${dim('TLS disabled — API läuft über HTTP.')}`);
+      console.log(`  ${dim('API nur auf localhost erreichbar.')}`);
     }
 
     // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
@@ -1970,7 +1995,7 @@ export async function setupCommand(): Promise<void> {
       routing?: { apiKey: string };
       youtube?: { apiKey: string; supadata?: { enabled: boolean; apiKey: string } };
       energy?: Record<string, unknown>;
-      api: { enabled: boolean; port: number; host: string; webUi: boolean; tls?: { enabled: boolean; cert?: string; key?: string } };
+      api: { enabled: boolean; port: number; host: string; webUi: boolean; token?: string; tls?: { enabled: boolean; cert?: string; key?: string } };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -2162,8 +2187,9 @@ export async function setupCommand(): Promise<void> {
       api: {
         enabled: true,
         port: 3420,
-        host: '127.0.0.1',
+        host: apiHost,
         webUi: enableWebUi,
+        ...(apiToken ? { token: apiToken } : {}),
         ...(enableTls ? { tls: { enabled: true } } : {}),
       },
       storage: {

@@ -197,6 +197,30 @@ export function DashboardPage() {
         )}
       </section>
 
+      {/* Reminders */}
+      {(data.reminders?.length ?? 0) > 0 && (
+        <section>
+          <h2 className="text-lg font-medium text-gray-300 mb-3">Offene Reminder ({data.reminders!.length})</h2>
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+            {data.reminders!.map((r) => {
+              const triggerDate = new Date(r.triggerAt);
+              const isOverdue = triggerDate < new Date();
+              return (
+                <div key={r.id} className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+                  <div className="flex justify-between items-start mb-1">
+                    <p className="text-sm text-gray-200">{r.message}</p>
+                    <span className={clsx('text-xs px-2 py-0.5 rounded-full', isOverdue ? 'bg-red-500/10 text-red-400' : 'bg-blue-500/10 text-blue-400')}>
+                      {isOverdue ? 'überfällig' : 'aktiv'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-gray-500">{triggerDate.toLocaleString('de-AT')} • {r.platform}</p>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Skill Health */}
       <section>
         <h2 className="text-lg font-medium text-gray-300 mb-3">Skill Health</h2>

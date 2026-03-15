@@ -74,10 +74,18 @@ export interface UsageData {
   total: UsageRecord[];
 }
 
+export interface ReminderItem {
+  id: string;
+  message: string;
+  triggerAt: string;
+  platform: string;
+}
+
 export interface DashboardData {
   watches: WatchItem[];
   scheduled: ScheduledItem[];
   skillHealth: SkillHealthItem[];
+  reminders?: ReminderItem[];
   usage?: UsageData;
   uptime?: number;
   startedAt?: string;

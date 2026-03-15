@@ -97,6 +97,7 @@ export class Alfred {
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
+  private reminderRepo?: ReminderRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly startedAt = new Date().toISOString();
@@ -119,6 +120,7 @@ export class Alfred {
     const memoryRepo = new MemoryRepository(db);
     this.memoryRepo = memoryRepo;
     const reminderRepo = new ReminderRepository(db);
+    this.reminderRepo = reminderRepo;
     const noteRepo = new NoteRepository(db);
     const embeddingRepo = new EmbeddingRepository(db);
     const linkTokenRepo = new LinkTokenRepository(db);
@@ -783,6 +785,7 @@ export class Alfred {
             watches: this.watchRepo?.getEnabled() ?? [],
             scheduled: this.scheduledActionRepo?.getAll() ?? [],
             skillHealth: this.skillHealthRepo?.getAll() ?? [],
+            reminders: this.reminderRepo?.getAllPending() ?? [],
             usage: {
               today: this.usageRepo?.getDaily(today) ?? null,
               week: this.usageRepo?.getRange(weekAgo, today) ?? [],
