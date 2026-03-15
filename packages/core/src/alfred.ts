@@ -992,12 +992,22 @@ export class Alfred {
   }
 
   private resolveWebUiPath(): string | undefined {
-    // Look for web UI files relative to common installation paths
+    // ESM-safe: use import.meta.url instead of __dirname
+    let selfDir: string;
+    try {
+      selfDir = path.dirname(new URL(import.meta.url).pathname);
+      // Windows: remove leading slash from /C:/...
+      if (process.platform === 'win32' && selfDir.startsWith('/')) selfDir = selfDir.slice(1);
+    } catch {
+      selfDir = process.cwd();
+    }
+
     const candidates = [
-      path.join(process.cwd(), 'web-ui'),                    // CWD/web-ui (manual deploy)
-      path.join(__dirname, '..', '..', 'web-ui'),            // relative to core dist
-      path.join(__dirname, '..', '..', '..', 'web-ui'),      // relative to bundle
-      path.join(__dirname, '..', '..', 'apps', 'web', 'out'), // monorepo dev
+      path.join(process.cwd(), 'web-ui'),                     // CWD/web-ui (manual deploy)
+      path.join(selfDir, '..', 'web-ui'),                     // bundle/index.js → bundle/web-ui/
+      path.join(selfDir, 'web-ui'),                            // same dir as bundle
+      path.join(selfDir, '..', '..', 'web-ui'),               // global npm package
+      path.join(selfDir, '..', '..', 'apps', 'web', 'out'),   // monorepo dev
     ];
     for (const candidate of candidates) {
       try {

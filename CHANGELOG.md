@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.3] - 2026-03-15
+
+### Fixed
+- **Web UI Path Resolution: ESM-Kompatibilität** — `resolveWebUiPath()` nutzt `import.meta.url` statt `__dirname` (existiert nicht in ESM Bundles). Verhindert `ReferenceError: __dirname is not defined` beim Start
+
 ## [0.15.2] - 2026-03-15
 
 ### Fixed
