@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.6] - 2026-03-15
+
+### Added
+- **Dashboard: Messaging-Adapter** — Zeigt alle verbundenen Adapter (Telegram, Matrix, API) mit Online/Offline-Status und farbigen Indikatoren
+- **Dashboard: LLM Provider** — Zeigt alle konfigurierten Model-Tiers (default, strong, fast, embeddings) mit Model-Name und Verfügbarkeit
+
 ## [0.17.5] - 2026-03-15
 
 ### Added

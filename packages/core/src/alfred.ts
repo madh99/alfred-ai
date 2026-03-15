@@ -796,6 +796,7 @@ export class Alfred {
             adapters: Object.fromEntries(
               [...this.adapters.entries()].map(([p, a]) => [p, a.getStatus()]),
             ),
+            llmProviders: this.llmProvider.getProviderStatuses(),
           };
         },
         webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,

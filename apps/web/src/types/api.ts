@@ -81,6 +81,11 @@ export interface ReminderItem {
   platform: string;
 }
 
+export interface LlmProviderInfo {
+  model: string;
+  available: boolean;
+}
+
 export interface DashboardData {
   watches: WatchItem[];
   scheduled: ScheduledItem[];
@@ -90,6 +95,7 @@ export interface DashboardData {
   uptime?: number;
   startedAt?: string;
   adapters?: Record<string, string>;
+  llmProviders?: Record<string, LlmProviderInfo>;
 }
 
 export interface HealthData {

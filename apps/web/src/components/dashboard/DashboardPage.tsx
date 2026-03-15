@@ -43,18 +43,55 @@ export function DashboardPage() {
           {data.uptime != null && (
             <span className="text-xs text-gray-500">Uptime: {formatUptime(data.uptime)}</span>
           )}
-          {data.adapters && (
-            <div className="flex gap-2">
-              {Object.entries(data.adapters).map(([platform, status]) => (
-                <span key={platform} className={clsx('text-xs px-2 py-0.5 rounded-full', status === 'connected' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400')}>
-                  {platform}
-                </span>
-              ))}
-            </div>
-          )}
           <button onClick={refresh} className="text-sm text-blue-400 hover:text-blue-300">Aktualisieren</button>
         </div>
       </div>
+
+      {/* Adapters + LLM Providers */}
+      <section className="grid gap-3 grid-cols-1 md:grid-cols-2">
+        {/* Connected Adapters */}
+        {data.adapters && (
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-gray-400 mb-3">Messaging-Adapter</h3>
+            <div className="space-y-2">
+              {Object.entries(data.adapters).map(([platform, status]) => (
+                <div key={platform} className="flex items-center justify-between">
+                  <span className="text-sm text-gray-200 capitalize">{platform}</span>
+                  <div className="flex items-center gap-2">
+                    <span className={clsx('w-2 h-2 rounded-full', status === 'connected' ? 'bg-green-500' : 'bg-red-500')} />
+                    <span className={clsx('text-xs', status === 'connected' ? 'text-green-400' : 'text-red-400')}>
+                      {status}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* LLM Providers */}
+        {data.llmProviders && (
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-gray-400 mb-3">LLM Provider</h3>
+            <div className="space-y-2">
+              {Object.entries(data.llmProviders).map(([tier, info]) => (
+                <div key={tier} className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-gray-500 uppercase">{tier}</span>
+                    <p className="text-sm text-gray-200 font-mono">{info.model}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={clsx('w-2 h-2 rounded-full', info.available ? 'bg-green-500' : 'bg-red-500')} />
+                    <span className={clsx('text-xs', info.available ? 'text-green-400' : 'text-red-400')}>
+                      {info.available ? 'online' : 'offline'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* Cost Overview */}
       {usage && (
