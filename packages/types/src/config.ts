@@ -154,6 +154,12 @@ export interface ActiveLearningConfig {
   maxExtractionsPerMinute?: number;
 }
 
+export interface ApiTlsConfig {
+  enabled?: boolean;
+  cert?: string;
+  key?: string;
+}
+
 export interface ApiConfig {
   enabled: boolean;
   port: number;
@@ -161,6 +167,7 @@ export interface ApiConfig {
   token?: string;
   corsOrigin?: string;
   webUi?: boolean;
+  tls?: ApiTlsConfig;
 }
 
 export interface CodeAgentDefinitionConfig {

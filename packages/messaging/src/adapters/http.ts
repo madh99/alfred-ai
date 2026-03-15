@@ -1,4 +1,5 @@
 import http from 'node:http';
+import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -25,6 +26,12 @@ export interface WebhookHandler {
   callback: (payload: Record<string, unknown>) => Promise<void>;
 }
 
+export interface TlsOptions {
+  enabled?: boolean;
+  cert?: string;  // path to cert.pem
+  key?: string;   // path to key.pem
+}
+
 export interface HttpAdapterOptions {
   port: number;
   host: string;
@@ -34,7 +41,8 @@ export interface HttpAdapterOptions {
   metricsCallback?: () => string;
   webhooks?: WebhookHandler[];
   dashboardCallback?: () => Record<string, unknown>;
-  webUiPath?: string;  // path to static web UI files (apps/web/out/)
+  webUiPath?: string;
+  tls?: TlsOptions;
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -45,7 +53,7 @@ const MAX_BODY_SIZE = 1_048_576; // 1 MB
  */
 export class HttpAdapter extends MessagingAdapter {
   readonly platform: Platform = 'api';
-  private server: http.Server | null = null;
+  private server: http.Server | https.Server | null = null;
   private readonly streams = new Map<string, http.ServerResponse>();
   private messageCounter = 0;
   private readonly port: number;
@@ -56,6 +64,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly metricsFn?: () => string;
   private readonly dashboardFn?: () => Record<string, unknown>;
   private readonly webUiPath?: string;
+  private readonly tls?: TlsOptions;
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
@@ -68,6 +77,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.metricsFn = options?.metricsCallback;
     this.dashboardFn = options?.dashboardCallback;
     this.webUiPath = options?.webUiPath;
+    this.tls = options?.tls;
     if (options?.webhooks) {
       for (const wh of options.webhooks) {
         this.webhooks.set(wh.name, wh);
@@ -82,9 +92,16 @@ export class HttpAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
-    this.server = http.createServer((req, res) => {
+    const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
       this.handleRequest(req, res);
-    });
+    };
+
+    const tlsOpts = this.resolveTls();
+    if (tlsOpts) {
+      this.server = https.createServer(tlsOpts, handler);
+    } else {
+      this.server = http.createServer(handler);
+    }
 
     await new Promise<void>((resolve, reject) => {
       this.server!.listen(this.port, this.host, () => {
@@ -183,6 +200,64 @@ export class HttpAdapter extends MessagingAdapter {
       this.writeSseEvent(res, 'done', { type: 'done' });
       res.end();
       this.streams.delete(chatId);
+    }
+  }
+
+  private resolveTls(): { cert: string | Buffer; key: string | Buffer } | null {
+    if (!this.tls?.enabled) return null;
+
+    // User-provided cert
+    if (this.tls.cert && this.tls.key) {
+      try {
+        return {
+          cert: fs.readFileSync(this.tls.cert),
+          key: fs.readFileSync(this.tls.key),
+        };
+      } catch (err) {
+        throw new Error(`TLS cert/key read failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Auto-generate self-signed cert
+    const tlsDir = path.join(process.env.HOME ?? process.env.USERPROFILE ?? '.', '.alfred', 'tls');
+    const certPath = path.join(tlsDir, 'cert.pem');
+    const keyPath = path.join(tlsDir, 'key.pem');
+
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+      return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
+    }
+
+    // Generate self-signed cert using Node.js crypto
+    try {
+      const { generateKeyPairSync, createSign, randomBytes } = require('node:crypto');
+      const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+        modulusLength: 2048,
+        publicKeyEncoding: { type: 'spki', format: 'pem' },
+        privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      });
+
+      // Create a minimal self-signed X.509 certificate
+      // Using a simplified DER construction for the cert
+      const now = new Date();
+      const notAfter = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+      const serial = randomBytes(8).toString('hex');
+
+      // For self-signed, we use a simple approach: openssl-like cert generation
+      // Since Node.js doesn't have a built-in X.509 cert generator, use execSync
+      const { execSync } = require('node:child_process');
+      fs.mkdirSync(tlsDir, { recursive: true });
+      fs.writeFileSync(keyPath, privateKey, { mode: 0o600 });
+
+      execSync(
+        `openssl req -new -x509 -key "${keyPath}" -out "${certPath}" -days 365 -subj "/CN=Alfred AI/O=Alfred" -addext "subjectAltName=IP:127.0.0.1,IP:0.0.0.0,DNS:localhost"`,
+        { stdio: 'pipe' },
+      );
+
+      return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
+    } catch (err) {
+      // Fallback: try without openssl (some systems don't have it)
+      console.warn(`[HttpAdapter] Self-signed TLS cert generation failed: ${err instanceof Error ? err.message : String(err)}. Running without TLS.`);
+      return null;
     }
   }
 

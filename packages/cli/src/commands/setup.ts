@@ -1246,6 +1246,20 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Web Chat UI disabled.')}`);
     }
 
+    // ── 8d3. TLS ─────────────────────────────────────────────
+    let enableTls = false;
+    console.log(`\n${bold('TLS/HTTPS für die HTTP API?')}`);
+    console.log(`${dim('Verschlüsselt die Verbindung. Selbstsigniertes Zertifikat wird automatisch generiert.')}`);
+    const tlsAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim('[y/N] ')}`)
+    ).trim().toLowerCase();
+    enableTls = tlsAnswer === 'y' || tlsAnswer === 'yes';
+    if (enableTls) {
+      console.log(`  ${green('>')} TLS ${bold('enabled')} — selbstsigniertes Zertifikat in ~/.alfred/tls/`);
+    } else {
+      console.log(`  ${dim('TLS disabled — API läuft über HTTP.')}`);
+    }
+
     // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
     console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi / Home Assistant)?')}`);
     console.log(`${dim('Control VMs, containers, network devices, and smart home through Alfred.')}`);
@@ -1912,7 +1926,7 @@ export async function setupCommand(): Promise<void> {
       bmw?: { clientId: string };
       routing?: { apiKey: string };
       energy?: Record<string, unknown>;
-      api: { enabled: boolean; port: number; host: string; webUi: boolean };
+      api: { enabled: boolean; port: number; host: string; webUi: boolean; tls?: { enabled: boolean; cert?: string; key?: string } };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -2100,6 +2114,7 @@ export async function setupCommand(): Promise<void> {
         port: 3420,
         host: '127.0.0.1',
         webUi: enableWebUi,
+        ...(enableTls ? { tls: { enabled: true } } : {}),
       },
       storage: {
         path: './data/alfred.db',
@@ -2288,6 +2303,7 @@ ${ownerAdminRule}
     }
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     console.log(`  ${bold('Web Chat UI:')}   ${enableWebUi ? green('enabled (/alfred/)') : dim('disabled')}`);
+    console.log(`  ${bold('TLS/HTTPS:')}    ${enableTls ? green('enabled (self-signed)') : dim('disabled')}`);
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
     if (enablePbs) console.log(`  ${bold('PBS:')}           ${green(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h)`)}`);
     if (enableUnifi) console.log(`  ${bold('UniFi:')}         ${green(unifiBaseUrl)}`);

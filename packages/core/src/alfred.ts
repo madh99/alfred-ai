@@ -745,6 +745,7 @@ export class Alfred {
       this.adapters.set('api', new HttpAdapter(port, host, {
         apiToken: config.api?.token,
         corsOrigin: config.api?.corsOrigin,
+        tls: config.api?.tls,
         healthCheck: () => {
           let diskUsage: { path: string; sizeBytes: number } | undefined;
           try {

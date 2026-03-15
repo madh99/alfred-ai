@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.7] - 2026-03-15
+
+### Added
+- **TLS/HTTPS Support** — HTTP API kann verschlüsselt laufen. Selbstsigniertes Zertifikat wird automatisch generiert (`~/.alfred/tls/`), eigenes Cert über `api.tls.cert` + `api.tls.key` konfigurierbar. Setup-Wizard fragt TLS-Aktivierung ab
+
 ## [0.16.6] - 2026-03-15
 
 ### Fixed

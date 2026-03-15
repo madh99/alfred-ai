@@ -166,6 +166,12 @@ export const ActiveLearningConfigSchema = z.object({
   maxExtractionsPerMinute: z.number().optional(),
 });
 
+export const ApiTlsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  cert: z.string().optional(),
+  key: z.string().optional(),
+});
+
 export const ApiConfigSchema = z.object({
   enabled: z.boolean(),
   port: z.coerce.number().int().min(1).max(65535),
@@ -173,6 +179,7 @@ export const ApiConfigSchema = z.object({
   token: z.string().optional(),
   corsOrigin: z.string().optional(),
   webUi: z.boolean().optional(),
+  tls: ApiTlsConfigSchema.optional(),
 });
 
 export const CodeAgentDefinitionSchema = z.object({
