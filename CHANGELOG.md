@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.4] - 2026-03-15
+
+### Added
+- **Web Chat: Persistenter User** — userId und chatId werden in localStorage gespeichert (einmalig generiert). Konversationshistorie bleibt über Seitenaufrufe erhalten. Cross-Platform-Verlinkung mit Telegram/Matrix via "Link my account" Befehl möglich
+
 ## [0.16.3] - 2026-03-15
 
 ### Fixed

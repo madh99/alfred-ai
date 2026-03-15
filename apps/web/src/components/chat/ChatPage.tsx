@@ -1,13 +1,12 @@
 'use client';
 
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect } from 'react';
 import { ChatMessage } from './ChatMessage';
 import { InputBar } from './InputBar';
 import { useChat } from '@/hooks/useChat';
 
 export function ChatPage() {
-  const chatId = useMemo(() => `web-${Date.now().toString(36)}`, []);
-  const { messages, streaming, currentStatus, error, sendMessage } = useChat(chatId);
+  const { messages, streaming, currentStatus, error, sendMessage, userId } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -23,6 +22,11 @@ export function ChatPage() {
               <p className="text-4xl mb-4 font-mono font-bold text-blue-500">Alfred</p>
               <p className="text-sm">Self-hosted AI Assistant</p>
               <p className="text-xs mt-2 text-gray-600">Stelle eine Frage oder gib einen Befehl ein.</p>
+              <p className="text-xs mt-4 text-gray-700">
+                User: <span className="font-mono text-gray-500">{userId}</span>
+                <br />
+                <span className="text-gray-600">Sage &quot;Link my account&quot; um mit Telegram/Matrix zu verknüpfen.</span>
+              </p>
             </div>
           )}
           {messages.map((msg) => (

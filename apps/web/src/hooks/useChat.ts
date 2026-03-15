@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useCallback, useRef } from 'react';
+import { useReducer, useCallback, useRef, useMemo } from 'react';
 import type { ChatMessage, Attachment } from '@/types/api';
 import { useConfig } from '@/context/ConfigContext';
 
@@ -71,8 +71,34 @@ function reducer(state: ChatState, action: Action): ChatState {
   }
 }
 
-export function useChat(chatId: string) {
+/** Get or create a persistent user ID stored in localStorage. */
+function getPersistentUserId(): string {
+  if (typeof window === 'undefined') return 'web-user';
+  const key = 'alfred-user-id';
+  let userId = localStorage.getItem(key);
+  if (!userId) {
+    userId = `web-${crypto.randomUUID().slice(0, 8)}`;
+    localStorage.setItem(key, userId);
+  }
+  return userId;
+}
+
+/** Get or create a persistent chat ID stored in localStorage. */
+function getPersistentChatId(): string {
+  if (typeof window === 'undefined') return 'web-chat';
+  const key = 'alfred-chat-id';
+  let chatId = localStorage.getItem(key);
+  if (!chatId) {
+    chatId = `web-chat-${crypto.randomUUID().slice(0, 8)}`;
+    localStorage.setItem(key, chatId);
+  }
+  return chatId;
+}
+
+export function useChat() {
   const { client } = useConfig();
+  const userId = useMemo(() => getPersistentUserId(), []);
+  const chatId = useMemo(() => getPersistentChatId(), []);
   const [state, dispatch] = useReducer(reducer, {
     messages: [],
     streaming: false,
@@ -87,19 +113,19 @@ export function useChat(chatId: string) {
     dispatch({ type: 'ADD_USER', text });
     dispatch({ type: 'START_ASSISTANT' });
 
-    cancelRef.current = client.streamMessage(text, chatId, 'web-user', {
+    cancelRef.current = client.streamMessage(text, chatId, userId, {
       onStatus: (t) => dispatch({ type: 'SET_STATUS', text: t }),
       onResponse: (t) => dispatch({ type: 'APPEND_RESPONSE', text: t }),
       onAttachment: (a) => dispatch({ type: 'ADD_ATTACHMENT', attachment: a }),
       onDone: () => dispatch({ type: 'DONE' }),
       onError: (e) => dispatch({ type: 'ERROR', error: e }),
     });
-  }, [client, chatId, state.streaming]);
+  }, [client, chatId, userId, state.streaming]);
 
   const cancel = useCallback(() => {
     cancelRef.current?.();
     dispatch({ type: 'DONE' });
   }, []);
 
-  return { ...state, sendMessage, cancel };
+  return { ...state, sendMessage, cancel, userId, chatId };
 }
