@@ -49,10 +49,39 @@ export interface SkillHealthItem {
   disabledUntil?: string;
 }
 
+export interface UsageRecord {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+}
+
+export interface DailyUsageSummary {
+  date: string;
+  models: UsageRecord[];
+  totalCalls: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCostUsd: number;
+}
+
+export interface UsageData {
+  today: DailyUsageSummary | null;
+  week: DailyUsageSummary[];
+  total: UsageRecord[];
+}
+
 export interface DashboardData {
   watches: WatchItem[];
   scheduled: ScheduledItem[];
   skillHealth: SkillHealthItem[];
+  usage?: UsageData;
+  uptime?: number;
+  startedAt?: string;
+  adapters?: Record<string, string>;
 }
 
 export interface HealthData {

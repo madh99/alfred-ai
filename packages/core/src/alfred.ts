@@ -768,11 +768,25 @@ export class Alfred {
           };
         },
         metricsCallback: () => this.buildPrometheusMetrics(),
-        dashboardCallback: () => ({
-          watches: this.watchRepo?.getEnabled() ?? [],
-          scheduled: this.scheduledActionRepo?.getAll() ?? [],
-          skillHealth: this.skillHealthRepo?.getAll() ?? [],
-        }),
+        dashboardCallback: () => {
+          const today = new Date().toISOString().slice(0, 10);
+          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+          return {
+            watches: this.watchRepo?.getEnabled() ?? [],
+            scheduled: this.scheduledActionRepo?.getAll() ?? [],
+            skillHealth: this.skillHealthRepo?.getAll() ?? [],
+            usage: {
+              today: this.usageRepo?.getDaily(today) ?? null,
+              week: this.usageRepo?.getRange(weekAgo, today) ?? [],
+              total: this.usageRepo?.getTotal() ?? [],
+            },
+            uptime: Math.floor(process.uptime()),
+            startedAt: this.startedAt,
+            adapters: Object.fromEntries(
+              [...this.adapters.entries()].map(([p, a]) => [p, a.getStatus()]),
+            ),
+          };
+        },
         webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,
       }));
       this.logger.info({ port, host, webUi: config.api?.webUi !== false }, 'HTTP API adapter registered');

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-03-15
+
+### Added
+- **Dashboard: LLM Kosten & Token-Verbrauch** — Neue Sektion mit Kosten heute/Woche/All-Time, Token-Verbrauch (Input/Output), 7-Tage-Kosten-Balkendiagramm, Kosten-Aufschlüsselung pro Model. Uptime-Anzeige und Adapter-Status im Header
+- **Dashboard API: Usage-Daten** — `GET /api/dashboard` liefert jetzt `usage` (today, week, total), `uptime`, `startedAt`, `adapters`
+
 ## [0.16.1] - 2026-03-15
 
 ### Fixed

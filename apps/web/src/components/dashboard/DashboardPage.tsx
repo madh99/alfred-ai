@@ -2,6 +2,25 @@
 
 import { useDashboard } from '@/hooks/useDashboard';
 import clsx from 'clsx';
+import type { DailyUsageSummary, UsageRecord } from '@/types/api';
+
+function formatCost(usd: number): string {
+  if (usd < 0.01) return `$${(usd * 100).toFixed(2)}c`;
+  return `$${usd.toFixed(4)}`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function formatUptime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  return `${h}h ${m}m`;
+}
 
 export function DashboardPage() {
   const { data, loading, error, refresh } = useDashboard();
@@ -10,12 +29,118 @@ export function DashboardPage() {
   if (error) return <div className="p-8 text-red-400">Fehler: {error}</div>;
   if (!data) return null;
 
+  const usage = data.usage;
+  const today = usage?.today;
+  const week = usage?.week ?? [];
+  const totalByModel = usage?.total ?? [];
+  const weekTotal = week.reduce((s, d) => s + d.totalCostUsd, 0);
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
       <div className="flex justify-between items-center">
         <h1 className="text-xl font-semibold text-gray-200">Dashboard</h1>
-        <button onClick={refresh} className="text-sm text-blue-400 hover:text-blue-300">Aktualisieren</button>
+        <div className="flex items-center gap-4">
+          {data.uptime != null && (
+            <span className="text-xs text-gray-500">Uptime: {formatUptime(data.uptime)}</span>
+          )}
+          {data.adapters && (
+            <div className="flex gap-2">
+              {Object.entries(data.adapters).map(([platform, status]) => (
+                <span key={platform} className={clsx('text-xs px-2 py-0.5 rounded-full', status === 'connected' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400')}>
+                  {platform}
+                </span>
+              ))}
+            </div>
+          )}
+          <button onClick={refresh} className="text-sm text-blue-400 hover:text-blue-300">Aktualisieren</button>
+        </div>
       </div>
+
+      {/* Cost Overview */}
+      {usage && (
+        <section>
+          <h2 className="text-lg font-medium text-gray-300 mb-3">LLM Kosten &amp; Token-Verbrauch</h2>
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
+            <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-1">Heute</p>
+              <p className="text-2xl font-bold text-blue-400">{today ? formatCost(today.totalCostUsd) : '$0'}</p>
+              <p className="text-xs text-gray-500 mt-1">{today?.totalCalls ?? 0} Calls</p>
+            </div>
+            <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-1">Letzte 7 Tage</p>
+              <p className="text-2xl font-bold text-blue-400">{formatCost(weekTotal)}</p>
+              <p className="text-xs text-gray-500 mt-1">{week.reduce((s, d) => s + d.totalCalls, 0)} Calls</p>
+            </div>
+            <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-1">Tokens heute</p>
+              <p className="text-lg font-semibold text-gray-200">
+                <span className="text-green-400">{formatTokens(today?.totalInputTokens ?? 0)}</span>
+                <span className="text-gray-500 mx-1">/</span>
+                <span className="text-amber-500">{formatTokens(today?.totalOutputTokens ?? 0)}</span>
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Input / Output</p>
+            </div>
+            <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <p className="text-xs text-gray-500 mb-1">Gesamt (All-Time)</p>
+              <p className="text-2xl font-bold text-gray-300">
+                {formatCost(totalByModel.reduce((s, m) => s + m.costUsd, 0))}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">{totalByModel.reduce((s, m) => s + m.calls, 0)} Calls</p>
+            </div>
+          </div>
+
+          {/* Weekly Cost Bars */}
+          {week.length > 0 && (
+            <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <p className="text-sm text-gray-400 mb-3">Kosten letzte 7 Tage</p>
+              <div className="flex items-end gap-1 h-24">
+                {week.map((day) => {
+                  const maxCost = Math.max(...week.map(d => d.totalCostUsd), 0.001);
+                  const height = Math.max(2, (day.totalCostUsd / maxCost) * 100);
+                  return (
+                    <div key={day.date} className="flex-1 flex flex-col items-center gap-1">
+                      <div
+                        className="w-full bg-blue-600 rounded-t"
+                        style={{ height: `${height}%` }}
+                        title={`${day.date}: ${formatCost(day.totalCostUsd)} (${day.totalCalls} Calls)`}
+                      />
+                      <span className="text-[10px] text-gray-500">{day.date.slice(5)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Cost by Model */}
+          {totalByModel.length > 0 && (
+            <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[#0d0d0d] text-gray-400">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-medium">Model</th>
+                    <th className="text-right px-4 py-2 font-medium">Calls</th>
+                    <th className="text-right px-4 py-2 font-medium hidden md:table-cell">Input</th>
+                    <th className="text-right px-4 py-2 font-medium hidden md:table-cell">Output</th>
+                    <th className="text-right px-4 py-2 font-medium">Kosten</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {totalByModel.sort((a, b) => b.costUsd - a.costUsd).map((m) => (
+                    <tr key={m.model} className="border-t border-[#1f1f1f]">
+                      <td className="px-4 py-2 text-gray-200 font-mono text-xs">{m.model}</td>
+                      <td className="px-4 py-2 text-gray-400 text-right">{m.calls}</td>
+                      <td className="px-4 py-2 text-gray-400 text-right hidden md:table-cell">{formatTokens(m.inputTokens)}</td>
+                      <td className="px-4 py-2 text-gray-400 text-right hidden md:table-cell">{formatTokens(m.outputTokens)}</td>
+                      <td className="px-4 py-2 text-blue-400 text-right font-medium">{formatCost(m.costUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Watches */}
       <section>
