@@ -202,8 +202,8 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
 
   private async fetchTranscriptSelfHosted(videoId: string, lang: string): Promise<Array<{ text: string; offset: number; duration: number }> | null> {
     try {
-      const { YoutubeTranscript } = await (Function('return import("youtube-transcript")')() as Promise<{ YoutubeTranscript: { fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> } }>);
-      const segments = await YoutubeTranscript.fetchTranscript(videoId, { lang });
+      const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
+      const segments = await mod.fetchTranscript(videoId, { lang });
       if (segments && segments.length > 0) {
         return segments.map((s: { text: string; offset: number; duration: number }) => ({
           text: s.text,
@@ -215,8 +215,8 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       // Try English fallback
       if (lang !== 'en') {
         try {
-          const { YoutubeTranscript } = await (Function('return import("youtube-transcript")')() as Promise<{ YoutubeTranscript: { fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> } }>);
-          const segments = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' });
+          const mod = await (Function('return import("youtube-transcript/dist/youtube-transcript.esm.js")')() as Promise<{ fetchTranscript: (id: string, opts?: { lang?: string }) => Promise<Array<{ text: string; offset: number; duration: number }>> }>);
+          const segments = await mod.fetchTranscript(videoId, { lang: 'en' });
           if (segments && segments.length > 0) {
             return segments.map((s: { text: string; offset: number; duration: number }) => ({
               text: s.text,

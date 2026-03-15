@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-03-15
+
+### Fixed
+- **YouTube Skill: Transkript-Import** — `youtube-transcript` Package hat kaputtes Export-Mapping (`"main"` zeigt auf CJS, aber `"type": "module"`). Fix: direkter Import von `dist/youtube-transcript.esm.js`. Transkript-Extraktion funktioniert jetzt
+
 ## [0.17.2] - 2026-03-15
 
 ### Fixed
