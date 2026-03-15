@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-03-15
+
+### Fixed
+- **Web Chat SSE Streaming** — `writeHead()` in der SSE-Response überschrieb CORS/Security Headers die vorher per `setHeader()` gesetzt wurden. CORS Headers werden jetzt direkt im `writeHead()` gesetzt + `flushHeaders()` damit der Browser die SSE-Verbindung sofort öffnet
+
 ## [0.15.9] - 2026-03-15
 
 ### Fixed

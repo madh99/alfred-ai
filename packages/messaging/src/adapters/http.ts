@@ -361,12 +361,17 @@ export class HttpAdapter extends MessagingAdapter {
           existingStream.end();
         }
 
-        // Set up SSE response
+        // Set up SSE response (include CORS + security headers since writeHead replaces setHeader)
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': this.corsOrigin,
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'X-Content-Type-Options': 'nosniff',
         });
+        res.flushHeaders();
 
         this.streams.set(chatId, res);
 
