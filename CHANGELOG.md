@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.5] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: basePath entfernt** — Next.js `basePath: '/alfred'` verursachte doppelten Prefix (`/alfred/alfred/chat`). Entfernt — Alfred's HTTP-Adapter handled den `/alfred/` Prefix serverseitig. Sidebar-Links korrigiert
+
 ## [0.15.4] - 2026-03-15
 
 ### Fixed
