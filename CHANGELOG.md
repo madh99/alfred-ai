@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.4] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: Root-Page zeigt Chat direkt** — `/alfred/` rendert die Chat-Seite statt eines Client-Side-Redirects der im Static Export als 404 erschien
+
 ## [0.15.3] - 2026-03-15
 
 ### Fixed
