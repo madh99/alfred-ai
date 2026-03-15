@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.7] - 2026-03-15
+
+### Fixed
+- **Dashboard: Kosten-Balkendiagramm** — Balken nutzen absolute Pixelhöhen statt CSS-Prozent (funktioniert nicht zuverlässig in Flex-Containern). Minimum 4px Höhe für sichtbare Balken
+
 ## [0.17.6] - 2026-03-15
 
 ### Added

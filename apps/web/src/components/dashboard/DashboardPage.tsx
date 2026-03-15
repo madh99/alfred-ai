@@ -130,18 +130,18 @@ export function DashboardPage() {
           {week.length > 0 && (
             <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <p className="text-sm text-gray-400 mb-3">Kosten letzte 7 Tage</p>
-              <div className="flex items-end gap-1 h-24">
+              <div className="flex items-end gap-1" style={{ height: '96px' }}>
                 {week.map((day) => {
                   const maxCost = Math.max(...week.map(d => d.totalCostUsd), 0.001);
-                  const height = Math.max(2, (day.totalCostUsd / maxCost) * 100);
+                  const barHeight = Math.max(4, Math.round((day.totalCostUsd / maxCost) * 80));
                   return (
-                    <div key={day.date} className="flex-1 flex flex-col items-center gap-1">
+                    <div key={day.date} className="flex-1 flex flex-col items-center justify-end" style={{ height: '96px' }}>
                       <div
                         className="w-full bg-blue-600 rounded-t"
-                        style={{ height: `${height}%` }}
+                        style={{ height: `${barHeight}px` }}
                         title={`${day.date}: ${formatCost(day.totalCostUsd)} (${day.totalCalls} Calls)`}
                       />
-                      <span className="text-[10px] text-gray-500">{day.date.slice(5)}</span>
+                      <span className="text-[10px] text-gray-500 mt-1">{day.date.slice(5)}</span>
                     </div>
                   );
                 })}
