@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-03-15
+
+### Fixed
+- **YouTube Skill: Channel-Handle-Auflösung** — `@Handle` wird jetzt über die YouTube Channels API (`forHandle`) aufgelöst statt nur über Search. Channel-URLs (`youtube.com/@name`) werden korrekt erkannt
+- **YouTube Skill: Channel-URL bei info/transcript** — Wenn eine Channel-URL statt einer Video-URL übergeben wird, leitet der Skill automatisch zur `channel` Aktion weiter statt einen Fehler zu werfen
+- **YouTube Skill: Bessere Fehlermeldungen** — Klarere Fehlertexte mit Hinweis auf erwartetes Format
+
 ## [0.17.1] - 2026-03-15
 
 ### Added

@@ -44,6 +44,14 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const action = input.action as string;
 
+    // Auto-detect: if info/transcript is called with a channel URL, redirect to channel action
+    if ((action === 'info' || action === 'transcript') && !this.extractVideoId(input)) {
+      const urlStr = (input.url as string) ?? (input.videoId as string) ?? '';
+      if (urlStr.includes('@') || urlStr.includes('/channel/') || urlStr.includes('/c/') || urlStr.includes('/user/')) {
+        return this.channelVideos({ ...input, action: 'channel', channelName: urlStr });
+      }
+    }
+
     switch (action) {
       case 'search': return this.search(input);
       case 'info': return this.videoInfo(input);
@@ -240,11 +248,35 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     const channelName = input.channelName as string | undefined;
     const maxResults = Math.min((input.maxResults as number) ?? 5, 20);
 
-    // Resolve channel name to ID
+    // Extract handle or channel ID from URL
+    const urlInput = channelName ?? channelId ?? '';
+    const handleMatch = /@([\w.-]+)/.exec(urlInput);
+    const channelIdMatch = /(?:channel\/)(UC[\w-]{22})/.exec(urlInput);
+
+    if (channelIdMatch) {
+      channelId = channelIdMatch[1];
+    }
+
+    // Resolve handle (@...) via Channels API
+    if (!channelId && handleMatch) {
+      const handleParams = new URLSearchParams({
+        part: 'snippet',
+        forHandle: handleMatch[1],
+        key: this.config.apiKey,
+      });
+      const handleRes = await fetch(`${YT_API_BASE}/channels?${handleParams}`);
+      if (handleRes.ok) {
+        const handleData = await handleRes.json() as { items?: Array<{ id: string; snippet: Record<string, unknown> }> };
+        channelId = handleData.items?.[0]?.id;
+      }
+    }
+
+    // Resolve channel name via Search API
     if (!channelId && channelName) {
+      const cleanName = channelName.replace(/^@/, '').replace(/https?:\/\/.*youtube\.com\//, '');
       const searchParams = new URLSearchParams({
         part: 'snippet',
-        q: channelName,
+        q: cleanName,
         type: 'channel',
         maxResults: '1',
         key: this.config.apiKey,
@@ -256,7 +288,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       }
     }
 
-    if (!channelId) return { success: false, error: 'Missing "channelId" or "channelName"' };
+    if (!channelId) return { success: false, error: `Could not resolve channel "${channelName ?? channelId}". Try a channel ID (starts with UC) or handle (@name).` };
 
     const params = new URLSearchParams({
       part: 'snippet',
