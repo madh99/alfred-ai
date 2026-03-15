@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-03-15
+
+### Fixed
+- **Web Chat: Status/Response Trennung** — Status-Nachrichten ("Thinking...") werden für die API-Platform als `status` SSE Event gesendet (nicht `response`). Verhindert dass Status-Text in der Antwort erscheint
+
 ## [0.16.5] - 2026-03-15
 
 ### Fixed

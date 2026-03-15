@@ -1159,7 +1159,10 @@ export class Alfred {
           if (status === lastStatus) return;
           lastStatus = status;
           try {
-            if (!statusMessageId) {
+            if (platform === 'api') {
+              // API adapter: always use editMessage (sends 'status' SSE event, not 'response')
+              await adapter.editMessage(message.chatId, statusMessageId ?? '', status);
+            } else if (!statusMessageId) {
               statusMessageId = await adapter.sendMessage(message.chatId, status);
             } else {
               await adapter.editMessage(message.chatId, statusMessageId, status);
