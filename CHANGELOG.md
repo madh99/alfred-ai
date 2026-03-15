@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-03-15
+
+### Added
+- **YouTube Skill: Setup-Wizard** — Frage im Wizard mit Anleitung (Google Cloud Console → YouTube Data API v3), optionaler Supadata Key
+- **YouTube Skill: README Doku** — Eigene Sektion mit Beispielen, Config, ENV-Variablen
+
 ## [0.17.0] - 2026-03-15
 
 ### Added
