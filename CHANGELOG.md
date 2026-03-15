@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.14.7] - 2026-03-15
+
+### Fixed
+- **Codex CLI: Non-Interactive Modus** — Setup-Wizard generiert jetzt `codex exec --dangerously-bypass-approvals-and-sandbox` statt interaktivem `codex` (braucht TTY). Code-Agent-Orchestration mit Codex funktioniert jetzt headless
+- **Reasoning Engine: Weather Location** — Reasoning-Pass übergibt jetzt `action: 'current'` und `location` (aus Briefing-Config) an den Weather-Skill. Vorher: leeres Input-Objekt → `Missing required field "location"`
+
 ## [0.14.6] - 2026-03-14
 
 ### Security

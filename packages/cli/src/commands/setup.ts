@@ -283,7 +283,7 @@ const KNOWN_AGENTS: KnownAgent[] = [
     name: 'codex',
     label: 'OpenAI Codex CLI',
     command: 'codex',
-    argsTemplate: ['{{prompt}}'],
+    argsTemplate: ['exec', '--dangerously-bypass-approvals-and-sandbox', '{{prompt}}'],
     promptVia: 'arg',
     whichCmd: 'codex',
   },

@@ -60,6 +60,7 @@ export class ReasoningEngine {
     config: ReasoningConfig | undefined,
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
+    private readonly defaultLocation?: string,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'morning_noon_evening';
@@ -199,7 +200,7 @@ export class ReasoningEngine {
     // Parallel: calendar + weather + energy (async), rest is sync SQLite
     const [events, weather, energy] = await Promise.all([
       this.fetchCalendar(now),
-      this.fetchSkillData('weather', {}),
+      this.fetchSkillData('weather', { action: 'current', ...(this.defaultLocation ? { location: this.defaultLocation } : {}) }),
       this.fetchSkillData('energy_price', { action: 'current' }),
     ]);
 

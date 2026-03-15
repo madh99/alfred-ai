@@ -634,6 +634,7 @@ export class Alfred {
           this.config.reasoning,
           this.logger.child({ component: 'reasoning-engine' }),
           activityLogger,
+          this.config.briefing?.location,
         );
       }
     }
