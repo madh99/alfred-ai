@@ -125,6 +125,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_DOCKER_VERIFY_TLS: ['docker', 'verifyTls'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
+  // YouTube
+  ALFRED_YOUTUBE_API_KEY: ['youtube', 'apiKey'],
+  ALFRED_SUPADATA_API_KEY: ['youtube', 'supadata', 'apiKey'],
   // Google Routing
   ALFRED_ROUTING_API_KEY: ['routing', 'apiKey'],
   // Microsoft To Do

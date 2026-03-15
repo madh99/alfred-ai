@@ -231,6 +231,14 @@ export const ProjectAgentsConfigSchema = z.object({
   buildCommandTimeoutMs: z.number().optional(),
 });
 
+export const YouTubeConfigSchema = z.object({
+  apiKey: z.string(),
+  supadata: z.object({
+    enabled: z.boolean().optional(),
+    apiKey: z.string().optional(),
+  }).optional(),
+});
+
 export const ProxmoxConfigSchema = z.object({
   baseUrl: z.string(),
   tokenId: z.string(),
@@ -375,6 +383,7 @@ export const AlfredConfigSchema = z.object({
   api: ApiConfigSchema.optional(),
   codeAgents: CodeAgentsConfigSchema.optional(),
   projectAgents: ProjectAgentsConfigSchema.optional(),
+  youtube: YouTubeConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),

@@ -475,6 +475,13 @@ export class Alfred {
     skillRegistry.register(new FeedReaderSkill(memoryRepo));
     this.logger.info('Feed reader skill registered');
 
+    // 4t. YouTube (optional, requires API key)
+    if (this.config.youtube?.apiKey) {
+      const { YouTubeSkill } = await import('@alfred/skills');
+      skillRegistry.register(new YouTubeSkill(this.config.youtube));
+      this.logger.info('YouTube skill registered');
+    }
+
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)

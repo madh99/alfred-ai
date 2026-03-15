@@ -219,6 +219,14 @@ export interface ProjectAgentsConfig {
   buildCommandTimeoutMs?: number;
 }
 
+export interface YouTubeConfig {
+  apiKey: string;
+  supadata?: {
+    enabled?: boolean;
+    apiKey?: string;
+  };
+}
+
 export interface ProxmoxConfig {
   baseUrl: string;
   tokenId: string;
@@ -362,6 +370,7 @@ export interface AlfredConfig {
   api?: ApiConfig;
   codeAgents?: CodeAgentsConfig;
   projectAgents?: ProjectAgentsConfig;
+  youtube?: YouTubeConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;

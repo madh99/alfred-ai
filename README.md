@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.16.7-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.17.0-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -90,7 +90,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
 | **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
-| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring |
+| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring, **YouTube** (Suche, Video-Info, Transkript-Extraktion, Channel-Monitoring) |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration, **autonomous project agent** (plan → code → validate → fix → commit loop, Telegram-controlled) |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server) |

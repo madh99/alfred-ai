@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-03-15
+
+### Added
+- **YouTube Skill** — Neuer Skill `youtube` mit 4 Aktionen: `search` (YouTube-Suche), `info` (Video-Details mit Views/Likes/Dauer), `transcript` (Transkript-Extraktion mit Timestamps), `channel` (Letzte Videos eines Channels). Self-hosted Transkripte via `youtube-transcript` npm (kostenlos, kein API-Key). Supadata als optionaler Fallback. Watch-kompatibel (`channel → newCount`). Skill-Filter: YouTube/Video/Transkript Keywords für `information` Category
+
 ## [0.16.7] - 2026-03-15
 
 ### Added
