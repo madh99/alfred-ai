@@ -96,7 +96,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleRequest(req, res);
     };
 
-    const tlsOpts = this.resolveTls();
+    const tlsOpts = await this.resolveTls();
     if (tlsOpts) {
       this.server = https.createServer(tlsOpts, handler);
     } else {
@@ -203,7 +203,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
   }
 
-  private resolveTls(): { cert: string | Buffer; key: string | Buffer } | null {
+  private async resolveTls(): Promise<{ cert: string | Buffer; key: string | Buffer } | null> {
     if (!this.tls?.enabled) return null;
 
     // User-provided cert
@@ -227,35 +227,31 @@ export class HttpAdapter extends MessagingAdapter {
       return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
     }
 
-    // Generate self-signed cert using Node.js crypto
+    // Generate self-signed cert using openssl CLI
     try {
-      const { generateKeyPairSync, createSign, randomBytes } = require('node:crypto');
-      const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+      const { execFileSync } = await import('node:child_process');
+      const { generateKeyPairSync } = await import('node:crypto');
+
+      const { privateKey } = generateKeyPairSync('rsa', {
         modulusLength: 2048,
         publicKeyEncoding: { type: 'spki', format: 'pem' },
         privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
       });
 
-      // Create a minimal self-signed X.509 certificate
-      // Using a simplified DER construction for the cert
-      const now = new Date();
-      const notAfter = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
-      const serial = randomBytes(8).toString('hex');
-
-      // For self-signed, we use a simple approach: openssl-like cert generation
-      // Since Node.js doesn't have a built-in X.509 cert generator, use execSync
-      const { execSync } = require('node:child_process');
       fs.mkdirSync(tlsDir, { recursive: true });
       fs.writeFileSync(keyPath, privateKey, { mode: 0o600 });
 
-      execSync(
-        `openssl req -new -x509 -key "${keyPath}" -out "${certPath}" -days 365 -subj "/CN=Alfred AI/O=Alfred" -addext "subjectAltName=IP:127.0.0.1,IP:0.0.0.0,DNS:localhost"`,
-        { stdio: 'pipe' },
-      );
+      execFileSync('openssl', [
+        'req', '-new', '-x509',
+        '-key', keyPath,
+        '-out', certPath,
+        '-days', '365',
+        '-subj', '/CN=Alfred AI/O=Alfred',
+        '-addext', 'subjectAltName=IP:127.0.0.1,IP:0.0.0.0,DNS:localhost',
+      ], { stdio: 'pipe' });
 
       return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };
     } catch (err) {
-      // Fallback: try without openssl (some systems don't have it)
       console.warn(`[HttpAdapter] Self-signed TLS cert generation failed: ${err instanceof Error ? err.message : String(err)}. Running without TLS.`);
       return null;
     }

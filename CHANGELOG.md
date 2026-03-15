@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.4] - 2026-03-15
+
+### Fixed
+- **TLS: ESM-Kompatibilität** — `resolveTls()` nutzt `await import('node:crypto')` und `await import('node:child_process')` statt `require()` (nicht verfügbar in ESM-Bundles). Self-signed Cert-Generierung funktioniert jetzt. Zusätzlich `execFileSync` Array-Form statt Shell-String für openssl-Aufruf
+
 ## [0.17.3] - 2026-03-15
 
 ### Fixed
