@@ -16,7 +16,7 @@ export function Sidebar() {
   return (
     <aside className="w-16 md:w-56 bg-[#111111] border-r border-[#1f1f1f] flex flex-col h-full">
       <div className="p-4 border-b border-[#1f1f1f]">
-        <Link href="/chat" className="flex items-center gap-2">
+        <Link href="/" className="flex items-center gap-2">
           <span className="text-xl font-bold text-blue-500 font-mono">A</span>
           <span className="hidden md:inline text-sm font-semibold text-gray-200">Alfred</span>
         </Link>

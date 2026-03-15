@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.6] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: Navigation Links** — Next.js `basePath` prefixed Links automatisch, Sidebar-Links nutzen jetzt relative Pfade (`/chat` statt `/alfred/chat`). Verhindert doppelten `/alfred/alfred/` Prefix
+- **npm publish: Web-UI Dateien inkludiert** — `.npmignore` im CLI-Package erstellt, damit `.gitignore` nicht die `bundle/web-ui/` Dateien beim Publish ausschließt
+
 ## [0.15.5] - 2026-03-15
 
 ### Fixed
