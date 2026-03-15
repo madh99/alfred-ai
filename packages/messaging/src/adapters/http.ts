@@ -277,13 +277,18 @@ export class HttpAdapter extends MessagingAdapter {
       else { res.writeHead(404, { 'Content-Type': 'text/html' }); res.end('Not found'); return; }
     }
 
-    const stat = fs.statSync(target);
-    if (stat.isDirectory()) {
-      const indexPath = path.join(target, 'index.html');
-      if (fs.existsSync(indexPath)) target = indexPath;
-      else { res.writeHead(404); res.end(); return; }
-    }
+    // Resolve directories to index.html
+    try {
+      const initialStat = fs.statSync(target);
+      if (initialStat.isDirectory()) {
+        const indexPath = path.join(target, 'index.html');
+        if (fs.existsSync(indexPath)) target = indexPath;
+        else { res.writeHead(404); res.end(); return; }
+      }
+    } catch { res.writeHead(404); res.end(); return; }
 
+    // Get final stat AFTER resolving directory → index.html
+    const stat = fs.statSync(target);
     const ext = path.extname(target).toLowerCase();
     const contentType = MIME_TYPES[ext] ?? 'application/octet-stream';
     const cacheControl = ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable';

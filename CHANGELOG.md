@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.9] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: Content-Length Bug** — `stat.size` wurde auf dem Directory gemacht statt auf der aufgelösten `index.html`. Browser brach Response nach falscher Content-Length ab → weiße Seite. stat() wird jetzt erst nach Directory→index.html Auflösung aufgerufen
+
 ## [0.15.8] - 2026-03-15
 
 ### Fixed
