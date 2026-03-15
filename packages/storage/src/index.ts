@@ -30,6 +30,8 @@ export { ActivityRepository } from './repositories/activity-repository.js';
 export { SkillHealthRepository } from './repositories/skill-health-repository.js';
 export { WorkflowRepository } from './repositories/workflow-repository.js';
 export { FeedbackRepository } from './repositories/feedback-repository.js';
+export { DatabaseConnectionRepository } from './repositories/database-connection-repository.js';
+export type { DatabaseConnection } from './repositories/database-connection-repository.js';
 export type { FeedbackEvent } from './repositories/feedback-repository.js';
 export { ProjectAgentSessionRepository } from './repositories/project-agent-session-repository.js';
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';

@@ -219,6 +219,30 @@ export interface ProjectAgentsConfig {
   buildCommandTimeoutMs?: number;
 }
 
+export interface DatabaseConnectionConfig {
+  name: string;
+  type: 'postgres' | 'mysql' | 'mssql' | 'mongodb' | 'influx' | 'sqlite' | 'redis';
+  host: string;
+  port?: number;
+  database?: string;
+  username?: string;
+  password?: string;
+  options?: {
+    ssl?: boolean;
+    readOnly?: boolean;
+    timeoutMs?: number;
+    rowLimit?: number;
+  };
+}
+
+export interface DatabaseConfig {
+  enabled: boolean;
+  defaultRowLimit?: number;
+  defaultTimeoutMs?: number;
+  allowWrite?: boolean;
+  connections?: DatabaseConnectionConfig[];
+}
+
 export interface YouTubeConfig {
   apiKey: string;
   supadata?: {
@@ -371,6 +395,7 @@ export interface AlfredConfig {
   codeAgents?: CodeAgentsConfig;
   projectAgents?: ProjectAgentsConfig;
   youtube?: YouTubeConfig;
+  database?: DatabaseConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;

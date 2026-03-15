@@ -608,4 +608,24 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 30,
+    description: 'Database Skill — connection storage',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS database_connections (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL UNIQUE,
+          type TEXT NOT NULL,
+          host TEXT NOT NULL,
+          port INTEGER,
+          database_name TEXT,
+          username TEXT,
+          auth_config TEXT,
+          options TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `);
+    },
+  },
 ];

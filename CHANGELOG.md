@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-03-15
+
+### Added
+- **Database Skill** — Neuer Skill `database` für Multi-DB-Zugriff. Unterstützt PostgreSQL, MySQL/MariaDB, MS SQL, MongoDB, InfluxDB, SQLite, Redis. Aktionen: `connect` (per Chat konfigurieren), `disconnect`, `list`, `schema` (Tabellen/Collections), `describe` (Spalten), `query` (SQL/Flux/MQL/Redis), `test`. Verbindungen persistent in DB gespeichert. Read-Only Default, Row-Limit (100), Query-Timeout (30s). Watch-kompatibel (`query → rowCount`). DB Migration v30
+
 ## [0.17.7] - 2026-03-15
 
 ### Fixed

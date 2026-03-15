@@ -231,6 +231,30 @@ export const ProjectAgentsConfigSchema = z.object({
   buildCommandTimeoutMs: z.number().optional(),
 });
 
+export const DatabaseConnectionConfigSchema = z.object({
+  name: z.string(),
+  type: z.enum(['postgres', 'mysql', 'mssql', 'mongodb', 'influx', 'sqlite', 'redis']),
+  host: z.string(),
+  port: z.coerce.number().optional(),
+  database: z.string().optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  options: z.object({
+    ssl: z.boolean().optional(),
+    readOnly: z.boolean().optional(),
+    timeoutMs: z.number().optional(),
+    rowLimit: z.number().optional(),
+  }).optional(),
+});
+
+export const DatabaseConfigSchema = z.object({
+  enabled: z.boolean(),
+  defaultRowLimit: z.number().optional(),
+  defaultTimeoutMs: z.number().optional(),
+  allowWrite: z.boolean().optional(),
+  connections: z.array(DatabaseConnectionConfigSchema).optional(),
+});
+
 export const YouTubeConfigSchema = z.object({
   apiKey: z.string(),
   supadata: z.object({
@@ -384,6 +408,7 @@ export const AlfredConfigSchema = z.object({
   codeAgents: CodeAgentsConfigSchema.optional(),
   projectAgents: ProjectAgentsConfigSchema.optional(),
   youtube: YouTubeConfigSchema.optional(),
+  database: DatabaseConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),

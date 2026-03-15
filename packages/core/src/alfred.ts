@@ -477,7 +477,32 @@ export class Alfred {
     skillRegistry.register(new FeedReaderSkill(memoryRepo));
     this.logger.info('Feed reader skill registered');
 
-    // 4t. YouTube (optional, requires API key)
+    // 4t. Database (optional)
+    if (this.config.database?.enabled) {
+      const { DatabaseSkill } = await import('@alfred/skills');
+      const { DatabaseConnectionRepository } = await import('@alfred/storage');
+      const dbConnRepo = new DatabaseConnectionRepository(db);
+      const dbSkill = new DatabaseSkill(this.config.database, dbConnRepo);
+
+      // Pre-load connections from config
+      if (this.config.database.connections) {
+        for (const conn of this.config.database.connections) {
+          if (!dbConnRepo.getByName(conn.name)) {
+            dbConnRepo.create({
+              name: conn.name, type: conn.type, host: conn.host, port: conn.port,
+              databaseName: conn.database, username: conn.username,
+              authConfig: conn.password ? { password: conn.password } : undefined,
+              options: { readOnly: conn.options?.readOnly ?? true, rowLimit: conn.options?.rowLimit, timeoutMs: conn.options?.timeoutMs },
+            });
+          }
+        }
+      }
+
+      skillRegistry.register(dbSkill);
+      this.logger.info('Database skill registered');
+    }
+
+    // 4u. YouTube (optional, requires API key)
     if (this.config.youtube?.apiKey) {
       const { YouTubeSkill } = await import('@alfred/skills');
       skillRegistry.register(new YouTubeSkill(this.config.youtube));
