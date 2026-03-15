@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.15.8] - 2026-03-15
+
+### Fixed
+- **Web Chat UI: Navigation** — Sidebar nutzt native `<a>` Tags mit absoluten Pfaden (`/alfred/chat/`) statt Next.js `<Link>` (Client-Side-Navigation verursachte weiße Seiten bei Static Export)
+
 ## [0.15.7] - 2026-03-15
 
 ### Fixed
