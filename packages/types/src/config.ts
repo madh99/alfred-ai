@@ -251,6 +251,25 @@ export interface YouTubeConfig {
   };
 }
 
+export interface ClusterNodeConfig {
+  id: string;
+  host: string;
+  port: number;
+  priority: number;
+}
+
+export interface ClusterConfig {
+  enabled: boolean;
+  nodeId: string;
+  role: 'primary' | 'secondary';
+  redisUrl: string;
+  token?: string;
+  nodes?: ClusterNodeConfig[];
+  heartbeatIntervalMs?: number;
+  failoverAfterMs?: number;
+  adapters?: string[];
+}
+
 export interface ProxmoxConfig {
   baseUrl: string;
   tokenId: string;
@@ -396,6 +415,7 @@ export interface AlfredConfig {
   projectAgents?: ProjectAgentsConfig;
   youtube?: YouTubeConfig;
   database?: DatabaseConfig;
+  cluster?: ClusterConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;

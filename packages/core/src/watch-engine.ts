@@ -36,6 +36,7 @@ export class WatchEngine {
     private readonly activityLogger?: ActivityLogger,
     private readonly skillHealthTracker?: SkillHealthTracker,
     private readonly llmProvider?: LLMProvider,
+    private readonly clusterManager?: { acquireLock(key: string, ttlMs?: number): Promise<boolean>; releaseLock(key: string): Promise<void> },
   ) {}
 
   start(): void {
@@ -65,10 +66,23 @@ export class WatchEngine {
       const dueWatches = this.watchRepo.getDue();
 
       for (const watch of dueWatches) {
+        // Distributed lock: only one node processes each watch
+        if (this.clusterManager) {
+          const acquired = await this.clusterManager.acquireLock(`watch:${watch.id}`, 5 * 60_000);
+          if (!acquired) {
+            this.logger.debug({ watchId: watch.id }, 'Watch lock held by another node, skipping');
+            continue;
+          }
+        }
+
         try {
           await this.checkWatch(watch);
         } catch (err) {
           this.logger.error({ err, watchId: watch.id }, 'Failed to check watch');
+        } finally {
+          if (this.clusterManager) {
+            await this.clusterManager.releaseLock(`watch:${watch.id}`);
+          }
         }
       }
     } catch (err) {

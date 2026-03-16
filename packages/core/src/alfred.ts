@@ -97,6 +97,7 @@ export class Alfred {
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
+  private clusterManager?: import('./cluster/cluster-manager.js').ClusterManager;
   private webAuthCallback?: {
     loginWithCode: (code: string) => { success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string };
     getUserByToken: (token: string) => { userId: string; username: string; role: string } | null;
@@ -723,6 +724,7 @@ export class Alfred {
       activityLogger,
       skillHealthTracker,
       llmProvider,
+      this.clusterManager ?? undefined,
     );
 
     // 7f. Initialize workflow chains
@@ -780,6 +782,29 @@ export class Alfred {
       const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
       const alfredUserRepo = new AlfredUserRepository(db);
       this.pipeline.setAlfredUserRepo(alfredUserRepo, ROLE_SKILL_ACCESS);
+    }
+
+    // 7c. Initialize cluster manager (if configured)
+    if (this.config.cluster?.enabled) {
+      const { ClusterManager } = await import('./cluster/cluster-manager.js');
+      this.clusterManager = new ClusterManager(
+        this.config.cluster,
+        this.logger.child({ component: 'cluster' }),
+      );
+      await this.clusterManager.connect();
+
+      // Subscribe to cross-node messages
+      this.clusterManager.subscribe('messages', (data) => {
+        const { targetPlatform, chatId, text } = data as { targetPlatform: string; chatId: string; text: string };
+        const adapter = this.adapters.get(targetPlatform as any);
+        if (adapter) {
+          adapter.sendMessage(chatId, text).catch(err => {
+            this.logger.warn({ err, targetPlatform, chatId }, 'Cross-node message delivery failed');
+          });
+        }
+      });
+
+      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
     }
 
     // 8. Initialize messaging adapters

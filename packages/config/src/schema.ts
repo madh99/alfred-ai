@@ -247,6 +247,25 @@ export const DatabaseConnectionConfigSchema = z.object({
   }).optional(),
 });
 
+export const ClusterNodeConfigSchema = z.object({
+  id: z.string(),
+  host: z.string(),
+  port: z.coerce.number(),
+  priority: z.number(),
+});
+
+export const ClusterConfigSchema = z.object({
+  enabled: z.boolean(),
+  nodeId: z.string(),
+  role: z.enum(['primary', 'secondary']),
+  redisUrl: z.string(),
+  token: z.string().optional(),
+  nodes: z.array(ClusterNodeConfigSchema).optional(),
+  heartbeatIntervalMs: z.number().optional(),
+  failoverAfterMs: z.number().optional(),
+  adapters: z.array(z.string()).optional(),
+});
+
 export const DatabaseConfigSchema = z.object({
   enabled: z.boolean(),
   defaultRowLimit: z.number().optional(),
@@ -409,6 +428,7 @@ export const AlfredConfigSchema = z.object({
   projectAgents: ProjectAgentsConfigSchema.optional(),
   youtube: YouTubeConfigSchema.optional(),
   database: DatabaseConfigSchema.optional(),
+  cluster: ClusterConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),
