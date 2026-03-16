@@ -702,4 +702,11 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 34,
+    description: 'Multi-User — document visibility (private/shared/public)',
+    up(db) {
+      db.exec(`ALTER TABLE documents ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'`);
+    },
+  },
 ];

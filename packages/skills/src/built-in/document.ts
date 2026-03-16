@@ -17,15 +17,15 @@ export interface DocumentProcessorInterface {
   ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }>;
 }
 
-type DocumentAction = 'ingest' | 'search' | 'summarize' | 'list' | 'delete';
+type DocumentAction = 'ingest' | 'search' | 'summarize' | 'list' | 'delete' | 'share' | 'unshare';
 
 export class DocumentSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'document',
     category: 'files',
     description:
-      'Ingest, search, summarize, list, or delete documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. ' +
-      'Documents are chunked and embedded for semantic search.',
+      'Ingest, search, summarize, list, delete, share, or unshare documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. ' +
+      'Documents are chunked and embedded for semantic search. Documents can be private (default), shared with specific users, or public (visible to all users).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 120_000,
@@ -34,15 +34,16 @@ export class DocumentSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['ingest', 'search', 'summarize', 'list', 'delete'],
+          enum: ['ingest', 'search', 'summarize', 'list', 'delete', 'share', 'unshare'],
           description: 'Action to perform',
         },
         file_path: { type: 'string', description: 'Path to the file (for ingest)' },
         filename: { type: 'string', description: 'Original filename (for ingest)' },
         mime_type: { type: 'string', description: 'MIME type of the file (for ingest)' },
         query: { type: 'string', description: 'Search query (for search)' },
-        document_id: { type: 'string', description: 'Document ID (for summarize, delete)' },
+        document_id: { type: 'string', description: 'Document ID (for summarize, delete, share, unshare)' },
         limit: { type: 'number', description: 'Max results (for search, list)' },
+        visibility: { type: 'string', enum: ['private', 'shared', 'public'], description: 'Document visibility (for share). "public" = all users, "shared" = specific users, "private" = only owner' },
       },
       required: ['action'],
     },
@@ -72,11 +73,15 @@ export class DocumentSkill extends Skill {
       case 'list':
         return this.list(input, context);
       case 'delete':
-        return this.deleteDoc(input);
+        return this.deleteDoc(input, context);
+      case 'share':
+        return this.shareDoc(input, context);
+      case 'unshare':
+        return this.unshareDoc(input, context);
       default:
         return {
           success: false,
-          error: `Unknown action: "${String(action)}". Valid actions: ingest, search, summarize, list, delete`,
+          error: `Unknown action: "${String(action)}". Valid actions: ingest, search, summarize, list, delete, share, unshare`,
         };
     }
   }
@@ -218,18 +223,9 @@ export class DocumentSkill extends Skill {
     context: SkillContext,
   ): SkillResult {
     const limit = (input.limit as number) || 50;
-    // List documents across all linked user IDs
-    const allIds = allUserIds(context);
-    const seenDocs = new Set<string>();
-    const docs: ReturnType<typeof this.docRepo.listByUser> = [];
-    for (const uid of allIds) {
-      for (const d of this.docRepo.listByUser(uid)) {
-        if (!seenDocs.has(d.id)) {
-          seenDocs.add(d.id);
-          docs.push(d);
-        }
-      }
-    }
+    // List own + public + shared documents
+    const userId = effectiveUserId(context);
+    const docs = this.docRepo.listAccessible(userId);
     const limited = docs.slice(0, limit);
 
     if (limited.length === 0) {
@@ -237,7 +233,11 @@ export class DocumentSkill extends Skill {
     }
 
     const display = limited
-      .map(d => `- **${d.filename}** [id=${d.id}] — ${d.mimeType}, ${d.chunkCount} chunks, ${d.sizeBytes} bytes`)
+      .map(d => {
+        const vis = d.visibility !== 'private' ? ` [${d.visibility}]` : '';
+        const owner = d.userId !== userId ? ` (von ${d.userId})` : '';
+        return `- **${d.filename}**${vis}${owner} [id=${d.id}] — ${d.mimeType}, ${d.chunkCount} chunks`;
+      })
       .join('\n');
 
     return {
@@ -247,7 +247,7 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private deleteDoc(input: Record<string, unknown>): SkillResult {
+  private deleteDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const documentId = input.document_id as string | undefined;
 
     if (!documentId || typeof documentId !== 'string') {
@@ -259,12 +259,60 @@ export class DocumentSkill extends Skill {
       return { success: false, error: `Document "${documentId}" not found` };
     }
 
+    // Only owner or admin can delete
+    const userId = effectiveUserId(context);
+    if (doc.userId !== userId && context.userRole !== 'admin') {
+      return { success: false, error: 'Nur der Owner oder Admin kann dieses Dokument löschen.' };
+    }
+
     this.docRepo.deleteDocument(documentId);
 
     return {
       success: true,
       data: { documentId },
       display: `Document "${doc.filename}" deleted.`,
+    };
+  }
+
+  private shareDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
+    const documentId = input.document_id as string;
+    const visibility = (input.visibility as 'private' | 'shared' | 'public') ?? 'public';
+    if (!documentId) return { success: false, error: 'Missing "document_id"' };
+
+    const doc = this.docRepo.getDocument(documentId);
+    if (!doc) return { success: false, error: `Document "${documentId}" not found` };
+
+    // Only owner or admin can share
+    const userId = effectiveUserId(context);
+    if (doc.userId !== userId && context.userRole !== 'admin') {
+      return { success: false, error: 'Nur der Owner oder Admin kann Dokumente teilen.' };
+    }
+
+    this.docRepo.setVisibility(documentId, visibility);
+    return {
+      success: true,
+      data: { documentId, visibility },
+      display: `✅ Dokument "${doc.filename}" ist jetzt ${visibility === 'public' ? 'für alle sichtbar' : visibility === 'shared' ? 'geteilt' : 'privat'}.`,
+    };
+  }
+
+  private unshareDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
+    const documentId = input.document_id as string;
+    if (!documentId) return { success: false, error: 'Missing "document_id"' };
+
+    const doc = this.docRepo.getDocument(documentId);
+    if (!doc) return { success: false, error: `Document "${documentId}" not found` };
+
+    const userId = effectiveUserId(context);
+    if (doc.userId !== userId && context.userRole !== 'admin') {
+      return { success: false, error: 'Nur der Owner oder Admin kann die Freigabe ändern.' };
+    }
+
+    this.docRepo.setVisibility(documentId, 'private');
+    return {
+      success: true,
+      data: { documentId },
+      display: `✅ Dokument "${doc.filename}" ist jetzt privat.`,
     };
   }
 }

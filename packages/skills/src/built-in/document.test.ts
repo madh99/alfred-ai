@@ -20,7 +20,7 @@ function createMockDocRepo() {
     createDocument: vi.fn((userId: string, filename: string, mimeType: string, sizeBytes: number): Document => {
       const id = `doc-${++counter}`;
       const now = new Date().toISOString();
-      const doc: Document = { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, createdAt: now };
+      const doc: Document = { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, visibility: 'private', createdAt: now };
       documents.set(id, doc);
       return doc;
     }),
@@ -40,6 +40,9 @@ function createMockDocRepo() {
     getDocument: vi.fn((id: string) => documents.get(id)),
     getChunks: vi.fn((documentId: string) => chunks.get(documentId) ?? []),
     listByUser: vi.fn((userId: string) => [...documents.values()].filter(d => d.userId === userId)),
+    listAccessible: vi.fn((userId: string) => [...documents.values()].filter(d => d.userId === userId || d.visibility === 'public')),
+    setVisibility: vi.fn(),
+    canAccess: vi.fn(() => true),
     deleteDocument: vi.fn((id: string) => {
       documents.delete(id);
       chunks.delete(id);

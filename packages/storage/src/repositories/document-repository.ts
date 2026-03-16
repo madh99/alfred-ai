@@ -16,10 +16,10 @@ export class DocumentRepository {
     const now = new Date().toISOString();
 
     this.db.prepare(
-      'INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, content_hash, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?)',
-    ).run(id, userId, filename, mimeType, sizeBytes, contentHash ?? null, now);
+      'INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, content_hash, visibility, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)',
+    ).run(id, userId, filename, mimeType, sizeBytes, contentHash ?? null, 'private', now);
 
-    return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, contentHash, createdAt: now };
+    return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, contentHash, visibility: 'private', createdAt: now };
   }
 
   findByContentHash(userId: string, hash: string): Document | undefined {
@@ -70,6 +70,56 @@ export class DocumentRepository {
     return rows.map(r => this.mapDocumentRow(r));
   }
 
+  setVisibility(id: string, visibility: 'private' | 'shared' | 'public'): void {
+    this.db.prepare('UPDATE documents SET visibility = ? WHERE id = ?').run(visibility, id);
+  }
+
+  /**
+   * List documents accessible by a user: own + public + shared via shared_resources.
+   */
+  listAccessible(userId: string, sharedDocIds?: string[]): Document[] {
+    const ownRows = this.db.prepare(
+      'SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC',
+    ).all(userId) as Record<string, unknown>[];
+
+    const publicRows = this.db.prepare(
+      'SELECT * FROM documents WHERE visibility = ? AND user_id != ? ORDER BY created_at DESC',
+    ).all('public', userId) as Record<string, unknown>[];
+
+    let sharedRows: Record<string, unknown>[] = [];
+    if (sharedDocIds && sharedDocIds.length > 0) {
+      const placeholders = sharedDocIds.map(() => '?').join(',');
+      sharedRows = this.db.prepare(
+        `SELECT * FROM documents WHERE id IN (${placeholders}) AND user_id != ? ORDER BY created_at DESC`,
+      ).all(...sharedDocIds, userId) as Record<string, unknown>[];
+    }
+
+    const seen = new Set<string>();
+    const result: Document[] = [];
+    for (const rows of [ownRows, publicRows, sharedRows]) {
+      for (const row of rows) {
+        const id = row.id as string;
+        if (!seen.has(id)) {
+          seen.add(id);
+          result.push(this.mapDocumentRow(row));
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Check if a user can access a document (owner, public, or shared).
+   */
+  canAccess(documentId: string, userId: string, sharedDocIds?: string[]): boolean {
+    const doc = this.getDocument(documentId);
+    if (!doc) return false;
+    if (doc.userId === userId) return true;
+    if (doc.visibility === 'public') return true;
+    if (sharedDocIds?.includes(documentId)) return true;
+    return false;
+  }
+
   deleteDocument(id: string): void {
     const deleteAll = this.db.transaction(() => {
       // Get embedding IDs from chunks before deleting them
@@ -109,6 +159,7 @@ export class DocumentRepository {
       sizeBytes: row.size_bytes as number,
       chunkCount: row.chunk_count as number,
       contentHash: (row.content_hash as string) || undefined,
+      visibility: (row.visibility as Document['visibility']) ?? 'private',
       createdAt: row.created_at as string,
     };
   }

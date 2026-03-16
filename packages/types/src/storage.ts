@@ -167,6 +167,7 @@ export interface Document {
   sizeBytes: number;
   chunkCount: number;
   contentHash?: string;
+  visibility: 'private' | 'shared' | 'public';
   createdAt: string;
 }
 
