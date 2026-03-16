@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.1-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.2-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -173,7 +173,7 @@ Alfred supports multiple users with role-based access control. Each user's data 
 
 ### High Availability (optional)
 
-Run multiple Alfred nodes for failover and redundancy. Requires Redis + PostgreSQL.
+Active-Active cluster — all nodes are equal, work is split automatically via PostgreSQL atomic claims. No single point of failure.
 
 ```yaml
 storage:
@@ -182,7 +182,6 @@ storage:
 cluster:
   enabled: true
   nodeId: node-1
-  role: primary
   redisUrl: redis://redis:6379
 fileStore:
   backend: s3
@@ -190,11 +189,13 @@ fileStore:
   s3Bucket: alfred-files
 ```
 
-- **PostgreSQL** — Shared database for all nodes (SQLite remains default for single-instance)
-- **Redis** — Distributed locks (watches, schedulers, reminders), heartbeat, pub/sub
-- **S3/MinIO** — Shared file storage for uploads and documents
-- **Failover** — Secondary detects primary failure via heartbeat, takes over automatically
-- **`alfred migrate-db`** — Migrate existing SQLite data to PostgreSQL
+- **Active-Active** — All nodes run schedulers. `FOR UPDATE SKIP LOCKED` splits work atomically. No duplicates.
+- **Adapter Claims** — Messaging adapters (Telegram, Discord, etc.) claimed by one node. Automatic failover on death.
+- **Message Dedup** — Every inbound message processed exactly once via `processed_messages` table.
+- **PostgreSQL** — Shared database, atomic coordination (replaces Redis locks). SQLite remains default for single-instance.
+- **Redis** — Heartbeat, pub/sub, cross-node messaging (optional supplement — PG heartbeat as fallback).
+- **S3/MinIO** — Shared file storage for uploads and documents.
+- **`alfred migrate-db`** — Migrate existing SQLite data to PostgreSQL.
 
 ### Infrastructure Management
 

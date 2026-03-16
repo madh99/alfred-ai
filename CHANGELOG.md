@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.2] - 2026-03-16
+
+### Added
+- **HA Active-Active** — Split-Brain-sicheres Design. Atomare DB-Claims via `FOR UPDATE SKIP LOCKED` statt Redis-Locks. Skalierbar auf N Nodes.
+- **Adapter-Claims** — Messaging-Adapter (Telegram, Discord, Matrix, Signal) werden via DB-Tabelle von genau einem Node betrieben. Automatisches Failover bei Node-Ausfall.
+- **Message-Dedup** — `processed_messages` Tabelle verhindert doppelte Nachrichtenverarbeitung bei HA.
+- **PG Migrator** — Inkrementelles Migrationssystem für PostgreSQL (`PgMigrator`, `PG_MIGRATIONS`). Migration v36: HA-Tabellen + Claim-Spalten.
+- **PG Heartbeat** — Fallback Heartbeat via PostgreSQL `node_heartbeats` Tabelle wenn Redis nicht verfügbar.
+- **nodeId in SkillContext** — Node-lokale Skills (shell, file, docker, etc.) annotieren Responses mit `[nodeId]` bei HA.
+
+### Fixed
+- **BMW Token-Isolation** — Tokens werden in DB gespeichert (HA-sicher), Datei als Fallback für Single-Instance.
+- **ConfigureSkill HA-Warnung** — Warnung dass `.env`-Änderungen nur lokal gelten bei HA-Modus.
+- **FileStore User-Isolation** — `read(key, requestingUserId)` prüft User-Prefix im Key.
+- **HA Validierung** — `cluster.enabled` ohne PostgreSQL → Fehler. Ohne S3/NFS FileStore → Warnung.
+- **Redis-Locks entfernt** — Alle Scheduler (Reminder, Proactive, Watch, Reasoning) nutzen ausschließlich DB-Claims.
+- **Active-Active Architektur** — Kein Primary/Secondary mehr. `ClusterConfig.role` deprecated.
+
 ## [0.19.0-multi-ha.1] - 2026-03-16
 
 ### Added
