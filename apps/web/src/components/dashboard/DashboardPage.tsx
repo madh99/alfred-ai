@@ -1,6 +1,7 @@
 'use client';
 
 import { useDashboard } from '@/hooks/useDashboard';
+import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
 import type { DailyUsageSummary, UsageRecord } from '@/types/api';
 
@@ -23,6 +24,7 @@ function formatUptime(seconds: number): string {
 }
 
 export function DashboardPage() {
+  const { user: authUser } = useConfig();
   const { data, loading, error, refresh } = useDashboard();
 
   if (loading) return <div className="p-8 text-gray-400">Laden...</div>;
@@ -42,6 +44,11 @@ export function DashboardPage() {
         <div className="flex items-center gap-4">
           {data.uptime != null && (
             <span className="text-xs text-gray-500">Uptime: {formatUptime(data.uptime)}</span>
+          )}
+          {authUser && (
+            <span className="text-xs text-gray-500">
+              {authUser.username} ({authUser.role})
+            </span>
           )}
           <button onClick={refresh} className="text-sm text-blue-400 hover:text-blue-300">Aktualisieren</button>
         </div>
