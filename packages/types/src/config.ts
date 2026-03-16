@@ -251,6 +251,16 @@ export interface YouTubeConfig {
   };
 }
 
+export interface FileStoreConfig {
+  backend: 'local' | 'nfs' | 's3';
+  basePath?: string;
+  s3Endpoint?: string;
+  s3Bucket?: string;
+  s3Region?: string;
+  s3AccessKey?: string;
+  s3SecretKey?: string;
+}
+
 export interface ClusterNodeConfig {
   id: string;
   host: string;
@@ -416,6 +426,7 @@ export interface AlfredConfig {
   youtube?: YouTubeConfig;
   database?: DatabaseConfig;
   cluster?: ClusterConfig;
+  fileStore?: FileStoreConfig;
   proxmox?: ProxmoxConfig;
   unifi?: UniFiConfig;
   homeassistant?: HomeAssistantConfig;

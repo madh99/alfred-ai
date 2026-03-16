@@ -247,6 +247,16 @@ export const DatabaseConnectionConfigSchema = z.object({
   }).optional(),
 });
 
+export const FileStoreConfigSchema = z.object({
+  backend: z.enum(['local', 'nfs', 's3']),
+  basePath: z.string().optional(),
+  s3Endpoint: z.string().optional(),
+  s3Bucket: z.string().optional(),
+  s3Region: z.string().optional(),
+  s3AccessKey: z.string().optional(),
+  s3SecretKey: z.string().optional(),
+});
+
 export const ClusterNodeConfigSchema = z.object({
   id: z.string(),
   host: z.string(),
@@ -429,6 +439,7 @@ export const AlfredConfigSchema = z.object({
   youtube: YouTubeConfigSchema.optional(),
   database: DatabaseConfigSchema.optional(),
   cluster: ClusterConfigSchema.optional(),
+  fileStore: FileStoreConfigSchema.optional(),
   proxmox: ProxmoxConfigSchema.optional(),
   unifi: UniFiConfigSchema.optional(),
   homeassistant: HomeAssistantConfigSchema.optional(),

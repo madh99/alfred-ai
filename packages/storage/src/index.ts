@@ -35,6 +35,8 @@ export { AlfredUserRepository } from './repositories/alfred-user-repository.js';
 export type { AlfredUser, UserRole, UserPlatformLink, UserService } from './repositories/alfred-user-repository.js';
 export { SharedResourceRepository } from './repositories/shared-resource-repository.js';
 export type { SharedResource } from './repositories/shared-resource-repository.js';
+export { createFileStore, LocalFileStore, S3FileStore } from './file-store.js';
+export type { FileStore, FileStoreConfig, StoredFile } from './file-store.js';
 export type { DatabaseConnection } from './repositories/database-connection-repository.js';
 export type { FeedbackEvent } from './repositories/feedback-repository.js';
 export { ProjectAgentSessionRepository } from './repositories/project-agent-session-repository.js';
