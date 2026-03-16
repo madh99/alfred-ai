@@ -176,11 +176,14 @@ export class BMWSkill extends Skill {
     this.config = config;
   }
 
+  private activeContext?: SkillContext;
+
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     // Resolve per-user BMW config if available
     this.activeConfig = await this.resolveUserConfig(_context) ?? undefined;
     // Isolate tokens/cache per user
     this.activeUserId = _context.alfredUserId ?? _context.masterUserId ?? 'default';
+    this.activeContext = _context;
 
     try {
       const action = input.action as Action | undefined;
@@ -487,6 +490,15 @@ export class BMWSkill extends Skill {
 
   private async loadTokens(): Promise<BMWTokens | null> {
     if (this.tokens) return this.tokens;
+    // Try DB first (HA-safe), then file fallback
+    if (this.activeContext?.userServiceResolver && this.activeContext.alfredUserId) {
+      try {
+        const svc = await this.activeContext.userServiceResolver.getServiceConfig(
+          this.activeContext.alfredUserId, 'bmw_tokens', 'tokens',
+        );
+        if (svc) { this.tokens = svc as unknown as BMWTokens; return this.tokens; }
+      } catch { /* fallback to disk */ }
+    }
     return await this.loadTokensFromDisk();
   }
 
@@ -503,6 +515,16 @@ export class BMWSkill extends Skill {
   }
 
   private async saveTokens(tokens: BMWTokens): Promise<void> {
+    // Save to DB if available (HA-safe)
+    if (this.activeContext?.userServiceResolver && this.activeContext.alfredUserId) {
+      try {
+        await this.activeContext.userServiceResolver.saveServiceConfig(
+          this.activeContext.alfredUserId, 'bmw_tokens', 'tokens', tokens as unknown as Record<string, unknown>,
+        );
+        return;
+      } catch { /* fallback to disk */ }
+    }
+    // Fallback: file
     await mkdir(join(homedir(), '.alfred'), { recursive: true });
     await writeFile(getTokenPath(this.activeUserId), JSON.stringify(tokens, null, 2), 'utf-8');
     try { await chmod(getTokenPath(this.activeUserId), 0o600); } catch { /* Windows has no chmod */ }

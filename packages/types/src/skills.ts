@@ -49,6 +49,10 @@ export interface SkillContext {
     saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): Promise<void>;
     removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): Promise<boolean>;
   };
+  /** HA cluster node ID (set when cluster.enabled). */
+  nodeId?: string;
+  /** Whether HA cluster mode is active. */
+  clusterEnabled?: boolean;
   /** ActivityTracker instance (avoid circular dep with skills package). */
   tracker?: unknown;
   /** Progress callback for reporting status updates. */

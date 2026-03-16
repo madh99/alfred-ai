@@ -24,6 +24,12 @@ import type { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { buildSkillContext } from './context-factory.js';
 import { selectCategories, filterSkills } from './skill-filter.js';
 
+/** Skills whose output is specific to the executing node (filesystem, OS, local processes). */
+const NODE_LOCAL_SKILLS = new Set([
+  'shell', 'file', 'system_info', 'screenshot', 'clipboard',
+  'docker', 'code_sandbox', 'code_agent', 'project_agent', 'browser',
+]);
+
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
@@ -291,6 +297,12 @@ export class MessagePipeline {
         if (this.userServiceResolver) {
           baseContext.userServiceResolver = this.userServiceResolver as SkillContext['userServiceResolver'];
         }
+      }
+
+      // HA context
+      if (this.nodeId !== 'single') {
+        baseContext.nodeId = this.nodeId;
+        baseContext.clusterEnabled = true;
       }
 
       // 1c. Group conversation isolation: use chatId:userId as conversation key in groups
@@ -1074,8 +1086,13 @@ export class MessagePipeline {
             await this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
           }
         }
+        let content = result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error');
+        // HA: annotate node-local skill results with nodeId
+        if (this.nodeId !== 'single' && NODE_LOCAL_SKILLS.has(toolCall.name) && result.success) {
+          content = `[${this.nodeId}] ${content}`;
+        }
         return {
-          content: result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error'),
+          content,
           isError: !result.success,
           attachments: result.attachments,
         };

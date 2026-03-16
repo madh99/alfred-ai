@@ -113,6 +113,14 @@ export class ConfigureSkill extends Skill {
   ): Promise<SkillResult> {
     const action = input.action as string;
 
+    // HA warning: .env changes are node-local
+    if (action === 'set' && _context.clusterEnabled) {
+      const warning = '\n\n⚠️ HA-Modus: Diese Änderung gilt nur für diesen Node. Auf allen anderen Nodes manuell anpassen oder Alfred neu deployen.';
+      const result = await this.setService(input.service as string, input.values as Record<string, string> | undefined);
+      if (result.display) result.display += warning;
+      return result;
+    }
+
     switch (action) {
       case 'list_services':
         return this.listServices();
