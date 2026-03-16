@@ -69,7 +69,7 @@ export class DocumentSkill extends Skill {
       case 'search':
         return this.search(input, context);
       case 'summarize':
-        return this.summarize(input);
+        return this.summarize(input, context);
       case 'list':
         return this.list(input, context);
       case 'delete':
@@ -164,8 +164,17 @@ export class DocumentSkill extends Skill {
       }
     }
 
-    // Filter to only document-sourced results
-    const docResults = allResults.filter(r => r.category === 'document');
+    // Filter to only document-sourced results + verify access
+    const userId = effectiveUserId(context);
+    const docResults = allResults.filter(r => {
+      if (r.category !== 'document') return false;
+      // key format is "doc:<docId>:chunk:<idx>" — extract docId
+      const docIdMatch = r.key.match(/^doc:([^:]+)/);
+      if (docIdMatch) {
+        return this.docRepo.canAccess(docIdMatch[1], userId);
+      }
+      return true; // if can't determine doc ID, allow (backward compat)
+    });
 
     if (docResults.length === 0) {
       return { success: true, data: [], display: `No document matches found for "${query}".` };
@@ -182,7 +191,7 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private summarize(input: Record<string, unknown>): SkillResult {
+  private summarize(input: Record<string, unknown>, context: SkillContext): SkillResult {
     const documentId = input.document_id as string | undefined;
 
     if (!documentId || typeof documentId !== 'string') {
@@ -192,6 +201,12 @@ export class DocumentSkill extends Skill {
     const doc = this.docRepo.getDocument(documentId);
     if (!doc) {
       return { success: false, error: `Document "${documentId}" not found` };
+    }
+
+    // Access check: only owner, admin, or if document is public/shared
+    const userId = effectiveUserId(context);
+    if (!this.docRepo.canAccess(documentId, userId)) {
+      return { success: false, error: 'Kein Zugriff auf dieses Dokument.' };
     }
 
     const chunks = this.docRepo.getChunks(documentId);

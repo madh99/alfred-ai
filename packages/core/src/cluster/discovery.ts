@@ -13,7 +13,6 @@ export interface DiscoveredNode {
   host: string;
   port: number;
   role: string;
-  redisUrl: string;
 }
 
 export class ClusterDiscovery {
@@ -25,7 +24,7 @@ export class ClusterDiscovery {
   /**
    * Start broadcasting this node's presence (primary only).
    */
-  startBroadcasting(nodeInfo: { nodeId: string; host: string; port: number; role: string; redisUrl: string }): void {
+  startBroadcasting(nodeInfo: { nodeId: string; host: string; port: number; role: string }): void {
     this.socket = dgram.createSocket({ type: 'udp4', reuseAddr: true });
 
     this.socket.bind(() => {
@@ -78,7 +77,6 @@ export class ClusterDiscovery {
               host: rinfo.address,
               port: data.port,
               role: data.role,
-              redisUrl: data.redisUrl,
             });
           }
         } catch { /* ignore non-Alfred packets */ }

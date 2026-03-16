@@ -136,6 +136,7 @@ export class MessagePipeline {
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
+  private usageRepo?: import('@alfred/storage').UsageRepository;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -165,9 +166,10 @@ export class MessagePipeline {
     this.skillHealthTracker = tracker;
   }
 
-  setAlfredUserRepo(repo: import('@alfred/storage').AlfredUserRepository, roleAccess: Record<string, string[] | '*'>): void {
+  setAlfredUserRepo(repo: import('@alfred/storage').AlfredUserRepository, roleAccess: Record<string, string[] | '*'>, usageRepo?: import('@alfred/storage').UsageRepository): void {
     this.alfredUserRepo = repo;
     this.roleSkillAccess = roleAccess;
+    this.usageRepo = usageRepo;
   }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
@@ -250,6 +252,9 @@ export class MessagePipeline {
       // 1b. Resolve Alfred user + role for multi-user support
       const alfredUser = this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId);
       if (alfredUser) {
+        if (!alfredUser.active) {
+          return { text: 'Dein Account ist deaktiviert. Bitte kontaktiere den Admin.' };
+        }
         baseContext.userRole = alfredUser.role;
         baseContext.alfredUserId = alfredUser.id;
       }
@@ -422,6 +427,7 @@ export class MessagePipeline {
       let consecutiveErrors = 0;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
+      let lastModel: string | undefined;
       const pendingAttachments: SkillResultAttachment[] = [];
       const usedSkillNames = new Set<string>();
       const accumulatedToolCalls: ToolCall[] = [];
@@ -651,7 +657,8 @@ export class MessagePipeline {
       }
 
       const duration = Date.now() - startTime;
-      const model = response.model ?? 'unknown';
+      const model = response.model ?? lastModel ?? 'unknown';
+      lastModel = model;
       const requestCostUsd = calculateCost(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens });
       this.logger.info(
         {
@@ -668,6 +675,13 @@ export class MessagePipeline {
       this.recordMetric(true, Date.now() - startTime, {
         input: totalInputTokens, output: totalOutputTokens, costUsd: requestCostUsd,
       });
+
+      // Record per-user LLM usage (separate from global tracking)
+      if (alfredUser && this.usageRepo && requestCostUsd > 0) {
+        try {
+          this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
+        } catch { /* non-critical */ }
+      }
       return {
         text: responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,

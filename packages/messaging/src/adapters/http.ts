@@ -308,16 +308,30 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   private checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
-    if (!this.apiToken) return true;
+    if (!this.apiToken && !this.authCb) return true;
     const authHeader = req.headers['authorization'];
-    const expected = `Bearer ${this.apiToken}`;
-    if (!authHeader || authHeader.length !== expected.length ||
-        !crypto.timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
-      return false;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    // Check static API token
+    if (this.apiToken && token) {
+      const expected = this.apiToken;
+      if (token.length === expected.length && crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expected))) {
+        return true;
+      }
     }
-    return true;
+
+    // Check user session token
+    if (this.authCb && token) {
+      const user = this.authCb.getUserByToken(token);
+      if (user) return true;
+    }
+
+    // No API token configured and no auth callback = open access
+    if (!this.apiToken) return true;
+
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return false;
   }
 
   private handleAuthLogin(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -367,7 +381,17 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     try {
-      const data = this.dashboardFn();
+      const data = this.dashboardFn() as Record<string, unknown>;
+
+      // Strip admin-only data for non-admin users
+      const authHeader = req.headers['authorization'];
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      const user = token && this.authCb ? this.authCb.getUserByToken(token) : null;
+      if (user && user.role !== 'admin') {
+        delete data.userUsage;
+        delete data.userSkillUsage;
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     } catch (err) {

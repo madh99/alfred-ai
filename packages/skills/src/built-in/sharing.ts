@@ -134,7 +134,10 @@ Actions:
     const shared = this.sharingRepo.getSharedWith(caller.id);
     if (shared.length === 0) return { success: true, data: [], display: 'Keine Ressourcen mit dir geteilt.' };
 
-    const display = shared.map(s => `• ${s.resourceType} "${s.resourceId}" (von ${s.ownerUserId})`).join('\n');
+    const display = shared.map(s => {
+      const owner = this.userRepo.getById(s.ownerUserId);
+      return `• ${s.resourceType} "${s.resourceId}" (von ${owner?.username ?? s.ownerUserId})`;
+    }).join('\n');
     return { success: true, data: shared, display: `**Mit dir geteilte Ressourcen (${shared.length}):**\n${display}` };
   }
 }

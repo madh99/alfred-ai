@@ -108,13 +108,43 @@ export class AlfredUserRepository {
     return this.db.prepare('DELETE FROM alfred_users WHERE id = ?').run(id).changes > 0;
   }
 
+  /**
+   * Atomically consume an invite code: verify, link platform, clear code.
+   * Returns the user or null if code is invalid/expired.
+   */
+  consumeInviteCode(code: string, platform: string, platformUserId: string): AlfredUser | null {
+    const consume = this.db.transaction(() => {
+      const user = this.getByInviteCode(code);
+      if (!user) return null;
+
+      // Check if platform user already linked
+      const existing = this.getUserByPlatform(platform, platformUserId);
+      if (existing) return null;
+
+      this.linkPlatform(user.id, platform, platformUserId);
+      this.clearInviteCode(user.id);
+      return user;
+    });
+    return consume();
+  }
+
   // ── Platform Links ─────────────────────────────────────────
 
   linkPlatform(userId: string, platform: string, platformUserId: string): UserPlatformLink {
-    const id = randomUUID();
     const now = new Date().toISOString();
+    // Check if link already exists
+    const existing = this.db.prepare(
+      'SELECT id FROM user_platform_links WHERE platform = ? AND platform_user_id = ?',
+    ).get(platform, platformUserId) as { id: string } | undefined;
+
+    if (existing) {
+      this.db.prepare('UPDATE user_platform_links SET user_id = ?, linked_at = ? WHERE id = ?').run(userId, now, existing.id);
+      return { id: existing.id, userId, platform, platformUserId, linkedAt: now };
+    }
+
+    const id = randomUUID();
     this.db.prepare(`
-      INSERT OR REPLACE INTO user_platform_links (id, user_id, platform, platform_user_id, linked_at)
+      INSERT INTO user_platform_links (id, user_id, platform, platform_user_id, linked_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(id, userId, platform, platformUserId, now);
     return { id, userId, platform, platformUserId, linkedAt: now };

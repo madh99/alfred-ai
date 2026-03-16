@@ -709,4 +709,23 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE documents ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'`);
     },
   },
+  {
+    version: 35,
+    description: 'Multi-User — separate per-user usage table (fixes double-counting)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_usage_by_user (
+          date TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          PRIMARY KEY (date, user_id, model)
+        );
+        DELETE FROM llm_usage WHERE date LIKE '%:%';
+      `);
+    },
+  },
 ];

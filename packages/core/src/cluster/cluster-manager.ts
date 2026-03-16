@@ -192,14 +192,15 @@ export class ClusterManager {
 
     this.failoverCheckTimer = setInterval(async () => {
       try {
-        const nodes = await this.getNodes();
-        const primaryNodes = (this.config.nodes ?? []).filter(n => n.priority > (this.config.nodes?.find(nn => nn.id === this.config.nodeId)?.priority ?? 0));
+        const liveNodes = await this.getNodes();
+        const liveIds = new Set(liveNodes.map(n => n.id));
 
-        for (const expected of primaryNodes) {
-          const alive = nodes.find(n => n.id === expected.id);
-          if (!alive) {
-            this.logger.warn({ deadNodeId: expected.id }, 'Primary node heartbeat missing — failover triggered');
-            this.onFailoverCallback?.(expected.id);
+        // Check if any configured node with role 'primary' is missing
+        for (const node of (this.config.nodes ?? [])) {
+          if (node.id === this.config.nodeId) continue; // skip self
+          if (!liveIds.has(node.id)) {
+            this.logger.warn({ deadNodeId: node.id }, 'Node heartbeat missing — failover triggered');
+            this.onFailoverCallback?.(node.id);
           }
         }
       } catch (err) {

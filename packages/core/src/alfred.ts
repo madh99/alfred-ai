@@ -516,11 +516,9 @@ export class Alfred {
       const webSessions = new Map<string, { userId: string; username: string; role: string }>();
       this.webAuthCallback = {
         loginWithCode: (code: string) => {
-          const user = alfredUserRepo.getByInviteCode(code);
+          const tempWebId = `web-pending-${Date.now()}`;
+          const user = alfredUserRepo.consumeInviteCode(code, 'api', tempWebId);
           if (!user) return { success: false, error: 'Ungültiger oder abgelaufener Code' };
-
-          alfredUserRepo.linkPlatform(user.id, 'web', `web-${user.id}`);
-          alfredUserRepo.clearInviteCode(user.id);
 
           const token = `alf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
           webSessions.set(token, { userId: user.id, username: user.username, role: user.role });
@@ -690,6 +688,17 @@ export class Alfred {
     this.watchRepo = watchRepo;
     skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
 
+    // 7d. Initialize cluster manager BEFORE watch engine (for distributed locking)
+    if (this.config.cluster?.enabled) {
+      const { ClusterManager } = await import('./cluster/cluster-manager.js');
+      this.clusterManager = new ClusterManager(
+        this.config.cluster,
+        this.logger.child({ component: 'cluster' }),
+      );
+      await this.clusterManager.connect();
+      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
+    }
+
     // 7e. Initialize confirmation queue (human-in-the-loop for watch actions)
     const confirmRepo = new ConfirmationRepository(db);
     this.confirmationQueue = new ConfirmationQueue(
@@ -778,22 +787,15 @@ export class Alfred {
 
     // 7b. Wire multi-user support into pipeline
     {
-      const { AlfredUserRepository } = await import('@alfred/storage');
+      // Reuse the alfredUserRepo from User Management skill init (same db handle)
+      const { AlfredUserRepository, UsageRepository: UsageRepoClass } = await import('@alfred/storage');
       const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
-      const alfredUserRepo = new AlfredUserRepository(db);
-      this.pipeline.setAlfredUserRepo(alfredUserRepo, ROLE_SKILL_ACCESS);
+      const pipelineUserRepo = new AlfredUserRepository(db);
+      this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo);
     }
 
-    // 7c. Initialize cluster manager (if configured)
-    if (this.config.cluster?.enabled) {
-      const { ClusterManager } = await import('./cluster/cluster-manager.js');
-      this.clusterManager = new ClusterManager(
-        this.config.cluster,
-        this.logger.child({ component: 'cluster' }),
-      );
-      await this.clusterManager.connect();
-
-      // Subscribe to cross-node messages
+    // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
+    if (this.clusterManager) {
       this.clusterManager.subscribe('messages', (data) => {
         const { targetPlatform, chatId, text } = data as { targetPlatform: string; chatId: string; text: string };
         const adapter = this.adapters.get(targetPlatform as any);
@@ -804,10 +806,8 @@ export class Alfred {
         }
       });
 
-      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
-
       // Start UDP discovery broadcast if primary
-      if (this.config.cluster.role === 'primary') {
+      if (this.config.cluster?.role === 'primary') {
         const { ClusterDiscovery } = await import('./cluster/discovery.js');
         const discovery = new ClusterDiscovery(this.logger.child({ component: 'cluster-discovery' }));
         discovery.startBroadcasting({
@@ -815,7 +815,6 @@ export class Alfred {
           host: '0.0.0.0',
           port: this.config.api?.port ?? 3420,
           role: 'primary',
-          redisUrl: this.config.cluster.redisUrl,
         });
       }
     }

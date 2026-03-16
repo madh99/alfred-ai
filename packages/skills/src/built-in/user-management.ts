@@ -120,17 +120,14 @@ Actions:
     const code = input.code as string;
     if (!code) return { success: false, error: 'Bitte Invite-Code angeben.' };
 
-    const user = this.userRepo.getByInviteCode(code);
-    if (!user) return { success: false, error: 'Ungültiger oder abgelaufener Invite-Code.' };
-
-    // Check if this platform user is already linked
+    // Atomic: verify code + link platform + clear code (prevents race condition)
     const existing = this.userRepo.getUserByPlatform(context.platform, context.userId);
     if (existing) {
       return { success: false, error: `Diese ${context.platform}-ID ist bereits mit User "${existing.username}" verbunden.` };
     }
 
-    this.userRepo.linkPlatform(user.id, context.platform, context.userId);
-    this.userRepo.clearInviteCode(user.id);
+    const user = this.userRepo.consumeInviteCode(code, context.platform, context.userId);
+    if (!user) return { success: false, error: 'Ungültiger oder abgelaufener Invite-Code.' };
 
     return {
       success: true,

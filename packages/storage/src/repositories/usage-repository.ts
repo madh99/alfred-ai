@@ -63,29 +63,20 @@ export class UsageRepository {
   /** Record a single LLM call (upsert into today's row for this model). */
   record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, userId?: string): void {
     const date = new Date().toISOString().slice(0, 10);
+    // Global aggregate (unchanged)
     this.stmtUpsert.run(date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd);
-    // Also record per-user if userId provided
+    // Per-user in separate table (no double-counting)
     if (userId) {
       this.db.prepare(`
-        INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, user_id)
-        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(date, model) DO UPDATE SET
+        INSERT INTO llm_usage_by_user (date, user_id, model, calls, input_tokens, output_tokens, cost_usd)
+        VALUES (?, ?, ?, 1, ?, ?, ?)
+        ON CONFLICT(date, user_id, model) DO UPDATE SET
           calls = calls + 1,
           input_tokens = input_tokens + excluded.input_tokens,
           output_tokens = output_tokens + excluded.output_tokens,
-          cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-          cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
           cost_usd = cost_usd + excluded.cost_usd
-      `).run(date + ':' + userId, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, userId);
+      `).run(date, userId, model, inputTokens, outputTokens, costUsd);
     }
-  }
-
-  /** Get usage for a specific user on a date. */
-  getUserDaily(userId: string, date: string): DailyUsageSummary {
-    const rows = this.db.prepare(
-      `SELECT model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd FROM llm_usage WHERE user_id = ? AND date LIKE ?`,
-    ).all(userId, date + '%') as Record<string, unknown>[];
-    return this.buildSummary(date, rows);
   }
 
   /** Get usage grouped by user_id for a date range. */
@@ -93,7 +84,7 @@ export class UsageRepository {
     const rows = this.db.prepare(`
       SELECT user_id, SUM(calls) as calls, SUM(input_tokens) as input_tokens,
              SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost_usd
-      FROM llm_usage WHERE user_id IS NOT NULL AND date >= ? AND date <= ? AND user_id NOT LIKE '%:%'
+      FROM llm_usage_by_user WHERE date >= ? AND date <= ?
       GROUP BY user_id ORDER BY cost_usd DESC
     `).all(startDate, endDate) as Record<string, unknown>[];
     return rows.map(r => ({
