@@ -68,21 +68,23 @@ export class EmbeddingRepository {
     return rows.map(row => this.mapRow(row));
   }
 
-  async findBySource(sourceType: string, sourceId: string): Promise<EmbeddingEntry | undefined> {
-    const row = await this.adapter.queryOne(
-      'SELECT * FROM embeddings WHERE source_type = ? AND source_id = ?',
-      [sourceType, sourceId],
-    ) as Record<string, unknown> | undefined;
+  async findBySource(sourceType: string, sourceId: string, userId?: string): Promise<EmbeddingEntry | undefined> {
+    const sql = userId
+      ? 'SELECT * FROM embeddings WHERE source_type = ? AND source_id = ? AND user_id = ?'
+      : 'SELECT * FROM embeddings WHERE source_type = ? AND source_id = ?';
+    const params = userId ? [sourceType, sourceId, userId] : [sourceType, sourceId];
+    const row = await this.adapter.queryOne(sql, params) as Record<string, unknown> | undefined;
 
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  async delete(sourceType: string, sourceId: string): Promise<boolean> {
-    const result = await this.adapter.execute(
-      'DELETE FROM embeddings WHERE source_type = ? AND source_id = ?',
-      [sourceType, sourceId],
-    );
+  async delete(sourceType: string, sourceId: string, userId?: string): Promise<boolean> {
+    const sql = userId
+      ? 'DELETE FROM embeddings WHERE source_type = ? AND source_id = ? AND user_id = ?'
+      : 'DELETE FROM embeddings WHERE source_type = ? AND source_id = ?';
+    const params = userId ? [sourceType, sourceId, userId] : [sourceType, sourceId];
+    const result = await this.adapter.execute(sql, params);
     return result.changes > 0;
   }
 
