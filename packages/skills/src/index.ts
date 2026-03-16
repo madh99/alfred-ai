@@ -59,6 +59,7 @@ export { WorkflowSkill } from './built-in/workflow.js';
 export { MarketplaceSkill } from './built-in/marketplace/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { FeedReaderSkill } from './built-in/feed-reader.js';
+export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
 export { DatabaseSkill } from './built-in/database/index.js';
 export { UserManagementSkill, ROLE_SKILL_ACCESS } from './built-in/user-management.js';

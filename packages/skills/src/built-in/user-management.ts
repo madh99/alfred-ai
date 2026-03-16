@@ -11,19 +11,19 @@ const ROLE_SKILL_ACCESS: Record<UserRole, string[] | '*'> = {
     'calculator', 'weather', 'web_search', 'reminder', 'note', 'todo',
     'memory', 'email', 'calendar', 'contacts', 'bmw', 'youtube',
     'feed_reader', 'watch', 'workflow', 'database', 'routing', 'transit',
-    'energy_price', 'marketplace', 'briefing', 'delegate', 'user_management',
+    'energy_price', 'marketplace', 'briefing', 'delegate', 'user_management', 'help',
   ],
   family: [
     'calculator', 'weather', 'web_search', 'reminder', 'note', 'todo',
     'memory', 'email', 'calendar', 'contacts', 'routing', 'transit',
-    'energy_price', 'briefing', 'youtube', 'feed_reader', 'user_management',
+    'energy_price', 'briefing', 'youtube', 'feed_reader', 'user_management', 'help',
   ],
   guest: [
     'calculator', 'weather', 'web_search', 'routing', 'transit',
-    'energy_price', 'youtube', 'user_management',
+    'energy_price', 'youtube', 'user_management', 'help',
   ],
   service: [
-    'calculator', 'weather', 'web_search', 'user_management',
+    'calculator', 'weather', 'web_search', 'user_management', 'help',
   ],
 };
 

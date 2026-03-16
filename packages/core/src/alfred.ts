@@ -43,6 +43,7 @@ import {
   ConfigureSkill,
   TodoSkill,
   FeedReaderSkill,
+  HelpSkill,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -491,6 +492,11 @@ export class Alfred {
     skillRegistry.register(new FeedReaderSkill(memoryRepo));
     this.logger.info('Feed reader skill registered');
 
+    // 4s2. Help skill (always available — shows available skills)
+    // ROLE_SKILL_ACCESS is imported later; we set it after user management init
+    const helpSkill = new HelpSkill(skillRegistry);
+    skillRegistry.register(helpSkill);
+
     // 4t. User Management (always available)
     {
       const { AlfredUserRepository } = await import('@alfred/storage');
@@ -843,6 +849,8 @@ export class Alfred {
       const { UserServiceResolver } = await import('./user-service-resolver.js');
       const serviceResolver = new UserServiceResolver(pipelineUserRepo);
       this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
+      // Wire role access into help skill
+      (helpSkill as any).roleAccess = ROLE_SKILL_ACCESS;
     }
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
