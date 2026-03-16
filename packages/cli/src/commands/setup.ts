@@ -1286,6 +1286,57 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('API nur auf localhost erreichbar.')}`);
     }
 
+    // ── 8d4. Cluster ──────────────────────────────────────────
+    let clusterEnabled = false;
+    let clusterNodeId = '';
+    let clusterRole: 'primary' | 'secondary' = 'primary';
+    let clusterRedisUrl = '';
+    let clusterToken = '';
+
+    console.log(`\n${bold('Cluster / Hochverfügbarkeit?')}`);
+    console.log(`${dim('Mehrere Alfred-Nodes für Failover und Last-Verteilung.')}`);
+    const clusterAnswer = (
+      await rl.question(`${YELLOW}> ${RESET}${dim('[y/N] ')}`)
+    ).trim().toLowerCase();
+    clusterEnabled = clusterAnswer === 'y' || clusterAnswer === 'yes';
+
+    if (clusterEnabled) {
+      console.log(`\n  ${bold('Ist dies der erste Node (Primary) oder ein weiterer?')}`);
+      console.log(`  ${dim('1) Erster Node (Primary) — Redis URL eingeben, Cluster-Token generieren')}`);
+      console.log(`  ${dim('2) Weiterer Node — Primary-Adresse + Cluster-Token eingeben')}`);
+      const modeAnswer = (await rl.question(`  ${YELLOW}> ${RESET}${dim('[1/2] ')}`)).trim();
+
+      if (modeAnswer === '2') {
+        clusterRole = 'secondary';
+        console.log(`\n  ${dim('Cluster beitreten:')}`);
+
+        const primaryHost = (await rl.question(`  ${BOLD}Primary-Host (IP:Port)${RESET}: ${YELLOW}`)).trim();
+        process.stdout.write(RESET);
+
+        clusterToken = (await rl.question(`  ${BOLD}Cluster-Token${RESET}: ${YELLOW}`)).trim();
+        process.stdout.write(RESET);
+
+        clusterRedisUrl = (await rl.question(`  ${BOLD}Redis URL${RESET} ${dim('[redis://localhost:6379]')}: ${YELLOW}`)).trim() || 'redis://localhost:6379';
+        process.stdout.write(RESET);
+
+        clusterNodeId = `node-${Math.random().toString(36).slice(2, 8)}`;
+        console.log(`  ${green('>')} Cluster beigetreten als ${bold(clusterNodeId)} (secondary)`);
+      } else {
+        clusterRole = 'primary';
+        clusterRedisUrl = (await rl.question(`\n  ${BOLD}Redis URL${RESET} ${dim('[redis://localhost:6379]')}: ${YELLOW}`)).trim() || 'redis://localhost:6379';
+        process.stdout.write(RESET);
+
+        clusterNodeId = `node-${Math.random().toString(36).slice(2, 8)}`;
+        clusterToken = `alf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+
+        console.log(`  ${green('>')} Cluster Primary: ${bold(clusterNodeId)}`);
+        console.log(`  ${green('>')} Cluster-Token: ${bold(clusterToken)}`);
+        console.log(`  ${dim('  Diesen Token beim 2. Node eingeben.')}`);
+      }
+    } else {
+      console.log(`  ${dim('Einzelinstanz — kein Cluster.')}`);
+    }
+
     // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
     console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi / Home Assistant)?')}`);
     console.log(`${dim('Control VMs, containers, network devices, and smart home through Alfred.')}`);
@@ -1996,6 +2047,7 @@ export async function setupCommand(): Promise<void> {
       youtube?: { apiKey: string; supadata?: { enabled: boolean; apiKey: string } };
       energy?: Record<string, unknown>;
       api: { enabled: boolean; port: number; host: string; webUi: boolean; token?: string; tls?: { enabled: boolean; cert?: string; key?: string } };
+      cluster?: { enabled: boolean; nodeId: string; role: string; redisUrl: string; token: string };
       storage: { path: string };
       logger: { level: string; pretty: boolean; auditLogPath: string };
       security: { rulesPath: string; defaultEffect: string; ownerUserId?: string };
@@ -2192,6 +2244,15 @@ export async function setupCommand(): Promise<void> {
         ...(apiToken ? { token: apiToken } : {}),
         ...(enableTls ? { tls: { enabled: true } } : {}),
       },
+      ...(clusterEnabled ? {
+        cluster: {
+          enabled: true,
+          nodeId: clusterNodeId,
+          role: clusterRole,
+          redisUrl: clusterRedisUrl,
+          token: clusterToken,
+        },
+      } : {}),
       storage: {
         path: './data/alfred.db',
       },
@@ -2380,6 +2441,10 @@ ${ownerAdminRule}
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     console.log(`  ${bold('Web Chat UI:')}   ${enableWebUi ? green('enabled (/alfred/)') : dim('disabled')}`);
     console.log(`  ${bold('TLS/HTTPS:')}    ${enableTls ? green('enabled (self-signed)') : dim('disabled')}`);
+    if (clusterEnabled) {
+      console.log(`  ${bold('Cluster:')}       ${green(`${clusterRole} (${clusterNodeId})`)}`);
+      console.log(`  ${bold('Redis:')}         ${clusterRedisUrl}`);
+    }
     if (enableYoutube) console.log(`  ${bold('YouTube:')}       ${green('enabled')}${supadataApiKey ? ' + Supadata' : ''}`);
     if (enableProxmox) console.log(`  ${bold('Proxmox:')}       ${green(proxmoxBaseUrl)}`);
     if (enablePbs) console.log(`  ${bold('PBS:')}           ${green(pbsBaseUrl)} ${dim(`(max age: ${pbsMaxAgeHours}h)`)}`);
