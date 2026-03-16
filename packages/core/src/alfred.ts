@@ -800,7 +800,9 @@ export class Alfred {
       const { AlfredUserRepository, UsageRepository: UsageRepoClass } = await import('@alfred/storage');
       const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
       const pipelineUserRepo = new AlfredUserRepository(db);
-      this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo);
+      const { UserServiceResolver } = await import('./user-service-resolver.js');
+      const serviceResolver = new UserServiceResolver(pipelineUserRepo);
+      this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
     }
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)

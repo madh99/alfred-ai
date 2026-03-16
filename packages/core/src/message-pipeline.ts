@@ -137,6 +137,7 @@ export class MessagePipeline {
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
+  private userServiceResolver?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -166,10 +167,16 @@ export class MessagePipeline {
     this.skillHealthTracker = tracker;
   }
 
-  setAlfredUserRepo(repo: import('@alfred/storage').AlfredUserRepository, roleAccess: Record<string, string[] | '*'>, usageRepo?: import('@alfred/storage').UsageRepository): void {
+  setAlfredUserRepo(
+    repo: import('@alfred/storage').AlfredUserRepository,
+    roleAccess: Record<string, string[] | '*'>,
+    usageRepo?: import('@alfred/storage').UsageRepository,
+    serviceResolver?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function },
+  ): void {
     this.alfredUserRepo = repo;
     this.roleSkillAccess = roleAccess;
     this.usageRepo = usageRepo;
+    this.userServiceResolver = serviceResolver;
   }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
@@ -262,6 +269,9 @@ export class MessagePipeline {
         }
         baseContext.userRole = alfredUser.role;
         baseContext.alfredUserId = alfredUser.id;
+        if (this.userServiceResolver) {
+          baseContext.userServiceResolver = this.userServiceResolver as SkillContext['userServiceResolver'];
+        }
       }
 
       // 1c. Group conversation isolation: use chatId:userId as conversation key in groups
@@ -1458,7 +1468,7 @@ export class MessagePipeline {
         }
       } else if ((attachment.type === 'document' || attachment.type === 'video' || attachment.type === 'other') && attachment.data) {
         // Save file to inbox and tell the LLM about it
-        const savedPath = this.saveToInbox(attachment);
+        const savedPath = this.saveToInbox(attachment, message.userId);
         if (savedPath) {
           const isTextFile = this.isTextMimeType(attachment.mimeType);
           let fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? 'unknown type'})]\n[Saved to: ${savedPath}]`;
@@ -1539,10 +1549,13 @@ export class MessagePipeline {
    * Save an attachment to the inbox directory.
    * Returns the saved file path, or undefined on failure.
    */
-  private saveToInbox(attachment: Attachment): string | undefined {
+  private saveToInbox(attachment: Attachment, userId?: string): string | undefined {
     if (!attachment.data) return undefined;
 
-    const inboxDir = this.inboxPath ?? path.resolve('./data/inbox');
+    const baseInbox = this.inboxPath ?? path.resolve('./data/inbox');
+    // Per-user subdirectory for multi-user isolation
+    const safeUserId = (userId ?? 'default').replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
+    const inboxDir = path.join(baseInbox, safeUserId);
     try {
       fs.mkdirSync(inboxDir, { recursive: true });
     } catch {

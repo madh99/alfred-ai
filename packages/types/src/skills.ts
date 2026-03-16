@@ -42,6 +42,13 @@ export interface SkillContext {
   userRole?: string;
   /** Alfred user ID (internal UUID from alfred_users table). */
   alfredUserId?: string;
+  /** Resolver for per-user service configs (email, bmw, calendar etc.). */
+  userServiceResolver?: {
+    getServiceConfig(alfredUserId: string | undefined, serviceType: string, serviceName?: string): Record<string, unknown> | null;
+    getUserServices(alfredUserId: string | undefined, serviceType?: string): Array<{ serviceType: string; serviceName: string; config: Record<string, unknown> }>;
+    saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): void;
+    removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): boolean;
+  };
   /** ActivityTracker instance (avoid circular dep with skills package). */
   tracker?: unknown;
   /** Progress callback for reporting status updates. */
