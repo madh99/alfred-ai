@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.18.2-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.1-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -101,6 +101,7 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot` und `check_conflicts` |
 | **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
+| **Multi-User** | `user_management`, `sharing`, `help` | Roles (admin/user/family/guest/service), invite codes, platform linking, per-user service config, share notes/todos/documents/services between users, interactive help |
 
 ### Code Agent Orchestration
 
@@ -154,6 +155,46 @@ projectAgents:
       buildCommands: ["npm install", "npm run build"]
       testCommands: ["npm test"]
 ```
+
+### Multi-User
+
+Alfred supports multiple users with role-based access control. Each user's data (notes, todos, memories, conversations, documents) is fully isolated.
+
+| Role | Access |
+|------|--------|
+| **admin** | All skills, user management, service sharing |
+| **user** | 25+ skills, own data, per-user service config |
+| **family** | Productivity skills, own data |
+| **guest** | Read-only skills (weather, search, calculator) |
+
+**Per-User Service Config** — Each user configures their own Email, Calendar, Contacts, BMW, Microsoft Todo via chat (`setup_service`). No server access needed.
+
+**Sharing** — Share notes, todo lists, documents, or service configs between users. MS 365 shared mailboxes/calendars supported via Graph API delegated access.
+
+### High Availability (optional)
+
+Run multiple Alfred nodes for failover and redundancy. Requires Redis + PostgreSQL.
+
+```yaml
+storage:
+  backend: postgres
+  connectionString: postgres://alfred:pass@db:5432/alfred
+cluster:
+  enabled: true
+  nodeId: node-1
+  role: primary
+  redisUrl: redis://redis:6379
+fileStore:
+  backend: s3
+  s3Endpoint: http://minio:9000
+  s3Bucket: alfred-files
+```
+
+- **PostgreSQL** — Shared database for all nodes (SQLite remains default for single-instance)
+- **Redis** — Distributed locks (watches, schedulers, reminders), heartbeat, pub/sub
+- **S3/MinIO** — Shared file storage for uploads and documents
+- **Failover** — Secondary detects primary failure via heartbeat, takes over automatically
+- **`alfred migrate-db`** — Migrate existing SQLite data to PostgreSQL
 
 ### Infrastructure Management
 

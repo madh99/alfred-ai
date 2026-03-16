@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.1] - 2026-03-16
+
+### Added
+- **Multi-User** — Rollen (admin/user/family/guest/service), Invite-Codes, Plattform-Verknüpfung, rollenbasierte Skill-Filter
+- **Per-User Service Config** — Email, Kalender, Contacts, BMW, Microsoft Todo pro User konfigurierbar per Chat (`setup_service`, `my_services`, `remove_service`)
+- **MS 365 Shared Resources** — Geteilte Postfächer, Kalender, Kontakte, Todos über Graph API Delegated Access (`sharedMailbox`, `sharedCalendar` Config)
+- **Sharing** — Notizen, Todo-Listen, Dokumente und Service-Configs zwischen Usern teilen
+- **PostgreSQL Backend** — Optionales Storage-Backend für HA. AsyncDbAdapter für SQLite und PostgreSQL. `alfred migrate-db` Migrationstool
+- **HA Cluster** — Redis Distributed Locks für Reminder, Scheduler, Watch Engine, Reasoning Engine. Heartbeat, Failover Detection, Cross-Node Messaging
+- **File Storage Abstraction** — Local/NFS/S3 Backend für Uploads und Dokumente. FileStore verdrahtet in Pipeline und DocumentProcessor
+- **DM-Redirect** — Gruppen-Privacy für alle Plattformen: Telegram, Discord (`createDM()`), Matrix (DM-Room), Signal
+- **HelpSkill** — Interaktive Hilfe: `overview` (alle Skills nach Kategorie), `detail` (Parameter-Info), `search` (Stichwortsuche). Rollenbasiert gefiltert
+- **Web Sessions persistent** — Login-Tokens in Datenbank statt In-Memory Map, überlebt Restart
+- **Setup Wizard** — Storage-Backend (SQLite/PostgreSQL), File Store (Local/NFS/S3) Konfiguration
+
+### Fixed
+- **User-Isolation** — Vollständige Datentrennung: Notizen, Todos, Memories, Conversations, Dokumente, Embeddings pro User isoliert
+- **PG Schema** — 16 Tabellen korrigiert, 40+ fehlende Indexes ergänzt, Spalten an SQLite-Migrationen angeglichen
+- **SQLite Transaction** — Manual BEGIN/COMMIT statt broken async better-sqlite3 Transaction
+- **PG Transaction** — PostgresClientAdapter bindet alle Queries an den Transaction-Client (Atomizität)
+- **Security** — Ownership-Checks für WatchSkill (toggle/delete), ProjectAgentSkill (interject/stop), BMWSkill Token-Isolation per User
+- **DocumentProcessor** — Akzeptiert Buffer für S3-Kompatibilität (kein lokaler Dateizugriff nötig)
+- **datetime('now')** — Alle DB-Zeitvergleiche nutzen JS-Timestamps statt SQLite/PG-spezifische Funktionen
+
 ## [0.18.2] - 2026-03-16
 
 ### Fixed
