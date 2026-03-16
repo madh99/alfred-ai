@@ -107,10 +107,31 @@ export class ScheduledActionRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async claimDue(nodeId: string, claimTtlMs = 600_000): Promise<ScheduledAction[]> {
+    if (this.adapter.type === 'postgres') {
+      const now = new Date().toISOString();
+      const claimExpiresAt = new Date(Date.now() + claimTtlMs).toISOString();
+      const rows = await this.adapter.query(`
+        WITH candidates AS (
+          SELECT id FROM scheduled_actions
+          WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= $1
+            AND (claimed_by IS NULL OR claim_expires_at < $2)
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE scheduled_actions SET claimed_by = $3, claim_expires_at = $4
+        WHERE id IN (SELECT id FROM candidates)
+        RETURNING *
+      `, [now, now, nodeId, claimExpiresAt]) as Record<string, unknown>[];
+      return rows.map((row) => this.mapRow(row));
+    }
+    // SQLite: single-node, no claim needed
+    return this.getDue();
+  }
+
   async updateLastRun(id: string, lastRunAt: string, nextRunAt: string | null): Promise<void> {
     await this.adapter.execute(`
       UPDATE scheduled_actions
-      SET last_run_at = ?, next_run_at = ?
+      SET last_run_at = ?, next_run_at = ?, claimed_by = NULL, claim_expires_at = NULL
       WHERE id = ?
     `, [lastRunAt, nextRunAt, id]);
   }

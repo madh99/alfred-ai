@@ -12,16 +12,9 @@ import { matchesCron, getNextCronDate } from '@alfred/types';
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 
-/** Minimal ClusterManager interface for distributed locking. */
-interface LockProvider {
-  acquireLock(key: string, ttlMs?: number): Promise<boolean>;
-  releaseLock(key: string): Promise<void>;
-}
-
 export class ProactiveScheduler {
   private tickTimer?: ReturnType<typeof setInterval>;
   private readonly tickIntervalMs = 60_000;
-  private lockProvider?: LockProvider;
 
   constructor(
     private readonly actionRepo: ScheduledActionRepository,
@@ -35,11 +28,8 @@ export class ProactiveScheduler {
     private readonly formatter?: ResponseFormatter,
     private readonly conversationManager?: ConversationManager,
     private readonly activityLogger?: ActivityLogger,
+    private readonly nodeId: string = 'single',
   ) {}
-
-  setLockProvider(provider: LockProvider): void {
-    this.lockProvider = provider;
-  }
 
   start(): void {
     this.tickTimer = setInterval(() => this.tick(), this.tickIntervalMs);
@@ -56,26 +46,13 @@ export class ProactiveScheduler {
 
   private async tick(): Promise<void> {
     try {
-      const dueActions = await this.actionRepo.getDue();
+      const dueActions = await this.actionRepo.claimDue(this.nodeId);
 
       for (const action of dueActions) {
-        // Distributed lock: only one node executes each scheduled action
-        if (this.lockProvider) {
-          const acquired = await this.lockProvider.acquireLock(`action:${action.id}`, 5 * 60_000);
-          if (!acquired) {
-            this.logger.debug({ actionId: action.id }, 'Action lock held by another node, skipping');
-            continue;
-          }
-        }
-
         try {
           await this.executeAction(action);
         } catch (err) {
           this.logger.error({ err, actionId: action.id }, 'Failed to execute scheduled action');
-        } finally {
-          if (this.lockProvider) {
-            await this.lockProvider.releaseLock(`action:${action.id}`);
-          }
         }
       }
     } catch (err) {

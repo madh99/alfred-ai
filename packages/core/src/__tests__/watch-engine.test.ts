@@ -3,7 +3,7 @@ import { WatchEngine } from '../watch-engine.js';
 
 function createMockWatchRepo(watches: any[] = []) {
   return {
-    getDue: vi.fn(() => watches),
+    claimDue: vi.fn(() => watches),
     updateAfterCheck: vi.fn(),
   } as any;
 }
@@ -494,6 +494,6 @@ describe('WatchEngine', () => {
     expect(logger.error).toHaveBeenCalled();
     // Engine still runs — next tick works
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(watchRepo.getDue).toHaveBeenCalledTimes(2);
+    expect(watchRepo.claimDue).toHaveBeenCalledTimes(2);
   });
 });

@@ -11,12 +11,6 @@ export interface LinkedUserResolver {
   findConversation(platform: string, userId: string): Promise<{ chatId: string } | undefined>;
 }
 
-/** Minimal ClusterManager interface for distributed locking. */
-interface LockProvider {
-  acquireLock(key: string, ttlMs?: number): Promise<boolean>;
-  releaseLock(key: string): Promise<void>;
-}
-
 export class ReminderScheduler {
   private intervalId?: ReturnType<typeof setInterval>;
   private readonly checkIntervalMs: number;
@@ -30,7 +24,7 @@ export class ReminderScheduler {
     private readonly logger: Logger,
     checkIntervalMs = 15_000,
     private readonly linkedUsers?: LinkedUserResolver,
-    private readonly lockProvider?: LockProvider,
+    private readonly nodeId: string = 'single',
   ) {
     this.checkIntervalMs = checkIntervalMs;
   }
@@ -53,17 +47,8 @@ export class ReminderScheduler {
 
   private async checkDueReminders(): Promise<void> {
     try {
-      const due = await this.reminderRepo.getDue();
+      const due = await this.reminderRepo.claimDue(this.nodeId);
       for (const reminder of due) {
-        // Distributed lock: only one node fires each reminder
-        if (this.lockProvider) {
-          const acquired = await this.lockProvider.acquireLock(`reminder:${reminder.id}`, 60_000);
-          if (!acquired) {
-            this.logger.debug({ reminderId: reminder.id }, 'Reminder lock held by another node, skipping');
-            continue;
-          }
-        }
-
         try {
           const text = `\u23F0 Reminder: ${reminder.message}`;
           let delivered = false;
@@ -126,10 +111,6 @@ export class ReminderScheduler {
               { err, reminderId: reminder.id, attempt: fails, maxRetries: ReminderScheduler.MAX_SEND_RETRIES },
               'Failed to send reminder, will retry',
             );
-          }
-        } finally {
-          if (this.lockProvider) {
-            await this.lockProvider.releaseLock(`reminder:${reminder.id}`);
           }
         }
       }

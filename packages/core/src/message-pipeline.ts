@@ -97,6 +97,8 @@ export interface PipelineOptions {
   speechTranscriber?: SpeechTranscriber;
   inboxPath?: string;
   fileStore?: import('@alfred/storage').FileStore;
+  processedMessageRepo?: import('@alfred/storage').ProcessedMessageRepository;
+  nodeId?: string;
   embeddingService?: EmbeddingService;
   activeLearning?: ActiveLearningService;
   memoryRetriever?: MemoryRetriever;
@@ -126,6 +128,8 @@ export class MessagePipeline {
   private readonly speechTranscriber?: SpeechTranscriber;
   private readonly inboxPath?: string;
   private readonly fileStore?: import('@alfred/storage').FileStore;
+  private readonly processedMessageRepo?: import('@alfred/storage').ProcessedMessageRepository;
+  private readonly nodeId: string;
   private readonly embeddingService?: EmbeddingService;
   private readonly activeLearning?: ActiveLearningService;
   private readonly memoryRetriever?: MemoryRetriever;
@@ -212,6 +216,8 @@ export class MessagePipeline {
     this.speechTranscriber = options.speechTranscriber;
     this.inboxPath = options.inboxPath;
     this.fileStore = options.fileStore;
+    this.processedMessageRepo = options.processedMessageRepo;
+    this.nodeId = options.nodeId ?? 'single';
     this.embeddingService = options.embeddingService;
     this.activeLearning = options.activeLearning;
     this.memoryRetriever = options.memoryRetriever;
@@ -242,6 +248,16 @@ export class MessagePipeline {
     }
 
     try {
+      // 0b. HA Message dedup — ensure each message is processed by exactly one node
+      if (this.processedMessageRepo && message.id) {
+        const messageKey = `${message.platform}:${message.id}`;
+        const claimed = await this.processedMessageRepo.markProcessed(messageKey, this.nodeId);
+        if (!claimed) {
+          this.logger.debug({ messageKey }, 'Message already processed by another node, skipping');
+          return { text: '' };
+        }
+      }
+
       // 1. Resolve user, master ID, and linked platform IDs via central factory
       // For scheduled tasks, use the real user chatId for skill context (reminders, etc.)
       // but keep the isolated chatId for conversation management.

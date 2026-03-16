@@ -36,7 +36,7 @@ export class WatchEngine {
     private readonly activityLogger?: ActivityLogger,
     private readonly skillHealthTracker?: SkillHealthTracker,
     private readonly llmProvider?: LLMProvider,
-    private readonly clusterManager?: { acquireLock(key: string, ttlMs?: number): Promise<boolean>; releaseLock(key: string): Promise<void> },
+    private readonly nodeId: string = 'single',
   ) {}
 
   start(): void {
@@ -57,32 +57,24 @@ export class WatchEngine {
     const watch = await this.watchRepo.getById(watchId);
     if (!watch) throw new Error(`Watch ${watchId} not found`);
     if (!watch.enabled) throw new Error(`Watch ${watchId} is disabled`);
+    const claimed = await this.watchRepo.claimSingle(watchId, this.nodeId);
+    if (!claimed) {
+      this.logger.debug({ watchId }, 'Watch claim held by another node, skipping webhook trigger');
+      return;
+    }
     this.logger.info({ watchId, name: watch.name }, 'Watch triggered via webhook');
     await this.checkWatch(watch);
   }
 
   private async tick(): Promise<void> {
     try {
-      const dueWatches = await this.watchRepo.getDue();
+      const dueWatches = await this.watchRepo.claimDue(this.nodeId);
 
       for (const watch of dueWatches) {
-        // Distributed lock: only one node processes each watch
-        if (this.clusterManager) {
-          const acquired = await this.clusterManager.acquireLock(`watch:${watch.id}`, 5 * 60_000);
-          if (!acquired) {
-            this.logger.debug({ watchId: watch.id }, 'Watch lock held by another node, skipping');
-            continue;
-          }
-        }
-
         try {
           await this.checkWatch(watch);
         } catch (err) {
           this.logger.error({ err, watchId: watch.id }, 'Failed to check watch');
-        } finally {
-          if (this.clusterManager) {
-            await this.clusterManager.releaseLock(`watch:${watch.id}`);
-          }
         }
       }
     } catch (err) {

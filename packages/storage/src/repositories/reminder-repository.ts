@@ -77,8 +77,32 @@ export class ReminderRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async claimDue(nodeId: string, claimTtlMs = 120_000): Promise<ReminderEntry[]> {
+    if (this.adapter.type === 'postgres') {
+      const now = new Date().toISOString();
+      const claimExpiresAt = new Date(Date.now() + claimTtlMs).toISOString();
+      const rows = await this.adapter.query(`
+        WITH candidates AS (
+          SELECT id FROM reminders
+          WHERE fired = 0 AND trigger_at <= $1
+            AND (claimed_by IS NULL OR claim_expires_at < $2)
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE reminders SET claimed_by = $3, claim_expires_at = $4
+        WHERE id IN (SELECT id FROM candidates)
+        RETURNING *
+      `, [now, now, nodeId, claimExpiresAt]) as Record<string, unknown>[];
+      return rows.map((row) => this.mapRow(row));
+    }
+    // SQLite: single-node, no claim needed
+    return this.getDue();
+  }
+
   async markFired(id: string): Promise<void> {
-    await this.adapter.execute(`UPDATE reminders SET fired = 1 WHERE id = ?`, [id]);
+    await this.adapter.execute(
+      `UPDATE reminders SET fired = 1, claimed_by = NULL, claim_expires_at = NULL WHERE id = ?`,
+      [id],
+    );
   }
 
   async cancel(id: string): Promise<boolean> {

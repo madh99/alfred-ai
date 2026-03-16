@@ -14,7 +14,8 @@ import type { Logger } from 'pino';
 export interface ClusterConfig {
   enabled: boolean;
   nodeId: string;
-  role: 'primary' | 'secondary';
+  /** @deprecated Active-Active has no role distinction. Kept for backward compatibility. */
+  role?: 'primary' | 'secondary' | 'node';
   redisUrl: string;
   nodes?: Array<{ id: string; host: string; port: number; priority: number }>;
   heartbeatIntervalMs?: number;
@@ -25,7 +26,7 @@ export interface ClusterNode {
   id: string;
   host: string;
   port: number;
-  role: 'primary' | 'secondary';
+  role?: string;
   adapters: string[];
   lastHeartbeat: string;
   healthy: boolean;
@@ -248,6 +249,68 @@ export class ClusterManager {
   // ── Status ─────────────────────────────────────────────────
 
   get nodeId(): string { return this.config.nodeId; }
-  get role(): string { return this.config.role; }
+  get role(): string { return this.config.role ?? 'node'; }
   get isConnected(): boolean { return !!this.redis; }
+
+  // ── PostgreSQL Heartbeat (fallback when Redis unavailable) ──
+
+  private pgAdapter?: import('@alfred/storage').AsyncDbAdapter;
+  private pgHeartbeatTimer?: ReturnType<typeof setInterval>;
+
+  /** Enable PG-based heartbeat as fallback/supplement to Redis. */
+  startPgHeartbeat(adapter: import('@alfred/storage').AsyncDbAdapter): void {
+    this.pgAdapter = adapter;
+    this.pgHeartbeatTimer = setInterval(() => this.sendPgHeartbeat(), this.heartbeatMs);
+    this.sendPgHeartbeat(); // immediate first heartbeat
+  }
+
+  private async sendPgHeartbeat(): Promise<void> {
+    if (!this.pgAdapter) return;
+    try {
+      const now = new Date().toISOString();
+      await this.pgAdapter.execute(
+        `INSERT INTO node_heartbeats (node_id, host, last_seen_at, started_at, uptime_s)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (node_id) DO UPDATE SET
+           last_seen_at = excluded.last_seen_at,
+           uptime_s = excluded.uptime_s`,
+        [this.config.nodeId, '', now, now, Math.floor(process.uptime())],
+      );
+    } catch (err) {
+      this.logger.debug({ err }, 'PG heartbeat write failed');
+    }
+  }
+
+  /** Get live nodes from PG heartbeat table (fallback when Redis unavailable). */
+  async getNodesFromPg(): Promise<ClusterNode[]> {
+    if (!this.pgAdapter) return [];
+    try {
+      const cutoff = new Date(Date.now() - this.failoverMs).toISOString();
+      const rows = await this.pgAdapter.query(
+        'SELECT * FROM node_heartbeats WHERE last_seen_at > ?',
+        [cutoff],
+      );
+      return rows.map(r => ({
+        id: r.node_id as string,
+        host: r.host as string ?? '',
+        port: 0,
+        adapters: [],
+        lastHeartbeat: r.last_seen_at as string,
+        healthy: true,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Get nodes — tries Redis first, falls back to PG. */
+  async getNodesAny(): Promise<ClusterNode[]> {
+    const redisNodes = await this.getNodes();
+    if (redisNodes.length > 0) return redisNodes;
+    return this.getNodesFromPg();
+  }
+
+  stopPgHeartbeat(): void {
+    if (this.pgHeartbeatTimer) clearInterval(this.pgHeartbeatTimer);
+  }
 }

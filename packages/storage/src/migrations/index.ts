@@ -728,4 +728,51 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 36,
+    description: 'HA Active-Active: claim columns, processed_messages, node_heartbeats, adapter_claims, reasoning_slots',
+    up(db) {
+      db.exec(`ALTER TABLE reminders ADD COLUMN claimed_by TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE reminders ADD COLUMN claim_expires_at TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE scheduled_actions ADD COLUMN claimed_by TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE scheduled_actions ADD COLUMN claim_expires_at TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE watches ADD COLUMN claimed_by TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE watches ADD COLUMN claim_expires_at TEXT DEFAULT NULL`);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS processed_messages (
+          message_key TEXT PRIMARY KEY,
+          node_id TEXT NOT NULL,
+          processed_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_processed_messages_expires ON processed_messages(expires_at)`);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS node_heartbeats (
+          node_id TEXT PRIMARY KEY,
+          host TEXT NOT NULL DEFAULT '',
+          last_seen_at TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          uptime_s INTEGER NOT NULL DEFAULT 0,
+          adapters TEXT NOT NULL DEFAULT '[]',
+          version TEXT NOT NULL DEFAULT ''
+        )
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS reasoning_slots (
+          slot_key TEXT PRIMARY KEY,
+          node_id TEXT NOT NULL,
+          claimed_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS adapter_claims (
+          platform TEXT PRIMARY KEY,
+          node_id TEXT NOT NULL,
+          claimed_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL
+        )
+      `);
+    },
+  },
 ];

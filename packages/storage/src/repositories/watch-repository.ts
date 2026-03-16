@@ -93,6 +93,44 @@ export class WatchRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  async claimDue(nodeId: string, claimTtlMs = 300_000): Promise<Watch[]> {
+    if (this.adapter.type === 'postgres') {
+      const now = new Date().toISOString();
+      const claimExpiresAt = new Date(Date.now() + claimTtlMs).toISOString();
+      const rows = await this.adapter.query(`
+        WITH candidates AS (
+          SELECT id FROM watches
+          WHERE enabled = 1
+            AND (last_checked_at IS NULL OR last_checked_at::timestamp + (interval_minutes * interval '1 minute') <= NOW())
+            AND (claimed_by IS NULL OR claim_expires_at < $1)
+          FOR UPDATE SKIP LOCKED
+        )
+        UPDATE watches SET claimed_by = $2, claim_expires_at = $3
+        WHERE id IN (SELECT id FROM candidates)
+        RETURNING *
+      `, [now, nodeId, claimExpiresAt]) as Record<string, unknown>[];
+      return rows.map((row) => this.mapRow(row));
+    }
+    // SQLite: single-node, no claim needed
+    return this.getDue();
+  }
+
+  async claimSingle(watchId: string, nodeId: string, claimTtlMs = 300_000): Promise<boolean> {
+    if (this.adapter.type === 'postgres') {
+      const now = new Date().toISOString();
+      const claimExpiresAt = new Date(Date.now() + claimTtlMs).toISOString();
+      const rows = await this.adapter.query(
+        `UPDATE watches SET claimed_by = $1, claim_expires_at = $2
+         WHERE id = $3 AND (claimed_by IS NULL OR claim_expires_at < $4)
+         RETURNING id`,
+        [nodeId, claimExpiresAt, watchId, now],
+      ) as Record<string, unknown>[];
+      return rows.length > 0;
+    }
+    // SQLite: single-node, always succeed
+    return true;
+  }
+
   async updateAfterCheck(id: string, update: {
     lastCheckedAt: string;
     lastValue: string | null;
@@ -101,13 +139,13 @@ export class WatchRepository {
     if (update.lastTriggeredAt) {
       await this.adapter.execute(`
         UPDATE watches
-        SET last_checked_at = ?, last_value = ?, last_triggered_at = ?
+        SET last_checked_at = ?, last_value = ?, last_triggered_at = ?, claimed_by = NULL, claim_expires_at = NULL
         WHERE id = ?
       `, [update.lastCheckedAt, update.lastValue, update.lastTriggeredAt, id]);
     } else {
       await this.adapter.execute(`
         UPDATE watches
-        SET last_checked_at = ?, last_value = ?
+        SET last_checked_at = ?, last_value = ?, claimed_by = NULL, claim_expires_at = NULL
         WHERE id = ?
       `, [update.lastCheckedAt, update.lastValue, id]);
     }

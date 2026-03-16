@@ -28,9 +28,13 @@ export interface FileStoreConfig {
 export interface FileStore {
   readonly backend: string;
   save(userId: string, fileName: string, data: Buffer): Promise<StoredFile>;
-  read(key: string): Promise<Buffer>;
+  /**
+   * Read a file by key. If requestingUserId is provided, verifies the key
+   * belongs to that user (key must start with sanitized userId prefix).
+   */
+  read(key: string, requestingUserId?: string): Promise<Buffer>;
   list(userId: string): Promise<StoredFile[]>;
-  delete(key: string): Promise<boolean>;
+  delete(key: string, requestingUserId?: string): Promise<boolean>;
   exists(key: string): Promise<boolean>;
 }
 
@@ -61,7 +65,13 @@ export class LocalFileStore implements FileStore {
     return { key, fileName, userId, size: data.length, createdAt: new Date().toISOString() };
   }
 
-  async read(key: string): Promise<Buffer> {
+  async read(key: string, requestingUserId?: string): Promise<Buffer> {
+    if (requestingUserId) {
+      const safeId = this.sanitize(requestingUserId);
+      if (!key.startsWith(safeId + '/')) {
+        throw new Error('Access denied: file does not belong to this user');
+      }
+    }
     const filePath = path.resolve(this.basePath, key);
     if (!filePath.startsWith(path.resolve(this.basePath))) {
       throw new Error('Path traversal attempt blocked');
@@ -152,7 +162,13 @@ export class S3FileStore implements FileStore {
     return { key, fileName, userId, size: data.length, createdAt: new Date().toISOString() };
   }
 
-  async read(key: string): Promise<Buffer> {
+  async read(key: string, requestingUserId?: string): Promise<Buffer> {
+    if (requestingUserId) {
+      const safeId = this.sanitize(requestingUserId);
+      if (!key.startsWith(safeId + '/')) {
+        throw new Error('Access denied: file does not belong to this user');
+      }
+    }
     const client = await this.getClient();
     const { GetObjectCommand } = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
     const response = await client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));

@@ -12,6 +12,7 @@ import type {
   CalendarNotificationRepository,
   UserRepository,
   FeedbackRepository,
+  AsyncDbAdapter,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -54,12 +55,6 @@ interface ReasoningContext {
   feedback: string;
 }
 
-/** Minimal ClusterManager interface for distributed locking. */
-interface LockProvider {
-  acquireLock(key: string, ttlMs?: number): Promise<boolean>;
-  releaseLock(key: string): Promise<void>;
-}
-
 export class ReasoningEngine {
   private tickTimer?: ReturnType<typeof setInterval>;
   private lastRunHour = -1;
@@ -67,7 +62,6 @@ export class ReasoningEngine {
   private readonly schedule: ReasoningConfig['schedule'];
   private readonly tier: 'fast' | 'default';
   private readonly deduplicationHours: number;
-  private lockProvider?: LockProvider;
 
   constructor(
     private readonly calendarProvider: CalendarProvider | undefined,
@@ -90,6 +84,8 @@ export class ReasoningEngine {
     private readonly defaultLocation?: string,
     private readonly feedbackRepo?: FeedbackRepository,
     private readonly confirmationQueue?: ConfirmationQueue,
+    private readonly nodeId: string = 'single',
+    private readonly adapter?: AsyncDbAdapter,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'morning_noon_evening';
@@ -105,10 +101,6 @@ export class ReasoningEngine {
     // Tick every 60 seconds, decide inside whether to run
     this.tickTimer = setInterval(() => this.tick(), 60_000);
     this.logger.info({ schedule: this.schedule, tier: this.tier }, 'Reasoning engine started');
-  }
-
-  setLockProvider(provider: LockProvider): void {
-    this.lockProvider = provider;
   }
 
   stop(): void {
@@ -158,11 +150,15 @@ export class ReasoningEngine {
     if (!this.shouldRun()) return;
     this.markRun();
 
-    // Distributed lock: only one node runs reasoning per cycle
-    if (this.lockProvider) {
-      const acquired = await this.lockProvider.acquireLock('reasoning:tick', 10 * 60_000);
-      if (!acquired) {
-        this.logger.debug('Reasoning lock held by another node, skipping');
+    // Distributed dedup: only one node runs reasoning per hour-slot
+    if (this.adapter && this.adapter.type === 'postgres') {
+      const slotKey = `reasoning:${new Date().toISOString().slice(0, 13)}`;
+      const result = await this.adapter.execute(
+        'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+        [slotKey, this.nodeId, new Date().toISOString()],
+      );
+      if (result.changes === 0) {
+        this.logger.debug('Reasoning slot already claimed by another node, skipping');
         return;
       }
     }
@@ -236,10 +232,6 @@ export class ReasoningEngine {
         userId: this.defaultChatId, outcome: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
-    } finally {
-      if (this.lockProvider) {
-        await this.lockProvider.releaseLock('reasoning:tick');
-      }
     }
   }
 

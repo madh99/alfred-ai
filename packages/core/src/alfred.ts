@@ -663,6 +663,10 @@ export class Alfred {
       speechTranscriber,
       inboxPath,
       fileStore,
+      processedMessageRepo: this.config.cluster?.enabled
+        ? new (await import('@alfred/storage')).ProcessedMessageRepository(adapter)
+        : undefined,
+      nodeId: this.config.cluster?.nodeId ?? 'single',
       embeddingService,
       activeLearning,
       memoryRetriever,
@@ -671,15 +675,35 @@ export class Alfred {
       conversationSummarizer,
     });
 
-    // 5e. Initialize cluster manager BEFORE schedulers (for distributed locking)
+    // 5e. Initialize cluster manager BEFORE schedulers
     if (this.config.cluster?.enabled) {
+      // HA requires PostgreSQL
+      if (adapter.type !== 'postgres') {
+        throw new Error('HA Cluster erfordert storage.backend: "postgres". SQLite ist nicht für Multi-Node geeignet.');
+      }
+      if (!this.config.cluster.nodeId) {
+        throw new Error('HA Cluster erfordert cluster.nodeId. Jeder Node braucht eine eindeutige ID.');
+      }
+      // FileStore warning
+      if (!this.config.fileStore || this.config.fileStore.backend === 'local') {
+        this.logger.warn('HA Cluster ohne S3/NFS FileStore — Datei-Uploads sind nur auf dem empfangenden Node sichtbar. Empfohlen: fileStore.backend: "s3" oder "nfs"');
+      }
+
       const { ClusterManager } = await import('./cluster/cluster-manager.js');
       this.clusterManager = new ClusterManager(
         this.config.cluster,
         this.logger.child({ component: 'cluster' }),
       );
       await this.clusterManager.connect();
-      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
+      // Start PG heartbeat as fallback
+      this.clusterManager.startPgHeartbeat(adapter);
+      // Run PG migrations for HA tables
+      const { PgMigrator } = await import('@alfred/storage');
+      const { PG_MIGRATIONS } = await import('@alfred/storage');
+      const pgMigrator = new PgMigrator(adapter);
+      await pgMigrator.migrate(PG_MIGRATIONS);
+
+      this.logger.info({ nodeId: this.config.cluster.nodeId }, 'Cluster manager initialized (Active-Active)');
     }
 
     // 6. Initialize reminder scheduler
@@ -700,7 +724,7 @@ export class Alfred {
         getLinkedUsers: (masterUserId) => userRepo.getLinkedUsers(masterUserId),
         findConversation: (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId),
       },
-      this.clusterManager ?? undefined,
+      this.config.cluster?.nodeId ?? 'single',
     );
 
     // 7b. Initialize background task runner
@@ -741,10 +765,8 @@ export class Alfred {
       this.formatter,
       conversationManager,
       activityLogger,
+      this.config.cluster?.nodeId ?? 'single',
     );
-    if (this.clusterManager) {
-      this.proactiveScheduler.setLockProvider(this.clusterManager);
-    }
 
     // 7d. Initialize watch engine (condition-based alerts)
     const watchRepo = new WatchRepository(adapter);
@@ -785,7 +807,7 @@ export class Alfred {
       activityLogger,
       skillHealthTracker,
       llmProvider,
-      this.clusterManager ?? undefined,
+      this.config.cluster?.nodeId ?? 'single',
     );
 
     // 7f. Initialize workflow chains
@@ -828,10 +850,9 @@ export class Alfred {
           this.config.briefing?.location,
           feedbackRepo,
           this.confirmationQueue,
+          this.config.cluster?.nodeId ?? 'single',
+          adapter,
         );
-        if (this.clusterManager) {
-          this.reasoningEngine.setLockProvider(this.clusterManager);
-        }
       }
     }
 
@@ -993,13 +1014,57 @@ export class Alfred {
   async start(): Promise<void> {
     this.logger.info('Starting Alfred...');
 
-    for (const [platform, adapter] of this.adapters) {
-      this.setupAdapterHandlers(platform, adapter);
-      try {
-        await adapter.connect();
-        this.logger.info({ platform }, 'Adapter connected');
-      } catch (err) {
-        this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
+    // In HA mode: claim adapters via DB (only one node per adapter).
+    // In single mode: connect all adapters directly.
+    if (this.config.cluster?.enabled && this.database.getAdapter().type === 'postgres') {
+      const { AdapterClaimManager } = await import('./adapter-claim-manager.js');
+      const claimManager = new AdapterClaimManager(
+        this.database.getAdapter(),
+        this.config.cluster.nodeId,
+        this.logger.child({ component: 'adapter-claims' }),
+      );
+
+      // Try to claim each adapter, only connect if claimed
+      for (const [platform, adapter] of this.adapters) {
+        // HTTP API always connects (both nodes serve API behind load balancer)
+        if (platform === 'api') {
+          this.setupAdapterHandlers(platform, adapter);
+          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (always-on)'); }
+          catch (err) { this.logger.error({ platform, err }, 'Adapter connection failed'); }
+          continue;
+        }
+
+        const claimed = await claimManager.tryClaim(platform);
+        if (claimed) {
+          this.setupAdapterHandlers(platform, adapter);
+          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (claimed)'); }
+          catch (err) { this.logger.error({ platform, err }, 'Adapter connection failed'); }
+        } else {
+          this.logger.info({ platform }, 'Adapter claimed by another node, skipping');
+        }
+      }
+
+      // When expired claims become available, connect the adapter
+      claimManager.onAcquired(async (platform) => {
+        const adapter = this.adapters.get(platform as any);
+        if (adapter && adapter.getStatus() === 'disconnected') {
+          this.setupAdapterHandlers(platform as any, adapter);
+          try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (failover)'); }
+          catch (err) { this.logger.error({ platform, err }, 'Failover adapter connection failed'); }
+        }
+      });
+
+      claimManager.start();
+    } else {
+      // Single instance: connect all adapters
+      for (const [platform, adapter] of this.adapters) {
+        this.setupAdapterHandlers(platform, adapter);
+        try {
+          await adapter.connect();
+          this.logger.info({ platform }, 'Adapter connected');
+        } catch (err) {
+          this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
+        }
       }
     }
 

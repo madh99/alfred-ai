@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS reminders (
   message TEXT NOT NULL,
   trigger_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  fired INTEGER NOT NULL DEFAULT 0
+  fired INTEGER NOT NULL DEFAULT 0,
+  claimed_by TEXT DEFAULT NULL,
+  claim_expires_at TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(fired, trigger_at);
 CREATE INDEX IF NOT EXISTS idx_reminders_user ON reminders(user_id, fired);
@@ -184,7 +186,9 @@ CREATE TABLE IF NOT EXISTS watches (
   last_action_error TEXT,
   conditions_json TEXT,
   requires_confirmation INTEGER NOT NULL DEFAULT 0,
-  trigger_watch_id TEXT
+  trigger_watch_id TEXT,
+  claimed_by TEXT DEFAULT NULL,
+  claim_expires_at TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_watches_chat ON watches(chat_id, platform);
 CREATE INDEX IF NOT EXISTS idx_watches_enabled ON watches(enabled);
@@ -205,7 +209,9 @@ CREATE TABLE IF NOT EXISTS scheduled_actions (
   enabled INTEGER NOT NULL DEFAULT 1,
   last_run_at TEXT,
   next_run_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  claimed_by TEXT DEFAULT NULL,
+  claim_expires_at TEXT DEFAULT NULL
 );
 
 -- Background Tasks
@@ -486,5 +492,37 @@ CREATE INDEX IF NOT EXISTS idx_link_tokens_code ON link_tokens(code);
 CREATE TABLE IF NOT EXISTS schema_version (
   version INTEGER PRIMARY KEY
 );
-INSERT INTO schema_version (version) VALUES (35) ON CONFLICT DO NOTHING;
+INSERT INTO schema_version (version) VALUES (36) ON CONFLICT DO NOTHING;
+
+-- HA Active-Active tables
+CREATE TABLE IF NOT EXISTS processed_messages (
+  message_key  TEXT PRIMARY KEY,
+  node_id      TEXT NOT NULL,
+  processed_at TEXT NOT NULL,
+  expires_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_processed_messages_expires ON processed_messages(expires_at);
+
+CREATE TABLE IF NOT EXISTS node_heartbeats (
+  node_id      TEXT PRIMARY KEY,
+  host         TEXT NOT NULL DEFAULT '',
+  last_seen_at TEXT NOT NULL,
+  started_at   TEXT NOT NULL,
+  uptime_s     INTEGER NOT NULL DEFAULT 0,
+  adapters     TEXT NOT NULL DEFAULT '[]',
+  version      TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS reasoning_slots (
+  slot_key    TEXT PRIMARY KEY,
+  node_id     TEXT NOT NULL,
+  claimed_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS adapter_claims (
+  platform     TEXT PRIMARY KEY,
+  node_id      TEXT NOT NULL,
+  claimed_at   TEXT NOT NULL,
+  expires_at   TEXT NOT NULL
+);
 `;

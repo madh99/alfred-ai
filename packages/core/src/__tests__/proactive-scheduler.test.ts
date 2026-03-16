@@ -3,7 +3,7 @@ import { ProactiveScheduler } from '../proactive-scheduler.js';
 
 function createMockActionRepo(actions: any[] = []) {
   return {
-    getDue: vi.fn(() => actions),
+    claimDue: vi.fn(() => actions),
     updateLastRun: vi.fn(),
     setEnabled: vi.fn(),
   } as any;
@@ -101,11 +101,11 @@ describe('ProactiveScheduler', () => {
     scheduler.start();
     await vi.advanceTimersByTimeAsync(60_000);
 
-    expect(actionRepo.getDue).toHaveBeenCalled();
+    expect(actionRepo.claimDue).toHaveBeenCalled();
     expect(sandbox.execute).toHaveBeenCalled();
   });
 
-  it('tick skips non-due actions (empty getDue)', async () => {
+  it('tick skips non-due actions (empty claimDue)', async () => {
     actionRepo = createMockActionRepo([]);
     const sandbox = createMockSkillSandbox();
 
@@ -117,7 +117,7 @@ describe('ProactiveScheduler', () => {
     scheduler.start();
     await vi.advanceTimersByTimeAsync(60_000);
 
-    expect(actionRepo.getDue).toHaveBeenCalled();
+    expect(actionRepo.claimDue).toHaveBeenCalled();
     expect(sandbox.execute).not.toHaveBeenCalled();
   });
 
@@ -149,6 +149,6 @@ describe('ProactiveScheduler', () => {
 
     // Scheduler should still be running — tick again without crashing
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(actionRepo.getDue).toHaveBeenCalledTimes(2);
+    expect(actionRepo.claimDue).toHaveBeenCalledTimes(2);
   });
 });
