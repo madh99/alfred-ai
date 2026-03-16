@@ -805,6 +805,19 @@ export class Alfred {
       });
 
       this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
+
+      // Start UDP discovery broadcast if primary
+      if (this.config.cluster.role === 'primary') {
+        const { ClusterDiscovery } = await import('./cluster/discovery.js');
+        const discovery = new ClusterDiscovery(this.logger.child({ component: 'cluster-discovery' }));
+        discovery.startBroadcasting({
+          nodeId: this.config.cluster.nodeId,
+          host: '0.0.0.0',
+          port: this.config.api?.port ?? 3420,
+          role: 'primary',
+          redisUrl: this.config.cluster.redisUrl,
+        });
+      }
     }
 
     // 8. Initialize messaging adapters

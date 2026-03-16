@@ -177,6 +177,68 @@ export class ClusterManager {
     await this.publish('messages', { type: 'send_message', targetPlatform, chatId, text });
   }
 
+  // ── Failover Detection ──────────────────────────────────────
+
+  private failoverCheckTimer?: ReturnType<typeof setInterval>;
+  private onFailoverCallback?: (deadNodeId: string) => void;
+
+  /**
+   * Start monitoring other nodes. Calls onFailover when a node goes down.
+   * Only secondary nodes should call this (to detect primary failure).
+   */
+  startFailoverMonitoring(onFailover: (deadNodeId: string) => void): void {
+    if (this.config.role !== 'secondary') return;
+    this.onFailoverCallback = onFailover;
+
+    this.failoverCheckTimer = setInterval(async () => {
+      try {
+        const nodes = await this.getNodes();
+        const primaryNodes = (this.config.nodes ?? []).filter(n => n.priority > (this.config.nodes?.find(nn => nn.id === this.config.nodeId)?.priority ?? 0));
+
+        for (const expected of primaryNodes) {
+          const alive = nodes.find(n => n.id === expected.id);
+          if (!alive) {
+            this.logger.warn({ deadNodeId: expected.id }, 'Primary node heartbeat missing — failover triggered');
+            this.onFailoverCallback?.(expected.id);
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'Failover check error');
+      }
+    }, this.failoverMs);
+  }
+
+  stopFailoverMonitoring(): void {
+    if (this.failoverCheckTimer) clearInterval(this.failoverCheckTimer);
+  }
+
+  /**
+   * Announce that this node is taking over adapters from a dead node.
+   */
+  async announceTakeover(deadNodeId: string, adapters: string[]): Promise<void> {
+    await this.publish('events', { type: 'failover', deadNodeId, takenOverBy: this.config.nodeId, adapters });
+    this.logger.info({ deadNodeId, adapters }, 'Failover: adapters taken over');
+  }
+
+  // ── Config Sync ────────────────────────────────────────────
+
+  /**
+   * Broadcast a config change to all nodes.
+   */
+  async syncConfig(changeType: string, details: Record<string, unknown>): Promise<void> {
+    await this.publish('config-sync', { type: changeType, ...details });
+  }
+
+  /**
+   * Listen for config changes from other nodes.
+   */
+  async onConfigSync(handler: (changeType: string, details: Record<string, unknown>) => void): Promise<void> {
+    await this.subscribe('config-sync', (data) => {
+      const { type, ...details } = data;
+      handler(type as string, details);
+    });
+  }
+
   // ── Status ─────────────────────────────────────────────────
 
   get nodeId(): string { return this.config.nodeId; }
