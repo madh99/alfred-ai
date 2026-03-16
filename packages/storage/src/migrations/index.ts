@@ -671,4 +671,11 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 32,
+    description: 'Multi-User — per-user LLM usage tracking',
+    up(db) {
+      db.exec(`ALTER TABLE llm_usage ADD COLUMN user_id TEXT DEFAULT NULL`);
+    },
+  },
 ];

@@ -61,9 +61,31 @@ export class UsageRepository {
   }
 
   /** Record a single LLM call (upsert into today's row for this model). */
-  record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number): void {
+  record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, userId?: string): void {
     const date = new Date().toISOString().slice(0, 10);
     this.stmtUpsert.run(date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd);
+    // Also record per-user if userId provided
+    if (userId) {
+      this.db.prepare(`
+        INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, user_id)
+        VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(date, model) DO UPDATE SET
+          calls = calls + 1,
+          input_tokens = input_tokens + excluded.input_tokens,
+          output_tokens = output_tokens + excluded.output_tokens,
+          cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+          cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
+          cost_usd = cost_usd + excluded.cost_usd
+      `).run(date + ':' + userId, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd, userId);
+    }
+  }
+
+  /** Get usage for a specific user on a date. */
+  getUserDaily(userId: string, date: string): DailyUsageSummary {
+    const rows = this.db.prepare(
+      `SELECT model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd FROM llm_usage WHERE user_id = ? AND date LIKE ?`,
+    ).all(userId, date + '%') as Record<string, unknown>[];
+    return this.buildSummary(date, rows);
   }
 
   /** Get usage for a specific date. */
