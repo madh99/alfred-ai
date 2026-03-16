@@ -489,15 +489,24 @@ export class Alfred {
       const alfredUserRepo = new AlfredUserRepository(db);
 
       // Auto-create admin user from ownerUserId if not exists
+      // Link to ALL enabled platforms (not just Telegram)
       if (this.config.security?.ownerUserId) {
-        const existingAdmin = alfredUserRepo.getUserByPlatform('telegram', this.config.security.ownerUserId);
-        if (!existingAdmin) {
-          const admins = alfredUserRepo.getAll().filter(u => u.role === 'admin');
-          if (admins.length === 0) {
-            const admin = alfredUserRepo.create({ username: 'admin', role: 'admin', displayName: 'Admin' });
-            alfredUserRepo.linkPlatform(admin.id, 'telegram', this.config.security.ownerUserId);
-            alfredUserRepo.clearInviteCode(admin.id);
-            this.logger.info({ userId: this.config.security.ownerUserId }, 'Auto-created admin user from ownerUserId');
+        const ownerUid = this.config.security.ownerUserId;
+        const admins = alfredUserRepo.getAll().filter(u => u.role === 'admin');
+        let adminUser = admins[0];
+
+        if (!adminUser) {
+          adminUser = alfredUserRepo.create({ username: 'admin', role: 'admin', displayName: 'Admin' });
+          alfredUserRepo.clearInviteCode(adminUser.id);
+          this.logger.info({ userId: ownerUid }, 'Auto-created admin user from ownerUserId');
+        }
+
+        // Link to all configured platforms with the ownerUserId
+        const platforms = ['telegram', 'discord', 'matrix', 'signal', 'api'] as const;
+        for (const platform of platforms) {
+          const existing = alfredUserRepo.getUserByPlatform(platform, ownerUid);
+          if (!existing) {
+            try { alfredUserRepo.linkPlatform(adminUser.id, platform, ownerUid); } catch { /* already linked */ }
           }
         }
       }

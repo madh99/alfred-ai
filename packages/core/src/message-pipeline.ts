@@ -250,7 +250,12 @@ export class MessagePipeline {
       );
 
       // 1b. Resolve Alfred user + role for multi-user support
-      const alfredUser = this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId);
+      let alfredUser: { id: string; role: string; active: boolean; username: string } | undefined;
+      try {
+        alfredUser = this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId) as typeof alfredUser;
+      } catch (err) {
+        this.logger.debug({ err }, 'Alfred user lookup failed (table may not exist yet)');
+      }
       if (alfredUser) {
         if (!alfredUser.active) {
           return { text: 'Dein Account ist deaktiviert. Bitte kontaktiere den Admin.' };
@@ -368,11 +373,14 @@ export class MessagePipeline {
       }
 
       // 6b. Role-based skill filtering (multi-user)
-      if (skillMetas && this.roleSkillAccess && alfredUser) {
-        const allowed = this.roleSkillAccess[alfredUser.role];
-        if (allowed && allowed !== '*') {
-          const allowedSet = new Set(allowed);
-          skillMetas = skillMetas.filter(s => allowedSet.has(s.name));
+      if (skillMetas && this.roleSkillAccess) {
+        const role = alfredUser?.role ?? (this.alfredUserRepo ? 'guest' : undefined);
+        if (role) {
+          const allowed = this.roleSkillAccess[role];
+          if (allowed && allowed !== '*') {
+            const allowedSet = new Set(allowed);
+            skillMetas = skillMetas.filter(s => allowedSet.has(s.name));
+          }
         }
       }
 
