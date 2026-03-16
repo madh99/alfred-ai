@@ -1273,6 +1273,42 @@ export class Alfred {
 
         const result = await this.pipeline.process(message, onProgress);
 
+        // Group privacy: redirect sensitive skill responses to DM
+        const PRIVATE_SKILLS = new Set([
+          'email', 'calendar', 'contacts', 'bmw', 'todo', 'microsoft_todo',
+          'database', 'memory', 'note', 'reminder', 'file', 'shell',
+        ]);
+        const isGroup = message.chatType === 'group';
+        const usedPrivateSkill = isGroup && result.usedSkills?.some(s => PRIVATE_SKILLS.has(s));
+
+        if (usedPrivateSkill && result.text) {
+          // Send response as DM instead of in the group
+          try {
+            const formatted = this.formatter.format(result.text, message.platform);
+            const sendOpts = formatted.parseMode !== 'text'
+              ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
+              : undefined;
+            await adapter.sendMessage(message.userId, formatted.text, sendOpts);
+            // Notify the group
+            await adapter.sendMessage(message.chatId, `@${message.userName ?? message.userId}, Antwort per DM gesendet (persönliche Daten).`);
+          } catch (err) {
+            this.logger.warn({ err, chatId: message.chatId }, 'Group privacy DM redirect failed, sending in group');
+            // Fallback: send in group anyway
+            const formatted = this.formatter.format(result.text, message.platform);
+            await adapter.sendMessage(message.chatId, formatted.text);
+          }
+          // Send attachments via DM too
+          if (result.attachments) {
+            for (const att of result.attachments) {
+              try {
+                await adapter.sendFile(message.userId, att.data, att.fileName);
+              } catch { /* skip */ }
+            }
+          }
+          adapter.endStream(message.chatId);
+          return;
+        }
+
         // Empty text means the message was handled internally (e.g. confirmation response)
         // — skip sending to avoid empty Telegram messages
         if (result.text) {

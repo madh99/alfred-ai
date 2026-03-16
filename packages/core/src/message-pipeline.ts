@@ -70,6 +70,8 @@ export type ProgressCallback = (status: string) => void;
 export interface PipelineResult {
   text: string;
   attachments?: SkillResultAttachment[];
+  /** Names of skills that were executed during this pipeline run. */
+  usedSkills?: string[];
 }
 
 export interface PipelineMetrics {
@@ -421,6 +423,7 @@ export class MessagePipeline {
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
       const pendingAttachments: SkillResultAttachment[] = [];
+      const usedSkillNames = new Set<string>();
       const accumulatedToolCalls: ToolCall[] = [];
       const accumulatedToolResults: LLMContentBlock[] = [];
       onProgress?.('Thinking...');
@@ -547,6 +550,10 @@ export class MessagePipeline {
         if (toolExecResult.attachments.length > 0) {
           pendingAttachments.push(...toolExecResult.attachments);
         }
+        // Track which skills were used
+        for (const tc of response.toolCalls) {
+          usedSkillNames.add(tc.name);
+        }
 
         // Accumulate tool interactions — saved as a single consolidated pair after the loop
         // to avoid bloating the DB with 2 messages per iteration (which quickly exhausts
@@ -664,6 +671,7 @@ export class MessagePipeline {
       return {
         text: responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
+        usedSkills: usedSkillNames.size > 0 ? [...usedSkillNames] : undefined,
       };
     } catch (error) {
       this.recordMetric(false, Date.now() - startTime);
