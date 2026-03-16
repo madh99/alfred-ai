@@ -96,6 +96,30 @@ export class ActivityRepository {
     }));
   }
 
+  /** Get skill usage grouped by user, with call counts per skill. */
+  skillUsageByUser(since?: string): Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }> {
+    const where = since
+      ? "WHERE event_type = 'skill_execution' AND timestamp >= ?"
+      : "WHERE event_type = 'skill_execution'";
+    const params = since ? [since] : [];
+
+    const rows = this.db.prepare(`
+      SELECT user_id, action as skill_name, COUNT(*) as calls,
+             SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes,
+             SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) as errors
+      FROM activity_log ${where} AND user_id IS NOT NULL
+      GROUP BY user_id, action ORDER BY calls DESC
+    `).all(...params) as Record<string, unknown>[];
+
+    return rows.map(r => ({
+      userId: r.user_id as string,
+      skillName: r.skill_name as string,
+      calls: r.calls as number,
+      successes: r.successes as number,
+      errors: r.errors as number,
+    }));
+  }
+
   cleanup(olderThanDays: number = 90): number {
     const result = this.db.prepare(
       `DELETE FROM activity_log WHERE timestamp < datetime('now', '-' || ? || ' days')`

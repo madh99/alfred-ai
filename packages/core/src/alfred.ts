@@ -922,6 +922,8 @@ export class Alfred {
               [...this.adapters.entries()].map(([p, a]) => [p, a.getStatus()]),
             ),
             llmProviders: this.llmProvider.getProviderStatuses(),
+            userUsage: this.usageRepo?.getByUser(weekAgo, today) ?? [],
+            userSkillUsage: this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
           };
         },
         webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,

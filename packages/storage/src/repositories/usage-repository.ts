@@ -88,6 +88,23 @@ export class UsageRepository {
     return this.buildSummary(date, rows);
   }
 
+  /** Get usage grouped by user_id for a date range. */
+  getByUser(startDate: string, endDate: string): Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }> {
+    const rows = this.db.prepare(`
+      SELECT user_id, SUM(calls) as calls, SUM(input_tokens) as input_tokens,
+             SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost_usd
+      FROM llm_usage WHERE user_id IS NOT NULL AND date >= ? AND date <= ? AND user_id NOT LIKE '%:%'
+      GROUP BY user_id ORDER BY cost_usd DESC
+    `).all(startDate, endDate) as Record<string, unknown>[];
+    return rows.map(r => ({
+      userId: r.user_id as string,
+      calls: r.calls as number,
+      inputTokens: r.input_tokens as number,
+      outputTokens: r.output_tokens as number,
+      costUsd: r.cost_usd as number,
+    }));
+  }
+
   /** Get usage for a specific date. */
   getDaily(date: string): DailyUsageSummary {
     const rows = this.stmtDaily.all(date) as Record<string, unknown>[];

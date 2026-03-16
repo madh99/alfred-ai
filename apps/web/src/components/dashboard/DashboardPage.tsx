@@ -241,6 +241,68 @@ export function DashboardPage() {
         )}
       </section>
 
+      {/* Admin: Per-User Costs */}
+      {authUser?.role === 'admin' && (data.userUsage?.length ?? 0) > 0 && (
+        <section>
+          <h2 className="text-lg font-medium text-gray-300 mb-3">Kosten pro User (letzte 7 Tage)</h2>
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[#0d0d0d] text-gray-400">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">User</th>
+                  <th className="text-right px-4 py-2 font-medium">Calls</th>
+                  <th className="text-right px-4 py-2 font-medium hidden md:table-cell">Input</th>
+                  <th className="text-right px-4 py-2 font-medium hidden md:table-cell">Output</th>
+                  <th className="text-right px-4 py-2 font-medium">Kosten</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.userUsage!.map((u) => (
+                  <tr key={u.userId} className="border-t border-[#1f1f1f]">
+                    <td className="px-4 py-2 text-gray-200">{u.userId}</td>
+                    <td className="px-4 py-2 text-gray-400 text-right">{u.calls}</td>
+                    <td className="px-4 py-2 text-gray-400 text-right hidden md:table-cell">{formatTokens(u.inputTokens)}</td>
+                    <td className="px-4 py-2 text-gray-400 text-right hidden md:table-cell">{formatTokens(u.outputTokens)}</td>
+                    <td className="px-4 py-2 text-blue-400 text-right font-medium">{formatCost(u.costUsd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* Admin: Skill Usage per User */}
+      {authUser?.role === 'admin' && (data.userSkillUsage?.length ?? 0) > 0 && (
+        <section>
+          <h2 className="text-lg font-medium text-gray-300 mb-3">Skill-Nutzung pro User (letzte 7 Tage)</h2>
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[#0d0d0d] text-gray-400">
+                <tr>
+                  <th className="text-left px-4 py-2 font-medium">User</th>
+                  <th className="text-left px-4 py-2 font-medium">Skill</th>
+                  <th className="text-right px-4 py-2 font-medium">Aufrufe</th>
+                  <th className="text-right px-4 py-2 font-medium hidden md:table-cell">OK</th>
+                  <th className="text-right px-4 py-2 font-medium hidden md:table-cell">Fehler</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.userSkillUsage!.slice(0, 30).map((s, i) => (
+                  <tr key={`${s.userId}-${s.skillName}-${i}`} className="border-t border-[#1f1f1f]">
+                    <td className="px-4 py-2 text-gray-200">{s.userId}</td>
+                    <td className="px-4 py-2 text-gray-300 font-mono text-xs">{s.skillName}</td>
+                    <td className="px-4 py-2 text-gray-400 text-right">{s.calls}</td>
+                    <td className="px-4 py-2 text-green-400 text-right hidden md:table-cell">{s.successes}</td>
+                    <td className="px-4 py-2 text-red-400 text-right hidden md:table-cell">{s.errors}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {/* Reminders */}
       {(data.reminders?.length ?? 0) > 0 && (
         <section>
