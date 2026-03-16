@@ -97,6 +97,10 @@ export class Alfred {
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
+  private webAuthCallback?: {
+    loginWithCode: (code: string) => { success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string };
+    getUserByToken: (token: string) => { userId: string; username: string; role: string } | null;
+  };
   private reminderRepo?: ReminderRepository;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -499,6 +503,24 @@ export class Alfred {
 
       skillRegistry.register(new UserManagementSkill(alfredUserRepo));
       this.logger.info('User management skill registered');
+
+      // Setup web auth callback for HTTP API login
+      const webSessions = new Map<string, { userId: string; username: string; role: string }>();
+      this.webAuthCallback = {
+        loginWithCode: (code: string) => {
+          const user = alfredUserRepo.getByInviteCode(code);
+          if (!user) return { success: false, error: 'Ungültiger oder abgelaufener Code' };
+
+          alfredUserRepo.linkPlatform(user.id, 'web', `web-${user.id}`);
+          alfredUserRepo.clearInviteCode(user.id);
+
+          const token = `alf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+          webSessions.set(token, { userId: user.id, username: user.username, role: user.role });
+
+          return { success: true, userId: user.id, username: user.username, role: user.role, token };
+        },
+        getUserByToken: (token: string) => webSessions.get(token) ?? null,
+      };
     }
 
     // 4u. Database (optional)
@@ -812,6 +834,7 @@ export class Alfred {
         apiToken: config.api?.token,
         corsOrigin: config.api?.corsOrigin,
         tls: config.api?.tls,
+        authCallback: this.webAuthCallback,
         healthCheck: () => {
           let diskUsage: { path: string; sizeBytes: number } | undefined;
           try {

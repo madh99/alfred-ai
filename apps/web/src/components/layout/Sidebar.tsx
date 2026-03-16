@@ -1,6 +1,7 @@
 'use client';
 
 import clsx from 'clsx';
+import { useConfig } from '@/context/ConfigContext';
 
 const BASE = '/alfred';
 
@@ -11,7 +12,7 @@ const navItems = [
 ];
 
 export function Sidebar() {
-  // Use window.location for active detection (works with full page loads)
+  const { user, logout } = useConfig();
   const pathname = typeof window !== 'undefined' ? window.location.pathname : '';
 
   return (
@@ -39,7 +40,14 @@ export function Sidebar() {
           </a>
         ))}
       </nav>
-      <div className="p-4 border-t border-[#1f1f1f]">
+      <div className="p-4 border-t border-[#1f1f1f] space-y-2">
+        {user && (
+          <div className="hidden md:block">
+            <p className="text-xs text-gray-400 truncate">{user.username}</p>
+            <p className="text-[10px] text-gray-600">{user.role}</p>
+            <button onClick={logout} className="text-[10px] text-red-400 hover:text-red-300 mt-1">Abmelden</button>
+          </div>
+        )}
         <a
           href="https://github.com/madh99/alfred-ai"
           target="_blank"

@@ -101,9 +101,9 @@ function getPersistentChatId(): string {
 }
 
 export function useChat() {
-  const { client } = useConfig();
-  const userId = useMemo(() => getPersistentUserId(), []);
-  const chatId = useMemo(() => getPersistentChatId(), []);
+  const { client, user: authUser } = useConfig();
+  const userId = useMemo(() => authUser?.userId ? `web-${authUser.userId}` : getPersistentUserId(), [authUser]);
+  const chatId = useMemo(() => authUser?.userId ? `web-chat-${authUser.userId}` : getPersistentChatId(), [authUser]);
   const [state, dispatch] = useReducer(reducer, {
     messages: [],
     streaming: false,

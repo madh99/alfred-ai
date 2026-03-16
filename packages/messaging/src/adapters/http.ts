@@ -43,6 +43,10 @@ export interface HttpAdapterOptions {
   dashboardCallback?: () => Record<string, unknown>;
   webUiPath?: string;
   tls?: TlsOptions;
+  authCallback?: {
+    loginWithCode: (code: string) => { success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string };
+    getUserByToken: (token: string) => { userId: string; username: string; role: string } | null;
+  };
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -65,6 +69,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly dashboardFn?: () => Record<string, unknown>;
   private readonly webUiPath?: string;
   private readonly tls?: TlsOptions;
+  private readonly authCb?: HttpAdapterOptions['authCallback'];
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
@@ -78,6 +83,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.dashboardFn = options?.dashboardCallback;
     this.webUiPath = options?.webUiPath;
     this.tls = options?.tls;
+    this.authCb = options?.authCallback;
     if (options?.webhooks) {
       for (const wh of options.webhooks) {
         this.webhooks.set(wh.name, wh);
@@ -283,6 +289,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMessage(req, res);
     } else if (url.pathname === '/api/dashboard' && req.method === 'GET') {
       this.handleDashboard(req, res);
+    } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+      this.handleAuthLogin(req, res);
+    } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
+      this.handleAuthMe(req, res);
     } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
       const name = url.pathname.slice('/api/webhook/'.length);
       this.handleWebhook(req, res, name);
@@ -308,6 +318,45 @@ export class HttpAdapter extends MessagingAdapter {
       return false;
     }
     return true;
+  }
+
+  private handleAuthLogin(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (!this.authCb) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Auth not configured' })); return; }
+
+    let body = '';
+    req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const { code } = JSON.parse(body) as { code?: string };
+        if (!code) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Missing code' })); return; }
+
+        const result = this.authCb!.loginWithCode(code);
+        if (result.success) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, userId: result.userId, username: result.username, role: result.role, token: result.token }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: result.error ?? 'Invalid code' }));
+        }
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+      }
+    });
+  }
+
+  private handleAuthMe(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (!this.authCb) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Auth not configured' })); return; }
+
+    const authHeader = req.headers['authorization'];
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No token' })); return; }
+
+    const user = this.authCb.getUserByToken(token);
+    if (!user) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid token' })); return; }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(user));
   }
 
   private handleDashboard(req: http.IncomingMessage, res: http.ServerResponse): void {
