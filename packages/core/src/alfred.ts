@@ -477,7 +477,31 @@ export class Alfred {
     skillRegistry.register(new FeedReaderSkill(memoryRepo));
     this.logger.info('Feed reader skill registered');
 
-    // 4t. Database (optional)
+    // 4t. User Management (always available)
+    {
+      const { AlfredUserRepository } = await import('@alfred/storage');
+      const { UserManagementSkill } = await import('@alfred/skills');
+      const alfredUserRepo = new AlfredUserRepository(db);
+
+      // Auto-create admin user from ownerUserId if not exists
+      if (this.config.security?.ownerUserId) {
+        const existingAdmin = alfredUserRepo.getUserByPlatform('telegram', this.config.security.ownerUserId);
+        if (!existingAdmin) {
+          const admins = alfredUserRepo.getAll().filter(u => u.role === 'admin');
+          if (admins.length === 0) {
+            const admin = alfredUserRepo.create({ username: 'admin', role: 'admin', displayName: 'Admin' });
+            alfredUserRepo.linkPlatform(admin.id, 'telegram', this.config.security.ownerUserId);
+            alfredUserRepo.clearInviteCode(admin.id);
+            this.logger.info({ userId: this.config.security.ownerUserId }, 'Auto-created admin user from ownerUserId');
+          }
+        }
+      }
+
+      skillRegistry.register(new UserManagementSkill(alfredUserRepo));
+      this.logger.info('User management skill registered');
+    }
+
+    // 4u. Database (optional)
     if (this.config.database?.enabled) {
       const { DatabaseSkill } = await import('@alfred/skills');
       const { DatabaseConnectionRepository } = await import('@alfred/storage');

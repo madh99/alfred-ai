@@ -628,4 +628,47 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 31,
+    description: 'Multi-User — users, user_services, user_platform_links tables',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS alfred_users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          role TEXT NOT NULL DEFAULT 'user',
+          display_name TEXT,
+          invite_code TEXT,
+          invite_expires_at TEXT,
+          created_by TEXT,
+          active INTEGER NOT NULL DEFAULT 1,
+          settings TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_alfred_users_username ON alfred_users(username);
+        CREATE INDEX IF NOT EXISTS idx_alfred_users_invite ON alfred_users(invite_code) WHERE invite_code IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS user_services (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES alfred_users(id) ON DELETE CASCADE,
+          service_type TEXT NOT NULL,
+          service_name TEXT NOT NULL,
+          config TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(user_id, service_type, service_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_services_user ON user_services(user_id);
+
+        CREATE TABLE IF NOT EXISTS user_platform_links (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES alfred_users(id) ON DELETE CASCADE,
+          platform TEXT NOT NULL,
+          platform_user_id TEXT NOT NULL,
+          linked_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(platform, platform_user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_platform_links_platform ON user_platform_links(platform, platform_user_id);
+      `);
+    },
+  },
 ];
