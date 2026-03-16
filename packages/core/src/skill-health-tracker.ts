@@ -18,32 +18,32 @@ export class SkillHealthTracker {
   ) {}
 
   /** Returns SkillHealth if skill is disabled, undefined if OK. */
-  isDisabled(skillName: string): SkillHealth | undefined {
+  async isDisabled(skillName: string): Promise<SkillHealth | undefined> {
     try {
-      if (!this.healthRepo.isDisabled(skillName)) return undefined;
+      if (!(await this.healthRepo.isDisabled(skillName))) return undefined;
       return this.healthRepo.getByName(skillName);
     } catch {
       return undefined; // DB error -> don't block
     }
   }
 
-  recordSuccess(skillName: string): void {
+  async recordSuccess(skillName: string): Promise<void> {
     try {
-      this.healthRepo.recordSuccess(skillName);
+      await this.healthRepo.recordSuccess(skillName);
     } catch (err) {
       this.logger.debug({ err, skillName }, 'Failed to record skill success');
     }
   }
 
-  recordFailure(skillName: string, error: string): void {
+  async recordFailure(skillName: string, error: string): Promise<void> {
     try {
-      const health = this.healthRepo.recordFailure(skillName, error);
+      const health = await this.healthRepo.recordFailure(skillName, error);
 
       // Check thresholds (ordered from highest to lowest)
       for (const threshold of DISABLE_THRESHOLDS) {
         if (health.consecutiveFails >= threshold.fails && !health.disabledUntil) {
           const until = new Date(Date.now() + threshold.durationMinutes * 60_000).toISOString();
-          this.healthRepo.disable(skillName, until);
+          await this.healthRepo.disable(skillName, until);
           this.logger.warn(
             { skillName, consecutiveFails: health.consecutiveFails, disabledUntil: until },
             'Skill auto-disabled due to repeated failures',
@@ -65,9 +65,9 @@ export class SkillHealthTracker {
     }
   }
 
-  forceEnable(skillName: string): void {
+  async forceEnable(skillName: string): Promise<void> {
     try {
-      this.healthRepo.enable(skillName);
+      await this.healthRepo.enable(skillName);
       this.logger.info({ skillName }, 'Skill force-enabled by user');
       this.activityLogger?.logSkillHealth({
         skillName,
@@ -79,22 +79,22 @@ export class SkillHealthTracker {
     }
   }
 
-  getDashboard(): SkillHealth[] {
+  async getDashboard(): Promise<SkillHealth[]> {
     try {
-      return this.healthRepo.getAll();
+      return await this.healthRepo.getAll();
     } catch {
       return [];
     }
   }
 
   /** Check for expired disables and re-enable them. */
-  checkReEnables(): void {
+  async checkReEnables(): Promise<void> {
     try {
-      const all = this.healthRepo.getAll();
+      const all = await this.healthRepo.getAll();
       const now = new Date();
       for (const health of all) {
         if (health.disabledUntil && new Date(health.disabledUntil) <= now) {
-          this.healthRepo.enable(health.skillName);
+          await this.healthRepo.enable(health.skillName);
           this.logger.info({ skillName: health.skillName }, 'Skill auto-re-enabled after cooldown');
           this.activityLogger?.logSkillHealth({
             skillName: health.skillName,

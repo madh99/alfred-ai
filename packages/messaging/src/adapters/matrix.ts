@@ -66,6 +66,37 @@ export class MatrixAdapter extends MessagingAdapter {
     this.emit('disconnected');
   }
 
+  async sendDirectMessage(
+    userId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<string | undefined> {
+    if (!this.client) return undefined;
+    try {
+      // Find existing DM room or create one
+      const rooms = this.client.getRooms?.() ?? [];
+      let dmRoomId: string | undefined;
+      for (const room of rooms) {
+        const members = room.getJoinedMembers?.() ?? [];
+        if (members.length === 2 && members.some((m: any) => m.userId === userId)) {
+          dmRoomId = room.roomId;
+          break;
+        }
+      }
+      if (!dmRoomId) {
+        const { room_id } = await this.client.createRoom({
+          invite: [userId],
+          is_direct: true,
+          preset: 'trusted_private_chat',
+        });
+        dmRoomId = room_id;
+      }
+      return await this.sendMessage(dmRoomId!, text, options);
+    } catch {
+      return undefined;
+    }
+  }
+
   async sendMessage(
     chatId: string,
     text: string,

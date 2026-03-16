@@ -27,9 +27,9 @@ export interface ContextResult {
 // concrete implementation.  We use type-guards rather than requiring them so the
 // factory stays backwards-compatible with minimal test mocks.
 type UsersWithCrossPlatform = UserRepository & {
-  getMasterUserId(id: string): string;
-  getLinkedUsers(masterId: string): { platformUserId: string }[];
-  getProfile(id: string): { timezone?: string } | undefined;
+  getMasterUserId(id: string): Promise<string>;
+  getLinkedUsers(masterId: string): Promise<{ platformUserId: string }[]>;
+  getProfile(id: string): Promise<{ timezone?: string } | undefined>;
 };
 
 /**
@@ -37,14 +37,14 @@ type UsersWithCrossPlatform = UserRepository & {
  * master-resolution and timezone logic previously duplicated across
  * message-pipeline, background-task-runner and proactive-scheduler.
  */
-export function buildSkillContext(
+export async function buildSkillContext(
   users: UserRepository,
   source: ContextSource,
-): ContextResult {
+): Promise<ContextResult> {
   // 1. Resolve user
   let user: { id: string; platformUserId: string; username?: string; displayName?: string };
   if (source.platformUserId) {
-    user = users.findOrCreate(
+    user = await users.findOrCreate(
       source.platform as Platform,
       source.platformUserId,
       source.userName,
@@ -52,21 +52,21 @@ export function buildSkillContext(
     );
   } else if (source.userId) {
     // Try internal lookup first to avoid creating phantom users.
-    const existing = users.findById(source.userId);
-    user = existing ?? users.findOrCreate(source.platform as Platform, source.userId);
+    const existing = await users.findById(source.userId);
+    user = existing ?? await users.findOrCreate(source.platform as Platform, source.userId);
   } else {
     throw new Error('ContextSource must provide either platformUserId or userId');
   }
 
   // 2. Resolve master user for cross-platform shared context
   const masterUserId = 'getMasterUserId' in users
-    ? (users as UsersWithCrossPlatform).getMasterUserId(user.id)
+    ? await (users as UsersWithCrossPlatform).getMasterUserId(user.id)
     : user.id;
 
   // 3. Resolve all linked platform user IDs
   let linkedPlatformUserIds: string[] = [];
   if ('getLinkedUsers' in users) {
-    const linked = (users as UsersWithCrossPlatform).getLinkedUsers(masterUserId);
+    const linked = await (users as UsersWithCrossPlatform).getLinkedUsers(masterUserId);
     linkedPlatformUserIds = linked.map(u => u.platformUserId);
   }
 
@@ -74,7 +74,7 @@ export function buildSkillContext(
   let timezone: string | undefined;
   try {
     if ('getProfile' in users) {
-      const profile = (users as UsersWithCrossPlatform).getProfile(masterUserId);
+      const profile = await (users as UsersWithCrossPlatform).getProfile(masterUserId);
       timezone = profile?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     } else {
       timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;

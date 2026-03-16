@@ -41,8 +41,8 @@ describe('ConversationSummarizer', () => {
     summarizer = new ConversationSummarizer(llm, summaryRepo, logger);
   });
 
-  it('getSummary() returns undefined for unknown conversation', () => {
-    expect(summarizer.getSummary('unknown-id')).toBeUndefined();
+  it('getSummary() returns undefined for unknown conversation', async () => {
+    expect(await summarizer.getSummary('unknown-id')).toBeUndefined();
     expect(summaryRepo.get).toHaveBeenCalledWith('unknown-id');
   });
 

@@ -1,5 +1,5 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import type { NoteRepository } from '@alfred/storage';
+import type { NoteRepository, SharedResourceRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
@@ -43,8 +43,19 @@ export class NoteSkill extends Skill {
     },
   };
 
+  private sharedResourceRepo?: SharedResourceRepository;
+
   constructor(private readonly noteRepo: NoteRepository) {
     super();
+  }
+
+  /** Resolve note IDs shared with the current alfred user. */
+  private async getSharedNoteIds(context: SkillContext): Promise<string[]> {
+    if (!this.sharedResourceRepo || !context.alfredUserId) return [];
+    try {
+      const shared = await this.sharedResourceRepo.getSharedWith(context.alfredUserId);
+      return shared.filter(s => s.resourceType === 'note').map(s => s.resourceId);
+    } catch { return []; }
   }
 
   async execute(
@@ -70,7 +81,7 @@ export class NoteSkill extends Skill {
     }
   }
 
-  private saveNote(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async saveNote(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const title = input.title as string | undefined;
     const content = input.content as string | undefined;
 
@@ -81,7 +92,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: 'Missing required field "content" for save action' };
     }
 
-    const entry = this.noteRepo.save(effectiveUserId(context), title, content);
+    const entry = await this.noteRepo.save(effectiveUserId(context), title, content);
 
     return {
       success: true,
@@ -90,14 +101,28 @@ export class NoteSkill extends Skill {
     };
   }
 
-  private listNotes(context: SkillContext): SkillResult {
+  private async listNotes(context: SkillContext): Promise<SkillResult> {
     const seen = new Set<string>();
-    const notes: ReturnType<typeof this.noteRepo.list> = [];
+    const notes: Awaited<ReturnType<typeof this.noteRepo.list>> = [];
     for (const uid of allUserIds(context)) {
-      for (const n of this.noteRepo.list(uid)) {
+      for (const n of await this.noteRepo.list(uid)) {
         if (!seen.has(n.id)) {
           seen.add(n.id);
           notes.push(n);
+        }
+      }
+    }
+
+    // Include shared notes
+    const sharedIds = await this.getSharedNoteIds(context);
+    const sharedNoteIds = new Set<string>();
+    for (const id of sharedIds) {
+      if (!seen.has(id)) {
+        const note = await this.noteRepo.getById(id);
+        if (note) {
+          seen.add(note.id);
+          sharedNoteIds.add(note.id);
+          notes.push(note);
         }
       }
     }
@@ -107,13 +132,16 @@ export class NoteSkill extends Skill {
     }
 
     const display = notes
-      .map(n => `- **${n.title}** (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`)
+      .map(n => {
+        const shared = sharedNoteIds.has(n.id) ? ' (shared)' : '';
+        return `- **${n.title}**${shared} (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`;
+      })
       .join('\n');
 
     return { success: true, data: notes, display: `${notes.length} note(s):\n${display}` };
   }
 
-  private searchNotes(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async searchNotes(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const query = input.query as string | undefined;
 
     if (!query || typeof query !== 'string') {
@@ -121,12 +149,27 @@ export class NoteSkill extends Skill {
     }
 
     const seen = new Set<string>();
-    const matches: ReturnType<typeof this.noteRepo.search> = [];
+    const matches: Awaited<ReturnType<typeof this.noteRepo.search>> = [];
     for (const uid of allUserIds(context)) {
-      for (const n of this.noteRepo.search(uid, query)) {
+      for (const n of await this.noteRepo.search(uid, query)) {
         if (!seen.has(n.id)) {
           seen.add(n.id);
           matches.push(n);
+        }
+      }
+    }
+
+    // Include shared notes matching the query
+    const sharedIds = await this.getSharedNoteIds(context);
+    const sharedNoteIds = new Set<string>();
+    const lowerQuery = query.toLowerCase();
+    for (const id of sharedIds) {
+      if (!seen.has(id)) {
+        const note = await this.noteRepo.getById(id);
+        if (note && (note.title.toLowerCase().includes(lowerQuery) || note.content.toLowerCase().includes(lowerQuery))) {
+          seen.add(note.id);
+          sharedNoteIds.add(note.id);
+          matches.push(note);
         }
       }
     }
@@ -136,13 +179,16 @@ export class NoteSkill extends Skill {
     }
 
     const display = matches
-      .map(n => `- **${n.title}** (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`)
+      .map(n => {
+        const shared = sharedNoteIds.has(n.id) ? ' (shared)' : '';
+        return `- **${n.title}**${shared} (${n.id.slice(0, 8)}…)\n  ${n.content.slice(0, 100)}${n.content.length > 100 ? '…' : ''}`;
+      })
       .join('\n');
 
     return { success: true, data: matches, display: `Found ${matches.length} note(s):\n${display}` };
   }
 
-  private deleteNote(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async deleteNote(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const noteId = input.noteId as string | undefined;
 
     if (!noteId || typeof noteId !== 'string') {
@@ -150,7 +196,7 @@ export class NoteSkill extends Skill {
     }
 
     // Verify ownership before deleting (check all linked user IDs)
-    const note = this.noteRepo.getById(noteId);
+    const note = await this.noteRepo.getById(noteId);
     if (!note) {
       return { success: false, error: `Note "${noteId}" not found` };
     }
@@ -159,7 +205,7 @@ export class NoteSkill extends Skill {
       return { success: false, error: `Note "${noteId}" not found` };
     }
 
-    const deleted = this.noteRepo.delete(noteId);
+    const deleted = await this.noteRepo.delete(noteId);
 
     if (!deleted) {
       return { success: false, error: `Note "${noteId}" not found` };

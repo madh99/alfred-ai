@@ -17,10 +17,10 @@ export class UserServiceResolver {
    * @param serviceType - e.g. 'email', 'bmw', 'calendar', 'contacts', 'todo'
    * @param serviceName - e.g. 'gmail', 'outlook', 'google-calendar' (optional)
    */
-  getServiceConfig(alfredUserId: string | undefined, serviceType: string, serviceName?: string): Record<string, unknown> | null {
+  async getServiceConfig(alfredUserId: string | undefined, serviceType: string, serviceName?: string): Promise<Record<string, unknown> | null> {
     if (!alfredUserId) return null;
     try {
-      const service = this.userRepo.getService(alfredUserId, serviceType, serviceName);
+      const service = await this.userRepo.getService(alfredUserId, serviceType, serviceName);
       return service?.config ?? null;
     } catch {
       return null;
@@ -30,10 +30,10 @@ export class UserServiceResolver {
   /**
    * Get all services of a type for a user.
    */
-  getUserServices(alfredUserId: string | undefined, serviceType?: string): UserService[] {
+  async getUserServices(alfredUserId: string | undefined, serviceType?: string): Promise<UserService[]> {
     if (!alfredUserId) return [];
     try {
-      const all = this.userRepo.getServices(alfredUserId);
+      const all = await this.userRepo.getServices(alfredUserId);
       return serviceType ? all.filter(s => s.serviceType === serviceType) : all;
     } catch {
       return [];
@@ -43,14 +43,14 @@ export class UserServiceResolver {
   /**
    * Save a service config for a user (called when user configures via chat).
    */
-  saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): void {
-    this.userRepo.addService(alfredUserId, serviceType, serviceName, config);
+  async saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): Promise<void> {
+    await this.userRepo.addService(alfredUserId, serviceType, serviceName, config);
   }
 
   /**
    * Remove a service config for a user.
    */
-  removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): boolean {
-    return this.userRepo.removeService(alfredUserId, serviceType, serviceName);
+  async removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): Promise<boolean> {
+    return await this.userRepo.removeService(alfredUserId, serviceType, serviceName);
   }
 }

@@ -95,11 +95,11 @@ Actions:
       case 'start':
         return this.startProject(input, context);
       case 'status':
-        return this.getStatus(input);
+        return this.getStatus(input, context);
       case 'interject':
-        return this.interject(input);
+        return this.interject(input, context);
       case 'stop':
-        return this.stopProject(input);
+        return this.stopProject(input, context);
       default:
         return { success: false, error: `Unknown action "${action}". Use start, status, interject, or stop.` };
     }
@@ -125,7 +125,7 @@ Actions:
     const testCommands = (input.testCommands as string[]) ?? template?.testCommands ?? [];
 
     // Create session tracking
-    const session = this.sessionRepo.create({
+    const session = await this.sessionRepo.create({
       taskId: crypto.randomUUID(),
       goal,
       cwd,
@@ -154,12 +154,22 @@ Actions:
     };
   }
 
-  private getStatus(input: Record<string, unknown>): SkillResult {
+  /** Verify the caller owns or is admin for this task. */
+  private async verifyTaskAccess(taskId: string, context: SkillContext): Promise<import('@alfred/storage').ProjectAgentSession | null> {
+    const session = await this.sessionRepo.getByTaskId(taskId);
+    if (!session) return null;
+    // Task was started from the same chat, or user is admin
+    if (context.chatId === (session as any).chatId) return session;
+    if (context.userRole === 'admin') return session;
+    return null;
+  }
+
+  private async getStatus(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const taskId = input.task_id as string | undefined;
     if (!taskId) return { success: false, error: 'Missing "task_id"' };
 
-    const session = this.sessionRepo.getByTaskId(taskId);
-    if (!session) return { success: false, error: `No project agent session found for task ${taskId}` };
+    const session = await this.verifyTaskAccess(taskId, context);
+    if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
     return {
       success: true,
@@ -174,11 +184,14 @@ Actions:
     };
   }
 
-  private interject(input: Record<string, unknown>): SkillResult {
+  private async interject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const taskId = input.task_id as string | undefined;
     const message = input.message as string | undefined;
     if (!taskId) return { success: false, error: 'Missing "task_id"' };
     if (!message) return { success: false, error: 'Missing "message"' };
+
+    const session = await this.verifyTaskAccess(taskId, context);
+    if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
     pushInterjection(taskId, message);
     return {
@@ -188,9 +201,12 @@ Actions:
     };
   }
 
-  private stopProject(input: Record<string, unknown>): SkillResult {
+  private async stopProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const taskId = input.task_id as string | undefined;
     if (!taskId) return { success: false, error: 'Missing "task_id"' };
+
+    const session = await this.verifyTaskAccess(taskId, context);
+    if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
     // Push stop signal to inbox
     pushInterjection(taskId, '__STOP__');

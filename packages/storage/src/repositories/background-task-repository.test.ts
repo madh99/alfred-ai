@@ -17,8 +17,8 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -30,15 +30,15 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
     const { Database } = await import('../database.js');
     const { BackgroundTaskRepository } = await import('./background-task-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-bgtask-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new BackgroundTaskRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new BackgroundTaskRepository(db.getAdapter());
     return repo;
   }
 
   it('should create a task with correct fields', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'chat-1', 'Fetch data', 'web_search', '{"q":"test"}');
+    const task = await repo.create('user-1', 'telegram', 'chat-1', 'Fetch data', 'web_search', '{"q":"test"}');
 
     expect(task).toBeDefined();
     expect(task.id).toBeDefined();
@@ -56,14 +56,14 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should return only pending tasks via getPending', async () => {
     const repo = await setup();
 
-    const t1 = repo.create('user-1', 'telegram', 'c1', 'task 1', 'skill_a', '{}');
-    const t2 = repo.create('user-1', 'telegram', 'c1', 'task 2', 'skill_b', '{}');
-    repo.create('user-1', 'telegram', 'c1', 'task 3', 'skill_c', '{}');
+    const t1 = await repo.create('user-1', 'telegram', 'c1', 'task 1', 'skill_a', '{}');
+    const t2 = await repo.create('user-1', 'telegram', 'c1', 'task 2', 'skill_b', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'task 3', 'skill_c', '{}');
 
     // Mark t1 as running, t2 stays pending, t3 stays pending
-    repo.updateStatus(t1.id, 'running');
+    await repo.updateStatus(t1.id, 'running');
 
-    const pending = repo.getPending();
+    const pending = await repo.getPending();
 
     expect(pending.length).toBe(2);
     expect(pending.every((t) => t.status === 'pending')).toBe(true);
@@ -73,23 +73,23 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should respect limit in getPending', async () => {
     const repo = await setup();
 
-    repo.create('user-1', 'telegram', 'c1', 'task 1', 'skill_a', '{}');
-    repo.create('user-1', 'telegram', 'c1', 'task 2', 'skill_b', '{}');
-    repo.create('user-1', 'telegram', 'c1', 'task 3', 'skill_c', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'task 1', 'skill_a', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'task 2', 'skill_b', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'task 3', 'skill_c', '{}');
 
-    const pending = repo.getPending(2);
+    const pending = await repo.getPending(2);
     expect(pending.length).toBe(2);
   });
 
   it('should set started_at when status changes to running', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'run me', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'running');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'run me', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'running');
 
-    const tasks = repo.getPending(100);
+    const tasks = await repo.getPending(100);
     // Task is no longer pending, verify via getByUser
-    const userTasks = repo.getByUser('user-1');
+    const userTasks = await repo.getByUser('user-1');
     const updated = userTasks.find((t) => t.id === task.id);
 
     expect(updated).toBeDefined();
@@ -100,11 +100,11 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should set completed_at when status changes to completed', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'complete me', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'running');
-    repo.updateStatus(task.id, 'completed', 'done!');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'complete me', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'running');
+    await repo.updateStatus(task.id, 'completed', 'done!');
 
-    const userTasks = repo.getByUser('user-1');
+    const userTasks = await repo.getByUser('user-1');
     const updated = userTasks.find((t) => t.id === task.id);
 
     expect(updated).toBeDefined();
@@ -116,10 +116,10 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should set completed_at and error when status changes to failed', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'fail me', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'failed', undefined, 'something broke');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'fail me', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'failed', undefined, 'something broke');
 
-    const userTasks = repo.getByUser('user-1');
+    const userTasks = await repo.getByUser('user-1');
     const updated = userTasks.find((t) => t.id === task.id);
 
     expect(updated).toBeDefined();
@@ -131,12 +131,12 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should return tasks for specific user via getByUser', async () => {
     const repo = await setup();
 
-    repo.create('user-1', 'telegram', 'c1', 'user1 task', 'skill_a', '{}');
-    repo.create('user-2', 'telegram', 'c2', 'user2 task', 'skill_b', '{}');
-    repo.create('user-1', 'telegram', 'c1', 'user1 task 2', 'skill_c', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'user1 task', 'skill_a', '{}');
+    await repo.create('user-2', 'telegram', 'c2', 'user2 task', 'skill_b', '{}');
+    await repo.create('user-1', 'telegram', 'c1', 'user1 task 2', 'skill_c', '{}');
 
-    const user1Tasks = repo.getByUser('user-1');
-    const user2Tasks = repo.getByUser('user-2');
+    const user1Tasks = await repo.getByUser('user-1');
+    const user2Tasks = await repo.getByUser('user-2');
 
     expect(user1Tasks.length).toBe(2);
     expect(user2Tasks.length).toBe(1);
@@ -147,51 +147,51 @@ describe.skipIf(!hasBetterSqlite3)('BackgroundTaskRepository', () => {
   it('should cancel a pending task', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'cancel me', 'skill_a', '{}');
-    const cancelled = repo.cancel(task.id);
+    const task = await repo.create('user-1', 'telegram', 'c1', 'cancel me', 'skill_a', '{}');
+    const cancelled = await repo.cancel(task.id);
 
     expect(cancelled).toBe(true);
 
-    const pending = repo.getPending();
+    const pending = await repo.getPending();
     expect(pending.find((t) => t.id === task.id)).toBeUndefined();
   });
 
   it('should return false when cancelling a completed task', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'done task', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'completed', 'result');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'done task', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'completed', 'result');
 
-    const cancelled = repo.cancel(task.id);
+    const cancelled = await repo.cancel(task.id);
     expect(cancelled).toBe(false);
   });
 
   it('should return false when cancelling a non-existent task', async () => {
     const repo = await setup();
 
-    const cancelled = repo.cancel('non-existent-id');
+    const cancelled = await repo.cancel('non-existent-id');
     expect(cancelled).toBe(false);
   });
 
   it('should cleanup old completed tasks', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'old task', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'completed', 'done');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'old task', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'completed', 'done');
 
     // With olderThanDays=0, any completed task should be cleaned up
-    const removed = repo.cleanup(0);
+    const removed = await repo.cleanup(0);
     expect(removed).toBe(1);
   });
 
   it('should not cleanup recent completed tasks', async () => {
     const repo = await setup();
 
-    const task = repo.create('user-1', 'telegram', 'c1', 'recent task', 'skill_a', '{}');
-    repo.updateStatus(task.id, 'completed', 'done');
+    const task = await repo.create('user-1', 'telegram', 'c1', 'recent task', 'skill_a', '{}');
+    await repo.updateStatus(task.id, 'completed', 'done');
 
     // With a high olderThanDays value, recent tasks should not be cleaned up
-    const removed = repo.cleanup(30);
+    const removed = await repo.cleanup(30);
     expect(removed).toBe(0);
   });
 });

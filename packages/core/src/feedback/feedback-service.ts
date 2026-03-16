@@ -55,7 +55,7 @@ export class FeedbackService {
    */
   async runMaintenance(): Promise<void> {
     try {
-      const pruned = this.feedbackRepo.pruneOldEvents(this.staleDays * 2);
+      const pruned = await this.feedbackRepo.pruneOldEvents(this.staleDays * 2);
       if (pruned > 0) {
         this.logger.info({ pruned }, 'Feedback: pruned old events');
       }
@@ -74,7 +74,7 @@ export class FeedbackService {
   }): Promise<void> {
     const contextKey = `watch:${opts.watchName.toLowerCase().replace(/\s+/g, '_')}:${opts.skillName}`;
 
-    this.feedbackRepo.recordEvent(
+    await this.feedbackRepo.recordEvent(
       opts.userId,
       'watch_rejection',
       opts.watchId,
@@ -83,14 +83,14 @@ export class FeedbackService {
       { skillName: opts.skillName, skillParams: opts.skillParams },
     );
 
-    const count = this.feedbackRepo.countEvents(opts.userId, contextKey);
+    const count = await this.feedbackRepo.countEvents(opts.userId, contextKey);
     this.logger.debug({ contextKey, count, threshold: this.threshold }, 'Feedback: watch rejection recorded');
 
     if (count >= this.threshold) {
       const memoryKey = `feedback:${contextKey}`;
       const memoryValue = `Watch "${opts.watchName}" wurde ${count}× abgelehnt. Schwellenwert oder Parameter überprüfen bevor diese Aktion vorgeschlagen wird.`;
 
-      this.memoryRepo.saveWithMetadata(
+      await this.memoryRepo.saveWithMetadata(
         opts.userId,
         memoryKey,
         memoryValue,
@@ -119,7 +119,7 @@ export class FeedbackService {
     const rule = this.extractCorrectionRule(opts.userMessage);
     if (!rule) return;
 
-    this.feedbackRepo.recordEvent(
+    await this.feedbackRepo.recordEvent(
       opts.userId,
       'conversation_correction',
       undefined,
@@ -130,7 +130,7 @@ export class FeedbackService {
 
     // Directly save as feedback memory (corrections are explicit — no threshold needed)
     const memoryKey = `feedback:correction:${Date.now()}`;
-    this.memoryRepo.saveWithMetadata(
+    await this.memoryRepo.saveWithMetadata(
       opts.userId,
       memoryKey,
       rule,

@@ -17,8 +17,8 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -30,15 +30,15 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
     const { Database } = await import('../database.js');
     const { DocumentRepository } = await import('./document-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-document-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new DocumentRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new DocumentRepository(db.getAdapter());
     return repo;
   }
 
   it('should create a document with correct fields', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'report.pdf', 'application/pdf', 102400);
+    const doc = await repo.createDocument('user-1', 'report.pdf', 'application/pdf', 102400);
 
     expect(doc).toBeDefined();
     expect(doc.id).toBeDefined();
@@ -54,11 +54,11 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should add chunks and retrieve them with getChunks', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'notes.txt', 'text/plain', 500);
+    const doc = await repo.createDocument('user-1', 'notes.txt', 'text/plain', 500);
 
-    const chunk1 = repo.addChunk(doc.id, 0, 'First chunk of content', 'emb-1');
-    const chunk2 = repo.addChunk(doc.id, 1, 'Second chunk of content', 'emb-2');
-    const chunk3 = repo.addChunk(doc.id, 2, 'Third chunk of content');
+    const chunk1 = await repo.addChunk(doc.id, 0, 'First chunk of content', 'emb-1');
+    const chunk2 = await repo.addChunk(doc.id, 1, 'Second chunk of content', 'emb-2');
+    const chunk3 = await repo.addChunk(doc.id, 2, 'Third chunk of content');
 
     expect(chunk1.id).toBeDefined();
     expect(chunk1.documentId).toBe(doc.id);
@@ -66,7 +66,7 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
     expect(chunk1.content).toBe('First chunk of content');
     expect(chunk1.embeddingId).toBe('emb-1');
 
-    const chunks = repo.getChunks(doc.id);
+    const chunks = await repo.getChunks(doc.id);
 
     expect(chunks.length).toBe(3);
     expect(chunks[0].chunkIndex).toBe(0);
@@ -81,14 +81,14 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should update chunk count', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'notes.txt', 'text/plain', 500);
+    const doc = await repo.createDocument('user-1', 'notes.txt', 'text/plain', 500);
     expect(doc.chunkCount).toBe(0);
 
-    repo.addChunk(doc.id, 0, 'Chunk 1');
-    repo.addChunk(doc.id, 1, 'Chunk 2');
-    repo.updateChunkCount(doc.id, 2);
+    await repo.addChunk(doc.id, 0, 'Chunk 1');
+    await repo.addChunk(doc.id, 1, 'Chunk 2');
+    await repo.updateChunkCount(doc.id, 2);
 
-    const updated = repo.getDocument(doc.id);
+    const updated = await repo.getDocument(doc.id);
     expect(updated).toBeDefined();
     expect(updated!.chunkCount).toBe(2);
   });
@@ -96,12 +96,12 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should list documents by user', async () => {
     const repo = await setup();
 
-    repo.createDocument('user-1', 'file1.txt', 'text/plain', 100);
-    repo.createDocument('user-2', 'file2.txt', 'text/plain', 200);
-    repo.createDocument('user-1', 'file3.pdf', 'application/pdf', 300);
+    await repo.createDocument('user-1', 'file1.txt', 'text/plain', 100);
+    await repo.createDocument('user-2', 'file2.txt', 'text/plain', 200);
+    await repo.createDocument('user-1', 'file3.pdf', 'application/pdf', 300);
 
-    const user1Docs = repo.listByUser('user-1');
-    const user2Docs = repo.listByUser('user-2');
+    const user1Docs = await repo.listByUser('user-1');
+    const user2Docs = await repo.listByUser('user-2');
 
     expect(user1Docs.length).toBe(2);
     expect(user2Docs.length).toBe(1);
@@ -112,24 +112,24 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should delete a document and its chunks', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'delete-me.txt', 'text/plain', 100);
-    repo.addChunk(doc.id, 0, 'Chunk to delete', 'emb-del');
-    repo.addChunk(doc.id, 1, 'Another chunk');
+    const doc = await repo.createDocument('user-1', 'delete-me.txt', 'text/plain', 100);
+    await repo.addChunk(doc.id, 0, 'Chunk to delete', 'emb-del');
+    await repo.addChunk(doc.id, 1, 'Another chunk');
 
-    repo.deleteDocument(doc.id);
+    await repo.deleteDocument(doc.id);
 
-    const found = repo.getDocument(doc.id);
+    const found = await repo.getDocument(doc.id);
     expect(found).toBeUndefined();
 
-    const chunks = repo.getChunks(doc.id);
+    const chunks = await repo.getChunks(doc.id);
     expect(chunks.length).toBe(0);
   });
 
   it('should retrieve document by id via getDocument', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'findme.txt', 'text/plain', 42);
-    const found = repo.getDocument(doc.id);
+    const doc = await repo.createDocument('user-1', 'findme.txt', 'text/plain', 42);
+    const found = await repo.getDocument(doc.id);
 
     expect(found).toBeDefined();
     expect(found!.id).toBe(doc.id);
@@ -139,19 +139,19 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should return undefined for non-existent document', async () => {
     const repo = await setup();
 
-    const found = repo.getDocument('non-existent-id');
+    const found = await repo.getDocument('non-existent-id');
     expect(found).toBeUndefined();
   });
 
   it('should retrieve chunks by embedding IDs', async () => {
     const repo = await setup();
 
-    const doc = repo.createDocument('user-1', 'embed.txt', 'text/plain', 100);
-    repo.addChunk(doc.id, 0, 'Chunk A', 'emb-a');
-    repo.addChunk(doc.id, 1, 'Chunk B', 'emb-b');
-    repo.addChunk(doc.id, 2, 'Chunk C', 'emb-c');
+    const doc = await repo.createDocument('user-1', 'embed.txt', 'text/plain', 100);
+    await repo.addChunk(doc.id, 0, 'Chunk A', 'emb-a');
+    await repo.addChunk(doc.id, 1, 'Chunk B', 'emb-b');
+    await repo.addChunk(doc.id, 2, 'Chunk C', 'emb-c');
 
-    const results = repo.getChunksByEmbeddingIds(['emb-a', 'emb-c']);
+    const results = await repo.getChunksByEmbeddingIds(['emb-a', 'emb-c']);
 
     expect(results.length).toBe(2);
     expect(results[0].embeddingId).toBe('emb-a');
@@ -161,7 +161,7 @@ describe.skipIf(!hasBetterSqlite3)('DocumentRepository', () => {
   it('should return empty array for getChunksByEmbeddingIds with empty input', async () => {
     const repo = await setup();
 
-    const results = repo.getChunksByEmbeddingIds([]);
+    const results = await repo.getChunksByEmbeddingIds([]);
     expect(results).toEqual([]);
   });
 });

@@ -101,6 +101,21 @@ export class DiscordAdapter extends MessagingAdapter {
     return lastMessageId;
   }
 
+  async sendDirectMessage(
+    userId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<string | undefined> {
+    if (!this.client) return undefined;
+    try {
+      const user = await this.client.users.fetch(userId);
+      const dmChannel = await user.createDM();
+      return await this.sendMessage(dmChannel.id, text, options);
+    } catch {
+      return undefined;
+    }
+  }
+
   async editMessage(
     chatId: string,
     messageId: string,

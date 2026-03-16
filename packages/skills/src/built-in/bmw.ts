@@ -15,7 +15,10 @@ const API_VERSION = 'v1';
 const SCOPE = 'authenticate_user openid cardata:api:read cardata:streaming:read';
 const CACHE_TTL = 5 * 60_000; // 5 min — BMW allows max 50 calls/day
 const CONTAINER_NAME = 'Alfred';
-const TOKEN_PATH = join(homedir(), '.alfred', 'bmw-tokens.json');
+function getTokenPath(userId: string): string {
+  const safe = userId.replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
+  return join(homedir(), '.alfred', `bmw-tokens-${safe}.json`);
+}
 
 // ── PKCE helpers ──────────────────────────────────────────
 function generateCodeVerifier(): string {
@@ -148,8 +151,25 @@ export class BMWSkill extends Skill {
   };
 
   private readonly config: BMWCarDataConfig;
-  private tokens: BMWTokens | null = null;
-  private cache: Map<string, CacheEntry> = new Map();
+  /** Per-user token storage keyed by alfredUserId (or 'default' for global). */
+  private tokensByUser: Map<string, BMWTokens | null> = new Map();
+  private cacheByUser: Map<string, Map<string, CacheEntry>> = new Map();
+  private activeUserId = 'default';
+
+  private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.activeUserId) ?? null; }
+  private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.activeUserId, t); }
+  private get cache(): Map<string, CacheEntry> {
+    if (!this.cacheByUser.has(this.activeUserId)) this.cacheByUser.set(this.activeUserId, new Map());
+    return this.cacheByUser.get(this.activeUserId)!;
+  }
+
+  /** Per-request override for user-specific BMW config. */
+  private activeConfig?: BMWCarDataConfig;
+
+  /** Return the active (per-user or global) BMW config. */
+  private get cfg(): BMWCarDataConfig {
+    return this.activeConfig ?? this.config;
+  }
 
   constructor(config: BMWCarDataConfig) {
     super();
@@ -157,10 +177,15 @@ export class BMWSkill extends Skill {
   }
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
-    const action = input.action as Action | undefined;
-    if (!action) return { success: false, error: 'Missing required field "action"' };
+    // Resolve per-user BMW config if available
+    this.activeConfig = await this.resolveUserConfig(_context) ?? undefined;
+    // Isolate tokens/cache per user
+    this.activeUserId = _context.alfredUserId ?? _context.masterUserId ?? 'default';
 
     try {
+      const action = input.action as Action | undefined;
+      if (!action) return { success: false, error: 'Missing required field "action"' };
+
       switch (action) {
         case 'authorize':
           return await this.authorize(input.device_code as string | undefined);
@@ -185,7 +210,20 @@ export class BMWSkill extends Skill {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: `BMW API error: ${msg}` };
+    } finally {
+      this.activeConfig = undefined;
     }
+  }
+
+  /**
+   * Resolve per-user BMW config from UserServiceResolver.
+   * Returns null if no per-user config is available (fall back to global).
+   */
+  private async resolveUserConfig(context: SkillContext): Promise<BMWCarDataConfig | null> {
+    if (!context.userServiceResolver || !context.alfredUserId) return null;
+    const config = await context.userServiceResolver.getServiceConfig(context.alfredUserId, 'bmw');
+    if (!config || !config.clientId) return null;
+    return config as unknown as BMWCarDataConfig;
   }
 
   // ── OAuth Device Authorization Flow with PKCE ───────────
@@ -213,7 +251,7 @@ export class BMWSkill extends Skill {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: this.config.clientId,
+        client_id: this.cfg.clientId,
         response_type: 'device_code',
         code_challenge: codeChallenge,
         code_challenge_method: 'S256',
@@ -263,7 +301,7 @@ export class BMWSkill extends Skill {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: this.config.clientId,
+        client_id: this.cfg.clientId,
         device_code: deviceCode,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
         code_verifier: codeVerifier,
@@ -455,7 +493,7 @@ export class BMWSkill extends Skill {
   /** Read tokens from disk, bypassing in-memory cache */
   private async loadTokensFromDisk(): Promise<BMWTokens | null> {
     try {
-      const raw = await readFile(TOKEN_PATH, 'utf-8');
+      const raw = await readFile(getTokenPath(this.activeUserId), 'utf-8');
       const tokens = JSON.parse(raw) as BMWTokens;
       this.tokens = tokens;
       return tokens;
@@ -466,20 +504,20 @@ export class BMWSkill extends Skill {
 
   private async saveTokens(tokens: BMWTokens): Promise<void> {
     await mkdir(join(homedir(), '.alfred'), { recursive: true });
-    await writeFile(TOKEN_PATH, JSON.stringify(tokens, null, 2), 'utf-8');
-    try { await chmod(TOKEN_PATH, 0o600); } catch { /* Windows has no chmod */ }
+    await writeFile(getTokenPath(this.activeUserId), JSON.stringify(tokens, null, 2), 'utf-8');
+    try { await chmod(getTokenPath(this.activeUserId), 0o600); } catch { /* Windows has no chmod */ }
   }
 
   private async savePartialTokens(partial: Partial<BMWTokens>): Promise<void> {
     await mkdir(join(homedir(), '.alfred'), { recursive: true });
     let existing: Partial<BMWTokens> = {};
     try {
-      const raw = await readFile(TOKEN_PATH, 'utf-8');
+      const raw = await readFile(getTokenPath(this.activeUserId), 'utf-8');
       existing = JSON.parse(raw) as Partial<BMWTokens>;
     } catch {
       // no existing file
     }
-    await writeFile(TOKEN_PATH, JSON.stringify({ ...existing, ...partial }, null, 2), 'utf-8');
+    await writeFile(getTokenPath(this.activeUserId), JSON.stringify({ ...existing, ...partial }, null, 2), 'utf-8');
   }
 
   private async ensureToken(): Promise<string> {
@@ -502,7 +540,7 @@ export class BMWSkill extends Skill {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: this.config.clientId,
+        client_id: this.cfg.clientId,
         grant_type: 'refresh_token',
         refresh_token: tokens.refreshToken,
       }),

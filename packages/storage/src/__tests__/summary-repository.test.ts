@@ -17,8 +17,8 @@ describe.skipIf(!hasBetterSqlite3)('SummaryRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -30,19 +30,19 @@ describe.skipIf(!hasBetterSqlite3)('SummaryRepository', () => {
     const { Database } = await import('../database.js');
     const { SummaryRepository } = await import('../repositories/summary-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-summary-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new SummaryRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new SummaryRepository(db.getAdapter());
     return repo;
   }
 
   it('get() returns undefined for non-existent id', async () => {
     const repo = await setup();
-    expect(repo.get('non-existent')).toBeUndefined();
+    expect(await repo.get('non-existent')).toBeUndefined();
   });
 
   it('upsert() inserts new entry', async () => {
     const repo = await setup();
-    repo.upsert({
+    await repo.upsert({
       conversationId: 'conv-1',
       summary: 'Test summary',
       messageCount: 5,
@@ -51,7 +51,7 @@ describe.skipIf(!hasBetterSqlite3)('SummaryRepository', () => {
       updatedAt: '2026-01-01T00:00:00Z',
     });
 
-    const result = repo.get('conv-1');
+    const result = await repo.get('conv-1');
     expect(result).toBeDefined();
     expect(result!.summary).toBe('Test summary');
     expect(result!.messageCount).toBe(5);
@@ -60,35 +60,35 @@ describe.skipIf(!hasBetterSqlite3)('SummaryRepository', () => {
 
   it('upsert() updates existing entry (ON CONFLICT)', async () => {
     const repo = await setup();
-    repo.upsert({
+    await repo.upsert({
       conversationId: 'conv-1',
       summary: 'First summary',
       messageCount: 5,
       updatedAt: '2026-01-01T00:00:00Z',
     });
 
-    repo.upsert({
+    await repo.upsert({
       conversationId: 'conv-1',
       summary: 'Updated summary',
       messageCount: 10,
       updatedAt: '2026-01-02T00:00:00Z',
     });
 
-    const result = repo.get('conv-1');
+    const result = await repo.get('conv-1');
     expect(result!.summary).toBe('Updated summary');
     expect(result!.messageCount).toBe(10);
   });
 
   it('delete() removes entry', async () => {
     const repo = await setup();
-    repo.upsert({
+    await repo.upsert({
       conversationId: 'conv-1',
       summary: 'To be deleted',
       messageCount: 3,
       updatedAt: '2026-01-01T00:00:00Z',
     });
 
-    repo.delete('conv-1');
-    expect(repo.get('conv-1')).toBeUndefined();
+    await repo.delete('conv-1');
+    expect(await repo.get('conv-1')).toBeUndefined();
   });
 });

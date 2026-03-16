@@ -26,12 +26,10 @@ describe.skipIf(!hasBetterSqlite3)('Database', () => {
   it('should create database and tables', async () => {
     const { Database } = await import('./database.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-${Date.now()}.db`);
-    const db = new Database(dbPath);
+    const db = Database.createSync(dbPath);
 
-    const rawDb = db.getDb();
-    const tables = rawDb
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-      .all() as { name: string }[];
+    const adapter = db.getAdapter();
+    const tables = await adapter.query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") as { name: string }[];
 
     const tableNames = tables.map((t) => t.name);
 
@@ -40,20 +38,18 @@ describe.skipIf(!hasBetterSqlite3)('Database', () => {
     expect(tableNames).toContain('users');
     expect(tableNames).toContain('audit_log');
 
-    db.close();
+    await db.close();
   });
 
   it('should close database', async () => {
     const { Database } = await import('./database.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-${Date.now()}.db`);
-    const db = new Database(dbPath);
+    const db = Database.createSync(dbPath);
 
-    db.close();
+    await db.close();
 
-    // After closing, calling operations on the underlying db should throw
-    const rawDb = db.getDb();
-    expect(() => {
-      rawDb.prepare('SELECT 1').get();
-    }).toThrow();
+    // After closing, calling operations on the adapter should throw
+    const adapter = db.getAdapter();
+    await expect(adapter.query('SELECT 1')).rejects.toThrow();
   });
 });

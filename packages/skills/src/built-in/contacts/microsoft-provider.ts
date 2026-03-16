@@ -4,9 +4,11 @@ import type { MicrosoftContactsConfig } from '@alfred/types';
 
 export class MicrosoftContactsProvider extends ContactsProvider {
   private accessToken = '';
+  private readonly userPath: string;
 
-  constructor(private readonly config: MicrosoftContactsConfig) {
+  constructor(private readonly config: MicrosoftContactsConfig & { sharedContacts?: string }) {
     super();
+    this.userPath = config.sharedContacts ? `/users/${config.sharedContacts}` : '/me';
   }
 
   async initialize(): Promise<void> {
@@ -20,7 +22,9 @@ export class MicrosoftContactsProvider extends ContactsProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Contacts.ReadWrite offline_access',
+      scope: this.config.sharedContacts
+        ? 'https://graph.microsoft.com/Contacts.ReadWrite.Shared offline_access'
+        : 'https://graph.microsoft.com/Contacts.ReadWrite offline_access',
     });
 
     const res = await fetch(tokenUrl, {
@@ -68,26 +72,26 @@ export class MicrosoftContactsProvider extends ContactsProvider {
   }
 
   async list(limit = 50): Promise<Contact[]> {
-    const data = await this.graphRequest(`/me/contacts?$top=${limit}&$orderby=displayName`);
+    const data = await this.graphRequest(`${this.userPath}/contacts?$top=${limit}&$orderby=displayName`);
     return (data.value ?? []).map((c: any) => this.mapContact(c));
   }
 
   async search(query: string): Promise<Contact[]> {
     try {
-      const data = await this.graphRequest(`/me/contacts?$search="${encodeURIComponent(query)}"`, {
+      const data = await this.graphRequest(`${this.userPath}/contacts?$search="${encodeURIComponent(query)}"`, {
         headers: { ConsistencyLevel: 'eventual' },
       });
       return (data.value ?? []).map((c: any) => this.mapContact(c));
     } catch {
       // Fallback to $filter if $search is not supported
-      const data = await this.graphRequest(`/me/contacts?$filter=contains(displayName, '${encodeURIComponent(query)}')`);
+      const data = await this.graphRequest(`${this.userPath}/contacts?$filter=contains(displayName, '${encodeURIComponent(query)}')`);
       return (data.value ?? []).map((c: any) => this.mapContact(c));
     }
   }
 
   async get(id: string): Promise<Contact | undefined> {
     try {
-      const data = await this.graphRequest(`/me/contacts/${id}`);
+      const data = await this.graphRequest(`${this.userPath}/contacts/${id}`);
       return this.mapContact(data);
     } catch {
       return undefined;
@@ -96,7 +100,7 @@ export class MicrosoftContactsProvider extends ContactsProvider {
 
   async create(input: CreateContactInput): Promise<Contact> {
     const body = this.buildContactBody(input);
-    const data = await this.graphRequest('/me/contacts', {
+    const data = await this.graphRequest(`${this.userPath}/contacts`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -105,7 +109,7 @@ export class MicrosoftContactsProvider extends ContactsProvider {
 
   async update(id: string, input: Partial<CreateContactInput>): Promise<Contact> {
     const body = this.buildContactBody(input);
-    const data = await this.graphRequest(`/me/contacts/${id}`, {
+    const data = await this.graphRequest(`${this.userPath}/contacts/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     });
@@ -113,7 +117,7 @@ export class MicrosoftContactsProvider extends ContactsProvider {
   }
 
   async delete(id: string): Promise<void> {
-    await this.graphRequest(`/me/contacts/${id}`, { method: 'DELETE' });
+    await this.graphRequest(`${this.userPath}/contacts/${id}`, { method: 'DELETE' });
   }
 
   private mapContact(c: any): Contact {

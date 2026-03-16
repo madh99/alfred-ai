@@ -1,15 +1,15 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { Watch, WatchCondition, CompositeCondition } from '@alfred/types';
 
 export class WatchRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  create(watch: Omit<Watch, 'id' | 'createdAt' | 'lastCheckedAt' | 'lastTriggeredAt' | 'lastValue'>): Watch {
+  async create(watch: Omit<Watch, 'id' | 'createdAt' | 'lastCheckedAt' | 'lastTriggeredAt' | 'lastValue'>): Promise<Watch> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO watches
         (id, chat_id, platform, name, skill_name, skill_params,
          condition_field, condition_operator, condition_value,
@@ -17,7 +17,7 @@ export class WatchRepository {
          action_skill_name, action_skill_params, action_on_trigger, conditions_json,
          requires_confirmation, trigger_watch_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       id,
       watch.chatId,
       watch.platform,
@@ -38,7 +38,7 @@ export class WatchRepository {
       watch.compositeCondition ? JSON.stringify(watch.compositeCondition) : null,
       watch.requiresConfirmation ? 1 : 0,
       watch.triggerWatchId ?? null,
-    );
+    ]);
 
     return {
       id,
@@ -65,84 +65,91 @@ export class WatchRepository {
     };
   }
 
-  countEnabled(): number {
-    const row = this.db.prepare(
+  async countEnabled(): Promise<number> {
+    const row = await this.adapter.queryOne(
       'SELECT COUNT(*) as cnt FROM watches WHERE enabled = 1'
-    ).get() as { cnt: number };
+    ) as { cnt: number };
     return row.cnt;
   }
 
-  getEnabled(): Watch[] {
-    const rows = this.db.prepare(
+  async getEnabled(): Promise<Watch[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM watches WHERE enabled = 1 ORDER BY created_at DESC',
-    ).all() as Record<string, unknown>[];
+    ) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  getDue(): Watch[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM watches
-      WHERE enabled = 1
-        AND (last_checked_at IS NULL
-             OR datetime(last_checked_at, '+' || interval_minutes || ' minutes') <= datetime('now'))
-      ORDER BY last_checked_at ASC
-    `).all() as Record<string, unknown>[];
-
+  async getDue(): Promise<Watch[]> {
+    const sql = this.adapter.type === 'postgres'
+      ? `SELECT * FROM watches WHERE enabled = 1
+         AND (last_checked_at IS NULL
+              OR last_checked_at::timestamp + (interval_minutes * interval '1 minute') <= NOW())
+         ORDER BY last_checked_at ASC`
+      : `SELECT * FROM watches WHERE enabled = 1
+         AND (last_checked_at IS NULL
+              OR datetime(last_checked_at, '+' || interval_minutes || ' minutes') <= datetime('now'))
+         ORDER BY last_checked_at ASC`;
+    const rows = await this.adapter.query(sql) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  updateAfterCheck(id: string, update: {
+  async updateAfterCheck(id: string, update: {
     lastCheckedAt: string;
     lastValue: string | null;
     lastTriggeredAt?: string;
-  }): void {
+  }): Promise<void> {
     if (update.lastTriggeredAt) {
-      this.db.prepare(`
+      await this.adapter.execute(`
         UPDATE watches
         SET last_checked_at = ?, last_value = ?, last_triggered_at = ?
         WHERE id = ?
-      `).run(update.lastCheckedAt, update.lastValue, update.lastTriggeredAt, id);
+      `, [update.lastCheckedAt, update.lastValue, update.lastTriggeredAt, id]);
     } else {
-      this.db.prepare(`
+      await this.adapter.execute(`
         UPDATE watches
         SET last_checked_at = ?, last_value = ?
         WHERE id = ?
-      `).run(update.lastCheckedAt, update.lastValue, id);
+      `, [update.lastCheckedAt, update.lastValue, id]);
     }
   }
 
-  findByChatId(chatId: string, platform: string): Watch[] {
-    const rows = this.db.prepare(
+  async findByChatId(chatId: string, platform: string): Promise<Watch[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM watches WHERE chat_id = ? AND platform = ? ORDER BY created_at DESC`,
-    ).all(chatId, platform) as Record<string, unknown>[];
+      [chatId, platform],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  toggle(id: string, enabled: boolean): boolean {
-    const result = this.db.prepare(
+  async toggle(id: string, enabled: boolean): Promise<boolean> {
+    const result = await this.adapter.execute(
       `UPDATE watches SET enabled = ? WHERE id = ?`,
-    ).run(enabled ? 1 : 0, id);
+      [enabled ? 1 : 0, id],
+    );
     return result.changes > 0;
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare(
+  async delete(id: string): Promise<boolean> {
+    const result = await this.adapter.execute(
       `DELETE FROM watches WHERE id = ?`,
-    ).run(id);
+      [id],
+    );
     return result.changes > 0;
   }
 
-  updateActionError(id: string, error: string | null): void {
-    this.db.prepare(
+  async updateActionError(id: string, error: string | null): Promise<void> {
+    await this.adapter.execute(
       `UPDATE watches SET last_action_error = ? WHERE id = ?`,
-    ).run(error, id);
+      [error, id],
+    );
   }
 
-  getById(id: string): Watch | undefined {
-    const row = this.db.prepare(
+  async getById(id: string): Promise<Watch | undefined> {
+    const row = await this.adapter.queryOne(
       `SELECT * FROM watches WHERE id = ?`,
-    ).get(id) as Record<string, unknown> | undefined;
+      [id],
+    ) as Record<string, unknown> | undefined;
 
     return row ? this.mapRow(row) : undefined;
   }

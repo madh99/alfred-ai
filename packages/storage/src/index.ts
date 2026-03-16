@@ -7,6 +7,7 @@ export type { MemoryEntry, MemoryType, MemorySource } from './repositories/memor
 export { Migrator } from './migrations/migrator.js';
 export type { Migration } from './migrations/migrator.js';
 export { MIGRATIONS } from './migrations/index.js';
+export { PG_SCHEMA } from './migrations/pg-schema.js';
 export { ReminderRepository } from './repositories/reminder-repository.js';
 export type { ReminderEntry } from './repositories/reminder-repository.js';
 export { NoteRepository } from './repositories/note-repository.js';
@@ -36,6 +37,8 @@ export type { AlfredUser, UserRole, UserPlatformLink, UserService } from './repo
 export { SharedResourceRepository } from './repositories/shared-resource-repository.js';
 export type { SharedResource } from './repositories/shared-resource-repository.js';
 export { createFileStore, LocalFileStore, S3FileStore } from './file-store.js';
+export { createDbAdapter, SQLiteAsyncAdapter, PostgresAsyncAdapter } from './db-adapter.js';
+export type { AsyncDbAdapter, DbRow, DbRunResult } from './db-adapter.js';
 export type { FileStore, FileStoreConfig, StoredFile } from './file-store.js';
 export type { DatabaseConnection } from './repositories/database-connection-repository.js';
 export type { FeedbackEvent } from './repositories/feedback-repository.js';

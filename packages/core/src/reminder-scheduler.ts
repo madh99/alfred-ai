@@ -6,9 +6,15 @@ export type SendMessageFn = (platform: Platform, chatId: string, text: string) =
 
 /** Minimal interface to resolve linked users for cross-platform reminder delivery. */
 export interface LinkedUserResolver {
-  getMasterUserId(userId: string): string;
-  getLinkedUsers(masterUserId: string): { id: string; platform: string; platformUserId: string }[];
-  findConversation(platform: string, userId: string): { chatId: string } | undefined;
+  getMasterUserId(userId: string): Promise<string>;
+  getLinkedUsers(masterUserId: string): Promise<{ id: string; platform: string; platformUserId: string }[]>;
+  findConversation(platform: string, userId: string): Promise<{ chatId: string } | undefined>;
+}
+
+/** Minimal ClusterManager interface for distributed locking. */
+interface LockProvider {
+  acquireLock(key: string, ttlMs?: number): Promise<boolean>;
+  releaseLock(key: string): Promise<void>;
 }
 
 export class ReminderScheduler {
@@ -24,6 +30,7 @@ export class ReminderScheduler {
     private readonly logger: Logger,
     checkIntervalMs = 15_000,
     private readonly linkedUsers?: LinkedUserResolver,
+    private readonly lockProvider?: LockProvider,
   ) {
     this.checkIntervalMs = checkIntervalMs;
   }
@@ -46,8 +53,17 @@ export class ReminderScheduler {
 
   private async checkDueReminders(): Promise<void> {
     try {
-      const due = this.reminderRepo.getDue();
+      const due = await this.reminderRepo.getDue();
       for (const reminder of due) {
+        // Distributed lock: only one node fires each reminder
+        if (this.lockProvider) {
+          const acquired = await this.lockProvider.acquireLock(`reminder:${reminder.id}`, 60_000);
+          if (!acquired) {
+            this.logger.debug({ reminderId: reminder.id }, 'Reminder lock held by another node, skipping');
+            continue;
+          }
+        }
+
         try {
           const text = `\u23F0 Reminder: ${reminder.message}`;
           let delivered = false;
@@ -67,11 +83,11 @@ export class ReminderScheduler {
           // Also send to all other linked platforms
           if (this.linkedUsers) {
             try {
-              const masterUserId = this.linkedUsers.getMasterUserId(reminder.userId);
-              const linked = this.linkedUsers.getLinkedUsers(masterUserId);
+              const masterUserId = await this.linkedUsers.getMasterUserId(reminder.userId);
+              const linked = await this.linkedUsers.getLinkedUsers(masterUserId);
               for (const user of linked) {
                 if (user.platform === reminder.platform) continue;
-                const conv = this.linkedUsers.findConversation(user.platform, user.id);
+                const conv = await this.linkedUsers.findConversation(user.platform, user.id);
                 if (conv) {
                   try {
                     await this.sendMessage(user.platform as Platform, conv.chatId, text);
@@ -91,7 +107,7 @@ export class ReminderScheduler {
             throw new Error('No platform could deliver reminder');
           }
 
-          this.reminderRepo.markFired(reminder.id);
+          await this.reminderRepo.markFired(reminder.id);
           this.failCounts.delete(reminder.id);
           this.logger.info({ reminderId: reminder.id }, 'Reminder fired');
         } catch (err) {
@@ -99,7 +115,7 @@ export class ReminderScheduler {
           this.failCounts.set(reminder.id, fails);
 
           if (fails >= ReminderScheduler.MAX_SEND_RETRIES) {
-            this.reminderRepo.markFired(reminder.id);
+            await this.reminderRepo.markFired(reminder.id);
             this.failCounts.delete(reminder.id);
             this.logger.error(
               { reminderId: reminder.id, attempts: fails, chatId: reminder.chatId },
@@ -110,6 +126,10 @@ export class ReminderScheduler {
               { err, reminderId: reminder.id, attempt: fails, maxRetries: ReminderScheduler.MAX_SEND_RETRIES },
               'Failed to send reminder, will retry',
             );
+          }
+        } finally {
+          if (this.lockProvider) {
+            await this.lockProvider.releaseLock(`reminder:${reminder.id}`);
           }
         }
       }

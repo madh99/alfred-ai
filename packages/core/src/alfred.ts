@@ -5,7 +5,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -99,8 +99,8 @@ export class Alfred {
   private skillHealthRepo?: SkillHealthRepository;
   private clusterManager?: import('./cluster/cluster-manager.js').ClusterManager;
   private webAuthCallback?: {
-    loginWithCode: (code: string) => { success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string };
-    getUserByToken: (token: string) => { userId: string; username: string; role: string } | null;
+    loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
+    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
   private reminderRepo?: ReminderRepository;
   private skillHealthTracker?: SkillHealthTracker;
@@ -115,27 +115,31 @@ export class Alfred {
     this.logger.info('Initializing Alfred...');
 
     // 1. Initialize storage
-    this.database = new Database(this.config.storage.path);
-    const db = this.database.getDb();
-    const conversationRepo = new ConversationRepository(db);
-    const userRepo = new UserRepository(db);
+    this.database = await Database.create({
+      backend: this.config.storage.backend ?? 'sqlite',
+      path: this.config.storage.path,
+      connectionString: this.config.storage.connectionString,
+    });
+    const adapter = this.database.getAdapter();
+    const conversationRepo = new ConversationRepository(adapter);
+    const userRepo = new UserRepository(adapter);
     this.userRepo = userRepo;
-    const auditRepo = new AuditRepository(db);
+    const auditRepo = new AuditRepository(adapter);
     this.auditRepo = auditRepo;
-    const memoryRepo = new MemoryRepository(db);
+    const memoryRepo = new MemoryRepository(adapter);
     this.memoryRepo = memoryRepo;
-    const reminderRepo = new ReminderRepository(db);
+    const reminderRepo = new ReminderRepository(adapter);
     this.reminderRepo = reminderRepo;
-    const noteRepo = new NoteRepository(db);
-    const embeddingRepo = new EmbeddingRepository(db);
-    const linkTokenRepo = new LinkTokenRepository(db);
-    const backgroundTaskRepo = new BackgroundTaskRepository(db);
-    const scheduledActionRepo = new ScheduledActionRepository(db);
+    const noteRepo = new NoteRepository(adapter);
+    const embeddingRepo = new EmbeddingRepository(adapter);
+    const linkTokenRepo = new LinkTokenRepository(adapter);
+    const backgroundTaskRepo = new BackgroundTaskRepository(adapter);
+    const scheduledActionRepo = new ScheduledActionRepository(adapter);
     this.scheduledActionRepo = scheduledActionRepo;
-    const activityRepo = new ActivityRepository(db);
+    const activityRepo = new ActivityRepository(adapter);
     this.activityRepo = activityRepo;
     const activityLogger = new ActivityLogger(activityRepo, this.logger.child({ component: 'activity' }));
-    const skillHealthRepo = new SkillHealthRepository(db);
+    const skillHealthRepo = new SkillHealthRepository(adapter);
     this.skillHealthRepo = skillHealthRepo;
     const skillHealthTracker = new SkillHealthTracker(
       skillHealthRepo,
@@ -162,10 +166,10 @@ export class Alfred {
     this.llmProvider = llmProvider;
 
     // Wire SQLite usage persistence
-    const usageRepo = new UsageRepository(db);
+    const usageRepo = new UsageRepository(adapter);
     this.usageRepo = usageRepo;
     llmProvider.setPersist((model, inp, out, cacheR, cacheW, cost) => {
-      usageRepo.record(model, inp, out, cacheR, cacheW, cost);
+      usageRepo.record(model, inp, out, cacheR, cacheW, cost).catch(() => {});
     });
 
     // Create embedding service
@@ -201,7 +205,7 @@ export class Alfred {
     }
 
     // 3c. Conversation summarizer
-    const summaryRepo = new SummaryRepository(db);
+    const summaryRepo = new SummaryRepository(adapter);
     this.summaryRepo = summaryRepo;
     const conversationSummarizer = new ConversationSummarizer(
       llmProvider,
@@ -223,9 +227,11 @@ export class Alfred {
       baseUrl: this.config.search.baseUrl,
     } : undefined));
     skillRegistry.register(new ReminderSkill(reminderRepo));
-    skillRegistry.register(new NoteSkill(noteRepo));
-    const todoRepo = new TodoRepository(db);
-    skillRegistry.register(new TodoSkill(todoRepo));
+    const noteSkill = new NoteSkill(noteRepo);
+    skillRegistry.register(noteSkill);
+    const todoRepo = new TodoRepository(adapter);
+    const todoSkill = new TodoSkill(todoRepo);
+    skillRegistry.register(todoSkill);
     skillRegistry.register(new WeatherSkill());
     skillRegistry.register(new ShellSkill());
     skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
@@ -271,9 +277,11 @@ export class Alfred {
     skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
 
     // 4a. Document intelligence
-    const documentRepo = new DocumentRepository(db);
+    const documentRepo = new DocumentRepository(adapter);
     const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: 'documents' }));
-    skillRegistry.register(new DocumentSkill(documentRepo, documentProcessor, embeddingService));
+    // SharedResourceRepo for document sharing — created later, set after user management init
+    const documentSkill = new DocumentSkill(documentRepo, documentProcessor, embeddingService);
+    skillRegistry.register(documentSkill);
 
     // 4b. Initialize calendar (optional)
     let calendarSkill: CalendarSkill | undefined;
@@ -292,7 +300,7 @@ export class Alfred {
 
     // 4b2. Initialize calendar vorlauf watcher (optional)
     if (calendarProvider && this.config.calendar?.vorlauf?.enabled) {
-      const calNotifRepo = new CalendarNotificationRepository(db);
+      const calNotifRepo = new CalendarNotificationRepository(adapter);
       const ownerUserId = this.config.security?.ownerUserId;
       if (ownerUserId) {
         this.calendarWatcher = new CalendarWatcher(
@@ -312,7 +320,7 @@ export class Alfred {
     {
       const ownerUserId = this.config.security?.ownerUserId;
       if (ownerUserId) {
-        const calNotifRepo = new CalendarNotificationRepository(db);
+        const calNotifRepo = new CalendarNotificationRepository(adapter);
         this.todoWatcher = new TodoWatcher(
           todoRepo,
           calNotifRepo,
@@ -362,7 +370,7 @@ export class Alfred {
     if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
       const { ProjectAgentSkill } = await import('@alfred/skills');
       const { ProjectAgentSessionRepository } = await import('@alfred/storage');
-      const projectSessionRepo = new ProjectAgentSessionRepository(db);
+      const projectSessionRepo = new ProjectAgentSessionRepository(adapter);
       const projectAgentSkill = new ProjectAgentSkill(
         { ...this.config.projectAgents, agents: this.config.codeAgents.agents },
         llmProvider,
@@ -486,27 +494,28 @@ export class Alfred {
     {
       const { AlfredUserRepository } = await import('@alfred/storage');
       const { UserManagementSkill } = await import('@alfred/skills');
-      const alfredUserRepo = new AlfredUserRepository(db);
+      const alfredUserRepo = new AlfredUserRepository(adapter);
 
       // Auto-create admin user from ownerUserId if not exists
       // Link to ALL enabled platforms (not just Telegram)
       if (this.config.security?.ownerUserId) {
         const ownerUid = this.config.security.ownerUserId;
-        const admins = alfredUserRepo.getAll().filter(u => u.role === 'admin');
+        const allUsers = await alfredUserRepo.getAll();
+        const admins = allUsers.filter(u => u.role === 'admin');
         let adminUser = admins[0];
 
         if (!adminUser) {
-          adminUser = alfredUserRepo.create({ username: 'admin', role: 'admin', displayName: 'Admin' });
-          alfredUserRepo.clearInviteCode(adminUser.id);
+          adminUser = await alfredUserRepo.create({ username: 'admin', role: 'admin', displayName: 'Admin' });
+          await alfredUserRepo.clearInviteCode(adminUser.id);
           this.logger.info({ userId: ownerUid }, 'Auto-created admin user from ownerUserId');
         }
 
         // Link to all configured platforms with the ownerUserId
         const platforms = ['telegram', 'discord', 'matrix', 'signal', 'api'] as const;
         for (const platform of platforms) {
-          const existing = alfredUserRepo.getUserByPlatform(platform, ownerUid);
+          const existing = await alfredUserRepo.getUserByPlatform(platform, ownerUid);
           if (!existing) {
-            try { alfredUserRepo.linkPlatform(adminUser.id, platform, ownerUid); } catch { /* already linked */ }
+            try { await alfredUserRepo.linkPlatform(adminUser.id, platform, ownerUid); } catch { /* already linked */ }
           }
         }
       }
@@ -517,24 +526,38 @@ export class Alfred {
       // Sharing skill
       const { SharingSkill } = await import('@alfred/skills');
       const { SharedResourceRepository } = await import('@alfred/storage');
-      const sharedResourceRepo = new SharedResourceRepository(db);
+      const sharedResourceRepo = new SharedResourceRepository(adapter);
       skillRegistry.register(new SharingSkill(sharedResourceRepo, alfredUserRepo));
+      // Wire shared resources into skills for visibility checks
+      (documentSkill as any).sharedResourceRepo = sharedResourceRepo;
+      (noteSkill as any).sharedResourceRepo = sharedResourceRepo;
+      (todoSkill as any).sharedResourceRepo = sharedResourceRepo;
       this.logger.info('Sharing skill registered');
 
-      // Setup web auth callback for HTTP API login
-      const webSessions = new Map<string, { userId: string; username: string; role: string }>();
+      // Setup web auth callback for HTTP API login (persistent via link_tokens table)
+      const webLinkTokenRepo = linkTokenRepo;
       this.webAuthCallback = {
-        loginWithCode: (code: string) => {
+        loginWithCode: async (code: string) => {
           const tempWebId = `web-pending-${Date.now()}`;
-          const user = alfredUserRepo.consumeInviteCode(code, 'api', tempWebId);
+          const user = await alfredUserRepo.consumeInviteCode(code, 'api', tempWebId);
           if (!user) return { success: false, error: 'Ungültiger oder abgelaufener Code' };
 
           const token = `alf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-          webSessions.set(token, { userId: user.id, username: user.username, role: user.role });
+          // Persist session token (expires in 30 days)
+          const expires = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString();
+          await webLinkTokenRepo.createSession(token, user.id, 'web-session', expires);
 
           return { success: true, userId: user.id, username: user.username, role: user.role, token };
         },
-        getUserByToken: (token: string) => webSessions.get(token) ?? null,
+        getUserByToken: async (token: string) => {
+          const entry = await webLinkTokenRepo.findByToken(token);
+          if (!entry) return null;
+          // Check expiry
+          if (new Date(entry.expiresAt) < new Date()) return null;
+          const user = await alfredUserRepo.getById(entry.userId);
+          if (!user) return null;
+          return { userId: user.id, username: user.username, role: user.role };
+        },
       };
     }
 
@@ -542,14 +565,14 @@ export class Alfred {
     if (this.config.database?.enabled) {
       const { DatabaseSkill } = await import('@alfred/skills');
       const { DatabaseConnectionRepository } = await import('@alfred/storage');
-      const dbConnRepo = new DatabaseConnectionRepository(db);
+      const dbConnRepo = new DatabaseConnectionRepository(adapter);
       const dbSkill = new DatabaseSkill(this.config.database, dbConnRepo);
 
       // Pre-load connections from config
       if (this.config.database.connections) {
         for (const conn of this.config.database.connections) {
-          if (!dbConnRepo.getByName(conn.name)) {
-            dbConnRepo.create({
+          if (!(await dbConnRepo.getByName(conn.name))) {
+            await dbConnRepo.create({
               name: conn.name, type: conn.type, host: conn.host, port: conn.port,
               databaseName: conn.database, username: conn.username,
               authConfig: conn.password ? { password: conn.password } : undefined,
@@ -609,6 +632,14 @@ export class Alfred {
       this.logger.warn({ err }, 'Failed to register transit skill');
     }
 
+    // 5f. Initialize file store (optional — defaults to local fs)
+    let fileStore: import('@alfred/storage').FileStore | undefined;
+    if (this.config.fileStore) {
+      const { createFileStore } = await import('@alfred/storage');
+      fileStore = createFileStore(this.config.fileStore);
+      this.logger.info({ backend: this.config.fileStore.backend }, 'File store initialized');
+    }
+
     // 6. Create conversation manager and pipeline
     const conversationManager = new ConversationManager(conversationRepo);
     // Derive inbox path from storage path (e.g. ./data/alfred.db → ./data/inbox)
@@ -624,6 +655,7 @@ export class Alfred {
       memoryRepo,
       speechTranscriber,
       inboxPath,
+      fileStore,
       embeddingService,
       activeLearning,
       memoryRetriever,
@@ -631,6 +663,17 @@ export class Alfred {
       documentProcessor,
       conversationSummarizer,
     });
+
+    // 5e. Initialize cluster manager BEFORE schedulers (for distributed locking)
+    if (this.config.cluster?.enabled) {
+      const { ClusterManager } = await import('./cluster/cluster-manager.js');
+      this.clusterManager = new ClusterManager(
+        this.config.cluster,
+        this.logger.child({ component: 'cluster' }),
+      );
+      await this.clusterManager.connect();
+      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
+    }
 
     // 6. Initialize reminder scheduler
     this.reminderScheduler = new ReminderScheduler(
@@ -650,6 +693,7 @@ export class Alfred {
         getLinkedUsers: (masterUserId) => userRepo.getLinkedUsers(masterUserId),
         findConversation: (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId),
       },
+      this.clusterManager ?? undefined,
     );
 
     // 7b. Initialize background task runner
@@ -691,25 +735,17 @@ export class Alfred {
       conversationManager,
       activityLogger,
     );
+    if (this.clusterManager) {
+      this.proactiveScheduler.setLockProvider(this.clusterManager);
+    }
 
     // 7d. Initialize watch engine (condition-based alerts)
-    const watchRepo = new WatchRepository(db);
+    const watchRepo = new WatchRepository(adapter);
     this.watchRepo = watchRepo;
     skillRegistry.register(new WatchSkill(watchRepo, skillRegistry));
 
-    // 7d. Initialize cluster manager BEFORE watch engine (for distributed locking)
-    if (this.config.cluster?.enabled) {
-      const { ClusterManager } = await import('./cluster/cluster-manager.js');
-      this.clusterManager = new ClusterManager(
-        this.config.cluster,
-        this.logger.child({ component: 'cluster' }),
-      );
-      await this.clusterManager.connect();
-      this.logger.info({ nodeId: this.config.cluster.nodeId, role: this.config.cluster.role }, 'Cluster manager initialized');
-    }
-
     // 7e. Initialize confirmation queue (human-in-the-loop for watch actions)
-    const confirmRepo = new ConfirmationRepository(db);
+    const confirmRepo = new ConfirmationRepository(adapter);
     this.confirmationQueue = new ConfirmationQueue(
       confirmRepo,
       skillRegistry,
@@ -720,7 +756,7 @@ export class Alfred {
     );
 
     // 7e2. Initialize feedback service (rejection/correction tracking)
-    const feedbackRepo = new FeedbackRepository(db);
+    const feedbackRepo = new FeedbackRepository(adapter);
     const feedbackService = new FeedbackService(
       feedbackRepo,
       memoryRepo,
@@ -746,7 +782,7 @@ export class Alfred {
     );
 
     // 7f. Initialize workflow chains
-    const workflowRepo = new WorkflowRepository(db);
+    const workflowRepo = new WorkflowRepository(adapter);
     const workflowSkill = new WorkflowSkill(workflowRepo);
     skillRegistry.register(workflowSkill);
     const workflowRunner = new WorkflowRunner(
@@ -763,7 +799,7 @@ export class Alfred {
     {
       const ownerUserId = this.config.security?.ownerUserId;
       if (ownerUserId && this.config.reasoning?.enabled !== false) {
-        const reasoningNotifRepo = new CalendarNotificationRepository(db);
+        const reasoningNotifRepo = new CalendarNotificationRepository(adapter);
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
           todoRepo,
@@ -786,6 +822,9 @@ export class Alfred {
           feedbackRepo,
           this.confirmationQueue,
         );
+        if (this.clusterManager) {
+          this.reasoningEngine.setLockProvider(this.clusterManager);
+        }
       }
     }
 
@@ -799,7 +838,7 @@ export class Alfred {
       // Reuse the alfredUserRepo from User Management skill init (same db handle)
       const { AlfredUserRepository, UsageRepository: UsageRepoClass } = await import('@alfred/storage');
       const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
-      const pipelineUserRepo = new AlfredUserRepository(db);
+      const pipelineUserRepo = new AlfredUserRepository(adapter);
       const { UserServiceResolver } = await import('./user-service-resolver.js');
       const serviceResolver = new UserServiceResolver(pipelineUserRepo);
       this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
@@ -807,7 +846,7 @@ export class Alfred {
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
     if (this.clusterManager) {
-      this.clusterManager.subscribe('messages', (data) => {
+      await this.clusterManager.subscribe('messages', (data) => {
         const { targetPlatform, chatId, text } = data as { targetPlatform: string; chatId: string; text: string };
         const adapter = this.adapters.get(targetPlatform as any);
         if (adapter) {
@@ -890,7 +929,7 @@ export class Alfred {
         corsOrigin: config.api?.corsOrigin,
         tls: config.api?.tls,
         authCallback: this.webAuthCallback,
-        healthCheck: () => {
+        healthCheck: async () => {
           let diskUsage: { path: string; sizeBytes: number } | undefined;
           try {
             const dbPath = this.config.storage.path;
@@ -905,26 +944,26 @@ export class Alfred {
             adapters: Object.fromEntries([...this.adapters].map(([p, a]) => [p, a.getStatus()])),
             metrics: this.pipeline.getMetrics(),
             costs: this.llmProvider.getCostSummary(),
-            todayUsage: this.usageRepo?.getDaily(new Date().toISOString().slice(0, 10)),
-            watchesActive: this.watchRepo?.countEnabled() ?? 0,
-            schedulersActive: this.scheduledActionRepo?.countEnabled() ?? 0,
+            todayUsage: await this.usageRepo?.getDaily(new Date().toISOString().slice(0, 10)),
+            watchesActive: await this.watchRepo?.countEnabled() ?? 0,
+            schedulersActive: await this.scheduledActionRepo?.countEnabled() ?? 0,
             llmProviders: this.llmProvider.getProviderStatuses(),
             diskUsage,
           };
         },
         metricsCallback: () => this.buildPrometheusMetrics(),
-        dashboardCallback: () => {
+        dashboardCallback: async () => {
           const today = new Date().toISOString().slice(0, 10);
           const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
           return {
-            watches: this.watchRepo?.getEnabled() ?? [],
-            scheduled: this.scheduledActionRepo?.getAll() ?? [],
-            skillHealth: this.skillHealthRepo?.getAll() ?? [],
-            reminders: this.reminderRepo?.getAllPending() ?? [],
+            watches: await this.watchRepo?.getEnabled() ?? [],
+            scheduled: await this.scheduledActionRepo?.getAll() ?? [],
+            skillHealth: await this.skillHealthRepo?.getAll() ?? [],
+            reminders: await this.reminderRepo?.getAllPending() ?? [],
             usage: {
-              today: this.usageRepo?.getDaily(today) ?? null,
-              week: this.usageRepo?.getRange(weekAgo, today) ?? [],
-              total: this.usageRepo?.getTotal() ?? [],
+              today: await this.usageRepo?.getDaily(today) ?? null,
+              week: await this.usageRepo?.getRange(weekAgo, today) ?? [],
+              total: await this.usageRepo?.getTotal() ?? [],
             },
             uptime: Math.floor(process.uptime()),
             startedAt: this.startedAt,
@@ -932,8 +971,8 @@ export class Alfred {
               [...this.adapters.entries()].map(([p, a]) => [p, a.getStatus()]),
             ),
             llmProviders: this.llmProvider.getProviderStatuses(),
-            userUsage: this.usageRepo?.getByUser(weekAgo, today) ?? [],
-            userSkillUsage: this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
+            userUsage: await this.usageRepo?.getByUser(weekAgo, today) ?? [],
+            userSkillUsage: await this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
           };
         },
         webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,
@@ -996,11 +1035,11 @@ export class Alfred {
     // Startup cleanup — retain audit/summary/activity/usage data
     try {
       const cleaned = {
-        audit: this.auditRepo?.cleanup(90) ?? 0,
-        summaries: this.summaryRepo?.cleanup(180) ?? 0,
-        activity: this.activityRepo?.cleanup(90) ?? 0,
-        usage: this.usageRepo?.cleanup(365) ?? 0,
-        expiredMemories: this.memoryRepo?.cleanupExpired() ?? 0,
+        audit: await this.auditRepo?.cleanup(90) ?? 0,
+        summaries: await this.summaryRepo?.cleanup(180) ?? 0,
+        activity: await this.activityRepo?.cleanup(90) ?? 0,
+        usage: await this.usageRepo?.cleanup(365) ?? 0,
+        expiredMemories: await this.memoryRepo?.cleanupExpired() ?? 0,
       };
       if (cleaned.audit || cleaned.summaries || cleaned.activity || cleaned.usage) {
         this.logger.info(cleaned, 'Startup DB cleanup completed');
@@ -1012,6 +1051,25 @@ export class Alfred {
     // Skill health: periodic re-enable check (every 5 minutes)
     if (this.skillHealthTracker) {
       this.healthCheckTimer = setInterval(() => this.skillHealthTracker!.checkReEnables(), 5 * 60_000);
+    }
+
+    // Cluster failover monitoring (secondary nodes detect primary failure)
+    if (this.clusterManager && this.config.cluster?.role === 'secondary') {
+      this.clusterManager.startFailoverMonitoring((deadNodeId) => {
+        this.logger.warn({ deadNodeId }, 'Failover detected — primary node down');
+
+        // On failover, secondary takes over adapter responsibilities.
+        // Adapters are already connected (both nodes run all adapters),
+        // but schedulers may have been locked by the dead primary.
+        // The lock TTLs will expire, and this node's schedulers will
+        // pick up the work automatically. No explicit action needed
+        // beyond logging the event.
+
+        const takenAdapters = [...this.adapters.keys()].map(String);
+        this.clusterManager!.announceTakeover(deadNodeId, takenAdapters).catch(() => {});
+        this.logger.info({ deadNodeId, adapters: takenAdapters }, 'Failover: this node is now active for all adapters');
+      });
+      this.logger.info('Cluster failover monitoring started (secondary role)');
     }
 
     if (this.adapters.size === 0) {
@@ -1185,7 +1243,7 @@ export class Alfred {
     return undefined;
   }
 
-  private buildPrometheusMetrics(): string {
+  private async buildPrometheusMetrics(): Promise<string> {
     const lines: string[] = [];
     const uptime = Math.floor(process.uptime());
 
@@ -1248,18 +1306,18 @@ export class Alfred {
     if (this.watchRepo) {
       lines.push('# HELP alfred_watches_active Number of enabled watches');
       lines.push('# TYPE alfred_watches_active gauge');
-      lines.push(`alfred_watches_active ${this.watchRepo.countEnabled()}`);
+      lines.push(`alfred_watches_active ${await this.watchRepo.countEnabled()}`);
     }
     if (this.scheduledActionRepo) {
       lines.push('# HELP alfred_schedulers_active Number of enabled scheduled actions');
       lines.push('# TYPE alfred_schedulers_active gauge');
-      lines.push(`alfred_schedulers_active ${this.scheduledActionRepo.countEnabled()}`);
+      lines.push(`alfred_schedulers_active ${await this.scheduledActionRepo.countEnabled()}`);
     }
 
-    // Persisted daily totals from SQLite
+    // Persisted daily totals from DB
     if (this.usageRepo) {
       const today = new Date().toISOString().slice(0, 10);
-      const daily = this.usageRepo.getDaily(today);
+      const daily = await this.usageRepo.getDaily(today);
       lines.push('# HELP alfred_llm_today_cost_usd Total LLM cost today (persisted)');
       lines.push('# TYPE alfred_llm_today_cost_usd gauge');
       lines.push(`alfred_llm_today_cost_usd ${daily.totalCostUsd}`);
@@ -1272,21 +1330,21 @@ export class Alfred {
     return lines.join('\n');
   }
 
-  private autoLinkApiUser(message: NormalizedMessage): void {
+  private async autoLinkApiUser(message: NormalizedMessage): Promise<void> {
     if (message.platform !== 'api') return;
 
     try {
-      const apiUser = this.userRepo.findOrCreate('api', message.userId, message.userName);
-      const masterUserId = this.userRepo.getMasterUserId(apiUser.id);
+      const apiUser = await this.userRepo.findOrCreate('api', message.userId, message.userName);
+      const masterUserId = await this.userRepo.getMasterUserId(apiUser.id);
 
       // Already linked to another user
       if (masterUserId !== apiUser.id) return;
 
       // Find the first non-API/non-CLI user to link with
-      const existingUser = this.userRepo.findFirstByPlatformNotIn(['api', 'cli']);
+      const existingUser = await this.userRepo.findFirstByPlatformNotIn(['api', 'cli']);
       if (existingUser) {
-        const targetMasterId = this.userRepo.getMasterUserId(existingUser.id);
-        this.userRepo.setMasterUser(apiUser.id, targetMasterId);
+        const targetMasterId = await this.userRepo.getMasterUserId(existingUser.id);
+        await this.userRepo.setMasterUser(apiUser.id, targetMasterId);
         this.logger.info({ apiUserId: apiUser.id, masterUserId: targetMasterId }, 'Auto-linked API user');
       }
     } catch (err) {
@@ -1338,24 +1396,29 @@ export class Alfred {
             const sendOpts = formatted.parseMode !== 'text'
               ? { parseMode: formatted.parseMode as 'markdown' | 'html' }
               : undefined;
-            await adapter.sendMessage(message.userId, formatted.text, sendOpts);
-            // Notify the group
-            await adapter.sendMessage(message.chatId, `@${message.userName ?? message.userId}, Antwort per DM gesendet (persönliche Daten).`);
+            const dmResult = await adapter.sendDirectMessage(message.userId, formatted.text, sendOpts);
+            if (dmResult) {
+              // Notify the group
+              await adapter.sendMessage(message.chatId, `@${message.userName ?? message.userId}, Antwort per DM gesendet (persönliche Daten).`);
+              // Send attachments via DM too
+              if (result.attachments) {
+                for (const att of result.attachments) {
+                  try {
+                    await adapter.sendDirectMessage(message.userId, att.fileName ?? 'file');
+                  } catch { /* skip */ }
+                }
+              }
+            } else {
+              // DM failed — send in group as fallback
+              await adapter.sendMessage(message.chatId, formatted.text, sendOpts);
+            }
           } catch (err) {
             this.logger.warn({ err, chatId: message.chatId }, 'Group privacy DM redirect failed, sending in group');
             // Fallback: send in group anyway
             const formatted = this.formatter.format(result.text, message.platform);
             await adapter.sendMessage(message.chatId, formatted.text);
           }
-          // Send attachments via DM too
-          if (result.attachments) {
-            for (const att of result.attachments) {
-              try {
-                await adapter.sendFile(message.userId, att.data, att.fileName);
-              } catch { /* skip */ }
-            }
-          }
-          adapter.endStream(message.chatId);
+          if ('endStream' in adapter) (adapter as any).endStream(message.chatId);
           return;
         }
 
@@ -1408,7 +1471,7 @@ export class Alfred {
         }
 
         // Signal end of stream (closes SSE for HttpAdapter, no-op for others)
-        adapter.endStream(message.chatId);
+        if ('endStream' in adapter) (adapter as any).endStream(message.chatId);
       } catch (error) {
         this.logger.error({ platform, err: error, chatId: message.chatId }, 'Failed to handle message');
         try {
@@ -1416,7 +1479,7 @@ export class Alfred {
         } catch (sendError) {
           this.logger.error({ err: sendError }, 'Failed to send error message');
         }
-        adapter.endStream(message.chatId);
+        if ('endStream' in adapter) (adapter as any).endStream(message.chatId);
       }
     });
 

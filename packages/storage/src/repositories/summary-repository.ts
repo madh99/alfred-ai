@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export interface ConversationSummary {
   conversationId: string;
@@ -10,16 +10,17 @@ export interface ConversationSummary {
 }
 
 export class SummaryRepository {
-  private db: BetterSqlite3.Database;
+  private adapter: AsyncDbAdapter;
 
-  constructor(db: BetterSqlite3.Database) {
-    this.db = db;
+  constructor(adapter: AsyncDbAdapter) {
+    this.adapter = adapter;
   }
 
-  get(conversationId: string): ConversationSummary | undefined {
-    const row = this.db.prepare(
+  async get(conversationId: string): Promise<ConversationSummary | undefined> {
+    const row = await this.adapter.queryOne(
       'SELECT conversation_id, summary, message_count, last_user_message, last_assistant_message, updated_at FROM conversation_summaries WHERE conversation_id = ?',
-    ).get(conversationId) as Record<string, unknown> | undefined;
+      [conversationId],
+    ) as Record<string, unknown> | undefined;
 
     if (!row) return undefined;
 
@@ -33,8 +34,8 @@ export class SummaryRepository {
     };
   }
 
-  upsert(entry: ConversationSummary): void {
-    this.db.prepare(`
+  async upsert(entry: ConversationSummary): Promise<void> {
+    await this.adapter.execute(`
       INSERT INTO conversation_summaries (conversation_id, summary, message_count, last_user_message, last_assistant_message, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(conversation_id) DO UPDATE SET
@@ -43,24 +44,29 @@ export class SummaryRepository {
         last_user_message = excluded.last_user_message,
         last_assistant_message = excluded.last_assistant_message,
         updated_at = excluded.updated_at
-    `).run(
+    `, [
       entry.conversationId,
       entry.summary,
       entry.messageCount,
       entry.lastUserMessage ?? null,
       entry.lastAssistantMessage ?? null,
       entry.updatedAt,
-    );
+    ]);
   }
 
-  cleanup(olderThanDays: number = 180): number {
-    const result = this.db.prepare(
-      `DELETE FROM conversation_summaries WHERE updated_at < datetime('now', '-' || ? || ' days')`
-    ).run(olderThanDays);
+  async cleanup(olderThanDays: number = 180): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    const result = await this.adapter.execute(
+      `DELETE FROM conversation_summaries WHERE updated_at < ?`,
+      [cutoff],
+    );
     return result.changes;
   }
 
-  delete(conversationId: string): void {
-    this.db.prepare('DELETE FROM conversation_summaries WHERE conversation_id = ?').run(conversationId);
+  async delete(conversationId: string): Promise<void> {
+    await this.adapter.execute(
+      'DELETE FROM conversation_summaries WHERE conversation_id = ?',
+      [conversationId],
+    );
   }
 }

@@ -22,6 +22,9 @@ export class EmailSkill extends Skill {
   private readonly multiAccount: boolean;
   private llm?: EmailLLM;
 
+  /** Per-request override for user-specific providers (set in execute, cleared in finally). */
+  private activeProviders?: Map<string, EmailProvider>;
+
   constructor(providers?: Map<string, EmailProvider> | EmailProvider) {
     super();
 
@@ -142,16 +145,21 @@ export class EmailSkill extends Skill {
     input: Record<string, unknown>,
     _context: SkillContext,
   ): Promise<SkillResult> {
-    if (this.providers.size === 0) {
-      return {
-        success: false,
-        error: 'Email is not configured. Run `alfred setup` to configure email access.',
-      };
-    }
-
-    const action = input.action as string;
+    // Resolve per-user email providers if available
+    const userProviders = await this.resolveUserProviders(_context);
+    this.activeProviders = userProviders ?? undefined;
 
     try {
+      const providers = this.activeProviders ?? this.providers;
+      if (providers.size === 0) {
+        return {
+          success: false,
+          error: 'Email is not configured. Run `alfred setup` to configure email access.',
+        };
+      }
+
+      const action = input.action as string;
+
       switch (action) {
         case 'inbox':
           return await this.handleInbox(input);
@@ -185,18 +193,43 @@ export class EmailSkill extends Skill {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: `Email error: ${msg}` };
+    } finally {
+      this.activeProviders = undefined;
     }
+  }
+
+  /**
+   * Resolve per-user email providers from UserServiceResolver.
+   * Returns null if no per-user config is available (fall back to global).
+   */
+  private async resolveUserProviders(context: SkillContext): Promise<Map<string, EmailProvider> | null> {
+    if (!context.userServiceResolver || !context.alfredUserId) return null;
+    const services = await context.userServiceResolver.getUserServices(context.alfredUserId, 'email');
+    if (services.length === 0) return null;
+
+    const providers = new Map<string, EmailProvider>();
+    for (const svc of services) {
+      try {
+        const { createEmailProvider } = await import('./factory.js');
+        const provider = await createEmailProvider(svc.config as unknown as import('@alfred/types').EmailAccountConfig);
+        providers.set(svc.serviceName, provider);
+      } catch { /* skip broken per-user configs */ }
+    }
+    return providers.size > 0 ? providers : null;
   }
 
   // ── Helpers ──────────────────────────────────────────────────────
 
   private resolveProvider(input: Record<string, unknown>): { provider: EmailProvider; account: string } | SkillResult {
-    const account = (input.account as string) ?? this.defaultAccount;
-    const provider = this.providers.get(account);
+    const providers = this.activeProviders ?? this.providers;
+    const accountNames = [...providers.keys()];
+    const defaultAccount = accountNames[0] ?? 'default';
+    const account = (input.account as string) ?? defaultAccount;
+    const provider = providers.get(account);
     if (!provider) {
       return {
         success: false,
-        error: `Unknown email account "${account}". Available: ${this.accountNames.join(', ')}`,
+        error: `Unknown email account "${account}". Available: ${accountNames.join(', ')}`,
       };
     }
     return { provider, account };
@@ -207,13 +240,16 @@ export class EmailSkill extends Skill {
   }
 
   private decodeId(compositeId: string): { account: string; rawId: string } {
-    if (this.multiAccount) {
+    const providers = this.activeProviders ?? this.providers;
+    const isMulti = providers.size > 1;
+    if (isMulti) {
       const idx = compositeId.indexOf('::');
       if (idx >= 0) {
         return { account: compositeId.slice(0, idx), rawId: compositeId.slice(idx + 2) };
       }
     }
-    return { account: this.defaultAccount, rawId: compositeId };
+    const defaultAccount = [...providers.keys()][0] ?? this.defaultAccount;
+    return { account: defaultAccount, rawId: compositeId };
   }
 
   private accountLabel(account: string, text: string): string {
@@ -256,7 +292,7 @@ export class EmailSkill extends Skill {
     }
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = this.providers.get(account);
+    const provider = (this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -348,7 +384,7 @@ export class EmailSkill extends Skill {
       if (!body) return { success: false, error: '"body" is required for reply draft.' };
 
       const { account, rawId } = this.decodeId(messageId);
-      const provider = this.providers.get(account);
+      const provider = (this.activeProviders ?? this.providers).get(account);
       if (!provider) {
         return { success: false, error: `Unknown email account "${account}".` };
       }
@@ -446,7 +482,7 @@ export class EmailSkill extends Skill {
     if (!body) return { success: false, error: '"body" is required for reply.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = this.providers.get(account);
+    const provider = (this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -472,7 +508,7 @@ export class EmailSkill extends Skill {
     if (!to) return { success: false, error: '"to" (recipient email) is required for forward.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = this.providers.get(account);
+    const provider = (this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -495,7 +531,7 @@ export class EmailSkill extends Skill {
     if (!attachmentId) return { success: false, error: '"attachmentId" is required.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = this.providers.get(account);
+    const provider = (this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }

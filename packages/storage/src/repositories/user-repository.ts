@@ -1,18 +1,19 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import type { Platform, User } from '@alfred/types';
 import crypto from 'node:crypto';
 
 export class UserRepository {
-  private db: BetterSqlite3.Database;
+  private readonly adapter: AsyncDbAdapter;
 
-  constructor(db: BetterSqlite3.Database) {
-    this.db = db;
+  constructor(adapter: AsyncDbAdapter) {
+    this.adapter = adapter;
   }
 
-  findOrCreate(platform: Platform, platformUserId: string, username?: string, displayName?: string): User {
-    const existing = this.db.prepare(
-      'SELECT * FROM users WHERE platform = ? AND platform_user_id = ?'
-    ).get(platform, platformUserId) as Record<string, string> | undefined;
+  async findOrCreate(platform: Platform, platformUserId: string, username?: string, displayName?: string): Promise<User> {
+    const existing = await this.adapter.queryOne(
+      'SELECT * FROM users WHERE platform = ? AND platform_user_id = ?',
+      [platform, platformUserId]
+    ) as Record<string, string> | undefined;
 
     if (existing) {
       return this.mapRow(existing);
@@ -29,21 +30,21 @@ export class UserRepository {
       updatedAt: now,
     };
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO users (id, platform, platform_user_id, username, display_name, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(user.id, user.platform, user.platformUserId, user.username ?? null, user.displayName ?? null, user.createdAt, user.updatedAt);
+    `, [user.id, user.platform, user.platformUserId, user.username ?? null, user.displayName ?? null, user.createdAt, user.updatedAt]);
 
     return user;
   }
 
-  findById(id: string): User | undefined {
-    const row = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as Record<string, string> | undefined;
+  async findById(id: string): Promise<User | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM users WHERE id = ?', [id]) as Record<string, string> | undefined;
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  update(id: string, data: Partial<Pick<User, 'username' | 'displayName'>>): void {
+  async update(id: string, data: Partial<Pick<User, 'username' | 'displayName'>>): Promise<void> {
     const fields: string[] = [];
     const values: (string | null)[] = [];
 
@@ -62,10 +63,10 @@ export class UserRepository {
     values.push(new Date().toISOString());
     values.push(id);
 
-    this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await this.adapter.execute(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
   }
 
-  updateProfile(id: string, data: { timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown> }): void {
+  async updateProfile(id: string, data: { timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown> }): Promise<void> {
     const fields: string[] = [];
     const values: (string | null)[] = [];
 
@@ -92,11 +93,11 @@ export class UserRepository {
     values.push(new Date().toISOString());
     values.push(id);
 
-    this.db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    await this.adapter.execute(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`, values);
   }
 
-  getProfile(id: string): { timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown>; displayName?: string } | undefined {
-    const row = this.db.prepare('SELECT display_name, timezone, language, bio, preferences FROM users WHERE id = ?').get(id) as Record<string, string> | undefined;
+  async getProfile(id: string): Promise<{ timezone?: string; language?: string; bio?: string; preferences?: Record<string, unknown>; displayName?: string } | undefined> {
+    const row = await this.adapter.queryOne('SELECT display_name, timezone, language, bio, preferences FROM users WHERE id = ?', [id]) as Record<string, string> | undefined;
     if (!row) return undefined;
     return {
       displayName: row.display_name ?? undefined,
@@ -107,29 +108,31 @@ export class UserRepository {
     };
   }
 
-  setMasterUser(userId: string, masterUserId: string): void {
-    this.db.prepare('UPDATE users SET master_user_id = ?, updated_at = ? WHERE id = ?')
-      .run(masterUserId, new Date().toISOString(), userId);
+  async setMasterUser(userId: string, masterUserId: string): Promise<void> {
+    await this.adapter.execute('UPDATE users SET master_user_id = ?, updated_at = ? WHERE id = ?',
+      [masterUserId, new Date().toISOString(), userId]);
   }
 
-  getLinkedUsers(masterUserId: string): User[] {
-    const rows = this.db.prepare(
-      'SELECT DISTINCT * FROM users WHERE master_user_id = ? OR id = ?'
-    ).all(masterUserId, masterUserId) as Record<string, string>[];
+  async getLinkedUsers(masterUserId: string): Promise<User[]> {
+    const rows = await this.adapter.query(
+      'SELECT DISTINCT * FROM users WHERE master_user_id = ? OR id = ?',
+      [masterUserId, masterUserId]
+    ) as Record<string, string>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  findFirstByPlatformNotIn(excludedPlatforms: Platform[]): User | undefined {
+  async findFirstByPlatformNotIn(excludedPlatforms: Platform[]): Promise<User | undefined> {
     const placeholders = excludedPlatforms.map(() => '?').join(', ');
-    const row = this.db.prepare(
-      `SELECT * FROM users WHERE platform NOT IN (${placeholders}) LIMIT 1`
-    ).get(...excludedPlatforms) as Record<string, string> | undefined;
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM users WHERE platform NOT IN (${placeholders}) LIMIT 1`,
+      excludedPlatforms
+    ) as Record<string, string> | undefined;
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  getMasterUserId(userId: string): string {
-    const row = this.db.prepare('SELECT master_user_id FROM users WHERE id = ?').get(userId) as { master_user_id: string | null } | undefined;
+  async getMasterUserId(userId: string): Promise<string> {
+    const row = await this.adapter.queryOne('SELECT master_user_id FROM users WHERE id = ?', [userId]) as { master_user_id: string | null } | undefined;
     return row?.master_user_id ?? userId;
   }
 

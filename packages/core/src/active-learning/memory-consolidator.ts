@@ -32,9 +32,9 @@ export class MemoryConsolidator {
 
     // 1. Delete stale memories
     try {
-      const stale = this.memoryRepo.findStale(userId, staleDays, staleMaxConfidence);
+      const stale = await this.memoryRepo.findStale(userId, staleDays, staleMaxConfidence);
       if (stale.length > 0) {
-        deleted = this.memoryRepo.deleteByIds(stale.map(m => m.id));
+        deleted = await this.memoryRepo.deleteByIds(stale.map(m => m.id));
         this.logger.info({ userId, deleted }, 'Deleted stale memories');
       }
     } catch (err) {
@@ -43,7 +43,7 @@ export class MemoryConsolidator {
 
     // 2. Find and merge similar memories
     try {
-      const allMemories = this.memoryRepo.listAll(userId);
+      const allMemories = await this.memoryRepo.listAll(userId);
       const groups = this.findSimilarGroups(allMemories);
 
       for (const group of groups) {
@@ -52,7 +52,7 @@ export class MemoryConsolidator {
           if (mergeResult) {
             // Save merged entry FIRST (keep highest confidence from the group)
             const maxConfidence = Math.max(...group.map(m => m.confidence));
-            this.memoryRepo.saveWithMetadata(
+            await this.memoryRepo.saveWithMetadata(
               userId,
               mergeResult.key,
               mergeResult.value,
@@ -62,7 +62,7 @@ export class MemoryConsolidator {
               'auto',
             );
             // Then delete old entries
-            this.memoryRepo.deleteByIds(group.map(m => m.id));
+            await this.memoryRepo.deleteByIds(group.map(m => m.id));
             merged++;
             this.logger.info(
               { mergedKeys: group.map(m => m.key), newKey: mergeResult.key },

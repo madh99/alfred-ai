@@ -1,18 +1,18 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { BackgroundTask } from '@alfred/types';
 
 export class BackgroundTaskRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  create(
+  async create(
     userId: string,
     platform: string,
     chatId: string,
     description: string,
     skillName: string,
     skillInput: string,
-  ): BackgroundTask {
+  ): Promise<BackgroundTask> {
     const task: BackgroundTask = {
       id: randomUUID(),
       userId,
@@ -25,10 +25,10 @@ export class BackgroundTaskRepository {
       createdAt: new Date().toISOString(),
     };
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO background_tasks (id, user_id, platform, chat_id, description, skill_name, skill_input, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       task.id,
       task.userId,
       task.platform,
@@ -38,12 +38,12 @@ export class BackgroundTaskRepository {
       task.skillInput,
       task.status,
       task.createdAt,
-    );
+    ]);
 
     return task;
   }
 
-  updateStatus(id: string, status: BackgroundTask['status'], result?: string, error?: string): void {
+  async updateStatus(id: string, status: BackgroundTask['status'], result?: string, error?: string): Promise<void> {
     const now = new Date().toISOString();
     let startedAt: string | null = null;
     let completedAt: string | null = null;
@@ -59,7 +59,7 @@ export class BackgroundTaskRepository {
       checkpointAt = now;
     }
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       UPDATE background_tasks
       SET status = ?,
           result = COALESCE(?, result),
@@ -68,119 +68,136 @@ export class BackgroundTaskRepository {
           completed_at = COALESCE(?, completed_at),
           checkpoint_at = COALESCE(?, checkpoint_at)
       WHERE id = ?
-    `).run(status, result ?? null, error ?? null, startedAt, completedAt, checkpointAt, id);
+    `, [status, result ?? null, error ?? null, startedAt, completedAt, checkpointAt, id]);
   }
 
-  getPending(limit = 10): BackgroundTask[] {
-    const rows = this.db.prepare(
+  async getPending(limit = 10): Promise<BackgroundTask[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM background_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
-    ).all(limit) as Record<string, unknown>[];
+      [limit],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
   /** Atomically claim pending tasks: SELECT + UPDATE to 'running' in a single transaction. */
-  claimPending(limit = 10): BackgroundTask[] {
-    const txn = this.db.transaction(() => {
-      const rows = this.db.prepare(
+  async claimPending(limit = 10): Promise<BackgroundTask[]> {
+    return this.adapter.transaction(async (tx) => {
+      const rows = await tx.query(
         `SELECT * FROM background_tasks WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?`,
-      ).all(limit) as Record<string, unknown>[];
+        [limit],
+      ) as Record<string, unknown>[];
 
       const now = new Date().toISOString();
-      const updateStmt = this.db.prepare(
-        `UPDATE background_tasks SET status = 'running', started_at = ? WHERE id = ?`,
-      );
       for (const row of rows) {
-        updateStmt.run(now, row.id as string);
+        await tx.execute(
+          `UPDATE background_tasks SET status = 'running', started_at = ? WHERE id = ?`,
+          [now, row.id as string],
+        );
       }
 
       return rows.map((row) => this.mapRow({ ...row, status: 'running', started_at: now }));
     });
-    return txn();
   }
 
   /** Atomically claim a single task by ID (only if still pending). Returns true if claimed. */
-  claimTask(id: string): boolean {
-    const result = this.db.prepare(
-      `UPDATE background_tasks SET status = 'running', started_at = datetime('now') WHERE id = ? AND status = 'pending'`,
-    ).run(id);
+  async claimTask(id: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.adapter.execute(
+      `UPDATE background_tasks SET status = 'running', started_at = ? WHERE id = ? AND status = 'pending'`,
+      [now, id],
+    );
     return result.changes > 0;
   }
 
-  getById(id: string): BackgroundTask | undefined {
-    const row = this.db.prepare('SELECT * FROM background_tasks WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  async getById(id: string): Promise<BackgroundTask | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM background_tasks WHERE id = ?',
+      [id],
+    ) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
   }
 
-  getByUser(userId: string): BackgroundTask[] {
-    const rows = this.db.prepare(
+  async getByUser(userId: string): Promise<BackgroundTask[]> {
+    const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
+    const rows = await this.adapter.query(
       `SELECT * FROM background_tasks
        WHERE user_id = ?
-         AND (status IN ('pending', 'running', 'checkpointed', 'resuming') OR completed_at > datetime('now', '-1 day'))
+         AND (status IN ('pending', 'running', 'checkpointed', 'resuming') OR completed_at > ?)
        ORDER BY created_at DESC`,
-    ).all(userId) as Record<string, unknown>[];
+      [userId, oneDayAgo],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  cancel(id: string): boolean {
-    const result = this.db.prepare(
+  async cancel(id: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    const result = await this.adapter.execute(
       `UPDATE background_tasks
-       SET status = 'cancelled', completed_at = datetime('now')
+       SET status = 'cancelled', completed_at = ?
        WHERE id = ? AND status IN ('pending', 'running')`,
-    ).run(id);
+      [now, id],
+    );
     return result.changes > 0;
   }
 
-  cleanup(olderThanDays = 7): number {
-    const result = this.db.prepare(
+  async cleanup(olderThanDays = 7): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    const result = await this.adapter.execute(
       `DELETE FROM background_tasks
        WHERE status IN ('completed', 'failed', 'cancelled')
-         AND completed_at < datetime('now', '-' || ? || ' days')`,
-    ).run(olderThanDays);
+         AND completed_at < ?`,
+      [cutoff],
+    );
     return result.changes;
   }
 
-  checkpoint(id: string, agentState: string): void {
-    this.db.prepare(`
+  async checkpoint(id: string, agentState: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.adapter.execute(`
       UPDATE background_tasks
-      SET agent_state = ?, checkpoint_at = datetime('now')
+      SET agent_state = ?, checkpoint_at = ?
       WHERE id = ?
-    `).run(agentState, id);
+    `, [agentState, now, id]);
   }
 
-  getCheckpointed(): BackgroundTask[] {
-    const rows = this.db.prepare(
+  async getCheckpointed(): Promise<BackgroundTask[]> {
+    const rows = await this.adapter.query(
       "SELECT * FROM background_tasks WHERE status = 'checkpointed' ORDER BY checkpoint_at DESC",
-    ).all() as Record<string, unknown>[];
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  markResuming(id: string): void {
-    this.db.prepare(`
+  async markResuming(id: string): Promise<void> {
+    await this.adapter.execute(`
       UPDATE background_tasks
       SET status = 'resuming', resume_count = resume_count + 1
       WHERE id = ?
-    `).run(id);
+    `, [id]);
   }
 
-  getInterrupted(): BackgroundTask[] {
-    const rows = this.db.prepare(
+  async getInterrupted(): Promise<BackgroundTask[]> {
+    const rows = await this.adapter.query(
       "SELECT * FROM background_tasks WHERE status IN ('running', 'resuming') ORDER BY created_at ASC",
-    ).all() as Record<string, unknown>[];
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  cancelTask(id: string): void {
-    this.db.prepare(`
+  async cancelTask(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.adapter.execute(`
       UPDATE background_tasks
-      SET status = 'cancelled', completed_at = datetime('now')
+      SET status = 'cancelled', completed_at = ?
       WHERE id = ? AND status IN ('pending', 'running', 'checkpointed', 'resuming')
-    `).run(id);
+    `, [now, id]);
   }
 
-  updatePersistentConfig(id: string, maxDurationHours: number): void {
-    this.db.prepare('UPDATE background_tasks SET max_duration_hours = ? WHERE id = ?').run(maxDurationHours, id);
+  async updatePersistentConfig(id: string, maxDurationHours: number): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE background_tasks SET max_duration_hours = ? WHERE id = ?',
+      [maxDurationHours, id],
+    );
   }
 
   private mapRow(row: Record<string, unknown>): BackgroundTask {

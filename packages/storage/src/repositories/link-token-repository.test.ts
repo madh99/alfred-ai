@@ -17,8 +17,8 @@ describe.skipIf(!hasBetterSqlite3)('LinkTokenRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -30,15 +30,15 @@ describe.skipIf(!hasBetterSqlite3)('LinkTokenRepository', () => {
     const { Database } = await import('../database.js');
     const { LinkTokenRepository } = await import('./link-token-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-linktoken-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new LinkTokenRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new LinkTokenRepository(db.getAdapter());
     return repo;
   }
 
   it('should create a token with a 6-digit code and expiry', async () => {
     const repo = await setup();
 
-    const token = repo.create('user-1', 'telegram');
+    const token = await repo.create('user-1', 'telegram');
 
     expect(token).toBeDefined();
     expect(token.id).toBeDefined();
@@ -58,8 +58,8 @@ describe.skipIf(!hasBetterSqlite3)('LinkTokenRepository', () => {
   it('should find a non-expired token by code', async () => {
     const repo = await setup();
 
-    const created = repo.create('user-1', 'telegram');
-    const found = repo.findByCode(created.code);
+    const created = await repo.create('user-1', 'telegram');
+    const found = await repo.findByCode(created.code);
 
     expect(found).toBeDefined();
     expect(found!.id).toBe(created.id);
@@ -71,48 +71,48 @@ describe.skipIf(!hasBetterSqlite3)('LinkTokenRepository', () => {
   it('should return undefined for expired token', async () => {
     const repo = await setup();
 
-    const created = repo.create('user-1', 'telegram');
+    const created = await repo.create('user-1', 'telegram');
 
     // Manually set expires_at to the past
     const pastDate = new Date(Date.now() - 60_000).toISOString();
-    db.getDb().prepare('UPDATE link_tokens SET expires_at = ? WHERE id = ?').run(pastDate, created.id);
+    await db.getAdapter().execute('UPDATE link_tokens SET expires_at = ? WHERE id = ?', [pastDate, created.id]);
 
-    const found = repo.findByCode(created.code);
+    const found = await repo.findByCode(created.code);
     expect(found).toBeUndefined();
   });
 
   it('should return undefined for non-existent code', async () => {
     const repo = await setup();
 
-    const found = repo.findByCode('000000');
+    const found = await repo.findByCode('000000');
     expect(found).toBeUndefined();
   });
 
   it('should consume (delete) a token', async () => {
     const repo = await setup();
 
-    const created = repo.create('user-1', 'telegram');
-    repo.consume(created.id);
+    const created = await repo.create('user-1', 'telegram');
+    await repo.consume(created.id);
 
-    const found = repo.findByCode(created.code);
+    const found = await repo.findByCode(created.code);
     expect(found).toBeUndefined();
   });
 
   it('should cleanup expired tokens', async () => {
     const repo = await setup();
 
-    const t1 = repo.create('user-1', 'telegram');
-    const t2 = repo.create('user-2', 'discord');
+    const t1 = await repo.create('user-1', 'telegram');
+    const t2 = await repo.create('user-2', 'discord');
 
     // Expire t1
     const pastDate = new Date(Date.now() - 60_000).toISOString();
-    db.getDb().prepare('UPDATE link_tokens SET expires_at = ? WHERE id = ?').run(pastDate, t1.id);
+    await db.getAdapter().execute('UPDATE link_tokens SET expires_at = ? WHERE id = ?', [pastDate, t1.id]);
 
-    repo.cleanup();
+    await repo.cleanup();
 
     // t1 should be gone (expired), t2 should remain (not expired)
-    const found1 = repo.findByCode(t1.code);
-    const found2 = repo.findByCode(t2.code);
+    const found1 = await repo.findByCode(t1.code);
+    const found2 = await repo.findByCode(t2.code);
 
     expect(found1).toBeUndefined();
     expect(found2).toBeDefined();

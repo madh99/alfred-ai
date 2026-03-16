@@ -47,7 +47,7 @@ export class ConfirmationQueue {
   }): Promise<void> {
     const expiresAt = new Date(Date.now() + (opts.timeoutMinutes ?? 30) * 60_000).toISOString();
 
-    const confirmation = this.confirmRepo.create({
+    const confirmation = await this.confirmRepo.create({
       chatId: opts.chatId,
       platform: opts.platform,
       source: opts.source,
@@ -96,13 +96,13 @@ export class ConfirmationQueue {
 
     if (!isYes && !isNo) return false;
 
-    const pending = this.confirmRepo.findPending(chatId, platform);
+    const pending = await this.confirmRepo.findPending(chatId, platform);
     if (!pending) return false;
 
     const adapter = this.adapters.get(platform as Platform);
 
     if (isYes) {
-      this.confirmRepo.resolve(pending.id, 'approved');
+      await this.confirmRepo.resolve(pending.id, 'approved');
 
       // Execute the action
       const skill = this.skillRegistry.get(pending.skillName);
@@ -135,7 +135,7 @@ export class ConfirmationQueue {
         }
       }
     } else {
-      this.confirmRepo.resolve(pending.id, 'rejected');
+      await this.confirmRepo.resolve(pending.id, 'rejected');
       if (adapter) {
         await adapter.sendMessage(chatId, `\u274C Aktion abgelehnt: ${pending.description}`);
       }
@@ -160,7 +160,7 @@ export class ConfirmationQueue {
 
   private async expireTick(): Promise<void> {
     try {
-      const expired = this.confirmRepo.expireOld();
+      const expired = await this.confirmRepo.expireOld();
       for (const conf of expired) {
         this.activityLogger?.logConfirmation({
           confirmationId: conf.id, skillName: conf.skillName, description: conf.description,

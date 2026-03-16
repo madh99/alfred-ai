@@ -82,10 +82,10 @@ export class MemorySkill extends Skill {
     }
   }
 
-  private saveMemory(
+  private async saveMemory(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const key = input.key as string | undefined;
     const value = input.value as string | undefined;
     const category = input.category as string | undefined;
@@ -104,7 +104,7 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entry = this.memoryRepo.save(
+    const entry = await this.memoryRepo.save(
       effectiveUserId(context),
       key,
       value,
@@ -128,10 +128,10 @@ export class MemorySkill extends Skill {
     };
   }
 
-  private recallMemory(
+  private async recallMemory(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const key = input.key as string | undefined;
 
     if (!key || typeof key !== 'string') {
@@ -142,9 +142,9 @@ export class MemorySkill extends Skill {
     }
 
     // Search across all linked user IDs for cross-platform access
-    let entry: ReturnType<typeof this.memoryRepo.recall>;
+    let entry: Awaited<ReturnType<typeof this.memoryRepo.recall>>;
     for (const uid of allUserIds(context)) {
-      entry = this.memoryRepo.recall(uid, key);
+      entry = await this.memoryRepo.recall(uid, key);
       if (entry) break;
     }
 
@@ -163,10 +163,10 @@ export class MemorySkill extends Skill {
     };
   }
 
-  private searchMemories(
+  private async searchMemories(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const query = input.query as string | undefined;
 
     if (!query || typeof query !== 'string') {
@@ -178,9 +178,9 @@ export class MemorySkill extends Skill {
 
     // Search across all linked user IDs for cross-platform access
     const seen = new Set<string>();
-    const entries: ReturnType<typeof this.memoryRepo.search> = [];
+    const entries: Awaited<ReturnType<typeof this.memoryRepo.search>> = [];
     for (const uid of allUserIds(context)) {
-      for (const e of this.memoryRepo.search(uid, query)) {
+      for (const e of await this.memoryRepo.search(uid, query)) {
         if (!seen.has(e.id)) {
           seen.add(e.id);
           entries.push(e);
@@ -198,19 +198,19 @@ export class MemorySkill extends Skill {
     };
   }
 
-  private listMemories(
+  private async listMemories(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const category = input.category as string | undefined;
 
     // List across all linked user IDs for cross-platform access
     const seen = new Set<string>();
-    const entries: ReturnType<typeof this.memoryRepo.listAll> = [];
+    const entries: Awaited<ReturnType<typeof this.memoryRepo.listAll>> = [];
     for (const uid of allUserIds(context)) {
       const items = category && typeof category === 'string'
-        ? this.memoryRepo.listByCategory(uid, category)
-        : this.memoryRepo.listAll(uid);
+        ? await this.memoryRepo.listByCategory(uid, category)
+        : await this.memoryRepo.listAll(uid);
       for (const e of items) {
         if (!seen.has(e.id)) {
           seen.add(e.id);
@@ -231,10 +231,10 @@ export class MemorySkill extends Skill {
     };
   }
 
-  private deleteMemory(
+  private async deleteMemory(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const key = input.key as string | undefined;
 
     if (!key || typeof key !== 'string') {
@@ -247,7 +247,7 @@ export class MemorySkill extends Skill {
     // Try deleting across all linked user IDs (old data may be under platform ID)
     let deleted = false;
     for (const uid of allUserIds(context)) {
-      if (this.memoryRepo.delete(uid, key)) {
+      if (await this.memoryRepo.delete(uid, key)) {
         deleted = true;
         break;
       }

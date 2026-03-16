@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, CalendarConfig } from '@alfred/types';
 import { Skill } from '../../skill.js';
 import type { CalendarProvider, CalendarEvent } from './calendar-provider.js';
 
@@ -61,6 +61,9 @@ export class CalendarSkill extends Skill {
     },
   };
 
+  /** Per-request override for user-specific calendar provider. */
+  private activeProvider?: CalendarProvider;
+
   constructor(
     private readonly calendarProvider: CalendarProvider,
     private readonly timezone?: string,
@@ -68,30 +71,59 @@ export class CalendarSkill extends Skill {
     super();
   }
 
-  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    // Propagate user timezone to the provider so it sends correct times to the API
-    if (context.timezone) {
-      this.calendarProvider.timezone = context.timezone;
-    }
-    const action = input.action as CalendarAction;
+  /** Return the active (per-user or global) calendar provider. */
+  private get provider(): CalendarProvider {
+    return this.activeProvider ?? this.calendarProvider;
+  }
 
-    switch (action) {
-      case 'list_events':
-        return this.listEvents(input);
-      case 'create_event':
-        return this.createEvent(input);
-      case 'update_event':
-        return this.updateEvent(input);
-      case 'delete_event':
-        return this.deleteEvent(input);
-      case 'check_availability':
-        return this.checkAvailability(input);
-      case 'find_free_slot':
-        return this.findFreeSlot(input);
-      case 'check_conflicts':
-        return this.checkConflicts(input);
-      default:
-        return { success: false, error: `Unknown action: "${String(action)}"` };
+  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    // Resolve per-user calendar provider if available
+    this.activeProvider = await this.resolveUserProvider(context) ?? undefined;
+
+    try {
+      // Propagate user timezone to the provider so it sends correct times to the API
+      if (context.timezone) {
+        this.provider.timezone = context.timezone;
+      }
+      const action = input.action as CalendarAction;
+
+      switch (action) {
+        case 'list_events':
+          return this.listEvents(input);
+        case 'create_event':
+          return this.createEvent(input);
+        case 'update_event':
+          return this.updateEvent(input);
+        case 'delete_event':
+          return this.deleteEvent(input);
+        case 'check_availability':
+          return this.checkAvailability(input);
+        case 'find_free_slot':
+          return this.findFreeSlot(input);
+        case 'check_conflicts':
+          return this.checkConflicts(input);
+        default:
+          return { success: false, error: `Unknown action: "${String(action)}"` };
+      }
+    } finally {
+      this.activeProvider = undefined;
+    }
+  }
+
+  /**
+   * Resolve a per-user calendar provider from UserServiceResolver.
+   * Returns null if no per-user config is available (fall back to global).
+   */
+  private async resolveUserProvider(context: SkillContext): Promise<CalendarProvider | null> {
+    if (!context.userServiceResolver || !context.alfredUserId) return null;
+    const config = await context.userServiceResolver.getServiceConfig(context.alfredUserId, 'calendar');
+    if (!config) return null;
+
+    try {
+      const { createCalendarProvider } = await import('./factory.js');
+      return await createCalendarProvider(config as unknown as CalendarConfig);
+    } catch {
+      return null;
     }
   }
 
@@ -114,7 +146,7 @@ export class CalendarSkill extends Skill {
       : new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000); // Default: 7 days
 
     try {
-      const events = await this.calendarProvider.listEvents(start, end);
+      const events = await this.provider.listEvents(start, end);
 
       if (events.length === 0) {
         return { success: true, data: [], display: 'No events found in this time range.' };
@@ -149,7 +181,7 @@ export class CalendarSkill extends Skill {
     if (!end) return { success: false, error: 'Missing required field "end"' };
 
     try {
-      const event = await this.calendarProvider.createEvent({
+      const event = await this.provider.createEvent({
         title,
         start: this.parseLocalTime(start),
         end: this.parseLocalTime(end),
@@ -173,7 +205,7 @@ export class CalendarSkill extends Skill {
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
     try {
-      const event = await this.calendarProvider.updateEvent(eventId, {
+      const event = await this.provider.updateEvent(eventId, {
         title: input.title as string | undefined,
         start: input.start ? this.parseLocalTime(input.start as string) : undefined,
         end: input.end ? this.parseLocalTime(input.end as string) : undefined,
@@ -197,7 +229,7 @@ export class CalendarSkill extends Skill {
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
     try {
-      await this.calendarProvider.deleteEvent(eventId);
+      await this.provider.deleteEvent(eventId);
       return { success: true, data: { deleted: eventId }, display: `Event "${eventId}" deleted.` };
     } catch (err) {
       return { success: false, error: `Failed to delete event: ${err instanceof Error ? err.message : String(err)}` };
@@ -210,7 +242,7 @@ export class CalendarSkill extends Skill {
     if (!start || !end) return { success: false, error: 'Missing required fields "start" and "end"' };
 
     try {
-      const result = await this.calendarProvider.checkAvailability(this.parseLocalTime(start), this.parseLocalTime(end));
+      const result = await this.provider.checkAvailability(this.parseLocalTime(start), this.parseLocalTime(end));
       const display = result.available
         ? 'Time slot is available.'
         : `Time slot has ${result.conflicts.length} conflict(s):\n${result.conflicts.map(e => this.formatEvent(e)).join('\n')}`;
@@ -234,7 +266,7 @@ export class CalendarSkill extends Skill {
     }
 
     try {
-      const events = await this.calendarProvider.listEvents(start, end);
+      const events = await this.provider.listEvents(start, end);
       // Sort by start time
       const sorted = [...events].sort((a, b) => a.start.getTime() - b.start.getTime());
 
@@ -271,7 +303,7 @@ export class CalendarSkill extends Skill {
         return { success: true, data: { slots: [] }, display: `No free ${durationMinutes}-minute slots found in the given range.` };
       }
 
-      const tz = this.calendarProvider.timezone || this.timezone;
+      const tz = this.provider.timezone || this.timezone;
       const timeOpts: Intl.DateTimeFormatOptions = {
         weekday: 'short', day: '2-digit', month: '2-digit',
         hour: '2-digit', minute: '2-digit',
@@ -345,7 +377,7 @@ export class CalendarSkill extends Skill {
     if (!start || !end) return { success: false, error: 'Missing required fields "start" and "end"' };
 
     try {
-      const result = await this.calendarProvider.checkAvailability(
+      const result = await this.provider.checkAvailability(
         this.parseLocalTime(start),
         this.parseLocalTime(end),
       );
@@ -371,7 +403,7 @@ export class CalendarSkill extends Skill {
 
   private formatEvent(event: CalendarEvent): string {
     // Use provider timezone (updated per-request from context) over constructor timezone
-    const tz = this.calendarProvider.timezone || this.timezone;
+    const tz = this.provider.timezone || this.timezone;
     const timeOpts: Intl.DateTimeFormatOptions = {
       hour: '2-digit',
       minute: '2-digit',

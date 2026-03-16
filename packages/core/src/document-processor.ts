@@ -15,15 +15,17 @@ export class DocumentProcessor {
     filePath: string,
     filename: string,
     mimeType: string,
+    /** Pre-loaded file data (used when files are stored in S3/NFS, not local disk). */
+    fileData?: Buffer,
   ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }> {
     const fs = await import('node:fs');
 
     // 1. Compute content hash for deduplication
-    const fileBuffer = fs.readFileSync(filePath);
+    const fileBuffer = fileData ?? fs.readFileSync(filePath);
     const contentHash = createHash('sha256').update(fileBuffer).digest('hex');
 
     // 2. Check for existing document with same content
-    const existing = this.docRepo.findByContentHash(userId, contentHash);
+    const existing = await this.docRepo.findByContentHash(userId, contentHash);
     if (existing && existing.chunkCount > 0) {
       this.logger.info({ documentId: existing.id, filename, contentHash: contentHash.slice(0, 12) }, 'Document already ingested (duplicate)');
       return { documentId: existing.id, chunkCount: existing.chunkCount, existing: true };
@@ -31,15 +33,14 @@ export class DocumentProcessor {
     // If existing but chunk_count = 0 → previous failed attempt, delete and re-ingest
     if (existing && existing.chunkCount === 0) {
       this.logger.info({ documentId: existing.id, filename }, 'Removing failed previous ingest attempt');
-      this.docRepo.deleteDocument(existing.id);
+      await this.docRepo.deleteDocument(existing.id);
     }
 
     // 3. Extract text content
-    const content = await this.extractText(filePath, mimeType);
+    const content = await this.extractText(filePath, mimeType, fileBuffer);
 
     // 4. Create document record
-    const stat = fs.statSync(filePath);
-    const doc = this.docRepo.createDocument(userId, filename, mimeType, stat.size, contentHash);
+    const doc = await this.docRepo.createDocument(userId, filename, mimeType, fileBuffer.length, contentHash);
 
     // 5. Chunk content (~500 tokens per chunk with 50-token overlap)
     const chunks = this.chunkText(content, 500, 50);
@@ -52,24 +53,24 @@ export class DocumentProcessor {
       } catch (err) {
         this.logger.warn({ documentId: doc.id, chunkIndex: i, err }, 'Embedding failed for chunk, continuing');
       }
-      this.docRepo.addChunk(doc.id, i, chunks[i], embeddingId);
+      await this.docRepo.addChunk(doc.id, i, chunks[i], embeddingId);
     }
 
-    this.docRepo.updateChunkCount(doc.id, chunks.length);
+    await this.docRepo.updateChunkCount(doc.id, chunks.length);
 
     this.logger.info({ documentId: doc.id, filename, chunkCount: chunks.length }, 'Document ingested');
 
     return { documentId: doc.id, chunkCount: chunks.length };
   }
 
-  async extractText(filePath: string, mimeType: string): Promise<string> {
+  async extractText(filePath: string, mimeType: string, fileBuffer?: Buffer): Promise<string> {
     const fs = await import('node:fs');
+    const buf = fileBuffer ?? fs.readFileSync(filePath);
 
     if (mimeType === 'application/pdf') {
       try {
         const pdfParse = (await import('pdf-parse')).default;
-        const buffer = fs.readFileSync(filePath);
-        const data = await pdfParse(buffer);
+        const data = await pdfParse(buf);
         return data.text;
       } catch (err) {
         this.logger.error({ err }, 'PDF parsing failed');
@@ -83,7 +84,7 @@ export class DocumentProcessor {
     ) {
       try {
         const mammoth = await import('mammoth');
-        const result = await mammoth.extractRawText({ path: filePath });
+        const result = await mammoth.extractRawText({ buffer: buf } as any);
         return result.value;
       } catch (err) {
         this.logger.error({ err }, 'DOCX parsing failed');
@@ -92,7 +93,7 @@ export class DocumentProcessor {
     }
 
     // Text-based formats: txt, csv, md, etc.
-    return fs.readFileSync(filePath, 'utf-8');
+    return buf.toString('utf-8');
   }
 
   chunkText(text: string, targetTokens: number, overlapTokens: number): string[] {

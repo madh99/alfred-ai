@@ -68,11 +68,11 @@ export class ScheduledTaskSkill extends Skill {
   }
 
   /** Get scheduled actions for all linked user IDs. */
-  private getAllActions(context: SkillContext): import('@alfred/types').ScheduledAction[] {
+  private async getAllActions(context: SkillContext): Promise<import('@alfred/types').ScheduledAction[]> {
     const seen = new Set<string>();
     const results: import('@alfred/types').ScheduledAction[] = [];
     for (const uid of allUserIds(context)) {
-      for (const a of this.actionRepo.getByUser(uid)) {
+      for (const a of await this.actionRepo.getByUser(uid)) {
         if (!seen.has(a.id)) {
           seen.add(a.id);
           results.push(a);
@@ -107,10 +107,10 @@ export class ScheduledTaskSkill extends Skill {
     }
   }
 
-  private createAction(
+  private async createAction(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const name = input.name as string | undefined;
     const description = input.description as string | undefined;
     const scheduleType = input.schedule_type as string | undefined;
@@ -158,7 +158,7 @@ export class ScheduledTaskSkill extends Skill {
       }
     }
 
-    const entry = this.actionRepo.create({
+    const entry = await this.actionRepo.create({
       userId: effectiveUserId(context),
       platform: context.platform,
       chatId: context.chatId,
@@ -184,8 +184,8 @@ export class ScheduledTaskSkill extends Skill {
     };
   }
 
-  private listActions(context: SkillContext): SkillResult {
-    const actions = this.getAllActions(context);
+  private async listActions(context: SkillContext): Promise<SkillResult> {
+    const actions = await this.getAllActions(context);
 
     if (actions.length === 0) {
       return {
@@ -222,7 +222,7 @@ export class ScheduledTaskSkill extends Skill {
     };
   }
 
-  private toggleAction(input: Record<string, unknown>, enabled: boolean, context: SkillContext): SkillResult {
+  private async toggleAction(input: Record<string, unknown>, enabled: boolean, context: SkillContext): Promise<SkillResult> {
     const actionId = input.action_id as string | undefined;
 
     if (!actionId || typeof actionId !== 'string') {
@@ -230,13 +230,13 @@ export class ScheduledTaskSkill extends Skill {
     }
 
     // Verify ownership before toggling
-    const action = this.actionRepo.findById(actionId);
+    const action = await this.actionRepo.findById(actionId);
     const userIds = allUserIds(context);
     if (!action || !userIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
-    const updated = this.actionRepo.setEnabled(actionId, enabled);
+    const updated = await this.actionRepo.setEnabled(actionId, enabled);
 
     if (!updated) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
@@ -249,7 +249,7 @@ export class ScheduledTaskSkill extends Skill {
     };
   }
 
-  private deleteAction(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async deleteAction(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const actionId = input.action_id as string | undefined;
 
     if (!actionId || typeof actionId !== 'string') {
@@ -257,13 +257,13 @@ export class ScheduledTaskSkill extends Skill {
     }
 
     // Verify ownership before deleting
-    const action = this.actionRepo.findById(actionId);
+    const action = await this.actionRepo.findById(actionId);
     const deleteUserIds = allUserIds(context);
     if (!action || !deleteUserIds.includes(action.userId)) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };
     }
 
-    const deleted = this.actionRepo.delete(actionId);
+    const deleted = await this.actionRepo.delete(actionId);
 
     if (!deleted) {
       return { success: false, error: `Scheduled action "${actionId}" not found` };

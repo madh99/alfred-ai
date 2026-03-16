@@ -39,6 +39,11 @@ Commands:
   rules          List loaded security rules from the rules path
   status         Show status overview (adapters, LLM, rules)
   auth <provider>  OAuth token setup (e.g., alfred auth microsoft)
+  migrate-db     Migrate SQLite data to PostgreSQL
+                   --connection-string <url>  PostgreSQL URL (overrides config)
+                   --batch-size <n>           Rows per INSERT batch (default: 500)
+                   --dry-run                  Show what would be migrated
+                   --skip-existing            Skip tables that already have PG data
   logs [--tail N] Show recent audit log entries (default: 20)
                    --activity          Show activity log instead of security audit log
                    --type <type>       Filter by event type (skill_exec, watch_trigger, etc.)
@@ -159,6 +164,17 @@ async function main(): Promise<void> {
       const provider = parsed.positional[0] ?? '';
       const { authCommand } = await import('./commands/auth.js');
       await authCommand(provider);
+      break;
+    }
+
+    case 'migrate-db': {
+      const { migrateDbCommand } = await import('./commands/migrate-db.js');
+      await migrateDbCommand({
+        connectionString: typeof parsed.flags['connection-string'] === 'string' ? parsed.flags['connection-string'] : undefined,
+        batchSize: typeof parsed.flags['batch-size'] === 'string' ? parseInt(parsed.flags['batch-size'], 10) : undefined,
+        dryRun: !!parsed.flags['dry-run'],
+        skipExisting: !!parsed.flags['skip-existing'],
+      });
       break;
     }
 

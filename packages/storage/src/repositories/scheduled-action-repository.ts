@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import { getNextCronDate, type ScheduledAction } from '@alfred/types';
 
@@ -16,27 +16,27 @@ export interface CreateScheduledActionInput {
 }
 
 export class ScheduledActionRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  countEnabled(): number {
-    const row = this.db.prepare(
+  async countEnabled(): Promise<number> {
+    const row = await this.adapter.queryOne(
       'SELECT COUNT(*) as cnt FROM scheduled_actions WHERE enabled = 1'
-    ).get() as { cnt: number };
+    ) as { cnt: number };
     return row.cnt;
   }
 
-  create(data: CreateScheduledActionInput): ScheduledAction {
+  async create(data: CreateScheduledActionInput): Promise<ScheduledAction> {
     const now = new Date().toISOString();
     const id = randomUUID();
 
     const nextRunAt = this.calculateInitialNextRun(data.scheduleType, data.scheduleValue);
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO scheduled_actions
         (id, user_id, platform, chat_id, name, description, schedule_type, schedule_value,
          skill_name, skill_input, prompt_template, enabled, next_run_at, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `).run(
+    `, [
       id,
       data.userId,
       data.platform,
@@ -50,7 +50,7 @@ export class ScheduledActionRepository {
       data.promptTemplate ?? null,
       nextRunAt,
       now,
-    );
+    ]);
 
     return {
       id,
@@ -70,59 +70,64 @@ export class ScheduledActionRepository {
     };
   }
 
-  findById(id: string): ScheduledAction | undefined {
-    const row = this.db.prepare(
+  async findById(id: string): Promise<ScheduledAction | undefined> {
+    const row = await this.adapter.queryOne(
       `SELECT * FROM scheduled_actions WHERE id = ?`,
-    ).get(id) as Record<string, unknown> | undefined;
+      [id],
+    ) as Record<string, unknown> | undefined;
 
     return row ? this.mapRow(row) : undefined;
   }
 
-  getAll(): ScheduledAction[] {
-    const rows = this.db.prepare(
+  async getAll(): Promise<ScheduledAction[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM scheduled_actions WHERE enabled = 1 ORDER BY next_run_at ASC`,
-    ).all() as Record<string, unknown>[];
+    ) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
   }
 
-  getByUser(userId: string): ScheduledAction[] {
-    const rows = this.db.prepare(
+  async getByUser(userId: string): Promise<ScheduledAction[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM scheduled_actions WHERE user_id = ? ORDER BY created_at DESC`,
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  getDue(): ScheduledAction[] {
+  async getDue(): Promise<ScheduledAction[]> {
     const now = new Date().toISOString();
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       `SELECT * FROM scheduled_actions
        WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
        ORDER BY next_run_at ASC`,
-    ).all(now) as Record<string, unknown>[];
+      [now],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  updateLastRun(id: string, lastRunAt: string, nextRunAt: string | null): void {
-    this.db.prepare(`
+  async updateLastRun(id: string, lastRunAt: string, nextRunAt: string | null): Promise<void> {
+    await this.adapter.execute(`
       UPDATE scheduled_actions
       SET last_run_at = ?, next_run_at = ?
       WHERE id = ?
-    `).run(lastRunAt, nextRunAt, id);
+    `, [lastRunAt, nextRunAt, id]);
   }
 
-  setEnabled(id: string, enabled: boolean): boolean {
-    const result = this.db.prepare(
+  async setEnabled(id: string, enabled: boolean): Promise<boolean> {
+    const result = await this.adapter.execute(
       `UPDATE scheduled_actions SET enabled = ? WHERE id = ?`,
-    ).run(enabled ? 1 : 0, id);
+      [enabled ? 1 : 0, id],
+    );
     return result.changes > 0;
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare(
+  async delete(id: string): Promise<boolean> {
+    const result = await this.adapter.execute(
       `DELETE FROM scheduled_actions WHERE id = ?`,
-    ).run(id);
+      [id],
+    );
     return result.changes > 0;
   }
 

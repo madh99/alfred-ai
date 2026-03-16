@@ -1,6 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
-import type { DocumentRepository } from '@alfred/storage';
+import type { DocumentRepository, SharedResourceRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
 /** Minimal embedding service interface to avoid circular dep on @alfred/core. */
@@ -53,8 +53,18 @@ export class DocumentSkill extends Skill {
     private readonly docRepo: DocumentRepository,
     private readonly processor: DocumentProcessorInterface,
     private readonly embeddingService?: EmbeddingSearchService,
+    private readonly sharedResourceRepo?: SharedResourceRepository,
   ) {
     super();
+  }
+
+  /** Resolve document IDs shared with the current alfred user. */
+  private async getSharedDocIds(context: SkillContext): Promise<string[]> {
+    if (!this.sharedResourceRepo || !context.alfredUserId) return [];
+    try {
+      const shared = await this.sharedResourceRepo.getSharedWith(context.alfredUserId);
+      return shared.filter(s => s.resourceType === 'document').map(s => s.resourceId);
+    } catch { return []; }
   }
 
   async execute(
@@ -166,15 +176,19 @@ export class DocumentSkill extends Skill {
 
     // Filter to only document-sourced results + verify access
     const userId = effectiveUserId(context);
-    const docResults = allResults.filter(r => {
-      if (r.category !== 'document') return false;
+    const docResults: typeof allResults = [];
+    for (const r of allResults) {
+      if (r.category !== 'document') continue;
       // key format is "doc:<docId>:chunk:<idx>" — extract docId
       const docIdMatch = r.key.match(/^doc:([^:]+)/);
       if (docIdMatch) {
-        return this.docRepo.canAccess(docIdMatch[1], userId);
+        if (await this.docRepo.canAccess(docIdMatch[1], userId)) {
+          docResults.push(r);
+        }
+      } else {
+        docResults.push(r); // if can't determine doc ID, allow (backward compat)
       }
-      return true; // if can't determine doc ID, allow (backward compat)
-    });
+    }
 
     if (docResults.length === 0) {
       return { success: true, data: [], display: `No document matches found for "${query}".` };
@@ -191,25 +205,25 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private summarize(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async summarize(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const documentId = input.document_id as string | undefined;
 
     if (!documentId || typeof documentId !== 'string') {
       return { success: false, error: 'Missing required field "document_id" for summarize action' };
     }
 
-    const doc = this.docRepo.getDocument(documentId);
+    const doc = await this.docRepo.getDocument(documentId);
     if (!doc) {
       return { success: false, error: `Document "${documentId}" not found` };
     }
 
     // Access check: only owner, admin, or if document is public/shared
     const userId = effectiveUserId(context);
-    if (!this.docRepo.canAccess(documentId, userId)) {
+    if (!await this.docRepo.canAccess(documentId, userId)) {
       return { success: false, error: 'Kein Zugriff auf dieses Dokument.' };
     }
 
-    const chunks = this.docRepo.getChunks(documentId);
+    const chunks = await this.docRepo.getChunks(documentId);
     if (chunks.length === 0) {
       return { success: true, data: { document: doc, content: '' }, display: `Document "${doc.filename}" has no content chunks.` };
     }
@@ -233,14 +247,15 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private list(
+  private async list(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const limit = (input.limit as number) || 50;
     // List own + public + shared documents
     const userId = effectiveUserId(context);
-    const docs = this.docRepo.listAccessible(userId);
+    const sharedDocIds = await this.getSharedDocIds(context);
+    const docs = await this.docRepo.listAccessible(userId, sharedDocIds);
     const limited = docs.slice(0, limit);
 
     if (limited.length === 0) {
@@ -262,14 +277,14 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private deleteDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async deleteDoc(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const documentId = input.document_id as string | undefined;
 
     if (!documentId || typeof documentId !== 'string') {
       return { success: false, error: 'Missing required field "document_id" for delete action' };
     }
 
-    const doc = this.docRepo.getDocument(documentId);
+    const doc = await this.docRepo.getDocument(documentId);
     if (!doc) {
       return { success: false, error: `Document "${documentId}" not found` };
     }
@@ -280,7 +295,7 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Nur der Owner oder Admin kann dieses Dokument löschen.' };
     }
 
-    this.docRepo.deleteDocument(documentId);
+    await this.docRepo.deleteDocument(documentId);
 
     return {
       success: true,
@@ -289,12 +304,12 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private shareDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async shareDoc(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const documentId = input.document_id as string;
     const visibility = (input.visibility as 'private' | 'shared' | 'public') ?? 'public';
     if (!documentId) return { success: false, error: 'Missing "document_id"' };
 
-    const doc = this.docRepo.getDocument(documentId);
+    const doc = await this.docRepo.getDocument(documentId);
     if (!doc) return { success: false, error: `Document "${documentId}" not found` };
 
     // Only owner or admin can share
@@ -303,7 +318,7 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Nur der Owner oder Admin kann Dokumente teilen.' };
     }
 
-    this.docRepo.setVisibility(documentId, visibility);
+    await this.docRepo.setVisibility(documentId, visibility);
     return {
       success: true,
       data: { documentId, visibility },
@@ -311,11 +326,11 @@ export class DocumentSkill extends Skill {
     };
   }
 
-  private unshareDoc(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async unshareDoc(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const documentId = input.document_id as string;
     if (!documentId) return { success: false, error: 'Missing "document_id"' };
 
-    const doc = this.docRepo.getDocument(documentId);
+    const doc = await this.docRepo.getDocument(documentId);
     if (!doc) return { success: false, error: `Document "${documentId}" not found` };
 
     const userId = effectiveUserId(context);
@@ -323,7 +338,7 @@ export class DocumentSkill extends Skill {
       return { success: false, error: 'Nur der Owner oder Admin kann die Freigabe ändern.' };
     }
 
-    this.docRepo.setVisibility(documentId, 'private');
+    await this.docRepo.setVisibility(documentId, 'private');
     return {
       success: true,
       data: { documentId },

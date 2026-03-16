@@ -55,7 +55,7 @@ export class BackgroundTaskRunner {
 
     try {
       const available = this.maxConcurrent - this.running;
-      const tasks = this.taskRepo.claimPending(available);
+      const tasks = await this.taskRepo.claimPending(available);
 
       for (const task of tasks) {
         this.running++;
@@ -81,13 +81,13 @@ export class BackgroundTaskRunner {
     try {
       const skill = this.skillRegistry.get(task.skillName);
       if (!skill) {
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, `Unknown skill: ${task.skillName}`);
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, `Unknown skill: ${task.skillName}`);
         return;
       }
 
       // Skip if skill is auto-disabled
       if (this.skillHealthTracker?.isDisabled(task.skillName)) {
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, `Skill "${task.skillName}" is temporarily disabled due to repeated failures`);
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, `Skill "${task.skillName}" is temporarily disabled due to repeated failures`);
         return;
       }
 
@@ -95,10 +95,10 @@ export class BackgroundTaskRunner {
       try { input = JSON.parse(task.skillInput); }
       catch (err) {
         this.logger.warn({ taskId: task.id, err }, 'Malformed skill input JSON');
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
         return;
       }
-      const { context } = buildSkillContext(this.users, {
+      const { context } = await buildSkillContext(this.users, {
         userId: task.userId,
         platform: task.platform as Platform,
         chatId: task.chatId,
@@ -116,7 +116,7 @@ export class BackgroundTaskRunner {
       ]).finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); });
       const resultJson = JSON.stringify(result.data ?? result.display ?? result.error);
 
-      this.taskRepo.updateStatus(
+      await this.taskRepo.updateStatus(
         task.id,
         result.success ? 'completed' : 'failed',
         resultJson,
@@ -146,7 +146,7 @@ export class BackgroundTaskRunner {
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      this.taskRepo.updateStatus(task.id, 'failed', undefined, errorMsg);
+      await this.taskRepo.updateStatus(task.id, 'failed', undefined, errorMsg);
       this.logger.error({ taskId: task.id, err }, 'Background task failed');
       this.activityLogger?.logBackgroundTask({
         taskId: task.id, skillName: task.skillName,

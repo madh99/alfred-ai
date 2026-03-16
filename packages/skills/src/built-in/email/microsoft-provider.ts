@@ -4,9 +4,15 @@ import type { EmailMessage, EmailDetail, EmailAttachment, SendEmailInput } from 
 
 export class MicrosoftGraphEmailProvider extends EmailProvider {
   private accessToken = '';
+  /**
+   * Graph API user path. '/me' for own mailbox,
+   * '/users/{email}' for shared mailboxes (e.g. team@company.com).
+   */
+  private readonly userPath: string;
 
-  constructor(private readonly config: MicrosoftEmailConfig) {
+  constructor(private readonly config: MicrosoftEmailConfig & { sharedMailbox?: string }) {
     super();
+    this.userPath = config.sharedMailbox ? `/users/${config.sharedMailbox}` : '/me';
   }
 
   async initialize(): Promise<void> {
@@ -23,7 +29,9 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access',
+      scope: this.config.sharedMailbox
+        ? 'https://graph.microsoft.com/Mail.ReadWrite.Shared https://graph.microsoft.com/Mail.Send.Shared offline_access'
+        : 'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access',
     });
 
     const res = await fetch(tokenUrl, {
@@ -99,7 +107,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
-    const data = await this.graphRequest(`/me/mailFolders/inbox/messages?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/mailFolders/inbox/messages?${params}`);
     return (data.value ?? []).map((item: any) => this.mapMessage(item));
   }
 
@@ -108,11 +116,11 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       $select: 'id,from,toRecipients,ccRecipients,bccRecipients,subject,body,receivedDateTime,isRead,hasAttachments',
     });
 
-    const data = await this.graphRequest(`/me/messages/${id}?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/messages/${id}?${params}`);
 
     let attachments: EmailAttachment[] = [];
     if (data.hasAttachments) {
-      const attData = await this.graphRequest(`/me/messages/${id}/attachments?$select=id,name,contentType,size`);
+      const attData = await this.graphRequest(`${this.userPath}/messages/${id}/attachments?$select=id,name,contentType,size`);
       attachments = (attData.value ?? []).map((a: any) => ({
         id: a.id,
         name: a.name,
@@ -147,7 +155,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
-    const data = await this.graphRequest(`/me/messages?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/messages?${params}`);
     const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
 
     // Follow pagination if more results requested
@@ -278,7 +286,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       params.set('$orderby', 'receivedDateTime desc');
     }
 
-    const data = await this.graphRequest(`/me/messages?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/messages?${params}`);
     const results: EmailMessage[] = (data.value ?? []).map((item: any) => this.mapMessage(item));
 
     // Follow pagination
@@ -334,7 +342,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   async sendMessage(input: SendEmailInput): Promise<{ messageId: string }> {
     if (input.replyTo) {
       // Reply to an existing message
-      await this.graphRequest(`/me/messages/${input.replyTo}/reply`, {
+      await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/reply`, {
         method: 'POST',
         body: JSON.stringify({
           comment: input.body,
@@ -360,7 +368,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       }));
     }
 
-    await this.graphRequest('/me/sendMail', {
+    await this.graphRequest(`${this.userPath}/sendMail`, {
       method: 'POST',
       body: JSON.stringify({ message }),
     });
@@ -371,7 +379,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   async createDraft(input: SendEmailInput): Promise<{ messageId: string }> {
     if (input.replyTo) {
       // Create a reply draft (not sent)
-      const data = await this.graphRequest(`/me/messages/${input.replyTo}/createReply`, {
+      const data = await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/createReply`, {
         method: 'POST',
         body: JSON.stringify({
           comment: input.body,
@@ -397,7 +405,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       }));
     }
 
-    const data = await this.graphRequest('/me/messages', {
+    const data = await this.graphRequest(`${this.userPath}/messages`, {
       method: 'POST',
       body: JSON.stringify(message),
     });
@@ -406,13 +414,13 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
   }
 
   async listFolders(): Promise<string[]> {
-    const data = await this.graphRequest('/me/mailFolders?$select=displayName&$top=100');
+    const data = await this.graphRequest(`${this.userPath}/mailFolders?$select=displayName&$top=100`);
     return (data.value ?? []).map((f: any) => f.displayName);
   }
 
   async fetchFolder(folder: string, count: number): Promise<EmailMessage[]> {
     // First resolve folder name to ID
-    const foldersData = await this.graphRequest('/me/mailFolders?$select=id,displayName&$top=100');
+    const foldersData = await this.graphRequest(`${this.userPath}/mailFolders?$select=id,displayName&$top=100`);
     const match = (foldersData.value ?? []).find(
       (f: any) => f.displayName.toLowerCase() === folder.toLowerCase(),
     );
@@ -427,16 +435,16 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
     });
 
-    const data = await this.graphRequest(`/me/mailFolders/${match.id}/messages?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/mailFolders/${match.id}/messages?${params}`);
     return (data.value ?? []).map((item: any) => this.mapMessage(item));
   }
 
   async downloadAttachment(messageId: string, attachmentId: string): Promise<Buffer> {
-    return this.graphRequestRaw(`/me/messages/${messageId}/attachments/${attachmentId}/$value`);
+    return this.graphRequestRaw(`${this.userPath}/messages/${messageId}/attachments/${attachmentId}/$value`);
   }
 
   async forwardMessage(messageId: string, to: string, comment?: string): Promise<{ messageId: string }> {
-    await this.graphRequest(`/me/messages/${messageId}/forward`, {
+    await this.graphRequest(`${this.userPath}/messages/${messageId}/forward`, {
       method: 'POST',
       body: JSON.stringify({
         comment: comment ?? '',

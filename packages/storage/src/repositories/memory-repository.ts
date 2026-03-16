@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export type MemoryType =
@@ -34,13 +34,13 @@ export interface MemoryEntry {
 }
 
 export class MemoryRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  save(userId: string, key: string, value: string, category = 'general'): MemoryEntry {
+  async save(userId: string, key: string, value: string, category = 'general'): Promise<MemoryEntry> {
     return this.saveWithMetadata(userId, key, value, category, 'general', 1.0, 'manual');
   }
 
-  saveWithMetadata(
+  async saveWithMetadata(
     userId: string,
     key: string,
     value: string,
@@ -48,11 +48,11 @@ export class MemoryRepository {
     type: MemoryType,
     confidence: number,
     source: MemorySource,
-  ): MemoryEntry {
+  ): Promise<MemoryEntry> {
     const now = new Date().toISOString();
     const id = randomUUID();
 
-    this.db.prepare(
+    await this.adapter.execute(
       `INSERT INTO memories (id, user_id, key, value, category, type, confidence, source, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_id, key) DO UPDATE SET
@@ -63,51 +63,58 @@ export class MemoryRepository {
          source = excluded.source,
          updated_at = excluded.updated_at,
          expires_at = NULL`,
-    ).run(id, userId, key, value, category, type, confidence, source, now, now);
+      [id, userId, key, value, category, type, confidence, source, now, now],
+    );
 
-    const row = this.db.prepare(
+    const row = await this.adapter.queryOne(
       'SELECT * FROM memories WHERE user_id = ? AND key = ?',
-    ).get(userId, key) as Record<string, unknown>;
+      [userId, key],
+    ) as Record<string, unknown>;
     return this.mapRow(row);
   }
 
-  saveWithTTL(
+  async saveWithTTL(
     userId: string,
     key: string,
     value: string,
     category: string,
     ttlMinutes: number,
-  ): MemoryEntry {
-    const entry = this.saveWithMetadata(userId, key, value, category, 'general', 1.0, 'manual');
+  ): Promise<MemoryEntry> {
+    const entry = await this.saveWithMetadata(userId, key, value, category, 'general', 1.0, 'manual');
     const expiresAt = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
-    this.db.prepare(
+    await this.adapter.execute(
       'UPDATE memories SET expires_at = ? WHERE user_id = ? AND key = ?',
-    ).run(expiresAt, userId, key);
+      [expiresAt, userId, key],
+    );
     entry.expiresAt = expiresAt;
     return entry;
   }
 
-  cleanupExpired(): number {
-    const result = this.db.prepare(
-      `DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < datetime('now')`,
-    ).run();
+  async cleanupExpired(): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.adapter.execute(
+      `DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?`,
+      [now],
+    );
     return result.changes;
   }
 
-  recall(userId: string, key: string): MemoryEntry | undefined {
-    const row = this.db.prepare(
+  async recall(userId: string, key: string): Promise<MemoryEntry | undefined> {
+    const row = await this.adapter.queryOne(
       'SELECT * FROM memories WHERE user_id = ? AND key = ?',
-    ).get(userId, key) as Record<string, unknown> | undefined;
+      [userId, key],
+    ) as Record<string, unknown> | undefined;
 
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  search(userId: string, query: string): MemoryEntry[] {
+  async search(userId: string, query: string): Promise<MemoryEntry[]> {
     const pattern = `%${query}%`;
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? AND (key LIKE ? OR value LIKE ?) ORDER BY updated_at DESC',
-    ).all(userId, pattern, pattern) as Record<string, unknown>[];
+      [userId, pattern, pattern],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
@@ -117,7 +124,7 @@ export class MemoryRepository {
    * Splits the query into terms and scores each memory by how many
    * terms match (in key or value), weighted by inverse document frequency.
    */
-  keywordSearch(userId: string, query: string, limit = 20): MemoryEntry[] {
+  async keywordSearch(userId: string, query: string, limit = 20): Promise<MemoryEntry[]> {
     const terms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 2);
     if (terms.length === 0) return [];
 
@@ -128,9 +135,10 @@ export class MemoryRepository {
       params.push(`%${term}%`, `%${term}%`);
     }
 
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       `SELECT * FROM memories WHERE user_id = ? AND (${conditions}) ORDER BY updated_at DESC`,
-    ).all(...params) as Record<string, unknown>[];
+      params,
+    ) as Record<string, unknown>[];
 
     // Score: count how many terms match each row
     const scored = rows.map(row => {
@@ -151,21 +159,23 @@ export class MemoryRepository {
   /**
    * Record an access to a memory (updates last_accessed_at and increments access_count).
    */
-  recordAccess(id: string): void {
+  async recordAccess(id: string): Promise<void> {
     const now = new Date().toISOString();
-    this.db.prepare(
+    await this.adapter.execute(
       'UPDATE memories SET last_accessed_at = ?, access_count = access_count + 1 WHERE id = ?',
-    ).run(now, id);
+      [now, id],
+    );
   }
 
   /**
    * Find stale memories: older than `olderThanDays` and with confidence below `maxConfidence`.
    */
-  findStale(userId: string, olderThanDays: number, maxConfidence: number): MemoryEntry[] {
+  async findStale(userId: string, olderThanDays: number, maxConfidence: number): Promise<MemoryEntry[]> {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? AND updated_at < ? AND confidence <= ? ORDER BY confidence ASC',
-    ).all(userId, cutoff, maxConfidence) as Record<string, unknown>[];
+      [userId, cutoff, maxConfidence],
+    ) as Record<string, unknown>[];
 
     return rows.map(row => this.mapRow(row));
   }
@@ -173,43 +183,48 @@ export class MemoryRepository {
   /**
    * Bulk-delete memories by their IDs.
    */
-  deleteByIds(ids: string[]): number {
+  async deleteByIds(ids: string[]): Promise<number> {
     if (ids.length === 0) return 0;
     const placeholders = ids.map(() => '?').join(',');
-    const result = this.db.prepare(
+    const result = await this.adapter.execute(
       `DELETE FROM memories WHERE id IN (${placeholders})`,
-    ).run(...ids);
+      ids,
+    );
     return result.changes;
   }
 
-  listByCategory(userId: string, category: string): MemoryEntry[] {
-    const rows = this.db.prepare(
+  async listByCategory(userId: string, category: string): Promise<MemoryEntry[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? AND category = ? ORDER BY updated_at DESC',
-    ).all(userId, category) as Record<string, unknown>[];
+      [userId, category],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  listAll(userId: string): MemoryEntry[] {
-    const rows = this.db.prepare(
+  async listAll(userId: string): Promise<MemoryEntry[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC',
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  delete(userId: string, key: string): boolean {
-    const result = this.db.prepare(
+  async delete(userId: string, key: string): Promise<boolean> {
+    const result = await this.adapter.execute(
       'DELETE FROM memories WHERE user_id = ? AND key = ?',
-    ).run(userId, key);
+      [userId, key],
+    );
 
     return result.changes > 0;
   }
 
-  getRecentForPrompt(userId: string, limit = 20): MemoryEntry[] {
-    const rows = this.db.prepare(
+  async getRecentForPrompt(userId: string, limit = 20): Promise<MemoryEntry[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
-    ).all(userId, limit) as Record<string, unknown>[];
+      [userId, limit],
+    ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
   }

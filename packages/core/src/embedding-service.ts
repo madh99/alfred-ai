@@ -31,7 +31,7 @@ export class EmbeddingService {
       const result = await this.llm.embed(content);
       if (!result) return undefined;
 
-      const entry = this.embeddingRepo.store({
+      const entry = await this.embeddingRepo.store({
         userId,
         sourceType,
         sourceId,
@@ -62,7 +62,7 @@ export class EmbeddingService {
       const queryResult = await this.llm.embed(query);
       if (!queryResult) return [];
 
-      const embeddings = this.embeddingRepo.findByUser(userId);
+      const embeddings = await this.embeddingRepo.findByUser(userId);
       if (embeddings.length === 0) return [];
 
       // Compute cosine similarity

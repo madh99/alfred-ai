@@ -25,7 +25,7 @@ export class PersistentAgentRunner {
   /** Find interrupted tasks from previous process and recover them. */
   async recoverInterrupted(): Promise<void> {
     try {
-      const interrupted = this.taskRepo.getInterrupted();
+      const interrupted = await this.taskRepo.getInterrupted();
       for (const task of interrupted) {
         if (task.agentState) {
           this.logger.info({ taskId: task.id, resumeCount: task.resumeCount }, 'Recovering interrupted persistent task');
@@ -34,7 +34,7 @@ export class PersistentAgentRunner {
           });
         } else {
           // No checkpoint data — mark as failed
-          this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Process restarted without checkpoint');
+          await this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Process restarted without checkpoint');
           this.logger.warn({ taskId: task.id }, 'Interrupted task without checkpoint marked as failed');
           this.notifyUser(task, '\u274C Hintergrund-Task abgebrochen (Prozess-Neustart ohne Checkpoint)');
         }
@@ -47,7 +47,7 @@ export class PersistentAgentRunner {
   /** Run a task with periodic checkpointing. */
   async runPersistent(task: BackgroundTask): Promise<void> {
     // Atomically claim: only proceed if this instance wins the race
-    if (!this.taskRepo.claimTask(task.id)) {
+    if (!await this.taskRepo.claimTask(task.id)) {
       this.logger.info({ taskId: task.id }, 'Task already claimed by another runner, skipping');
       return;
     }
@@ -60,18 +60,18 @@ export class PersistentAgentRunner {
     try {
       const skill = this.skillRegistry.get(task.skillName);
       if (!skill) {
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, `Unknown skill: ${task.skillName}`);
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, `Unknown skill: ${task.skillName}`);
         return;
       }
 
       let input: Record<string, unknown>;
       try { input = JSON.parse(task.skillInput); }
       catch {
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Malformed skill input JSON');
         return;
       }
 
-      const { context } = buildSkillContext(this.users, {
+      const { context } = await buildSkillContext(this.users, {
         userId: task.userId,
         platform: task.platform as Platform,
         chatId: task.chatId,
@@ -81,7 +81,7 @@ export class PersistentAgentRunner {
       // Check max duration against original creation time (survives resume cycles)
       const elapsedMs = Date.now() - new Date(task.createdAt).getTime();
       if (elapsedMs > maxDurationMs) {
-        this.taskRepo.updateStatus(task.id, 'failed', undefined, `Max duration of ${task.maxDurationHours}h exceeded`);
+        await this.taskRepo.updateStatus(task.id, 'failed', undefined, `Max duration of ${task.maxDurationHours}h exceeded`);
         this.notifyUser(task, `\u274C Persistenter Task "${task.description}" abgebrochen: maximale Laufzeit \u00fcberschritten.`);
         this.logLifecycle(task, 'expired');
         return;
@@ -115,7 +115,7 @@ export class PersistentAgentRunner {
         ...context,
         resumeState,
         abortSignal: abortController.signal,
-        onIteration: (data: { iteration: number; maxIterations: number; messages: unknown[]; dataStore?: Record<string, string> }) => {
+        onIteration: async (data: { iteration: number; maxIterations: number; messages: unknown[]; dataStore?: Record<string, string> }) => {
           // Checkpoint every N iterations, or force-write when aborting (pause)
           if (data.iteration - lastCheckpointIteration >= CHECKPOINT_EVERY_N_ITERATIONS || abortController.signal.aborted) {
             lastCheckpointIteration = data.iteration;
@@ -129,17 +129,17 @@ export class PersistentAgentRunner {
               dataStore: data.dataStore,
             };
             try {
-              this.taskRepo.checkpoint(task.id, JSON.stringify(checkpoint));
+              await this.taskRepo.checkpoint(task.id, JSON.stringify(checkpoint));
               this.logLifecycle(task, 'checkpoint');
               this.logger.debug({ taskId: task.id, iteration: data.iteration }, 'Persistent task checkpointed');
             } catch (err) {
               this.logger.warn({ err, taskId: task.id }, 'Failed to write checkpoint, retrying once');
               try {
-                this.taskRepo.checkpoint(task.id, JSON.stringify(checkpoint));
+                await this.taskRepo.checkpoint(task.id, JSON.stringify(checkpoint));
                 this.logger.info({ taskId: task.id }, 'Checkpoint retry succeeded');
               } catch (retryErr) {
                 this.logger.error({ err: retryErr, taskId: task.id }, 'Checkpoint retry failed, aborting task');
-                this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Checkpoint write failed after retry');
+                await this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Checkpoint write failed after retry');
                 abortController.abort();
               }
             }
@@ -168,7 +168,7 @@ export class PersistentAgentRunner {
 
       const resultJson = JSON.stringify(result.data ?? result.display ?? result.error);
 
-      this.taskRepo.updateStatus(
+      await this.taskRepo.updateStatus(
         task.id,
         result.success ? 'completed' : 'failed',
         resultJson,
@@ -192,7 +192,7 @@ export class PersistentAgentRunner {
         return;
       }
 
-      this.taskRepo.updateStatus(task.id, 'failed', undefined, errorMsg);
+      await this.taskRepo.updateStatus(task.id, 'failed', undefined, errorMsg);
       this.logger.error({ taskId: task.id, err }, 'Persistent task failed');
       this.notifyUser(task, `\u274C Persistenter Task fehlgeschlagen: ${task.description}\n\nFehler: ${errorMsg}`);
     }
@@ -200,11 +200,11 @@ export class PersistentAgentRunner {
 
   /** Resume a checkpointed task. */
   async resume(task: BackgroundTask): Promise<void> {
-    this.taskRepo.markResuming(task.id);
+    await this.taskRepo.markResuming(task.id);
     this.logLifecycle(task, 'resume');
 
     // Re-fetch from DB to get fresh state after markResuming
-    const freshTask = this.taskRepo.getById(task.id);
+    const freshTask = await this.taskRepo.getById(task.id);
     if (!freshTask) {
       this.logger.warn({ taskId: task.id }, 'Task disappeared during resume');
       return;
@@ -215,7 +215,7 @@ export class PersistentAgentRunner {
 
   /** Pause a running task: set status to checkpointed and abort execution. */
   async pause(taskId: string): Promise<void> {
-    this.taskRepo.updateStatus(taskId, 'checkpointed');
+    await this.taskRepo.updateStatus(taskId, 'checkpointed');
     // Signal the running skill to stop cooperatively
     const controller = this.activeAbortControllers.get(taskId);
     if (controller) {
@@ -234,7 +234,7 @@ export class PersistentAgentRunner {
       controller.abort();
       this.activeAbortControllers.delete(taskId);
     }
-    this.taskRepo.cancelTask(taskId);
+    await this.taskRepo.cancelTask(taskId);
     this.logger.info({ taskId }, 'Persistent task cancelled');
   }
 

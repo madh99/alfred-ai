@@ -47,7 +47,7 @@ export class MemoryRetriever {
       const keywordSeen = new Set<string>();
       const keywordResults: MemoryEntry[] = [];
       for (const uid of userIds) {
-        for (const m of this.memoryRepo.keywordSearch(uid, query, 30)) {
+        for (const m of await this.memoryRepo.keywordSearch(uid, query, 30)) {
           if (!keywordSeen.has(m.id)) {
             keywordSeen.add(m.id);
             keywordResults.push(m);
@@ -103,7 +103,7 @@ export class MemoryRetriever {
         });
 
         // Track access
-        this.memoryRepo.recordAccess(mem.id);
+        await this.memoryRepo.recordAccess(mem.id);
       }
 
       // Score semantic results
@@ -119,7 +119,7 @@ export class MemoryRetriever {
             existing.memory.score = existing.score;
           } else {
             // Semantic-only result: try to find the memory for metadata
-            const memEntry = this.memoryRepo.recall(userId, sr.key);
+            const memEntry = await this.memoryRepo.recall(userId, sr.key);
             const combined = this.applyBoosts(
               semanticScore,
               memEntry || undefined,
@@ -137,7 +137,7 @@ export class MemoryRetriever {
             });
 
             if (memEntry) {
-              this.memoryRepo.recordAccess(memEntry.id);
+              await this.memoryRepo.recordAccess(memEntry.id);
             }
           }
         }
@@ -178,7 +178,7 @@ export class MemoryRetriever {
       const fallbackSeen = new Set<string>();
       const fallback: RetrievedMemory[] = [];
       for (const uid of userIds) {
-        for (const m of this.memoryRepo.getRecentForPrompt(uid, limit)) {
+        for (const m of await this.memoryRepo.getRecentForPrompt(uid, limit)) {
           if (!fallbackSeen.has(m.key)) {
             fallbackSeen.add(m.key);
             fallback.push({ key: m.key, value: m.value, category: m.category, type: m.type, score: 0 });

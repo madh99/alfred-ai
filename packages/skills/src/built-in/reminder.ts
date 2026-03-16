@@ -50,11 +50,11 @@ export class ReminderSkill extends Skill {
   }
 
   /** Get reminders for all linked user IDs (handles old data stored under platform ID). */
-  private getAllReminders(context: SkillContext): import('@alfred/storage').ReminderEntry[] {
+  private async getAllReminders(context: SkillContext): Promise<import('@alfred/storage').ReminderEntry[]> {
     const seen = new Set<string>();
     const results: import('@alfred/storage').ReminderEntry[] = [];
     for (const uid of allUserIds(context)) {
-      for (const r of this.reminderRepo.getByUser(uid)) {
+      for (const r of await this.reminderRepo.getByUser(uid)) {
         if (!seen.has(r.id)) {
           seen.add(r.id);
           results.push(r);
@@ -85,10 +85,10 @@ export class ReminderSkill extends Skill {
     }
   }
 
-  private setReminder(
+  private async setReminder(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const message = input.message as string | undefined;
     const triggerAtStr = input.triggerAt as string | undefined;
     const delayMinutes = input.delayMinutes as number | undefined;
@@ -128,7 +128,7 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    const entry = this.reminderRepo.create(
+    const entry = await this.reminderRepo.create(
       effectiveUserId(context),
       context.platform,
       context.chatId,
@@ -257,8 +257,8 @@ export class ReminderSkill extends Skill {
     return guess;
   }
 
-  private listReminders(context: SkillContext): SkillResult {
-    const reminders = this.getAllReminders(context);
+  private async listReminders(context: SkillContext): Promise<SkillResult> {
+    const reminders = await this.getAllReminders(context);
 
     const reminderList = reminders.map((r) => ({
       reminderId: r.id,
@@ -276,7 +276,7 @@ export class ReminderSkill extends Skill {
     };
   }
 
-  private cancelReminder(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async cancelReminder(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const reminderId = input.reminderId as string | undefined;
 
     if (!reminderId || typeof reminderId !== 'string') {
@@ -287,7 +287,7 @@ export class ReminderSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own reminders
-    const userReminders = this.getAllReminders(context);
+    const userReminders = await this.getAllReminders(context);
     const ownsReminder = userReminders.some(r => r.id === reminderId);
     if (!ownsReminder) {
       return {
@@ -296,7 +296,7 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    const deleted = this.reminderRepo.cancel(reminderId);
+    const deleted = await this.reminderRepo.cancel(reminderId);
 
     if (!deleted) {
       return {

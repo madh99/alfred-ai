@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID, randomInt } from 'node:crypto';
 
 export type UserRole = 'admin' | 'user' | 'family' | 'guest' | 'service';
@@ -34,132 +34,150 @@ export interface UserService {
 }
 
 export class AlfredUserRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
   // ── User CRUD ──────────────────────────────────────────────
 
-  create(opts: { username: string; role: UserRole; displayName?: string; createdBy?: string }): AlfredUser {
+  async create(opts: { username: string; role: UserRole; displayName?: string; createdBy?: string }): Promise<AlfredUser> {
     const id = randomUUID();
     const inviteCode = String(randomInt(100000, 999999));
     const inviteExpiresAt = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
     const now = new Date().toISOString();
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO alfred_users (id, username, role, display_name, invite_code, invite_expires_at, created_by, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, opts.username, opts.role, opts.displayName ?? null, inviteCode, inviteExpiresAt, opts.createdBy ?? null, now);
+    `, [id, opts.username, opts.role, opts.displayName ?? null, inviteCode, inviteExpiresAt, opts.createdBy ?? null, now]);
 
     return { id, username: opts.username, role: opts.role, displayName: opts.displayName, inviteCode, inviteExpiresAt, createdBy: opts.createdBy, active: true, settings: {}, createdAt: now };
   }
 
-  getById(id: string): AlfredUser | undefined {
-    const row = this.db.prepare('SELECT * FROM alfred_users WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  async getById(id: string): Promise<AlfredUser | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM alfred_users WHERE id = ?', [id]) as Record<string, unknown> | undefined;
     return row ? this.mapUser(row) : undefined;
   }
 
-  getByUsername(username: string): AlfredUser | undefined {
-    const row = this.db.prepare('SELECT * FROM alfred_users WHERE username = ?').get(username) as Record<string, unknown> | undefined;
+  async getByUsername(username: string): Promise<AlfredUser | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM alfred_users WHERE username = ?', [username]) as Record<string, unknown> | undefined;
     return row ? this.mapUser(row) : undefined;
   }
 
-  getByInviteCode(code: string): AlfredUser | undefined {
-    const row = this.db.prepare('SELECT * FROM alfred_users WHERE invite_code = ? AND invite_expires_at > datetime(\'now\')').get(code) as Record<string, unknown> | undefined;
+  async getByInviteCode(code: string): Promise<AlfredUser | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM alfred_users WHERE invite_code = ? AND invite_expires_at > datetime(\'now\')', [code]) as Record<string, unknown> | undefined;
     return row ? this.mapUser(row) : undefined;
   }
 
-  getAll(): AlfredUser[] {
-    const rows = this.db.prepare('SELECT * FROM alfred_users ORDER BY created_at').all() as Record<string, unknown>[];
+  async getAll(): Promise<AlfredUser[]> {
+    const rows = await this.adapter.query('SELECT * FROM alfred_users ORDER BY created_at') as Record<string, unknown>[];
     return rows.map(r => this.mapUser(r));
   }
 
-  getActive(): AlfredUser[] {
-    const rows = this.db.prepare('SELECT * FROM alfred_users WHERE active = 1 ORDER BY created_at').all() as Record<string, unknown>[];
+  async getActive(): Promise<AlfredUser[]> {
+    const rows = await this.adapter.query('SELECT * FROM alfred_users WHERE active = 1 ORDER BY created_at') as Record<string, unknown>[];
     return rows.map(r => this.mapUser(r));
   }
 
-  updateRole(id: string, role: UserRole): boolean {
-    return this.db.prepare('UPDATE alfred_users SET role = ? WHERE id = ?').run(role, id).changes > 0;
+  async updateRole(id: string, role: UserRole): Promise<boolean> {
+    const result = await this.adapter.execute('UPDATE alfred_users SET role = ? WHERE id = ?', [role, id]);
+    return result.changes > 0;
   }
 
-  deactivate(id: string): boolean {
-    return this.db.prepare('UPDATE alfred_users SET active = 0 WHERE id = ?').run(id).changes > 0;
+  async deactivate(id: string): Promise<boolean> {
+    const result = await this.adapter.execute('UPDATE alfred_users SET active = 0 WHERE id = ?', [id]);
+    return result.changes > 0;
   }
 
-  activate(id: string): boolean {
-    return this.db.prepare('UPDATE alfred_users SET active = 1 WHERE id = ?').run(id).changes > 0;
+  async activate(id: string): Promise<boolean> {
+    const result = await this.adapter.execute('UPDATE alfred_users SET active = 1 WHERE id = ?', [id]);
+    return result.changes > 0;
   }
 
-  clearInviteCode(id: string): void {
-    this.db.prepare('UPDATE alfred_users SET invite_code = NULL, invite_expires_at = NULL WHERE id = ?').run(id);
+  async clearInviteCode(id: string): Promise<void> {
+    await this.adapter.execute('UPDATE alfred_users SET invite_code = NULL, invite_expires_at = NULL WHERE id = ?', [id]);
   }
 
-  regenerateInviteCode(id: string): string {
+  async regenerateInviteCode(id: string): Promise<string> {
     const code = String(randomInt(100000, 999999));
     const expires = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
-    this.db.prepare('UPDATE alfred_users SET invite_code = ?, invite_expires_at = ? WHERE id = ?').run(code, expires, id);
+    await this.adapter.execute('UPDATE alfred_users SET invite_code = ?, invite_expires_at = ? WHERE id = ?', [code, expires, id]);
     return code;
   }
 
-  updateSettings(id: string, settings: Record<string, unknown>): void {
-    this.db.prepare('UPDATE alfred_users SET settings = ? WHERE id = ?').run(JSON.stringify(settings), id);
+  async updateSettings(id: string, settings: Record<string, unknown>): Promise<void> {
+    await this.adapter.execute('UPDATE alfred_users SET settings = ? WHERE id = ?', [JSON.stringify(settings), id]);
   }
 
-  delete(id: string): boolean {
-    return this.db.prepare('DELETE FROM alfred_users WHERE id = ?').run(id).changes > 0;
+  async delete(id: string): Promise<boolean> {
+    const result = await this.adapter.execute('DELETE FROM alfred_users WHERE id = ?', [id]);
+    return result.changes > 0;
   }
 
   /**
    * Atomically consume an invite code: verify, link platform, clear code.
    * Returns the user or null if code is invalid/expired.
    */
-  consumeInviteCode(code: string, platform: string, platformUserId: string): AlfredUser | null {
-    const consume = this.db.transaction(() => {
-      const user = this.getByInviteCode(code);
+  async consumeInviteCode(code: string, platform: string, platformUserId: string): Promise<AlfredUser | null> {
+    return await this.adapter.transaction(async (tx) => {
+      const user = await tx.queryOne(
+        'SELECT * FROM alfred_users WHERE invite_code = ? AND (invite_expires_at IS NULL OR invite_expires_at > ?)',
+        [code, new Date().toISOString()],
+      ) as Record<string, unknown> | undefined;
       if (!user) return null;
+      const alfredUser = this.mapUser(user);
 
       // Check if platform user already linked
-      const existing = this.getUserByPlatform(platform, platformUserId);
+      const existing = await tx.queryOne(
+        'SELECT id FROM user_platform_links WHERE platform = ? AND platform_user_id = ?',
+        [platform, platformUserId],
+      );
       if (existing) return null;
 
-      this.linkPlatform(user.id, platform, platformUserId);
-      this.clearInviteCode(user.id);
-      return user;
+      await tx.execute(
+        'INSERT INTO user_platform_links (id, user_id, platform, platform_user_id, linked_at) VALUES (?, ?, ?, ?, ?)',
+        [randomUUID(), alfredUser.id, platform, platformUserId, new Date().toISOString()],
+      );
+      await tx.execute(
+        'UPDATE alfred_users SET invite_code = NULL, invite_expires_at = NULL WHERE id = ?',
+        [alfredUser.id],
+      );
+      return alfredUser;
     });
-    return consume();
   }
 
   // ── Platform Links ─────────────────────────────────────────
 
-  linkPlatform(userId: string, platform: string, platformUserId: string): UserPlatformLink {
+  async linkPlatform(userId: string, platform: string, platformUserId: string): Promise<UserPlatformLink> {
     const now = new Date().toISOString();
     // Check if link already exists
-    const existing = this.db.prepare(
+    const existing = await this.adapter.queryOne(
       'SELECT id FROM user_platform_links WHERE platform = ? AND platform_user_id = ?',
-    ).get(platform, platformUserId) as { id: string } | undefined;
+      [platform, platformUserId],
+    ) as { id: string } | undefined;
 
     if (existing) {
-      this.db.prepare('UPDATE user_platform_links SET user_id = ?, linked_at = ? WHERE id = ?').run(userId, now, existing.id);
+      await this.adapter.execute('UPDATE user_platform_links SET user_id = ?, linked_at = ? WHERE id = ?', [userId, now, existing.id]);
       return { id: existing.id, userId, platform, platformUserId, linkedAt: now };
     }
 
     const id = randomUUID();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO user_platform_links (id, user_id, platform, platform_user_id, linked_at)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, userId, platform, platformUserId, now);
+    `, [id, userId, platform, platformUserId, now]);
     return { id, userId, platform, platformUserId, linkedAt: now };
   }
 
-  getUserByPlatform(platform: string, platformUserId: string): AlfredUser | undefined {
-    const link = this.db.prepare(
+  async getUserByPlatform(platform: string, platformUserId: string): Promise<AlfredUser | undefined> {
+    const link = await this.adapter.queryOne(
       'SELECT user_id FROM user_platform_links WHERE platform = ? AND platform_user_id = ?',
-    ).get(platform, platformUserId) as { user_id: string } | undefined;
+      [platform, platformUserId],
+    ) as { user_id: string } | undefined;
     if (!link) return undefined;
     return this.getById(link.user_id);
   }
 
-  getPlatformLinks(userId: string): UserPlatformLink[] {
-    const rows = this.db.prepare('SELECT * FROM user_platform_links WHERE user_id = ?').all(userId) as Record<string, unknown>[];
+  async getPlatformLinks(userId: string): Promise<UserPlatformLink[]> {
+    const rows = await this.adapter.query('SELECT * FROM user_platform_links WHERE user_id = ?', [userId]) as Record<string, unknown>[];
     return rows.map(r => ({
       id: r.id as string,
       userId: r.user_id as string,
@@ -169,36 +187,39 @@ export class AlfredUserRepository {
     }));
   }
 
-  unlinkPlatform(userId: string, platform: string): boolean {
-    return this.db.prepare('DELETE FROM user_platform_links WHERE user_id = ? AND platform = ?').run(userId, platform).changes > 0;
+  async unlinkPlatform(userId: string, platform: string): Promise<boolean> {
+    const result = await this.adapter.execute('DELETE FROM user_platform_links WHERE user_id = ? AND platform = ?', [userId, platform]);
+    return result.changes > 0;
   }
 
   // ── User Services ──────────────────────────────────────────
 
-  addService(userId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): UserService {
+  async addService(userId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): Promise<UserService> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT OR REPLACE INTO user_services (id, user_id, service_type, service_name, config, created_at)
+    await this.adapter.execute(`
+      INSERT INTO user_services (id, user_id, service_type, service_name, config, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, userId, serviceType, serviceName, JSON.stringify(config), now);
+      ON CONFLICT(user_id, service_type, service_name) DO UPDATE SET config = excluded.config
+    `, [id, userId, serviceType, serviceName, JSON.stringify(config), now]);
     return { id, userId, serviceType, serviceName, config, createdAt: now };
   }
 
-  getServices(userId: string): UserService[] {
-    const rows = this.db.prepare('SELECT * FROM user_services WHERE user_id = ?').all(userId) as Record<string, unknown>[];
+  async getServices(userId: string): Promise<UserService[]> {
+    const rows = await this.adapter.query('SELECT * FROM user_services WHERE user_id = ?', [userId]) as Record<string, unknown>[];
     return rows.map(r => this.mapService(r));
   }
 
-  getService(userId: string, serviceType: string, serviceName?: string): UserService | undefined {
+  async getService(userId: string, serviceType: string, serviceName?: string): Promise<UserService | undefined> {
     const row = serviceName
-      ? this.db.prepare('SELECT * FROM user_services WHERE user_id = ? AND service_type = ? AND service_name = ?').get(userId, serviceType, serviceName) as Record<string, unknown> | undefined
-      : this.db.prepare('SELECT * FROM user_services WHERE user_id = ? AND service_type = ? LIMIT 1').get(userId, serviceType) as Record<string, unknown> | undefined;
+      ? await this.adapter.queryOne('SELECT * FROM user_services WHERE user_id = ? AND service_type = ? AND service_name = ?', [userId, serviceType, serviceName]) as Record<string, unknown> | undefined
+      : await this.adapter.queryOne('SELECT * FROM user_services WHERE user_id = ? AND service_type = ? LIMIT 1', [userId, serviceType]) as Record<string, unknown> | undefined;
     return row ? this.mapService(row) : undefined;
   }
 
-  removeService(userId: string, serviceType: string, serviceName: string): boolean {
-    return this.db.prepare('DELETE FROM user_services WHERE user_id = ? AND service_type = ? AND service_name = ?').run(userId, serviceType, serviceName).changes > 0;
+  async removeService(userId: string, serviceType: string, serviceName: string): Promise<boolean> {
+    const result = await this.adapter.execute('DELETE FROM user_services WHERE user_id = ? AND service_type = ? AND service_name = ?', [userId, serviceType, serviceName]);
+    return result.changes > 0;
   }
 
   // ── Mappers ────────────────────────────────────────────────

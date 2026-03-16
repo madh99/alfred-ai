@@ -47,7 +47,12 @@ export class ClusterManager {
 
   async connect(): Promise<void> {
     try {
-      const Redis = (await (Function('return import("ioredis")')() as Promise<{ default: any }>)).default;
+      let Redis: any;
+      try {
+        Redis = (await (Function('return import("ioredis")')() as Promise<{ default: any }>)).default;
+      } catch {
+        throw new Error('Cluster mode requires the "ioredis" package. Install it: npm install ioredis');
+      }
       this.redis = new Redis(this.config.redisUrl);
       this.logger.info({ nodeId: this.config.nodeId, role: this.config.role }, 'Cluster manager connected to Redis');
     } catch (err) {

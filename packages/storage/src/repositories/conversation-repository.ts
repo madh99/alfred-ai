@@ -1,15 +1,15 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import type { Conversation, ConversationMessage, Platform } from '@alfred/types';
 import crypto from 'node:crypto';
 
 export class ConversationRepository {
-  private db: BetterSqlite3.Database;
+  private readonly adapter: AsyncDbAdapter;
 
-  constructor(db: BetterSqlite3.Database) {
-    this.db = db;
+  constructor(adapter: AsyncDbAdapter) {
+    this.adapter = adapter;
   }
 
-  create(platform: Platform, chatId: string, userId: string): Conversation {
+  async create(platform: Platform, chatId: string, userId: string): Promise<Conversation> {
     const now = new Date().toISOString();
     const conversation: Conversation = {
       id: crypto.randomUUID(),
@@ -20,33 +20,33 @@ export class ConversationRepository {
       updatedAt: now,
     };
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO conversations (id, platform, chat_id, user_id, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(conversation.id, conversation.platform, conversation.chatId, conversation.userId, conversation.createdAt, conversation.updatedAt);
+    `, [conversation.id, conversation.platform, conversation.chatId, conversation.userId, conversation.createdAt, conversation.updatedAt]);
 
     return conversation;
   }
 
-  findById(id: string): Conversation | undefined {
-    const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as Record<string, string> | undefined;
+  async findById(id: string): Promise<Conversation | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM conversations WHERE id = ?', [id]) as Record<string, string> | undefined;
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  findByPlatformChat(platform: Platform, chatId: string): Conversation | undefined {
-    const row = this.db.prepare('SELECT * FROM conversations WHERE platform = ? AND chat_id = ?').get(platform, chatId) as Record<string, string> | undefined;
+  async findByPlatformChat(platform: Platform, chatId: string): Promise<Conversation | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM conversations WHERE platform = ? AND chat_id = ?', [platform, chatId]) as Record<string, string> | undefined;
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  findByPlatformAndUser(platform: string, userId: string): Conversation | undefined {
-    const row = this.db.prepare('SELECT * FROM conversations WHERE platform = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1').get(platform, userId) as Record<string, string> | undefined;
+  async findByPlatformAndUser(platform: string, userId: string): Promise<Conversation | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM conversations WHERE platform = ? AND user_id = ? ORDER BY updated_at DESC LIMIT 1', [platform, userId]) as Record<string, string> | undefined;
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string): ConversationMessage {
+  async addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string): Promise<ConversationMessage> {
     const message: ConversationMessage = {
       id: crypto.randomUUID(),
       conversationId,
@@ -56,18 +56,19 @@ export class ConversationRepository {
       createdAt: new Date().toISOString(),
     };
 
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(message.id, message.conversationId, message.role, message.content, message.toolCalls ?? null, message.createdAt);
+    `, [message.id, message.conversationId, message.role, message.content, message.toolCalls ?? null, message.createdAt]);
 
     return message;
   }
 
-  getMessages(conversationId: string, limit = 50): ConversationMessage[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM (SELECT *, rowid AS _rn FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, _rn DESC LIMIT ?) ORDER BY created_at ASC, _rn ASC'
-    ).all(conversationId, limit) as Record<string, string>[];
+  async getMessages(conversationId: string, limit = 50): Promise<ConversationMessage[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?) sub ORDER BY created_at ASC',
+      [conversationId, limit]
+    ) as Record<string, string>[];
 
     return rows.map((row) => ({
       id: row.id,
@@ -79,17 +80,17 @@ export class ConversationRepository {
     }));
   }
 
-  updateTimestamp(id: string): void {
-    this.db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
+  async updateTimestamp(id: string): Promise<void> {
+    await this.adapter.execute('UPDATE conversations SET updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
   }
 
   /** Delete all but the most recent `keep` messages for a conversation. */
-  pruneMessages(conversationId: string, keep: number): number {
-    const result = this.db.prepare(`
+  async pruneMessages(conversationId: string, keep: number): Promise<number> {
+    const result = await this.adapter.execute(`
       DELETE FROM messages WHERE conversation_id = ? AND id NOT IN (
         SELECT id FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?
       )
-    `).run(conversationId, conversationId, keep);
+    `, [conversationId, conversationId, keep]);
     return result.changes;
   }
 

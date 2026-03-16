@@ -1,5 +1,5 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import type { TodoRepository } from '@alfred/storage';
+import type { TodoRepository, SharedResourceRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
@@ -56,8 +56,19 @@ export class TodoSkill extends Skill {
     },
   };
 
+  private sharedResourceRepo?: SharedResourceRepository;
+
   constructor(private readonly todoRepo: TodoRepository) {
     super();
+  }
+
+  /** Resolve shared todo list names for the current alfred user. */
+  private async getSharedTodoLists(context: SkillContext): Promise<string[]> {
+    if (!this.sharedResourceRepo || !context.alfredUserId) return [];
+    try {
+      const shared = await this.sharedResourceRepo.getSharedWith(context.alfredUserId);
+      return shared.filter(s => s.resourceType === 'todo_list').map(s => s.resourceId);
+    } catch { return []; }
   }
 
   async execute(
@@ -89,7 +100,7 @@ export class TodoSkill extends Skill {
     }
   }
 
-  private addTodo(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async addTodo(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const title = input.title as string | undefined;
 
     if (!title || typeof title !== 'string') {
@@ -101,7 +112,7 @@ export class TodoSkill extends Skill {
     const priority = input.priority as string | undefined;
     const dueDate = input.dueDate as string | undefined;
 
-    const entry = this.todoRepo.add(effectiveUserId(context), title, {
+    const entry = await this.todoRepo.add(effectiveUserId(context), title, {
       list,
       description,
       priority,
@@ -115,16 +126,31 @@ export class TodoSkill extends Skill {
     };
   }
 
-  private listTodos(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async listTodos(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const list = input.list as string | undefined;
     const includeCompleted = (input.includeCompleted as boolean | undefined) ?? false;
 
     const seen = new Set<string>();
-    const todos: ReturnType<typeof this.todoRepo.list> = [];
+    const todos: Awaited<ReturnType<typeof this.todoRepo.list>> = [];
     for (const uid of allUserIds(context)) {
-      for (const t of this.todoRepo.list(uid, list, includeCompleted)) {
+      for (const t of await this.todoRepo.list(uid, list, includeCompleted)) {
         if (!seen.has(t.id)) {
           seen.add(t.id);
+          todos.push(t);
+        }
+      }
+    }
+
+    // Include todos from shared lists
+    const sharedLists = await this.getSharedTodoLists(context);
+    const sharedTodoIds = new Set<string>();
+    for (const sharedList of sharedLists) {
+      // If a specific list is requested, only include shared todos from that list
+      if (list && sharedList !== list) continue;
+      for (const t of await this.todoRepo.listByListName(sharedList, includeCompleted)) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          sharedTodoIds.add(t.id);
           todos.push(t);
         }
       }
@@ -139,7 +165,8 @@ export class TodoSkill extends Skill {
       .map(t => {
         const check = t.completed ? '\u2611' : '\u2610';
         const due = t.dueDate ?? '';
-        return `| ${check} | ${t.priority} | ${t.title} | ${due} | ${t.id} |`;
+        const shared = sharedTodoIds.has(t.id) ? ' (shared)' : '';
+        return `| ${check} | ${t.priority} | ${t.title}${shared} | ${due} | ${t.id} |`;
       })
       .join('\n');
 
@@ -150,23 +177,24 @@ export class TodoSkill extends Skill {
     };
   }
 
-  private completeTodo(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async completeTodo(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const todoId = input.todoId as string | undefined;
 
     if (!todoId || typeof todoId !== 'string') {
       return { success: false, error: 'Missing required field "todoId" for complete action' };
     }
 
-    const todo = this.todoRepo.getById(todoId);
+    const todo = await this.todoRepo.getById(todoId);
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
     const userIds = allUserIds(context);
-    if (!userIds.includes(todo.userId)) {
+    const sharedLists = await this.getSharedTodoLists(context);
+    if (!userIds.includes(todo.userId) && !sharedLists.includes(todo.list)) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
 
-    const completed = this.todoRepo.complete(todoId);
+    const completed = await this.todoRepo.complete(todoId);
     if (!completed) {
       return { success: false, error: `Todo "${todoId}" is already completed` };
     }
@@ -174,23 +202,24 @@ export class TodoSkill extends Skill {
     return { success: true, data: { todoId }, display: 'Todo completed.' };
   }
 
-  private uncompleteTodo(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async uncompleteTodo(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const todoId = input.todoId as string | undefined;
 
     if (!todoId || typeof todoId !== 'string') {
       return { success: false, error: 'Missing required field "todoId" for uncomplete action' };
     }
 
-    const todo = this.todoRepo.getById(todoId);
+    const todo = await this.todoRepo.getById(todoId);
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
     const userIds = allUserIds(context);
-    if (!userIds.includes(todo.userId)) {
+    const sharedLists = await this.getSharedTodoLists(context);
+    if (!userIds.includes(todo.userId) && !sharedLists.includes(todo.list)) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
 
-    const reopened = this.todoRepo.uncomplete(todoId);
+    const reopened = await this.todoRepo.uncomplete(todoId);
     if (!reopened) {
       return { success: false, error: `Todo "${todoId}" is not completed` };
     }
@@ -198,14 +227,14 @@ export class TodoSkill extends Skill {
     return { success: true, data: { todoId }, display: 'Todo reopened.' };
   }
 
-  private deleteTodo(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async deleteTodo(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const todoId = input.todoId as string | undefined;
 
     if (!todoId || typeof todoId !== 'string') {
       return { success: false, error: 'Missing required field "todoId" for delete action' };
     }
 
-    const todo = this.todoRepo.getById(todoId);
+    const todo = await this.todoRepo.getById(todoId);
     if (!todo) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
@@ -214,7 +243,7 @@ export class TodoSkill extends Skill {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
 
-    const deleted = this.todoRepo.delete(todoId);
+    const deleted = await this.todoRepo.delete(todoId);
     if (!deleted) {
       return { success: false, error: `Todo "${todoId}" not found` };
     }
@@ -222,11 +251,11 @@ export class TodoSkill extends Skill {
     return { success: true, data: { todoId }, display: 'Todo deleted.' };
   }
 
-  private showLists(context: SkillContext): SkillResult {
-    const merged = new Map<string, { open: number; completed: number; total: number }>();
+  private async showLists(context: SkillContext): Promise<SkillResult> {
+    const merged = new Map<string, { open: number; completed: number; total: number; shared?: boolean }>();
 
     for (const uid of allUserIds(context)) {
-      for (const entry of this.todoRepo.getLists(uid)) {
+      for (const entry of await this.todoRepo.getLists(uid)) {
         const existing = merged.get(entry.list);
         if (existing) {
           existing.open += entry.open;
@@ -235,6 +264,17 @@ export class TodoSkill extends Skill {
         } else {
           merged.set(entry.list, { open: entry.open, completed: entry.completed, total: entry.total });
         }
+      }
+    }
+
+    // Include shared lists
+    const sharedLists = await this.getSharedTodoLists(context);
+    for (const sharedList of sharedLists) {
+      if (!merged.has(sharedList)) {
+        const todos = await this.todoRepo.listByListName(sharedList, true);
+        const open = todos.filter(t => !t.completed).length;
+        const completed = todos.filter(t => t.completed).length;
+        merged.set(sharedList, { open, completed, total: todos.length, shared: true });
       }
     }
 
@@ -249,7 +289,10 @@ export class TodoSkill extends Skill {
 
     const header = '| List | Open | Completed | Total |\n|---|---|---|---|';
     const rows = lists
-      .map(l => `| ${l.list} | ${l.open} | ${l.completed} | ${l.total} |`)
+      .map(l => {
+        const shared = (l as any).shared ? ' (shared)' : '';
+        return `| ${l.list}${shared} | ${l.open} | ${l.completed} | ${l.total} |`;
+      })
       .join('\n');
 
     return {
@@ -259,10 +302,10 @@ export class TodoSkill extends Skill {
     };
   }
 
-  private clearCompleted(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async clearCompleted(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const list = input.list as string | undefined;
 
-    const cleared = this.todoRepo.clearCompleted(effectiveUserId(context), list);
+    const cleared = await this.todoRepo.clearCompleted(effectiveUserId(context), list);
 
     return {
       success: true,

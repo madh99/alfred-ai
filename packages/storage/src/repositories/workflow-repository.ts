@@ -1,67 +1,73 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { WorkflowChain, WorkflowExecution } from '@alfred/types';
 
 export class WorkflowRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  create(chain: Omit<WorkflowChain, 'id' | 'createdAt'>): WorkflowChain {
+  async create(chain: Omit<WorkflowChain, 'id' | 'createdAt'>): Promise<WorkflowChain> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO workflow_chains (id, name, user_id, chat_id, platform, steps, trigger_type, trigger_config, enabled, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       id, chain.name, chain.userId, chain.chatId, chain.platform,
       JSON.stringify(chain.steps), chain.triggerType,
       chain.triggerConfig ? JSON.stringify(chain.triggerConfig) : null,
       chain.enabled ? 1 : 0, now,
-    );
+    ]);
     return { ...chain, id, createdAt: now };
   }
 
-  getById(id: string): WorkflowChain | undefined {
-    const row = this.db.prepare('SELECT * FROM workflow_chains WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  async getById(id: string): Promise<WorkflowChain | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM workflow_chains WHERE id = ?', [id],
+    ) as Record<string, unknown> | undefined;
     return row ? this.mapChain(row) : undefined;
   }
 
-  findByUser(userId: string): WorkflowChain[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM workflow_chains WHERE user_id = ? ORDER BY created_at DESC',
-    ).all(userId) as Record<string, unknown>[];
+  async findByUser(userId: string): Promise<WorkflowChain[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM workflow_chains WHERE user_id = ? ORDER BY created_at DESC', [userId],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapChain(r));
   }
 
-  findByChatId(chatId: string, platform: string): WorkflowChain[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM workflow_chains WHERE chat_id = ? AND platform = ? ORDER BY created_at DESC',
-    ).all(chatId, platform) as Record<string, unknown>[];
+  async findByChatId(chatId: string, platform: string): Promise<WorkflowChain[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM workflow_chains WHERE chat_id = ? AND platform = ? ORDER BY created_at DESC', [chatId, platform],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapChain(r));
   }
 
-  delete(id: string): boolean {
-    const result = this.db.prepare('DELETE FROM workflow_chains WHERE id = ?').run(id);
+  async delete(id: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'DELETE FROM workflow_chains WHERE id = ?', [id],
+    );
     return result.changes > 0;
   }
 
-  toggle(id: string, enabled: boolean): void {
-    this.db.prepare('UPDATE workflow_chains SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, id);
+  async toggle(id: string, enabled: boolean): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE workflow_chains SET enabled = ? WHERE id = ?', [enabled ? 1 : 0, id],
+    );
   }
 
-  createExecution(chainId: string, totalSteps: number): WorkflowExecution {
+  async createExecution(chainId: string, totalSteps: number): Promise<WorkflowExecution> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO workflow_executions (id, chain_id, status, steps_completed, total_steps, started_at)
       VALUES (?, ?, 'running', 0, ?, ?)
-    `).run(id, chainId, totalSteps, now);
+    `, [id, chainId, totalSteps, now]);
     return {
       id, chainId, status: 'running', stepsCompleted: 0,
       totalSteps, startedAt: now,
     };
   }
 
-  updateExecution(id: string, updates: Partial<Pick<WorkflowExecution, 'status' | 'stepsCompleted' | 'stepResults' | 'error' | 'completedAt'>>): void {
+  async updateExecution(id: string, updates: Partial<Pick<WorkflowExecution, 'status' | 'stepsCompleted' | 'stepResults' | 'error' | 'completedAt'>>): Promise<void> {
     const sets: string[] = [];
     const values: unknown[] = [];
     if (updates.status !== undefined) { sets.push('status = ?'); values.push(updates.status); }
@@ -71,18 +77,22 @@ export class WorkflowRepository {
     if (updates.completedAt !== undefined) { sets.push('completed_at = ?'); values.push(updates.completedAt); }
     if (sets.length === 0) return;
     values.push(id);
-    this.db.prepare(`UPDATE workflow_executions SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    await this.adapter.execute(
+      `UPDATE workflow_executions SET ${sets.join(', ')} WHERE id = ?`, values,
+    );
   }
 
-  getExecution(id: string): WorkflowExecution | undefined {
-    const row = this.db.prepare('SELECT * FROM workflow_executions WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  async getExecution(id: string): Promise<WorkflowExecution | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM workflow_executions WHERE id = ?', [id],
+    ) as Record<string, unknown> | undefined;
     return row ? this.mapExecution(row) : undefined;
   }
 
-  getRecentExecutions(chainId: string, limit = 10): WorkflowExecution[] {
-    const rows = this.db.prepare(
-      'SELECT * FROM workflow_executions WHERE chain_id = ? ORDER BY started_at DESC LIMIT ?',
-    ).all(chainId, limit) as Record<string, unknown>[];
+  async getRecentExecutions(chainId: string, limit = 10): Promise<WorkflowExecution[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM workflow_executions WHERE chain_id = ? ORDER BY started_at DESC LIMIT ?', [chainId, limit],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapExecution(r));
   }
 

@@ -19,8 +19,8 @@ describe.skipIf(!hasBetterSqlite3)('AuditRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -32,8 +32,8 @@ describe.skipIf(!hasBetterSqlite3)('AuditRepository', () => {
     const { Database } = await import('../database.js');
     const { AuditRepository } = await import('./audit-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-audit-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new AuditRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new AuditRepository(db.getAdapter());
     return repo;
   }
 
@@ -53,38 +53,38 @@ describe.skipIf(!hasBetterSqlite3)('AuditRepository', () => {
   it('should log an audit entry', async () => {
     const repo = await setup();
 
-    repo.log(makeEntry());
+    await repo.log(makeEntry());
 
-    const count = repo.count({});
+    const count = await repo.count({});
     expect(count).toBe(1);
   });
 
   it('should query audit entries', async () => {
     const repo = await setup();
 
-    repo.log(makeEntry({ action: 'action.one' }));
-    repo.log(makeEntry({ action: 'action.two' }));
-    repo.log(makeEntry({ action: 'action.three' }));
+    await repo.log(makeEntry({ action: 'action.one' }));
+    await repo.log(makeEntry({ action: 'action.two' }));
+    await repo.log(makeEntry({ action: 'action.three' }));
 
-    const results = repo.query({ limit: 2 });
+    const results = await repo.query({ limit: 2 });
     expect(results).toHaveLength(2);
 
-    const allResults = repo.query({});
+    const allResults = await repo.query({});
     expect(allResults).toHaveLength(3);
   });
 
   it('should filter by action', async () => {
     const repo = await setup();
 
-    repo.log(makeEntry({ action: 'file.read' }));
-    repo.log(makeEntry({ action: 'file.write' }));
-    repo.log(makeEntry({ action: 'file.read' }));
+    await repo.log(makeEntry({ action: 'file.read' }));
+    await repo.log(makeEntry({ action: 'file.write' }));
+    await repo.log(makeEntry({ action: 'file.read' }));
 
-    const readResults = repo.query({ action: 'file.read' });
+    const readResults = await repo.query({ action: 'file.read' });
     expect(readResults).toHaveLength(2);
     expect(readResults.every((e) => e.action === 'file.read')).toBe(true);
 
-    const writeResults = repo.query({ action: 'file.write' });
+    const writeResults = await repo.query({ action: 'file.write' });
     expect(writeResults).toHaveLength(1);
     expect(writeResults[0].action).toBe('file.write');
   });

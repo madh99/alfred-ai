@@ -147,11 +147,11 @@ export class WatchSkill extends Skill {
       case 'list':
         return this.listWatches(context);
       case 'enable':
-        return this.toggleWatch(input, true);
+        return this.toggleWatch(input, context, true);
       case 'disable':
-        return this.toggleWatch(input, false);
+        return this.toggleWatch(input, context, false);
       case 'delete':
-        return this.deleteWatch(input);
+        return this.deleteWatch(input, context);
       default:
         return {
           success: false,
@@ -160,10 +160,10 @@ export class WatchSkill extends Skill {
     }
   }
 
-  private createWatch(
+  private async createWatch(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const name = input.name as string | undefined;
     const skillName = input.skill_name as string | undefined;
     const skillParams = (input.skill_params as Record<string, unknown>) ?? {};
@@ -223,7 +223,7 @@ export class WatchSkill extends Skill {
     if (actionOnTrigger === 'trigger_watch' && !triggerWatchId) {
       return { success: false, error: 'Missing "trigger_watch_id" — required when action_on_trigger is "trigger_watch"' };
     }
-    if (triggerWatchId && !this.watchRepo.getById(triggerWatchId)) {
+    if (triggerWatchId && !await this.watchRepo.getById(triggerWatchId)) {
       return { success: false, error: `Chained watch "${triggerWatchId}" does not exist` };
     }
 
@@ -252,7 +252,7 @@ export class WatchSkill extends Skill {
     const primaryOperator = (conditionOperator ?? (compositeCondition ? compositeCondition.conditions[0].operator : 'changed')) as WatchCondition['operator'];
     const primaryValue = conditionValue ?? (compositeCondition ? compositeCondition.conditions[0].value : undefined);
 
-    const watch = this.watchRepo.create({
+    const watch = await this.watchRepo.create({
       chatId: context.chatId,
       platform: context.platform,
       name,
@@ -290,8 +290,8 @@ export class WatchSkill extends Skill {
     };
   }
 
-  private listWatches(context: SkillContext): SkillResult {
-    const watches = this.watchRepo.findByChatId(context.chatId, context.platform);
+  private async listWatches(context: SkillContext): Promise<SkillResult> {
+    const watches = await this.watchRepo.findByChatId(context.chatId, context.platform);
 
     if (watches.length === 0) {
       return { success: true, data: [], display: 'Keine Watches vorhanden.' };
@@ -321,12 +321,25 @@ export class WatchSkill extends Skill {
     };
   }
 
-  private toggleWatch(input: Record<string, unknown>, enabled: boolean): SkillResult {
+  private async verifyOwnership(watchId: string, context: SkillContext): Promise<Watch | null> {
+    const watch = await this.watchRepo.getById(watchId);
+    if (!watch) return null;
+    // Ownership: watch belongs to this chat+platform, or user is admin
+    if (watch.chatId === context.chatId && watch.platform === context.platform) return watch;
+    // Also allow if the watch chatId contains the userId (group isolation format chatId:userId)
+    if (watch.chatId.includes(context.userId)) return watch;
+    if (context.userRole === 'admin') return watch;
+    return null;
+  }
+
+  private async toggleWatch(input: Record<string, unknown>, context: SkillContext, enabled: boolean): Promise<SkillResult> {
     const watchId = input.watch_id as string | undefined;
     if (!watchId) return { success: false, error: `Missing "watch_id" for ${enabled ? 'enable' : 'disable'}` };
 
-    const updated = this.watchRepo.toggle(watchId, enabled);
-    if (!updated) return { success: false, error: `Watch "${watchId}" not found` };
+    const watch = await this.verifyOwnership(watchId, context);
+    if (!watch) return { success: false, error: `Watch "${watchId}" nicht gefunden oder keine Berechtigung.` };
+
+    await this.watchRepo.toggle(watchId, enabled);
 
     return {
       success: true,
@@ -335,12 +348,14 @@ export class WatchSkill extends Skill {
     };
   }
 
-  private deleteWatch(input: Record<string, unknown>): SkillResult {
+  private async deleteWatch(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const watchId = input.watch_id as string | undefined;
     if (!watchId) return { success: false, error: 'Missing "watch_id" for delete' };
 
-    const deleted = this.watchRepo.delete(watchId);
-    if (!deleted) return { success: false, error: `Watch "${watchId}" not found` };
+    const watch = await this.verifyOwnership(watchId, context);
+    if (!watch) return { success: false, error: `Watch "${watchId}" nicht gefunden oder keine Berechtigung.` };
+
+    await this.watchRepo.delete(watchId);
 
     return {
       success: true,

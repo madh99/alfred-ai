@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { MemoryRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
+import { effectiveUserId } from '../user-utils.js';
 
 interface FeedEntry {
   url: string;
@@ -47,7 +48,7 @@ export class FeedReaderSkill extends Skill {
   ): Promise<SkillResult> {
     const action = input.action as string;
     const url = input.url as string | undefined;
-    const userId = context.userId;
+    const userId = effectiveUserId(context);
 
     switch (action) {
       case 'subscribe':
@@ -73,7 +74,7 @@ export class FeedReaderSkill extends Skill {
       lastCheckedAt: null,
       lastEntryId: null,
     };
-    this.memoryRepo.save(userId, `feed:${url}`, JSON.stringify(entry), 'feed');
+    await this.memoryRepo.save(userId, `feed:${url}`, JSON.stringify(entry), 'feed');
     return {
       success: true,
       data: entry,
@@ -84,13 +85,13 @@ export class FeedReaderSkill extends Skill {
   private async unsubscribe(userId: string, url?: string): Promise<SkillResult> {
     if (!url) return { success: false, error: 'URL is required for unsubscribe' };
 
-    const deleted = this.memoryRepo.delete(userId, `feed:${url}`);
+    const deleted = await this.memoryRepo.delete(userId, `feed:${url}`);
     if (!deleted) return { success: false, error: `No subscription found for ${url}` };
     return { success: true, display: `Unsubscribed from feed: ${url}` };
   }
 
   private async listFeeds(userId: string): Promise<SkillResult> {
-    const memories = this.memoryRepo.listByCategory(userId, 'feed');
+    const memories = await this.memoryRepo.listByCategory(userId, 'feed');
     const feeds = memories.map(m => {
       try { return JSON.parse(m.value) as FeedEntry; } catch { return null; }
     }).filter(Boolean) as FeedEntry[];
@@ -110,7 +111,7 @@ export class FeedReaderSkill extends Skill {
   private async check(userId: string, url?: string): Promise<SkillResult> {
     if (!url) {
       // Check all feeds
-      const memories = this.memoryRepo.listByCategory(userId, 'feed');
+      const memories = await this.memoryRepo.listByCategory(userId, 'feed');
       if (memories.length === 0) {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
@@ -137,7 +138,7 @@ export class FeedReaderSkill extends Skill {
     }
 
     // Check single feed
-    const mem = this.memoryRepo.listByCategory(userId, 'feed')
+    const mem = (await this.memoryRepo.listByCategory(userId, 'feed'))
       .find(m => m.key === `feed:${url}`);
     if (!mem) return { success: false, error: `Not subscribed to ${url}. Use subscribe first.` };
 
@@ -180,7 +181,7 @@ export class FeedReaderSkill extends Skill {
       lastCheckedAt: new Date().toISOString(),
       lastEntryId: latestId,
     };
-    this.memoryRepo.save(userId, `feed:${entry.url}`, JSON.stringify(updated), 'feed');
+    await this.memoryRepo.save(userId, `feed:${entry.url}`, JSON.stringify(updated), 'feed');
 
     return {
       label: entry.label,

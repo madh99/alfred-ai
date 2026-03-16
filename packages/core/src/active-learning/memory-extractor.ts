@@ -72,7 +72,7 @@ export class MemoryExtractor {
         if (mem.confidence < this.minConfidence) continue;
 
         try {
-          const entry = this.memoryRepo.saveWithMetadata(
+          const entry = await this.memoryRepo.saveWithMetadata(
             userId,
             mem.key,
             mem.value,

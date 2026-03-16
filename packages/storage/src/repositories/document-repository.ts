@@ -1,97 +1,106 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { Document, DocumentChunk } from '@alfred/types';
 
 export class DocumentRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  createDocument(
+  async createDocument(
     userId: string,
     filename: string,
     mimeType: string,
     sizeBytes: number,
     contentHash?: string,
-  ): Document {
+  ): Promise<Document> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db.prepare(
+    await this.adapter.execute(
       'INSERT INTO documents (id, user_id, filename, mime_type, size_bytes, chunk_count, content_hash, visibility, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)',
-    ).run(id, userId, filename, mimeType, sizeBytes, contentHash ?? null, 'private', now);
+      [id, userId, filename, mimeType, sizeBytes, contentHash ?? null, 'private', now],
+    );
 
     return { id, userId, filename, mimeType, sizeBytes, chunkCount: 0, contentHash, visibility: 'private', createdAt: now };
   }
 
-  findByContentHash(userId: string, hash: string): Document | undefined {
-    const row = this.db.prepare(
+  async findByContentHash(userId: string, hash: string): Promise<Document | undefined> {
+    const row = await this.adapter.queryOne(
       'SELECT * FROM documents WHERE user_id = ? AND content_hash = ? ORDER BY chunk_count DESC LIMIT 1',
-    ).get(userId, hash) as Record<string, unknown> | undefined;
+      [userId, hash],
+    ) as Record<string, unknown> | undefined;
     return row ? this.mapDocumentRow(row) : undefined;
   }
 
-  updateChunkCount(documentId: string, count: number): void {
-    this.db.prepare(
+  async updateChunkCount(documentId: string, count: number): Promise<void> {
+    await this.adapter.execute(
       'UPDATE documents SET chunk_count = ? WHERE id = ?',
-    ).run(count, documentId);
+      [count, documentId],
+    );
   }
 
-  addChunk(
+  async addChunk(
     documentId: string,
     chunkIndex: number,
     content: string,
     embeddingId?: string,
-  ): DocumentChunk {
+  ): Promise<DocumentChunk> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
-    this.db.prepare(
+    await this.adapter.execute(
       'INSERT INTO document_chunks (id, document_id, chunk_index, content, embedding_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, documentId, chunkIndex, content, embeddingId ?? null, now);
+      [id, documentId, chunkIndex, content, embeddingId ?? null, now],
+    );
 
     return { id, documentId, chunkIndex, content, embeddingId, createdAt: now };
   }
 
-  getDocument(id: string): Document | undefined {
-    const row = this.db.prepare('SELECT * FROM documents WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  async getDocument(id: string): Promise<Document | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM documents WHERE id = ?', [id]) as Record<string, unknown> | undefined;
     return row ? this.mapDocumentRow(row) : undefined;
   }
 
-  getChunks(documentId: string): DocumentChunk[] {
-    const rows = this.db.prepare(
+  async getChunks(documentId: string): Promise<DocumentChunk[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM document_chunks WHERE document_id = ? ORDER BY chunk_index ASC',
-    ).all(documentId) as Record<string, unknown>[];
+      [documentId],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapChunkRow(r));
   }
 
-  listByUser(userId: string): Document[] {
-    const rows = this.db.prepare(
+  async listByUser(userId: string): Promise<Document[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC',
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapDocumentRow(r));
   }
 
-  setVisibility(id: string, visibility: 'private' | 'shared' | 'public'): void {
-    this.db.prepare('UPDATE documents SET visibility = ? WHERE id = ?').run(visibility, id);
+  async setVisibility(id: string, visibility: 'private' | 'shared' | 'public'): Promise<void> {
+    await this.adapter.execute('UPDATE documents SET visibility = ? WHERE id = ?', [visibility, id]);
   }
 
   /**
    * List documents accessible by a user: own + public + shared via shared_resources.
    */
-  listAccessible(userId: string, sharedDocIds?: string[]): Document[] {
-    const ownRows = this.db.prepare(
+  async listAccessible(userId: string, sharedDocIds?: string[]): Promise<Document[]> {
+    const ownRows = await this.adapter.query(
       'SELECT * FROM documents WHERE user_id = ? ORDER BY created_at DESC',
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
 
-    const publicRows = this.db.prepare(
+    const publicRows = await this.adapter.query(
       'SELECT * FROM documents WHERE visibility = ? AND user_id != ? ORDER BY created_at DESC',
-    ).all('public', userId) as Record<string, unknown>[];
+      ['public', userId],
+    ) as Record<string, unknown>[];
 
     let sharedRows: Record<string, unknown>[] = [];
     if (sharedDocIds && sharedDocIds.length > 0) {
       const placeholders = sharedDocIds.map(() => '?').join(',');
-      sharedRows = this.db.prepare(
+      sharedRows = await this.adapter.query(
         `SELECT * FROM documents WHERE id IN (${placeholders}) AND user_id != ? ORDER BY created_at DESC`,
-      ).all(...sharedDocIds, userId) as Record<string, unknown>[];
+        [...sharedDocIds, userId],
+      ) as Record<string, unknown>[];
     }
 
     const seen = new Set<string>();
@@ -111,8 +120,8 @@ export class DocumentRepository {
   /**
    * Check if a user can access a document (owner, public, or shared).
    */
-  canAccess(documentId: string, userId: string, sharedDocIds?: string[]): boolean {
-    const doc = this.getDocument(documentId);
+  async canAccess(documentId: string, userId: string, sharedDocIds?: string[]): Promise<boolean> {
+    const doc = await this.getDocument(documentId);
     if (!doc) return false;
     if (doc.userId === userId) return true;
     if (doc.visibility === 'public') return true;
@@ -120,33 +129,34 @@ export class DocumentRepository {
     return false;
   }
 
-  deleteDocument(id: string): void {
-    const deleteAll = this.db.transaction(() => {
+  async deleteDocument(id: string): Promise<void> {
+    await this.adapter.transaction(async (tx) => {
       // Get embedding IDs from chunks before deleting them
-      const chunks = this.db.prepare(
-        'SELECT embedding_id FROM document_chunks WHERE document_id = ? AND embedding_id IS NOT NULL'
-      ).all(id) as { embedding_id: string }[];
+      const chunks = await tx.query(
+        'SELECT embedding_id FROM document_chunks WHERE document_id = ? AND embedding_id IS NOT NULL',
+        [id],
+      ) as { embedding_id: string }[];
 
       // Delete embeddings
       if (chunks.length > 0) {
         const embeddingIds = chunks.map(c => c.embedding_id);
         const placeholders = embeddingIds.map(() => '?').join(', ');
-        this.db.prepare(`DELETE FROM embeddings WHERE id IN (${placeholders})`).run(...embeddingIds);
+        await tx.execute(`DELETE FROM embeddings WHERE id IN (${placeholders})`, embeddingIds);
       }
 
-      this.db.prepare('DELETE FROM document_chunks WHERE document_id = ?').run(id);
-      this.db.prepare('DELETE FROM documents WHERE id = ?').run(id);
+      await tx.execute('DELETE FROM document_chunks WHERE document_id = ?', [id]);
+      await tx.execute('DELETE FROM documents WHERE id = ?', [id]);
     });
-    deleteAll();
   }
 
-  getChunksByEmbeddingIds(embeddingIds: string[]): DocumentChunk[] {
+  async getChunksByEmbeddingIds(embeddingIds: string[]): Promise<DocumentChunk[]> {
     if (embeddingIds.length === 0) return [];
 
     const placeholders = embeddingIds.map(() => '?').join(', ');
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       `SELECT * FROM document_chunks WHERE embedding_id IN (${placeholders}) ORDER BY chunk_index ASC`,
-    ).all(...embeddingIds) as Record<string, unknown>[];
+      embeddingIds,
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapChunkRow(r));
   }
 

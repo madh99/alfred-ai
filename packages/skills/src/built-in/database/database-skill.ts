@@ -73,10 +73,10 @@ Watch-compatible: query action returns rowCount and first row data for condition
     const host = input.host as string;
     if (!name || !type || !host) return { success: false, error: 'Missing name, type, or host' };
 
-    const existing = this.connRepo.getByName(name);
+    const existing = await this.connRepo.getByName(name);
     if (existing) return { success: false, error: `Connection "${name}" already exists. Use disconnect first.` };
 
-    const conn = this.connRepo.create({
+    const conn = await this.connRepo.create({
       name, type, host,
       port: input.port as number | undefined,
       databaseName: input.database as string | undefined,
@@ -99,7 +99,7 @@ Watch-compatible: query action returns rowCount and first row data for condition
       };
     } catch (err) {
       // Remove failed connection
-      this.connRepo.delete(name);
+      await this.connRepo.delete(name);
       this.providers.delete(name);
       return { success: false, error: `Verbindung fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -112,14 +112,14 @@ Watch-compatible: query action returns rowCount and first row data for condition
     const provider = this.providers.get(name);
     if (provider) { try { await provider.disconnect(); } catch { /* ignore */ } this.providers.delete(name); }
 
-    const deleted = this.connRepo.delete(name);
+    const deleted = await this.connRepo.delete(name);
     return deleted
       ? { success: true, data: { name }, display: `✅ Verbindung "${name}" entfernt.` }
       : { success: false, error: `Connection "${name}" not found.` };
   }
 
-  private listConnections(): SkillResult {
-    const connections = this.connRepo.getAll();
+  private async listConnections(): Promise<SkillResult> {
+    const connections = await this.connRepo.getAll();
     if (connections.length === 0) return { success: true, data: [], display: 'Keine Datenbankverbindungen konfiguriert.' };
 
     const display = connections.map(c =>
@@ -163,7 +163,7 @@ Watch-compatible: query action returns rowCount and first row data for condition
     const sql = input.sql as string;
     if (!name || !sql) return { success: false, error: 'Missing "connection" or "sql"' };
 
-    const conn = this.connRepo.getByName(name);
+    const conn = await this.connRepo.getByName(name);
     if (!conn) return { success: false, error: `Connection "${name}" not found` };
 
     // Security: check read-only
@@ -262,7 +262,7 @@ Watch-compatible: query action returns rowCount and first row data for condition
 
   private async getProviderByName(name: string): Promise<DbProvider | null> {
     if (this.providers.has(name)) return this.providers.get(name)!;
-    const conn = this.connRepo.getByName(name);
+    const conn = await this.connRepo.getByName(name);
     if (!conn) return null;
     return this.getProvider(conn);
   }

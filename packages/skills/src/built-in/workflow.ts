@@ -81,7 +81,7 @@ export class WorkflowSkill extends Skill {
     }
   }
 
-  private createWorkflow(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async createWorkflow(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const name = input.name as string | undefined;
     const steps = input.steps as WorkflowStep[] | undefined;
     if (!name) return { success: false, error: 'Missing required field "name"' };
@@ -125,7 +125,7 @@ export class WorkflowSkill extends Skill {
       }
     }
 
-    const chain = this.workflowRepo.create({
+    const chain = await this.workflowRepo.create({
       name,
       userId: effectiveUserId(context),
       chatId: context.chatId,
@@ -142,11 +142,11 @@ export class WorkflowSkill extends Skill {
     };
   }
 
-  private listWorkflows(context: SkillContext): SkillResult {
+  private async listWorkflows(context: SkillContext): Promise<SkillResult> {
     const workflows: import('@alfred/types').WorkflowChain[] = [];
     const seen = new Set<string>();
     for (const uid of allUserIds(context)) {
-      for (const w of this.workflowRepo.findByUser(uid)) {
+      for (const w of await this.workflowRepo.findByUser(uid)) {
         if (!seen.has(w.id)) { seen.add(w.id); workflows.push(w); }
       }
     }
@@ -174,7 +174,7 @@ export class WorkflowSkill extends Skill {
     const workflowId = input.workflow_id as string | undefined;
     if (!workflowId) return { success: false, error: 'Missing "workflow_id"' };
 
-    const chain = this.workflowRepo.getById(workflowId);
+    const chain = await this.workflowRepo.getById(workflowId);
     if (!chain) return { success: false, error: `Workflow "${workflowId}" not found` };
     if (!chain.enabled) return { success: false, error: `Workflow "${chain.name}" is disabled` };
 
@@ -197,11 +197,11 @@ export class WorkflowSkill extends Skill {
     };
   }
 
-  private deleteWorkflow(input: Record<string, unknown>, context: SkillContext): SkillResult {
+  private async deleteWorkflow(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const workflowId = input.workflow_id as string | undefined;
     if (!workflowId) return { success: false, error: 'Missing "workflow_id"' };
 
-    const chain = this.workflowRepo.getById(workflowId);
+    const chain = await this.workflowRepo.getById(workflowId);
     if (!chain) return { success: false, error: `Workflow "${workflowId}" not found` };
 
     // Verify ownership
@@ -210,15 +210,15 @@ export class WorkflowSkill extends Skill {
       return { success: false, error: 'Not authorized to delete this workflow' };
     }
 
-    this.workflowRepo.delete(workflowId);
+    await this.workflowRepo.delete(workflowId);
     return { success: true, data: { workflowId }, display: `Workflow "${chain.name}" gel\u00F6scht.` };
   }
 
-  private getHistory(input: Record<string, unknown>): SkillResult {
+  private async getHistory(input: Record<string, unknown>): Promise<SkillResult> {
     const workflowId = input.workflow_id as string | undefined;
     if (!workflowId) return { success: false, error: 'Missing "workflow_id"' };
 
-    const executions = this.workflowRepo.getRecentExecutions(workflowId);
+    const executions = await this.workflowRepo.getRecentExecutions(workflowId);
     if (executions.length === 0) {
       return { success: true, data: [], display: 'Keine Ausf\u00FChrungen vorhanden.' };
     }

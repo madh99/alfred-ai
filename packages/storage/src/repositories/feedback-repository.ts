@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export interface FeedbackEvent {
@@ -13,57 +13,62 @@ export interface FeedbackEvent {
 }
 
 export class FeedbackRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  recordEvent(
+  async recordEvent(
     userId: string,
     feedbackType: FeedbackEvent['feedbackType'],
     sourceId: string | undefined,
     contextKey: string,
     description: string,
     rawContext?: Record<string, unknown>,
-  ): FeedbackEvent {
+  ): Promise<FeedbackEvent> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO feedback_events (id, user_id, feedback_type, source_id, context_key, description, raw_context, occurred_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, userId, feedbackType, sourceId ?? null, contextKey, description, rawContext ? JSON.stringify(rawContext) : null, now);
+    `, [id, userId, feedbackType, sourceId ?? null, contextKey, description, rawContext ? JSON.stringify(rawContext) : null, now]);
     return { id, userId, feedbackType, sourceId, contextKey, description, rawContext: rawContext ? JSON.stringify(rawContext) : undefined, occurredAt: now };
   }
 
-  countEvents(userId: string, contextKey: string, sinceIso?: string): number {
+  async countEvents(userId: string, contextKey: string, sinceIso?: string): Promise<number> {
     if (sinceIso) {
-      const row = this.db.prepare(
+      const row = await this.adapter.queryOne(
         `SELECT COUNT(*) as cnt FROM feedback_events WHERE user_id = ? AND context_key = ? AND occurred_at >= ?`,
-      ).get(userId, contextKey, sinceIso) as { cnt: number };
+        [userId, contextKey, sinceIso],
+      ) as { cnt: number };
       return row.cnt;
     }
-    const row = this.db.prepare(
+    const row = await this.adapter.queryOne(
       `SELECT COUNT(*) as cnt FROM feedback_events WHERE user_id = ? AND context_key = ?`,
-    ).get(userId, contextKey) as { cnt: number };
+      [userId, contextKey],
+    ) as { cnt: number };
     return row.cnt;
   }
 
-  getRecentEvents(userId: string, limit = 20): FeedbackEvent[] {
-    const rows = this.db.prepare(
+  async getRecentEvents(userId: string, limit = 20): Promise<FeedbackEvent[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM feedback_events WHERE user_id = ? ORDER BY occurred_at DESC LIMIT ?`,
-    ).all(userId, limit) as Record<string, unknown>[];
+      [userId, limit],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  getEventsForKey(userId: string, contextKey: string): FeedbackEvent[] {
-    const rows = this.db.prepare(
+  async getEventsForKey(userId: string, contextKey: string): Promise<FeedbackEvent[]> {
+    const rows = await this.adapter.query(
       `SELECT * FROM feedback_events WHERE user_id = ? AND context_key = ? ORDER BY occurred_at DESC`,
-    ).all(userId, contextKey) as Record<string, unknown>[];
+      [userId, contextKey],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  pruneOldEvents(olderThanDays = 180): number {
+  async pruneOldEvents(olderThanDays = 180): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60_000).toISOString();
-    const result = this.db.prepare(
+    const result = await this.adapter.execute(
       `DELETE FROM feedback_events WHERE occurred_at < ?`,
-    ).run(cutoff);
+      [cutoff],
+    );
     return result.changes;
   }
 

@@ -44,10 +44,10 @@ export interface SkillContext {
   alfredUserId?: string;
   /** Resolver for per-user service configs (email, bmw, calendar etc.). */
   userServiceResolver?: {
-    getServiceConfig(alfredUserId: string | undefined, serviceType: string, serviceName?: string): Record<string, unknown> | null;
-    getUserServices(alfredUserId: string | undefined, serviceType?: string): Array<{ serviceType: string; serviceName: string; config: Record<string, unknown> }>;
-    saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): void;
-    removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): boolean;
+    getServiceConfig(alfredUserId: string | undefined, serviceType: string, serviceName?: string): Promise<Record<string, unknown> | null>;
+    getUserServices(alfredUserId: string | undefined, serviceType?: string): Promise<Array<{ serviceType: string; serviceName: string; config: Record<string, unknown> }>>;
+    saveServiceConfig(alfredUserId: string, serviceType: string, serviceName: string, config: Record<string, unknown>): Promise<void>;
+    removeServiceConfig(alfredUserId: string, serviceType: string, serviceName: string): Promise<boolean>;
   };
   /** ActivityTracker instance (avoid circular dep with skills package). */
   tracker?: unknown;

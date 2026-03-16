@@ -32,28 +32,29 @@ export async function logsCommand(tail: number, opts?: {
 
   let database: Database | undefined;
   try {
-    database = new Database(dbPath);
+    database = Database.createSync(dbPath);
+    const adapter = database.getAdapter();
 
     if (opts?.activity) {
-      showActivityLog(database, tail, opts);
+      await showActivityLog(adapter, tail, opts);
     } else {
-      showAuditLog(database, tail);
+      await showAuditLog(adapter, tail);
     }
   } catch (error) {
     console.error('Failed to read log:', (error as Error).message);
     process.exit(1);
   } finally {
     if (database) {
-      database.close();
+      await database.close();
     }
   }
 }
 
-function showAuditLog(database: Database, tail: number): void {
-  const auditRepo = new AuditRepository(database.getDb());
+async function showAuditLog(adapter: import('@alfred/storage').AsyncDbAdapter, tail: number): Promise<void> {
+  const auditRepo = new AuditRepository(adapter);
 
-  const totalCount = auditRepo.count({});
-  const entries: AuditEntry[] = auditRepo.query({ limit: tail });
+  const totalCount = await auditRepo.count({});
+  const entries: AuditEntry[] = await auditRepo.query({ limit: tail });
 
   console.log('Alfred — Audit Log (Security)');
   console.log('==============================');
@@ -84,17 +85,17 @@ function showAuditLog(database: Database, tail: number): void {
   }
 }
 
-function showActivityLog(database: Database, tail: number, opts: {
+async function showActivityLog(adapter: import('@alfred/storage').AsyncDbAdapter, tail: number, opts: {
   type?: string;
   source?: string;
   outcome?: string;
   since?: string;
   stats?: boolean;
-}): void {
-  const activityRepo = new ActivityRepository(database.getDb());
+}): Promise<void> {
+  const activityRepo = new ActivityRepository(adapter);
 
   if (opts.stats) {
-    const stats = activityRepo.stats(opts.since);
+    const stats = await activityRepo.stats(opts.since);
     console.log('Alfred — Activity Stats');
     console.log('========================');
     if (opts.since) console.log(`Since: ${opts.since}`);
@@ -115,12 +116,12 @@ function showActivityLog(database: Database, tail: number, opts: {
     return;
   }
 
-  const totalCount = activityRepo.count({
+  const totalCount = await activityRepo.count({
     eventType: opts.type,
     source: opts.source,
     outcome: opts.outcome,
   });
-  const entries: ActivityEntry[] = activityRepo.query({
+  const entries: ActivityEntry[] = await activityRepo.query({
     eventType: opts.type,
     source: opts.source,
     outcome: opts.outcome,

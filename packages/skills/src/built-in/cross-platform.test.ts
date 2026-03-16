@@ -10,7 +10,7 @@ import type { CrossPlatformAdapter } from './cross-platform.js';
 let hasBetterSqlite3 = true;
 try {
   const { Database } = await import('@alfred/storage');
-  const testDb = new Database(path.join(os.tmpdir(), `alfred-probe-${Date.now()}.db`));
+  const testDb = Database.createSync(path.join(os.tmpdir(), `alfred-probe-${Date.now()}.db`));
   testDb.close();
 } catch {
   hasBetterSqlite3 = false;
@@ -35,10 +35,10 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
     const { LinkTokenRepository } = await import('@alfred/storage');
 
     dbPath = path.join(os.tmpdir(), `alfred-test-crossplatform-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const rawDb = db.getDb();
-    const users = new UserRepository(rawDb);
-    const linkTokens = new LinkTokenRepository(rawDb);
+    db = Database.createSync(dbPath);
+    const adapter = db.getAdapter();
+    const users = new UserRepository(adapter);
+    const linkTokens = new LinkTokenRepository(adapter);
 
     const adapters = new Map<Platform, CrossPlatformAdapter>();
     const mockAdapter: CrossPlatformAdapter = {
@@ -68,7 +68,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('link_start generates a 6-digit code', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const ctx = { ...ctxTelegram, userId: tgUser.id };
 
     const result = await skill.execute({ action: 'link_start' }, ctx);
@@ -86,8 +86,8 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
     const { skill, users } = await setup();
 
     // Create two users on different platforms
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
-    const dcUser = users.findOrCreate('discord', 'dc-user-1', 'alice_dc');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const dcUser = await users.findOrCreate('discord', 'dc-user-1', 'alice_dc');
 
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
     const dcCtx = { ...ctxDiscord, userId: dcUser.id };
@@ -109,7 +109,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('link_confirm with invalid code fails', async () => {
     const { skill, users } = await setup();
 
-    const dcUser = users.findOrCreate('discord', 'dc-user-1', 'bob');
+    const dcUser = await users.findOrCreate('discord', 'dc-user-1', 'bob');
     const dcCtx = { ...ctxDiscord, userId: dcUser.id };
 
     const result = await skill.execute({ action: 'link_confirm', code: '000000' }, dcCtx);
@@ -121,7 +121,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('link_confirm with missing code fails', async () => {
     const { skill, users } = await setup();
 
-    const dcUser = users.findOrCreate('discord', 'dc-user-1', 'bob');
+    const dcUser = await users.findOrCreate('discord', 'dc-user-1', 'bob');
     const dcCtx = { ...ctxDiscord, userId: dcUser.id };
 
     const result = await skill.execute({ action: 'link_confirm' }, dcCtx);
@@ -133,7 +133,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('link_confirm with own code (self-link) fails', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     // Generate and confirm with same user
@@ -150,8 +150,8 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
     const { skill, users } = await setup();
 
     // Create and link two users
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice', 'Alice');
-    const dcUser = users.findOrCreate('discord', 'dc-user-1', 'alice_dc', 'Alice DC');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice', 'Alice');
+    const dcUser = await users.findOrCreate('discord', 'dc-user-1', 'alice_dc', 'Alice DC');
 
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
     const dcCtx = { ...ctxDiscord, userId: dcUser.id };
@@ -176,7 +176,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('list_identities with no links returns single identity', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const listResult = await skill.execute({ action: 'list_identities' }, tgCtx);
@@ -188,8 +188,8 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('unlink removes a link', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice', 'Alice');
-    const dcUser = users.findOrCreate('discord', 'dc-user-1', 'alice_dc', 'Alice DC');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice', 'Alice');
+    const dcUser = await users.findOrCreate('discord', 'dc-user-1', 'alice_dc', 'Alice DC');
 
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
     const dcCtx = { ...ctxDiscord, userId: dcUser.id };
@@ -219,7 +219,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('unlink with missing platform fails', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const result = await skill.execute({ action: 'unlink' }, tgCtx);
@@ -231,7 +231,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('send_message sends via adapter', async () => {
     const { skill, users, mockAdapter } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const result = await skill.execute(
@@ -254,7 +254,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('send_message with unavailable platform fails', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const result = await skill.execute(
@@ -274,7 +274,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('send_message with missing fields fails', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const r1 = await skill.execute({ action: 'send_message' }, tgCtx);
@@ -296,7 +296,7 @@ describe.skipIf(!hasBetterSqlite3)('CrossPlatformSkill', () => {
   it('unknown action returns error', async () => {
     const { skill, users } = await setup();
 
-    const tgUser = users.findOrCreate('telegram', 'tg-user-1', 'alice');
+    const tgUser = await users.findOrCreate('telegram', 'tg-user-1', 'alice');
     const tgCtx = { ...ctxTelegram, userId: tgUser.id };
 
     const result = await skill.execute({ action: 'invalid_action' }, tgCtx);

@@ -77,14 +77,14 @@ export class ProjectAgentRunner {
 
       // ── PLANNING ──
       state.projectPhase = 'planning';
-      this.updateSession(sessionId, state, lastBuildActuallyPassed);
+      await this.updateSession(sessionId, state, lastBuildActuallyPassed);
       await this.sendProgress(platform, chatId, '📋 Erstelle Projekt-Plan...');
 
       const plan = await createProjectPlan(config.goal, this.llm);
       await this.sendProgress(platform, chatId,
         `📋 Plan erstellt: ${plan.phases.length} Phasen\n${plan.phases.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
       state.milestonesReached.push('Plan erstellt');
-      this.sessionRepo.addMilestone(sessionId, 'Plan erstellt');
+      await this.sessionRepo.addMilestone(sessionId, 'Plan erstellt');
 
       const startTime = Date.now();
       const maxDurationMs = config.maxDurationHours * 60 * 60 * 1000;
@@ -114,7 +114,7 @@ export class ProjectAgentRunner {
         state.projectPhase = 'coding';
         state.consecutiveFixFailures = 0;
         lastBuildActuallyPassed = false;
-        this.updateSession(sessionId, state, lastBuildActuallyPassed);
+        await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
         const phase = plan.phases[phaseIdx];
         const userMessages = messages.filter(m => m !== '__STOP__');
@@ -139,7 +139,7 @@ export class ProjectAgentRunner {
           if (abortController.signal.aborted) break;
 
           state.projectPhase = 'validating';
-          this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
           if (config.buildCommands.length === 0 && config.testCommands.length === 0) {
             buildPassed = true;
@@ -167,13 +167,13 @@ export class ProjectAgentRunner {
               `Letzter Fehler:\n${buildResult.combinedOutput.slice(-500)}\n` +
               `Sende "interject" mit Hinweisen oder "stop" zum Abbrechen.`);
             state.projectPhase = 'awaiting_user';
-            this.updateSession(sessionId, state, lastBuildActuallyPassed);
+            await this.updateSession(sessionId, state, lastBuildActuallyPassed);
             break;
           }
 
           // ── FIXING ──
           state.projectPhase = 'fixing';
-          this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
           await this.sendProgress(platform, chatId,
             `🔧 Fix-Versuch ${fixAttempt + 1}/${config.maxFixAttempts}...`);
 
@@ -190,7 +190,7 @@ export class ProjectAgentRunner {
         // ── COMMITTING (async, no event loop blocking) ──
         if (buildPassed) {
           state.projectPhase = 'committing';
-          this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
           try {
             await execFileAsync('git', ['add', '-A'], { cwd: config.cwd });
@@ -208,14 +208,14 @@ export class ProjectAgentRunner {
 
           const milestone = `Phase ${phaseIdx + 1}: ${phase}`;
           state.milestonesReached.push(milestone);
-          this.sessionRepo.addMilestone(sessionId, milestone);
-          this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          await this.sessionRepo.addMilestone(sessionId, milestone);
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
         }
       }
 
       // ── DONE ──
       state.projectPhase = 'done';
-      this.updateSession(sessionId, state, lastBuildActuallyPassed);
+      await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
       await this.sendProgress(platform, chatId,
         `🎉 Project Agent fertig!\n` +
@@ -226,7 +226,7 @@ export class ProjectAgentRunner {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error({ err, sessionId }, 'Project agent failed');
       state.projectPhase = 'done';
-      this.updateSession(sessionId, state, lastBuildActuallyPassed);
+      await this.updateSession(sessionId, state, lastBuildActuallyPassed);
       await this.sendProgress(platform, chatId, `💥 Project Agent Fehler: ${msg}`);
     } finally {
       removeAbortController(sessionId);
@@ -265,9 +265,9 @@ export class ProjectAgentRunner {
     return parts.join('\n\n');
   }
 
-  private updateSession(sessionId: string, state: ProjectAgentMeta, buildPassed: boolean): void {
+  private async updateSession(sessionId: string, state: ProjectAgentMeta, buildPassed: boolean): Promise<void> {
     try {
-      this.sessionRepo.updateProgress(sessionId, {
+      await this.sessionRepo.updateProgress(sessionId, {
         currentPhase: state.projectPhase,
         currentIteration: state.projectIteration,
         totalFilesChanged: state.totalFilesChanged,

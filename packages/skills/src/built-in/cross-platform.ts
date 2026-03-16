@@ -14,7 +14,7 @@ export interface CrossPlatformAdapter {
 }
 
 /** Resolve chat_id for a linked user on another platform. */
-export type FindConversationFn = (platform: string, userId: string) => { chatId: string } | undefined;
+export type FindConversationFn = (platform: string, userId: string) => Promise<{ chatId: string } | undefined> | { chatId: string } | undefined;
 
 /**
  * CrossPlatformSkill intentionally does NOT use the shared effectiveUserId/allUserIds
@@ -74,8 +74,8 @@ export class CrossPlatformSkill extends Skill {
   }
 
   /** Resolve platform user ID to internal DB UUID via findOrCreate. */
-  private resolveInternalId(context: SkillContext): string {
-    return this.users.findOrCreate(context.platform as Platform, context.userId).id;
+  private async resolveInternalId(context: SkillContext): Promise<string> {
+    return (await this.users.findOrCreate(context.platform as Platform, context.userId)).id;
   }
 
   async execute(
@@ -124,17 +124,17 @@ export class CrossPlatformSkill extends Skill {
 
   private async linkStart(context: SkillContext): Promise<SkillResult> {
     // Clean up expired tokens first
-    this.linkTokens.cleanup();
+    await this.linkTokens.cleanup();
 
-    const internalId = this.resolveInternalId(context);
+    const internalId = await this.resolveInternalId(context);
 
     // Rate limit: max 5 active codes per user per 10 minutes
-    const recentCount = this.linkTokens.countRecentByUser(internalId, 10);
+    const recentCount = await this.linkTokens.countRecentByUser(internalId, 10);
     if (recentCount >= 5) {
       return { success: false, error: 'Too many linking codes generated recently. Please wait a few minutes.' };
     }
 
-    const token = this.linkTokens.create(internalId, context.platform);
+    const token = await this.linkTokens.create(internalId, context.platform);
 
     return {
       success: true,
@@ -155,7 +155,7 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: 'Missing required field "code"' };
     }
 
-    const currentInternalId = this.resolveInternalId(context);
+    const currentInternalId = await this.resolveInternalId(context);
 
     // Rate limit failed confirmation attempts (max 5 per 5 minutes)
     const rateLimitError = this.checkConfirmRateLimit(currentInternalId);
@@ -163,7 +163,7 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: rateLimitError };
     }
 
-    const token = this.linkTokens.findByCode(code.trim());
+    const token = await this.linkTokens.findByCode(code.trim());
     if (!token) {
       this.recordFailedConfirm(currentInternalId);
       return {
@@ -184,8 +184,8 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // Determine master user: use existing master if either user already has one
-    const existingMaster1 = this.users.getMasterUserId(tokenInternalId);
-    const existingMaster2 = this.users.getMasterUserId(currentInternalId);
+    const existingMaster1 = await this.users.getMasterUserId(tokenInternalId);
+    const existingMaster2 = await this.users.getMasterUserId(currentInternalId);
 
     let masterUserId: string;
     if (existingMaster1 !== tokenInternalId) {
@@ -202,24 +202,24 @@ export class CrossPlatformSkill extends Skill {
       existingMaster2 !== currentInternalId &&
       existingMaster1 !== existingMaster2
     ) {
-      const groupToMerge = this.users.getLinkedUsers(existingMaster2);
+      const groupToMerge = await this.users.getLinkedUsers(existingMaster2);
       for (const u of groupToMerge) {
-        this.users.setMasterUser(u.id, masterUserId);
+        await this.users.setMasterUser(u.id, masterUserId);
       }
     }
 
     // Link both users to the master
     if (tokenInternalId !== masterUserId) {
-      this.users.setMasterUser(tokenInternalId, masterUserId);
+      await this.users.setMasterUser(tokenInternalId, masterUserId);
     }
     if (currentInternalId !== masterUserId) {
-      this.users.setMasterUser(currentInternalId, masterUserId);
+      await this.users.setMasterUser(currentInternalId, masterUserId);
     }
 
     // Consume the token
-    this.linkTokens.consume(token.id);
+    await this.linkTokens.consume(token.id);
 
-    const tokenUser = this.users.findById(tokenInternalId);
+    const tokenUser = await this.users.findById(tokenInternalId);
     const platformName = token.platform;
 
     return {
@@ -258,12 +258,12 @@ export class CrossPlatformSkill extends Skill {
 
     // Resolve chat_id: try DB conversation lookup for linked user on target platform
     if (!chatId || !/^[!0-9]/.test(chatId)) {
-      const currentInternalId = this.resolveInternalId(context);
-      const masterUserId = this.users.getMasterUserId(currentInternalId);
-      const linked = this.users.getLinkedUsers(masterUserId);
+      const currentInternalId = await this.resolveInternalId(context);
+      const masterUserId = await this.users.getMasterUserId(currentInternalId);
+      const linked = await this.users.getLinkedUsers(masterUserId);
       const targetUser = linked.find(u => u.platform === platform);
       if (targetUser && this.findConversation) {
-        const conv = this.findConversation(platform, targetUser.id);
+        const conv = await this.findConversation(platform, targetUser.id);
         if (conv) chatId = conv.chatId;
       }
       // Fallback to platformUserId for Telegram DMs
@@ -290,9 +290,9 @@ export class CrossPlatformSkill extends Skill {
   }
 
   private async listIdentities(context: SkillContext): Promise<SkillResult> {
-    const currentInternalId = this.resolveInternalId(context);
-    const masterUserId = this.users.getMasterUserId(currentInternalId);
-    const linkedUsers = this.users.getLinkedUsers(masterUserId);
+    const currentInternalId = await this.resolveInternalId(context);
+    const masterUserId = await this.users.getMasterUserId(currentInternalId);
+    const linkedUsers = await this.users.getLinkedUsers(masterUserId);
 
     if (linkedUsers.length <= 1) {
       return {
@@ -327,9 +327,9 @@ export class CrossPlatformSkill extends Skill {
       return { success: false, error: 'Missing required field "platform"' };
     }
 
-    const currentInternalId = this.resolveInternalId(context);
-    const masterUserId = this.users.getMasterUserId(currentInternalId);
-    const linkedUsers = this.users.getLinkedUsers(masterUserId);
+    const currentInternalId = await this.resolveInternalId(context);
+    const masterUserId = await this.users.getMasterUserId(currentInternalId);
+    const linkedUsers = await this.users.getLinkedUsers(masterUserId);
 
     const targetUser = linkedUsers.find(u => u.platform === platform && u.id !== currentInternalId);
     if (!targetUser) {
@@ -340,7 +340,7 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // Remove the link by clearing master_user_id
-    this.users.setMasterUser(targetUser.id, targetUser.id);
+    await this.users.setMasterUser(targetUser.id, targetUser.id);
 
     return {
       success: true,

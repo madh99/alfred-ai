@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export interface DatabaseConnection {
@@ -15,32 +15,33 @@ export interface DatabaseConnection {
 }
 
 export class DatabaseConnectionRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  create(conn: Omit<DatabaseConnection, 'id' | 'createdAt'>): DatabaseConnection {
+  async create(conn: Omit<DatabaseConnection, 'id' | 'createdAt'>): Promise<DatabaseConnection> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO database_connections (id, name, type, host, port, database_name, username, auth_config, options, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, conn.name, conn.type, conn.host, conn.port ?? null, conn.databaseName ?? null,
+    `, [id, conn.name, conn.type, conn.host, conn.port ?? null, conn.databaseName ?? null,
       conn.username ?? null, conn.authConfig ? JSON.stringify(conn.authConfig) : null,
-      conn.options ? JSON.stringify(conn.options) : null, now);
+      conn.options ? JSON.stringify(conn.options) : null, now]);
     return { id, ...conn, createdAt: now };
   }
 
-  getAll(): DatabaseConnection[] {
-    const rows = this.db.prepare('SELECT * FROM database_connections ORDER BY name').all() as Record<string, unknown>[];
+  async getAll(): Promise<DatabaseConnection[]> {
+    const rows = await this.adapter.query('SELECT * FROM database_connections ORDER BY name') as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  getByName(name: string): DatabaseConnection | undefined {
-    const row = this.db.prepare('SELECT * FROM database_connections WHERE name = ?').get(name) as Record<string, unknown> | undefined;
+  async getByName(name: string): Promise<DatabaseConnection | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM database_connections WHERE name = ?', [name]) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
   }
 
-  delete(name: string): boolean {
-    return this.db.prepare('DELETE FROM database_connections WHERE name = ?').run(name).changes > 0;
+  async delete(name: string): Promise<boolean> {
+    const result = await this.adapter.execute('DELETE FROM database_connections WHERE name = ?', [name]);
+    return result.changes > 0;
   }
 
   private mapRow(row: Record<string, unknown>): DatabaseConnection {

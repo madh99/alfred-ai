@@ -64,8 +64,8 @@ export class ProfileSkill extends Skill {
     }
   }
 
-  private getProfile(userId: string): SkillResult {
-    const profile = (this.userRepo as any).getProfile(userId);
+  private async getProfile(userId: string): Promise<SkillResult> {
+    const profile = await (this.userRepo as any).getProfile(userId);
     if (!profile) {
       return { success: true, data: null, display: 'No profile found. Set your timezone, language, or bio to create one.' };
     }
@@ -88,22 +88,22 @@ export class ProfileSkill extends Skill {
     };
   }
 
-  private setField(userId: string, field: 'timezone' | 'language' | 'bio', value: string): SkillResult {
+  private async setField(userId: string, field: 'timezone' | 'language' | 'bio', value: string): Promise<SkillResult> {
     if (!value || typeof value !== 'string') {
       return { success: false, error: `Missing required "value" for ${field}` };
     }
-    (this.userRepo as any).updateProfile(userId, { [field]: value });
+    await (this.userRepo as any).updateProfile(userId, { [field]: value });
     return { success: true, data: { [field]: value }, display: `${field} set to "${value}"` };
   }
 
-  private setPreference(userId: string, key: string, value: string): SkillResult {
+  private async setPreference(userId: string, key: string, value: string): Promise<SkillResult> {
     if (!key || typeof key !== 'string') {
       return { success: false, error: 'Missing required "preference_key"' };
     }
-    const profile = (this.userRepo as any).getProfile(userId);
+    const profile = await (this.userRepo as any).getProfile(userId);
     const prefs = profile?.preferences ?? {};
     prefs[key] = value;
-    (this.userRepo as any).updateProfile(userId, { preferences: prefs });
+    await (this.userRepo as any).updateProfile(userId, { preferences: prefs });
     return { success: true, data: { key, value }, display: `Preference "${key}" set to "${value}"` };
   }
 }

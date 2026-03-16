@@ -17,8 +17,8 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
   let dbPath: string;
   let db: Database;
 
-  afterEach(() => {
-    try { db?.close(); } catch { /* ignore */ }
+  afterEach(async () => {
+    try { await db?.close(); } catch { /* ignore */ }
     if (dbPath && fs.existsSync(dbPath)) {
       try { fs.unlinkSync(dbPath); } catch { /* ignore */ }
       try { fs.unlinkSync(dbPath + '-wal'); } catch { /* ignore */ }
@@ -30,15 +30,15 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
     const { Database } = await import('../database.js');
     const { ConversationRepository } = await import('./conversation-repository.js');
     dbPath = path.join(os.tmpdir(), `alfred-test-conv-${Date.now()}.db`);
-    db = new Database(dbPath);
-    const repo = new ConversationRepository(db.getDb());
+    db = Database.createSync(dbPath);
+    const repo = new ConversationRepository(db.getAdapter());
     return repo;
   }
 
   it('should create a conversation', async () => {
     const repo = await setup();
 
-    const conversation = repo.create('telegram', 'chat-123', 'user-456');
+    const conversation = await repo.create('telegram', 'chat-123', 'user-456');
 
     expect(conversation).toBeDefined();
     expect(conversation.id).toBeDefined();
@@ -53,8 +53,8 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
   it('should find conversation by platform and chatId', async () => {
     const repo = await setup();
 
-    const created = repo.create('discord', 'chat-abc', 'user-789');
-    const found = repo.findByPlatformChat('discord', 'chat-abc');
+    const created = await repo.create('discord', 'chat-abc', 'user-789');
+    const found = await repo.findByPlatformChat('discord', 'chat-abc');
 
     expect(found).toBeDefined();
     expect(found!.id).toBe(created.id);
@@ -65,8 +65,8 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
   it('should add and get messages', async () => {
     const repo = await setup();
 
-    const conversation = repo.create('telegram', 'chat-msg', 'user-1');
-    const message = repo.addMessage(conversation.id, 'user', 'Hello, Alfred!');
+    const conversation = await repo.create('telegram', 'chat-msg', 'user-1');
+    const message = await repo.addMessage(conversation.id, 'user', 'Hello, Alfred!');
 
     expect(message).toBeDefined();
     expect(message.id).toBeDefined();
@@ -74,7 +74,7 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
     expect(message.role).toBe('user');
     expect(message.content).toBe('Hello, Alfred!');
 
-    const messages = repo.getMessages(conversation.id);
+    const messages = await repo.getMessages(conversation.id);
 
     expect(messages).toHaveLength(1);
     expect(messages[0].id).toBe(message.id);
@@ -85,7 +85,7 @@ describe.skipIf(!hasBetterSqlite3)('ConversationRepository', () => {
   it('should return undefined for nonexistent conversation', async () => {
     const repo = await setup();
 
-    const found = repo.findByPlatformChat('signal', 'nonexistent-chat');
+    const found = await repo.findByPlatformChat('signal', 'nonexistent-chat');
 
     expect(found).toBeUndefined();
   });

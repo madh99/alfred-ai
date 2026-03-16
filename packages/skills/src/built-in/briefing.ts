@@ -145,7 +145,7 @@ export class BriefingSkill extends Skill {
   }
 
   private async runBriefing(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const { home } = this.resolveAddresses(context);
+    const { home } = await this.resolveAddresses(context);
     // Prefer resolved home address over LLM-provided location — the LLM often
     // guesses a generic city (e.g. "Vienna") when no explicit location is given.
     const resolvedLocation = home ? extractCity(home) : undefined;
@@ -161,7 +161,7 @@ export class BriefingSkill extends Skill {
     }
 
     // Resolve HA briefing preferences from config + memories
-    const haPrefs = this.resolveHaPreferences(context);
+    const haPrefs = await this.resolveHaPreferences(context);
 
     // Build inputs with overrides
     const tasks = modules.map(m => {
@@ -260,7 +260,7 @@ export class BriefingSkill extends Skill {
     if (!isWeekday()) return null;
     if (!this.skillRegistry.has('routing')) return null;
 
-    const { home: homeAddress, office: officeAddress } = this.resolveAddresses(context);
+    const { home: homeAddress, office: officeAddress } = await this.resolveAddresses(context);
     if (!homeAddress || !officeAddress) return null;
 
     // Check calendar for external appointments (events with a location)
@@ -320,7 +320,7 @@ export class BriefingSkill extends Skill {
    * Searches for keys like "heimadresse", "home_address", "wohnadresse",
    * "büroadresse", "office_address", "arbeit_adresse" etc.
    */
-  private resolveAddresses(context: SkillContext): { home: string | undefined; office: string | undefined } {
+  private async resolveAddresses(context: SkillContext): Promise<{ home: string | undefined; office: string | undefined }> {
     const configHome = this.alfredConfig.briefing?.homeAddress;
     const configOffice = this.alfredConfig.briefing?.officeAddress;
 
@@ -331,7 +331,7 @@ export class BriefingSkill extends Skill {
 
     // Search memories for addresses across all linked user IDs
     for (const uid of allUserIds(context)) {
-      const memories = this.memoryRepo.search(uid, 'adresse');
+      const memories = await this.memoryRepo.search(uid, 'adresse');
       for (const m of memories) {
         const key = m.key.toLowerCase();
         const val = m.value;
@@ -353,7 +353,7 @@ export class BriefingSkill extends Skill {
    * Users can store preferences like "briefing_ha_entities" = "sensor.victron_soc, sensor.power"
    * or "briefing_ha_domains" = "binary_sensor, light, climate".
    */
-  private resolveHaPreferences(context: SkillContext): { entities?: string[]; domains?: string[] } {
+  private async resolveHaPreferences(context: SkillContext): Promise<{ entities?: string[]; domains?: string[] }> {
     const configEntities = this.alfredConfig.briefing?.homeAssistant?.entities;
     const configDomains = this.alfredConfig.briefing?.homeAssistant?.domains;
 
@@ -365,7 +365,7 @@ export class BriefingSkill extends Skill {
 
     // Search memories for HA briefing preferences
     for (const uid of allUserIds(context)) {
-      const memories = this.memoryRepo.search(uid, 'briefing');
+      const memories = await this.memoryRepo.search(uid, 'briefing');
       for (const m of memories) {
         const key = m.key.toLowerCase();
         if (/ha_entit|home.?assistant.*entit|briefing.*entit/.test(key)) {

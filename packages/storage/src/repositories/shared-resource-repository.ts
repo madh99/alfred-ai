@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export interface SharedResource {
@@ -12,36 +12,39 @@ export interface SharedResource {
 }
 
 export class SharedResourceRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
   /**
    * Share a resource with a specific user or group.
    */
-  share(opts: {
+  async share(opts: {
     resourceType: string;
     resourceId: string;
     ownerUserId: string;
     sharedWithUserId?: string;
     sharedWithGroupId?: string;
-  }): SharedResource {
+  }): Promise<SharedResource> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    this.db.prepare(`
-      INSERT OR IGNORE INTO shared_resources (id, resource_type, resource_id, owner_user_id, shared_with_user_id, shared_with_group_id, created_at)
+    await this.adapter.execute(`
+      INSERT INTO shared_resources (id, resource_type, resource_id, owner_user_id, shared_with_user_id, shared_with_group_id, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(id, opts.resourceType, opts.resourceId, opts.ownerUserId, opts.sharedWithUserId ?? null, opts.sharedWithGroupId ?? null, now);
+      ON CONFLICT DO NOTHING
+    `, [id, opts.resourceType, opts.resourceId, opts.ownerUserId, opts.sharedWithUserId ?? null, opts.sharedWithGroupId ?? null, now]);
     return { id, ...opts, createdAt: now };
   }
 
   /**
    * Remove sharing for a resource.
    */
-  unshare(resourceType: string, resourceId: string, sharedWithUserId?: string, sharedWithGroupId?: string): boolean {
+  async unshare(resourceType: string, resourceId: string, sharedWithUserId?: string, sharedWithGroupId?: string): Promise<boolean> {
     if (sharedWithUserId) {
-      return this.db.prepare('DELETE FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND shared_with_user_id = ?').run(resourceType, resourceId, sharedWithUserId).changes > 0;
+      const result = await this.adapter.execute('DELETE FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND shared_with_user_id = ?', [resourceType, resourceId, sharedWithUserId]);
+      return result.changes > 0;
     }
     if (sharedWithGroupId) {
-      return this.db.prepare('DELETE FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND shared_with_group_id = ?').run(resourceType, resourceId, sharedWithGroupId).changes > 0;
+      const result = await this.adapter.execute('DELETE FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND shared_with_group_id = ?', [resourceType, resourceId, sharedWithGroupId]);
+      return result.changes > 0;
     }
     return false;
   }
@@ -49,19 +52,21 @@ export class SharedResourceRepository {
   /**
    * Check if a user has access to a resource (owned or shared).
    */
-  hasAccess(resourceType: string, resourceId: string, userId: string, groupIds?: string[]): boolean {
+  async hasAccess(resourceType: string, resourceId: string, userId: string, groupIds?: string[]): Promise<boolean> {
     // Direct user share
-    const userShare = this.db.prepare(
+    const userShare = await this.adapter.queryOne(
       'SELECT 1 FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND (owner_user_id = ? OR shared_with_user_id = ?)',
-    ).get(resourceType, resourceId, userId, userId);
+      [resourceType, resourceId, userId, userId],
+    );
     if (userShare) return true;
 
     // Group share
     if (groupIds && groupIds.length > 0) {
       const placeholders = groupIds.map(() => '?').join(',');
-      const groupShare = this.db.prepare(
+      const groupShare = await this.adapter.queryOne(
         `SELECT 1 FROM shared_resources WHERE resource_type = ? AND resource_id = ? AND shared_with_group_id IN (${placeholders})`,
-      ).get(resourceType, resourceId, ...groupIds);
+        [resourceType, resourceId, ...groupIds],
+      );
       if (groupShare) return true;
     }
 
@@ -71,14 +76,14 @@ export class SharedResourceRepository {
   /**
    * Get all resources shared with a user (directly or via groups).
    */
-  getSharedWith(userId: string, resourceType?: string, groupIds?: string[]): SharedResource[] {
+  async getSharedWith(userId: string, resourceType?: string, groupIds?: string[]): Promise<SharedResource[]> {
     const results: SharedResource[] = [];
 
     // Direct shares
     let sql = 'SELECT * FROM shared_resources WHERE shared_with_user_id = ?';
     const params: unknown[] = [userId];
     if (resourceType) { sql += ' AND resource_type = ?'; params.push(resourceType); }
-    const directRows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+    const directRows = await this.adapter.query(sql, params) as Record<string, unknown>[];
     results.push(...directRows.map(r => this.mapRow(r)));
 
     // Group shares
@@ -87,7 +92,7 @@ export class SharedResourceRepository {
       let groupSql = `SELECT * FROM shared_resources WHERE shared_with_group_id IN (${placeholders})`;
       const groupParams: unknown[] = [...groupIds];
       if (resourceType) { groupSql += ' AND resource_type = ?'; groupParams.push(resourceType); }
-      const groupRows = this.db.prepare(groupSql).all(...groupParams) as Record<string, unknown>[];
+      const groupRows = await this.adapter.query(groupSql, groupParams) as Record<string, unknown>[];
       results.push(...groupRows.map(r => this.mapRow(r)));
     }
 
@@ -97,8 +102,8 @@ export class SharedResourceRepository {
   /**
    * Get all shares for a resource owned by a user.
    */
-  getSharesForResource(resourceType: string, resourceId: string): SharedResource[] {
-    const rows = this.db.prepare('SELECT * FROM shared_resources WHERE resource_type = ? AND resource_id = ?').all(resourceType, resourceId) as Record<string, unknown>[];
+  async getSharesForResource(resourceType: string, resourceId: string): Promise<SharedResource[]> {
+    const rows = await this.adapter.query('SELECT * FROM shared_resources WHERE resource_type = ? AND resource_id = ?', [resourceType, resourceId]) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 

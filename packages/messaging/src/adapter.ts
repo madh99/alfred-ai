@@ -64,6 +64,23 @@ export abstract class MessagingAdapter extends EventEmitter<MessagingAdapterEven
     // No-op. HttpAdapter overrides this to close SSE streams.
   }
 
+  /**
+   * Send a direct message to a user (not a channel/group).
+   * Default: falls back to sendMessage(userId, text) which works for Telegram.
+   * Adapters that need special DM handling (Discord, Matrix) override this.
+   */
+  async sendDirectMessage(
+    userId: string,
+    text: string,
+    options?: SendMessageOptions,
+  ): Promise<string | undefined> {
+    try {
+      return await this.sendMessage(userId, text, options);
+    } catch {
+      return undefined; // DM not supported or failed
+    }
+  }
+
   getStatus(): MessagingAdapterStatus {
     return this.status;
   }

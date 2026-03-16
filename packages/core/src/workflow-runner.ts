@@ -31,7 +31,7 @@ export class WorkflowRunner {
     context: SkillContext,
     initialData?: Record<string, unknown>,
   ): Promise<WorkflowRunResult> {
-    const execution = this.workflowRepo.createExecution(chain.id, chain.steps.length);
+    const execution = await this.workflowRepo.createExecution(chain.id, chain.steps.length);
     const stepResults: Array<{ skillName: string; success: boolean; data?: unknown; error?: string }> = [];
     let lastStepData: unknown = initialData ?? {};
     let currentIndex = 0;
@@ -45,7 +45,7 @@ export class WorkflowRunner {
       visitCount.set(currentIndex, visits);
       if (visits > maxVisits) {
         const errMsg = `Workflow cycle detected at step ${currentIndex} (visited ${visits} times)`;
-        this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
+        await this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
         this.logWorkflow(chain, execution.id, 'failed', visitedCount, errMsg);
         return { executionId: execution.id, status: 'failed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
       }
@@ -78,13 +78,13 @@ export class WorkflowRunner {
         }, 'Workflow condition evaluated');
 
         if (target === 'end') {
-          this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
+          await this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
           this.logWorkflow(chain, execution.id, 'completed', visitedCount);
           return { executionId: execution.id, status: 'completed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults };
         } else if (typeof target === 'number') {
           if (target < 0 || target >= chain.steps.length) {
             const errMsg = `Condition step ${currentIndex}: jump target ${target} is out of range (0-${chain.steps.length - 1})`;
-            this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
+            await this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
             return { executionId: execution.id, status: 'failed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
           }
           currentIndex = target;
@@ -94,7 +94,7 @@ export class WorkflowRunner {
         }
 
         // Update progress
-        this.workflowRepo.updateExecution(execution.id, {
+        await this.workflowRepo.updateExecution(execution.id, {
           stepsCompleted: visitedCount,
           stepResults: JSON.stringify(stepResults),
         });
@@ -113,7 +113,7 @@ export class WorkflowRunner {
           continue;
         }
         const status = visitedCount > 1 ? 'partial' : 'failed';
-        this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
+        await this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
         return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
       }
 
@@ -126,7 +126,7 @@ export class WorkflowRunner {
           continue;
         }
         const status = visitedCount > 1 ? 'partial' : 'failed';
-        this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
+        await this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
         return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
       }
 
@@ -171,7 +171,7 @@ export class WorkflowRunner {
         }
         // stop (or retry exhausted)
         const status = visitedCount > 1 ? 'partial' : 'failed';
-        this.finishExecution(execution.id, status, visitedCount, stepResults, lastError);
+        await this.finishExecution(execution.id, status, visitedCount, stepResults, lastError);
         this.logWorkflow(chain, execution.id, status, visitedCount, lastError);
         return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: lastError };
       }
@@ -184,13 +184,13 @@ export class WorkflowRunner {
 
       // Handle jumpTo on action step
       if (actionStep.jumpTo === 'end') {
-        this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
+        await this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
         this.logWorkflow(chain, execution.id, 'completed', visitedCount);
         return { executionId: execution.id, status: 'completed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults };
       } else if (typeof actionStep.jumpTo === 'number') {
         if (actionStep.jumpTo < 0 || actionStep.jumpTo >= chain.steps.length) {
           const errMsg = `Action step ${currentIndex}: jumpTo ${actionStep.jumpTo} is out of range`;
-          this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
+          await this.finishExecution(execution.id, 'failed', visitedCount, stepResults, errMsg);
           return { executionId: execution.id, status: 'failed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
         }
         currentIndex = actionStep.jumpTo;
@@ -199,19 +199,19 @@ export class WorkflowRunner {
       }
     }
 
-    this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
+    await this.finishExecution(execution.id, 'completed', visitedCount, stepResults);
     this.logWorkflow(chain, execution.id, 'completed', visitedCount);
     return { executionId: execution.id, status: 'completed', stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults };
   }
 
-  private finishExecution(
+  private async finishExecution(
     id: string,
     status: 'completed' | 'failed' | 'partial',
     stepsCompleted: number,
     stepResults: unknown[],
     error?: string,
-  ): void {
-    this.workflowRepo.updateExecution(id, {
+  ): Promise<void> {
+    await this.workflowRepo.updateExecution(id, {
       status,
       stepsCompleted,
       stepResults: JSON.stringify(stepResults),

@@ -54,6 +54,12 @@ interface ReasoningContext {
   feedback: string;
 }
 
+/** Minimal ClusterManager interface for distributed locking. */
+interface LockProvider {
+  acquireLock(key: string, ttlMs?: number): Promise<boolean>;
+  releaseLock(key: string): Promise<void>;
+}
+
 export class ReasoningEngine {
   private tickTimer?: ReturnType<typeof setInterval>;
   private lastRunHour = -1;
@@ -61,6 +67,7 @@ export class ReasoningEngine {
   private readonly schedule: ReasoningConfig['schedule'];
   private readonly tier: 'fast' | 'default';
   private readonly deduplicationHours: number;
+  private lockProvider?: LockProvider;
 
   constructor(
     private readonly calendarProvider: CalendarProvider | undefined,
@@ -98,6 +105,10 @@ export class ReasoningEngine {
     // Tick every 60 seconds, decide inside whether to run
     this.tickTimer = setInterval(() => this.tick(), 60_000);
     this.logger.info({ schedule: this.schedule, tier: this.tier }, 'Reasoning engine started');
+  }
+
+  setLockProvider(provider: LockProvider): void {
+    this.lockProvider = provider;
   }
 
   stop(): void {
@@ -147,6 +158,15 @@ export class ReasoningEngine {
     if (!this.shouldRun()) return;
     this.markRun();
 
+    // Distributed lock: only one node runs reasoning per cycle
+    if (this.lockProvider) {
+      const acquired = await this.lockProvider.acquireLock('reasoning:tick', 10 * 60_000);
+      if (!acquired) {
+        this.logger.debug('Reasoning lock held by another node, skipping');
+        return;
+      }
+    }
+
     try {
       this.logger.info('Reasoning pass starting');
       const startMs = Date.now();
@@ -175,7 +195,10 @@ export class ReasoningEngine {
 
       // Parse insights and optional actions
       const parsed = this.parseReasoningResponse(text);
-      const newInsights = parsed.insights.filter(insight => !this.wasRecentlySent(insight));
+      const newInsights: string[] = [];
+      for (const insight of parsed.insights) {
+        if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
+      }
 
       if (newInsights.length === 0 && parsed.actions.length === 0) {
         this.logger.info({ durationMs, total: parsed.insights.length }, 'Reasoning pass: all deduplicated');
@@ -189,7 +212,7 @@ export class ReasoningEngine {
         if (adapter) {
           await adapter.sendMessage(this.defaultChatId, message);
           for (const insight of newInsights) {
-            this.markSent(insight);
+            await this.markSent(insight);
           }
           this.logger.info({ durationMs, insights: newInsights.length }, 'Reasoning pass: insights sent');
         }
@@ -213,6 +236,10 @@ export class ReasoningEngine {
         userId: this.defaultChatId, outcome: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
+    } finally {
+      if (this.lockProvider) {
+        await this.lockProvider.releaseLock('reasoning:tick');
+      }
     }
   }
 
@@ -232,13 +259,13 @@ export class ReasoningEngine {
       this.fetchSkillData('energy_price', { action: 'current' }),
     ]);
 
-    // Sync SQLite queries
-    const todos = this.fetchTodos();
-    const watches = this.fetchWatches();
-    const memories = this.fetchMemories();
-    const activity = this.fetchActivity();
-    const skillHealth = this.fetchSkillHealth();
-    const feedback = this.fetchFeedback();
+    // SQLite queries (now async)
+    const todos = await this.fetchTodos();
+    const watches = await this.fetchWatches();
+    const memories = await this.fetchMemories();
+    const activity = await this.fetchActivity();
+    const skillHealth = await this.fetchSkillHealth();
+    const feedback = await this.fetchFeedback();
 
     return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth, feedback };
   }
@@ -267,7 +294,7 @@ export class ReasoningEngine {
     const skill = this.skillRegistry.get(skillName);
     if (!skill) return `(${skillName} nicht verfügbar)`;
     try {
-      const { context } = buildSkillContext(this.userRepo, {
+      const { context } = await buildSkillContext(this.userRepo, {
         userId: this.defaultChatId,
         platform: this.defaultPlatform,
         chatId: this.defaultChatId,
@@ -282,12 +309,12 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchTodos(): string {
+  private async fetchTodos(): Promise<string> {
     try {
-      const overdue = this.todoRepo.getOverdue();
+      const overdue = await this.todoRepo.getOverdue();
       const windowEnd = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const upcoming = this.todoRepo.getDueInWindow(windowEnd);
-      const allOpen = this.todoRepo.list(this.defaultChatId);
+      const upcoming = await this.todoRepo.getDueInWindow(windowEnd);
+      const allOpen = await this.todoRepo.list(this.defaultChatId);
 
       const lines: string[] = [];
       if (overdue.length > 0) {
@@ -312,9 +339,9 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchWatches(): string {
+  private async fetchWatches(): Promise<string> {
     try {
-      const watches = this.watchRepo.getEnabled();
+      const watches = await this.watchRepo.getEnabled();
       if (watches.length === 0) return 'Keine aktiven Watches.';
       return watches.map(w => {
         const lastVal = w.lastValue
@@ -331,9 +358,9 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchMemories(): string {
+  private async fetchMemories(): Promise<string> {
     try {
-      const memories = this.memoryRepo.getRecentForPrompt(this.defaultChatId, 30);
+      const memories = await this.memoryRepo.getRecentForPrompt(this.defaultChatId, 30);
       if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
       return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
     } catch (err) {
@@ -342,10 +369,10 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchActivity(): string {
+  private async fetchActivity(): Promise<string> {
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const stats = this.activityRepo.stats(since);
+      const stats = await this.activityRepo.stats(since);
       if (stats.length === 0) return 'Keine Aktivität in den letzten 24h.';
       return stats.map(s => `- ${s.eventType} (${s.outcome}): ${s.count}×`).join('\n');
     } catch (err) {
@@ -354,9 +381,9 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchSkillHealth(): string {
+  private async fetchSkillHealth(): Promise<string> {
     try {
-      const disabled = this.skillHealthRepo.getDisabled();
+      const disabled = await this.skillHealthRepo.getDisabled();
       if (disabled.length === 0) return 'Alle Skills aktiv.';
       return disabled.map(s =>
         `- ${s.skillName}: deaktiviert bis ${s.disabledUntil} (${s.consecutiveFails} Fehler: ${s.lastError ?? '?'})`,
@@ -367,10 +394,10 @@ export class ReasoningEngine {
     }
   }
 
-  private fetchFeedback(): string {
+  private async fetchFeedback(): Promise<string> {
     if (!this.feedbackRepo) return '';
     try {
-      const events = this.feedbackRepo.getRecentEvents(this.defaultChatId, 20);
+      const events = await this.feedbackRepo.getRecentEvents(this.defaultChatId, 20);
       if (events.length === 0) return 'Kein Feedback zu Watches oder Korrekturen.';
       return events.map(e =>
         `- [${e.feedbackType}] ${e.description} (${e.occurredAt.slice(0, 10)})`,
@@ -459,18 +486,18 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
     return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
   }
 
-  private wasRecentlySent(insight: string): boolean {
+  private async wasRecentlySent(insight: string): Promise<boolean> {
     const hash = this.insightHash(insight);
     const key = `reasoning:${hash}`;
-    return this.notifRepo.wasNotified(key, this.defaultChatId);
+    return await this.notifRepo.wasNotified(key, this.defaultChatId);
   }
 
-  private markSent(insight: string): void {
+  private async markSent(insight: string): Promise<void> {
     const hash = this.insightHash(insight);
     const key = `reasoning:${hash}`;
     // Use event_start as expiry marker (dedup window)
     const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
-    this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
+    await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
 
   // ── Action Support ──────────────────────────────────────────
@@ -507,23 +534,23 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
     return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
   }
 
-  private actionWasRecentlyProposed(action: ProposedAction): boolean {
+  private async actionWasRecentlyProposed(action: ProposedAction): Promise<boolean> {
     const hash = this.actionHash(action);
-    return this.notifRepo.wasNotified(`reasoning-action:${hash}`, this.defaultChatId);
+    return await this.notifRepo.wasNotified(`reasoning-action:${hash}`, this.defaultChatId);
   }
 
-  private markActionProposed(action: ProposedAction): void {
+  private async markActionProposed(action: ProposedAction): Promise<void> {
     const hash = this.actionHash(action);
     const key = `reasoning-action:${hash}`;
     const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
-    this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
+    await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
 
   private async processActions(actions: ProposedAction[]): Promise<void> {
     if (!this.confirmationQueue || actions.length === 0) return;
     const limit = actions.slice(0, 2); // max 2 actions per pass
     for (const action of limit) {
-      if (this.actionWasRecentlyProposed(action)) {
+      if (await this.actionWasRecentlyProposed(action)) {
         this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
         continue;
       }
@@ -538,7 +565,7 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
           skillParams: action.skillParams,
           timeoutMinutes: 60,
         });
-        this.markActionProposed(action);
+        await this.markActionProposed(action);
         this.logger.info({ action: action.description }, 'Reasoning: action enqueued for confirmation');
       } catch (err) {
         this.logger.error({ err, action: action.description }, 'Reasoning: failed to enqueue action');

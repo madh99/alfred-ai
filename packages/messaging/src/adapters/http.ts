@@ -37,15 +37,15 @@ export interface HttpAdapterOptions {
   host: string;
   apiToken?: string;
   corsOrigin?: string;
-  healthCheck?: () => Record<string, unknown>;
-  metricsCallback?: () => string;
+  healthCheck?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  metricsCallback?: () => string | Promise<string>;
   webhooks?: WebhookHandler[];
-  dashboardCallback?: () => Record<string, unknown>;
+  dashboardCallback?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   webUiPath?: string;
   tls?: TlsOptions;
   authCallback?: {
-    loginWithCode: (code: string) => { success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string };
-    getUserByToken: (token: string) => { userId: string; username: string; role: string } | null;
+    loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
+    getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
 }
 
@@ -64,9 +64,9 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly host: string;
   private readonly apiToken?: string;
   private readonly corsOrigin: string;
-  private readonly healthCheckFn?: () => Record<string, unknown>;
-  private readonly metricsFn?: () => string;
-  private readonly dashboardFn?: () => Record<string, unknown>;
+  private readonly healthCheckFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  private readonly metricsFn?: () => string | Promise<string>;
+  private readonly dashboardFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   private readonly webUiPath?: string;
   private readonly tls?: TlsOptions;
   private readonly authCb?: HttpAdapterOptions['authCallback'];
@@ -282,17 +282,17 @@ export class HttpAdapter extends MessagingAdapter {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
-      this.handleHealth(res);
+      this.handleHealth(res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/metrics' && req.method === 'GET') {
-      this.handleMetrics(res);
+      this.handleMetrics(res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
-      this.handleMessage(req, res);
+      this.handleMessage(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/dashboard' && req.method === 'GET') {
-      this.handleDashboard(req, res);
+      this.handleDashboard(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
-      this.handleAuthMe(req, res);
+      this.handleAuthMe(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
       const name = url.pathname.slice('/api/webhook/'.length);
       this.handleWebhook(req, res, name);
@@ -307,7 +307,7 @@ export class HttpAdapter extends MessagingAdapter {
     }
   }
 
-  private checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  private async checkAuth(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
     if (!this.apiToken && !this.authCb) return true;
     const authHeader = req.headers['authorization'];
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
@@ -322,7 +322,7 @@ export class HttpAdapter extends MessagingAdapter {
 
     // Check user session token
     if (this.authCb && token) {
-      const user = this.authCb.getUserByToken(token);
+      const user = await this.authCb.getUserByToken(token);
       if (user) return true;
     }
 
@@ -339,12 +339,12 @@ export class HttpAdapter extends MessagingAdapter {
 
     let body = '';
     req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
         const { code } = JSON.parse(body) as { code?: string };
         if (!code) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Missing code' })); return; }
 
-        const result = this.authCb!.loginWithCode(code);
+        const result = await this.authCb!.loginWithCode(code);
         if (result.success) {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, userId: result.userId, username: result.username, role: result.role, token: result.token }));
@@ -359,34 +359,34 @@ export class HttpAdapter extends MessagingAdapter {
     });
   }
 
-  private handleAuthMe(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private async handleAuthMe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!this.authCb) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Auth not configured' })); return; }
 
     const authHeader = req.headers['authorization'];
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'No token' })); return; }
 
-    const user = this.authCb.getUserByToken(token);
+    const user = await this.authCb.getUserByToken(token);
     if (!user) { res.writeHead(401, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid token' })); return; }
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(user));
   }
 
-  private handleDashboard(req: http.IncomingMessage, res: http.ServerResponse): void {
-    if (!this.checkAuth(req, res)) return;
+  private async handleDashboard(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
     if (!this.dashboardFn) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Dashboard not configured' }));
       return;
     }
     try {
-      const data = this.dashboardFn() as Record<string, unknown>;
+      const data = await this.dashboardFn() as Record<string, unknown>;
 
       // Strip admin-only data for non-admin users
       const authHeader = req.headers['authorization'];
       const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-      const user = token && this.authCb ? this.authCb.getUserByToken(token) : null;
+      const user = token && this.authCb ? await this.authCb.getUserByToken(token) : null;
       if (user && user.role !== 'admin') {
         delete data.userUsage;
         delete data.userSkillUsage;
@@ -445,27 +445,36 @@ export class HttpAdapter extends MessagingAdapter {
     fs.createReadStream(target).pipe(res);
   }
 
-  private handleHealth(res: http.ServerResponse): void {
-    const health = this.healthCheckFn?.() ?? {};
+  private safeError(res: http.ServerResponse, err: unknown): void {
+    try {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+      }
+      res.end(JSON.stringify({ error: 'Internal server error' }));
+    } catch { /* response already closed */ }
+  }
+
+  private async handleHealth(res: http.ServerResponse): Promise<void> {
+    const health = await this.healthCheckFn?.() ?? {};
     const status = (health.db !== false) ? 'ok' : 'degraded';
     const code = status === 'ok' ? 200 : 503;
     res.writeHead(code, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status, ...health, timestamp: new Date().toISOString() }));
   }
 
-  private handleMetrics(res: http.ServerResponse): void {
+  private async handleMetrics(res: http.ServerResponse): Promise<void> {
     if (this.metricsFn) {
       res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
-      res.end(this.metricsFn());
+      res.end(await this.metricsFn());
     } else {
       // Fallback: return health as JSON
-      this.handleHealth(res);
+      await this.handleHealth(res);
     }
   }
 
-  private handleMessage(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private async handleMessage(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     // Auth check
-    if (!this.checkAuth(req, res)) return;
+    if (!(await this.checkAuth(req, res))) return;
 
     let body = '';
     let bodySize = 0;

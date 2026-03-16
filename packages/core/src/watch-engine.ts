@@ -54,7 +54,7 @@ export class WatchEngine {
 
   /** Trigger a specific watch immediately (used by inbound webhooks). */
   async triggerWatch(watchId: string): Promise<void> {
-    const watch = this.watchRepo.getById(watchId);
+    const watch = await this.watchRepo.getById(watchId);
     if (!watch) throw new Error(`Watch ${watchId} not found`);
     if (!watch.enabled) throw new Error(`Watch ${watchId} is disabled`);
     this.logger.info({ watchId, name: watch.name }, 'Watch triggered via webhook');
@@ -63,7 +63,7 @@ export class WatchEngine {
 
   private async tick(): Promise<void> {
     try {
-      const dueWatches = this.watchRepo.getDue();
+      const dueWatches = await this.watchRepo.getDue();
 
       for (const watch of dueWatches) {
         // Distributed lock: only one node processes each watch
@@ -98,18 +98,18 @@ export class WatchEngine {
     const skill = this.skillRegistry.get(watch.skillName);
     if (!skill) {
       this.logger.warn({ watchId: watch.id, skillName: watch.skillName }, 'Unknown skill for watch');
-      this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
+      await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
     }
 
     // Skip if poll skill is auto-disabled
     if (this.skillHealthTracker?.isDisabled(watch.skillName)) {
       this.logger.debug({ watchId: watch.id, skillName: watch.skillName }, 'Watch poll skill is auto-disabled, skipping');
-      this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
+      await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
     }
 
-    const { context } = buildSkillContext(this.users, {
+    const { context } = await buildSkillContext(this.users, {
       platformUserId: watch.chatId,
       platform: watch.platform as Platform,
       chatId: watch.chatId,
@@ -121,7 +121,7 @@ export class WatchEngine {
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');
       this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
-      this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
+      await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
     }
 
@@ -220,7 +220,7 @@ export class WatchEngine {
           }
         }
 
-        this.watchRepo.updateAfterCheck(watch.id, {
+        await this.watchRepo.updateAfterCheck(watch.id, {
           lastCheckedAt: now,
           lastValue: newLastValue,
           lastTriggeredAt: now,
@@ -241,21 +241,21 @@ export class WatchEngine {
             platform: watch.platform, chatId: watch.chatId,
             outcome: 'depth_limit', chainDepth,
           });
-          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
           return;
         }
 
-        const target = this.watchRepo.getById(watch.triggerWatchId);
+        const target = await this.watchRepo.getById(watch.triggerWatchId);
         if (!target) {
           this.logger.warn({ watchId: watch.id, targetId: watch.triggerWatchId }, 'Chained watch not found');
-          this.watchRepo.updateActionError(watch.id, `Chained watch "${watch.triggerWatchId}" not found`);
-          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          await this.watchRepo.updateActionError(watch.id, `Chained watch "${watch.triggerWatchId}" not found`);
+          await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
           return;
         }
 
         if (!target.enabled) {
           this.logger.warn({ watchId: watch.id, targetId: target.id }, 'Chained watch is disabled, skipping');
-          this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+          await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
           return;
         }
 
@@ -273,14 +273,14 @@ export class WatchEngine {
 
         try {
           await this.checkWatch(target, chainDepth + 1);
-          this.watchRepo.updateActionError(watch.id, null);
+          await this.watchRepo.updateActionError(watch.id, null);
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
-          this.watchRepo.updateActionError(watch.id, errMsg);
+          await this.watchRepo.updateActionError(watch.id, errMsg);
           this.logger.warn({ watchId: watch.id, targetId: target.id, err }, 'Watch chain execution failed');
         }
 
-        this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
+        await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: newLastValue, lastTriggeredAt: now });
         return;
       }
 
@@ -290,14 +290,14 @@ export class WatchEngine {
         // Skip if action skill is auto-disabled
         if (this.skillHealthTracker?.isDisabled(watch.actionSkillName)) {
           actionError = `Action skill "${watch.actionSkillName}" is temporarily disabled due to repeated failures`;
-          this.watchRepo.updateActionError(watch.id, actionError);
+          await this.watchRepo.updateActionError(watch.id, actionError);
           this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Watch action skill is auto-disabled');
         } else {
           const actionSkill = this.skillRegistry.get(watch.actionSkillName);
           if (actionSkill) {
             try {
               await this.skillSandbox.execute(actionSkill, resolvedParams, context);
-              this.watchRepo.updateActionError(watch.id, null);
+              await this.watchRepo.updateActionError(watch.id, null);
               this.skillHealthTracker?.recordSuccess(watch.actionSkillName!);
               this.activityLogger?.logWatchAction({
                 watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
@@ -305,7 +305,7 @@ export class WatchEngine {
               });
             } catch (err) {
               actionError = err instanceof Error ? err.message : String(err);
-              this.watchRepo.updateActionError(watch.id, actionError);
+              await this.watchRepo.updateActionError(watch.id, actionError);
               this.skillHealthTracker?.recordFailure(watch.actionSkillName!, actionError);
               this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
               this.activityLogger?.logWatchAction({
@@ -315,7 +315,7 @@ export class WatchEngine {
             }
           } else {
             actionError = `Action skill "${watch.actionSkillName}" not found`;
-            this.watchRepo.updateActionError(watch.id, actionError);
+            await this.watchRepo.updateActionError(watch.id, actionError);
             this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Unknown action skill for watch');
           }
         }
@@ -351,13 +351,13 @@ export class WatchEngine {
         }
       }
 
-      this.watchRepo.updateAfterCheck(watch.id, {
+      await this.watchRepo.updateAfterCheck(watch.id, {
         lastCheckedAt: now,
         lastValue: newLastValue,
         lastTriggeredAt: now,
       });
     } else {
-      this.watchRepo.updateAfterCheck(watch.id, {
+      await this.watchRepo.updateAfterCheck(watch.id, {
         lastCheckedAt: now,
         lastValue: newLastValue,
       });

@@ -14,18 +14,18 @@ export class ConversationSummarizer {
     private readonly logger: Logger,
   ) {}
 
-  getSummary(conversationId: string): ConversationSummary | undefined {
-    return this.summaryRepo.get(conversationId);
+  async getSummary(conversationId: string): Promise<ConversationSummary | undefined> {
+    return await this.summaryRepo.get(conversationId);
   }
 
-  onMessageProcessed(
+  async onMessageProcessed(
     conversationId: string,
     totalMessages: number,
     userMessage: string,
     assistantResponse: string,
     recentHistory: { role: string; content: string }[],
-  ): void {
-    const existing = this.summaryRepo.get(conversationId);
+  ): Promise<void> {
+    const existing = await this.summaryRepo.get(conversationId);
 
     // Too early — not enough messages yet
     if (!existing && totalMessages < SUMMARY_THRESHOLD) {
@@ -65,7 +65,7 @@ export class ConversationSummarizer {
       return;
     }
 
-    this.summaryRepo.upsert({
+    await this.summaryRepo.upsert({
       conversationId,
       summary,
       messageCount: totalMessages,

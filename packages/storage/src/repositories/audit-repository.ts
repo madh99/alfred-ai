@@ -1,18 +1,18 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import type { AuditEntry, RiskLevel, RuleEffect } from '@alfred/types';
 
 export class AuditRepository {
-  private db: BetterSqlite3.Database;
+  private readonly adapter: AsyncDbAdapter;
 
-  constructor(db: BetterSqlite3.Database) {
-    this.db = db;
+  constructor(adapter: AsyncDbAdapter) {
+    this.adapter = adapter;
   }
 
-  log(entry: AuditEntry): void {
-    this.db.prepare(`
+  async log(entry: AuditEntry): Promise<void> {
+    await this.adapter.execute(`
       INSERT INTO audit_log (id, timestamp, user_id, action, risk_level, rule_id, effect, platform, chat_id, context)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       entry.id,
       entry.timestamp.toISOString(),
       entry.userId,
@@ -23,10 +23,10 @@ export class AuditRepository {
       entry.platform,
       entry.chatId ?? null,
       entry.context ? JSON.stringify(entry.context) : null,
-    );
+    ]);
   }
 
-  query(filters: { userId?: string; action?: string; effect?: string; limit?: number }): AuditEntry[] {
+  async query(filters: { userId?: string; action?: string; effect?: string; limit?: number }): Promise<AuditEntry[]> {
     const conditions: string[] = [];
     const values: (string | number)[] = [];
 
@@ -47,14 +47,15 @@ export class AuditRepository {
     const limit = filters.limit ?? 100;
     values.push(limit);
 
-    const rows = this.db.prepare(
-      `SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT ?`
-    ).all(...values) as Record<string, string>[];
+    const rows = await this.adapter.query(
+      `SELECT * FROM audit_log ${where} ORDER BY timestamp DESC LIMIT ?`,
+      values
+    ) as Record<string, string>[];
 
     return rows.map((row) => this.mapRow(row));
   }
 
-  count(filters: { userId?: string; effect?: string }): number {
+  async count(filters: { userId?: string; effect?: string }): Promise<number> {
     const conditions: string[] = [];
     const values: string[] = [];
 
@@ -69,17 +70,20 @@ export class AuditRepository {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const row = this.db.prepare(
-      `SELECT COUNT(*) as count FROM audit_log ${where}`
-    ).get(...values) as { count: number };
+    const row = await this.adapter.queryOne(
+      `SELECT COUNT(*) as count FROM audit_log ${where}`,
+      values
+    ) as { count: number };
 
     return row.count;
   }
 
-  cleanup(olderThanDays: number = 90): number {
-    const result = this.db.prepare(
-      `DELETE FROM audit_log WHERE timestamp < datetime('now', '-' || ? || ' days')`
-    ).run(olderThanDays);
+  async cleanup(olderThanDays: number = 90): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    const result = await this.adapter.execute(
+      'DELETE FROM audit_log WHERE timestamp < ?',
+      [cutoff]
+    );
     return result.changes;
   }
 

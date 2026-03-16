@@ -1,27 +1,27 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { ActivityEntry, ActivityQuery, ActivityStats } from '@alfred/types';
 
 export class ActivityRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  log(entry: Omit<ActivityEntry, 'id' | 'timestamp'>): void {
+  async log(entry: Omit<ActivityEntry, 'id' | 'timestamp'>): Promise<void> {
     const id = randomUUID();
     const timestamp = new Date().toISOString();
-    this.db.prepare(`
+    await this.adapter.execute(`
       INSERT INTO activity_log (id, timestamp, event_type, source, source_id, user_id, platform, chat_id, action, outcome, error_message, duration_ms, details)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    `, [
       id, timestamp,
       entry.eventType, entry.source, entry.sourceId ?? null,
       entry.userId ?? null, entry.platform ?? null, entry.chatId ?? null,
       entry.action, entry.outcome,
       entry.errorMessage ?? null, entry.durationMs ?? null,
       entry.details ? JSON.stringify(entry.details) : null,
-    );
+    ]);
   }
 
-  query(filters: ActivityQuery): ActivityEntry[] {
+  async query(filters: ActivityQuery): Promise<ActivityEntry[]> {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -48,15 +48,16 @@ export class ActivityRepository {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
     const limit = filters.limit ?? 100;
+    params.push(limit);
 
-    const rows = this.db.prepare(
-      `SELECT * FROM activity_log ${where} ORDER BY timestamp DESC LIMIT ?`
-    ).all(...params, limit) as Record<string, unknown>[];
+    const rows = await this.adapter.query(
+      `SELECT * FROM activity_log ${where} ORDER BY timestamp DESC LIMIT ?`, params,
+    ) as Record<string, unknown>[];
 
     return rows.map(r => this.mapRow(r));
   }
 
-  count(filters: Omit<ActivityQuery, 'limit' | 'since'>): number {
+  async count(filters: Omit<ActivityQuery, 'limit' | 'since'>): Promise<number> {
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -74,20 +75,20 @@ export class ActivityRepository {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    const row = this.db.prepare(
-      `SELECT COUNT(*) as cnt FROM activity_log ${where}`
-    ).get(...params) as { cnt: number };
+    const row = await this.adapter.queryOne(
+      `SELECT COUNT(*) as cnt FROM activity_log ${where}`, params,
+    ) as { cnt: number };
 
     return row.cnt;
   }
 
-  stats(since?: string): ActivityStats[] {
+  async stats(since?: string): Promise<ActivityStats[]> {
     const where = since ? 'WHERE timestamp >= ?' : '';
     const params = since ? [since] : [];
 
-    const rows = this.db.prepare(
-      `SELECT event_type, outcome, COUNT(*) as cnt FROM activity_log ${where} GROUP BY event_type, outcome ORDER BY cnt DESC`
-    ).all(...params) as Array<{ event_type: string; outcome: string; cnt: number }>;
+    const rows = await this.adapter.query(
+      `SELECT event_type, outcome, COUNT(*) as cnt FROM activity_log ${where} GROUP BY event_type, outcome ORDER BY cnt DESC`, params,
+    ) as Array<{ event_type: string; outcome: string; cnt: number }>;
 
     return rows.map(r => ({
       eventType: r.event_type,
@@ -97,19 +98,19 @@ export class ActivityRepository {
   }
 
   /** Get skill usage grouped by user, with call counts per skill. */
-  skillUsageByUser(since?: string): Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }> {
+  async skillUsageByUser(since?: string): Promise<Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }>> {
     const where = since
       ? "WHERE event_type = 'skill_execution' AND timestamp >= ?"
       : "WHERE event_type = 'skill_execution'";
     const params = since ? [since] : [];
 
-    const rows = this.db.prepare(`
+    const rows = await this.adapter.query(`
       SELECT user_id, action as skill_name, COUNT(*) as calls,
              SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes,
              SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) as errors
       FROM activity_log ${where} AND user_id IS NOT NULL
       GROUP BY user_id, action ORDER BY calls DESC
-    `).all(...params) as Record<string, unknown>[];
+    `, params) as Record<string, unknown>[];
 
     return rows.map(r => ({
       userId: r.user_id as string,
@@ -120,10 +121,11 @@ export class ActivityRepository {
     }));
   }
 
-  cleanup(olderThanDays: number = 90): number {
-    const result = this.db.prepare(
-      `DELETE FROM activity_log WHERE timestamp < datetime('now', '-' || ? || ' days')`
-    ).run(olderThanDays);
+  async cleanup(olderThanDays: number = 90): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    const result = await this.adapter.execute(
+      `DELETE FROM activity_log WHERE timestamp < ?`, [cutoff],
+    );
     return result.changes;
   }
 

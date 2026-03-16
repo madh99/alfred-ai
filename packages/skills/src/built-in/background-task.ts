@@ -73,11 +73,11 @@ export class BackgroundTaskSkill extends Skill {
   }
 
   /** Get tasks for all linked user IDs. */
-  private getAllTasks(context: SkillContext): import('@alfred/types').BackgroundTask[] {
+  private async getAllTasks(context: SkillContext): Promise<import('@alfred/types').BackgroundTask[]> {
     const seen = new Set<string>();
     const results: import('@alfred/types').BackgroundTask[] = [];
     for (const uid of allUserIds(context)) {
-      for (const t of this.taskRepo.getByUser(uid)) {
+      for (const t of await this.taskRepo.getByUser(uid)) {
         if (!seen.has(t.id)) {
           seen.add(t.id);
           results.push(t);
@@ -112,10 +112,10 @@ export class BackgroundTaskSkill extends Skill {
     }
   }
 
-  private scheduleTask(
+  private async scheduleTask(
     input: Record<string, unknown>,
     context: SkillContext,
-  ): SkillResult {
+  ): Promise<SkillResult> {
     const description = input.description as string | undefined;
     const skillName = input.skill_name as string | undefined;
     const skillInput = input.skill_input as Record<string, unknown> | undefined;
@@ -129,7 +129,7 @@ export class BackgroundTaskSkill extends Skill {
       return { success: false, error: 'Missing required field "skill_name" for schedule action' };
     }
 
-    const task = this.taskRepo.create(
+    const task = await this.taskRepo.create(
       effectiveUserId(context),
       context.platform,
       context.chatId,
@@ -140,10 +140,10 @@ export class BackgroundTaskSkill extends Skill {
 
     // Set persistent config if requested
     if (persistent && maxDurationHours) {
-      this.taskRepo.updatePersistentConfig(task.id, maxDurationHours);
+      await this.taskRepo.updatePersistentConfig(task.id, maxDurationHours);
       task.maxDurationHours = maxDurationHours;
     } else if (persistent) {
-      this.taskRepo.updatePersistentConfig(task.id, 24);
+      await this.taskRepo.updatePersistentConfig(task.id, 24);
       task.maxDurationHours = 24;
     }
 
@@ -155,8 +155,8 @@ export class BackgroundTaskSkill extends Skill {
     };
   }
 
-  private listTasks(context: SkillContext): SkillResult {
-    const tasks = this.getAllTasks(context);
+  private async listTasks(context: SkillContext): Promise<SkillResult> {
+    const tasks = await this.getAllTasks(context);
 
     if (tasks.length === 0) {
       return {
@@ -202,7 +202,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     // Verify ownership: only allow canceling own tasks
-    const userTasks = this.getAllTasks(context);
+    const userTasks = await this.getAllTasks(context);
     const task = userTasks.find(t => t.id === taskId);
     if (!task) {
       return {
@@ -215,10 +215,10 @@ export class BackgroundTaskSkill extends Skill {
     if (task.maxDurationHours && this.persistentRunner) {
       await this.persistentRunner.cancel(taskId);
     } else {
-      const cancelled = this.taskRepo.cancel(taskId);
+      const cancelled = await this.taskRepo.cancel(taskId);
       if (!cancelled) {
         // Try cancelTask (UPDATE) as fallback for checkpointed/resuming tasks
-        this.taskRepo.cancelTask(taskId);
+        await this.taskRepo.cancelTask(taskId);
       }
     }
 
@@ -241,7 +241,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     // Verify ownership
-    const userTasks = this.getAllTasks(context);
+    const userTasks = await this.getAllTasks(context);
     const task = userTasks.find(t => t.id === taskId);
     if (!task) {
       return { success: false, error: `Task "${taskId}" not found` };
@@ -270,7 +270,7 @@ export class BackgroundTaskSkill extends Skill {
     }
 
     // Verify ownership
-    const userTasks = this.getAllTasks(context);
+    const userTasks = await this.getAllTasks(context);
     const task = userTasks.find(t => t.id === taskId);
     if (!task) {
       return { success: false, error: `Task "${taskId}" not found` };

@@ -50,7 +50,7 @@ export class TodoWatcher {
     try {
       // Upcoming todos within vorlauf window
       const windowEnd = new Date(Date.now() + this.minutesBefore * 60_000);
-      const upcoming = this.todoRepo.getDueInWindow(windowEnd.toISOString());
+      const upcoming = await this.todoRepo.getDueInWindow(windowEnd.toISOString());
 
       for (const todo of upcoming) {
         await this.notify(todo.id, todo.title, todo.dueDate!, todo.list, todo.priority, 'upcoming');
@@ -60,7 +60,7 @@ export class TodoWatcher {
       const now = Date.now();
       if (this.overdueCheck && now - this.lastOverdueCheck > 3_600_000) {
         this.lastOverdueCheck = now;
-        const overdue = this.todoRepo.getOverdue();
+        const overdue = await this.todoRepo.getOverdue();
         for (const todo of overdue) {
           await this.notify(todo.id, todo.title, todo.dueDate!, todo.list, todo.priority, 'overdue');
         }
@@ -80,7 +80,7 @@ export class TodoWatcher {
     const notifKey = kind === 'overdue'
       ? `todo:${kind}:${todoId}:${new Date().toISOString().slice(0, 10)}`
       : `todo:${kind}:${todoId}`;
-    if (this.notifRepo.wasNotified(notifKey, this.defaultChatId)) return;
+    if (await this.notifRepo.wasNotified(notifKey, this.defaultChatId)) return;
 
     const due = new Date(dueDate);
     const timeStr = due.toLocaleString('de-DE', {
@@ -106,7 +106,7 @@ export class TodoWatcher {
 
     try {
       await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
-      this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
+      await this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
       this.logger.info({ todoId, title, kind }, 'Todo reminder sent');
       this.activityLogger?.logCalendarNotify({
         eventId: notifKey, eventTitle: `[Todo] ${title}`,

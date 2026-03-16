@@ -96,6 +96,7 @@ export interface PipelineOptions {
   memoryRepo?: MemoryRepository;
   speechTranscriber?: SpeechTranscriber;
   inboxPath?: string;
+  fileStore?: import('@alfred/storage').FileStore;
   embeddingService?: EmbeddingService;
   activeLearning?: ActiveLearningService;
   memoryRetriever?: MemoryRetriever;
@@ -124,6 +125,7 @@ export class MessagePipeline {
   private readonly memoryRepo?: MemoryRepository;
   private readonly speechTranscriber?: SpeechTranscriber;
   private readonly inboxPath?: string;
+  private readonly fileStore?: import('@alfred/storage').FileStore;
   private readonly embeddingService?: EmbeddingService;
   private readonly activeLearning?: ActiveLearningService;
   private readonly memoryRetriever?: MemoryRetriever;
@@ -209,6 +211,7 @@ export class MessagePipeline {
     this.memoryRepo = options.memoryRepo;
     this.speechTranscriber = options.speechTranscriber;
     this.inboxPath = options.inboxPath;
+    this.fileStore = options.fileStore;
     this.embeddingService = options.embeddingService;
     this.activeLearning = options.activeLearning;
     this.memoryRetriever = options.memoryRetriever;
@@ -224,7 +227,7 @@ export class MessagePipeline {
 
     // Check for pending confirmation response
     if (this.confirmationQueue && message.text) {
-      const { context: confContext } = buildSkillContext(this.users, {
+      const { context: confContext } = await buildSkillContext(this.users, {
         platformUserId: message.userId,
         platform: message.platform,
         chatId: message.chatId,
@@ -244,7 +247,7 @@ export class MessagePipeline {
       // but keep the isolated chatId for conversation management.
       const skillChatId = (message.metadata?.originalChatId as string) ?? message.chatId;
 
-      const { user, masterUserId, linkedPlatformUserIds, context: baseContext } = buildSkillContext(
+      const { user, masterUserId, linkedPlatformUserIds, context: baseContext } = await buildSkillContext(
         this.users,
         {
           platformUserId: message.userId,
@@ -259,7 +262,7 @@ export class MessagePipeline {
       // 1b. Resolve Alfred user + role for multi-user support
       let alfredUser: { id: string; role: string; active: boolean; username: string } | undefined;
       try {
-        alfredUser = this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId) as typeof alfredUser;
+        alfredUser = await this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId) as typeof alfredUser;
       } catch (err) {
         this.logger.debug({ err }, 'Alfred user lookup failed (table may not exist yet)');
       }
@@ -280,7 +283,7 @@ export class MessagePipeline {
         : message.chatId;
 
       // 2. Find or create conversation
-      const conversation = this.conversationManager.getOrCreateConversation(
+      const conversation = await this.conversationManager.getOrCreateConversation(
         message.platform,
         conversationChatId,
         user.id,
@@ -288,15 +291,15 @@ export class MessagePipeline {
 
       // 3. Load conversation summary & history
       const summary = (!message.metadata?.skipHistory && this.conversationSummarizer)
-        ? this.conversationSummarizer.getSummary(conversation.id)
+        ? await this.conversationSummarizer.getSummary(conversation.id)
         : undefined;
       const historyLimit = summary ? HISTORY_WITH_SUMMARY : this.maxHistoryMessages;
       const history = message.metadata?.skipHistory
         ? []
-        : this.conversationManager.getHistory(conversation.id, historyLimit);
+        : await this.conversationManager.getHistory(conversation.id, historyLimit);
 
       // 4. Save user message
-      this.conversationManager.addMessage(conversation.id, 'user', message.text);
+      await this.conversationManager.addMessage(conversation.id, 'user', message.text);
 
       // 5. Load user memories for prompt injection (hybrid retrieval or fallback)
       //    Uses masterUserId so linked cross-platform accounts share memories.
@@ -326,7 +329,7 @@ export class MessagePipeline {
               }
             }
             for (const uid of memUserIds) {
-              for (const m of this.memoryRepo.getRecentForPrompt(uid, 5)) {
+              for (const m of await this.memoryRepo.getRecentForPrompt(uid, 5)) {
                 if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
               }
             }
@@ -334,7 +337,7 @@ export class MessagePipeline {
             const seen = new Set<string>();
             memories = [];
             for (const uid of memUserIds) {
-              for (const m of this.memoryRepo.getRecentForPrompt(uid, 20)) {
+              for (const m of await this.memoryRepo.getRecentForPrompt(uid, 20)) {
                 if (!seen.has(m.key)) { seen.add(m.key); memories.push(m); }
               }
             }
@@ -351,7 +354,7 @@ export class MessagePipeline {
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {
         if ('getProfile' in this.users) {
-          userProfile = (this.users as { getProfile(id: string): import('@alfred/llm').UserProfile | undefined }).getProfile(masterUserId);
+          userProfile = await (this.users as { getProfile(id: string): Promise<import('@alfred/llm').UserProfile | undefined> }).getProfile(masterUserId);
           if (userProfile && !userProfile.displayName) {
             userProfile.displayName = user.displayName ?? user.username;
           }
@@ -639,16 +642,16 @@ export class MessagePipeline {
       // 8. Save accumulated tool interactions as a single consolidated pair
       //    (instead of 2 messages per iteration, this stores at most 2 total)
       if (accumulatedToolCalls.length > 0) {
-        this.conversationManager.addMessage(
+        await this.conversationManager.addMessage(
           conversation.id, 'assistant', '', JSON.stringify(accumulatedToolCalls),
         );
-        this.conversationManager.addMessage(
+        await this.conversationManager.addMessage(
           conversation.id, 'user', '', JSON.stringify(accumulatedToolResults),
         );
       }
 
       // 9. Save final assistant response
-      this.conversationManager.addMessage(
+      await this.conversationManager.addMessage(
         conversation.id,
         'assistant',
         responseText,
@@ -697,7 +700,7 @@ export class MessagePipeline {
       // Record per-user LLM usage (separate from global tracking)
       if (alfredUser && this.usageRepo && requestCostUsd > 0) {
         try {
-          this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
+          await this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
         } catch { /* non-critical */ }
       }
       return {
@@ -747,11 +750,11 @@ export class MessagePipeline {
     // Persist to DB so the pair is complete.
     // Only save the assistant message if it wasn't already saved by the main loop.
     if (!assistantAlreadyPushed) {
-      this.conversationManager.addMessage(
+      await this.conversationManager.addMessage(
         conversationId, 'assistant', response.content ?? '', JSON.stringify(response.toolCalls),
       );
     }
-    this.conversationManager.addMessage(
+    await this.conversationManager.addMessage(
       conversationId, 'user', '', JSON.stringify(syntheticResults),
     );
 
@@ -972,7 +975,7 @@ export class MessagePipeline {
 
     // Skill health check — auto-disabled skills are blocked
     if (this.skillHealthTracker) {
-      const disabled = this.skillHealthTracker.isDisabled(toolCall.name);
+      const disabled = await this.skillHealthTracker.isDisabled(toolCall.name);
       if (disabled) {
         const until = disabled.disabledUntil ? new Date(disabled.disabledUntil).toISOString() : 'unknown';
         this.logger.warn(
@@ -1050,9 +1053,9 @@ export class MessagePipeline {
         // Record skill health
         if (this.skillHealthTracker) {
           if (result.success) {
-            this.skillHealthTracker.recordSuccess(toolCall.name);
+            await this.skillHealthTracker.recordSuccess(toolCall.name);
           } else {
-            this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
+            await this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
           }
         }
         return {
@@ -1468,7 +1471,7 @@ export class MessagePipeline {
         }
       } else if ((attachment.type === 'document' || attachment.type === 'video' || attachment.type === 'other') && attachment.data) {
         // Save file to inbox and tell the LLM about it
-        const savedPath = this.saveToInbox(attachment, message.userId);
+        const savedPath = await this.saveToInbox(attachment, message.userId);
         if (savedPath) {
           const isTextFile = this.isTextMimeType(attachment.mimeType);
           let fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? 'unknown type'})]\n[Saved to: ${savedPath}]`;
@@ -1487,6 +1490,7 @@ export class MessagePipeline {
                 savedPath,
                 attachment.fileName ?? 'unknown',
                 attachment.mimeType ?? 'application/octet-stream',
+                attachment.data, // Pass raw data so DocumentProcessor doesn't need local fs access
               );
               if (result.existing) {
                 // Remove duplicate file from inbox
@@ -1549,12 +1553,25 @@ export class MessagePipeline {
    * Save an attachment to the inbox directory.
    * Returns the saved file path, or undefined on failure.
    */
-  private saveToInbox(attachment: Attachment, userId?: string): string | undefined {
+  private async saveToInbox(attachment: Attachment, userId?: string): Promise<string | undefined> {
     if (!attachment.data) return undefined;
 
-    const baseInbox = this.inboxPath ?? path.resolve('./data/inbox');
-    // Per-user subdirectory for multi-user isolation
     const safeUserId = (userId ?? 'default').replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
+    const originalName = attachment.fileName ?? `file_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+
+    // Use FileStore if available (supports S3/NFS for HA)
+    if (this.fileStore) {
+      try {
+        const stored = await this.fileStore.save(safeUserId, originalName, attachment.data);
+        return stored.key;
+      } catch (err) {
+        this.logger.error({ err }, 'Failed to save file via FileStore');
+        return undefined;
+      }
+    }
+
+    // Fallback: local filesystem (single-instance)
+    const baseInbox = this.inboxPath ?? path.resolve('./data/inbox');
     const inboxDir = path.join(baseInbox, safeUserId);
     try {
       fs.mkdirSync(inboxDir, { recursive: true });
@@ -1563,9 +1580,7 @@ export class MessagePipeline {
       return undefined;
     }
 
-    // Generate unique filename: timestamp_originalname
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const originalName = attachment.fileName ?? `file_${timestamp}`;
     const safeName = originalName.replace(/[<>:"/\\|?*]/g, '_');
     const fileName = `${timestamp}_${safeName}`;
     const filePath = path.join(inboxDir, fileName);

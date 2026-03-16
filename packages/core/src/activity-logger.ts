@@ -264,11 +264,10 @@ export class ActivityLogger {
     }));
   }
 
-  private safe(fn: () => void): void {
-    try {
-      fn();
-    } catch (err) {
+  /** Fire-and-forget: catches async errors and logs them. */
+  private safe(fn: () => Promise<void>): void {
+    fn().catch(err => {
       this.logger.warn({ err }, 'Failed to write activity log entry');
-    }
+    });
   }
 }

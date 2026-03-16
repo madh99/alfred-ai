@@ -30,6 +30,8 @@ export const SignalConfigSchema = z.object({
 
 export const StorageConfigSchema = z.object({
   path: z.string(),
+  backend: z.enum(['sqlite', 'postgres']).optional(),
+  connectionString: z.string().optional(),
 });
 
 export const LoggerConfigSchema = z.object({

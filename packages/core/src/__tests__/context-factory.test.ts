@@ -27,9 +27,9 @@ function createMockUsers(overrides?: Partial<Record<string, unknown>>) {
 }
 
 describe('buildSkillContext', () => {
-  it('resolves via platformUserId path', () => {
+  it('resolves via platformUserId path', async () => {
     const users = createMockUsers();
-    const result = buildSkillContext(users, {
+    const result = await buildSkillContext(users, {
       platformUserId: 'plat-1',
       platform: 'telegram',
       chatId: 'chat-1',
@@ -49,9 +49,9 @@ describe('buildSkillContext', () => {
     expect(result.user.id).toBe('internal-1');
   });
 
-  it('resolves via userId with findById hit', () => {
+  it('resolves via userId with findById hit', async () => {
     const users = createMockUsers();
-    const result = buildSkillContext(users, {
+    const result = await buildSkillContext(users, {
       userId: 'internal-1',
       platform: 'telegram',
       chatId: 'chat-1',
@@ -63,11 +63,11 @@ describe('buildSkillContext', () => {
     expect(result.masterUserId).toBe('master-1');
   });
 
-  it('falls back to findOrCreate when findById misses', () => {
+  it('falls back to findOrCreate when findById misses', async () => {
     const users = createMockUsers({
       findById: vi.fn(() => undefined),
     });
-    const result = buildSkillContext(users, {
+    const result = await buildSkillContext(users, {
       userId: 'unknown-uuid',
       platform: 'telegram',
       chatId: 'chat-1',
@@ -78,11 +78,11 @@ describe('buildSkillContext', () => {
     expect(result.context.userId).toBe('unknown-uuid');
   });
 
-  it('uses server timezone when profile has none', () => {
+  it('uses server timezone when profile has none', async () => {
     const users = createMockUsers({
       getProfile: vi.fn(() => undefined),
     });
-    const result = buildSkillContext(users, {
+    const result = await buildSkillContext(users, {
       platformUserId: 'plat-1',
       platform: 'telegram',
       chatId: 'chat-1',
@@ -93,13 +93,13 @@ describe('buildSkillContext', () => {
     expect(result.context.timezone).not.toBe('Europe/Berlin');
   });
 
-  it('throws when neither platformUserId nor userId provided', () => {
+  it('throws when neither platformUserId nor userId provided', async () => {
     const users = createMockUsers();
-    expect(() =>
+    await expect(
       buildSkillContext(users, {
         platform: 'telegram',
         chatId: 'chat-1',
       }),
-    ).toThrow('ContextSource must provide either platformUserId or userId');
+    ).rejects.toThrow('ContextSource must provide either platformUserId or userId');
   });
 });

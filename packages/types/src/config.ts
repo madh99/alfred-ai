@@ -30,6 +30,8 @@ export interface SignalConfig {
 
 export interface StorageConfig {
   path: string;
+  backend?: 'sqlite' | 'postgres';
+  connectionString?: string;  // PostgreSQL connection string (for HA cluster)
 }
 
 export interface LoggerConfig {

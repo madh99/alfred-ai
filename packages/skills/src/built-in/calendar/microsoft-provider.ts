@@ -5,9 +5,12 @@ import type { MicrosoftCalendarConfig } from '@alfred/types';
 export class MicrosoftCalendarProvider extends CalendarProvider {
   private client: any;
   private accessToken = '';
+  /** Graph API user path. '/me' for own calendar, '/users/{email}' for shared. */
+  private readonly userPath: string;
 
-  constructor(private readonly config: MicrosoftCalendarConfig) {
+  constructor(private readonly config: MicrosoftCalendarConfig & { sharedCalendar?: string }) {
     super();
+    this.userPath = config.sharedCalendar ? `/users/${config.sharedCalendar}` : '/me';
   }
 
   async initialize(): Promise<void> {
@@ -22,7 +25,9 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Calendars.ReadWrite offline_access',
+      scope: this.config.sharedCalendar
+        ? 'https://graph.microsoft.com/Calendars.ReadWrite.Shared offline_access'
+        : 'https://graph.microsoft.com/Calendars.ReadWrite offline_access',
     });
 
     const res = await fetch(tokenUrl, {
@@ -79,7 +84,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       $top: '50',
     });
 
-    const data = await this.graphRequest(`/me/calendarView?${params}`);
+    const data = await this.graphRequest(`${this.userPath}/calendarView?${params}`);
     return (data.value ?? []).map((item: any) => this.mapEvent(item));
   }
 
@@ -120,7 +125,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       patch.end = { dateTime: this.formatDateInTz(input.end, this.timezone), timeZone: this.timezone };
     }
 
-    const data = await this.graphRequest(`/me/events/${id}`, {
+    const data = await this.graphRequest(`${this.userPath}/events/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
@@ -129,7 +134,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   async deleteEvent(id: string): Promise<void> {
-    await this.graphRequest(`/me/events/${id}`, { method: 'DELETE' });
+    await this.graphRequest(`${this.userPath}/events/${id}`, { method: 'DELETE' });
   }
 
   async checkAvailability(start: Date, end: Date): Promise<{ available: boolean; conflicts: CalendarEvent[] }> {

@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export interface UsageRecord {
   model: string;
@@ -20,13 +20,13 @@ export interface DailyUsageSummary {
 }
 
 export class UsageRepository {
-  private readonly stmtUpsert: BetterSqlite3.Statement;
-  private readonly stmtDaily: BetterSqlite3.Statement;
-  private readonly stmtRange: BetterSqlite3.Statement;
-  private readonly stmtTotal: BetterSqlite3.Statement;
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  constructor(private readonly db: BetterSqlite3.Database) {
-    this.stmtUpsert = db.prepare(`
+  /** Record a single LLM call (upsert into today's row for this model). */
+  async record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, userId?: string): Promise<void> {
+    const date = new Date().toISOString().slice(0, 10);
+    // Global aggregate (unchanged)
+    await this.adapter.execute(`
       INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(date, model) DO UPDATE SET
@@ -36,38 +36,10 @@ export class UsageRepository {
         cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
         cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
         cost_usd = cost_usd + excluded.cost_usd
-    `);
-
-    this.stmtDaily = db.prepare(`
-      SELECT model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd
-      FROM llm_usage WHERE date = ?
-    `);
-
-    this.stmtRange = db.prepare(`
-      SELECT date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd
-      FROM llm_usage WHERE date >= ? AND date <= ? ORDER BY date, model
-    `);
-
-    this.stmtTotal = db.prepare(`
-      SELECT model,
-        SUM(calls) as calls,
-        SUM(input_tokens) as input_tokens,
-        SUM(output_tokens) as output_tokens,
-        SUM(cache_read_tokens) as cache_read_tokens,
-        SUM(cache_write_tokens) as cache_write_tokens,
-        SUM(cost_usd) as cost_usd
-      FROM llm_usage GROUP BY model
-    `);
-  }
-
-  /** Record a single LLM call (upsert into today's row for this model). */
-  record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, userId?: string): void {
-    const date = new Date().toISOString().slice(0, 10);
-    // Global aggregate (unchanged)
-    this.stmtUpsert.run(date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd);
+    `, [date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]);
     // Per-user in separate table (no double-counting)
     if (userId) {
-      this.db.prepare(`
+      await this.adapter.execute(`
         INSERT INTO llm_usage_by_user (date, user_id, model, calls, input_tokens, output_tokens, cost_usd)
         VALUES (?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(date, user_id, model) DO UPDATE SET
@@ -75,18 +47,18 @@ export class UsageRepository {
           input_tokens = input_tokens + excluded.input_tokens,
           output_tokens = output_tokens + excluded.output_tokens,
           cost_usd = cost_usd + excluded.cost_usd
-      `).run(date, userId, model, inputTokens, outputTokens, costUsd);
+      `, [date, userId, model, inputTokens, outputTokens, costUsd]);
     }
   }
 
   /** Get usage grouped by user_id for a date range. */
-  getByUser(startDate: string, endDate: string): Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }> {
-    const rows = this.db.prepare(`
+  async getByUser(startDate: string, endDate: string): Promise<Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }>> {
+    const rows = await this.adapter.query(`
       SELECT user_id, SUM(calls) as calls, SUM(input_tokens) as input_tokens,
              SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost_usd
       FROM llm_usage_by_user WHERE date >= ? AND date <= ?
       GROUP BY user_id ORDER BY cost_usd DESC
-    `).all(startDate, endDate) as Record<string, unknown>[];
+    `, [startDate, endDate]) as Record<string, unknown>[];
     return rows.map(r => ({
       userId: r.user_id as string,
       calls: r.calls as number,
@@ -97,14 +69,20 @@ export class UsageRepository {
   }
 
   /** Get usage for a specific date. */
-  getDaily(date: string): DailyUsageSummary {
-    const rows = this.stmtDaily.all(date) as Record<string, unknown>[];
+  async getDaily(date: string): Promise<DailyUsageSummary> {
+    const rows = await this.adapter.query(`
+      SELECT model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd
+      FROM llm_usage WHERE date = ?
+    `, [date]) as Record<string, unknown>[];
     return this.buildSummary(date, rows);
   }
 
   /** Get usage for a date range (inclusive). */
-  getRange(startDate: string, endDate: string): DailyUsageSummary[] {
-    const rows = this.stmtRange.all(startDate, endDate) as Record<string, unknown>[];
+  async getRange(startDate: string, endDate: string): Promise<DailyUsageSummary[]> {
+    const rows = await this.adapter.query(`
+      SELECT date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd
+      FROM llm_usage WHERE date >= ? AND date <= ? ORDER BY date, model
+    `, [startDate, endDate]) as Record<string, unknown>[];
     const byDate = new Map<string, Record<string, unknown>[]>();
     for (const row of rows) {
       const d = row.date as string;
@@ -115,15 +93,25 @@ export class UsageRepository {
   }
 
   /** Get all-time totals grouped by model. */
-  getTotal(): UsageRecord[] {
-    const rows = this.stmtTotal.all() as Record<string, unknown>[];
+  async getTotal(): Promise<UsageRecord[]> {
+    const rows = await this.adapter.query(`
+      SELECT model,
+        SUM(calls) as calls,
+        SUM(input_tokens) as input_tokens,
+        SUM(output_tokens) as output_tokens,
+        SUM(cache_read_tokens) as cache_read_tokens,
+        SUM(cache_write_tokens) as cache_write_tokens,
+        SUM(cost_usd) as cost_usd
+      FROM llm_usage GROUP BY model
+    `) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  cleanup(olderThanDays: number = 365): number {
-    const result = this.db.prepare(
-      `DELETE FROM llm_usage WHERE date < date('now', '-' || ? || ' days')`
-    ).run(olderThanDays);
+  async cleanup(olderThanDays: number = 365): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString().slice(0, 10);
+    const result = await this.adapter.execute(
+      `DELETE FROM llm_usage WHERE date < ?`, [cutoff],
+    );
     return result.changes;
   }
 

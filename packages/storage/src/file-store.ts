@@ -116,6 +116,10 @@ export class S3FileStore implements FileStore {
     this.endpoint = config.s3Endpoint;
   }
 
+  private sanitize(name: string): string {
+    return name.replace(/[<>:"/\\|?*]/g, '_').replace(/\.\./g, '_').slice(0, 100);
+  }
+
   private async getClient(): Promise<any> {
     if (this.client) return this.client;
     // Dynamic import to keep S3 SDK optional
@@ -136,7 +140,7 @@ export class S3FileStore implements FileStore {
     const client = await this.getClient();
     const { PutObjectCommand } = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const key = `${userId}/${timestamp}_${fileName}`;
+    const key = `${this.sanitize(userId)}/${timestamp}_${this.sanitize(fileName)}`;
 
     await client.send(new PutObjectCommand({
       Bucket: this.bucket,
@@ -162,7 +166,7 @@ export class S3FileStore implements FileStore {
     const { ListObjectsV2Command } = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
     const response = await client.send(new ListObjectsV2Command({
       Bucket: this.bucket,
-      Prefix: `${userId}/`,
+      Prefix: `${this.sanitize(userId)}/`,
     }));
 
     return (response.Contents ?? []).map((obj: any) => ({

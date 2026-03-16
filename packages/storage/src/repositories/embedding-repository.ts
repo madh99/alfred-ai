@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export interface EmbeddingEntry {
@@ -24,26 +24,27 @@ export interface StoreEmbeddingInput {
 }
 
 export class EmbeddingRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  store(input: StoreEmbeddingInput): EmbeddingEntry {
+  async store(input: StoreEmbeddingInput): Promise<EmbeddingEntry> {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     // Store embedding as Float32Array buffer
     const buffer = Buffer.from(new Float32Array(input.embedding).buffer);
 
-    const upsert = this.db.transaction(() => {
+    await this.adapter.transaction(async (tx) => {
       // Delete existing embedding for same source
-      this.db.prepare(
+      await tx.execute(
         'DELETE FROM embeddings WHERE user_id = ? AND source_type = ? AND source_id = ?',
-      ).run(input.userId, input.sourceType, input.sourceId);
+        [input.userId, input.sourceType, input.sourceId],
+      );
 
-      this.db.prepare(
+      await tx.execute(
         'INSERT INTO embeddings (id, user_id, source_type, source_id, content, embedding, model, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      ).run(id, input.userId, input.sourceType, input.sourceId, input.content, buffer, input.model, input.dimensions, now);
+        [id, input.userId, input.sourceType, input.sourceId, input.content, buffer, input.model, input.dimensions, now],
+      );
     });
-    upsert();
 
     return {
       id,
@@ -58,27 +59,30 @@ export class EmbeddingRepository {
     };
   }
 
-  findByUser(userId: string): EmbeddingEntry[] {
-    const rows = this.db.prepare(
+  async findByUser(userId: string): Promise<EmbeddingEntry[]> {
+    const rows = await this.adapter.query(
       'SELECT * FROM embeddings WHERE user_id = ? ORDER BY created_at DESC',
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
 
     return rows.map(row => this.mapRow(row));
   }
 
-  findBySource(sourceType: string, sourceId: string): EmbeddingEntry | undefined {
-    const row = this.db.prepare(
+  async findBySource(sourceType: string, sourceId: string): Promise<EmbeddingEntry | undefined> {
+    const row = await this.adapter.queryOne(
       'SELECT * FROM embeddings WHERE source_type = ? AND source_id = ?',
-    ).get(sourceType, sourceId) as Record<string, unknown> | undefined;
+      [sourceType, sourceId],
+    ) as Record<string, unknown> | undefined;
 
     if (!row) return undefined;
     return this.mapRow(row);
   }
 
-  delete(sourceType: string, sourceId: string): boolean {
-    const result = this.db.prepare(
+  async delete(sourceType: string, sourceId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
       'DELETE FROM embeddings WHERE source_type = ? AND source_id = ?',
-    ).run(sourceType, sourceId);
+      [sourceType, sourceId],
+    );
     return result.changes > 0;
   }
 

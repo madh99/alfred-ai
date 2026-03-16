@@ -338,6 +338,8 @@ interface ExistingConfig {
   routing?: { apiKey?: string };
   youtube?: { apiKey?: string; supadata?: { enabled?: boolean; apiKey?: string } };
   energy?: { gridName?: string; gridUsageCt?: number; gridLossCt?: number; gridCapacityFee?: number; gridMeterFee?: number };
+  storage?: { path?: string; backend?: string; connectionString?: string };
+  fileStore?: { backend?: string; basePath?: string; s3Endpoint?: string; s3Bucket?: string; s3AccessKey?: string; s3SecretKey?: string };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1337,6 +1339,68 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Einzelinstanz — kein Cluster.')}`);
     }
 
+    // ── 8d5. Storage Backend (SQLite / PostgreSQL) ──────────
+    let storageBackend: 'sqlite' | 'postgres' = 'sqlite';
+    let storageConnectionString = '';
+    const existingBackend = existing.config.storage?.backend ?? 'sqlite';
+    const existingConnStr = existing.env['ALFRED_STORAGE_CONNECTION_STRING'] ?? (existing.config.storage as any)?.connectionString ?? '';
+
+    if (clusterEnabled || existingBackend === 'postgres') {
+      console.log(`\n${bold('Datenbank-Backend')}`);
+      console.log(`${dim('SQLite ist Standard. PostgreSQL empfohlen für Cluster/HA (gemeinsamer Zustand).')}`);
+      console.log(`  ${cyan('1)')} SQLite (lokal, Standard)`);
+      console.log(`  ${cyan('2)')} PostgreSQL (HA, gemeinsame DB)`);
+      const backendDefault = existingBackend === 'postgres' ? '2' : (clusterEnabled ? '2' : '1');
+      const backendChoice = (await rl.question(`${YELLOW}> ${RESET}${dim(`[${backendDefault}] `)}`)).trim() || backendDefault;
+
+      if (backendChoice === '2') {
+        storageBackend = 'postgres';
+        const connDefault = existingConnStr || 'postgres://alfred:password@localhost:5432/alfred';
+        storageConnectionString = await askWithDefault(rl, '  PostgreSQL Connection-String', connDefault);
+        console.log(`  ${green('>')} PostgreSQL: ${dim(storageConnectionString.replace(/:[^:@]+@/, ':***@'))}`);
+
+        if (existingBackend === 'sqlite' && existingConnStr !== storageConnectionString) {
+          console.log(`  ${yellow('i')} Bestehende SQLite-Daten migrieren: ${bold('alfred migrate-db')}`);
+        }
+      } else {
+        console.log(`  ${green('>')} SQLite (Standard)`);
+      }
+    }
+
+    // ── 8d6. File Store (Local / NFS / S3) ──────────────────
+    let fileStoreBackend: 'local' | 'nfs' | 's3' = 'local';
+    let fileStoreBasePath = '';
+    let fileStoreS3Endpoint = '';
+    let fileStoreS3Bucket = '';
+    let fileStoreS3AccessKey = '';
+    let fileStoreS3SecretKey = '';
+    const existingFileStore = existing.config.fileStore;
+
+    if (clusterEnabled || existingFileStore) {
+      console.log(`\n${bold('Datei-Storage')}`);
+      console.log(`${dim('Wo sollen Datei-Uploads (Dokumente, Inbox) gespeichert werden?')}`);
+      console.log(`  ${cyan('1)')} Lokal (Standard — ./data/files)`);
+      console.log(`  ${cyan('2)')} NFS / Netzwerk-Pfad`);
+      console.log(`  ${cyan('3)')} S3 / MinIO`);
+      const fsDefault = existingFileStore?.backend === 's3' ? '3' : (existingFileStore?.backend === 'nfs' ? '2' : '1');
+      const fsChoice = (await rl.question(`${YELLOW}> ${RESET}${dim(`[${fsDefault}] `)}`)).trim() || fsDefault;
+
+      if (fsChoice === '3') {
+        fileStoreBackend = 's3';
+        fileStoreS3Endpoint = await askWithDefault(rl, '  S3/MinIO Endpoint (z.B. http://minio:9000)', existingFileStore?.s3Endpoint ?? '');
+        fileStoreS3Bucket = await askWithDefault(rl, '  Bucket-Name', existingFileStore?.s3Bucket ?? 'alfred-files');
+        fileStoreS3AccessKey = await askWithDefault(rl, '  Access Key', existing.env['ALFRED_S3_ACCESS_KEY'] ?? existingFileStore?.s3AccessKey ?? '');
+        fileStoreS3SecretKey = await askWithDefault(rl, '  Secret Key', existing.env['ALFRED_S3_SECRET_KEY'] ?? existingFileStore?.s3SecretKey ?? '');
+        console.log(`  ${green('>')} S3: ${dim(fileStoreS3Endpoint)} / ${fileStoreS3Bucket}`);
+      } else if (fsChoice === '2') {
+        fileStoreBackend = 'nfs';
+        fileStoreBasePath = await askWithDefault(rl, '  NFS-Pfad', existingFileStore?.basePath ?? '/mnt/alfred-files');
+        console.log(`  ${green('>')} NFS: ${dim(fileStoreBasePath)}`);
+      } else {
+        console.log(`  ${green('>')} Lokal (./data/files)`);
+      }
+    }
+
     // ── 8e. Infrastructure (Proxmox / UniFi / Home Assistant) ──
     console.log(`\n${bold('Infrastructure Management (Proxmox / UniFi / Home Assistant)?')}`);
     console.log(`${dim('Control VMs, containers, network devices, and smart home through Alfred.')}`);
@@ -2003,6 +2067,18 @@ export async function setupCommand(): Promise<void> {
       envLines.push('# ALFRED_ENERGY_GRID_METER_FEE=');
     }
 
+    // === Storage & File Store ===
+    if (storageConnectionString) {
+      envLines.push('', '# === Storage (PostgreSQL) ===', '');
+      envLines.push(`ALFRED_STORAGE_CONNECTION_STRING=${storageConnectionString}`);
+    }
+
+    if (fileStoreBackend === 's3') {
+      envLines.push('', '# === File Store (S3/MinIO) ===', '');
+      if (fileStoreS3AccessKey) envLines.push(`ALFRED_S3_ACCESS_KEY=${fileStoreS3AccessKey}`);
+      if (fileStoreS3SecretKey) envLines.push(`ALFRED_S3_SECRET_KEY=${fileStoreS3SecretKey}`);
+    }
+
     envLines.push('', '# === Security ===', '');
 
     if (ownerUserId) {
@@ -2255,7 +2331,19 @@ export async function setupCommand(): Promise<void> {
       } : {}),
       storage: {
         path: './data/alfred.db',
+        ...(storageBackend === 'postgres' ? { backend: 'postgres' as const } : {}),
+        ...(storageConnectionString ? { connectionString: storageConnectionString } : {}),
       },
+      ...(fileStoreBackend !== 'local' ? {
+        fileStore: {
+          backend: fileStoreBackend,
+          ...(fileStoreBasePath ? { basePath: fileStoreBasePath } : {}),
+          ...(fileStoreS3Endpoint ? { s3Endpoint: fileStoreS3Endpoint } : {}),
+          ...(fileStoreS3Bucket ? { s3Bucket: fileStoreS3Bucket } : {}),
+          ...(fileStoreS3AccessKey ? { s3AccessKey: fileStoreS3AccessKey } : {}),
+          ...(fileStoreS3SecretKey ? { s3SecretKey: fileStoreS3SecretKey } : {}),
+        },
+      } : {}),
       logger: {
         level: 'info',
         pretty: true,
@@ -2441,6 +2529,12 @@ ${ownerAdminRule}
     console.log(`  ${bold('Code Sandbox:')}  ${enableSandbox ? green('enabled') : dim('disabled')}`);
     console.log(`  ${bold('Web Chat UI:')}   ${enableWebUi ? green('enabled (/alfred/)') : dim('disabled')}`);
     console.log(`  ${bold('TLS/HTTPS:')}    ${enableTls ? green('enabled (self-signed)') : dim('disabled')}`);
+    if (storageBackend === 'postgres') {
+      console.log(`  ${bold('Storage:')}       ${green('PostgreSQL')}`);
+    }
+    if (fileStoreBackend !== 'local') {
+      console.log(`  ${bold('File Store:')}    ${green(fileStoreBackend.toUpperCase())}${fileStoreBackend === 's3' ? ` (${fileStoreS3Bucket})` : ` (${fileStoreBasePath})`}`);
+    }
     if (clusterEnabled) {
       console.log(`  ${bold('Cluster:')}       ${green(`${clusterRole} (${clusterNodeId})`)}`);
       console.log(`  ${bold('Redis:')}         ${clusterRedisUrl}`);

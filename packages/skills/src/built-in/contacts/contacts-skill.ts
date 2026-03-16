@@ -5,6 +5,9 @@ import type { ContactsProvider, Contact } from './contacts-provider.js';
 type ContactsAction = 'search' | 'get' | 'list' | 'create' | 'update' | 'delete';
 
 export class ContactsSkill extends Skill {
+  /** Per-request override for user-specific contacts provider. */
+  private activeProvider?: ContactsProvider;
+
   readonly metadata: SkillMetadata = {
     name: 'contacts',
     category: 'productivity',
@@ -85,25 +88,51 @@ export class ContactsSkill extends Skill {
     super();
   }
 
-  async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
-    const action = input.action as ContactsAction;
+  /** Return the active (per-user or global) contacts provider. */
+  private get provider(): ContactsProvider {
+    return this.activeProvider ?? this.contactsProvider;
+  }
 
-    switch (action) {
-      case 'search':
-        return this.searchContacts(input);
-      case 'get':
-        return this.getContact(input);
-      case 'list':
-        return this.listContacts(input);
-      case 'create':
-        return this.createContact(input);
-      case 'update':
-        return this.updateContact(input);
-      case 'delete':
-        return this.deleteContact(input);
-      default:
-        return { success: false, error: `Unknown action: "${String(action)}"` };
+  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const userProvider = await this.resolveUserProvider(context);
+    this.activeProvider = userProvider ?? undefined;
+
+    try {
+      const action = input.action as ContactsAction;
+
+      switch (action) {
+        case 'search':
+          return this.searchContacts(input);
+        case 'get':
+          return this.getContact(input);
+        case 'list':
+          return this.listContacts(input);
+        case 'create':
+          return this.createContact(input);
+        case 'update':
+          return this.updateContact(input);
+        case 'delete':
+          return this.deleteContact(input);
+        default:
+          return { success: false, error: `Unknown action: "${String(action)}"` };
+      }
+    } finally {
+      this.activeProvider = undefined;
     }
+  }
+
+  /**
+   * Resolve a per-user contacts provider from UserServiceResolver.
+   * Returns null if no per-user config is available (fall back to global).
+   */
+  private async resolveUserProvider(context: SkillContext): Promise<ContactsProvider | null> {
+    if (!context.userServiceResolver || !context.alfredUserId) return null;
+    const config = await context.userServiceResolver.getServiceConfig(context.alfredUserId, 'contacts');
+    if (!config) return null;
+    try {
+      const { createContactsProvider } = await import('./factory.js');
+      return await createContactsProvider(config as any);
+    } catch { return null; }
   }
 
   private async searchContacts(input: Record<string, unknown>): Promise<SkillResult> {
@@ -111,7 +140,7 @@ export class ContactsSkill extends Skill {
     if (!query) return { success: false, error: 'Missing required field "query"' };
 
     try {
-      const contacts = await this.contactsProvider.search(query);
+      const contacts = await this.provider.search(query);
 
       if (contacts.length === 0) {
         return { success: true, data: [], display: `No contacts found for "${query}".` };
@@ -129,7 +158,7 @@ export class ContactsSkill extends Skill {
     if (!contactId) return { success: false, error: 'Missing required field "contactId"' };
 
     try {
-      const contact = await this.contactsProvider.get(contactId);
+      const contact = await this.provider.get(contactId);
       if (!contact) {
         return { success: false, error: `Contact "${contactId}" not found.` };
       }
@@ -145,7 +174,7 @@ export class ContactsSkill extends Skill {
     const limit = (input.limit as number) ?? 50;
 
     try {
-      const contacts = await this.contactsProvider.list(limit);
+      const contacts = await this.provider.list(limit);
 
       if (contacts.length === 0) {
         return { success: true, data: [], display: 'No contacts found.' };
@@ -161,7 +190,7 @@ export class ContactsSkill extends Skill {
   private async createContact(input: Record<string, unknown>): Promise<SkillResult> {
     try {
       const contactInput = this.buildContactInput(input);
-      const contact = await this.contactsProvider.create(contactInput);
+      const contact = await this.provider.create(contactInput);
       return {
         success: true,
         data: contact,
@@ -178,7 +207,7 @@ export class ContactsSkill extends Skill {
 
     try {
       const contactInput = this.buildContactInput(input);
-      const contact = await this.contactsProvider.update(contactId, contactInput);
+      const contact = await this.provider.update(contactId, contactInput);
       return {
         success: true,
         data: contact,
@@ -194,7 +223,7 @@ export class ContactsSkill extends Skill {
     if (!contactId) return { success: false, error: 'Missing required field "contactId"' };
 
     try {
-      await this.contactsProvider.delete(contactId);
+      await this.provider.delete(contactId);
       return { success: true, data: { deleted: contactId }, display: `Contact "${contactId}" deleted.` };
     } catch (err) {
       return { success: false, error: `Failed to delete contact: ${err instanceof Error ? err.message : String(err)}` };

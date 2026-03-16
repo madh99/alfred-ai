@@ -1,4 +1,4 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 
 export interface TodoEntry {
@@ -15,26 +15,27 @@ export interface TodoEntry {
 }
 
 export class TodoRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  add(
+  async add(
     userId: string,
     title: string,
     opts?: { list?: string; description?: string; priority?: string; dueDate?: string },
-  ): TodoEntry {
+  ): Promise<TodoEntry> {
     const now = new Date().toISOString();
     const id = randomUUID();
     const list = opts?.list ?? 'default';
     const priority = opts?.priority ?? 'normal';
 
-    this.db.prepare(
+    await this.adapter.execute(
       'INSERT INTO todos (id, user_id, list, title, description, priority, due_date, completed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
-    ).run(id, userId, list, title, opts?.description ?? null, priority, opts?.dueDate ?? null, now, now);
+      [id, userId, list, title, opts?.description ?? null, priority, opts?.dueDate ?? null, now, now],
+    );
 
     return { id, userId, list, title, description: opts?.description, priority: priority as TodoEntry['priority'], dueDate: opts?.dueDate, completed: false, createdAt: now, updatedAt: now };
   }
 
-  list(userId: string, list?: string, includeCompleted = false): TodoEntry[] {
+  async list(userId: string, list?: string, includeCompleted = false): Promise<TodoEntry[]> {
     let sql = 'SELECT * FROM todos WHERE user_id = ?';
     const params: unknown[] = [userId];
 
@@ -47,55 +48,58 @@ export class TodoRepository {
     }
     sql += ' ORDER BY CASE priority WHEN \'urgent\' THEN 0 WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 WHEN \'low\' THEN 3 END, created_at DESC';
 
-    const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
-  getById(todoId: string): TodoEntry | undefined {
-    const row = this.db.prepare('SELECT * FROM todos WHERE id = ?').get(todoId) as Record<string, unknown> | undefined;
+  async getById(todoId: string): Promise<TodoEntry | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM todos WHERE id = ?', [todoId]) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
   }
 
-  complete(todoId: string): boolean {
+  async complete(todoId: string): Promise<boolean> {
     const now = new Date().toISOString();
-    const result = this.db.prepare(
+    const result = await this.adapter.execute(
       'UPDATE todos SET completed = 1, updated_at = ? WHERE id = ? AND completed = 0',
-    ).run(now, todoId);
+      [now, todoId],
+    );
     return result.changes > 0;
   }
 
-  uncomplete(todoId: string): boolean {
+  async uncomplete(todoId: string): Promise<boolean> {
     const now = new Date().toISOString();
-    const result = this.db.prepare(
+    const result = await this.adapter.execute(
       'UPDATE todos SET completed = 0, updated_at = ? WHERE id = ? AND completed = 1',
-    ).run(now, todoId);
+      [now, todoId],
+    );
     return result.changes > 0;
   }
 
-  delete(todoId: string): boolean {
-    const result = this.db.prepare('DELETE FROM todos WHERE id = ?').run(todoId);
+  async delete(todoId: string): Promise<boolean> {
+    const result = await this.adapter.execute('DELETE FROM todos WHERE id = ?', [todoId]);
     return result.changes > 0;
   }
 
-  clearCompleted(userId: string, list?: string): number {
+  async clearCompleted(userId: string, list?: string): Promise<number> {
     let sql = 'DELETE FROM todos WHERE user_id = ? AND completed = 1';
     const params: unknown[] = [userId];
     if (list) {
       sql += ' AND list = ?';
       params.push(list);
     }
-    const result = this.db.prepare(sql).run(...params);
+    const result = await this.adapter.execute(sql, params);
     return result.changes;
   }
 
-  getLists(userId: string): { list: string; open: number; completed: number; total: number }[] {
-    const rows = this.db.prepare(
+  async getLists(userId: string): Promise<{ list: string; open: number; completed: number; total: number }[]> {
+    const rows = await this.adapter.query(
       `SELECT list,
         SUM(CASE WHEN completed = 0 THEN 1 ELSE 0 END) as open,
         SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) as completed,
         COUNT(*) as total
        FROM todos WHERE user_id = ? GROUP BY list ORDER BY list`,
-    ).all(userId) as Record<string, unknown>[];
+      [userId],
+    ) as Record<string, unknown>[];
 
     return rows.map(r => ({
       list: r.list as string,
@@ -105,26 +109,40 @@ export class TodoRepository {
     }));
   }
 
+  /** Returns todos for a given list name, regardless of userId (used for shared lists). */
+  async listByListName(listName: string, includeCompleted = false): Promise<TodoEntry[]> {
+    let sql = 'SELECT * FROM todos WHERE list = ?';
+    const params: unknown[] = [listName];
+    if (!includeCompleted) {
+      sql += ' AND completed = 0';
+    }
+    sql += ' ORDER BY CASE priority WHEN \'urgent\' THEN 0 WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 WHEN \'low\' THEN 3 END, created_at DESC';
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   /** Returns open todos with a due_date between now and windowEndIso (ISO strings). */
-  getDueInWindow(windowEndIso: string): TodoEntry[] {
+  async getDueInWindow(windowEndIso: string): Promise<TodoEntry[]> {
     const nowIso = new Date().toISOString();
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       `SELECT * FROM todos
        WHERE completed = 0 AND due_date IS NOT NULL
          AND due_date >= ? AND due_date <= ?
        ORDER BY due_date ASC`,
-    ).all(nowIso, windowEndIso) as Record<string, unknown>[];
+      [nowIso, windowEndIso],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
   /** Returns open todos where due_date has already passed (overdue). */
-  getOverdue(): TodoEntry[] {
+  async getOverdue(): Promise<TodoEntry[]> {
     const nowIso = new Date().toISOString();
-    const rows = this.db.prepare(
+    const rows = await this.adapter.query(
       `SELECT * FROM todos
        WHERE completed = 0 AND due_date IS NOT NULL AND due_date < ?
        ORDER BY due_date ASC`,
-    ).all(nowIso) as Record<string, unknown>[];
+      [nowIso],
+    ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 

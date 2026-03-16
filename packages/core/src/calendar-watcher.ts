@@ -43,7 +43,7 @@ export class CalendarWatcher {
       const now = Date.now();
       if (now - this.lastCleanup > 3_600_000) {
         const cutoff = new Date(now - 24 * 3_600_000).toISOString();
-        this.notifRepo.cleanup(cutoff);
+        await this.notifRepo.cleanup(cutoff);
         this.lastCleanup = now;
       }
 
@@ -74,7 +74,7 @@ export class CalendarWatcher {
     if (event.allDay) return;
 
     // Check if already notified
-    if (this.notifRepo.wasNotified(event.id, this.defaultChatId)) return;
+    if (await this.notifRepo.wasNotified(event.id, this.defaultChatId)) return;
 
     // Check if event starts within the vorlauf window
     const now = Date.now();
@@ -113,7 +113,7 @@ export class CalendarWatcher {
     if (adapter) {
       try {
         await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
-        this.notifRepo.markNotified(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
+        await this.notifRepo.markNotified(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
         this.logger.info({ eventId: event.id, title: event.title }, 'Calendar vorlauf notification sent');
         this.activityLogger?.logCalendarNotify({
           eventId: event.id, eventTitle: event.title,

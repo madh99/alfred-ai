@@ -1,26 +1,28 @@
-import type BetterSqlite3 from 'better-sqlite3';
+import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export class CalendarNotificationRepository {
-  constructor(private readonly db: BetterSqlite3.Database) {}
+  constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  wasNotified(eventId: string, chatId: string): boolean {
-    const row = this.db.prepare(
-      'SELECT 1 FROM calendar_notifications WHERE event_id = ? AND chat_id = ?'
-    ).get(eventId, chatId);
+  async wasNotified(eventId: string, chatId: string): Promise<boolean> {
+    const row = await this.adapter.queryOne(
+      'SELECT 1 FROM calendar_notifications WHERE event_id = ? AND chat_id = ?', [eventId, chatId],
+    );
     return !!row;
   }
 
-  markNotified(eventId: string, chatId: string, platform: string, eventStart: string): void {
-    this.db.prepare(`
-      INSERT OR IGNORE INTO calendar_notifications (event_id, chat_id, platform, notified_at, event_start)
-      VALUES (?, ?, ?, datetime('now'), ?)
-    `).run(eventId, chatId, platform, eventStart);
+  async markNotified(eventId: string, chatId: string, platform: string, eventStart: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.adapter.execute(`
+      INSERT INTO calendar_notifications (event_id, chat_id, platform, notified_at, event_start)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (event_id, chat_id) DO NOTHING
+    `, [eventId, chatId, platform, now, eventStart]);
   }
 
-  cleanup(cutoffIso: string): number {
-    const result = this.db.prepare(
-      'DELETE FROM calendar_notifications WHERE event_start < ?'
-    ).run(cutoffIso);
+  async cleanup(cutoffIso: string): Promise<number> {
+    const result = await this.adapter.execute(
+      'DELETE FROM calendar_notifications WHERE event_start < ?', [cutoffIso],
+    );
     return result.changes;
   }
 }

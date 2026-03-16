@@ -4,6 +4,13 @@ import type { MicrosoftTodoConfig } from '@alfred/types';
 
 export class MicrosoftTodoSkill extends Skill {
   private accessToken = '';
+  /** Graph API user path. '/me' for own todos, '/users/{email}' for shared. */
+  private get userPath(): string {
+    const cfg = this.cfg;
+    return (cfg as any).sharedUser ? `/users/${(cfg as any).sharedUser}` : '/me';
+  }
+  /** Per-request override for user-specific config. */
+  private activeConfig?: MicrosoftTodoConfig;
 
   readonly metadata: SkillMetadata = {
     name: 'microsoft_todo',
@@ -36,35 +43,58 @@ export class MicrosoftTodoSkill extends Skill {
     super();
   }
 
-  async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
-    const action = input.action as string;
+  /** Return the active (per-user or global) config. */
+  private get cfg(): MicrosoftTodoConfig {
+    return this.activeConfig ?? this.config;
+  }
+
+  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const userConfig = await this.resolveUserConfig(context);
+    this.activeConfig = userConfig ?? undefined;
 
     try {
-      switch (action) {
-        case 'list_lists': return await this.listLists();
-        case 'list_tasks': return await this.listTasks(input);
-        case 'add_task': return await this.addTask(input);
-        case 'complete_task': return await this.completeTask(input);
-        case 'uncomplete_task': return await this.uncompleteTask(input);
-        case 'delete_task': return await this.deleteTask(input);
-        case 'update_task': return await this.updateTask(input);
-        case 'create_list': return await this.createList(input);
-        default:
-          return { success: false, error: `Unknown action: ${action}` };
+      const action = input.action as string;
+
+      try {
+        switch (action) {
+          case 'list_lists': return await this.listLists();
+          case 'list_tasks': return await this.listTasks(input);
+          case 'add_task': return await this.addTask(input);
+          case 'complete_task': return await this.completeTask(input);
+          case 'uncomplete_task': return await this.uncompleteTask(input);
+          case 'delete_task': return await this.deleteTask(input);
+          case 'update_task': return await this.updateTask(input);
+          case 'create_list': return await this.createList(input);
+          default:
+            return { success: false, error: `Unknown action: ${action}` };
+        }
+      } catch (err) {
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
-    } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    } finally {
+      this.activeConfig = undefined;
     }
+  }
+
+  /**
+   * Resolve a per-user todo config from UserServiceResolver.
+   * Returns null if no per-user config is available (fall back to global).
+   */
+  private async resolveUserConfig(context: SkillContext): Promise<MicrosoftTodoConfig | null> {
+    if (!context.userServiceResolver || !context.alfredUserId) return null;
+    const config = await context.userServiceResolver.getServiceConfig(context.alfredUserId, 'todo');
+    if (!config || !config.clientId) return null;
+    return config as unknown as MicrosoftTodoConfig;
   }
 
   // ── Graph API helpers ─────────────────────────────────────────────
 
   private async refreshAccessToken(): Promise<void> {
-    const tokenUrl = `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
+    const tokenUrl = `https://login.microsoftonline.com/${this.cfg.tenantId}/oauth2/v2.0/token`;
     const body = new URLSearchParams({
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      refresh_token: this.config.refreshToken,
+      client_id: this.cfg.clientId,
+      client_secret: this.cfg.clientSecret,
+      refresh_token: this.cfg.refreshToken,
       grant_type: 'refresh_token',
       scope: 'https://graph.microsoft.com/Tasks.ReadWrite offline_access',
     });
@@ -113,7 +143,7 @@ export class MicrosoftTodoSkill extends Skill {
   private async resolveListId(input: Record<string, unknown>): Promise<string> {
     if (input.listId) return input.listId as string;
 
-    const data = await this.graphRequest('/me/todo/lists');
+    const data = await this.graphRequest(`${this.userPath}/todo/lists`);
     const lists = (data.value ?? []) as Array<{ id: string; displayName: string; wellknownListName?: string }>;
 
     if (input.list) {
@@ -136,7 +166,7 @@ export class MicrosoftTodoSkill extends Skill {
   // ── Actions ───────────────────────────────────────────────────────
 
   private async listLists(): Promise<SkillResult> {
-    const data = await this.graphRequest('/me/todo/lists');
+    const data = await this.graphRequest(`${this.userPath}/todo/lists`);
     const lists = (data.value ?? []) as Array<{ id: string; displayName: string; isOwner: boolean; wellknownListName?: string }>;
 
     const display = lists.map(l => `• **${l.displayName}**${l.wellknownListName === 'defaultList' ? ' (Standard)' : ''} [listId=${l.id}]`).join('\n');
@@ -148,7 +178,7 @@ export class MicrosoftTodoSkill extends Skill {
     const listId = await this.resolveListId(input);
     const includeCompleted = input.includeCompleted === true;
 
-    let path = `/me/todo/lists/${listId}/tasks`;
+    let path = `${this.userPath}/todo/lists/${listId}/tasks`;
     if (!includeCompleted) {
       path += `?$filter=status ne 'completed'`;
     }
@@ -185,7 +215,7 @@ export class MicrosoftTodoSkill extends Skill {
     if (input.dueDate) task.dueDateTime = { dateTime: `${input.dueDate}T00:00:00`, timeZone: 'UTC' };
     if (input.importance) task.importance = input.importance;
 
-    const created = await this.graphRequest(`/me/todo/lists/${listId}/tasks`, {
+    const created = await this.graphRequest(`${this.userPath}/todo/lists/${listId}/tasks`, {
       method: 'POST',
       body: JSON.stringify(task),
     });
@@ -197,7 +227,7 @@ export class MicrosoftTodoSkill extends Skill {
     const listId = await this.resolveListId(input);
     if (!input.taskId) return { success: false, error: 'taskId is required.' };
 
-    await this.graphRequest(`/me/todo/lists/${listId}/tasks/${input.taskId}`, {
+    await this.graphRequest(`${this.userPath}/todo/lists/${listId}/tasks/${input.taskId}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'completed' }),
     });
@@ -209,7 +239,7 @@ export class MicrosoftTodoSkill extends Skill {
     const listId = await this.resolveListId(input);
     if (!input.taskId) return { success: false, error: 'taskId is required.' };
 
-    await this.graphRequest(`/me/todo/lists/${listId}/tasks/${input.taskId}`, {
+    await this.graphRequest(`${this.userPath}/todo/lists/${listId}/tasks/${input.taskId}`, {
       method: 'PATCH',
       body: JSON.stringify({ status: 'notStarted' }),
     });
@@ -221,7 +251,7 @@ export class MicrosoftTodoSkill extends Skill {
     const listId = await this.resolveListId(input);
     if (!input.taskId) return { success: false, error: 'taskId is required.' };
 
-    await this.graphRequest(`/me/todo/lists/${listId}/tasks/${input.taskId}`, {
+    await this.graphRequest(`${this.userPath}/todo/lists/${listId}/tasks/${input.taskId}`, {
       method: 'DELETE',
     });
 
@@ -242,7 +272,7 @@ export class MicrosoftTodoSkill extends Skill {
       return { success: false, error: 'Nothing to update — provide title, body, dueDate, or importance.' };
     }
 
-    const updated = await this.graphRequest(`/me/todo/lists/${listId}/tasks/${input.taskId}`, {
+    const updated = await this.graphRequest(`${this.userPath}/todo/lists/${listId}/tasks/${input.taskId}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
@@ -253,7 +283,7 @@ export class MicrosoftTodoSkill extends Skill {
   private async createList(input: Record<string, unknown>): Promise<SkillResult> {
     if (!input.title) return { success: false, error: 'title is required for create_list.' };
 
-    const created = await this.graphRequest('/me/todo/lists', {
+    const created = await this.graphRequest(`${this.userPath}/todo/lists`, {
       method: 'POST',
       body: JSON.stringify({ displayName: input.title }),
     });
