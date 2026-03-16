@@ -109,11 +109,13 @@ export class WatchEngine {
       return;
     }
 
+    // Resolve the user who owns this watch.
+    // In DMs, chatId == userId. In groups, chatId is the group ID.
+    // Use chatId as platformUserId for DMs (most common case).
     const { context } = await buildSkillContext(this.users, {
       platformUserId: watch.chatId,
       platform: watch.platform as Platform,
       chatId: watch.chatId,
-      chatType: 'dm',
     });
 
     const result = await this.skillSandbox.execute(skill, watch.skillParams, context);

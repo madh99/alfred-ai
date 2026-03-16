@@ -28,6 +28,7 @@ export class TodoWatcher {
     config: TodoWatcherConfig,
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
+    private readonly ownerUserId?: string,
   ) {
     this.minutesBefore = config.minutesBefore ?? 30;
     this.overdueCheck = config.overdueCheck ?? true;
@@ -50,7 +51,7 @@ export class TodoWatcher {
     try {
       // Upcoming todos within vorlauf window
       const windowEnd = new Date(Date.now() + this.minutesBefore * 60_000);
-      const upcoming = await this.todoRepo.getDueInWindow(windowEnd.toISOString());
+      const upcoming = await this.todoRepo.getDueInWindow(windowEnd.toISOString(), this.ownerUserId);
 
       for (const todo of upcoming) {
         await this.notify(todo.id, todo.title, todo.dueDate!, todo.list, todo.priority, 'upcoming');
@@ -60,7 +61,7 @@ export class TodoWatcher {
       const now = Date.now();
       if (this.overdueCheck && now - this.lastOverdueCheck > 3_600_000) {
         this.lastOverdueCheck = now;
-        const overdue = await this.todoRepo.getOverdue();
+        const overdue = await this.todoRepo.getOverdue(this.ownerUserId);
         for (const todo of overdue) {
           await this.notify(todo.id, todo.title, todo.dueDate!, todo.list, todo.priority, 'overdue');
         }

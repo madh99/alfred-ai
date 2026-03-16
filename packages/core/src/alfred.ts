@@ -330,6 +330,7 @@ export class Alfred {
           { minutesBefore: 30 },
           this.logger.child({ component: 'todo-watcher' }),
           activityLogger,
+          ownerUserId,
         );
       }
     }

@@ -183,13 +183,14 @@ export class MemoryRepository {
   /**
    * Bulk-delete memories by their IDs.
    */
-  async deleteByIds(ids: string[]): Promise<number> {
+  async deleteByIds(ids: string[], userId?: string): Promise<number> {
     if (ids.length === 0) return 0;
     const placeholders = ids.map(() => '?').join(',');
-    const result = await this.adapter.execute(
-      `DELETE FROM memories WHERE id IN (${placeholders})`,
-      ids,
-    );
+    const sql = userId
+      ? `DELETE FROM memories WHERE id IN (${placeholders}) AND user_id = ?`
+      : `DELETE FROM memories WHERE id IN (${placeholders})`;
+    const params = userId ? [...ids, userId] : ids;
+    const result = await this.adapter.execute(sql, params);
     return result.changes;
   }
 

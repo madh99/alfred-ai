@@ -57,6 +57,12 @@ export class TodoRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /** Get a todo by ID, but only if it belongs to the specified user. */
+  async getByIdForUser(todoId: string, userId: string): Promise<TodoEntry | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM todos WHERE id = ? AND user_id = ?', [todoId, userId]) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async complete(todoId: string): Promise<boolean> {
     const now = new Date().toISOString();
     const result = await this.adapter.execute(
@@ -122,27 +128,24 @@ export class TodoRepository {
   }
 
   /** Returns open todos with a due_date between now and windowEndIso (ISO strings). */
-  async getDueInWindow(windowEndIso: string): Promise<TodoEntry[]> {
+  async getDueInWindow(windowEndIso: string, userId?: string): Promise<TodoEntry[]> {
     const nowIso = new Date().toISOString();
-    const rows = await this.adapter.query(
-      `SELECT * FROM todos
-       WHERE completed = 0 AND due_date IS NOT NULL
-         AND due_date >= ? AND due_date <= ?
-       ORDER BY due_date ASC`,
-      [nowIso, windowEndIso],
-    ) as Record<string, unknown>[];
+    const sql = userId
+      ? `SELECT * FROM todos WHERE user_id = ? AND completed = 0 AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ? ORDER BY due_date ASC`
+      : `SELECT * FROM todos WHERE completed = 0 AND due_date IS NOT NULL AND due_date >= ? AND due_date <= ? ORDER BY due_date ASC`;
+    const params = userId ? [userId, nowIso, windowEndIso] : [nowIso, windowEndIso];
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 
   /** Returns open todos where due_date has already passed (overdue). */
-  async getOverdue(): Promise<TodoEntry[]> {
+  async getOverdue(userId?: string): Promise<TodoEntry[]> {
     const nowIso = new Date().toISOString();
-    const rows = await this.adapter.query(
-      `SELECT * FROM todos
-       WHERE completed = 0 AND due_date IS NOT NULL AND due_date < ?
-       ORDER BY due_date ASC`,
-      [nowIso],
-    ) as Record<string, unknown>[];
+    const sql = userId
+      ? `SELECT * FROM todos WHERE user_id = ? AND completed = 0 AND due_date IS NOT NULL AND due_date < ? ORDER BY due_date ASC`
+      : `SELECT * FROM todos WHERE completed = 0 AND due_date IS NOT NULL AND due_date < ? ORDER BY due_date ASC`;
+    const params = userId ? [userId, nowIso] : [nowIso];
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
 

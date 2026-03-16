@@ -30,6 +30,12 @@ export class NoteRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /** Get a note by ID, but only if it belongs to the specified user. */
+  async getByIdForUser(noteId: string, userId: string): Promise<NoteEntry | undefined> {
+    const row = await this.adapter.queryOne('SELECT * FROM notes WHERE id = ? AND user_id = ?', [noteId, userId]) as Record<string, string> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async list(userId: string, limit = 50): Promise<NoteEntry[]> {
     const rows = await this.adapter.query(
       'SELECT * FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
