@@ -38,6 +38,10 @@ export interface SkillContext {
   linkedPlatformUserIds?: string[];
   /** User timezone (from profile) or server timezone as fallback. */
   timezone?: string;
+  /** Alfred user role (admin/user/family/guest). Undefined = unregistered. */
+  userRole?: string;
+  /** Alfred user ID (internal UUID from alfred_users table). */
+  alfredUserId?: string;
   /** ActivityTracker instance (avoid circular dep with skills package). */
   tracker?: unknown;
   /** Progress callback for reporting status updates. */

@@ -745,6 +745,14 @@ export class Alfred {
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
 
+    // 7b. Wire multi-user support into pipeline
+    {
+      const { AlfredUserRepository } = await import('@alfred/storage');
+      const { ROLE_SKILL_ACCESS } = await import('@alfred/skills');
+      const alfredUserRepo = new AlfredUserRepository(db);
+      this.pipeline.setAlfredUserRepo(alfredUserRepo, ROLE_SKILL_ACCESS);
+    }
+
     // 8. Initialize messaging adapters
     await this.initializeAdapters();
 

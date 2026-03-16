@@ -132,6 +132,8 @@ export class MessagePipeline {
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
+  private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
+  private roleSkillAccess?: Record<string, string[] | '*'>;
 
   /** Registry of currently running delegate agents, keyed by a unique agent ID. */
   private readonly activeAgents = new Map<string, ActiveAgent>();
@@ -159,6 +161,11 @@ export class MessagePipeline {
 
   setSkillHealthTracker(tracker: import('./skill-health-tracker.js').SkillHealthTracker): void {
     this.skillHealthTracker = tracker;
+  }
+
+  setAlfredUserRepo(repo: import('@alfred/storage').AlfredUserRepository, roleAccess: Record<string, string[] | '*'>): void {
+    this.alfredUserRepo = repo;
+    this.roleSkillAccess = roleAccess;
   }
 
   private recordMetric(success: boolean, durationMs: number, tokenData?: { input: number; output: number; costUsd: number }): void {
@@ -238,10 +245,22 @@ export class MessagePipeline {
         },
       );
 
+      // 1b. Resolve Alfred user + role for multi-user support
+      const alfredUser = this.alfredUserRepo?.getUserByPlatform(message.platform, message.userId);
+      if (alfredUser) {
+        baseContext.userRole = alfredUser.role;
+        baseContext.alfredUserId = alfredUser.id;
+      }
+
+      // 1c. Group conversation isolation: use chatId:userId as conversation key in groups
+      const conversationChatId = message.chatType === 'group'
+        ? `${message.chatId}:${message.userId}`
+        : message.chatId;
+
       // 2. Find or create conversation
       const conversation = this.conversationManager.getOrCreateConversation(
         message.platform,
-        message.chatId,
+        conversationChatId,
         user.id,
       );
 
@@ -340,6 +359,16 @@ export class MessagePipeline {
         const selectedCategories = selectCategories(categoryInput, availableCategories);
         skillMetas = filterSkills(allSkillMetas, selectedCategories);
       }
+
+      // 6b. Role-based skill filtering (multi-user)
+      if (skillMetas && this.roleSkillAccess && alfredUser) {
+        const allowed = this.roleSkillAccess[alfredUser.role];
+        if (allowed && allowed !== '*') {
+          const allowedSet = new Set(allowed);
+          skillMetas = skillMetas.filter(s => allowedSet.has(s.name));
+        }
+      }
+
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
