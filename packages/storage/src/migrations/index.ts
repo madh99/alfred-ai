@@ -678,4 +678,28 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE llm_usage ADD COLUMN user_id TEXT DEFAULT NULL`);
     },
   },
+  {
+    version: 33,
+    description: 'Multi-User — shared resources (todos, db connections)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS shared_resources (
+          id TEXT PRIMARY KEY,
+          resource_type TEXT NOT NULL,
+          resource_id TEXT NOT NULL,
+          owner_user_id TEXT NOT NULL,
+          shared_with_user_id TEXT,
+          shared_with_group_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(resource_type, resource_id, shared_with_user_id),
+          UNIQUE(resource_type, resource_id, shared_with_group_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_shared_resources_user ON shared_resources(shared_with_user_id);
+        CREATE INDEX IF NOT EXISTS idx_shared_resources_group ON shared_resources(shared_with_group_id);
+
+        ALTER TABLE database_connections ADD COLUMN user_id TEXT DEFAULT NULL;
+        ALTER TABLE database_connections ADD COLUMN shared INTEGER NOT NULL DEFAULT 0;
+      `);
+    },
+  },
 ];

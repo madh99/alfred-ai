@@ -504,6 +504,13 @@ export class Alfred {
       skillRegistry.register(new UserManagementSkill(alfredUserRepo));
       this.logger.info('User management skill registered');
 
+      // Sharing skill
+      const { SharingSkill } = await import('@alfred/skills');
+      const { SharedResourceRepository } = await import('@alfred/storage');
+      const sharedResourceRepo = new SharedResourceRepository(db);
+      skillRegistry.register(new SharingSkill(sharedResourceRepo, alfredUserRepo));
+      this.logger.info('Sharing skill registered');
+
       // Setup web auth callback for HTTP API login
       const webSessions = new Map<string, { userId: string; username: string; role: string }>();
       this.webAuthCallback = {
