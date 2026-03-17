@@ -273,7 +273,8 @@ export interface ClusterNodeConfig {
 export interface ClusterConfig {
   enabled: boolean;
   nodeId: string;
-  role: 'primary' | 'secondary';
+  /** @deprecated Active-Active has no role distinction. Kept for backward compatibility. */
+  role?: 'primary' | 'secondary';
   redisUrl: string;
   token?: string;
   nodes?: ClusterNodeConfig[];

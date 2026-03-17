@@ -255,8 +255,9 @@ export class MessagePipeline {
 
     try {
       // 0b. HA Message dedup — ensure each message is processed by exactly one node
-      if (this.processedMessageRepo && message.id) {
-        const messageKey = `${message.platform}:${message.id}`;
+      if (this.processedMessageRepo) {
+        const msgId = message.id ?? `${message.chatId}:${message.userId}:${Date.now()}`;
+        const messageKey = `${message.platform}:${msgId}`;
         const claimed = await this.processedMessageRepo.markProcessed(messageKey, this.nodeId);
         if (!claimed) {
           this.logger.debug({ messageKey }, 'Message already processed by another node, skipping');

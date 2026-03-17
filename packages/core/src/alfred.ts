@@ -99,6 +99,7 @@ export class Alfred {
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
   private clusterManager?: import('./cluster/cluster-manager.js').ClusterManager;
+  private adapterClaimManager?: import('./adapter-claim-manager.js').AdapterClaimManager;
   private webAuthCallback?: {
     loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
     getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
@@ -695,13 +696,15 @@ export class Alfred {
         this.logger.child({ component: 'cluster' }),
       );
       await this.clusterManager.connect();
-      // Start PG heartbeat as fallback
-      this.clusterManager.startPgHeartbeat(adapter);
-      // Run PG migrations for HA tables
-      const { PgMigrator } = await import('@alfred/storage');
-      const { PG_MIGRATIONS } = await import('@alfred/storage');
+      if (!this.clusterManager.isConnected) {
+        this.logger.warn('Redis nicht erreichbar — Cross-Node Pub/Sub und Echtzeit-Heartbeat deaktiviert. PG-Heartbeat als Fallback aktiv.');
+      }
+      // Run PG migrations BEFORE heartbeat (tables must exist first)
+      const { PgMigrator, PG_MIGRATIONS } = await import('@alfred/storage');
       const pgMigrator = new PgMigrator(adapter);
       await pgMigrator.migrate(PG_MIGRATIONS);
+      // Start PG heartbeat as fallback
+      this.clusterManager.startPgHeartbeat(adapter);
 
       this.logger.info({ nodeId: this.config.cluster.nodeId }, 'Cluster manager initialized (Active-Active)');
     }
@@ -886,15 +889,15 @@ export class Alfred {
         }
       });
 
-      // Start UDP discovery broadcast if primary
-      if (this.config.cluster?.role === 'primary') {
+      // Start UDP discovery broadcast (any node can broadcast)
+      if (this.config.cluster) {
         const { ClusterDiscovery } = await import('./cluster/discovery.js');
         const discovery = new ClusterDiscovery(this.logger.child({ component: 'cluster-discovery' }));
         discovery.startBroadcasting({
           nodeId: this.config.cluster.nodeId,
           host: '0.0.0.0',
           port: this.config.api?.port ?? 3420,
-          role: 'primary',
+          role: 'node',
         });
       }
     }
@@ -1018,7 +1021,7 @@ export class Alfred {
     // In single mode: connect all adapters directly.
     if (this.config.cluster?.enabled && this.database.getAdapter().type === 'postgres') {
       const { AdapterClaimManager } = await import('./adapter-claim-manager.js');
-      const claimManager = new AdapterClaimManager(
+      this.adapterClaimManager = new AdapterClaimManager(
         this.database.getAdapter(),
         this.config.cluster.nodeId,
         this.logger.child({ component: 'adapter-claims' }),
@@ -1034,7 +1037,7 @@ export class Alfred {
           continue;
         }
 
-        const claimed = await claimManager.tryClaim(platform);
+        const claimed = await this.adapterClaimManager.tryClaim(platform);
         if (claimed) {
           this.setupAdapterHandlers(platform, adapter);
           try { await adapter.connect(); this.logger.info({ platform }, 'Adapter connected (claimed)'); }
@@ -1045,7 +1048,7 @@ export class Alfred {
       }
 
       // When expired claims become available, connect the adapter
-      claimManager.onAcquired(async (platform) => {
+      this.adapterClaimManager.onAcquired(async (platform) => {
         const adapter = this.adapters.get(platform as any);
         if (adapter && adapter.getStatus() === 'disconnected') {
           this.setupAdapterHandlers(platform as any, adapter);
@@ -1054,7 +1057,7 @@ export class Alfred {
         }
       });
 
-      claimManager.start();
+      this.adapterClaimManager.start();
     } else {
       // Single instance: connect all adapters
       for (const [platform, adapter] of this.adapters) {
@@ -1127,23 +1130,16 @@ export class Alfred {
       this.healthCheckTimer = setInterval(() => this.skillHealthTracker!.checkReEnables(), 5 * 60_000);
     }
 
-    // Cluster failover monitoring (secondary nodes detect primary failure)
-    if (this.clusterManager && this.config.cluster?.role === 'secondary') {
-      this.clusterManager.startFailoverMonitoring((deadNodeId) => {
-        this.logger.warn({ deadNodeId }, 'Failover detected — primary node down');
-
-        // On failover, secondary takes over adapter responsibilities.
-        // Adapters are already connected (both nodes run all adapters),
-        // but schedulers may have been locked by the dead primary.
-        // The lock TTLs will expire, and this node's schedulers will
-        // pick up the work automatically. No explicit action needed
-        // beyond logging the event.
-
-        const takenAdapters = [...this.adapters.keys()].map(String);
-        this.clusterManager!.announceTakeover(deadNodeId, takenAdapters).catch(() => {});
-        this.logger.info({ deadNodeId, adapters: takenAdapters }, 'Failover: this node is now active for all adapters');
-      });
-      this.logger.info('Cluster failover monitoring started (secondary role)');
+    // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)
+    if (this.clusterManager) {
+      setInterval(async () => {
+        try {
+          const nodes = await this.clusterManager!.getNodesAny();
+          if (nodes.length > 0) {
+            this.logger.debug({ liveNodes: nodes.map(n => n.id) }, 'Cluster node status');
+          }
+        } catch { /* ignore */ }
+      }, 60_000);
     }
 
     if (this.adapters.size === 0) {
@@ -1180,6 +1176,8 @@ export class Alfred {
     this.calendarWatcher?.stop();
     this.todoWatcher?.stop();
     this.reasoningEngine?.stop();
+    this.adapterClaimManager?.stop();
+    this.clusterManager?.stopPgHeartbeat();
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;
