@@ -157,7 +157,11 @@ export class TelegramAdapter extends MessagingAdapter {
       this.emit('error', err.error as Error);
     });
 
+    // Drop pending updates to avoid getting stuck on stale offsets
+    // (critical for HA failover — new node must start fresh)
     this.bot.start({
+      drop_pending_updates: true,
+      allowed_updates: ['message', 'callback_query', 'edited_message'],
       onStart: () => {
         this.status = 'connected';
         this.emit('connected');
