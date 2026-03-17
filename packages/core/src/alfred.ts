@@ -897,7 +897,7 @@ export class Alfred {
           nodeId: this.config.cluster.nodeId,
           host: '0.0.0.0',
           port: this.config.api?.port ?? 3420,
-          role: 'node',
+          role: this.config.cluster?.role ?? 'node',
         });
       }
     }
@@ -1117,6 +1117,9 @@ export class Alfred {
         activity: await this.activityRepo?.cleanup(90) ?? 0,
         usage: await this.usageRepo?.cleanup(365) ?? 0,
         expiredMemories: await this.memoryRepo?.cleanupExpired() ?? 0,
+        processedMessages: this.config.cluster?.enabled
+          ? await new (await import('@alfred/storage')).ProcessedMessageRepository(this.database.getAdapter()).cleanup()
+          : 0,
       };
       if (cleaned.audit || cleaned.summaries || cleaned.activity || cleaned.usage) {
         this.logger.info(cleaned, 'Startup DB cleanup completed');

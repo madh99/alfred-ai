@@ -269,7 +269,7 @@ export const ClusterNodeConfigSchema = z.object({
 export const ClusterConfigSchema = z.object({
   enabled: z.boolean(),
   nodeId: z.string(),
-  role: z.enum(['primary', 'secondary']),
+  role: z.enum(['primary', 'secondary']).optional(),
   redisUrl: z.string(),
   token: z.string().optional(),
   nodes: z.array(ClusterNodeConfigSchema).optional(),
