@@ -13,14 +13,18 @@ function mapParseMode(
 
 export class TelegramAdapter extends MessagingAdapter {
   readonly platform = 'telegram' as const;
-  private readonly bot: Bot;
+  private bot: Bot;
+  private readonly token: string;
 
   constructor(token: string) {
     super();
+    this.token = token;
     this.bot = new Bot(token);
   }
 
   async connect(): Promise<void> {
+    // Create fresh Bot instance on every connect (critical for HA failover)
+    this.bot = new Bot(this.token);
     this.status = 'connecting';
 
     // Handle text messages
