@@ -132,8 +132,10 @@ export class AdapterClaimManager {
         if (!existing || (existing.expires_at as string) < now) {
           const claimed = await this.tryClaim(platform);
           if (claimed) {
-            this.logger.info({ platform, nodeId: this.nodeId }, 'Acquired adapter claim from dead node');
-            this.onClaimAcquired?.(platform);
+            this.logger.info({ platform, nodeId: this.nodeId }, 'Acquired adapter claim — restarting to connect adapter');
+            // Restart process to cleanly connect the adapter
+            // (grammy bot.start() doesn't work reliably mid-runtime)
+            process.exit(0);
           }
         }
       }
