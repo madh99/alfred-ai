@@ -104,25 +104,37 @@ export class AdapterClaimManager {
     }
   }
 
-  /** Check for expired claims from dead nodes and acquire them. */
+  /** Track which platforms we know about (for detecting unclaimed adapters). */
+  private knownPlatforms = new Set<string>();
+
+  /** Register a platform as known (even if not claimed by this node). */
+  registerPlatform(platform: string): void {
+    this.knownPlatforms.add(platform);
+  }
+
+  /** Check for expired OR missing claims and acquire them. */
   private async checkExpiredClaims(): Promise<void> {
     if (this.adapter.type === 'sqlite') return;
 
     try {
       const now = new Date().toISOString();
-      const expired = await this.adapter.query(
-        'SELECT platform FROM adapter_claims WHERE expires_at < ?',
-        [now],
-      );
 
-      for (const row of expired) {
-        const platform = row.platform as string;
+      // Check all known platforms — if no claim exists OR claim expired, try to acquire
+      for (const platform of this.knownPlatforms) {
         if (this.claimedPlatforms.has(platform)) continue;
 
-        const claimed = await this.tryClaim(platform);
-        if (claimed) {
-          this.logger.info({ platform, nodeId: this.nodeId }, 'Acquired adapter claim from dead node');
-          this.onClaimAcquired?.(platform);
+        const existing = await this.adapter.queryOne(
+          'SELECT node_id, expires_at FROM adapter_claims WHERE platform = ?',
+          [platform],
+        );
+
+        // No claim exists (released/deleted) OR claim expired → try to acquire
+        if (!existing || (existing.expires_at as string) < now) {
+          const claimed = await this.tryClaim(platform);
+          if (claimed) {
+            this.logger.info({ platform, nodeId: this.nodeId }, 'Acquired adapter claim from dead node');
+            this.onClaimAcquired?.(platform);
+          }
         }
       }
     } catch (err) {

@@ -79,6 +79,8 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_API_HOST: ['api', 'host'],
   ALFRED_API_TOKEN: ['api', 'token'],
   ALFRED_API_CORS_ORIGIN: ['api', 'corsOrigin'],
+  ALFRED_SECURITY_DEFAULT_EFFECT: ['security', 'defaultEffect'],
+  ALFRED_SECURITY_RULES_PATH: ['security', 'rulesPath'],
   ALFRED_LOG_LEVEL: ['logger', 'level'],
   ALFRED_OWNER_USER_ID: ['security', 'ownerUserId'],
   ALFRED_SEARCH_PROVIDER: ['search', 'provider'],

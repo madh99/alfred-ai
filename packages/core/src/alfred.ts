@@ -1037,6 +1037,7 @@ export class Alfred {
           continue;
         }
 
+        this.adapterClaimManager.registerPlatform(platform);
         const claimed = await this.adapterClaimManager.tryClaim(platform);
         if (claimed) {
           this.setupAdapterHandlers(platform, adapter);
