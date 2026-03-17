@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.3] - 2026-03-17
+
+### Fixed
+- **AdapterClaimManager** — Auf Class-Field gespeichert, `stop()` bei Shutdown (Claims werden freigegeben)
+- **ClusterConfig.role** — Optional in Zod Schema (Active-Active braucht keine Rolle)
+- **Dead Code** — Redis-Failover-Monitoring durch Node-Status-Logging ersetzt
+- **Message-Dedup** — Fallback-Key wenn `message.id` fehlt (`chatId:userId:timestamp`)
+- **Redis-Ausfall** — Explizite Warnung im Log statt stille Degradierung
+- **PG Heartbeat** — Migration läuft vor erstem Heartbeat (Tabellen existieren beim INSERT)
+- **UDP Discovery** — Role-Check entfernt (jeder Node broadcastet)
+- **processed_messages Cleanup** — Bei Startup verdrahtet
+
 ## [0.19.0-multi-ha.2] - 2026-03-16
 
 ### Added
