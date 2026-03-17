@@ -179,12 +179,19 @@ const ENV_MAP: Record<string, string[]> = {
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
  *  (Zod schemas and downstream code handle string→number conversion). */
+/** ENV keys that should be coerced to numbers. */
+const NUMERIC_ENV_KEYS = new Set([
+  'ALFRED_API_PORT',
+]);
+
+let _currentEnvKey = '';
+
 function coerceEnvValue(value: string): string | boolean | number {
   const lower = value.toLowerCase();
   if (lower === 'true') return true;
   if (lower === 'false') return false;
-  // Coerce numeric strings (port numbers, intervals)
-  if (/^\d+$/.test(value)) return parseInt(value, 10);
+  // Only coerce to number for explicitly numeric fields
+  if (NUMERIC_ENV_KEYS.has(_currentEnvKey) && /^\d+$/.test(value)) return parseInt(value, 10);
   return value;
 }
 
@@ -193,6 +200,7 @@ function applyEnvOverrides(config: Record<string, unknown>): Record<string, unkn
   for (const [envVar, keyPath] of Object.entries(ENV_MAP)) {
     const value = process.env[envVar];
     if (value === undefined) continue;
+    _currentEnvKey = envVar;
 
     let current = result;
     for (let i = 0; i < keyPath.length - 1; i++) {
