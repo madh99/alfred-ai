@@ -27,6 +27,17 @@ export class TelegramAdapter extends MessagingAdapter {
     this.bot = new Bot(this.token);
     this.status = 'connecting';
 
+    // Reset Telegram polling offset before starting grammy.
+    // This clears any stale polling state from a previous node/process.
+    // offset=-1 retrieves only the last update and confirms all previous ones.
+    try {
+      const last = await this.bot.api.getUpdates({ offset: -1, limit: 1, timeout: 0 });
+      if (last.length > 0) {
+        // Confirm the last update by requesting offset = last_update_id + 1
+        await this.bot.api.getUpdates({ offset: last[0].update_id + 1, limit: 0, timeout: 0 });
+      }
+    } catch { /* ignore — fresh bot will start from current offset */ }
+
     // Handle text messages
     this.bot.on('message:text', (ctx) => {
       this.emit('message', this.normalizeMessage(ctx.message, ctx.message.text));
@@ -161,11 +172,7 @@ export class TelegramAdapter extends MessagingAdapter {
       this.emit('error', err.error as Error);
     });
 
-    // Drop pending updates to avoid getting stuck on stale offsets
-    // (critical for HA failover — new node must start fresh)
     this.bot.start({
-      drop_pending_updates: true,
-      allowed_updates: ['message', 'callback_query', 'edited_message'],
       onStart: () => {
         this.status = 'connected';
         this.emit('connected');
