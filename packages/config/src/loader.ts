@@ -70,6 +70,15 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_FILE_STORE_S3_BUCKET: ['fileStore', 's3Bucket'],
   ALFRED_S3_ACCESS_KEY: ['fileStore', 's3AccessKey'],
   ALFRED_S3_SECRET_KEY: ['fileStore', 's3SecretKey'],
+  ALFRED_CLUSTER_ENABLED: ['cluster', 'enabled'],
+  ALFRED_CLUSTER_NODE_ID: ['cluster', 'nodeId'],
+  ALFRED_CLUSTER_ROLE: ['cluster', 'role'],
+  ALFRED_CLUSTER_REDIS_URL: ['cluster', 'redisUrl'],
+  ALFRED_CLUSTER_TOKEN: ['cluster', 'token'],
+  ALFRED_API_PORT: ['api', 'port'],
+  ALFRED_API_HOST: ['api', 'host'],
+  ALFRED_API_TOKEN: ['api', 'token'],
+  ALFRED_API_CORS_ORIGIN: ['api', 'corsOrigin'],
   ALFRED_LOG_LEVEL: ['logger', 'level'],
   ALFRED_OWNER_USER_ID: ['security', 'ownerUserId'],
   ALFRED_SEARCH_PROVIDER: ['search', 'provider'],
@@ -170,10 +179,12 @@ const ENV_MAP: Record<string, string[]> = {
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
  *  (Zod schemas and downstream code handle string→number conversion). */
-function coerceEnvValue(value: string): string | boolean {
+function coerceEnvValue(value: string): string | boolean | number {
   const lower = value.toLowerCase();
   if (lower === 'true') return true;
   if (lower === 'false') return false;
+  // Coerce numeric strings (port numbers, intervals)
+  if (/^\d+$/.test(value)) return parseInt(value, 10);
   return value;
 }
 

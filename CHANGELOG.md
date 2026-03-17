@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.4] - 2026-03-17
+
+### Fixed
+- **ENV-Overrides für Cluster/API** — `ALFRED_CLUSTER_ENABLED`, `ALFRED_CLUSTER_NODE_ID`, `ALFRED_CLUSTER_REDIS_URL`, `ALFRED_API_PORT`, `ALFRED_API_HOST`, `ALFRED_API_TOKEN` fehlten im Config Loader. Cluster-Modus konnte nicht per ENV aktiviert werden.
+- **Numerische ENV-Werte** — `coerceEnvValue` konvertiert numerische Strings (`"3420"`) zu Numbers. Behebt `ALFRED_API_PORT` als String statt Number.
+
 ## [0.19.0-multi-ha.3] - 2026-03-17
 
 ### Fixed
