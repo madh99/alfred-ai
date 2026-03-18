@@ -2,6 +2,9 @@ import type { AsyncDbAdapter } from '../db-adapter.js';
 import type { Conversation, ConversationMessage, Platform } from '@alfred/types';
 import crypto from 'node:crypto';
 
+/** Monotonically increasing timestamp — ensures no two messages have the same created_at. */
+let lastMessageTs = 0;
+
 export class ConversationRepository {
   private readonly adapter: AsyncDbAdapter;
 
@@ -53,7 +56,12 @@ export class ConversationRepository {
       role,
       content,
       toolCalls,
-      createdAt: new Date().toISOString(),
+      createdAt: (() => {
+        let now = Date.now();
+        if (now <= lastMessageTs) now = lastMessageTs + 1;
+        lastMessageTs = now;
+        return new Date(now).toISOString();
+      })(),
     };
 
     await this.adapter.execute(`
@@ -66,7 +74,7 @@ export class ConversationRepository {
 
   async getMessages(conversationId: string, limit = 50): Promise<ConversationMessage[]> {
     const rows = await this.adapter.query(
-      'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?) sub ORDER BY created_at ASC',
+      'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) sub ORDER BY created_at ASC, id ASC',
       [conversationId, limit]
     ) as Record<string, string>[];
 
