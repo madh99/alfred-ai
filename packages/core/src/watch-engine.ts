@@ -97,7 +97,7 @@ export class WatchEngine {
     }
 
     // Skip if poll skill is auto-disabled
-    if (this.skillHealthTracker?.isDisabled(watch.skillName)) {
+    if (await this.skillHealthTracker?.isDisabled(watch.skillName)) {
       this.logger.debug({ watchId: watch.id, skillName: watch.skillName }, 'Watch poll skill is auto-disabled, skipping');
       await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
@@ -287,7 +287,7 @@ export class WatchEngine {
       let actionError: string | null = null;
       if ((actionMode === 'action_only' || actionMode === 'alert_and_action') && watch.actionSkillName) {
         // Skip if action skill is auto-disabled
-        if (this.skillHealthTracker?.isDisabled(watch.actionSkillName)) {
+        if (await this.skillHealthTracker?.isDisabled(watch.actionSkillName)) {
           actionError = `Action skill "${watch.actionSkillName}" is temporarily disabled due to repeated failures`;
           await this.watchRepo.updateActionError(watch.id, actionError);
           this.logger.warn({ watchId: watch.id, skillName: watch.actionSkillName }, 'Watch action skill is auto-disabled');
