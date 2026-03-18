@@ -1,6 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { MemoryRepository } from '@alfred/storage';
 import { createRequire } from 'node:module';
+import { realpathSync } from 'node:fs';
 import { Skill } from '../skill.js';
 import { effectiveUserId } from '../user-utils.js';
 
@@ -163,9 +164,8 @@ export class FeedReaderSkill extends Skill {
       RSSParser = (await import('rss-parser')).default;
     } catch {
       // ESM import fails in bundled context — fall back to createRequire
-      // Use process.argv[1] (the bundle entry point) for correct module resolution
-      const entryPoint = process.argv[1] || import.meta.url;
-      const require = createRequire(entryPoint.startsWith('file:') ? entryPoint : `file://${entryPoint}`);
+      // Resolve symlink (e.g. /usr/bin/alfred → .../bundle/index.js) for correct node_modules lookup
+      const require = createRequire(realpathSync(process.argv[1] || ''));
       RSSParser = require('rss-parser');
     }
     const parser = new RSSParser({ timeout: 15_000 });
