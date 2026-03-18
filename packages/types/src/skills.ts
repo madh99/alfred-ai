@@ -70,6 +70,15 @@ export interface SkillContext {
   };
   /** AbortSignal for cooperative cancellation (e.g. pause). */
   abortSignal?: AbortSignal;
+  /** FileStore for cloud-backed file operations (S3/NFS). Undefined in single-instance local mode. */
+  fileStore?: {
+    readonly backend: string;
+    read(key: string, requestingUserId?: string): Promise<Buffer>;
+    save(userId: string, fileName: string, data: Buffer): Promise<{ key: string; fileName: string; userId: string; size: number; createdAt: string }>;
+    list(userId: string): Promise<Array<{ key: string; fileName: string; userId: string; size: number; createdAt: string }>>;
+    delete(key: string, requestingUserId?: string): Promise<boolean>;
+    exists(key: string): Promise<boolean>;
+  };
 }
 
 export interface SkillResultAttachment {

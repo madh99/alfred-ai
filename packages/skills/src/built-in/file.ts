@@ -86,9 +86,9 @@ export class FileSkill extends Skill {
     description:
       'Read, write, move, copy, or send files. Use for reading file contents, writing text to files, ' +
       'saving binary data, listing directory contents, moving/copying files, or getting file info. ' +
-      'Use "send" to deliver a file to the user in the chat (PDF, images, etc.). ' +
-      'Prefer this over shell for file operations. ' +
-      'When a user sends a file attachment, it is saved to the inbox — use "move" to relocate it. ' +
+      'Use "send" to deliver a file to the user in the chat (PDF, images, etc.) — works with both local paths and FileStore keys. ' +
+      'Use "read_store" / "list_store" / "delete_store" to access files in the FileStore (S3/NFS) — e.g. inbox attachments the user sent. ' +
+      'When a message contains [Saved to FileStore ... key="<key>"], use "read_store" or "send" with that key. ' +
       'IMPORTANT: For large content (HTML pages, long text), use code_sandbox instead to generate the file programmatically.',
     riskLevel: 'write',
     version: '2.0.0',
@@ -97,7 +97,7 @@ export class FileSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete', 'send'],
+          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete', 'send', 'read_store', 'list_store', 'delete_store'],
           description: 'The file operation to perform',
         },
         path: {
@@ -168,9 +168,12 @@ export class FileSkill extends Skill {
       case 'move': return this.moveFile(resolvedPath, destination);
       case 'copy': return this.copyFile(resolvedPath, destination);
       case 'delete': return this.deleteFile(resolvedPath);
-      case 'send': return this.sendFile(resolvedPath);
+      case 'send': return this.sendFile(rawPath, _context);
+      case 'read_store': return this.readFromStore(rawPath, _context);
+      case 'list_store': return this.listFromStore(_context);
+      case 'delete_store': return this.deleteFromStore(rawPath, _context);
       default:
-        return { success: false, error: `Unknown action "${action}". Valid: read, write, write_binary, append, list, info, exists, move, copy, delete, send` };
+        return { success: false, error: `Unknown action "${action}". Valid: read, write, write_binary, append, list, info, exists, move, copy, delete, send, read_store, list_store, delete_store` };
     }
   }
 
@@ -387,7 +390,33 @@ export class FileSkill extends Skill {
     }
   }
 
-  private sendFile(filePath: string): SkillResult {
+  private async sendFile(rawPath: string, context: SkillContext): Promise<SkillResult> {
+    // Detect FileStore keys: not absolute, not ~, contains /
+    const isStoreKey = !path.isAbsolute(rawPath) && !rawPath.startsWith('~') && rawPath.includes('/') && context.fileStore;
+
+    if (isStoreKey && context.fileStore) {
+      try {
+        const data = await context.fileStore.read(rawPath, context.userId);
+        if (data.length === 0) return { success: false, error: `Store key "${rawPath}" is empty (0 bytes)` };
+        if (data.length > MAX_SEND_SIZE) return { success: false, error: `File too large to send (${data.length} bytes, max ${MAX_SEND_SIZE})` };
+        const rawName = rawPath.split('/').pop() ?? rawPath;
+        // Strip timestamp prefix: "2026-03-18T22-06-31-071Z_CV.pdf" → "CV.pdf"
+        const fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
+        const ext = path.extname(fileName).toLowerCase();
+        const mimeType = MIME_MAP[ext] || 'application/octet-stream';
+        return {
+          success: true,
+          data: { key: rawPath, size: data.length, fileName, mimeType },
+          display: `Sending ${fileName} (${data.length} bytes) from FileStore`,
+          attachments: [{ fileName, data, mimeType }],
+        };
+      } catch (err) {
+        return { success: false, error: `Cannot read from FileStore key "${rawPath}": ${(err as Error).message}` };
+      }
+    }
+
+    // Local file path
+    const filePath = this.resolvePath(rawPath);
     try {
       if (!fs.existsSync(filePath)) {
         return { success: false, error: `"${filePath}" does not exist` };
@@ -415,6 +444,64 @@ export class FileSkill extends Skill {
       };
     } catch (err) {
       return { success: false, error: `Cannot send "${filePath}": ${(err as Error).message}` };
+    }
+  }
+
+  private async readFromStore(key: string, context: SkillContext): Promise<SkillResult> {
+    const store = context.fileStore;
+    if (!store) {
+      return this.readFile(this.resolvePath(key));
+    }
+    try {
+      const data = await store.read(key, context.userId);
+      const isText = data.length < MAX_READ_SIZE && !data.includes(0);
+      if (isText) {
+        const text = data.toString('utf-8');
+        return {
+          success: true,
+          data: { key, size: data.length },
+          display: text,
+        };
+      }
+      return {
+        success: true,
+        data: { key, size: data.length, binary: true },
+        display: `Binary file (${data.length} bytes). Use "send" to deliver to user, or "document search" for indexed content.`,
+      };
+    } catch (err) {
+      return { success: false, error: `Cannot read store key "${key}": ${(err as Error).message}` };
+    }
+  }
+
+  private async listFromStore(context: SkillContext): Promise<SkillResult> {
+    const store = context.fileStore;
+    if (!store) {
+      return { success: false, error: 'No FileStore configured. Use action "list" with a directory path.' };
+    }
+    try {
+      const files = await store.list(context.userId);
+      if (files.length === 0) {
+        return { success: true, data: { files: [] }, display: 'No files in your inbox.' };
+      }
+      const display = files.map(f => `• ${f.fileName} (${f.size} bytes, ${f.createdAt})\n  key: ${f.key}`).join('\n');
+      return { success: true, data: { files }, display: `${files.length} file(s):\n${display}` };
+    } catch (err) {
+      return { success: false, error: `Cannot list store: ${(err as Error).message}` };
+    }
+  }
+
+  private async deleteFromStore(key: string, context: SkillContext): Promise<SkillResult> {
+    const store = context.fileStore;
+    if (!store) {
+      return this.deleteFile(this.resolvePath(key));
+    }
+    try {
+      const deleted = await store.delete(key, context.userId);
+      return deleted
+        ? { success: true, data: { key }, display: `Deleted from store: ${key}` }
+        : { success: false, error: `Key "${key}" not found in store` };
+    } catch (err) {
+      return { success: false, error: `Cannot delete store key "${key}": ${(err as Error).message}` };
     }
   }
 

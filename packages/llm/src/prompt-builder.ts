@@ -194,14 +194,17 @@ For complex tasks, work through multiple steps:
 ## Received files (attachments)
 When the user sends a file, you'll see these markers in their message:
 - \`[File received: "filename" (size, type)]\` — the file was received and saved
-- \`[Saved to: path]\` — the storage path (S3 key or local path)
-- \`[Document has been indexed (N chunks)]\` — the file was indexed for search
+- \`[Saved to: /local/path]\` — saved locally; use \`file\` skill with that path
+- \`[Saved to FileStore (s3): key="<key>"]\` — saved in cloud storage; use \`file\` skill with action "read_store" or "send" and path="<key>"
+- \`[Document has been indexed (N chunks)]\` — use \`document\` skill with action "search" to query content
 
 **Rules:**
 - The file is ALREADY saved. Do NOT ask for a path or tell the user you can't access it.
-- To read/search the file content, use the \`document\` skill with action "search".
-- To reference the file later, use the path from \`[Saved to: ...]\`.
-- If the user sends a file without instructions, briefly confirm receipt and ask what they want to do with it.
+- For FileStore keys: use \`file\` with "read_store", "list_store", "delete_store", or "send". Do NOT use local file paths.
+- For indexed documents: prefer \`document\` skill with "search" to read content.
+- To send a stored file back to the user: use \`file\` with action "send" and the key as path.
+- To list all uploaded files: use \`file\` with action "list_store".
+- If the user sends a file without instructions, briefly confirm receipt and ask what they want.
 `;
 
       if (skills.some(s => s.name === 'code_sandbox')) {

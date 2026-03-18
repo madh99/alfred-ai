@@ -306,6 +306,11 @@ export class MessagePipeline {
         baseContext.clusterEnabled = true;
       }
 
+      // FileStore context — enables skills to access S3/NFS stored files
+      if (this.fileStore) {
+        baseContext.fileStore = this.fileStore as SkillContext['fileStore'];
+      }
+
       // 1c. Group conversation isolation: use chatId:userId as conversation key in groups
       const conversationChatId = message.chatType === 'group'
         ? `${message.chatId}:${message.userId}`
@@ -1525,7 +1530,12 @@ export class MessagePipeline {
         const savedPath = await this.saveToInbox(attachment, message.userId);
         if (savedPath) {
           const isTextFile = this.isTextMimeType(attachment.mimeType);
-          let fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? 'unknown type'})]\n[Saved to: ${savedPath}]`;
+          const storageBackend = this.fileStore?.backend ?? 'local';
+          const isCloudStore = storageBackend === 's3' || storageBackend === 'nfs';
+          const savedToLabel = isCloudStore
+            ? `[Saved to FileStore (${storageBackend}): key="${savedPath}". Use file skill with action "read_store" or "send" to access it. Do NOT use local file paths.]`
+            : `[Saved to: ${savedPath}]`;
+          let fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (${this.formatBytes(attachment.data.length)}, ${attachment.mimeType ?? 'unknown type'})]\n${savedToLabel}`;
 
           // For text-based files, include the content inline
           if (isTextFile && attachment.data.length <= MAX_INLINE_FILE_SIZE) {
@@ -1545,7 +1555,11 @@ export class MessagePipeline {
               );
               if (result.existing) {
                 // Remove duplicate file from inbox
-                try { fs.unlinkSync(savedPath); } catch { /* ignore */ }
+                if (this.fileStore) {
+                  this.fileStore.delete(savedPath).catch(() => {});
+                } else {
+                  try { fs.unlinkSync(savedPath); } catch { /* ignore */ }
+                }
                 fileNote = `[File received: "${attachment.fileName ?? 'unknown'}" (duplicate, not saved again)]\n[IMPORTANT: This document is already indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
               } else {
                 fileNote += `\n[IMPORTANT: Document has been indexed (${result.chunkCount} chunks). To read or answer questions about it, use the "document" skill with action "search" and a relevant query. Do NOT use shell/file tools to read the PDF.]`;
