@@ -22,23 +22,11 @@ export class MatrixAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
-    // Delete stale sync storage — matrix-bot-sdk resumes from the stored
-    // sync token which may point to a state where all events are already
-    // consumed. Fresh start ensures new events are received.
-    try {
-      const fs = await import('node:fs');
-      if (fs.existsSync(this.storagePath)) fs.unlinkSync(this.storagePath);
-    } catch { /* ignore */ }
-
-    // Use createRequire to force CJS require() — ESM import() doesn't work
-    // correctly in the esbuild bundle (events don't fire after client.start())
-    const { createRequire } = await import('node:module');
-    const req = createRequire(import.meta.url);
     const {
       MatrixClient,
       SimpleFsStorageProvider,
       AutojoinRoomsMixin,
-    } = req('matrix-bot-sdk');
+    } = await import('matrix-bot-sdk');
 
     const storageProvider = new SimpleFsStorageProvider(
       this.storagePath,
@@ -51,13 +39,7 @@ export class MatrixAdapter extends MessagingAdapter {
 
     AutojoinRoomsMixin.setupOnClient(this.client);
 
-    // Log all events to diagnose sync issues
-    this.client.on('room.event', (roomId: string, event: any) => {
-      console.log(`[MATRIX DEBUG] room.event: ${event.type} from ${event.sender} in ${roomId}`);
-    });
-
     this.client.on('room.message', async (roomId: string, event: any) => {
-      console.log(`[MATRIX DEBUG] room.message: ${event.sender} "${event.content?.body?.slice(0, 50)}"`);
       if (event.sender === this.botUserId) return;
 
       const msgtype = event.content?.msgtype as string | undefined;
@@ -73,9 +55,7 @@ export class MatrixAdapter extends MessagingAdapter {
       }
     });
 
-    console.log('[MATRIX DEBUG] Handlers registered, calling client.start()...');
     await this.client.start();
-    console.log('[MATRIX DEBUG] client.start() resolved');
     this.status = 'connected';
     this.emit('connected');
   }
