@@ -22,16 +22,16 @@ export class MatrixAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
-    // Use createRequire with process.cwd() to bypass esbuild's import() interception.
-    // esbuild bundles import() calls which breaks matrix-bot-sdk's internal sync loop.
-    // createRequire with CWD resolves to node_modules in the working directory.
-    const { createRequire } = await import('node:module');
-    const require = createRequire(process.cwd() + '/');
-    const {
-      MatrixClient,
-      SimpleFsStorageProvider,
-      AutojoinRoomsMixin,
-    } = require('matrix-bot-sdk');
+    // matrix-bot-sdk's sync loop breaks when loaded from esbuild bundle's copy.
+    // Use Function('require(...)') to bypass esbuild and use Node's native require
+    // which resolves from the global node_modules chain.
+    let MatrixClient: any, SimpleFsStorageProvider: any, AutojoinRoomsMixin: any;
+    try {
+      const sdk = (Function('return require("matrix-bot-sdk")')()) as any;
+      ({ MatrixClient, SimpleFsStorageProvider, AutojoinRoomsMixin } = sdk);
+    } catch {
+      ({ MatrixClient, SimpleFsStorageProvider, AutojoinRoomsMixin } = await import('matrix-bot-sdk'));
+    }
 
     const storageProvider = new SimpleFsStorageProvider(
       this.storagePath,
