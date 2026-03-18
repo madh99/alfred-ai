@@ -189,6 +189,21 @@ For complex tasks, work through multiple steps:
       }
 
       // File generation workflow hint
+      // Received files / attachments guidance
+      prompt += `
+## Received files (attachments)
+When the user sends a file, you'll see these markers in their message:
+- \`[File received: "filename" (size, type)]\` — the file was received and saved
+- \`[Saved to: path]\` — the storage path (S3 key or local path)
+- \`[Document has been indexed (N chunks)]\` — the file was indexed for search
+
+**Rules:**
+- The file is ALREADY saved. Do NOT ask for a path or tell the user you can't access it.
+- To read/search the file content, use the \`document\` skill with action "search".
+- To reference the file later, use the path from \`[Saved to: ...]\`.
+- If the user sends a file without instructions, briefly confirm receipt and ask what they want to do with it.
+`;
+
       if (skills.some(s => s.name === 'code_sandbox')) {
         prompt += `
 ## File generation (PDF, HTML, images, etc.)
