@@ -51,7 +51,13 @@ export class MatrixAdapter extends MessagingAdapter {
 
     AutojoinRoomsMixin.setupOnClient(this.client);
 
+    // Log all events to diagnose sync issues
+    this.client.on('room.event', (roomId: string, event: any) => {
+      console.log(`[MATRIX DEBUG] room.event: ${event.type} from ${event.sender} in ${roomId}`);
+    });
+
     this.client.on('room.message', async (roomId: string, event: any) => {
+      console.log(`[MATRIX DEBUG] room.message: ${event.sender} "${event.content?.body?.slice(0, 50)}"`);
       if (event.sender === this.botUserId) return;
 
       const msgtype = event.content?.msgtype as string | undefined;
@@ -67,7 +73,9 @@ export class MatrixAdapter extends MessagingAdapter {
       }
     });
 
+    console.log('[MATRIX DEBUG] Handlers registered, calling client.start()...');
     await this.client.start();
+    console.log('[MATRIX DEBUG] client.start() resolved');
     this.status = 'connected';
     this.emit('connected');
   }
