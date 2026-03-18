@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.33] - 2026-03-18
+
+### Fixed
+- **Watch-Engine/Background-Tasks — fehlendes await** — `skillHealthTracker.isDisabled()` ist async, wurde aber ohne `await` aufgerufen. `if (promise)` ist immer truthy → alle Watches und Background-Tasks wurden als disabled übersprungen, Skills wurden nie ausgeführt.
+- **S3 FileStore — fehlende Dependency** — `@aws-sdk/client-s3` war nicht in `optionalDependencies`, wurde bei `npm install` nie installiert. Datei-Uploads auf S3 (Telegram Attachments, Inbox) schlugen fehl → LLM bekam keinen `[File received]` Block → konnte Dateien nicht verarbeiten.
+
 ## [0.19.0-multi-ha.28] - 2026-03-18
 
 ### Fixed
