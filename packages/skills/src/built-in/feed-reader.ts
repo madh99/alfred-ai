@@ -118,6 +118,7 @@ export class FeedReaderSkill extends Skill {
       }
       let totalNew = 0;
       const results: Array<{ label: string; newCount: number; items: Array<{ title: string; link?: string; snippet?: string }> }> = [];
+      const errors: string[] = [];
       for (const mem of memories) {
         try {
           const entry = JSON.parse(mem.value) as FeedEntry;
@@ -126,12 +127,18 @@ export class FeedReaderSkill extends Skill {
             totalNew += result.newCount;
             results.push(result);
           }
-        } catch { /* skip broken entries */ }
+        } catch (err) {
+          const label = (() => { try { return (JSON.parse(mem.value) as FeedEntry).label; } catch { return mem.key; } })();
+          errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (errors.length > 0 && results.length === 0) {
+        return { success: false, error: `All feeds failed: ${errors.join('; ')}` };
       }
       const lines = results.map(r => `${r.label}: ${r.newCount} new\n${r.items.map(i => `  • ${i.title}${i.link ? ` — ${i.link}` : ''}${i.snippet ? `\n    ${i.snippet}` : ''}`).join('\n')}`);
       return {
         success: true,
-        data: { newCount: totalNew, feeds: results },
+        data: { newCount: totalNew, feeds: results, errors: errors.length > 0 ? errors : undefined },
         display: totalNew > 0
           ? `${totalNew} new entries across ${results.length} feed(s):\n${lines.join('\n\n')}`
           : 'No new entries in any feed.',
