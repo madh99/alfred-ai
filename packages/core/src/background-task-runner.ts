@@ -86,7 +86,7 @@ export class BackgroundTaskRunner {
       }
 
       // Skip if skill is auto-disabled
-      if (this.skillHealthTracker?.isDisabled(task.skillName)) {
+      if (await this.skillHealthTracker?.isDisabled(task.skillName)) {
         await this.taskRepo.updateStatus(task.id, 'failed', undefined, `Skill "${task.skillName}" is temporarily disabled due to repeated failures`);
         return;
       }
