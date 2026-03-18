@@ -22,11 +22,15 @@ export class MatrixAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
+    // Use createRequire to force CJS require() — ESM import() doesn't work
+    // correctly in the esbuild bundle (events don't fire after client.start())
+    const { createRequire } = await import('node:module');
+    const req = createRequire(import.meta.url);
     const {
       MatrixClient,
       SimpleFsStorageProvider,
       AutojoinRoomsMixin,
-    } = await (Function('return import("matrix-bot-sdk")')() as Promise<any>);
+    } = req('matrix-bot-sdk');
 
     const storageProvider = new SimpleFsStorageProvider(
       this.storagePath,
