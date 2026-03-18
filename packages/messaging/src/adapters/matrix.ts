@@ -22,6 +22,14 @@ export class MatrixAdapter extends MessagingAdapter {
   async connect(): Promise<void> {
     this.status = 'connecting';
 
+    // Delete stale sync storage — matrix-bot-sdk resumes from the stored
+    // sync token which may point to a state where all events are already
+    // consumed. Fresh start ensures new events are received.
+    try {
+      const fs = await import('node:fs');
+      if (fs.existsSync(this.storagePath)) fs.unlinkSync(this.storagePath);
+    } catch { /* ignore */ }
+
     // Use createRequire to force CJS require() — ESM import() doesn't work
     // correctly in the esbuild bundle (events don't fire after client.start())
     const { createRequire } = await import('node:module');
