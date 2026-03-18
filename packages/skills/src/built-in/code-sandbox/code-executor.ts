@@ -17,7 +17,7 @@ export class CodeExecutor {
     const dirs = new Set<string>();
 
     // 1. Try require.resolve (works in dev, fails in bundle)
-    for (const pkg of ['pdf-parse', 'exceljs', 'pdfkit']) {
+    for (const pkg of ['pdf-parse', 'exceljs', 'pdfkit', 'docx']) {
       try {
         const resolved = require.resolve(`${pkg}/package.json`);
         dirs.add(path.dirname(path.dirname(resolved)));

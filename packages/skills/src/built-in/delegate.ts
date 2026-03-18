@@ -140,7 +140,7 @@ export class DelegateSkill extends Skill {
       'When tool results contain "[Data stored as result_N]", use code_sandbox with ' +
       'action "run_with_data" and data="result_N" to process the data. ' +
       'The data will be injected as INPUT_DATA (parsed array/object). Never hardcode data in code.\n' +
-      'Available JS libraries in code_sandbox (no install needed): exceljs, pdfkit, pdf-parse.';
+      'Available JS libraries in code_sandbox (no install needed): exceljs, pdfkit, docx, pdf-parse.';
 
     let userContent = task;
     if (additionalContext && typeof additionalContext === 'string') {

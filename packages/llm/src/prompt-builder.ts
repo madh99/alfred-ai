@@ -206,11 +206,12 @@ When the user sends a file, you'll see these markers in their message:
 
       if (skills.some(s => s.name === 'code_sandbox')) {
         prompt += `
-## File generation (PDF, HTML, images, etc.)
+## File generation (PDF, DOCX, Excel, HTML, images, etc.)
 To generate and send a file to the user:
-1. Use \`code_sandbox\` to run code that creates the file (e.g. pdfkit for PDF, HTML generation, etc.)
+1. Use \`code_sandbox\` to run code that creates the file. Available JS libraries (no install needed): **pdfkit** (PDF), **docx** (Word DOCX), **exceljs** (Excel XLSX), **pdf-parse** (read PDFs).
 2. The sandbox **automatically collects all files** written to the working directory and sends them as attachments to the user.
 3. Do NOT use \`file send\` afterwards — the files are already delivered. Using \`file send\` on sandbox-generated files will fail because the sandbox runs in an isolated temp directory.
+4. When the user asks for a PDF, DOCX, or Excel file, ALWAYS use \`code_sandbox\` — do NOT say you can't generate files.
 `;
       }
 

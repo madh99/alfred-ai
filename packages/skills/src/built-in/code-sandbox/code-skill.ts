@@ -6,7 +6,7 @@ export class CodeExecutionSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'code_sandbox',
     category: 'automation',
-    description: 'Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating files (PDF, HTML, CSV, images, etc.), or testing code snippets. Code runs in an isolated temp directory with a timeout. Any files written to the working directory are automatically collected and sent to the user as attachments — do NOT use the file skill to send them afterwards. For PDF generation use pdfkit (Node.js) or reportlab/fpdf (Python). IMPORTANT: When generating large files, write compact data-driven code — define data as arrays/objects, then build the output programmatically. Never embed large HTML/text as string literals.',
+    description: 'Execute code in a sandboxed environment. Supports JavaScript (Node.js) and Python. Use for calculations, data processing, generating files (PDF, HTML, CSV, images, etc.), or testing code snippets. Code runs in an isolated temp directory with a timeout. Any files written to the working directory are automatically collected and sent to the user as attachments — do NOT use the file skill to send them afterwards. For PDF generation use pdfkit (Node.js) or reportlab/fpdf (Python). For Word/DOCX generation use the docx package (Node.js). IMPORTANT: When generating large files, write compact data-driven code — define data as arrays/objects, then build the output programmatically. Never embed large HTML/text as string literals.',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 120_000,
