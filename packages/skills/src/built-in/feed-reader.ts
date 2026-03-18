@@ -1,5 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import type { MemoryRepository } from '@alfred/storage';
+import { createRequire } from 'node:module';
 import { Skill } from '../skill.js';
 import { effectiveUserId } from '../user-utils.js';
 
@@ -49,8 +50,6 @@ export class FeedReaderSkill extends Skill {
     const action = input.action as string;
     const url = input.url as string | undefined;
     const userId = effectiveUserId(context);
-    console.log('[DEBUG feed_reader] execute', { action, url, userId, contextUserId: context.userId, masterUserId: context.masterUserId });
-
     switch (action) {
       case 'subscribe':
         return this.subscribe(userId, url, input.label as string | undefined);
@@ -110,11 +109,9 @@ export class FeedReaderSkill extends Skill {
   }
 
   private async check(userId: string, url?: string): Promise<SkillResult> {
-    console.log('[DEBUG feed_reader.check]', { userId, url });
     if (!url) {
       // Check all feeds
       const memories = await this.memoryRepo.listByCategory(userId, 'feed');
-      console.log('[DEBUG feed_reader.check] check_all memories found:', memories.length);
       if (memories.length === 0) {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
@@ -141,9 +138,8 @@ export class FeedReaderSkill extends Skill {
     }
 
     // Check single feed
-    const allMems = await this.memoryRepo.listByCategory(userId, 'feed');
-    console.log('[DEBUG feed_reader.check] single feed lookup for userId:', userId, 'url:', url, 'found memories:', allMems.length, 'keys:', allMems.map(m => m.key));
-    const mem = allMems.find(m => m.key === `feed:${url}`);
+    const mem = (await this.memoryRepo.listByCategory(userId, 'feed'))
+      .find(m => m.key === `feed:${url}`);
     if (!mem) return { success: false, error: `Not subscribed to ${url}. Use subscribe first.` };
 
     const entry = JSON.parse(mem.value) as FeedEntry;
@@ -162,7 +158,14 @@ export class FeedReaderSkill extends Skill {
     userId: string,
     entry: FeedEntry,
   ): Promise<{ label: string; newCount: number; items: Array<{ title: string; link?: string; pubDate?: string; snippet?: string }> }> {
-    const RSSParser = (await import('rss-parser')).default;
+    let RSSParser: any;
+    try {
+      RSSParser = (await import('rss-parser')).default;
+    } catch {
+      // ESM import fails in bundled context — fall back to createRequire
+      const require = createRequire(import.meta.url);
+      RSSParser = require('rss-parser');
+    }
     const parser = new RSSParser({ timeout: 15_000 });
     const feed = await parser.parseURL(entry.url);
 
@@ -171,7 +174,7 @@ export class FeedReaderSkill extends Skill {
 
     if (entry.lastEntryId) {
       // Find items newer than the last known one
-      const lastIdx = items.findIndex(i => (i.guid ?? i.link ?? i.title) === entry.lastEntryId);
+      const lastIdx = items.findIndex((i: any) => (i.guid ?? i.link ?? i.title) === entry.lastEntryId);
       newItems = lastIdx > 0 ? items.slice(0, lastIdx) : lastIdx === 0 ? [] : items.slice(0, 10);
     } else {
       // First check — return up to 5 latest
@@ -190,7 +193,7 @@ export class FeedReaderSkill extends Skill {
     return {
       label: entry.label,
       newCount: newItems.length,
-      items: newItems.map(i => {
+      items: newItems.map((i: any) => {
         // Extract snippet from contentSnippet, description, or content
         let snippet = (i.contentSnippet ?? i.summary ?? '') as string;
         if (!snippet && typeof i.content === 'string') {

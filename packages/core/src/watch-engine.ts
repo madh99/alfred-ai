@@ -110,9 +110,7 @@ export class WatchEngine {
       chatId: watch.chatId,
     });
 
-    this.logger.info({ watchId: watch.id, skillName: watch.skillName, skillParams: watch.skillParams, userId: context.userId, masterUserId: context.masterUserId }, '[DEBUG] Watch executing skill');
     const result = await this.skillSandbox.execute(skill, watch.skillParams, context);
-    this.logger.info({ watchId: watch.id, success: result.success, error: result.error, hasData: result.data != null, dataKeys: result.data && typeof result.data === 'object' ? Object.keys(result.data as Record<string,unknown>) : undefined }, '[DEBUG] Watch skill result');
 
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');
