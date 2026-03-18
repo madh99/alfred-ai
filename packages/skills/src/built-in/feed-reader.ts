@@ -163,7 +163,9 @@ export class FeedReaderSkill extends Skill {
       RSSParser = (await import('rss-parser')).default;
     } catch {
       // ESM import fails in bundled context — fall back to createRequire
-      const require = createRequire(import.meta.url);
+      // Use process.argv[1] (the bundle entry point) for correct module resolution
+      const entryPoint = process.argv[1] || import.meta.url;
+      const require = createRequire(entryPoint.startsWith('file:') ? entryPoint : `file://${entryPoint}`);
       RSSParser = require('rss-parser');
     }
     const parser = new RSSParser({ timeout: 15_000 });
