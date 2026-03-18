@@ -188,7 +188,8 @@ CREATE TABLE IF NOT EXISTS watches (
   requires_confirmation INTEGER NOT NULL DEFAULT 0,
   trigger_watch_id TEXT,
   claimed_by TEXT DEFAULT NULL,
-  claim_expires_at TEXT DEFAULT NULL
+  claim_expires_at TEXT DEFAULT NULL,
+  user_id TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_watches_chat ON watches(chat_id, platform);
 CREATE INDEX IF NOT EXISTS idx_watches_enabled ON watches(enabled);

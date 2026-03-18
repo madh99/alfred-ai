@@ -55,4 +55,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       `);
     },
   },
+  {
+    version: 37,
+    description: 'Watch owner — user_id column for correct skill context resolution',
+    async up(db) {
+      await db.exec(`ALTER TABLE watches ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT NULL`);
+    },
+  },
 ];

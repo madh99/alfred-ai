@@ -121,6 +121,7 @@ export interface CompositeCondition {
 
 export interface Watch {
   id: string;
+  userId?: string;
   chatId: string;
   platform: string;
   name: string;

@@ -2,6 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult, WatchCondition, Composit
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
 import type { WatchRepository } from '@alfred/storage';
+import { effectiveUserId } from '../user-utils.js';
 
 type WatchAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
 
@@ -253,6 +254,7 @@ export class WatchSkill extends Skill {
     const primaryValue = conditionValue ?? (compositeCondition ? compositeCondition.conditions[0].value : undefined);
 
     const watch = await this.watchRepo.create({
+      userId: effectiveUserId(context),
       chatId: context.chatId,
       platform: context.platform,
       name,

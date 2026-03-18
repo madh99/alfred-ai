@@ -775,4 +775,11 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 37,
+    description: 'Watch owner — user_id column for correct skill context resolution',
+    up(db) {
+      db.exec(`ALTER TABLE watches ADD COLUMN user_id TEXT DEFAULT NULL`);
+    },
+  },
 ];

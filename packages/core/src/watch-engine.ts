@@ -102,10 +102,10 @@ export class WatchEngine {
     }
 
     // Resolve the user who owns this watch.
-    // In DMs, chatId == userId. In groups, chatId is the group ID.
-    // Use chatId as platformUserId for DMs (most common case).
+    // If watch has userId (internal UUID from v37+), use it directly.
+    // Otherwise fall back to chatId as platformUserId (DM-only, legacy watches).
     const { context } = await buildSkillContext(this.users, {
-      platformUserId: watch.chatId,
+      ...(watch.userId ? { userId: watch.userId } : { platformUserId: watch.chatId }),
       platform: watch.platform as Platform,
       chatId: watch.chatId,
     });
@@ -168,7 +168,7 @@ export class WatchEngine {
 
       triggered = evalResult.triggered;
       displayValue = evalResult.displayValue;
-      newLastValue = JSON.stringify(currentValue);
+      newLastValue = currentValue !== undefined ? JSON.stringify(currentValue) : 'null';
     }
 
     if (triggered && this.isCooldownExpired(watch)) {
