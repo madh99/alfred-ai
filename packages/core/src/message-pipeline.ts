@@ -740,6 +740,23 @@ export class MessagePipeline {
     } catch (error) {
       this.recordMetric(false, Date.now() - startTime);
       this.logger.error({ err: error }, 'Failed to process message');
+
+      // Save error response to prevent orphaned user messages in history
+      // (an orphaned user message without an assistant reply corrupts the
+      // conversation for ALL subsequent requests in this chat)
+      try {
+        const convChatId = message.chatType === 'group'
+          ? `${message.chatId}:${message.userId}`
+          : message.chatId;
+        const conv = await this.conversationManager.getOrCreateConversation(
+          message.platform, convChatId, message.userId,
+        );
+        await this.conversationManager.addMessage(
+          conv.id, 'assistant',
+          'Sorry, I encountered an error processing your message. Please try again.',
+        );
+      } catch { /* best effort — don't mask the original error */ }
+
       throw error;
     }
   }

@@ -512,7 +512,55 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         merged.push(msg);
       }
     }
-    return merged;
+
+    // Final validation: ensure strict alternating user/assistant pattern.
+    // If a user message with tool_result content is followed by another user
+    // message (orphaned from a failed LLM call), insert a synthetic assistant
+    // response to maintain the required alternation.
+    const validated: LLMMessage[] = [];
+    for (let i = 0; i < merged.length; i++) {
+      const msg = merged[i];
+      const prev = validated[validated.length - 1];
+
+      // Detect two consecutive user messages
+      if (prev && prev.role === 'user' && msg.role === 'user') {
+        // Insert synthetic assistant response
+        validated.push({ role: 'assistant', content: '(previous request failed)' });
+      }
+
+      // Detect assistant[tool_use] followed by user[text] (not tool_result)
+      // This means the tool execution was never completed — drop the tool_use
+      if (prev && prev.role === 'assistant' && Array.isArray(prev.content) && msg.role === 'user') {
+        const hasToolUse = prev.content.some(b => b.type === 'tool_use');
+        const hasToolResult = Array.isArray(msg.content) && msg.content.some((b: any) => b.type === 'tool_result');
+        if (hasToolUse && !hasToolResult) {
+          // Replace the tool_use assistant message with a text-only version
+          const textOnly = prev.content.filter(b => b.type === 'text');
+          validated[validated.length - 1] = {
+            role: 'assistant',
+            content: textOnly.length > 0 ? textOnly : '(tool execution failed)',
+          };
+        }
+      }
+
+      // Detect assistant with tool_use at the very end (no tool_result follows)
+      if (i === merged.length - 1 && msg.role === 'assistant' && Array.isArray(msg.content)) {
+        const hasToolUse = msg.content.some(b => b.type === 'tool_use');
+        if (hasToolUse) {
+          // Replace with text-only content
+          const textOnly = (msg.content as any[]).filter(b => b.type === 'text');
+          validated.push({
+            role: 'assistant',
+            content: textOnly.length > 0 ? textOnly : '(tool execution incomplete)',
+          });
+          continue;
+        }
+      }
+
+      validated.push(msg);
+    }
+
+    return validated;
   }
 
   buildTools(skills: SkillMetadata[]): ToolDefinition[] {
