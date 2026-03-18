@@ -490,16 +490,6 @@ export class MessagePipeline {
           this.compressToolLoop(messages, system, toolTokens);
         }
 
-        // Debug: log message structure before LLM call
-        this.logger.info({
-          messageCount: messages.length,
-          messageRoles: messages.map((m, i) => {
-            const hasToolUse = Array.isArray(m.content) && m.content.some((b: any) => b.type === 'tool_use');
-            const hasToolResult = Array.isArray(m.content) && m.content.some((b: any) => b.type === 'tool_result');
-            return `[${i}]${m.role}${hasToolUse ? '[tool_use]' : ''}${hasToolResult ? '[tool_result]' : ''}`;
-          }),
-        }, 'LLM request message structure');
-
         try {
           response = await this.llm.complete({
             messages,

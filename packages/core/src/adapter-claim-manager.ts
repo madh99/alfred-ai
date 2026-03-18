@@ -42,14 +42,17 @@ export class AdapterClaimManager {
     const now = new Date().toISOString();
     const expiresAt = new Date(Date.now() + this.claimTtlMs).toISOString();
 
-    // Try to insert or take over expired claim
+    // Try to insert or take over expired/own claim.
+    // A claim is takeable when:
+    // - it's expired (expires_at < now), OR
+    // - it belongs to this same node (restart scenario)
     const result = await this.adapter.execute(
       `INSERT INTO adapter_claims (platform, node_id, claimed_at, expires_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT (platform) DO UPDATE
        SET node_id = excluded.node_id, claimed_at = excluded.claimed_at, expires_at = excluded.expires_at
-       WHERE adapter_claims.expires_at < ?`,
-      [platform, this.nodeId, now, expiresAt, now],
+       WHERE adapter_claims.expires_at < ? OR adapter_claims.node_id = ?`,
+      [platform, this.nodeId, now, expiresAt, now, this.nodeId],
     );
 
     if (result.changes > 0) {
