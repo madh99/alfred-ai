@@ -26,7 +26,7 @@ export class MatrixAdapter extends MessagingAdapter {
       MatrixClient,
       SimpleFsStorageProvider,
       AutojoinRoomsMixin,
-    } = await import('matrix-bot-sdk');
+    } = await (Function('return import("matrix-bot-sdk")')() as Promise<any>);
 
     const storageProvider = new SimpleFsStorageProvider(
       this.storagePath,
