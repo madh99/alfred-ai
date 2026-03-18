@@ -75,6 +75,8 @@ export class WatchEngine {
           await this.checkWatch(watch);
         } catch (err) {
           this.logger.error({ err, watchId: watch.id }, 'Failed to check watch');
+          const errMsg = err instanceof Error ? err.message : String(err);
+          await this.watchRepo.updateActionError(watch.id, `Uncaught: ${errMsg}`).catch(() => {});
         }
       }
     } catch (err) {
@@ -115,9 +117,12 @@ export class WatchEngine {
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');
       this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
+      await this.watchRepo.updateActionError(watch.id, `Poll failed: ${result.error ?? 'unknown'}`);
       await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
     }
+    // Clear previous poll error on success
+    await this.watchRepo.updateActionError(watch.id, null);
 
     this.skillHealthTracker?.recordSuccess(watch.skillName);
 
