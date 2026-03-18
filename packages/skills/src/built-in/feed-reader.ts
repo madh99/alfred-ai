@@ -49,6 +49,7 @@ export class FeedReaderSkill extends Skill {
     const action = input.action as string;
     const url = input.url as string | undefined;
     const userId = effectiveUserId(context);
+    console.log('[DEBUG feed_reader] execute', { action, url, userId, contextUserId: context.userId, masterUserId: context.masterUserId });
 
     switch (action) {
       case 'subscribe':
@@ -109,9 +110,11 @@ export class FeedReaderSkill extends Skill {
   }
 
   private async check(userId: string, url?: string): Promise<SkillResult> {
+    console.log('[DEBUG feed_reader.check]', { userId, url });
     if (!url) {
       // Check all feeds
       const memories = await this.memoryRepo.listByCategory(userId, 'feed');
+      console.log('[DEBUG feed_reader.check] check_all memories found:', memories.length);
       if (memories.length === 0) {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
@@ -138,8 +141,9 @@ export class FeedReaderSkill extends Skill {
     }
 
     // Check single feed
-    const mem = (await this.memoryRepo.listByCategory(userId, 'feed'))
-      .find(m => m.key === `feed:${url}`);
+    const allMems = await this.memoryRepo.listByCategory(userId, 'feed');
+    console.log('[DEBUG feed_reader.check] single feed lookup for userId:', userId, 'url:', url, 'found memories:', allMems.length, 'keys:', allMems.map(m => m.key));
+    const mem = allMems.find(m => m.key === `feed:${url}`);
     if (!mem) return { success: false, error: `Not subscribed to ${url}. Use subscribe first.` };
 
     const entry = JSON.parse(mem.value) as FeedEntry;
