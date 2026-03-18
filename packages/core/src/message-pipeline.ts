@@ -491,7 +491,7 @@ export class MessagePipeline {
         }
 
         // Debug: log message structure before LLM call
-        this.logger.debug({
+        this.logger.info({
           messageCount: messages.length,
           messageRoles: messages.map((m, i) => {
             const hasToolUse = Array.isArray(m.content) && m.content.some((b: any) => b.type === 'tool_use');
