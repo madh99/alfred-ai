@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.4-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.44-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -163,11 +163,14 @@ Alfred supports multiple users with role-based access control. Each user's data 
 | Role | Access |
 |------|--------|
 | **admin** | All skills, user management, service sharing |
-| **user** | 25+ skills, own data, per-user service config |
-| **family** | Productivity skills, own data |
-| **guest** | Read-only skills (weather, search, calculator) |
+| **user** | 30+ skills incl. file, code_sandbox, document, scheduled_task, sharing |
+| **family** | Productivity skills incl. file, document, scheduled_task |
+| **guest** | Basic skills (weather, search, calculator, routing) — no data access |
+| **service** | Minimal (calculator, weather, search) |
 
-**Per-User Service Config** — Each user configures their own Email, Calendar, Contacts, BMW, Microsoft Todo via chat (`setup_service`). No server access needed.
+**Data Isolation** — Non-admin users cannot access admin's Email, Calendar, Contacts, BMW, or Microsoft Todo. Each user must configure their own services.
+
+**Per-User Service Config** — Each user configures their own Email, Calendar, Contacts, BMW, Microsoft Todo via chat (`setup_service`). Known email providers (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, etc.) are auto-configured — only email + password needed. No server access required.
 
 **Sharing** — Share notes, todo lists, documents, or service configs between users. MS 365 shared mailboxes/calendars supported via Graph API delegated access.
 
@@ -194,7 +197,7 @@ fileStore:
 - **Message Dedup** — Every inbound message processed exactly once via `processed_messages` table.
 - **PostgreSQL** — Shared database, atomic coordination (replaces Redis locks). SQLite remains default for single-instance.
 - **Redis** — Heartbeat, pub/sub, cross-node messaging (optional supplement — PG heartbeat as fallback).
-- **S3/MinIO** — Shared file storage for uploads and documents.
+- **S3/MinIO** — Shared file storage for uploads, documents, and generated files. File Skill supports `read_store`/`write_store`/`list_store` for S3 access. Code Sandbox auto-saves generated files (PDF, DOCX, Excel) to S3. Email attachments can be sent directly from S3.
 - **`alfred migrate-db`** — Migrate existing SQLite data to PostgreSQL.
 
 ### Infrastructure Management

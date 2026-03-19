@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.44] - 2026-03-19
+
+### Added
+- **FileStore-Integration** — File-Skill: `read_store`, `write_store`, `list_store`, `delete_store` Actions für S3/NFS-Zugriff. `send` erkennt S3-Keys automatisch. Pipeline zeigt `[Saved to FileStore (s3): key="..."]` statt rohem S3-Key. Duplikat-Löschung via `fileStore.delete()`.
+- **Code Sandbox → S3** — Generierte Dateien (PDF, DOCX, Excel) werden automatisch auf S3 gespeichert. Response enthält `fileStoreKeys` für Weiterverwendung (z.B. Email-Attachment).
+- **Email-Attachments** — `attachmentKeys` Parameter für send/draft/reply. Akzeptiert S3-Keys und lokale Pfade. Unterstützt Standard-IMAP (nodemailer) und Microsoft Graph (fileAttachment inline + Draft→Attach→Send für Replies).
+- **Email-Provider-Templates** — `setup_service` für Email: bekannte Provider (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, posteo, mailbox.org, aon, a1, hotmail) werden automatisch konfiguriert. Nur email + password nötig.
+- **Dependencies** — `@aws-sdk/client-s3`, `pdfkit`, `docx`, `puppeteer-core` hinzugefügt.
+
+### Fixed
+- **Watch-Engine — fehlendes await** — `skillHealthTracker.isDisabled()` ist async, `if (promise)` ist immer truthy → alle Watches und Background-Tasks wurden als disabled übersprungen. Einzeiler-Fix.
+- **Watch-Engine — Owner-Kontext** — Watch nutzte `chatId` statt Owner-userId für Skill-Kontext. Migration v37: `user_id` Spalte in watches.
+- **Feed-Reader — ESM-Bundle Import** — `await import('rss-parser')` scheitert im esbuild-Bundle + Symlink. Fix: `createRequire(realpathSync(process.argv[1]))`.
+- **S3 FileStore — fehlende Dependency** — `@aws-sdk/client-s3` fehlte in Dependencies.
+- **Multi-User Isolation** — Email, Kalender, Kontakte, BMW, Microsoft Todo: Nicht-Admin User bekamen Zugriff auf Admin-Daten (Fallback auf globale Provider). Geschlossen.
+- **Skill-Filter** — `code_sandbox` wurde bei PDF-Anfragen gefiltert (Kategorie `automation` statt `files`). Fix: `files` inkludiert jetzt `automation`. Identity-Keywords erweitert für User-Management.
+- **Rollen-Zugriffe** — `user` Rolle fehlten `file`, `code_sandbox`, `document`, `scheduled_task`, `microsoft_todo`, `sharing`. `family` fehlten `file`, `document`, `scheduled_task`.
+- **MS Graph Reply + Attachments** — Reply-Endpoint ignorierte Attachments. Fix: Draft→Attach→Send.
+- **System-Prompt** — File-Upload-Kontext, FileStore-Keys, Email-Attachment-Flow, write_store dokumentiert.
+- **Watch Poll-Error Reporting** — Fehler werden in `last_action_error` geschrieben statt nur ins Log.
+
 ## [0.19.0-multi-ha.33] - 2026-03-18
 
 ### Fixed
