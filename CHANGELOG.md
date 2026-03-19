@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.51] - 2026-03-20
+
+### Added
+- **Web-UI Auth-Gate** — Login-Bildschirm wenn `api.token` konfiguriert ist. Ohne gültigen Einmal-Code kein Zugriff auf Chat, Dashboard oder Settings. Neuer Endpunkt `/api/auth/required` für Frontend-Check.
+
+### Fixed
+- **Web-Sicherheit** — `/api/metrics` und `/api/auth/me` waren ohne Auth zugänglich. Jetzt hinter `checkAuth`.
+- **Device Code Flow Scopes** — `.Shared` Scopes (Mail, Calendar, Contacts) hinzugefügt für Zugriff auf freigegebene Ressourcen.
+
+## [0.19.0-multi-ha.50] - 2026-03-19
+
+### Fixed
+- **Device Code Flow Scopes** — `.Shared` Scopes für freigegebene Postfächer/Kalender/Kontakte.
+
 ## [0.19.0-multi-ha.49] - 2026-03-19
 
 ### Added

@@ -283,8 +283,12 @@ export class HttpAdapter extends MessagingAdapter {
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/auth/required' && req.method === 'GET') {
+      // Public: tells the frontend whether auth is needed
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ authRequired: !!(this.apiToken || this.authCb) }));
     } else if (url.pathname === '/api/metrics' && req.method === 'GET') {
-      this.handleMetrics(res).catch(err => this.safeError(res, err));
+      this.handleMetricsAuth(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/message' && req.method === 'POST') {
       this.handleMessage(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/dashboard' && req.method === 'GET') {
@@ -292,7 +296,7 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
-      this.handleAuthMe(req, res).catch(err => this.safeError(res, err));
+      this.handleAuthMeProtected(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
       const name = url.pathname.slice('/api/webhook/'.length);
       this.handleWebhook(req, res, name);
@@ -357,6 +361,16 @@ export class HttpAdapter extends MessagingAdapter {
         res.end(JSON.stringify({ error: 'Invalid JSON' }));
       }
     });
+  }
+
+  private async handleAuthMeProtected(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    return this.handleAuthMe(req, res);
+  }
+
+  private async handleMetricsAuth(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    return this.handleMetrics(res);
   }
 
   private async handleAuthMe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
