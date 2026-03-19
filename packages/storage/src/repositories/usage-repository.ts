@@ -30,12 +30,12 @@ export class UsageRepository {
       INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(date, model) DO UPDATE SET
-        calls = calls + excluded.calls,
-        input_tokens = input_tokens + excluded.input_tokens,
-        output_tokens = output_tokens + excluded.output_tokens,
-        cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
-        cache_write_tokens = cache_write_tokens + excluded.cache_write_tokens,
-        cost_usd = cost_usd + excluded.cost_usd
+        calls = llm_usage.calls + excluded.calls,
+        input_tokens = llm_usage.input_tokens + excluded.input_tokens,
+        output_tokens = llm_usage.output_tokens + excluded.output_tokens,
+        cache_read_tokens = llm_usage.cache_read_tokens + excluded.cache_read_tokens,
+        cache_write_tokens = llm_usage.cache_write_tokens + excluded.cache_write_tokens,
+        cost_usd = llm_usage.cost_usd + excluded.cost_usd
     `, [date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]);
     // Per-user in separate table (no double-counting)
     if (userId) {
@@ -43,10 +43,10 @@ export class UsageRepository {
         INSERT INTO llm_usage_by_user (date, user_id, model, calls, input_tokens, output_tokens, cost_usd)
         VALUES (?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(date, user_id, model) DO UPDATE SET
-          calls = calls + 1,
-          input_tokens = input_tokens + excluded.input_tokens,
-          output_tokens = output_tokens + excluded.output_tokens,
-          cost_usd = cost_usd + excluded.cost_usd
+          calls = llm_usage_by_user.calls + 1,
+          input_tokens = llm_usage_by_user.input_tokens + excluded.input_tokens,
+          output_tokens = llm_usage_by_user.output_tokens + excluded.output_tokens,
+          cost_usd = llm_usage_by_user.cost_usd + excluded.cost_usd
       `, [date, userId, model, inputTokens, outputTokens, costUsd]);
     }
   }

@@ -24,11 +24,11 @@ export class SkillHealthRepository {
       INSERT INTO skill_health (skill_name, success_count, fail_count, consecutive_fails, updated_at)
       VALUES (?, 1, 0, 0, ?)
       ON CONFLICT(skill_name) DO UPDATE SET
-        success_count = success_count + 1,
+        success_count = skill_health.success_count + 1,
         consecutive_fails = 0,
         disabled_until = NULL,
-        updated_at = ?
-    `, [skillName, now, now]);
+        updated_at = excluded.updated_at
+    `, [skillName, now]);
   }
 
   async recordFailure(skillName: string, error: string): Promise<SkillHealth> {
@@ -37,12 +37,12 @@ export class SkillHealthRepository {
       INSERT INTO skill_health (skill_name, success_count, fail_count, consecutive_fails, last_error, last_error_at, updated_at)
       VALUES (?, 0, 1, 1, ?, ?, ?)
       ON CONFLICT(skill_name) DO UPDATE SET
-        fail_count = fail_count + 1,
-        consecutive_fails = consecutive_fails + 1,
-        last_error = ?,
-        last_error_at = ?,
-        updated_at = ?
-    `, [skillName, error, now, now, error, now, now]);
+        fail_count = skill_health.fail_count + 1,
+        consecutive_fails = skill_health.consecutive_fails + 1,
+        last_error = excluded.last_error,
+        last_error_at = excluded.last_error_at,
+        updated_at = excluded.updated_at
+    `, [skillName, error, now, now]);
     return (await this.getByName(skillName))!;
   }
 
