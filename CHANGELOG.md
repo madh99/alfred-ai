@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.48] - 2026-03-19
+
+### Fixed
+- **MS 365 Shared Resources — Admin-Account-Schutz** — `share_service` für Microsoft 365 erfordert jetzt `shared_resource` (Email des freigegebenen Postfachs/Kalenders). Ohne shared_resource wird das Sharing verweigert → Admin-Account kann nicht versehentlich freigegeben werden. Config wird mit `sharedMailbox`/`sharedCalendar`/`sharedUser` angereichert → User greift auf `/users/{shared-email}` zu, nie auf `/me`.
+
 ## [0.19.0-multi-ha.47] - 2026-03-19
 
 ### Fixed

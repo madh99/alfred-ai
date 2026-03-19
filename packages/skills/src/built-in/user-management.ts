@@ -47,7 +47,7 @@ Actions:
 - setup_service: Configure a personal service. Params: service_type, service_name, config. For email: config only needs {email, password} — known providers (gmx, gmail, yahoo, outlook, icloud, web.de, posteo, mailbox.org, aon, a1, hotmail) are auto-configured. Example: service_type:"email", service_name:"gmx", config:{email:"user@gmx.at", password:"pass"}
 - my_services: List your configured services
 - remove_service: Remove a personal service. Params: service_type, service_name
-- share_service: Share a service with another user (admin only). Params: username, service_type, service_name`,
+- share_service: Share a service with another user (admin only). Params: username, service_type, service_name, shared_resource (email of shared mailbox/calendar). For Microsoft 365: shared_resource is REQUIRED — it specifies the shared mailbox/calendar/todo (e.g. "office@firma.at"), your own account is NEVER shared. Example: share_service username:"alex" service_type:"email" service_name:"outlook" shared_resource:"office@firma.at"`,
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -65,6 +65,7 @@ Actions:
         service_name: { type: 'string', description: 'Service name (e.g. "outlook", "gmail", "google-calendar")' },
         config: { type: 'object', description: 'Service config JSON (credentials, endpoints)' },
         target_username: { type: 'string', description: 'Target username for sharing' },
+        shared_resource: { type: 'string', description: 'Email address of shared resource (for share_service with Microsoft 365). E.g. "office@firma.at" for a shared mailbox. REQUIRED for M365 to prevent sharing your own account.' },
       },
       required: ['action'],
     },
@@ -397,6 +398,7 @@ Actions:
     const targetUsername = (input.target_username ?? input.username) as string;
     const serviceType = input.service_type as string;
     const serviceName = input.service_name as string;
+    const sharedResource = input.shared_resource as string | undefined;
 
     if (!targetUsername || !serviceType || !serviceName) {
       return { success: false, error: 'username, service_type und service_name sind erforderlich.' };
@@ -412,12 +414,39 @@ Actions:
     const target = await this.userRepo.getByUsername(targetUsername);
     if (!target) return { success: false, error: `User "${targetUsername}" nicht gefunden.` };
 
-    // Copy the service config to the target user
-    await this.userRepo.addService(target.id, serviceType, serviceName, adminService.config);
+    // Build shared config: copy admin credentials but point to shared resource
+    const config = { ...(adminService.config as Record<string, unknown>) };
 
+    if (config.provider === 'microsoft' || config.microsoft) {
+      // Microsoft 365: shared_resource is REQUIRED to prevent leaking admin's own account
+      if (!sharedResource) {
+        return {
+          success: false,
+          error: 'shared_resource (Email-Adresse des freigegebenen Postfachs/Kalenders) ist erforderlich für Microsoft 365. ' +
+            'Beispiel: shared_resource: "office@firma.at". Ohne shared_resource würde dein eigener Account freigegeben werden.',
+        };
+      }
+      // Set the shared resource path based on service type
+      const ms = (config.microsoft ?? config) as Record<string, unknown>;
+      if (serviceType === 'email') ms.sharedMailbox = sharedResource;
+      else if (serviceType === 'calendar') ms.sharedCalendar = sharedResource;
+      else if (serviceType === 'todo') ms.sharedUser = sharedResource;
+      else if (serviceType === 'contacts') ms.sharedUser = sharedResource;
+      if (config.microsoft) config.microsoft = ms;
+    } else if (sharedResource) {
+      // Non-Microsoft: shared_resource is informational only
+      config.sharedResource = sharedResource;
+    }
+
+    await this.userRepo.addService(target.id, serviceType, serviceName, config);
+
+    const sharedInfo = sharedResource ? ` (Shared Resource: ${sharedResource})` : '';
     return {
       success: true,
-      display: `✅ Service "${serviceName}" (${serviceType}) mit ${targetUsername} geteilt.`,
+      display: `✅ Service "${serviceName}" (${serviceType}) mit ${targetUsername} geteilt${sharedInfo}.\n\n` +
+        (sharedResource
+          ? `${targetUsername} greift auf die freigegebene Ressource "${sharedResource}" zu, NICHT auf deinen persönlichen Account.`
+          : `Hinweis: Die Konfiguration wurde 1:1 kopiert.`),
     };
   }
 }
