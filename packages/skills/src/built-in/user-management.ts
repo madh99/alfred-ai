@@ -44,7 +44,7 @@ Actions:
 - invite: Regenerate invite code (admin only). Params: username
 - whoami: Show current user info
 - connect: Connect platform with invite code. Params: code
-- setup_service: Configure a personal service (email, calendar, bmw). Params: service_type, service_name, config (JSON with credentials)
+- setup_service: Configure a personal service. Params: service_type, service_name, config. For email: config only needs {email, password} — known providers (gmx, gmail, yahoo, outlook, icloud, web.de, posteo, mailbox.org, aon, a1, hotmail) are auto-configured. Example: service_type:"email", service_name:"gmx", config:{email:"user@gmx.at", password:"pass"}
 - my_services: List your configured services
 - remove_service: Remove a personal service. Params: service_type, service_name
 - share_service: Share a service with another user (admin only). Params: username, service_type, service_name`,
@@ -259,6 +259,57 @@ Actions:
 
   // ── Service Management ──────────────────────────────────────
 
+  // Well-known email provider templates: only email + password needed
+  private static readonly EMAIL_TEMPLATES: Record<string, { imap: { host: string; port: number; secure: boolean }; smtp: { host: string; port: number; secure: boolean } }> = {
+    'gmx': { imap: { host: 'imap.gmx.net', port: 993, secure: true }, smtp: { host: 'mail.gmx.net', port: 587, secure: false } },
+    'gmx.at': { imap: { host: 'imap.gmx.at', port: 993, secure: true }, smtp: { host: 'mail.gmx.at', port: 587, secure: false } },
+    'gmail': { imap: { host: 'imap.gmail.com', port: 993, secure: true }, smtp: { host: 'smtp.gmail.com', port: 587, secure: false } },
+    'yahoo': { imap: { host: 'imap.mail.yahoo.com', port: 993, secure: true }, smtp: { host: 'smtp.mail.yahoo.com', port: 587, secure: false } },
+    'icloud': { imap: { host: 'imap.mail.me.com', port: 993, secure: true }, smtp: { host: 'smtp.mail.me.com', port: 587, secure: false } },
+    'aon': { imap: { host: 'imap.aon.at', port: 993, secure: true }, smtp: { host: 'smtp.aon.at', port: 587, secure: false } },
+    'a1': { imap: { host: 'imap.a1.net', port: 993, secure: true }, smtp: { host: 'smtp.a1.net', port: 587, secure: false } },
+    'hotmail': { imap: { host: 'outlook.office365.com', port: 993, secure: true }, smtp: { host: 'smtp.office365.com', port: 587, secure: false } },
+    'outlook': { imap: { host: 'outlook.office365.com', port: 993, secure: true }, smtp: { host: 'smtp.office365.com', port: 587, secure: false } },
+    'web.de': { imap: { host: 'imap.web.de', port: 993, secure: true }, smtp: { host: 'smtp.web.de', port: 587, secure: false } },
+    'posteo': { imap: { host: 'posteo.de', port: 993, secure: true }, smtp: { host: 'posteo.de', port: 587, secure: true } },
+    'mailbox.org': { imap: { host: 'imap.mailbox.org', port: 993, secure: true }, smtp: { host: 'smtp.mailbox.org', port: 587, secure: true } },
+  };
+
+  private resolveEmailConfig(serviceName: string, config: Record<string, unknown>): Record<string, unknown> {
+    const email = config.email as string | undefined;
+    const password = config.password as string | undefined;
+
+    // If full config already provided (imap/smtp/auth), use as-is
+    if (config.imap || config.smtp || config.auth || config.provider === 'microsoft') {
+      return config;
+    }
+
+    if (!email || !password) {
+      throw new Error('email und password sind erforderlich.');
+    }
+
+    // Try to match template by service name or email domain
+    const domain = email.split('@')[1]?.toLowerCase() ?? '';
+    const templateKey = serviceName.toLowerCase();
+    const template = UserManagementSkill.EMAIL_TEMPLATES[templateKey]
+      ?? UserManagementSkill.EMAIL_TEMPLATES[domain.replace(/\.(com|net|at|de|org)$/, '')]
+      ?? UserManagementSkill.EMAIL_TEMPLATES[domain];
+
+    if (!template) {
+      throw new Error(
+        `Unbekannter Email-Provider "${serviceName}". Bekannte Provider: ${Object.keys(UserManagementSkill.EMAIL_TEMPLATES).join(', ')}. ` +
+        `Alternativ: vollständige config mit imap/smtp/auth angeben.`,
+      );
+    }
+
+    return {
+      type: 'standard',
+      imap: template.imap,
+      smtp: template.smtp,
+      auth: { user: email, pass: password },
+    };
+  }
+
   private async setupService(
     input: Record<string, unknown>,
     context: SkillContext,
@@ -272,15 +323,25 @@ Actions:
     const config = input.config as Record<string, unknown>;
 
     if (!serviceType) return { success: false, error: 'service_type ist erforderlich (email, calendar, bmw, contacts, todo).' };
-    if (!serviceName) return { success: false, error: 'service_name ist erforderlich (z.B. "outlook", "gmail", "google-calendar").' };
-    if (!config || typeof config !== 'object') return { success: false, error: 'config ist erforderlich (JSON mit Zugangsdaten).' };
+    if (!serviceName) return { success: false, error: 'service_name ist erforderlich (z.B. "gmx", "gmail", "google-calendar").' };
+    if (!config || typeof config !== 'object') return { success: false, error: 'config ist erforderlich. Für Email: {email, password}. Bekannte Provider werden automatisch konfiguriert.' };
 
     const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }
 
-    await context.userServiceResolver.saveServiceConfig(callerUser.id, serviceType, serviceName, config);
+    // Auto-resolve email provider templates
+    let resolvedConfig = config;
+    if (serviceType === 'email') {
+      try {
+        resolvedConfig = this.resolveEmailConfig(serviceName, config);
+      } catch (err) {
+        return { success: false, error: (err as Error).message };
+      }
+    }
+
+    await context.userServiceResolver.saveServiceConfig(callerUser.id, serviceType, serviceName, resolvedConfig);
 
     return {
       success: true,
