@@ -24,6 +24,12 @@ export interface EmailAttachment {
   size: number;
 }
 
+export interface SendEmailAttachment {
+  fileName: string;
+  data: Buffer;
+  contentType: string;
+}
+
 export interface SendEmailInput {
   to: string;
   subject: string;
@@ -31,6 +37,7 @@ export interface SendEmailInput {
   cc?: string;
   replyTo?: string;
   isHtml?: boolean;
+  attachments?: SendEmailAttachment[];
 }
 
 export abstract class EmailProvider {

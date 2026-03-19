@@ -368,6 +368,15 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       }));
     }
 
+    if (input.attachments && input.attachments.length > 0) {
+      message.attachments = input.attachments.map(att => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: att.fileName,
+        contentBytes: att.data.toString('base64'),
+        contentType: att.contentType,
+      }));
+    }
+
     await this.graphRequest(`${this.userPath}/sendMail`, {
       method: 'POST',
       body: JSON.stringify({ message }),
@@ -385,6 +394,20 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
           comment: input.body,
         }),
       });
+      // Add attachments to reply draft if provided
+      if (input.attachments && input.attachments.length > 0 && data?.id) {
+        for (const att of input.attachments) {
+          await this.graphRequest(`${this.userPath}/messages/${data.id}/attachments`, {
+            method: 'POST',
+            body: JSON.stringify({
+              '@odata.type': '#microsoft.graph.fileAttachment',
+              name: att.fileName,
+              contentBytes: att.data.toString('base64'),
+              contentType: att.contentType,
+            }),
+          });
+        }
+      }
       return { messageId: data?.id ?? input.replyTo };
     }
 
@@ -402,6 +425,15 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     if (input.cc) {
       message.ccRecipients = input.cc.split(',').map(addr => ({
         emailAddress: { address: addr.trim() },
+      }));
+    }
+
+    if (input.attachments && input.attachments.length > 0) {
+      message.attachments = input.attachments.map(att => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: att.fileName,
+        contentBytes: att.data.toString('base64'),
+        contentType: att.contentType,
       }));
     }
 

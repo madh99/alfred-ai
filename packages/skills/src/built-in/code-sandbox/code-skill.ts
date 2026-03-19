@@ -33,7 +33,7 @@ export class CodeExecutionSkill extends Skill {
     this.maxTimeout = config?.maxTimeoutMs ?? 120_000;
   }
 
-  async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
+  async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as string;
     const code = input.code as string;
     const language = input.language as 'javascript' | 'python';
@@ -83,6 +83,17 @@ export class CodeExecutionSkill extends Skill {
       mimeType: f.mimeType,
     }));
 
+    // Persist generated files to FileStore (S3) if available
+    const fileStoreKeys: string[] = [];
+    if (context.fileStore && attachments && attachments.length > 0) {
+      for (const att of attachments) {
+        try {
+          const stored = await context.fileStore.save(context.userId, att.fileName, att.data);
+          fileStoreKeys.push(stored.key);
+        } catch { /* best-effort — files are still sent as attachments */ }
+      }
+    }
+
     const output = [
       result.stdout ? `Output:\n${result.stdout}` : '',
       result.stderr ? `Errors:\n${result.stderr}` : '',
@@ -90,6 +101,9 @@ export class CodeExecutionSkill extends Skill {
       `Duration: ${result.durationMs}ms`,
       attachments && attachments.length > 0
         ? `Files generated: ${attachments.map(a => a.fileName).join(', ')}`
+        : '',
+      fileStoreKeys.length > 0
+        ? `Saved to FileStore: ${fileStoreKeys.join(', ')}`
         : '',
     ].filter(Boolean).join('\n\n');
 
@@ -101,6 +115,7 @@ export class CodeExecutionSkill extends Skill {
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         fileCount: result.files?.length ?? 0,
+        fileStoreKeys: fileStoreKeys.length > 0 ? fileStoreKeys : undefined,
       },
       display: output,
       error: result.exitCode !== 0 ? `Code execution failed with exit code ${result.exitCode}` : undefined,

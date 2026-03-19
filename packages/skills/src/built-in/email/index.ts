@@ -1,12 +1,14 @@
 export { EmailProvider } from './email-provider.js';
-export type { EmailMessage, EmailDetail, EmailAttachment, SendEmailInput } from './email-provider.js';
+export type { EmailMessage, EmailDetail, EmailAttachment, SendEmailInput, SendEmailAttachment } from './email-provider.js';
 export { createEmailProvider } from './factory.js';
 export { StandardEmailProvider } from './standard-provider.js';
 export { MicrosoftGraphEmailProvider } from './microsoft-provider.js';
 
 import type { SkillMetadata, SkillContext, SkillResult, LLMRequest, LLMResponse } from '@alfred/types';
 import { Skill } from '../../skill.js';
-import type { EmailProvider } from './email-provider.js';
+import type { EmailProvider, SendEmailAttachment } from './email-provider.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 /** Minimal LLM interface to avoid hard dependency on @alfred/llm. */
 interface EmailLLM {
@@ -131,6 +133,11 @@ export class EmailSkill extends Skill {
             type: 'string',
             description: 'End date filter for extract action (YYYY-MM-DD format, e.g. "2026-12-31")',
           },
+          attachmentKeys: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Files to attach to the email (for send/draft/reply actions). Array of FileStore keys (e.g. "userId/timestamp_file.pdf") or local file paths.',
+          },
         },
         required: ['action'],
       },
@@ -168,15 +175,15 @@ export class EmailSkill extends Skill {
         case 'search':
           return await this.handleSearch(input);
         case 'send':
-          return await this.handleSend(input);
+          return await this.handleSend(input, _context);
         case 'draft':
-          return await this.handleDraft(input);
+          return await this.handleDraft(input, _context);
         case 'folders':
           return await this.handleFolders(input);
         case 'folder':
           return await this.handleFolder(input);
         case 'reply':
-          return await this.handleReply(input);
+          return await this.handleReply(input, _context);
         case 'forward':
           return await this.handleForward(input);
         case 'attachment':
@@ -347,7 +354,7 @@ export class EmailSkill extends Skill {
     };
   }
 
-  private async handleSend(input: Record<string, unknown>): Promise<SkillResult> {
+  private async handleSend(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const to = input.to as string;
     const subject = input.subject as string;
     const body = input.body as string;
@@ -360,22 +367,29 @@ export class EmailSkill extends Skill {
     if ('success' in resolved) return resolved;
     const { provider, account } = resolved;
 
+    const attachments = await this.loadAttachments(input.attachmentKeys as string[] | undefined, context);
+
     const result = await provider.sendMessage({
       to,
       subject,
       body,
       cc: input.cc as string | undefined,
       isHtml: input.isHtml as boolean | undefined,
+      attachments,
     });
+
+    const attInfo = attachments && attachments.length > 0
+      ? `\nAttachments: ${attachments.map(a => a.fileName).join(', ')}`
+      : '';
 
     return {
       success: true,
-      data: { messageId: result.messageId, to, subject },
-      display: this.accountLabel(account, `Email sent to ${to}\nSubject: ${subject}\nMessage ID: ${result.messageId}`),
+      data: { messageId: result.messageId, to, subject, attachmentCount: attachments?.length ?? 0 },
+      display: this.accountLabel(account, `Email sent to ${to}\nSubject: ${subject}${attInfo}\nMessage ID: ${result.messageId}`),
     };
   }
 
-  private async handleDraft(input: Record<string, unknown>): Promise<SkillResult> {
+  private async handleDraft(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const messageId = input.messageId as string;
     const body = input.body as string;
 
@@ -389,11 +403,13 @@ export class EmailSkill extends Skill {
         return { success: false, error: `Unknown email account "${account}".` };
       }
 
+      const attachments = await this.loadAttachments(input.attachmentKeys as string[] | undefined, context);
       const result = await provider.createDraft({
         to: '',
         subject: '',
         body,
         replyTo: rawId,
+        attachments,
       });
 
       return {
@@ -415,12 +431,14 @@ export class EmailSkill extends Skill {
     if ('success' in resolved) return resolved;
     const { provider, account } = resolved;
 
+    const attachments = await this.loadAttachments(input.attachmentKeys as string[] | undefined, context);
     const result = await provider.createDraft({
       to,
       subject,
       body,
       cc: input.cc as string | undefined,
       isHtml: input.isHtml as boolean | undefined,
+      attachments,
     });
 
     return {
@@ -475,7 +493,7 @@ export class EmailSkill extends Skill {
     };
   }
 
-  private async handleReply(input: Record<string, unknown>): Promise<SkillResult> {
+  private async handleReply(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const messageId = input.messageId as string;
     const body = input.body as string;
     if (!messageId) return { success: false, error: '"messageId" is required for reply.' };
@@ -487,11 +505,13 @@ export class EmailSkill extends Skill {
       return { success: false, error: `Unknown email account "${account}".` };
     }
 
+    const attachments = await this.loadAttachments(input.attachmentKeys as string[] | undefined, context);
     const result = await provider.sendMessage({
       to: '',
       subject: '',
       body,
       replyTo: rawId,
+      attachments,
     });
 
     return {
@@ -771,5 +791,46 @@ export class EmailSkill extends Skill {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  /** Load attachments from FileStore keys or local file paths. */
+  private async loadAttachments(
+    keys: string[] | undefined,
+    context: SkillContext,
+  ): Promise<SendEmailAttachment[] | undefined> {
+    if (!keys || keys.length === 0) return undefined;
+
+    const MIME_MAP: Record<string, string> = {
+      '.pdf': 'application/pdf', '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.xls': 'application/vnd.ms-excel',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.csv': 'text/csv', '.txt': 'text/plain', '.json': 'application/json',
+      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif', '.zip': 'application/zip', '.html': 'text/html',
+    };
+
+    const results: SendEmailAttachment[] = [];
+    for (const key of keys) {
+      const isStoreKey = !path.isAbsolute(key) && !key.startsWith('~') && key.includes('/') && context.fileStore;
+
+      let data: Buffer;
+      let fileName: string;
+
+      if (isStoreKey && context.fileStore) {
+        data = await context.fileStore.read(key, context.userId);
+        const rawName = key.split('/').pop() ?? key;
+        fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
+      } else {
+        const resolved = path.resolve(key.startsWith('~') ? key.replace('~', process.env['HOME'] || '') : key);
+        if (!fs.existsSync(resolved)) throw new Error(`Attachment not found: ${key}`);
+        data = fs.readFileSync(resolved);
+        fileName = path.basename(resolved);
+      }
+
+      const ext = path.extname(fileName).toLowerCase();
+      results.push({ fileName, data, contentType: MIME_MAP[ext] || 'application/octet-stream' });
+    }
+    return results.length > 0 ? results : undefined;
   }
 }

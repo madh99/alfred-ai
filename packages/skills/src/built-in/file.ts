@@ -97,7 +97,7 @@ export class FileSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete', 'send', 'read_store', 'list_store', 'delete_store'],
+          enum: ['read', 'write', 'write_binary', 'append', 'list', 'info', 'exists', 'move', 'copy', 'delete', 'send', 'read_store', 'write_store', 'list_store', 'delete_store'],
           description: 'The file operation to perform',
         },
         path: {
@@ -170,6 +170,7 @@ export class FileSkill extends Skill {
       case 'delete': return this.deleteFile(resolvedPath);
       case 'send': return this.sendFile(rawPath, _context);
       case 'read_store': return this.readFromStore(rawPath, _context);
+      case 'write_store': return this.writeToStore(rawPath, content, _context);
       case 'list_store': return this.listFromStore(_context);
       case 'delete_store': return this.deleteFromStore(rawPath, _context);
       default:
@@ -470,6 +471,29 @@ export class FileSkill extends Skill {
       };
     } catch (err) {
       return { success: false, error: `Cannot read store key "${key}": ${(err as Error).message}` };
+    }
+  }
+
+  private async writeToStore(fileName: string, content: string | undefined, context: SkillContext): Promise<SkillResult> {
+    const store = context.fileStore;
+    if (!store) {
+      // Fallback: write locally
+      if (!content) return { success: false, error: 'Missing "content" for write_store action' };
+      return this.writeFile(this.resolvePath(fileName), content);
+    }
+    if (!content) return { success: false, error: 'Missing "content" for write_store action' };
+    try {
+      // Detect base64 binary content
+      const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(content) && content.length > 100;
+      const data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
+      const stored = await store.save(context.userId, fileName, data);
+      return {
+        success: true,
+        data: { key: stored.key, fileName: stored.fileName, size: stored.size },
+        display: `Saved to FileStore: ${stored.key} (${stored.size} bytes)`,
+      };
+    } catch (err) {
+      return { success: false, error: `Cannot write to store "${fileName}": ${(err as Error).message}` };
     }
   }
 

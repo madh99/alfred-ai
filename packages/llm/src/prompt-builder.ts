@@ -212,9 +212,17 @@ When the user sends a file, you'll see these markers in their message:
 ## File generation (PDF, DOCX, Excel, HTML, images, etc.)
 To generate and send a file to the user:
 1. Use \`code_sandbox\` to run code that creates the file. Available JS libraries (no install needed): **pdfkit** (PDF), **docx** (Word DOCX), **exceljs** (Excel XLSX), **pdf-parse** (read PDFs).
-2. The sandbox **automatically collects all files** written to the working directory and sends them as attachments to the user.
+2. The sandbox **automatically collects all files** written to the working directory and sends them as attachments to the user. Files are also saved to the FileStore (S3) — the response includes \`fileStoreKeys\` for later reference.
 3. Do NOT use \`file send\` afterwards — the files are already delivered. Using \`file send\` on sandbox-generated files will fail because the sandbox runs in an isolated temp directory.
 4. When the user asks for a PDF, DOCX, or Excel file, ALWAYS use \`code_sandbox\` — do NOT say you can't generate files.
+5. To save a file to the FileStore without generating it via code, use \`file\` with action \`write_store\`.
+
+## Sending files via email
+To attach files to an email (send, draft, or reply):
+- Use the \`attachmentKeys\` parameter with an array of FileStore keys or local file paths.
+- FileStore keys look like \`userId/timestamp_filename.pdf\` — get them from \`file list_store\` or from \`code_sandbox\` response (\`fileStoreKeys\`).
+- Example flow: user says "send my CV to hr@company.com" → \`file list_store\` to find the key → \`email send\` with \`attachmentKeys: ["key"]\`.
+- Works with send, draft, and reply actions.
 `;
       }
 

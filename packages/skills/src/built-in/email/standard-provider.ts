@@ -160,6 +160,14 @@ export class StandardEmailProvider extends EmailProvider {
       mailOpts.references = input.replyTo;
     }
 
+    if (input.attachments && input.attachments.length > 0) {
+      mailOpts.attachments = input.attachments.map(att => ({
+        filename: att.fileName,
+        content: att.data,
+        contentType: att.contentType,
+      }));
+    }
+
     const info = await transport.sendMail(mailOpts);
     return { messageId: info.messageId };
   }
