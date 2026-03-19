@@ -166,9 +166,16 @@ export class BMWSkill extends Skill {
   /** Per-request override for user-specific BMW config. */
   private activeConfig?: BMWCarDataConfig;
 
-  /** Return the active (per-user or global) BMW config. */
+  /** Return the active (per-user or global) BMW config, respecting multi-user isolation. */
   private get cfg(): BMWCarDataConfig {
-    return this.activeConfig ?? this.config;
+    if (this.activeConfig) return this.activeConfig;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return undefined as unknown as BMWCarDataConfig;
+    return this.config;
+  }
+  private get hasCfg(): boolean {
+    if (this.activeConfig) return true;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return false;
+    return !!this.config;
   }
 
   constructor(config: BMWCarDataConfig) {
@@ -186,6 +193,9 @@ export class BMWSkill extends Skill {
     this.activeContext = _context;
 
     try {
+      if (!this.hasCfg) {
+        return { success: false, error: 'BMW ist nicht konfiguriert. Nutze "setup_service" um BMW Connected Drive zu verbinden.' };
+      }
       const action = input.action as Action | undefined;
       if (!action) return { success: false, error: 'Missing required field "action"' };
 

@@ -71,16 +71,29 @@ export class CalendarSkill extends Skill {
     super();
   }
 
-  /** Return the active (per-user or global) calendar provider. */
+  /** Return the active (per-user or global) calendar provider, respecting multi-user isolation. */
   private get provider(): CalendarProvider {
-    return this.activeProvider ?? this.calendarProvider;
+    if (this.activeProvider) return this.activeProvider;
+    // Multi-user: non-admin users must have their own calendar config
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return undefined as unknown as CalendarProvider;
+    return this.calendarProvider;
   }
+  private get hasProvider(): boolean {
+    if (this.activeProvider) return true;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return false;
+    return !!this.calendarProvider;
+  }
+  private activeContext?: SkillContext;
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     // Resolve per-user calendar provider if available
     this.activeProvider = await this.resolveUserProvider(context) ?? undefined;
+    this.activeContext = context;
 
     try {
+      if (!this.hasProvider) {
+        return { success: false, error: 'Kalender ist nicht konfiguriert. Nutze "setup_service" um einen Kalender zu verbinden.' };
+      }
       // Propagate user timezone to the provider so it sends correct times to the API
       if (context.timezone) {
         this.provider.timezone = context.timezone;

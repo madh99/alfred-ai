@@ -157,7 +157,9 @@ export class EmailSkill extends Skill {
     this.activeProviders = userProviders ?? undefined;
 
     try {
-      const providers = this.activeProviders ?? this.providers;
+      // Multi-user: non-admin users must have their own email config, no fallback to global
+      const providers = this.activeProviders
+        ?? (_context.userRole === 'admin' || !_context.alfredUserId ? this.providers : new Map());
       if (providers.size === 0) {
         return {
           success: false,

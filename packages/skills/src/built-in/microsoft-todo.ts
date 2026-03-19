@@ -43,16 +43,28 @@ export class MicrosoftTodoSkill extends Skill {
     super();
   }
 
-  /** Return the active (per-user or global) config. */
+  /** Return the active (per-user or global) config, respecting multi-user isolation. */
   private get cfg(): MicrosoftTodoConfig {
-    return this.activeConfig ?? this.config;
+    if (this.activeConfig) return this.activeConfig;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return undefined as unknown as MicrosoftTodoConfig;
+    return this.config;
   }
+  private get hasCfg(): boolean {
+    if (this.activeConfig) return true;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return false;
+    return !!this.config;
+  }
+  private activeContext?: SkillContext;
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const userConfig = await this.resolveUserConfig(context);
     this.activeConfig = userConfig ?? undefined;
+    this.activeContext = context;
 
     try {
+      if (!this.hasCfg) {
+        return { success: false, error: 'Microsoft Todo ist nicht konfiguriert. Nutze "setup_service" um Microsoft Todo zu verbinden.' };
+      }
       const action = input.action as string;
 
       try {

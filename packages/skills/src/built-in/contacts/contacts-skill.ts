@@ -88,16 +88,28 @@ export class ContactsSkill extends Skill {
     super();
   }
 
-  /** Return the active (per-user or global) contacts provider. */
+  /** Return the active (per-user or global) contacts provider, respecting multi-user isolation. */
   private get provider(): ContactsProvider {
-    return this.activeProvider ?? this.contactsProvider;
+    if (this.activeProvider) return this.activeProvider;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return undefined as unknown as ContactsProvider;
+    return this.contactsProvider;
   }
+  private get hasProvider(): boolean {
+    if (this.activeProvider) return true;
+    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return false;
+    return !!this.contactsProvider;
+  }
+  private activeContext?: SkillContext;
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const userProvider = await this.resolveUserProvider(context);
     this.activeProvider = userProvider ?? undefined;
+    this.activeContext = context;
 
     try {
+      if (!this.hasProvider) {
+        return { success: false, error: 'Kontakte nicht konfiguriert. Nutze "setup_service" um Kontakte zu verbinden.' };
+      }
       const action = input.action as ContactsAction;
 
       switch (action) {
