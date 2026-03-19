@@ -7,33 +7,126 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [0.19.0-multi-ha.46] - 2026-03-19
 
-### Added
-- **FileStore-Integration** — File-Skill: `read_store`, `write_store`, `list_store`, `delete_store` Actions für S3/NFS-Zugriff. `send` erkennt S3-Keys automatisch. Pipeline zeigt `[Saved to FileStore (s3): key="..."]` statt rohem S3-Key. Duplikat-Löschung via `fileStore.delete()`.
-- **Code Sandbox → S3** — Generierte Dateien (PDF, DOCX, Excel) werden automatisch auf S3 gespeichert. Response enthält `fileStoreKeys` für Weiterverwendung (z.B. Email-Attachment).
-- **Email-Attachments** — `attachmentKeys` Parameter für send/draft/reply. Akzeptiert S3-Keys und lokale Pfade. Unterstützt Standard-IMAP (nodemailer) und Microsoft Graph (fileAttachment inline + Draft→Attach→Send für Replies).
-- **Email-Provider-Templates** — `setup_service` für Email: bekannte Provider (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, posteo, mailbox.org, aon, a1, hotmail) werden automatisch konfiguriert. Nur email + password nötig.
-- **Dependencies** — `@aws-sdk/client-s3`, `pdfkit`, `docx`, `puppeteer-core` hinzugefügt.
+### Fixed
+- **Skill-Filter Identity-Keywords** — "einrichten", "konfigurieren", "Postfach", "verbinde", "richte...ein" fehlten → `setup_service` wurde bei Email-Setup Anfragen nicht geladen.
+
+## [0.19.0-multi-ha.45] - 2026-03-19
 
 ### Fixed
-- **Watch-Engine — fehlendes await** — `skillHealthTracker.isDisabled()` ist async, `if (promise)` ist immer truthy → alle Watches und Background-Tasks wurden als disabled übersprungen. Einzeiler-Fix.
-- **Watch-Engine — Owner-Kontext** — Watch nutzte `chatId` statt Owner-userId für Skill-Kontext. Migration v37: `user_id` Spalte in watches.
-- **Feed-Reader — ESM-Bundle Import** — `await import('rss-parser')` scheitert im esbuild-Bundle + Symlink. Fix: `createRequire(realpathSync(process.argv[1]))`.
-- **S3 FileStore — fehlende Dependency** — `@aws-sdk/client-s3` fehlte in Dependencies.
-- **Multi-User Isolation** — Email, Kalender, Kontakte, BMW, Microsoft Todo: Nicht-Admin User bekamen Zugriff auf Admin-Daten (Fallback auf globale Provider). Geschlossen.
-- **Skill-Filter** — `code_sandbox` wurde bei PDF-Anfragen gefiltert (Kategorie `automation` statt `files`). Fix: `files` inkludiert jetzt `automation`. Identity-Keywords erweitert für User-Management.
-- **Rollen-Zugriffe** — `user` Rolle fehlten `file`, `code_sandbox`, `document`, `scheduled_task`, `microsoft_todo`, `sharing`. `family` fehlten `file`, `document`, `scheduled_task`.
-- **MS Graph Reply + Attachments** — Reply-Endpoint ignorierte Attachments. Fix: Draft→Attach→Send.
-- **System-Prompt** — File-Upload-Kontext, FileStore-Keys, Email-Attachment-Flow, write_store dokumentiert.
-- **Watch Poll-Error Reporting** — Fehler werden in `last_action_error` geschrieben statt nur ins Log.
 - **PostgreSQL ON CONFLICT ambiguous column** — `ON CONFLICT DO UPDATE SET calls = calls + excluded.calls` ist auf PostgreSQL mehrdeutig. LLM-Usage und Skill-Health wurden nie auf PG geschrieben (Fehler still verschluckt). Fix: qualifizierte Spaltennamen (`llm_usage.calls`, `skill_health.fail_count`).
-- **Email-Provider-Templates** — `setup_service` für Email: bekannte Provider (GMX, Gmail, Yahoo, etc.) werden automatisch konfiguriert, nur email + password nötig.
-- **Skill-Filter Identity-Keywords** — "einrichten", "konfigurieren", "Postfach", "verbinde", "richte...ein" fehlten → `setup_service` wurde bei Email-Setup Anfragen nicht geladen.
+
+## [0.19.0-multi-ha.44] - 2026-03-19
+
+### Added
+- **Email-Provider-Templates** — `setup_service` für Email: bekannte Provider (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, posteo, mailbox.org, aon, a1, hotmail) werden automatisch konfiguriert. Nur email + password nötig.
+
+## [0.19.0-multi-ha.43] - 2026-03-19
+
+### Fixed
+- **Multi-User Isolation** — Email, Kalender, Kontakte, BMW, Microsoft Todo: Nicht-Admin User bekamen Zugriff auf Admin-Daten (Fallback auf globale Provider aus .env). Geschlossen.
+
+## [0.19.0-multi-ha.42] - 2026-03-19
+
+### Fixed
+- **Skill-Filter Identity-Keywords** — `user_management` Skill wurde bei User-Management Anfragen nicht geladen. Keywords `user`, `benutzer`, `rolle`, `invite`, `connect` etc. fehlten.
+
+## [0.19.0-multi-ha.41] - 2026-03-19
+
+### Fixed
+- **MS Graph Reply + Attachments** — Reply-Endpoint ignorierte Attachments. Fix: Draft→Attach→Send.
+- **Fehlende awaits** — `recordFailure()`/`recordSuccess()` in watch-engine und workflow-runner ohne await.
+- **Skill-Filter** — `code_sandbox` (Kategorie `automation`) wurde bei PDF-Anfragen gefiltert. Fix: `files` inkludiert jetzt `automation`.
+
+## [0.19.0-multi-ha.40] - 2026-03-19
+
+### Fixed
+- **Rollen-Zugriffe** — `user` Rolle fehlten `file`, `code_sandbox`, `document`, `scheduled_task`, `microsoft_todo`, `sharing`, `background_task`. `family` fehlten `file`, `document`, `scheduled_task`.
+
+## [0.19.0-multi-ha.39] - 2026-03-19
+
+### Fixed
+- **code_sandbox Kategorie** — War `automation`, wurde bei PDF/DOCX-Anfragen (Kategorie `files`) aus der Tool-Liste gefiltert. LLM sagte "nicht verfügbar". Fix: Kategorie auf `files`.
+
+## [0.19.0-multi-ha.38] - 2026-03-19
+
+### Added
+- **FileStore-Integration** — File-Skill: `read_store`, `write_store`, `list_store`, `delete_store` Actions für S3/NFS-Zugriff. `send` erkennt S3-Keys automatisch.
+- **Code Sandbox → S3** — Generierte Dateien werden auf S3 gespeichert. Response enthält `fileStoreKeys`.
+- **Email-Attachments** — `attachmentKeys` Parameter für send/draft/reply. Standard-IMAP (nodemailer) und Microsoft Graph.
+- **System-Prompt** — File-Upload-Kontext, FileStore-Keys, Email-Attachment-Flow dokumentiert.
+
+## [0.19.0-multi-ha.37] - 2026-03-19
+
+### Added
+- **SkillContext.fileStore** — FileStore-Interface im SkillContext für S3/NFS-Zugriff aus Skills.
+- **File Skill Store-Actions** — `read_store`, `list_store`, `delete_store`. `send` erkennt S3-Keys automatisch.
+- **Pipeline FileStore-aware** — `[Saved to FileStore (s3): key="..."]` statt rohem S3-Key. Duplikat-Löschung via `fileStore.delete()`.
+
+## [0.19.0-multi-ha.36] - 2026-03-19
+
+### Added
+- **Dependencies** — `pdfkit`, `docx` als Dependencies für PDF/Word-Erzeugung im code_sandbox.
+- **code_sandbox Skill-Description** — docx für Word-DOCX Erzeugung dokumentiert.
+
+## [0.19.0-multi-ha.35] - 2026-03-18
+
+### Fixed
+- **System-Prompt File-Upload** — LLM wusste nicht dass `[File received]` und `[Saved to]` bedeuten dass die Datei bereits gespeichert ist. Fragte stattdessen nach Dateipfad.
+
+## [0.19.0-multi-ha.34] - 2026-03-18
+
+### Added
+- **puppeteer-core** als optionalDependency für Browser-Skill Fallback.
 
 ## [0.19.0-multi-ha.33] - 2026-03-18
 
 ### Fixed
-- **Watch-Engine/Background-Tasks — fehlendes await** — `skillHealthTracker.isDisabled()` ist async, wurde aber ohne `await` aufgerufen. `if (promise)` ist immer truthy → alle Watches und Background-Tasks wurden als disabled übersprungen, Skills wurden nie ausgeführt.
-- **S3 FileStore — fehlende Dependency** — `@aws-sdk/client-s3` war nicht in `optionalDependencies`, wurde bei `npm install` nie installiert. Datei-Uploads auf S3 (Telegram Attachments, Inbox) schlugen fehl → LLM bekam keinen `[File received]` Block → konnte Dateien nicht verarbeiten.
+- **Watch-Engine/Background-Tasks — fehlendes await** — `skillHealthTracker.isDisabled()` ohne `await` → `if (promise)` immer truthy → alle Watches/Tasks als disabled übersprungen.
+- **S3 FileStore — fehlende Dependency** — `@aws-sdk/client-s3` fehlte in Dependencies. File-Uploads auf S3 schlugen fehl.
+
+## [0.19.0-multi-ha.32] - 2026-03-18
+
+### Fixed
+- **BackgroundTaskRunner — fehlendes await** bei `isDisabled()`. Gleicher Bug wie Watch-Engine.
+
+## [0.19.0-multi-ha.31] - 2026-03-18
+
+### Fixed
+- **Watch-Engine — fehlendes await bei isDisabled()** — Root-Cause für Watch-Skills die nie ausgeführt wurden. `if (promise)` ist immer truthy → jede Watch wurde als disabled übersprungen.
+
+## [0.19.0-multi-ha.30] - 2026-03-18
+
+### Fixed
+- **Feed-Reader — Fehler sichtbar machen** — `catch {}` in check_all schluckte alle Fehler still. Jetzt werden Fehler gesammelt und als `success: false` zurückgegeben.
+
+## [0.19.0-multi-ha.29] - 2026-03-18
+
+### Fixed
+- **Watch Poll-Error Reporting** — Skill-Fehler beim Watch-Poll werden in `last_action_error` geschrieben statt nur ins Log.
+
+## [0.19.0-multi-ha.28] - 2026-03-18
+
+### Fixed
+- **Feed-Reader — createRequire mit realpathSync** — `/usr/bin/alfred` Symlink wurde von `createRequire` nicht aufgelöst. `realpathSync` löst den Symlink → `node_modules` wird gefunden.
+
+## [0.19.0-multi-ha.27] - 2026-03-18
+
+### Fixed
+- **Feed-Reader — createRequire mit process.argv[1]** — `import.meta.url` im Bundle resolvet falsch. `process.argv[1]` ist der tatsächliche Entry-Point.
+
+## [0.19.0-multi-ha.26] - 2026-03-18
+
+### Fixed
+- **Feed-Reader — rss-parser Import-Fallback** — `await import('rss-parser')` scheitert im ESM-Bundle. Fix: `createRequire`-Fallback wenn ESM-Import fehlschlägt.
+
+## [0.19.0-multi-ha.25] - 2026-03-18
+
+### Added
+- **Migration v37** — `user_id` Spalte in watches Tabelle (SQLite + PostgreSQL).
+
+### Fixed
+- **Watch Owner-Kontext** — Watch-Engine nutzte `chatId` als User-ID für Skill-Kontext. In Gruppen-Chats falsche User-Auflösung. Fix: `user_id` in Watch gespeichert, Watch-Engine nutzt es.
+- **JSON.stringify(undefined)** — Watch `last_value` wurde `undefined` statt String. Fix: Fallback auf `"null"`.
 
 ## [0.19.0-multi-ha.28] - 2026-03-18
 
