@@ -410,7 +410,7 @@ Actions:
     }
 
     const { clientId, clientSecret } = this.msAppCredentials;
-    const scopes = 'offline_access Mail.ReadWrite Mail.Send Calendars.ReadWrite Contacts.ReadWrite Tasks.ReadWrite User.Read';
+    const scopes = 'offline_access Mail.ReadWrite Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Calendars.ReadWrite Calendars.ReadWrite.Shared Contacts.ReadWrite Contacts.ReadWrite.Shared Tasks.ReadWrite User.Read';
 
     // Step 1: Device Code Request
     const deviceCodeRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/devicecode', {
