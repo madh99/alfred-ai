@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.44] - 2026-03-19
+## [0.19.0-multi-ha.45] - 2026-03-19
 
 ### Added
 - **FileStore-Integration** — File-Skill: `read_store`, `write_store`, `list_store`, `delete_store` Actions für S3/NFS-Zugriff. `send` erkennt S3-Keys automatisch. Pipeline zeigt `[Saved to FileStore (s3): key="..."]` statt rohem S3-Key. Duplikat-Löschung via `fileStore.delete()`.
@@ -25,6 +25,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **MS Graph Reply + Attachments** — Reply-Endpoint ignorierte Attachments. Fix: Draft→Attach→Send.
 - **System-Prompt** — File-Upload-Kontext, FileStore-Keys, Email-Attachment-Flow, write_store dokumentiert.
 - **Watch Poll-Error Reporting** — Fehler werden in `last_action_error` geschrieben statt nur ins Log.
+- **PostgreSQL ON CONFLICT ambiguous column** — `ON CONFLICT DO UPDATE SET calls = calls + excluded.calls` ist auf PostgreSQL mehrdeutig. LLM-Usage und Skill-Health wurden nie auf PG geschrieben (Fehler still verschluckt). Fix: qualifizierte Spaltennamen (`llm_usage.calls`, `skill_health.fail_count`).
+- **Email-Provider-Templates** — `setup_service` für Email: bekannte Provider (GMX, Gmail, Yahoo, etc.) werden automatisch konfiguriert, nur email + password nötig.
 
 ## [0.19.0-multi-ha.33] - 2026-03-18
 
