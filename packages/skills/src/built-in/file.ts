@@ -483,8 +483,8 @@ export class FileSkill extends Skill {
     }
     if (!content) return { success: false, error: 'Missing "content" for write_store action' };
     try {
-      // Detect base64 binary content
-      const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(content) && content.length > 100;
+      // Detect base64 binary content: must have padding AND no whitespace/punctuation
+      const isBase64 = /^[A-Za-z0-9+/\s]+=+$/.test(content.trim()) && content.length > 100 && !content.includes(' ');
       const data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
       const stored = await store.save(context.userId, fileName, data);
       return {

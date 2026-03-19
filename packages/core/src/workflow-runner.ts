@@ -105,7 +105,7 @@ export class WorkflowRunner {
       const actionStep = step as WorkflowActionStep;
 
       // Check skill health
-      if (this.healthTracker?.isDisabled(actionStep.skillName)) {
+      if (await this.healthTracker?.isDisabled(actionStep.skillName)) {
         const errMsg = `Skill "${actionStep.skillName}" is temporarily disabled`;
         if (actionStep.onError === 'skip') {
           stepResults.push({ skillName: actionStep.skillName, success: false, error: errMsg });
@@ -150,16 +150,16 @@ export class WorkflowRunner {
           if (result.success) {
             lastStepData = result.data;
             stepResults.push({ skillName: actionStep.skillName, success: true, data: result.data });
-            this.healthTracker?.recordSuccess(actionStep.skillName);
+            await this.healthTracker?.recordSuccess(actionStep.skillName);
             stepSucceeded = true;
             break;
           } else {
             lastError = result.error ?? 'Unknown error';
-            this.healthTracker?.recordFailure(actionStep.skillName, lastError);
+            await this.healthTracker?.recordFailure(actionStep.skillName, lastError);
           }
         } catch (err) {
           lastError = err instanceof Error ? err.message : String(err);
-          this.healthTracker?.recordFailure(actionStep.skillName, lastError);
+          await this.healthTracker?.recordFailure(actionStep.skillName, lastError);
         }
       }
 

@@ -341,12 +341,36 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
   async sendMessage(input: SendEmailInput): Promise<{ messageId: string }> {
     if (input.replyTo) {
-      // Reply to an existing message
+      if (input.attachments && input.attachments.length > 0) {
+        // Reply with attachments: create reply draft → add attachments → send
+        const draftData = await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/createReply`, {
+          method: 'POST',
+          body: JSON.stringify({ comment: input.body }),
+        });
+        const draftId = draftData?.id;
+        if (draftId) {
+          for (const att of input.attachments) {
+            await this.graphRequest(`${this.userPath}/messages/${draftId}/attachments`, {
+              method: 'POST',
+              body: JSON.stringify({
+                '@odata.type': '#microsoft.graph.fileAttachment',
+                name: att.fileName,
+                contentBytes: att.data.toString('base64'),
+                contentType: att.contentType,
+              }),
+            });
+          }
+          await this.graphRequest(`${this.userPath}/messages/${draftId}/send`, {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          return { messageId: draftId };
+        }
+      }
+      // Reply without attachments: direct reply
       await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/reply`, {
         method: 'POST',
-        body: JSON.stringify({
-          comment: input.body,
-        }),
+        body: JSON.stringify({ comment: input.body }),
       });
       return { messageId: input.replyTo };
     }

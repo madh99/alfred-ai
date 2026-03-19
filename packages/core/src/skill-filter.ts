@@ -40,6 +40,11 @@ export function selectCategories(
     return selected;
   }
 
+  // files needs automation because code_sandbox (automation) generates files (PDF, DOCX, Excel)
+  if (selected.has('files')) {
+    selected.add('automation');
+  }
+
   // Fallback: if nothing matched, include common categories instead of ALL.
   // Heavy categories (infrastructure, identity, mcp) only appear when keywords match,
   // saving ~1500-2000 tokens per request on generic messages.

@@ -116,7 +116,7 @@ export class WatchEngine {
 
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');
-      this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
+      await this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
       await this.watchRepo.updateActionError(watch.id, `Poll failed: ${result.error ?? 'unknown'}`);
       await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
       return;
@@ -124,7 +124,7 @@ export class WatchEngine {
     // Clear previous poll error on success
     await this.watchRepo.updateActionError(watch.id, null);
 
-    this.skillHealthTracker?.recordSuccess(watch.skillName);
+    await this.skillHealthTracker?.recordSuccess(watch.skillName);
 
     // Evaluate condition(s)
     let triggered: boolean;
@@ -297,7 +297,7 @@ export class WatchEngine {
             try {
               await this.skillSandbox.execute(actionSkill, resolvedParams, context);
               await this.watchRepo.updateActionError(watch.id, null);
-              this.skillHealthTracker?.recordSuccess(watch.actionSkillName!);
+              await this.skillHealthTracker?.recordSuccess(watch.actionSkillName!);
               this.activityLogger?.logWatchAction({
                 watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
                 platform: watch.platform, chatId: watch.chatId, outcome: 'success',
@@ -305,7 +305,7 @@ export class WatchEngine {
             } catch (err) {
               actionError = err instanceof Error ? err.message : String(err);
               await this.watchRepo.updateActionError(watch.id, actionError);
-              this.skillHealthTracker?.recordFailure(watch.actionSkillName!, actionError);
+              await this.skillHealthTracker?.recordFailure(watch.actionSkillName!, actionError);
               this.logger.warn({ watchId: watch.id, err }, 'Watch action failed');
               this.activityLogger?.logWatchAction({
                 watchId: watch.id, watchName: watch.name, skillName: watch.actionSkillName!,
