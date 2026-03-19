@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.47] - 2026-03-19
+
+### Fixed
+- **Email Account-Info Leak** — Skill-Description listete Admin-Account-Namen (outlook, gmail) auf, sichtbar für alle User. Entfernt. Neue `list_accounts` Action zeigt nur die für den jeweiligen User verfügbaren Accounts.
+
 ## [0.19.0-multi-ha.46] - 2026-03-19
 
 ### Fixed

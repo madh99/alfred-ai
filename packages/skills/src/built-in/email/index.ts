@@ -42,19 +42,14 @@ export class EmailSkill extends Skill {
     this.defaultAccount = this.accountNames[0] ?? 'default';
     this.multiAccount = this.providers.size > 1;
 
-    const accountProp = this.multiAccount
-      ? {
-          account: {
-            type: 'string' as const,
-            enum: this.accountNames,
-            description: `Email account to use (available: ${this.accountNames.join(', ')}). Required for multi-account setups.`,
-          },
-        }
-      : {};
+    const accountProp = {
+      account: {
+        type: 'string' as const,
+        description: 'Email account name. Use list_accounts to see available accounts.',
+      },
+    };
 
-    const description = this.multiAccount
-      ? `Access the user's email accounts (${this.accountNames.join(', ')}): check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, forward messages, or download attachments.`
-      : 'Access the user\'s email: check inbox, read messages, search emails, send new emails, create drafts, list folders, read from specific folders, reply to messages, forward messages, or download attachments. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
+    const description = 'Access your email: check inbox, read, search, send, draft, reply, forward, attachment. Use "list_accounts" to see available email accounts. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
 
     this.metadata = {
       name: 'email',
@@ -68,7 +63,7 @@ export class EmailSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract', 'summarize_inbox', 'categorize'],
+            enum: ['inbox', 'read', 'search', 'send', 'draft', 'folders', 'folder', 'reply', 'forward', 'attachment', 'extract', 'summarize_inbox', 'categorize', 'list_accounts'],
             description: 'The email action to perform. Use "extract" for bulk invoice/receipt extraction. Use "summarize_inbox" for an AI-generated summary of recent unread emails. Use "categorize" to classify unread emails by priority.',
           },
           ...accountProp,
@@ -196,8 +191,10 @@ export class EmailSkill extends Skill {
           return await this.handleSummarizeInbox(input);
         case 'categorize':
           return await this.handleCategorize(input);
+        case 'list_accounts':
+          return this.handleListAccounts(providers);
         default:
-          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment, summarize_inbox, categorize` };
+          return { success: false, error: `Unknown action: ${action}. Use: inbox, read, search, send, draft, folders, folder, reply, forward, attachment, extract, summarize_inbox, categorize, list_accounts` };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -793,6 +790,18 @@ export class EmailSkill extends Skill {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  private handleListAccounts(providers: Map<string, EmailProvider>): SkillResult {
+    const names = [...providers.keys()];
+    if (names.length === 0) {
+      return { success: true, data: { accounts: [] }, display: 'Keine Email-Accounts konfiguriert.\nNutze "setup_service" um ein Email-Konto einzurichten (z.B. GMX, Gmail, Outlook).' };
+    }
+    return {
+      success: true,
+      data: { accounts: names, default: names[0] },
+      display: `Verfügbare Email-Accounts:\n${names.map((n, i) => `${i === 0 ? '• ' + n + ' (Standard)' : '• ' + n}`).join('\n')}`,
+    };
   }
 
   /** Load attachments from FileStore keys or local file paths. */
