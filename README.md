@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.48-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.49-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -170,7 +170,7 @@ Alfred supports multiple users with role-based access control. Each user's data 
 
 **Data Isolation** — Non-admin users cannot access admin's Email, Calendar, Contacts, BMW, or Microsoft Todo. Each user must configure their own services.
 
-**Per-User Service Config** — Each user configures their own Email, Calendar, Contacts, BMW, Microsoft Todo via chat (`setup_service`). Known email providers (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, etc.) are auto-configured — only email + password needed. No server access required.
+**Per-User Service Config** — Each user configures their own Email, Calendar, Contacts, BMW, Microsoft Todo via chat (`setup_service`). Known email providers (GMX, Gmail, Yahoo, Outlook, iCloud, web.de, etc.) are auto-configured — only email + password needed. Microsoft 365 via Device Code Flow (`auth_microsoft`) — user signs in at microsoft.com/devicelogin, all services auto-configured. No server access required.
 
 **Sharing** — Share notes, todo lists, documents, or service configs between users. MS 365 shared mailboxes/calendars supported via Graph API delegated access.
 

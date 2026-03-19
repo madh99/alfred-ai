@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.49] - 2026-03-19
+
+### Added
+- **Microsoft 365 Device Code Flow** — `auth_microsoft` Action: User sagt "verbinde mein Microsoft Konto" → bekommt Code + URL → meldet sich im Browser an → Email, Kalender, Kontakte, Todo werden automatisch konfiguriert. Funktioniert für gleichen und verschiedenen Tenant (`common`). Azure App Credentials kommen aus der Admin-Config, jeder User bekommt seinen eigenen refreshToken.
+
 ## [0.19.0-multi-ha.48] - 2026-03-19
 
 ### Fixed

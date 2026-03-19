@@ -47,7 +47,8 @@ Actions:
 - setup_service: Configure a personal service. Params: service_type, service_name, config. For email: config only needs {email, password} — known providers (gmx, gmail, yahoo, outlook, icloud, web.de, posteo, mailbox.org, aon, a1, hotmail) are auto-configured. Example: service_type:"email", service_name:"gmx", config:{email:"user@gmx.at", password:"pass"}
 - my_services: List your configured services
 - remove_service: Remove a personal service. Params: service_type, service_name
-- share_service: Share a service with another user (admin only). Params: username, service_type, service_name, shared_resource (email of shared mailbox/calendar). For Microsoft 365: shared_resource is REQUIRED — it specifies the shared mailbox/calendar/todo (e.g. "office@firma.at"), your own account is NEVER shared. Example: share_service username:"alex" service_type:"email" service_name:"outlook" shared_resource:"office@firma.at"`,
+- share_service: Share a service with another user (admin only). Params: username, service_type, service_name, shared_resource (email of shared mailbox/calendar). For Microsoft 365: shared_resource is REQUIRED — it specifies the shared mailbox/calendar/todo (e.g. "office@firma.at"), your own account is NEVER shared. Example: share_service username:"alex" service_type:"email" service_name:"outlook" shared_resource:"office@firma.at"
+- auth_microsoft: Connect your Microsoft 365 account (email, calendar, contacts, todo) via Device Code Flow. No params needed — Alfred provides a code, you sign in at microsoft.com/devicelogin. Works for any Microsoft account (same or different tenant).`,
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -55,7 +56,7 @@ Actions:
       properties: {
         action: {
           type: 'string',
-          enum: ['create_user', 'list_users', 'set_role', 'deactivate', 'activate', 'delete', 'invite', 'whoami', 'connect', 'setup_service', 'my_services', 'remove_service', 'share_service'],
+          enum: ['create_user', 'list_users', 'set_role', 'deactivate', 'activate', 'delete', 'invite', 'whoami', 'connect', 'setup_service', 'my_services', 'remove_service', 'share_service', 'auth_microsoft'],
         },
         username: { type: 'string' },
         role: { type: 'string', enum: ['admin', 'user', 'family', 'guest', 'service'] },
@@ -71,8 +72,12 @@ Actions:
     },
   };
 
-  constructor(private readonly userRepo: AlfredUserRepository) {
+  /** Microsoft App credentials for Device Code Flow (from admin config). */
+  private msAppCredentials?: { clientId: string; clientSecret: string };
+
+  constructor(private readonly userRepo: AlfredUserRepository, msAppCredentials?: { clientId: string; clientSecret: string }) {
     super();
+    this.msAppCredentials = msAppCredentials;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -90,6 +95,8 @@ Actions:
         return this.listServices(context, callerUser);
       case 'remove_service':
         return this.removeService(input, context, callerUser);
+      case 'auth_microsoft':
+        return this.authMicrosoft(context, callerUser);
       case 'create_user':
       case 'list_users':
       case 'set_role':
@@ -387,6 +394,141 @@ Actions:
     if (!removed) return { success: false, error: `Service "${serviceName}" (${serviceType}) nicht gefunden.` };
 
     return { success: true, display: `✅ Service "${serviceName}" (${serviceType}) entfernt.` };
+  }
+
+  // ── Microsoft Device Code Flow ─────────────────────────────
+
+  private async authMicrosoft(
+    context: SkillContext,
+    callerUser: Awaited<ReturnType<AlfredUserRepository['getUserByPlatform']>>,
+  ): Promise<SkillResult> {
+    if (!callerUser) return { success: false, error: 'Du musst registriert sein. Nutze "connect" mit einem Invite-Code.' };
+    if (!context.userServiceResolver) return { success: false, error: 'Service-Konfiguration nicht verfügbar.' };
+
+    if (!this.msAppCredentials?.clientId || !this.msAppCredentials?.clientSecret) {
+      return { success: false, error: 'Microsoft 365 ist nicht konfiguriert. Der Admin muss zuerst eine Azure App Registration einrichten (ALFRED_MICROSOFT_EMAIL_CLIENT_ID etc. in .env).' };
+    }
+
+    const { clientId, clientSecret } = this.msAppCredentials;
+    const scopes = 'offline_access Mail.ReadWrite Mail.Send Calendars.ReadWrite Contacts.ReadWrite Tasks.ReadWrite User.Read';
+
+    // Step 1: Device Code Request
+    const deviceCodeRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/devicecode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: clientId, scope: scopes }).toString(),
+    });
+
+    if (!deviceCodeRes.ok) {
+      const err = await deviceCodeRes.text().catch(() => '');
+      return { success: false, error: `Microsoft Device Code Request fehlgeschlagen: ${deviceCodeRes.status} — ${err.slice(0, 300)}` };
+    }
+
+    const deviceData = await deviceCodeRes.json() as {
+      device_code: string;
+      user_code: string;
+      verification_uri: string;
+      expires_in: number;
+      interval: number;
+      message: string;
+    };
+
+    // Send user the code immediately via the chat
+    // The skill response will contain the instructions
+    const userMessage = `🔐 **Microsoft 365 verbinden**\n\n` +
+      `1. Öffne: ${deviceData.verification_uri}\n` +
+      `2. Gib diesen Code ein: **${deviceData.user_code}**\n` +
+      `3. Melde dich mit deinem Microsoft-Konto an\n\n` +
+      `⏳ Warte auf Bestätigung (max ${Math.round(deviceData.expires_in / 60)} Minuten)...`;
+
+    // Step 2: Poll for token (sync, like BMW skill)
+    const pollInterval = (deviceData.interval || 5) * 1000;
+    const deadline = Date.now() + deviceData.expires_in * 1000;
+    let refreshToken: string | undefined;
+    let pollError: string | undefined;
+
+    while (Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+      const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          client_id: clientId,
+          client_secret: clientSecret,
+          device_code: deviceData.device_code,
+        }).toString(),
+      });
+
+      if (tokenRes.ok) {
+        const tokenData = await tokenRes.json() as { access_token: string; refresh_token?: string };
+        refreshToken = tokenData.refresh_token;
+        break;
+      }
+
+      const errBody = await tokenRes.json().catch(() => ({ error: 'unknown' })) as { error: string };
+
+      if (errBody.error === 'authorization_pending') {
+        continue; // User hasn't authenticated yet
+      } else if (errBody.error === 'slow_down') {
+        await new Promise(resolve => setTimeout(resolve, 5000)); // Extra delay
+        continue;
+      } else if (errBody.error === 'expired_token') {
+        pollError = 'Code abgelaufen. Bitte erneut versuchen.';
+        break;
+      } else if (errBody.error === 'authorization_declined') {
+        pollError = 'Autorisierung abgelehnt.';
+        break;
+      } else {
+        pollError = `Token-Fehler: ${errBody.error}`;
+        break;
+      }
+    }
+
+    if (!refreshToken) {
+      return {
+        success: false,
+        error: pollError ?? 'Timeout — keine Bestätigung innerhalb der Frist.',
+        display: userMessage + '\n\n❌ ' + (pollError ?? 'Timeout'),
+      };
+    }
+
+    // Step 3: Save service configs for user
+    const baseConfig = { clientId, clientSecret, tenantId: 'common', refreshToken };
+
+    try {
+      await context.userServiceResolver.saveServiceConfig(
+        callerUser.id, 'email', 'outlook',
+        { provider: 'microsoft', microsoft: { ...baseConfig } },
+      );
+      await context.userServiceResolver.saveServiceConfig(
+        callerUser.id, 'calendar', 'microsoft',
+        { provider: 'microsoft', microsoft: { ...baseConfig } },
+      );
+      await context.userServiceResolver.saveServiceConfig(
+        callerUser.id, 'contacts', 'microsoft',
+        { provider: 'microsoft', microsoft: { ...baseConfig } },
+      );
+      // Todo uses flat config structure
+      await context.userServiceResolver.saveServiceConfig(
+        callerUser.id, 'todo', 'microsoft-todo',
+        { ...baseConfig },
+      );
+    } catch (err) {
+      return { success: false, error: `Token erhalten, aber Speichern fehlgeschlagen: ${(err as Error).message}` };
+    }
+
+    return {
+      success: true,
+      display: userMessage + '\n\n✅ **Microsoft 365 verbunden!**\n\n' +
+        'Folgende Dienste sind jetzt konfiguriert:\n' +
+        '• Email (Outlook)\n' +
+        '• Kalender\n' +
+        '• Kontakte\n' +
+        '• Microsoft Todo\n\n' +
+        'Du kannst jetzt z.B. "Zeig meine Emails" oder "Was steht im Kalender?" fragen.',
+    };
   }
 
   // ── Service Sharing (admin only) ───────────────────────────

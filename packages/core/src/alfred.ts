@@ -528,7 +528,17 @@ export class Alfred {
         }
       }
 
-      skillRegistry.register(new UserManagementSkill(alfredUserRepo));
+      // Resolve Microsoft App credentials for Device Code Flow (from any configured MS service)
+      const msAppCredentials = (() => {
+        const ms = this.config.email?.accounts?.[0]?.microsoft
+          ?? (this.config.email as any)?.microsoft
+          ?? this.config.calendar?.microsoft
+          ?? this.config.contacts?.microsoft
+          ?? (this.config.todo as any);
+        if (ms?.clientId && ms?.clientSecret) return { clientId: ms.clientId as string, clientSecret: ms.clientSecret as string };
+        return undefined;
+      })();
+      skillRegistry.register(new UserManagementSkill(alfredUserRepo, msAppCredentials));
       this.logger.info('User management skill registered');
 
       // Sharing skill
