@@ -349,8 +349,33 @@ export class CrossPlatformSkill extends Skill {
     let targetPlatform = platform;
     let targetChatId: string | undefined;
 
-    // 1. Try Alfred user lookup
-    if (this.alfredUsers) {
+    // 1. Check if sending to self (use cross-platform linked identities)
+    const currentInternalId = await this.resolveInternalId(context);
+    const masterUserId = await this.users.getMasterUserId(currentInternalId);
+    const linkedUsers = await this.users.getLinkedUsers(masterUserId);
+
+    // If target matches own username, display name, or "self"/"ich"/"mir"
+    const selfNames = ['self', 'ich', 'mir', 'me', 'myself'];
+    const isSelf = selfNames.includes(targetUsername.toLowerCase())
+      || linkedUsers.some(u =>
+        u.username?.toLowerCase() === targetUsername.toLowerCase()
+        || u.displayName?.toLowerCase() === targetUsername.toLowerCase()
+        || u.platformUserId === targetUsername
+      );
+
+    if (isSelf) {
+      // Send to own linked platform
+      const targetLinked = targetPlatform
+        ? linkedUsers.find(u => u.platform === targetPlatform)
+        : linkedUsers.find(u => u.platform !== context.platform && this.adapters.has(u.platform as Platform));
+      if (targetLinked) {
+        targetPlatform = targetLinked.platform;
+        targetChatId = targetLinked.platformUserId;
+      }
+    }
+
+    // 2. Try Alfred user lookup (other users)
+    if (!targetChatId && this.alfredUsers) {
       const alfredUser = await this.alfredUsers.getByUsername(targetUsername);
       if (alfredUser) {
         const links = await this.alfredUsers.getPlatformLinks(alfredUser.id);
@@ -358,7 +383,6 @@ export class CrossPlatformSkill extends Skill {
           const link = links.find(l => l.platform === targetPlatform);
           targetChatId = link?.platformUserId;
         } else {
-          // Pick first available platform that has a connected adapter
           for (const link of links) {
             if (this.adapters.has(link.platform as Platform)) {
               targetPlatform = link.platform;
