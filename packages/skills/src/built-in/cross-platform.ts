@@ -354,23 +354,58 @@ export class CrossPlatformSkill extends Skill {
     const masterUserId = await this.users.getMasterUserId(currentInternalId);
     const linkedUsers = await this.users.getLinkedUsers(masterUserId);
 
-    // If target matches own username, display name, or "self"/"ich"/"mir"
+    // If target matches own username, display name, Alfred username, or "self"/"ich"/"mir"
     const selfNames = ['self', 'ich', 'mir', 'me', 'myself'];
-    const isSelf = selfNames.includes(targetUsername.toLowerCase())
+    let isSelf = selfNames.includes(targetUsername.toLowerCase())
       || linkedUsers.some(u =>
         u.username?.toLowerCase() === targetUsername.toLowerCase()
         || u.displayName?.toLowerCase() === targetUsername.toLowerCase()
         || u.platformUserId === targetUsername
       );
 
+    // Also check Alfred username (e.g. "admin" is the Alfred username but not in users table)
+    if (!isSelf && this.alfredUsers) {
+      const callerAlfred = await this.alfredUsers.getByUsername(targetUsername);
+      if (callerAlfred) {
+        // Check if this Alfred user is the same as the caller
+        const callerLinks = await this.alfredUsers.getPlatformLinks(callerAlfred.id);
+        const callerPlatformLink = callerLinks.find(l => l.platform === context.platform && l.platformUserId === context.userId);
+        if (callerPlatformLink) isSelf = true;
+      }
+    }
+
     if (isSelf) {
-      // Send to own linked platform
-      const targetLinked = targetPlatform
-        ? linkedUsers.find(u => u.platform === targetPlatform)
-        : linkedUsers.find(u => u.platform !== context.platform && this.adapters.has(u.platform as Platform));
-      if (targetLinked) {
-        targetPlatform = targetLinked.platform;
-        targetChatId = targetLinked.platformUserId;
+      // Send to own linked platform — prefer Alfred user platform links (more complete)
+      if (this.alfredUsers) {
+        let alfredUser = await this.alfredUsers.getByUsername(targetUsername);
+        if (!alfredUser) {
+          for (const u of linkedUsers) {
+            if (u.username) {
+              alfredUser = await this.alfredUsers.getByUsername(u.username);
+              if (alfredUser) break;
+            }
+          }
+        }
+        if (alfredUser) {
+          const links = await this.alfredUsers.getPlatformLinks(alfredUser.id);
+          const link = targetPlatform
+            ? links.find(l => l.platform === targetPlatform)
+            : links.find(l => l.platform !== context.platform && this.adapters.has(l.platform as Platform));
+          if (link) {
+            targetPlatform = link.platform;
+            targetChatId = link.platformUserId;
+          }
+        }
+      }
+      // Fallback to users table linked identities
+      if (!targetChatId) {
+        const targetLinked = targetPlatform
+          ? linkedUsers.find(u => u.platform === targetPlatform)
+          : linkedUsers.find(u => u.platform !== context.platform && this.adapters.has(u.platform as Platform));
+        if (targetLinked) {
+          targetPlatform = targetLinked.platform;
+          targetChatId = targetLinked.platformUserId;
+        }
       }
     }
 
