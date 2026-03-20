@@ -48,7 +48,7 @@ Actions:
 - my_services: List your configured services
 - remove_service: Remove a personal service. Params: service_type, service_name
 - share_service: Share a service with another user (admin only). Params: username, service_type, service_name, shared_resource (email of shared mailbox/calendar). For Microsoft 365: shared_resource is REQUIRED — it specifies the shared mailbox/calendar/todo (e.g. "office@firma.at"), your own account is NEVER shared. Example: share_service username:"alex" service_type:"email" service_name:"outlook" shared_resource:"office@firma.at"
-- auth_microsoft: Connect your Microsoft 365 account (email, calendar, contacts, todo) via Device Code Flow. No params needed — Alfred provides a code, you sign in at microsoft.com/devicelogin. Works for any Microsoft account (same or different tenant).`,
+- auth_microsoft: Connect your Microsoft 365 account (email, calendar, contacts, todo) via Device Code Flow. No params needed — Alfred provides a code, you sign in at microsoft.com/devicelogin. Uses the default tenant. Optional: tenant_id for a different tenant.`,
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -67,15 +67,16 @@ Actions:
         config: { type: 'object', description: 'Service config JSON (credentials, endpoints)' },
         target_username: { type: 'string', description: 'Target username for sharing' },
         shared_resource: { type: 'string', description: 'Email address of shared resource (for share_service with Microsoft 365). E.g. "office@firma.at" for a shared mailbox. REQUIRED for M365 to prevent sharing your own account.' },
+        tenant_id: { type: 'string', description: 'Microsoft tenant ID (for auth_microsoft). Optional — uses default tenant if omitted. Only needed for accounts on a different tenant.' },
       },
       required: ['action'],
     },
   };
 
   /** Microsoft App credentials for Device Code Flow (from admin config). */
-  private msAppCredentials?: { clientId: string; clientSecret: string };
+  private msAppCredentials?: { clientId: string; clientSecret: string; tenantId?: string };
 
-  constructor(private readonly userRepo: AlfredUserRepository, msAppCredentials?: { clientId: string; clientSecret: string }) {
+  constructor(private readonly userRepo: AlfredUserRepository, msAppCredentials?: { clientId: string; clientSecret: string; tenantId?: string }) {
     super();
     this.msAppCredentials = msAppCredentials;
   }
@@ -96,7 +97,7 @@ Actions:
       case 'remove_service':
         return this.removeService(input, context, callerUser);
       case 'auth_microsoft':
-        return this.authMicrosoft(context, callerUser);
+        return this.authMicrosoft(input, context, callerUser);
       case 'create_user':
       case 'list_users':
       case 'set_role':
@@ -399,6 +400,7 @@ Actions:
   // ── Microsoft Device Code Flow ─────────────────────────────
 
   private async authMicrosoft(
+    input: Record<string, unknown>,
     context: SkillContext,
     callerUser: Awaited<ReturnType<AlfredUserRepository['getUserByPlatform']>>,
   ): Promise<SkillResult> {
@@ -410,10 +412,12 @@ Actions:
     }
 
     const { clientId, clientSecret } = this.msAppCredentials;
+    // Use admin's tenantId by default, allow user override for different tenant
+    const tenantId = (input.tenant_id as string) || this.msAppCredentials.tenantId || 'common';
     const scopes = 'offline_access Mail.ReadWrite Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Calendars.ReadWrite Calendars.ReadWrite.Shared Contacts.ReadWrite Contacts.ReadWrite.Shared Tasks.ReadWrite User.Read';
 
     // Step 1: Device Code Request
-    const deviceCodeRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/devicecode', {
+    const deviceCodeRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/devicecode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ client_id: clientId, scope: scopes }).toString(),
@@ -450,7 +454,7 @@ Actions:
     while (Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, pollInterval));
 
-      const tokenRes = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+      const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
@@ -495,7 +499,7 @@ Actions:
     }
 
     // Step 3: Save service configs for user
-    const baseConfig = { clientId, clientSecret, tenantId: 'common', refreshToken };
+    const baseConfig = { clientId, clientSecret, tenantId, refreshToken };
 
     try {
       await context.userServiceResolver.saveServiceConfig(

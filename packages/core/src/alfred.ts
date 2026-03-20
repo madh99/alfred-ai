@@ -536,7 +536,7 @@ export class Alfred {
           ?? this.config.calendar?.microsoft
           ?? this.config.contacts?.microsoft
           ?? (this.config.todo as any);
-        if (ms?.clientId && ms?.clientSecret) return { clientId: ms.clientId as string, clientSecret: ms.clientSecret as string };
+        if (ms?.clientId && ms?.clientSecret) return { clientId: ms.clientId as string, clientSecret: ms.clientSecret as string, tenantId: ms.tenantId as string | undefined };
         return undefined;
       })();
       skillRegistry.register(new UserManagementSkill(alfredUserRepo, msAppCredentials));
