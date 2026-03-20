@@ -58,7 +58,7 @@ export class CrossPlatformSkill extends Skill {
         },
         platform: {
           type: 'string',
-          description: 'Target platform (for send_message or unlink)',
+          description: 'Target platform: telegram, matrix, discord, whatsapp, signal (for send_message, send_to_user, or unlink)',
         },
         chat_id: {
           type: 'string',
