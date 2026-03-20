@@ -1263,17 +1263,7 @@ CREATE TABLE IF NOT EXISTS adapter_claims (
         last_user_message = excluded.last_user_message,
         last_assistant_message = excluded.last_assistant_message,
         updated_at = excluded.updated_at
-    `,[e.conversationId,e.summary,e.messageCount,e.lastUserMessage??null,e.lastAssistantMessage??null,e.updatedAt])}async cleanup(e=180){let t=new Date(Date.now()-e*864e5).toISOString();return(await this.adapter.execute("DELETE FROM conversation_summaries WHERE updated_at < ?",[t])).changes}async delete(e){await this.adapter.execute("DELETE FROM conversation_summaries WHERE conversation_id = ?",[e])}}});var Xs,Au=w(()=>{"use strict";Xs=class{static{h(this,"UsageRepository")}adapter;constructor(e){this.adapter=e}async record(e,t,s,r,n,i,a){let o=new Date().toISOString().slice(0,10);await this.adapter.execute(`
-      INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(date, model) DO UPDATE SET
-        calls = llm_usage.calls + excluded.calls,
-        input_tokens = llm_usage.input_tokens + excluded.input_tokens,
-        output_tokens = llm_usage.output_tokens + excluded.output_tokens,
-        cache_read_tokens = llm_usage.cache_read_tokens + excluded.cache_read_tokens,
-        cache_write_tokens = llm_usage.cache_write_tokens + excluded.cache_write_tokens,
-        cost_usd = llm_usage.cost_usd + excluded.cost_usd
-    `,[o,e,1,t,s,r,n,i]),a&&await this.adapter.execute(`
+    `,[e.conversationId,e.summary,e.messageCount,e.lastUserMessage??null,e.lastAssistantMessage??null,e.updatedAt])}async cleanup(e=180){let t=new Date(Date.now()-e*864e5).toISOString();return(await this.adapter.execute("DELETE FROM conversation_summaries WHERE updated_at < ?",[t])).changes}async delete(e){await this.adapter.execute("DELETE FROM conversation_summaries WHERE conversation_id = ?",[e])}}});var Xs,Au=w(()=>{"use strict";Xs=class{static{h(this,"UsageRepository")}adapter;constructor(e){this.adapter=e}async record(e,t,s,r,n,i,a){let o=new Date().toISOString().slice(0,10);a?await this.adapter.execute(`
         INSERT INTO llm_usage_by_user (date, user_id, model, calls, input_tokens, output_tokens, cost_usd)
         VALUES (?, ?, ?, 1, ?, ?, ?)
         ON CONFLICT(date, user_id, model) DO UPDATE SET
@@ -1281,7 +1271,17 @@ CREATE TABLE IF NOT EXISTS adapter_claims (
           input_tokens = llm_usage_by_user.input_tokens + excluded.input_tokens,
           output_tokens = llm_usage_by_user.output_tokens + excluded.output_tokens,
           cost_usd = llm_usage_by_user.cost_usd + excluded.cost_usd
-      `,[o,a,e,t,s,i])}async getByUser(e,t){return(await this.adapter.query(`
+      `,[o,a,e,t,s,i]):await this.adapter.execute(`
+        INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(date, model) DO UPDATE SET
+          calls = llm_usage.calls + excluded.calls,
+          input_tokens = llm_usage.input_tokens + excluded.input_tokens,
+          output_tokens = llm_usage.output_tokens + excluded.output_tokens,
+          cache_read_tokens = llm_usage.cache_read_tokens + excluded.cache_read_tokens,
+          cache_write_tokens = llm_usage.cache_write_tokens + excluded.cache_write_tokens,
+          cost_usd = llm_usage.cost_usd + excluded.cost_usd
+      `,[o,e,1,t,s,r,n,i])}async getByUser(e,t){return(await this.adapter.query(`
       SELECT user_id, SUM(calls) as calls, SUM(input_tokens) as input_tokens,
              SUM(output_tokens) as output_tokens, SUM(cost_usd) as cost_usd
       FROM llm_usage_by_user WHERE date >= ? AND date <= ?

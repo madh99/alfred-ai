@@ -22,23 +22,17 @@ export interface DailyUsageSummary {
 export class UsageRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  /** Record a single LLM call (upsert into today's row for this model). */
+  /**
+   * Record a single LLM call.
+   * Without userId: writes to llm_usage (global aggregate) — called by setPersist callback.
+   * With userId: writes ONLY to llm_usage_by_user (per-user) — called by pipeline.
+   * This separation prevents double-counting in llm_usage.
+   */
   async record(model: string, inputTokens: number, outputTokens: number, cacheReadTokens: number, cacheWriteTokens: number, costUsd: number, userId?: string): Promise<void> {
     const date = new Date().toISOString().slice(0, 10);
-    // Global aggregate (unchanged)
-    await this.adapter.execute(`
-      INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(date, model) DO UPDATE SET
-        calls = llm_usage.calls + excluded.calls,
-        input_tokens = llm_usage.input_tokens + excluded.input_tokens,
-        output_tokens = llm_usage.output_tokens + excluded.output_tokens,
-        cache_read_tokens = llm_usage.cache_read_tokens + excluded.cache_read_tokens,
-        cache_write_tokens = llm_usage.cache_write_tokens + excluded.cache_write_tokens,
-        cost_usd = llm_usage.cost_usd + excluded.cost_usd
-    `, [date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]);
-    // Per-user in separate table (no double-counting)
+
     if (userId) {
+      // Per-user only — global is handled by setPersist
       await this.adapter.execute(`
         INSERT INTO llm_usage_by_user (date, user_id, model, calls, input_tokens, output_tokens, cost_usd)
         VALUES (?, ?, ?, 1, ?, ?, ?)
@@ -48,6 +42,19 @@ export class UsageRepository {
           output_tokens = llm_usage_by_user.output_tokens + excluded.output_tokens,
           cost_usd = llm_usage_by_user.cost_usd + excluded.cost_usd
       `, [date, userId, model, inputTokens, outputTokens, costUsd]);
+    } else {
+      // Global aggregate — called by setPersist for every LLM call
+      await this.adapter.execute(`
+        INSERT INTO llm_usage (date, model, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(date, model) DO UPDATE SET
+          calls = llm_usage.calls + excluded.calls,
+          input_tokens = llm_usage.input_tokens + excluded.input_tokens,
+          output_tokens = llm_usage.output_tokens + excluded.output_tokens,
+          cache_read_tokens = llm_usage.cache_read_tokens + excluded.cache_read_tokens,
+          cache_write_tokens = llm_usage.cache_write_tokens + excluded.cache_write_tokens,
+          cost_usd = llm_usage.cost_usd + excluded.cost_usd
+      `, [date, model, 1, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUsd]);
     }
   }
 
