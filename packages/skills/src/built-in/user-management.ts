@@ -475,6 +475,7 @@ Actions:
         body: new URLSearchParams({
           grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
           client_id: clientId,
+          client_secret: clientSecret,
           device_code: deviceData.device_code,
         }).toString(),
       });
@@ -485,7 +486,7 @@ Actions:
         break;
       }
 
-      const errBody = await tokenRes.json().catch(() => ({ error: 'unknown' })) as { error: string };
+      const errBody = await tokenRes.json().catch(() => ({ error: 'unknown' })) as { error: string; error_description?: string; error_codes?: number[] };
 
       if (errBody.error === 'authorization_pending') {
         continue; // User hasn't authenticated yet
@@ -499,7 +500,7 @@ Actions:
         pollError = 'Autorisierung abgelehnt.';
         break;
       } else {
-        pollError = `Token-Fehler: ${errBody.error}`;
+        pollError = `Token-Fehler: ${errBody.error}${errBody.error_description ? ` — ${errBody.error_description.slice(0, 300)}` : ''}`;
         break;
       }
     }
