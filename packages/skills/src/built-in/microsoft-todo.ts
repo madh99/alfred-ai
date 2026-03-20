@@ -179,7 +179,7 @@ export class MicrosoftTodoSkill extends Skill {
       client_secret: cfg.clientSecret,
       refresh_token: cfg.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Tasks.ReadWrite offline_access',
+      scope: 'openid offline_access',
     });
 
     const res = await fetch(tokenUrl, {
