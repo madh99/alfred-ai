@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.69] - 2026-03-20
+
+### Fixed
+- **Skill-Filter Einkaufsliste** — `einkaufsliste`, `einkauf`, `shopping`, `liste` als productivity Keywords. Ohne diese wurden Todo-Skills bei "Einkaufsliste" nicht geladen. Betrifft nur Kategorie-Auswahl, nicht Tool-Wahl.
+
 ## [0.19.0-multi-ha.68] - 2026-03-20
 
 ### Added
