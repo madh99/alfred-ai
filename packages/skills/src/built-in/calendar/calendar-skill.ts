@@ -101,8 +101,17 @@ export class CalendarSkill extends Skill {
 
     try {
       // Multi-user: non-admin users must have their own calendar config, no fallback to global
-      const providers = this.activeProviders
-        ?? (context.userRole === 'admin' || !context.alfredUserId ? this.providers : new Map());
+      let providers: Map<string, CalendarProvider>;
+      if (this.activeProviders) {
+        if (context.userRole === 'admin' || !context.alfredUserId) {
+          // Admin: merge global providers + per-user providers (per-user overrides global with same name)
+          providers = new Map([...this.providers, ...this.activeProviders]);
+        } else {
+          providers = this.activeProviders;
+        }
+      } else {
+        providers = (context.userRole === 'admin' || !context.alfredUserId) ? this.providers : new Map();
+      }
       if (providers.size === 0) {
         return { success: false, error: 'Kalender ist nicht konfiguriert. Nutze "setup_service" um einen Kalender zu verbinden.' };
       }

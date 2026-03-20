@@ -153,8 +153,17 @@ export class EmailSkill extends Skill {
 
     try {
       // Multi-user: non-admin users must have their own email config, no fallback to global
-      const providers = this.activeProviders
-        ?? (_context.userRole === 'admin' || !_context.alfredUserId ? this.providers : new Map());
+      let providers: Map<string, EmailProvider>;
+      if (this.activeProviders) {
+        if (_context.userRole === 'admin' || !_context.alfredUserId) {
+          // Admin: merge global + per-user (per-user overrides global with same name)
+          providers = new Map([...this.providers, ...this.activeProviders]);
+        } else {
+          providers = this.activeProviders;
+        }
+      } else {
+        providers = (_context.userRole === 'admin' || !_context.alfredUserId) ? this.providers : new Map();
+      }
       if (providers.size === 0) {
         return {
           success: false,

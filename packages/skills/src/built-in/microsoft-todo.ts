@@ -72,8 +72,16 @@ export class MicrosoftTodoSkill extends Skill {
 
     try {
       // Multi-user: non-admin users must have their own todo config, no fallback to global
-      const cfgs = this.activeConfigs
-        ?? (context.userRole === 'admin' || !context.alfredUserId ? this.configs : new Map());
+      let cfgs: Map<string, MicrosoftTodoConfig>;
+      if (this.activeConfigs) {
+        if (context.userRole === 'admin' || !context.alfredUserId) {
+          cfgs = new Map([...this.configs, ...this.activeConfigs]);
+        } else {
+          cfgs = this.activeConfigs;
+        }
+      } else {
+        cfgs = (context.userRole === 'admin' || !context.alfredUserId) ? this.configs : new Map();
+      }
       if (cfgs.size === 0) {
         return { success: false, error: 'Microsoft Todo ist nicht konfiguriert. Nutze "setup_service" um Microsoft Todo zu verbinden.' };
       }

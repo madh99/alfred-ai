@@ -119,8 +119,16 @@ export class ContactsSkill extends Skill {
 
     try {
       // Multi-user: non-admin users must have their own contacts config, no fallback to global
-      const providers = this.activeProviders
-        ?? (context.userRole === 'admin' || !context.alfredUserId ? this.providers : new Map());
+      let providers: Map<string, ContactsProvider>;
+      if (this.activeProviders) {
+        if (context.userRole === 'admin' || !context.alfredUserId) {
+          providers = new Map([...this.providers, ...this.activeProviders]);
+        } else {
+          providers = this.activeProviders;
+        }
+      } else {
+        providers = (context.userRole === 'admin' || !context.alfredUserId) ? this.providers : new Map();
+      }
       if (providers.size === 0) {
         return { success: false, error: 'Kontakte nicht konfiguriert. Nutze "setup_service" um Kontakte zu verbinden.' };
       }
