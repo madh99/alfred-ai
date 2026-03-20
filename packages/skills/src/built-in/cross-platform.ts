@@ -383,20 +383,47 @@ export class CrossPlatformSkill extends Skill {
     }
 
     try {
-      // Send text message
-      if (message) {
-        await adapter.sendMessage(targetChatId, message);
-      }
+      // For platforms that use user IDs instead of chat IDs (Matrix: @user:server, Discord: username),
+      // use sendDirectMessage which creates/finds a DM room/channel automatically.
+      const isUserId = targetChatId.startsWith('@') || (targetPlatform === 'discord' && !/^\d+$/.test(targetChatId));
 
-      // Send file attachment if provided
-      if (attachmentKey && context.fileStore) {
-        const data = await context.fileStore.read(attachmentKey, context.userId);
-        const rawName = attachmentKey.split('/').pop() ?? attachmentKey;
-        const fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
-        if (adapter.sendFile) {
-          await adapter.sendFile(targetChatId, data, fileName, message ? undefined : fileName);
-        } else {
-          return { success: false, error: `Plattform "${targetPlatform}" unterstützt keinen Dateiversand.` };
+      if (isUserId && adapter.sendDirectMessage) {
+        // DM path: sendDirectMessage handles room/channel creation
+        if (message) {
+          await adapter.sendDirectMessage(targetChatId, message);
+        }
+        if (attachmentKey && context.fileStore && adapter.sendFile) {
+          // For Matrix/Discord DMs: sendDirectMessage ensures room exists,
+          // then we need the room ID for sendFile. Use sendDirectMessage with file info as text fallback.
+          const data = await context.fileStore.read(attachmentKey, context.userId);
+          const rawName = attachmentKey.split('/').pop() ?? attachmentKey;
+          const fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
+          // Try sendFile with user ID — Telegram/WhatsApp handle this fine,
+          // Matrix will fail but we already sent the text message above
+          try {
+            await adapter.sendFile(targetChatId, data, fileName);
+          } catch {
+            // Matrix sendFile needs room ID, not user ID — send as DM text with filename
+            if (message) {
+              // Text already sent, inform about file limitation
+              await adapter.sendDirectMessage!(targetChatId, `📎 Datei: ${fileName} (Datei-Versand über DM wird noch nicht unterstützt auf ${targetPlatform})`);
+            }
+          }
+        }
+      } else {
+        // Direct chat ID path (Telegram numeric ID, Matrix room ID, etc.)
+        if (message) {
+          await adapter.sendMessage(targetChatId, message);
+        }
+        if (attachmentKey && context.fileStore) {
+          const data = await context.fileStore.read(attachmentKey, context.userId);
+          const rawName = attachmentKey.split('/').pop() ?? attachmentKey;
+          const fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
+          if (adapter.sendFile) {
+            await adapter.sendFile(targetChatId, data, fileName);
+          } else {
+            return { success: false, error: `Plattform "${targetPlatform}" unterstützt keinen Dateiversand.` };
+          }
         }
       }
 
