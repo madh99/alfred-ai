@@ -48,7 +48,8 @@ Actions:
 - my_services: List your configured services
 - remove_service: Remove a personal service. Params: service_type, service_name
 - share_service: Share a service with another user (admin only). Params: username, service_type, service_name, shared_resource (email of shared mailbox/calendar). For Microsoft 365: shared_resource is REQUIRED — it specifies the shared mailbox/calendar/todo (e.g. "office@firma.at"), your own account is NEVER shared. Example: share_service username:"alex" service_type:"email" service_name:"outlook" shared_resource:"office@firma.at"
-- auth_microsoft: Connect your Microsoft 365 account (email, calendar, contacts, todo) via Device Code Flow. No params needed — Alfred provides a code, you sign in at microsoft.com/devicelogin. Uses the default tenant. Optional: tenant_id for a different tenant.`,
+- auth_microsoft: Connect your Microsoft 365 account (email, calendar, contacts, todo) via Device Code Flow. No params needed — Alfred provides a code, you sign in at microsoft.com/devicelogin. Uses the default tenant. Optional: tenant_id for a different tenant.
+- add_shared_resource: Add a shared/delegated Microsoft 365 resource (calendar, mailbox, contacts, todo) to your account. Uses your existing credentials + adds the shared resource as an additional account. Params: service_type (email/calendar/contacts/todo), shared_resource (email of shared resource, e.g. "fam@dohnal.co"), service_name (optional display name).`,
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
@@ -56,7 +57,7 @@ Actions:
       properties: {
         action: {
           type: 'string',
-          enum: ['create_user', 'list_users', 'set_role', 'deactivate', 'activate', 'delete', 'invite', 'whoami', 'connect', 'setup_service', 'my_services', 'remove_service', 'share_service', 'auth_microsoft'],
+          enum: ['create_user', 'list_users', 'set_role', 'deactivate', 'activate', 'delete', 'invite', 'whoami', 'connect', 'setup_service', 'my_services', 'remove_service', 'share_service', 'auth_microsoft', 'add_shared_resource'],
         },
         username: { type: 'string' },
         role: { type: 'string', enum: ['admin', 'user', 'family', 'guest', 'service'] },
@@ -75,10 +76,17 @@ Actions:
 
   /** Microsoft App credentials for Device Code Flow (from admin config). */
   private msAppCredentials?: { clientId: string; clientSecret: string; tenantId?: string };
+  /** Global MS configs per service type for add_shared_resource. */
+  private msGlobalConfigs?: Record<string, Record<string, unknown>>;
 
-  constructor(private readonly userRepo: AlfredUserRepository, msAppCredentials?: { clientId: string; clientSecret: string; tenantId?: string }) {
+  constructor(
+    private readonly userRepo: AlfredUserRepository,
+    msAppCredentials?: { clientId: string; clientSecret: string; tenantId?: string },
+    msGlobalConfigs?: Record<string, Record<string, unknown>>,
+  ) {
     super();
     this.msAppCredentials = msAppCredentials;
+    this.msGlobalConfigs = msGlobalConfigs;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -98,6 +106,8 @@ Actions:
         return this.removeService(input, context, callerUser);
       case 'auth_microsoft':
         return this.authMicrosoft(input, context, callerUser);
+      case 'add_shared_resource':
+        return this.addSharedResource(input, context, callerUser);
       case 'create_user':
       case 'list_users':
       case 'set_role':
@@ -532,6 +542,77 @@ Actions:
         '• Kontakte\n' +
         '• Microsoft Todo\n\n' +
         'Du kannst jetzt z.B. "Zeig meine Emails" oder "Was steht im Kalender?" fragen.',
+    };
+  }
+
+  // ── Add Shared Resource ────────────────────────────────────
+
+  private async addSharedResource(
+    input: Record<string, unknown>,
+    context: SkillContext,
+    callerUser: Awaited<ReturnType<AlfredUserRepository['getUserByPlatform']>>,
+  ): Promise<SkillResult> {
+    if (!callerUser) return { success: false, error: 'Du musst registriert sein. Nutze "connect" mit einem Invite-Code.' };
+    if (!context.userServiceResolver) return { success: false, error: 'Service-Konfiguration nicht verfügbar.' };
+
+    const serviceType = input.service_type as string;
+    const sharedResource = input.shared_resource as string;
+    const serviceName = (input.service_name as string) || sharedResource?.split('@')[0] || 'shared';
+
+    if (!serviceType) return { success: false, error: 'service_type ist erforderlich (email, calendar, contacts, todo).' };
+    if (!sharedResource) return { success: false, error: 'shared_resource ist erforderlich (Email-Adresse der freigegebenen Ressource, z.B. "fam@dohnal.co").' };
+
+    const validTypes = ['email', 'calendar', 'contacts', 'todo'];
+    if (!validTypes.includes(serviceType)) {
+      return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
+    }
+
+    // Find base config: first check per-user services, then global config
+    let baseConfig: Record<string, unknown> | undefined;
+
+    // 1. Try per-user service config
+    const existingServices = await context.userServiceResolver.getUserServices(callerUser.id, serviceType);
+    if (existingServices.length > 0) {
+      // Use the first existing service as base (copy credentials, change shared resource)
+      baseConfig = { ...(existingServices[0].config as Record<string, unknown>) };
+    }
+
+    // 2. Fallback to global MS config (admin only or if no per-user config)
+    if (!baseConfig && this.msGlobalConfigs?.[serviceType]) {
+      baseConfig = JSON.parse(JSON.stringify(this.msGlobalConfigs[serviceType]));
+    }
+
+    if (!baseConfig) {
+      return { success: false, error: `Kein ${serviceType}-Dienst konfiguriert. Richte zuerst deinen eigenen ${serviceType}-Account ein (auth_microsoft oder setup_service).` };
+    }
+
+    // Add shared resource to config
+    const sharedConfig = { ...baseConfig };
+    if (sharedConfig.microsoft && typeof sharedConfig.microsoft === 'object') {
+      const ms = { ...(sharedConfig.microsoft as Record<string, unknown>) };
+      if (serviceType === 'email') ms.sharedMailbox = sharedResource;
+      else if (serviceType === 'calendar') ms.sharedCalendar = sharedResource;
+      else if (serviceType === 'contacts') ms.sharedUser = sharedResource;
+      else if (serviceType === 'todo') ms.sharedUser = sharedResource;
+      sharedConfig.microsoft = ms;
+    } else {
+      // Flat config (todo)
+      if (serviceType === 'todo') (sharedConfig as any).sharedUser = sharedResource;
+      else if (serviceType === 'email') (sharedConfig as any).sharedMailbox = sharedResource;
+      else if (serviceType === 'calendar') (sharedConfig as any).sharedCalendar = sharedResource;
+      else (sharedConfig as any).sharedUser = sharedResource;
+    }
+
+    // Save as additional service (does NOT replace existing ones)
+    await context.userServiceResolver.saveServiceConfig(callerUser.id, serviceType, serviceName, sharedConfig);
+
+    return {
+      success: true,
+      display: `✅ Freigegebene Ressource "${sharedResource}" als ${serviceType}/${serviceName} hinzugefügt.\n\n` +
+        `Du hast jetzt Zugriff auf:\n` +
+        `• Deinen eigenen ${serviceType}-Account (Standard)\n` +
+        `• ${sharedResource} (Account: "${serviceName}")\n\n` +
+        `Nutze \`account: "${serviceName}"\` um explizit auf die freigegebene Ressource zuzugreifen.`,
     };
   }
 

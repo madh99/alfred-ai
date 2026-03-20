@@ -529,7 +529,7 @@ export class Alfred {
         }
       }
 
-      // Resolve Microsoft App credentials for Device Code Flow (from any configured MS service)
+      // Resolve Microsoft App credentials for Device Code Flow + shared resource setup
       const msAppCredentials = (() => {
         const ms = this.config.email?.accounts?.[0]?.microsoft
           ?? (this.config.email as any)?.microsoft
@@ -539,7 +539,14 @@ export class Alfred {
         if (ms?.clientId && ms?.clientSecret) return { clientId: ms.clientId as string, clientSecret: ms.clientSecret as string, tenantId: ms.tenantId as string | undefined };
         return undefined;
       })();
-      skillRegistry.register(new UserManagementSkill(alfredUserRepo, msAppCredentials));
+      // Collect full MS configs per service type for add_shared_resource
+      const msGlobalConfigs: Record<string, Record<string, unknown>> = {};
+      if (this.config.calendar?.microsoft) msGlobalConfigs.calendar = { provider: 'microsoft', microsoft: this.config.calendar.microsoft };
+      if (this.config.contacts?.microsoft) msGlobalConfigs.contacts = { provider: 'microsoft', microsoft: this.config.contacts.microsoft };
+      const emailMs = this.config.email?.accounts?.[0]?.microsoft ?? (this.config.email as any)?.microsoft;
+      if (emailMs) msGlobalConfigs.email = { provider: 'microsoft', microsoft: emailMs };
+      if (this.config.todo?.clientId) msGlobalConfigs.todo = { ...(this.config.todo as unknown as Record<string, unknown>) };
+      skillRegistry.register(new UserManagementSkill(alfredUserRepo, msAppCredentials, Object.keys(msGlobalConfigs).length > 0 ? msGlobalConfigs : undefined));
       this.logger.info('User management skill registered');
 
       // Wire Alfred user lookup into CrossPlatformSkill for send_to_user
