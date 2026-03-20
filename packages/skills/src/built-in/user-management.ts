@@ -425,6 +425,7 @@ Actions:
     const { clientId, clientSecret } = this.msAppCredentials;
     // Use admin's tenantId by default, allow user override for different tenant
     const tenantId = (input.tenant_id as string) || this.msAppCredentials.tenantId || 'common';
+    console.log('[auth_microsoft] clientId:', clientId?.slice(0, 8) + '...', 'tenantId:', tenantId?.slice(0, 8) + '...', 'secretLen:', clientSecret?.length);
     const scopes = 'offline_access Mail.ReadWrite Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Calendars.ReadWrite Calendars.ReadWrite.Shared Contacts.ReadWrite Contacts.ReadWrite.Shared Tasks.ReadWrite User.Read';
 
     // Step 1: Device Code Request
@@ -500,6 +501,7 @@ Actions:
         pollError = 'Autorisierung abgelehnt.';
         break;
       } else {
+        console.error('[auth_microsoft] Token poll error:', JSON.stringify(errBody).slice(0, 500));
         pollError = `Token-Fehler: ${errBody.error}${errBody.error_description ? ` — ${errBody.error_description.slice(0, 300)}` : ''}`;
         break;
       }
