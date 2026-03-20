@@ -22,9 +22,7 @@ export class MicrosoftContactsProvider extends ContactsProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: this.config.sharedContacts
-        ? 'https://graph.microsoft.com/Contacts.ReadWrite.Shared offline_access'
-        : 'https://graph.microsoft.com/Contacts.ReadWrite offline_access',
+      scope: 'https://graph.microsoft.com/Contacts.ReadWrite offline_access',
     });
 
     const res = await fetch(tokenUrl, {
