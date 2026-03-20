@@ -39,7 +39,8 @@ export class CrossPlatformSkill extends Skill {
       'Actions: link_start (generate a linking code on current platform), ' +
       'link_confirm (enter a code from another platform to link accounts), ' +
       'send_message (send a message to your own linked platform), ' +
-      'send_to_user (send a message/file to another person or to yourself on another platform — username is optional for self-send, just set platform), ' +
+      'send_to_user (send a message/file to another person), ' +
+      'send_to_self (send a message/file to YOURSELF on another platform — only needs platform, no username), ' +
       'list_identities (show all linked platforms), ' +
       'unlink (remove a platform link).',
     riskLevel: 'write',
@@ -49,7 +50,7 @@ export class CrossPlatformSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['link_start', 'link_confirm', 'send_message', 'send_to_user', 'list_identities', 'unlink'],
+          enum: ['link_start', 'link_confirm', 'send_message', 'send_to_user', 'send_to_self', 'list_identities', 'unlink'],
           description: 'The action to perform',
         },
         code: {
@@ -116,6 +117,8 @@ export class CrossPlatformSkill extends Skill {
         return this.sendMessage(input, context);
       case 'send_to_user':
         return this.sendToUser(input, context);
+      case 'send_to_self':
+        return this.sendToUser({ ...input, username: undefined }, context);
       case 'list_identities':
         return this.listIdentities(context);
       case 'unlink':
