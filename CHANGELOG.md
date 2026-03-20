@@ -190,12 +190,6 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **Watch Owner-Kontext** — Watch-Engine nutzte `chatId` als User-ID für Skill-Kontext. In Gruppen-Chats falsche User-Auflösung. Fix: `user_id` in Watch gespeichert, Watch-Engine nutzt es.
 - **JSON.stringify(undefined)** — Watch `last_value` wurde `undefined` statt String. Fix: Fallback auf `"null"`.
 
-## [0.19.0-multi-ha.28] - 2026-03-18
-
-### Fixed
-- **Feed-Reader Watch-Trigger** — RSS Feeds in Watches haben nie getriggert. Root-Cause: `await import('rss-parser')` scheitert im ESM-Bundle (Node.js kann externalisierte Imports nicht relativ zum Bundle-Pfad auflösen), und `/usr/bin/alfred` ist ein Symlink dessen Pfad `createRequire` falsch resolvet. Fix: `realpathSync(process.argv[1])` löst den Symlink auf, `createRequire` findet `rss-parser` im korrekten `node_modules`.
-- **Watch Owner-Kontext** — Watch-Engine nutzte `chatId` als User-ID für Skill-Kontext. In Gruppen-Chats führte das zu einer falschen User-Auflösung, wodurch Feed-Subscriptions nicht gefunden wurden. Fix: `user_id` Spalte in watches (Migration v37), Watch-Skill speichert Owner-ID beim Erstellen.
-- **JSON.stringify(undefined)** — Wenn `extractField` für eine Watch-Condition `undefined` zurückgab, wurde `JSON.stringify(undefined)` als `undefined` (nicht String) gespeichert → NULL in DB → Watch blieb im Baseline-Modus. Fix: Fallback auf `"null"`.
 
 ## [0.19.0-multi-ha.4] - 2026-03-17
 
