@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.80] - 2026-03-20
+
+### Added
+- **Multi-Account Calendar, Contacts, Todo** — Wie Email-Skill: Map-basierte Provider-Architektur. Eigener Account + freigegebene Ressourcen gleichzeitig nutzbar. `list_accounts` Action, `account` Parameter pro Abfrage.
+- **add_shared_resource Action** — Freigegebene MS 365 Ressourcen (Kalender, Postfach, Kontakte, Todo) als zusätzlichen Account hinzufügen. Nutzt bestehende Credentials, fügt `sharedCalendar`/`sharedMailbox`/`sharedUser` hinzu.
+- **/stop Befehl** — Laufende Anfragen per Chat abbrechen. AbortController pro chatId:userId.
+- **Thinking-Status sofort** — `onProgress('Thinking...')` am Anfang von `process()` statt nach der ganzen Vorarbeit.
+
+### Fixed
+- **MS Token-Refresh** — Nur `openid offline_access` beim Refresh anfordern. Microsoft gibt Token mit Original-Scopes zurück. Vorher: Refresh mit `.Shared` Scopes scheiterte wenn Original-Token diese nicht hatte.
+- **Admin behält globale Provider** — Per-user Services (shared Kalender) überschrieben globale Provider. Jetzt Merge: global + per-user. `mergedProviders` für alle Actions, nicht nur `list_accounts`.
+- **Calendar per-user Provider Fehler** — Fehler werden geloggt statt still verschluckt.
+- **Device Code Flow** — `timeoutMs: 900_000` (15 Min) für User-Management Skill. Code wird sofort via `onProgress` gesendet, nicht erst nach Polling. Token-Polling mit detaillierter `error_description`.
+- **Skill-Filter Einkaufsliste** — `einkaufsliste`, `einkauf`, `shopping`, `liste` als productivity Keywords.
+
 ## [0.19.0-multi-ha.69] - 2026-03-20
 
 ### Fixed
