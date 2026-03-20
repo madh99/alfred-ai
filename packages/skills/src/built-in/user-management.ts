@@ -475,7 +475,6 @@ Actions:
         body: new URLSearchParams({
           grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
           client_id: clientId,
-          client_secret: clientSecret,
           device_code: deviceData.device_code,
         }).toString(),
       });
