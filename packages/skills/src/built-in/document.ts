@@ -17,15 +17,16 @@ export interface DocumentProcessorInterface {
   ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }>;
 }
 
-type DocumentAction = 'ingest' | 'search' | 'summarize' | 'list' | 'delete' | 'share' | 'unshare';
+type DocumentAction = 'ingest' | 'search' | 'read' | 'summarize' | 'list' | 'delete' | 'share' | 'unshare';
 
 export class DocumentSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'document',
     category: 'files',
     description:
-      'Ingest, search, summarize, list, delete, share, or unshare documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. ' +
-      'Documents are chunked and embedded for semantic search. Documents can be private (default), shared with specific users, or public (visible to all users).',
+      'Ingest, search, read, summarize, list, delete, share, or unshare documents. Supports PDF, DOCX, TXT, CSV, and Markdown files. ' +
+      'Use "read" to get the FULL text content of a document. Use "search" for semantic search across documents. ' +
+      'Documents can be private (default), shared with specific users, or public (visible to all users).',
     riskLevel: 'write',
     version: '1.0.0',
     timeoutMs: 120_000,
@@ -34,8 +35,8 @@ export class DocumentSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['ingest', 'search', 'summarize', 'list', 'delete', 'share', 'unshare'],
-          description: 'Action to perform',
+          enum: ['ingest', 'search', 'read', 'summarize', 'list', 'delete', 'share', 'unshare'],
+          description: 'Action to perform. Use "read" to get the FULL text content of a document (requires document_id). Use "search" for semantic search across all documents.',
         },
         file_path: { type: 'string', description: 'Path to the file (for ingest)' },
         filename: { type: 'string', description: 'Original filename (for ingest)' },
@@ -78,6 +79,8 @@ export class DocumentSkill extends Skill {
         return this.ingest(input, context);
       case 'search':
         return this.search(input, context);
+      case 'read':
+        return this.readDocument(input, context);
       case 'summarize':
         return this.summarize(input, context);
       case 'list':
@@ -202,6 +205,32 @@ export class DocumentSkill extends Skill {
       success: true,
       data: docResults,
       display: `Found ${docResults.length} relevant chunk(s):\n\n${display}`,
+    };
+  }
+
+  private async readDocument(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const documentId = input.document_id as string | undefined;
+    if (!documentId) return { success: false, error: 'Missing required field "document_id" for read action. Use "list" to find document IDs.' };
+
+    const doc = await this.docRepo.getDocument(documentId);
+    if (!doc) return { success: false, error: `Document "${documentId}" not found` };
+
+    const userId = effectiveUserId(context);
+    if (!await this.docRepo.canAccess(documentId, userId)) {
+      return { success: false, error: 'Kein Zugriff auf dieses Dokument.' };
+    }
+
+    const chunks = await this.docRepo.getChunks(documentId);
+    if (chunks.length === 0) {
+      return { success: true, data: { document: doc, content: '' }, display: `Document "${doc.filename}" has no content.` };
+    }
+
+    const fullContent = chunks.map(c => c.content).join('\n\n');
+
+    return {
+      success: true,
+      data: { document: doc, content: fullContent, totalChunks: chunks.length },
+      display: `**${doc.filename}** (${chunks.length} chunks)\n\n${fullContent}`,
     };
   }
 
