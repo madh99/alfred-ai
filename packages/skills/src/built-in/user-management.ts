@@ -448,13 +448,17 @@ Actions:
       message: string;
     };
 
-    // Send user the code immediately via the chat
-    // The skill response will contain the instructions
+    // Send user the code IMMEDIATELY via onProgress before polling starts
     const userMessage = `🔐 **Microsoft 365 verbinden**\n\n` +
       `1. Öffne: ${deviceData.verification_uri}\n` +
       `2. Gib diesen Code ein: **${deviceData.user_code}**\n` +
       `3. Melde dich mit deinem Microsoft-Konto an\n\n` +
       `⏳ Warte auf Bestätigung (max ${Math.round(deviceData.expires_in / 60)} Minuten)...`;
+
+    // Send code to user IMMEDIATELY via onProgress (before polling blocks)
+    if (context.onProgress) {
+      context.onProgress(userMessage);
+    }
 
     // Step 2: Poll for token (sync, like BMW skill)
     const pollInterval = (deviceData.interval || 5) * 1000;
