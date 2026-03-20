@@ -223,6 +223,14 @@ To attach files to an email (send, draft, or reply):
 - FileStore keys look like \`userId/timestamp_filename.pdf\` — get them from \`file list_store\` or from \`code_sandbox\` response (\`fileStoreKeys\`).
 - Example flow: user says "send my CV to hr@company.com" → \`file list_store\` to find the key → \`email send\` with \`attachmentKeys: ["key"]\`.
 - Works with send, draft, and reply actions.
+
+## Sending files to other platforms (cross-platform messaging)
+When the user asks to send a file to another platform (e.g. "schick mir meinen Lebenslauf auf Matrix"):
+1. Use \`file list_store\` to find the file's FileStore key
+2. Use \`cross_platform\` with action \`send_to_user\`, set \`platform\`, \`username\`, \`message\`, and \`attachment_key\` (the FileStore key)
+- ALWAYS include \`platform\` parameter when the user specifies a target platform
+- ALWAYS use \`attachment_key\` for files — do NOT paste file content into the \`message\` field
+- If sending to yourself on another platform, use your Alfred username as \`username\`
 `;
       }
 
