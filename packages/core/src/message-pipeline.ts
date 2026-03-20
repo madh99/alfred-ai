@@ -257,6 +257,9 @@ export class MessagePipeline {
     const abortController = new AbortController();
     this.activeRequests.set(requestKey, abortController);
 
+    // Show status immediately so user knows Alfred is working
+    onProgress?.('Thinking...');
+
     // Check for pending confirmation response
     if (this.confirmationQueue && message.text) {
       const { context: confContext } = await buildSkillContext(this.users, {
