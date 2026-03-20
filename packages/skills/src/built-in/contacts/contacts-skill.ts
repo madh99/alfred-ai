@@ -1,115 +1,130 @@
-import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, ContactsConfig } from '@alfred/types';
 import { Skill } from '../../skill.js';
 import type { ContactsProvider, Contact } from './contacts-provider.js';
 
-type ContactsAction = 'search' | 'get' | 'list' | 'create' | 'update' | 'delete';
+type ContactsAction = 'search' | 'get' | 'list' | 'create' | 'update' | 'delete' | 'list_accounts';
 
 export class ContactsSkill extends Skill {
-  /** Per-request override for user-specific contacts provider. */
-  private activeProvider?: ContactsProvider;
+  readonly metadata: SkillMetadata;
 
-  readonly metadata: SkillMetadata = {
-    name: 'contacts',
-    category: 'productivity',
-    description:
-      'Manage contacts. Search, view, create, update, or delete contacts.',
-    riskLevel: 'write',
-    version: '1.0.0',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          enum: ['search', 'get', 'list', 'create', 'update', 'delete'],
-          description: 'The contacts action to perform',
-        },
-        query: {
-          type: 'string',
-          description: 'Search query (for search action)',
-        },
-        contactId: {
-          type: 'string',
-          description: 'Contact ID (for get/update/delete)',
-        },
-        firstName: {
-          type: 'string',
-          description: 'First name (for create/update)',
-        },
-        lastName: {
-          type: 'string',
-          description: 'Last name (for create/update)',
-        },
-        displayName: {
-          type: 'string',
-          description: 'Display name (for create/update)',
-        },
-        email: {
-          type: 'string',
-          description: 'Single email address (for create/update, shorthand)',
-        },
-        phone: {
-          type: 'string',
-          description: 'Single phone number (for create/update, shorthand)',
-        },
-        organization: {
-          type: 'string',
-          description: 'Organization / company (for create/update)',
-        },
-        birthday: {
-          type: 'string',
-          description: 'Birthday in YYYY-MM-DD format (for create/update)',
-        },
-        notes: {
-          type: 'string',
-          description: 'Notes (for create/update)',
-        },
-        emailAddresses: {
-          type: 'string',
-          description: 'JSON array of {address, label?, primary?} for multiple emails',
-        },
-        phoneNumbers: {
-          type: 'string',
-          description: 'JSON array of {number, label?, primary?} for multiple phones',
-        },
-        addresses: {
-          type: 'string',
-          description: 'JSON array of {street?, city?, region?, postalCode?, country?, label?}',
-        },
-        limit: {
-          type: 'number',
-          description: 'Maximum number of contacts to return (for list, default 50)',
-        },
-      },
-      required: ['action'],
-    },
-  };
+  private readonly providers: Map<string, ContactsProvider>;
+  private readonly defaultAccount: string;
 
-  constructor(private readonly contactsProvider: ContactsProvider) {
+  /** Per-request override for user-specific providers (set in execute, cleared in finally). */
+  private activeProviders?: Map<string, ContactsProvider>;
+
+  constructor(providers?: Map<string, ContactsProvider> | ContactsProvider) {
     super();
-  }
 
-  /** Return the active (per-user or global) contacts provider, respecting multi-user isolation. */
-  private get provider(): ContactsProvider {
-    if (this.activeProvider) return this.activeProvider;
-    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return undefined as unknown as ContactsProvider;
-    return this.contactsProvider;
+    if (providers instanceof Map) {
+      this.providers = providers;
+    } else if (providers) {
+      this.providers = new Map([['default', providers]]);
+    } else {
+      this.providers = new Map();
+    }
+
+    this.defaultAccount = [...this.providers.keys()][0] ?? 'default';
+
+    const accountProp = {
+      account: {
+        type: 'string' as const,
+        description: 'Contacts account name. Use list_accounts to see available accounts.',
+      },
+    };
+
+    const description = 'Manage contacts. Search, view, create, update, or delete contacts. Use "list_accounts" to see available contacts accounts.';
+
+    this.metadata = {
+      name: 'contacts',
+      category: 'productivity',
+      description,
+      riskLevel: 'write',
+      version: '2.0.0',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['search', 'get', 'list', 'create', 'update', 'delete', 'list_accounts'],
+            description: 'The contacts action to perform',
+          },
+          ...accountProp,
+          query: {
+            type: 'string',
+            description: 'Search query (for search action)',
+          },
+          contactId: {
+            type: 'string',
+            description: 'Contact ID (for get/update/delete)',
+          },
+          firstName: {
+            type: 'string',
+            description: 'First name (for create/update)',
+          },
+          lastName: {
+            type: 'string',
+            description: 'Last name (for create/update)',
+          },
+          displayName: {
+            type: 'string',
+            description: 'Display name (for create/update)',
+          },
+          email: {
+            type: 'string',
+            description: 'Single email address (for create/update, shorthand)',
+          },
+          phone: {
+            type: 'string',
+            description: 'Single phone number (for create/update, shorthand)',
+          },
+          organization: {
+            type: 'string',
+            description: 'Organization / company (for create/update)',
+          },
+          birthday: {
+            type: 'string',
+            description: 'Birthday in YYYY-MM-DD format (for create/update)',
+          },
+          notes: {
+            type: 'string',
+            description: 'Notes (for create/update)',
+          },
+          emailAddresses: {
+            type: 'string',
+            description: 'JSON array of {address, label?, primary?} for multiple emails',
+          },
+          phoneNumbers: {
+            type: 'string',
+            description: 'JSON array of {number, label?, primary?} for multiple phones',
+          },
+          addresses: {
+            type: 'string',
+            description: 'JSON array of {street?, city?, region?, postalCode?, country?, label?}',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of contacts to return (for list, default 50)',
+          },
+        },
+        required: ['action'],
+      },
+    };
   }
-  private get hasProvider(): boolean {
-    if (this.activeProvider) return true;
-    if (this.activeContext?.alfredUserId && this.activeContext.userRole !== 'admin') return false;
-    return !!this.contactsProvider;
-  }
-  private activeContext?: SkillContext;
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const userProvider = await this.resolveUserProvider(context);
-    this.activeProvider = userProvider ?? undefined;
-    this.activeContext = context;
+    // Resolve per-user contacts providers if available
+    const userProviders = await this.resolveUserProviders(context);
+    this.activeProviders = userProviders ?? undefined;
 
     try {
-      if (!this.hasProvider) {
+      // Multi-user: non-admin users must have their own contacts config, no fallback to global
+      const providers = this.activeProviders
+        ?? (context.userRole === 'admin' || !context.alfredUserId ? this.providers : new Map());
+      if (providers.size === 0) {
         return { success: false, error: 'Kontakte nicht konfiguriert. Nutze "setup_service" um Kontakte zu verbinden.' };
       }
+
       const action = input.action as ContactsAction;
 
       switch (action) {
@@ -125,41 +140,94 @@ export class ContactsSkill extends Skill {
           return this.updateContact(input);
         case 'delete':
           return this.deleteContact(input);
+        case 'list_accounts':
+          return this.handleListAccounts(providers);
         default:
           return { success: false, error: `Unknown action: "${String(action)}"` };
       }
     } finally {
-      this.activeProvider = undefined;
+      this.activeProviders = undefined;
     }
   }
 
+  // ── Provider Resolution ──────────────────────────────────────────
+
   /**
-   * Resolve a per-user contacts provider from UserServiceResolver.
+   * Resolve per-user contacts providers from UserServiceResolver.
    * Returns null if no per-user config is available (fall back to global).
    */
-  private async resolveUserProvider(context: SkillContext): Promise<ContactsProvider | null> {
+  private async resolveUserProviders(context: SkillContext): Promise<Map<string, ContactsProvider> | null> {
     if (!context.userServiceResolver || !context.alfredUserId) return null;
-    const config = await context.userServiceResolver.getServiceConfig(context.alfredUserId, 'contacts');
-    if (!config) return null;
-    try {
-      const { createContactsProvider } = await import('./factory.js');
-      return await createContactsProvider(config as any);
-    } catch { return null; }
+    const services = await context.userServiceResolver.getUserServices(context.alfredUserId, 'contacts');
+    if (services.length === 0) return null;
+
+    const providers = new Map<string, ContactsProvider>();
+    for (const svc of services) {
+      try {
+        const { createContactsProvider } = await import('./factory.js');
+        const provider = await createContactsProvider(svc.config as unknown as ContactsConfig);
+        providers.set(svc.serviceName, provider);
+      } catch { /* skip broken per-user configs */ }
+    }
+    return providers.size > 0 ? providers : null;
   }
+
+  private resolveProvider(input: Record<string, unknown>): { provider: ContactsProvider; account: string } | SkillResult {
+    const providers = this.activeProviders ?? this.providers;
+    const accountNames = [...providers.keys()];
+    const defaultAccount = accountNames[0] ?? 'default';
+    const account = (input.account as string) ?? defaultAccount;
+    const provider = providers.get(account);
+    if (!provider) {
+      return {
+        success: false,
+        error: `Unbekannter Kontakte-Account "${account}". Verfügbar: ${accountNames.join(', ')}`,
+      };
+    }
+    return { provider, account };
+  }
+
+  private accountLabel(account: string, text: string): string {
+    const providers = this.activeProviders ?? this.providers;
+    return providers.size > 1 ? `[${account}] ${text}` : text;
+  }
+
+  private encodeId(account: string, rawId: string): string {
+    const providers = this.activeProviders ?? this.providers;
+    return providers.size > 1 ? `${account}::${rawId}` : rawId;
+  }
+
+  private decodeId(compositeId: string): { account: string; rawId: string } {
+    const providers = this.activeProviders ?? this.providers;
+    if (providers.size > 1) {
+      const idx = compositeId.indexOf('::');
+      if (idx >= 0) {
+        return { account: compositeId.slice(0, idx), rawId: compositeId.slice(idx + 2) };
+      }
+    }
+    const defaultAccount = [...providers.keys()][0] ?? this.defaultAccount;
+    return { account: defaultAccount, rawId: compositeId };
+  }
+
+  // ── Handlers ─────────────────────────────────────────────────────
 
   private async searchContacts(input: Record<string, unknown>): Promise<SkillResult> {
     const query = input.query as string;
     if (!query) return { success: false, error: 'Missing required field "query"' };
 
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
     try {
-      const contacts = await this.provider.search(query);
+      const contacts = await provider.search(query);
 
       if (contacts.length === 0) {
-        return { success: true, data: [], display: `No contacts found for "${query}".` };
+        return { success: true, data: [], display: this.accountLabel(account, `No contacts found for "${query}".`) };
       }
 
-      const display = this.formatTable(contacts);
-      return { success: true, data: contacts, display: `${contacts.length} contact(s) found:\n${display}` };
+      const display = this.formatTable(contacts, account);
+      return { success: true, data: contacts, display: this.accountLabel(account, `${contacts.length} contact(s) found:\n${display}`) };
     } catch (err) {
       return { success: false, error: `Failed to search contacts: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -169,13 +237,20 @@ export class ContactsSkill extends Skill {
     const contactId = input.contactId as string;
     if (!contactId) return { success: false, error: 'Missing required field "contactId"' };
 
+    const { account, rawId } = this.decodeId(contactId);
+    const providers = this.activeProviders ?? this.providers;
+    const provider = providers.get(account);
+    if (!provider) {
+      return { success: false, error: `Unbekannter Kontakte-Account "${account}".` };
+    }
+
     try {
-      const contact = await this.provider.get(contactId);
+      const contact = await provider.get(rawId);
       if (!contact) {
-        return { success: false, error: `Contact "${contactId}" not found.` };
+        return { success: false, error: `Contact "${rawId}" not found.` };
       }
 
-      const display = this.formatDetail(contact);
+      const display = this.formatDetail(contact, account);
       return { success: true, data: contact, display };
     } catch (err) {
       return { success: false, error: `Failed to get contact: ${err instanceof Error ? err.message : String(err)}` };
@@ -185,28 +260,36 @@ export class ContactsSkill extends Skill {
   private async listContacts(input: Record<string, unknown>): Promise<SkillResult> {
     const limit = (input.limit as number) ?? 50;
 
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
     try {
-      const contacts = await this.provider.list(limit);
+      const contacts = await provider.list(limit);
 
       if (contacts.length === 0) {
-        return { success: true, data: [], display: 'No contacts found.' };
+        return { success: true, data: [], display: this.accountLabel(account, 'No contacts found.') };
       }
 
-      const display = this.formatTable(contacts);
-      return { success: true, data: contacts, display: `${contacts.length} contact(s):\n${display}` };
+      const display = this.formatTable(contacts, account);
+      return { success: true, data: contacts, display: this.accountLabel(account, `${contacts.length} contact(s):\n${display}`) };
     } catch (err) {
       return { success: false, error: `Failed to list contacts: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
 
   private async createContact(input: Record<string, unknown>): Promise<SkillResult> {
+    const resolved = this.resolveProvider(input);
+    if ('success' in resolved) return resolved;
+    const { provider, account } = resolved;
+
     try {
       const contactInput = this.buildContactInput(input);
-      const contact = await this.provider.create(contactInput);
+      const contact = await provider.create(contactInput);
       return {
         success: true,
         data: contact,
-        display: `Contact created: ${contact.displayName}`,
+        display: this.accountLabel(account, `Contact created: ${contact.displayName}`),
       };
     } catch (err) {
       return { success: false, error: `Failed to create contact: ${err instanceof Error ? err.message : String(err)}` };
@@ -217,13 +300,20 @@ export class ContactsSkill extends Skill {
     const contactId = input.contactId as string;
     if (!contactId) return { success: false, error: 'Missing required field "contactId"' };
 
+    const { account, rawId } = this.decodeId(contactId);
+    const providers = this.activeProviders ?? this.providers;
+    const provider = providers.get(account);
+    if (!provider) {
+      return { success: false, error: `Unbekannter Kontakte-Account "${account}".` };
+    }
+
     try {
       const contactInput = this.buildContactInput(input);
-      const contact = await this.provider.update(contactId, contactInput);
+      const contact = await provider.update(rawId, contactInput);
       return {
         success: true,
         data: contact,
-        display: `Contact updated: ${contact.displayName}`,
+        display: this.accountLabel(account, `Contact updated: ${contact.displayName}`),
       };
     } catch (err) {
       return { success: false, error: `Failed to update contact: ${err instanceof Error ? err.message : String(err)}` };
@@ -234,13 +324,34 @@ export class ContactsSkill extends Skill {
     const contactId = input.contactId as string;
     if (!contactId) return { success: false, error: 'Missing required field "contactId"' };
 
+    const { account, rawId } = this.decodeId(contactId);
+    const providers = this.activeProviders ?? this.providers;
+    const provider = providers.get(account);
+    if (!provider) {
+      return { success: false, error: `Unbekannter Kontakte-Account "${account}".` };
+    }
+
     try {
-      await this.provider.delete(contactId);
-      return { success: true, data: { deleted: contactId }, display: `Contact "${contactId}" deleted.` };
+      await provider.delete(rawId);
+      return { success: true, data: { deleted: rawId }, display: this.accountLabel(account, `Contact "${rawId}" deleted.`) };
     } catch (err) {
       return { success: false, error: `Failed to delete contact: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
+
+  private handleListAccounts(providers: Map<string, ContactsProvider>): SkillResult {
+    const names = [...providers.keys()];
+    if (names.length === 0) {
+      return { success: true, data: { accounts: [] }, display: 'Keine Kontakte-Accounts konfiguriert.\nNutze "setup_service" um Kontakte zu verbinden.' };
+    }
+    return {
+      success: true,
+      data: { accounts: names, default: names[0] },
+      display: `Verfügbare Kontakte-Accounts:\n${names.map((n, i) => `${i === 0 ? '• ' + n + ' (Standard)' : '• ' + n}`).join('\n')}`,
+    };
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────────
 
   private buildContactInput(input: Record<string, unknown>): Partial<import('./contacts-provider.js').CreateContactInput> {
     const result: Partial<import('./contacts-provider.js').CreateContactInput> = {};
@@ -286,17 +397,18 @@ export class ContactsSkill extends Skill {
     return result;
   }
 
-  private formatTable(contacts: Contact[]): string {
+  private formatTable(contacts: Contact[], account: string): string {
     const header = '| Name | Email | Phone |\n|------|-------|-------|';
     const rows = contacts.map(c => {
       const email = c.emails[0]?.address ?? '-';
       const phone = c.phones[0]?.number ?? '-';
-      return `| ${c.displayName} | ${email} | ${phone} |`;
+      const id = this.encodeId(account, c.id);
+      return `| ${c.displayName} | ${email} | ${phone} | [id:${id}]`;
     });
     return `${header}\n${rows.join('\n')}`;
   }
 
-  private formatDetail(contact: Contact): string {
+  private formatDetail(contact: Contact, account: string): string {
     const lines: string[] = [];
     lines.push(`**Name:** ${contact.displayName}`);
     if (contact.firstName) lines.push(`**First name:** ${contact.firstName}`);
@@ -316,7 +428,7 @@ export class ContactsSkill extends Skill {
     if (contact.organization) lines.push(`**Organization:** ${contact.organization}`);
     if (contact.birthday) lines.push(`**Birthday:** ${contact.birthday}`);
     if (contact.notes) lines.push(`**Notes:** ${contact.notes}`);
-    lines.push(`**ID:** ${contact.id}`);
+    lines.push(`**ID:** ${this.encodeId(account, contact.id)}`);
     return lines.join('\n');
   }
 }
