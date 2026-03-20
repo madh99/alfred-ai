@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.65] - 2026-03-20
+
+### Added
+- **send_to_user / send_to_self** — Nachrichten und Dateien an andere Personen oder sich selbst auf einer anderen Plattform senden. Unterstützt Telegram, Matrix, Discord, WhatsApp, Signal. Empfänger per Alfred-Username, Display-Name oder chatId. Dateien aus FileStore (S3) als Attachment. Rate-Limiting (10/min).
+- **Alfred-Username im User-Profil** — LLM kennt den eigenen Alfred-Username für Self-Send Auflösung.
+
+### Fixed
+- **Matrix Room-ID Auflösung** — Matrix braucht Room-ID (`!xxx:server`), nicht User-ID (`@user:server`). Conversation-DB wird genutzt um Room-ID aufzulösen. chatId-Format `!roomId:server:@user:server` wird korrekt auf Room-ID getrimmt.
+- **Matrix sendDirectMessage** — `sendFile` und `sendMessage` nutzen `sendDirectMessage` wenn Ziel eine User-ID ist (erstellt/findet DM-Room automatisch).
+- **Self-Send Erkennung** — Erkennt Alfred-Username, Display-Name, Platform-Username und Self-Keywords (ich/mir/me/self). `send_to_self` Action braucht keinen Username.
+- **Skill-Filter Plattform-Keywords** — `matrix`, `telegram`, `whatsapp`, `discord`, `signal` als identity Keywords. `schick mir X auf Matrix` wurde nicht als identity erkannt.
+- **platform Parameter Description** — LLM ignorierte `platform` bei `send_to_user` weil Description nur "for send_message or unlink" sagte.
+
 ## [0.19.0-multi-ha.52] - 2026-03-20
 
 ### Added
