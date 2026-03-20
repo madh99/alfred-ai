@@ -392,6 +392,9 @@ export class MessagePipeline {
           if (userProfile && !userProfile.displayName) {
             userProfile.displayName = user.displayName ?? user.username;
           }
+          if (userProfile && alfredUser?.username) {
+            userProfile.alfredUsername = alfredUser.username;
+          }
         }
       } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
 

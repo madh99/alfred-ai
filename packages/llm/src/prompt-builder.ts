@@ -16,6 +16,7 @@ export interface MemoryForPrompt {
 
 export interface UserProfile {
   displayName?: string;
+  alfredUsername?: string;
   timezone?: string;
   language?: string;
   bio?: string;
@@ -294,6 +295,9 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
       prompt += '\n\n## User profile';
       if (userProfile.displayName) {
         prompt += `\n- Name: ${userProfile.displayName}`;
+      }
+      if (userProfile.alfredUsername) {
+        prompt += `\n- Alfred Username: ${userProfile.alfredUsername} (use this as "username" for send_to_user when sending to yourself)`;
       }
       if (userProfile.timezone) {
         prompt += `\n- Timezone: ${userProfile.timezone}`;
