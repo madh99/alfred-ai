@@ -163,7 +163,9 @@ export class CalendarSkill extends Skill {
         const { createCalendarProvider } = await import('./factory.js');
         const provider = await createCalendarProvider(svc.config as unknown as CalendarConfig);
         providers.set(svc.serviceName, provider);
-      } catch { /* skip broken per-user configs */ }
+      } catch (err) {
+        console.error(`[calendar] Failed to create per-user provider "${svc.serviceName}":`, err instanceof Error ? err.message : String(err));
+      }
     }
     return providers.size > 0 ? providers : null;
   }
