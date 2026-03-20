@@ -52,6 +52,7 @@ Actions:
 - add_shared_resource: Add a shared/delegated Microsoft 365 resource (calendar, mailbox, contacts, todo) to your account. Uses your existing credentials + adds the shared resource as an additional account. Params: service_type (email/calendar/contacts/todo), shared_resource (email of shared resource, e.g. "fam@dohnal.co"), service_name (optional display name).`,
     riskLevel: 'admin',
     version: '1.0.0',
+    timeoutMs: 900_000, // 15 min — Device Code Flow needs time for user to authenticate
     inputSchema: {
       type: 'object',
       properties: {
