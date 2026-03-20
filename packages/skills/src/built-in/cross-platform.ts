@@ -39,7 +39,7 @@ export class CrossPlatformSkill extends Skill {
       'Actions: link_start (generate a linking code on current platform), ' +
       'link_confirm (enter a code from another platform to link accounts), ' +
       'send_message (send a message to your own linked platform), ' +
-      'send_to_user (send a message/file to another person — Alfred user or anyone who contacted the bot), ' +
+      'send_to_user (send a message/file to another person or to yourself on another platform — username is optional for self-send, just set platform), ' +
       'list_identities (show all linked platforms), ' +
       'unlink (remove a platform link).',
     riskLevel: 'write',
@@ -70,7 +70,7 @@ export class CrossPlatformSkill extends Skill {
         },
         username: {
           type: 'string',
-          description: 'Alfred username or platform user ID of recipient (for send_to_user)',
+          description: 'Alfred username or platform user ID of recipient (for send_to_user). OPTIONAL — if omitted, sends to yourself on the target platform.',
         },
         attachment_key: {
           type: 'string',
@@ -329,7 +329,9 @@ export class CrossPlatformSkill extends Skill {
     const platform = input.platform as string | undefined;
     const attachmentKey = input.attachment_key as string | undefined;
 
-    if (!targetUsername) return { success: false, error: 'Missing "username" — Alfred username or platform user ID of recipient.' };
+    // If no username provided, assume self-send (user wants to send to themselves on another platform)
+    const isSelfSendImplicit = !targetUsername || ['mir', 'mich', 'me', 'myself', 'ich', 'self'].includes((targetUsername ?? '').toLowerCase());
+    const resolvedUsername = isSelfSendImplicit ? undefined : targetUsername;
     if (!message && !attachmentKey) return { success: false, error: 'Missing "message" or "attachment_key" — at least one is required.' };
 
     // Rate limit: max 10 sends per minute per sender
@@ -354,30 +356,32 @@ export class CrossPlatformSkill extends Skill {
     const masterUserId = await this.users.getMasterUserId(currentInternalId);
     const linkedUsers = await this.users.getLinkedUsers(masterUserId);
 
-    // If target matches own username, display name, Alfred username, or "self"/"ich"/"mir"
-    const selfNames = ['self', 'ich', 'mir', 'me', 'myself'];
-    let isSelf = selfNames.includes(targetUsername.toLowerCase())
-      || linkedUsers.some(u =>
-        u.username?.toLowerCase() === targetUsername.toLowerCase()
-        || u.displayName?.toLowerCase() === targetUsername.toLowerCase()
-        || u.platformUserId === targetUsername
+    // If no username or self-keywords → self-send
+    let isSelf = isSelfSendImplicit;
+
+    // If username provided, check if it matches own identity
+    if (!isSelf && resolvedUsername) {
+      isSelf = linkedUsers.some(u =>
+        u.username?.toLowerCase() === resolvedUsername.toLowerCase()
+        || u.displayName?.toLowerCase() === resolvedUsername.toLowerCase()
+        || u.platformUserId === resolvedUsername
       );
 
-    // Also check Alfred username (e.g. "admin" is the Alfred username but not in users table)
-    if (!isSelf && this.alfredUsers) {
-      const callerAlfred = await this.alfredUsers.getByUsername(targetUsername);
-      if (callerAlfred) {
-        // Check if this Alfred user is the same as the caller
-        const callerLinks = await this.alfredUsers.getPlatformLinks(callerAlfred.id);
-        const callerPlatformLink = callerLinks.find(l => l.platform === context.platform && l.platformUserId === context.userId);
-        if (callerPlatformLink) isSelf = true;
+      // Also check Alfred username (e.g. "admin" is the Alfred username but not in users table)
+      if (!isSelf && this.alfredUsers) {
+        const callerAlfred = await this.alfredUsers.getByUsername(resolvedUsername);
+        if (callerAlfred) {
+          const callerLinks = await this.alfredUsers.getPlatformLinks(callerAlfred.id);
+          const callerPlatformLink = callerLinks.find(l => l.platform === context.platform && l.platformUserId === context.userId);
+          if (callerPlatformLink) isSelf = true;
+        }
       }
     }
 
     if (isSelf) {
       // Send to own linked platform — prefer Alfred user platform links (more complete)
       if (this.alfredUsers) {
-        let alfredUser = await this.alfredUsers.getByUsername(targetUsername);
+        let alfredUser = resolvedUsername ? await this.alfredUsers.getByUsername(resolvedUsername) : undefined;
         if (!alfredUser) {
           for (const u of linkedUsers) {
             if (u.username) {
@@ -410,8 +414,8 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // 2. Try Alfred user lookup (other users)
-    if (!targetChatId && this.alfredUsers) {
-      const alfredUser = await this.alfredUsers.getByUsername(targetUsername);
+    if (!targetChatId && resolvedUsername && this.alfredUsers) {
+      const alfredUser = await this.alfredUsers.getByUsername(resolvedUsername);
       if (alfredUser) {
         const links = await this.alfredUsers.getPlatformLinks(alfredUser.id);
         if (targetPlatform) {
@@ -446,8 +450,8 @@ export class CrossPlatformSkill extends Skill {
     }
 
     // 3. Last resort: treat username as chatId directly (e.g. Telegram numeric ID)
-    if (!targetChatId) {
-      targetChatId = targetUsername;
+    if (!targetChatId && resolvedUsername) {
+      targetChatId = resolvedUsername;
       if (!targetPlatform) targetPlatform = [...this.adapters.keys()][0];
     }
 
