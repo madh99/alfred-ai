@@ -13,6 +13,8 @@ export class CalendarSkill extends Skill {
 
   /** Per-request override for user-specific providers (set in execute, cleared in finally). */
   private activeProviders?: Map<string, CalendarProvider>;
+  /** Merged providers (global + per-user) for the current request. */
+  private mergedProviders?: Map<string, CalendarProvider>;
 
   constructor(providers?: Map<string, CalendarProvider> | CalendarProvider, timezone?: string) {
     super();
@@ -112,6 +114,7 @@ export class CalendarSkill extends Skill {
       } else {
         providers = (context.userRole === 'admin' || !context.alfredUserId) ? this.providers : new Map();
       }
+      this.mergedProviders = providers;
       if (providers.size === 0) {
         return { success: false, error: 'Kalender ist nicht konfiguriert. Nutze "setup_service" um einen Kalender zu verbinden.' };
       }
@@ -143,6 +146,7 @@ export class CalendarSkill extends Skill {
       return { success: false, error: `Calendar error: ${msg}` };
     } finally {
       this.activeProviders = undefined;
+      this.mergedProviders = undefined;
     }
   }
 
@@ -171,7 +175,7 @@ export class CalendarSkill extends Skill {
   }
 
   private resolveProvider(input: Record<string, unknown>, contextTimezone?: string): { provider: CalendarProvider; account: string } | SkillResult {
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const accountNames = [...providers.keys()];
     const defaultAccount = accountNames[0] ?? 'default';
     const account = (input.account as string) ?? defaultAccount;
@@ -190,17 +194,17 @@ export class CalendarSkill extends Skill {
   }
 
   private accountLabel(account: string, text: string): string {
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     return providers.size > 1 ? `[${account}] ${text}` : text;
   }
 
   private encodeId(account: string, rawId: string): string {
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     return providers.size > 1 ? `${account}::${rawId}` : rawId;
   }
 
   private decodeId(compositeId: string): { account: string; rawId: string } {
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     if (providers.size > 1) {
       const idx = compositeId.indexOf('::');
       if (idx >= 0) {
@@ -308,7 +312,7 @@ export class CalendarSkill extends Skill {
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
     const { account, rawId } = this.decodeId(eventId);
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const provider = providers.get(account);
     if (!provider) {
       return { success: false, error: `Unbekannter Kalender-Account "${account}".` };
@@ -339,7 +343,7 @@ export class CalendarSkill extends Skill {
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
     const { account, rawId } = this.decodeId(eventId);
-    const providers = this.activeProviders ?? this.providers;
+    const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const provider = providers.get(account);
     if (!provider) {
       return { success: false, error: `Unbekannter Kalender-Account "${account}".` };

@@ -13,6 +13,7 @@ export class MicrosoftTodoSkill extends Skill {
 
   /** Per-request override for user-specific configs (set in execute, cleared in finally). */
   private activeConfigs?: Map<string, MicrosoftTodoConfig>;
+  private mergedConfigs?: Map<string, MicrosoftTodoConfig>;
 
   constructor(configs?: Map<string, MicrosoftTodoConfig> | MicrosoftTodoConfig) {
     super();
@@ -82,6 +83,7 @@ export class MicrosoftTodoSkill extends Skill {
       } else {
         cfgs = (context.userRole === 'admin' || !context.alfredUserId) ? this.configs : new Map();
       }
+      this.mergedConfigs = cfgs;
       if (cfgs.size === 0) {
         return { success: false, error: 'Microsoft Todo ist nicht konfiguriert. Nutze "setup_service" um Microsoft Todo zu verbinden.' };
       }
@@ -107,6 +109,7 @@ export class MicrosoftTodoSkill extends Skill {
       }
     } finally {
       this.activeConfigs = undefined;
+      this.mergedConfigs = undefined;
     }
   }
 
@@ -131,7 +134,7 @@ export class MicrosoftTodoSkill extends Skill {
   }
 
   private resolveConfig(input: Record<string, unknown>): { cfg: MicrosoftTodoConfig; account: string } | SkillResult {
-    const cfgs = this.activeConfigs ?? this.configs;
+    const cfgs = this.mergedConfigs ?? this.activeConfigs ?? this.configs;
     const accountNames = [...cfgs.keys()];
     const defaultAccount = accountNames[0] ?? 'default';
     const account = (input.account as string) ?? defaultAccount;
@@ -146,7 +149,7 @@ export class MicrosoftTodoSkill extends Skill {
   }
 
   private accountLabel(account: string, text: string): string {
-    const cfgs = this.activeConfigs ?? this.configs;
+    const cfgs = this.mergedConfigs ?? this.activeConfigs ?? this.configs;
     return cfgs.size > 1 ? `[${account}] ${text}` : text;
   }
 
