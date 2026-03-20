@@ -404,7 +404,10 @@ export class CrossPlatformSkill extends Skill {
           const resolved = conv.chatId.startsWith('!') ? conv.chatId.split(':').slice(0, 2).join(':') : conv.chatId;
           if (resolved) targetChatId = resolved;
         }
-      } catch { /* fallback to platformUserId */ }
+      } catch (convErr) {
+        // Log but continue with platformUserId
+        console.error('[cross_platform] Conversation lookup failed:', (convErr as Error).message);
+      }
     }
 
     // 3. Last resort: treat username as chatId directly (e.g. Telegram numeric ID)
@@ -477,7 +480,7 @@ export class CrossPlatformSkill extends Skill {
         display: `✅ ${parts.join(' + ')}.`,
       };
     } catch (err) {
-      return { success: false, error: `Senden fehlgeschlagen: ${(err as Error).message}` };
+      return { success: false, error: `Senden fehlgeschlagen: ${(err as Error).message} [targetChatId=${targetChatId}, platform=${targetPlatform}, isUserId=${targetChatId?.startsWith('@')}]` };
     }
   }
 
