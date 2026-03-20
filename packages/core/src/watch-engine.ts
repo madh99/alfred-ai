@@ -461,7 +461,14 @@ Regeln:
     resultData: unknown,
     resolvedTemplate: string | undefined,
   ): Promise<string> {
+    // Try static formatting first — deterministic, free, always includes links
+    if (resultData && typeof resultData === 'object') {
+      const staticFormatted = this.formatResultContext(resultData as Record<string, unknown>, watch.condition.field);
+      if (staticFormatted) return staticFormatted;
+    }
+
     // When messageTemplate exists and LLM is available, use intelligent formatting
+    // (for complex cases like marketplace filtering/sorting that static can't handle)
     if (resolvedTemplate && resultData && this.llmProvider) {
       const llmFormatted = await this.formatAlertWithLLM(
         watch.messageTemplate!,
@@ -471,15 +478,8 @@ Regeln:
       if (llmFormatted) return llmFormatted;
     }
 
-    // Fallback: static formatting
-    let alertText = resolvedTemplate ?? this.formatAlert(watch, displayValue, resultData);
-
-    if (resolvedTemplate && resultData && typeof resultData === 'object') {
-      const resultContext = this.formatResultContext(resultData as Record<string, unknown>, watch.condition.field);
-      if (resultContext) alertText += '\n\n' + resultContext;
-    }
-
-    return alertText;
+    // Final fallback: template text or generic alert
+    return resolvedTemplate ?? this.formatAlert(watch, displayValue, resultData);
   }
 
   /**
@@ -521,6 +521,24 @@ Regeln:
         lines.push(`\u2022 ${title} \u2014 ${price}${url}`);
       }
       return lines.join('\n');
+    }
+
+    // Feed-style: has feeds array with items
+    if (Array.isArray(data.feeds) && data.feeds.length > 0) {
+      const feeds = data.feeds as Array<{ label?: string; newCount?: number; items?: Array<{ title?: string; link?: string }> }>;
+      const totalNew = feeds.reduce((s, f) => s + (f.newCount ?? 0), 0);
+      const lines = [`📰 **${totalNew} neue RSS-Einträge**\n`];
+      for (const feed of feeds) {
+        if (!feed.items || feed.items.length === 0) continue;
+        lines.push(`**${feed.label ?? 'Feed'}** (${feed.newCount ?? feed.items.length} neu)`);
+        for (const item of feed.items) {
+          const title = item.title ?? '(untitled)';
+          const link = item.link ? `\n  ${item.link}` : '';
+          lines.push(`• ${title}${link}`);
+        }
+        lines.push('');
+      }
+      return lines.join('\n').trim();
     }
 
     return null;
