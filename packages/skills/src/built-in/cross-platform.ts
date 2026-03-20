@@ -289,7 +289,10 @@ export class CrossPlatformSkill extends Skill {
       const targetUser = linked.find(u => u.platform === platform);
       if (targetUser && this.findConversation) {
         const conv = await this.findConversation(platform, targetUser.id);
-        if (conv) chatId = conv.chatId;
+        if (conv) {
+          // Matrix chatId format: "!roomId:server:@user:server" — extract room ID
+          chatId = conv.chatId.startsWith('!') ? conv.chatId.split(':').slice(0, 2).join(':') : conv.chatId;
+        }
       }
       // Fallback to platformUserId for Telegram DMs
       if (!chatId && targetUser) {
@@ -369,27 +372,15 @@ export class CrossPlatformSkill extends Skill {
 
     // 2. Try conversation DB lookup (resolves Matrix user ID → room ID)
     if (targetChatId && targetPlatform && this.findConversation) {
-      // For Matrix: platformUserId is @user:server, but we need room ID
-      // findConversation searches by platform + internal user ID
-      if (this.alfredUsers) {
-        const alfredUser = await this.alfredUsers.getByUsername(targetUsername);
-        if (alfredUser) {
-          const links = await this.alfredUsers.getPlatformLinks(alfredUser.id);
-          const link = links.find(l => l.platform === targetPlatform);
-          if (link) {
-            // Look up the internal user ID for this platform user
-            try {
-              const internalUser = await this.users.findOrCreate(targetPlatform as Platform, link.platformUserId);
-              const conv = await this.findConversation(targetPlatform, internalUser.id);
-              if (conv) {
-                // Extract room ID from conversation chatId (format: "!roomId:server:@user:server")
-                const roomId = conv.chatId.split(':').slice(0, 2).join(':');
-                if (roomId.startsWith('!')) targetChatId = roomId;
-              }
-            } catch { /* fallback to platformUserId */ }
-          }
+      try {
+        const internalUser = await this.users.findOrCreate(targetPlatform as Platform, targetChatId);
+        const conv = await this.findConversation(targetPlatform, internalUser.id);
+        if (conv) {
+          // Matrix chatId format: "!roomId:server:@user:server" — extract room ID
+          const resolved = conv.chatId.startsWith('!') ? conv.chatId.split(':').slice(0, 2).join(':') : conv.chatId;
+          if (resolved) targetChatId = resolved;
         }
-      }
+      } catch { /* fallback to platformUserId */ }
     }
 
     // 3. Last resort: treat username as chatId directly (e.g. Telegram numeric ID)
