@@ -155,6 +155,21 @@ export class MessagePipeline {
   private readonly activeAgents = new Map<string, ActiveAgent>();
   private agentIdCounter = 0;
 
+  /** Active request AbortControllers, keyed by chatId:userId */
+  private readonly activeRequests = new Map<string, AbortController>();
+
+  /** Cancel the active request for a specific chat+user. Returns true if something was cancelled. */
+  cancelRequest(chatId: string, userId: string): boolean {
+    const key = `${chatId}:${userId}`;
+    const controller = this.activeRequests.get(key);
+    if (controller) {
+      controller.abort();
+      this.activeRequests.delete(key);
+      return true;
+    }
+    return false;
+  }
+
   private readonly metrics: PipelineMetrics = {
     requestsTotal: 0,
     requestsSuccess: 0,
@@ -236,6 +251,11 @@ export class MessagePipeline {
   async process(message: NormalizedMessage, onProgress?: ProgressCallback): Promise<PipelineResult> {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
+
+    // Register AbortController for this request (keyed by chatId:userId)
+    const requestKey = `${message.chatId}:${message.userId}`;
+    const abortController = new AbortController();
+    this.activeRequests.set(requestKey, abortController);
 
     // Check for pending confirmation response
     if (this.confirmationQueue && message.text) {
@@ -493,6 +513,14 @@ export class MessagePipeline {
       onProgress?.('Thinking...');
 
       while (true) {
+        // Check for abort before each LLM call
+        if (abortController.signal.aborted) {
+          // Save dummy assistant response to prevent orphaned user message
+          await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
+          this.activeRequests.delete(requestKey);
+          return { text: '⏹ Anfrage abgebrochen.' };
+        }
+
         // Re-trim if tool loop has grown beyond the context budget
         if (iteration > 0) {
           this.compressToolLoop(messages, system, toolTokens);
@@ -588,6 +616,13 @@ export class MessagePipeline {
 
         iteration++;
         this.logger.info({ iteration, toolCalls: response.toolCalls.length }, 'Processing tool calls');
+
+        // Check for abort before tool execution
+        if (abortController.signal.aborted) {
+          await this.conversationManager.addMessage(conversation.id, 'assistant', '⏹ Abgebrochen.');
+          this.activeRequests.delete(requestKey);
+          return { text: '⏹ Anfrage abgebrochen.' };
+        }
 
         // Build assistant message with text + tool_use blocks
         const assistantContent: LLMContentBlock[] = [];
@@ -740,12 +775,14 @@ export class MessagePipeline {
           await this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
         } catch { /* non-critical */ }
       }
+      this.activeRequests.delete(requestKey);
       return {
         text: responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
         usedSkills: usedSkillNames.size > 0 ? [...usedSkillNames] : undefined,
       };
     } catch (error) {
+      this.activeRequests.delete(requestKey);
       this.recordMetric(false, Date.now() - startTime);
       this.logger.error({ err: error }, 'Failed to process message');
 

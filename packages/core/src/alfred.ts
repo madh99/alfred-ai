@@ -1445,6 +1445,14 @@ export class Alfred {
   private setupAdapterHandlers(platform: Platform, adapter: MessagingAdapter): void {
     adapter.on('message', async (message: NormalizedMessage) => {
       try {
+        // Handle /stop command — cancel active request for this user
+        if (message.text?.trim().toLowerCase() === '/stop') {
+          const cancelled = this.pipeline.cancelRequest(message.chatId, message.userId);
+          const reply = cancelled ? '⏹ Anfrage abgebrochen.' : 'Keine laufende Anfrage zum Abbrechen.';
+          try { await adapter.sendMessage(message.chatId, reply); } catch { /* ignore */ }
+          return;
+        }
+
         // Auto-link API user with existing platform user
         this.autoLinkApiUser(message);
 
