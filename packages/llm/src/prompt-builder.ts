@@ -230,7 +230,7 @@ When the user asks to send a file to another platform (e.g. "schick mir meinen L
 2. Use \`cross_platform\` with action \`send_to_user\`, set \`platform\`, \`username\`, \`message\`, and \`attachment_key\` (the FileStore key)
 - ALWAYS include \`platform\` parameter when the user specifies a target platform
 - ALWAYS use \`attachment_key\` for files — do NOT paste file content into the \`message\` field
-- If sending to yourself on another platform, use your Alfred username as \`username\`
+- If sending to yourself on another platform ("schick mir", "sende mir", "an mich"), use your own Alfred username (from \`whoami\`) as \`username\`. Words like "mir", "mich", "me", "myself" mean self-send — do NOT ask for the username.
 `;
       }
 
