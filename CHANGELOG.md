@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.52] - 2026-03-20
+
+### Added
+- **send_to_user** — Nachrichten und Dateien an andere Personen senden über jede Plattform (Telegram, Matrix, Discord, WhatsApp, Signal). Empfänger per Alfred-Username oder chatId. Dateien aus FileStore (S3) als Attachment. Rate-Limiting (10/min).
+
 ## [0.19.0-multi-ha.51] - 2026-03-20
 
 ### Added

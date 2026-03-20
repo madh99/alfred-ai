@@ -11,6 +11,14 @@ import type { Platform } from '@alfred/types';
 /** Minimal adapter interface to avoid depending on @alfred/messaging. */
 export interface CrossPlatformAdapter {
   sendMessage(chatId: string, text: string): Promise<string>;
+  sendFile?(chatId: string, file: Buffer, fileName: string, caption?: string): Promise<string | undefined>;
+  sendDirectMessage?(userId: string, text: string): Promise<string | undefined>;
+}
+
+/** Minimal Alfred user repo interface for username → platform lookup. */
+export interface AlfredUserLookup {
+  getByUsername(username: string): Promise<{ id: string; username: string } | undefined>;
+  getPlatformLinks(userId: string): Promise<Array<{ platform: string; platformUserId: string }>>;
 }
 
 /** Resolve chat_id for a linked user on another platform. */
@@ -30,7 +38,8 @@ export class CrossPlatformSkill extends Skill {
       'Manage cross-platform identity linking and messaging. ' +
       'Actions: link_start (generate a linking code on current platform), ' +
       'link_confirm (enter a code from another platform to link accounts), ' +
-      'send_message (send a message to a linked platform), ' +
+      'send_message (send a message to your own linked platform), ' +
+      'send_to_user (send a message/file to another person — Alfred user or anyone who contacted the bot), ' +
       'list_identities (show all linked platforms), ' +
       'unlink (remove a platform link).',
     riskLevel: 'write',
@@ -40,7 +49,7 @@ export class CrossPlatformSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['link_start', 'link_confirm', 'send_message', 'list_identities', 'unlink'],
+          enum: ['link_start', 'link_confirm', 'send_message', 'send_to_user', 'list_identities', 'unlink'],
           description: 'The action to perform',
         },
         code: {
@@ -57,7 +66,15 @@ export class CrossPlatformSkill extends Skill {
         },
         message: {
           type: 'string',
-          description: 'Message text to send (for send_message)',
+          description: 'Message text to send (for send_message/send_to_user)',
+        },
+        username: {
+          type: 'string',
+          description: 'Alfred username or platform user ID of recipient (for send_to_user)',
+        },
+        attachment_key: {
+          type: 'string',
+          description: 'FileStore key to send as file attachment (for send_to_user, optional). Get from file list_store or code_sandbox response.',
         },
       },
       required: ['action'],
@@ -69,8 +86,14 @@ export class CrossPlatformSkill extends Skill {
     private readonly linkTokens: LinkTokenRepository,
     private readonly adapters: Map<Platform, CrossPlatformAdapter>,
     private readonly findConversation?: FindConversationFn,
+    private alfredUsers?: AlfredUserLookup,
   ) {
     super();
+  }
+
+  /** Set Alfred user lookup (called after multi-user init). */
+  setAlfredUserLookup(lookup: AlfredUserLookup): void {
+    this.alfredUsers = lookup;
   }
 
   /** Resolve platform user ID to internal DB UUID via findOrCreate. */
@@ -91,6 +114,8 @@ export class CrossPlatformSkill extends Skill {
         return this.linkConfirm(input, context);
       case 'send_message':
         return this.sendMessage(input, context);
+      case 'send_to_user':
+        return this.sendToUser(input, context);
       case 'list_identities':
         return this.listIdentities(context);
       case 'unlink':
@@ -286,6 +311,106 @@ export class CrossPlatformSkill extends Skill {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return { success: false, error: `Failed to send message: ${msg}` };
+    }
+  }
+
+  // Rate limiting for send_to_user
+  private sendRateLimits = new Map<string, { count: number; resetAt: number }>();
+
+  private async sendToUser(
+    input: Record<string, unknown>,
+    context: SkillContext,
+  ): Promise<SkillResult> {
+    const targetUsername = input.username as string | undefined;
+    const message = input.message as string | undefined;
+    const platform = input.platform as string | undefined;
+    const attachmentKey = input.attachment_key as string | undefined;
+
+    if (!targetUsername) return { success: false, error: 'Missing "username" — Alfred username or platform user ID of recipient.' };
+    if (!message && !attachmentKey) return { success: false, error: 'Missing "message" or "attachment_key" — at least one is required.' };
+
+    // Rate limit: max 10 sends per minute per sender
+    const senderId = context.userId;
+    const now = Date.now();
+    const limit = this.sendRateLimits.get(senderId);
+    if (limit && now < limit.resetAt && limit.count >= 10) {
+      return { success: false, error: 'Zu viele Nachrichten. Bitte warte eine Minute.' };
+    }
+    if (!limit || now >= (limit?.resetAt ?? 0)) {
+      this.sendRateLimits.set(senderId, { count: 1, resetAt: now + 60_000 });
+    } else {
+      limit.count++;
+    }
+
+    // Resolve recipient: try Alfred username first, then platform user ID
+    let targetPlatform = platform;
+    let targetChatId: string | undefined;
+
+    // 1. Try Alfred user lookup
+    if (this.alfredUsers) {
+      const alfredUser = await this.alfredUsers.getByUsername(targetUsername);
+      if (alfredUser) {
+        const links = await this.alfredUsers.getPlatformLinks(alfredUser.id);
+        if (targetPlatform) {
+          const link = links.find(l => l.platform === targetPlatform);
+          targetChatId = link?.platformUserId;
+        } else {
+          // Pick first available platform that has a connected adapter
+          for (const link of links) {
+            if (this.adapters.has(link.platform as Platform)) {
+              targetPlatform = link.platform;
+              targetChatId = link.platformUserId;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Last resort: treat username as chatId directly (e.g. Telegram numeric ID)
+    if (!targetChatId) {
+      targetChatId = targetUsername;
+      if (!targetPlatform) targetPlatform = [...this.adapters.keys()][0];
+    }
+
+    if (!targetPlatform || !targetChatId) {
+      return { success: false, error: `Empfänger "${targetUsername}" nicht gefunden. Kein Alfred-User und kein bekannter Kontakt.` };
+    }
+
+    const adapter = this.adapters.get(targetPlatform as Platform);
+    if (!adapter) {
+      return { success: false, error: `Plattform "${targetPlatform}" ist nicht verbunden. Verfügbar: ${[...this.adapters.keys()].join(', ')}` };
+    }
+
+    try {
+      // Send text message
+      if (message) {
+        await adapter.sendMessage(targetChatId, message);
+      }
+
+      // Send file attachment if provided
+      if (attachmentKey && context.fileStore) {
+        const data = await context.fileStore.read(attachmentKey, context.userId);
+        const rawName = attachmentKey.split('/').pop() ?? attachmentKey;
+        const fileName = rawName.replace(/^\d{4}-\d{2}-\d{2}T[\d-]+Z?_/, '');
+        if (adapter.sendFile) {
+          await adapter.sendFile(targetChatId, data, fileName, message ? undefined : fileName);
+        } else {
+          return { success: false, error: `Plattform "${targetPlatform}" unterstützt keinen Dateiversand.` };
+        }
+      }
+
+      const parts = [];
+      if (message) parts.push(`Nachricht an ${targetUsername} (${targetPlatform}) gesendet`);
+      if (attachmentKey) parts.push(`Datei gesendet`);
+
+      return {
+        success: true,
+        data: { platform: targetPlatform, chatId: targetChatId, hasAttachment: !!attachmentKey },
+        display: `✅ ${parts.join(' + ')}.`,
+      };
+    } catch (err) {
+      return { success: false, error: `Senden fehlgeschlagen: ${(err as Error).message}` };
     }
   }
 

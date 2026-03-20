@@ -273,7 +273,8 @@ export class Alfred {
     skillRegistry.register(new ScreenshotSkill());
     skillRegistry.register(new BrowserSkill());
     skillRegistry.register(new ProfileSkill(userRepo));
-    skillRegistry.register(new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters, (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId)));
+    const crossPlatformSkill = new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters, (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId));
+    skillRegistry.register(crossPlatformSkill);
     const backgroundTaskSkill = new BackgroundTaskSkill(backgroundTaskRepo);
     skillRegistry.register(backgroundTaskSkill);
     skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
@@ -540,6 +541,9 @@ export class Alfred {
       })();
       skillRegistry.register(new UserManagementSkill(alfredUserRepo, msAppCredentials));
       this.logger.info('User management skill registered');
+
+      // Wire Alfred user lookup into CrossPlatformSkill for send_to_user
+      crossPlatformSkill.setAlfredUserLookup(alfredUserRepo);
 
       // Sharing skill
       const { SharingSkill } = await import('@alfred/skills');
