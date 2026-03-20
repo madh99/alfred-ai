@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.68] - 2026-03-20
+
+### Added
+- **/stop Befehl** — Laufende Anfragen per Chat abbrechen. AbortController pro chatId:userId (Gruppen-Chat safe). Abort-Check vor jedem LLM-Call und Tool-Ausführung. Dummy-Antwort bei Abbruch verhindert Conversation-Corruption.
+- **send_to_self Action** — Dateien/Nachrichten an sich selbst auf anderer Plattform senden ohne Username.
+- **Alfred-Username im User-Profil** — LLM kennt eigenen Username für Self-Send.
+
+### Fixed
+- **auth_microsoft tenantId** — Device Code Flow nutzte hardcoded `common` statt Admin-tenantId aus Config. Scheiterte mit AADSTS50059 bei Single-Tenant Apps. Optional: User kann eigenen tenant_id angeben.
+- **Feed-Alerts ohne Links** — LLM (fast tier) ließ Links bei RSS-Alerts weg. Fix: statisches Format für Feeds (deterministisch, immer mit Links, kein LLM-Call). LLM nur noch für komplexe Alerts (Marketplace Filtering).
+- **send_to_user Matrix Room-ID** — Matrix braucht Room-ID, nicht User-ID. Conversation-DB Lookup + chatId-Format Parsing. sendDirectMessage für User-IDs.
+- **send_to_user Self-Send** — Erkennt Alfred-Username, Display-Name, Self-Keywords (ich/mir/me). username optional bei Self-Send.
+- **Skill-Filter Plattform-Keywords** — matrix, telegram, whatsapp, discord, signal als identity Keywords.
+- **platform Parameter** — Description inkludiert jetzt send_to_user, LLM übergibt den Parameter.
+
 ## [0.19.0-multi-ha.65] - 2026-03-20
 
 ### Added
