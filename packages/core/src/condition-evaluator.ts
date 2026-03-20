@@ -140,6 +140,32 @@ export function evaluateCondition(
       return { triggered: curr < prev, displayValue };
     }
 
+    // always_* operators: trigger EVERY time the condition is met, no state-change detection
+    case 'always_gt': {
+      const num = toNumber(currentValue);
+      const thresh = toNumber(threshold);
+      if (num === null || thresh === null) return { triggered: false, displayValue };
+      return { triggered: num > thresh, displayValue };
+    }
+    case 'always_lt': {
+      const num = toNumber(currentValue);
+      const thresh = toNumber(threshold);
+      if (num === null || thresh === null) return { triggered: false, displayValue };
+      return { triggered: num < thresh, displayValue };
+    }
+    case 'always_gte': {
+      const num = toNumber(currentValue);
+      const thresh = toNumber(threshold);
+      if (num === null || thresh === null) return { triggered: false, displayValue };
+      return { triggered: num >= thresh, displayValue };
+    }
+    case 'always_lte': {
+      const num = toNumber(currentValue);
+      const thresh = toNumber(threshold);
+      if (num === null || thresh === null) return { triggered: false, displayValue };
+      return { triggered: num <= thresh, displayValue };
+    }
+
     default:
       return { triggered: false, displayValue };
   }

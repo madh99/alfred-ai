@@ -110,7 +110,7 @@ export interface ScheduledAction {
 
 export interface WatchCondition {
   field: string;
-  operator: 'lt' | 'gt' | 'lte' | 'gte' | 'eq' | 'neq' | 'contains' | 'not_contains' | 'changed' | 'increased' | 'decreased';
+  operator: 'lt' | 'gt' | 'lte' | 'gte' | 'eq' | 'neq' | 'contains' | 'not_contains' | 'changed' | 'increased' | 'decreased' | 'always_gt' | 'always_lt' | 'always_gte' | 'always_lte';
   value?: string | number;
 }
 

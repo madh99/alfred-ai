@@ -19,6 +19,7 @@ const OPERATOR_LABELS: Record<string, string> = {
   eq: '=', neq: '!=',
   contains: 'contains', not_contains: 'not contains',
   changed: 'changed', increased: 'increased', decreased: 'decreased',
+  always_gt: '> (always)', always_lt: '< (always)', always_gte: '>= (always)', always_lte: '<= (always)',
 };
 
 export class WatchEngine {
