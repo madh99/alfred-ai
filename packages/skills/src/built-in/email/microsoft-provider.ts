@@ -29,7 +29,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/Mail.Send offline_access',
+      scope: 'offline_access',
     });
 
     const res = await fetch(tokenUrl, {

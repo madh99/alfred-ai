@@ -25,7 +25,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       client_secret: this.config.clientSecret,
       refresh_token: this.config.refreshToken,
       grant_type: 'refresh_token',
-      scope: 'https://graph.microsoft.com/Calendars.ReadWrite offline_access',
+      scope: 'offline_access',
     });
 
     const res = await fetch(tokenUrl, {
