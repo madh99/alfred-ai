@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.82] - 2026-03-20
+## [0.19.0-multi-ha.83] - 2026-03-20
 
 ### Added
 - **Multi-Account Calendar, Contacts, Todo** — Wie Email-Skill: Map-basierte Provider-Architektur. Eigener Account + freigegebene Ressourcen gleichzeitig nutzbar. `list_accounts` Action, `account` Parameter pro Abfrage.
@@ -20,6 +20,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **Device Code Flow** — `timeoutMs: 900_000` (15 Min) für User-Management Skill. Code wird sofort via `onProgress` gesendet, nicht erst nach Polling. Token-Polling mit detaillierter `error_description`.
 - **Skill-Filter Einkaufsliste** — `einkaufsliste`, `einkauf`, `shopping`, `liste` als productivity Keywords.
 - **Skill-Filter Routing** — `route`, `routing`, `fahrzeit`, `anfahrt`, `heimfahrt`, `navigation`, `navi` als information Keywords. Routing-Skill wurde bei Fahrzeit-Anfragen nicht geladen.
+- **always_gt/lt/gte/lte Watch-Operatoren** — Triggern bei JEDEM Check wenn Bedingung erfüllt, ohne State-Change-Detection. Für Feeds mit vielen Quellen wo `gt` nur einmal beim Übergang feuerte.
 
 ## [0.19.0-multi-ha.69] - 2026-03-20
 
