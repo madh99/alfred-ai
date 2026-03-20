@@ -117,12 +117,14 @@ export class FeedReaderSkill extends Skill {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
       let totalNew = 0;
+      let successCount = 0;
       const results: Array<{ label: string; newCount: number; items: Array<{ title: string; link?: string; snippet?: string }> }> = [];
       const errors: string[] = [];
       for (const mem of memories) {
         try {
           const entry = JSON.parse(mem.value) as FeedEntry;
           const result = await this.checkSingleFeed(userId, entry);
+          successCount++;
           if (result.newCount > 0) {
             totalNew += result.newCount;
             results.push(result);
@@ -132,7 +134,7 @@ export class FeedReaderSkill extends Skill {
           errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      if (errors.length > 0 && results.length === 0) {
+      if (errors.length > 0 && successCount === 0) {
         return { success: false, error: `All feeds failed: ${errors.join('; ')}` };
       }
       const lines = results.map(r => `${r.label}: ${r.newCount} new\n${r.items.map(i => `  • ${i.title}${i.link ? ` — ${i.link}` : ''}${i.snippet ? `\n    ${i.snippet}` : ''}`).join('\n')}`);
