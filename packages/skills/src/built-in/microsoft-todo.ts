@@ -174,19 +174,32 @@ export class MicrosoftTodoSkill extends Skill {
 
   private async refreshAccessToken(cfg: MicrosoftTodoConfig, account: string): Promise<string> {
     const tokenUrl = `https://login.microsoftonline.com/${cfg.tenantId}/oauth2/v2.0/token`;
-    const body = new URLSearchParams({
-      client_id: cfg.clientId,
-      client_secret: cfg.clientSecret,
-      refresh_token: cfg.refreshToken,
-      grant_type: 'refresh_token',
-      scope: 'openid offline_access',
-    });
+    const doRefresh = async (includeSecret: boolean) => {
+      const params: Record<string, string> = {
+        client_id: cfg.clientId,
+        refresh_token: cfg.refreshToken,
+        grant_type: 'refresh_token',
+        scope: 'openid offline_access',
+      };
+      if (includeSecret && cfg.clientSecret) params.client_secret = cfg.clientSecret;
+      return fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params).toString(),
+      });
+    };
 
-    const res = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
+    // Try with client_secret first (confidential client from .env),
+    // retry without if AADSTS700025 (public client from Device Code Flow)
+    let res = await doRefresh(true);
+    if (!res.ok) {
+      const errText = await res.text();
+      if (errText.includes('AADSTS700025') || errText.includes('Client is public')) {
+        res = await doRefresh(false);
+      } else {
+        throw new Error(`Microsoft token refresh failed: ${res.status}`);
+      }
+    }
 
     if (!res.ok) {
       throw new Error(`Microsoft token refresh failed: ${res.status}`);

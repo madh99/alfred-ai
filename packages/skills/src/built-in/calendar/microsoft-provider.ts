@@ -20,19 +20,30 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
 
   private async refreshAccessToken(): Promise<void> {
     const tokenUrl = `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0/token`;
-    const body = new URLSearchParams({
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      refresh_token: this.config.refreshToken,
-      grant_type: 'refresh_token',
-      scope: 'offline_access',
-    });
+    const doRefresh = async (includeSecret: boolean) => {
+      const params: Record<string, string> = {
+        client_id: this.config.clientId,
+        refresh_token: this.config.refreshToken,
+        grant_type: 'refresh_token',
+        scope: 'openid offline_access',
+      };
+      if (includeSecret && this.config.clientSecret) params.client_secret = this.config.clientSecret;
+      return fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(params).toString(),
+      });
+    };
 
-    const res = await fetch(tokenUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
-    });
+    let res = await doRefresh(true);
+    if (!res.ok) {
+      const errText = await res.text();
+      if (errText.includes('AADSTS700025') || errText.includes('Client is public')) {
+        res = await doRefresh(false);
+      } else {
+        throw new Error(`Microsoft token refresh failed: ${res.status} — ${errText.slice(0, 200)}`);
+      }
+    }
 
     if (!res.ok) {
       throw new Error(`Microsoft token refresh failed: ${res.status}`);
