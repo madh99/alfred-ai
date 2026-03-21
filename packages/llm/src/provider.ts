@@ -14,6 +14,7 @@ export interface EmbeddingResult {
   embedding: number[];
   model: string;
   dimensions: number;
+  totalTokens?: number;
 }
 
 // Known context window sizes for popular models

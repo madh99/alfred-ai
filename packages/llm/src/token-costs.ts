@@ -50,6 +50,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['gemini-2.5-flash', { input: 0.30, output: 2.50, cacheRead: 0.03 }],
   ['gemini-2.0-flash', { input: 0.10, output: 0.40, cacheRead: 0.025 }],
 
+  // ── OpenAI Embeddings ───────────────────────────────────────
+  ['text-embedding-3-small', { input: 0.02, output: 0 }],
+  ['text-embedding-3-large', { input: 0.13, output: 0 }],
+
   // ── Mistral ─────────────────────────────────────────────────
   ['mistral-large',   { input: 2.00, output: 6.00 }],
   ['mistral-small',   { input: 0.20, output: 0.60 }],

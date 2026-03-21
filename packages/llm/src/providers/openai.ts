@@ -65,6 +65,7 @@ export class OpenAIProvider extends LLMProvider {
     let finishReason: string | null = null;
     let promptTokens = 0;
     let completionTokens = 0;
+    let cachedTokens = 0;
 
     for await (const chunk of stream) {
       const choice = chunk.choices[0];
@@ -124,6 +125,7 @@ export class OpenAIProvider extends LLMProvider {
       if (chunk.usage) {
         promptTokens = chunk.usage.prompt_tokens;
         completionTokens = chunk.usage.completion_tokens;
+        cachedTokens = (chunk.usage as any).prompt_tokens_details?.cached_tokens ?? 0;
       }
     }
 
@@ -148,6 +150,7 @@ export class OpenAIProvider extends LLMProvider {
         usage: {
           inputTokens: promptTokens,
           outputTokens: completionTokens,
+          cacheReadTokens: cachedTokens,
         },
         stopReason: this.mapStopReason(finishReason),
       },
@@ -169,6 +172,7 @@ export class OpenAIProvider extends LLMProvider {
         embedding: data.embedding,
         model: 'text-embedding-3-small',
         dimensions: data.embedding.length,
+        totalTokens: response.usage?.total_tokens ?? 0,
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -323,6 +327,7 @@ export class OpenAIProvider extends LLMProvider {
       usage: {
         inputTokens: response.usage?.prompt_tokens ?? 0,
         outputTokens: response.usage?.completion_tokens ?? 0,
+        cacheReadTokens: (response.usage as any)?.prompt_tokens_details?.cached_tokens ?? 0,
       },
       stopReason: this.mapStopReason(choice?.finish_reason ?? null),
     };

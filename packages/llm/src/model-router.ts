@@ -171,7 +171,11 @@ export class ModelRouter extends LLMProvider {
   }
 
   async embed(text: string): Promise<EmbeddingResult | undefined> {
-    return (this.providers.get('embeddings') ?? this.resolve().provider).embed(text);
+    const result = await (this.providers.get('embeddings') ?? this.resolve().provider).embed(text);
+    if (result?.totalTokens) {
+      this.costTracker.record(result.model, { inputTokens: result.totalTokens, outputTokens: 0 });
+    }
+    return result;
   }
 
   supportsEmbeddings(): boolean {

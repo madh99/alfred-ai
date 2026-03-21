@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.95] - 2026-03-21
+
+### Fixed
+- **OpenAI Prompt-Cache-Tokens nicht erfasst** — `prompt_tokens_details.cached_tokens` wurde ignoriert. Alle Input-Tokens wurden zum vollen Preis berechnet statt zum Cache-Preis. Betrifft `complete()` und `stream()`.
+- **Embedding-Usage nicht getrackt** — Embedding-Aufrufe erzeugten keinen Cost-Record. Jetzt werden Token-Counts aus der API-Response gelesen und über den CostTracker erfasst. Embedding-Preise in Pricing-Tabelle ergänzt.
+
 ## [0.19.0-multi-ha.94] - 2026-03-21
 
 ### Fixed
