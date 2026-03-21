@@ -107,8 +107,16 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
     };
 
     if (input.allDay) {
-      event.start = { dateTime: this.formatDateInTz(input.start, tz).slice(0, 10) + 'T00:00:00', timeZone: tz };
-      event.end = { dateTime: this.formatDateInTz(input.end, tz).slice(0, 10) + 'T00:00:00', timeZone: tz };
+      const startDate = this.formatDateInTz(input.start, tz).slice(0, 10);
+      let endDate = this.formatDateInTz(input.end, tz).slice(0, 10);
+      // Graph API: end date is exclusive — must be at least day after start
+      if (endDate <= startDate) {
+        const d = new Date(startDate + 'T12:00:00');
+        d.setDate(d.getDate() + 1);
+        endDate = d.toISOString().slice(0, 10);
+      }
+      event.start = { dateTime: startDate + 'T00:00:00', timeZone: tz };
+      event.end = { dateTime: endDate + 'T00:00:00', timeZone: tz };
     } else {
       event.start = { dateTime: this.formatDateInTz(input.start, tz), timeZone: tz };
       event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };

@@ -5,10 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.91] - 2026-03-21
+## [0.19.0-multi-ha.92] - 2026-03-21
 
 ### Fixed
 - **Kalender createEvent in falschem Kalender** — `createEvent()` war hardcoded auf `/me/events` statt `${this.userPath}/events`. Events im Shared-Kalender (z.B. fam@dohnal.co) landeten im Admin-Kalender. `listEvents`, `updateEvent`, `deleteEvent` waren korrekt.
+- **Ganztags-Events Graph API 400** — End-Datum war gleich Start-Datum (Zero-Duration). Graph API erwartet exklusives End-Datum (Tag nach letztem Tag). Fix: End automatisch auf Start + 1 Tag setzen wenn End ≤ Start.
 
 ## [0.19.0-multi-ha.90] - 2026-03-21
 
