@@ -5,10 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.89] - 2026-03-21
+## [0.19.0-multi-ha.90] - 2026-03-21
 
 ### Fixed
-- **LLM Context-Window-Größen aktualisiert** — Claude Opus 4.6 (1M/128K), Sonnet 4.6 (1M/64K), Opus 4.5 (1M/64K), Sonnet 4.5 (1M/64K), Haiku 4.5 (200K/64K). Generic `claude-` Fallback auf 1M/64K.
+- **LLM Context-Window-Größen vollständig aktualisiert** — Alle Provider geprüft und korrigiert:
+  - Claude: Opus 4.6 (1M/128K), Sonnet 4.6 (1M/64K), Opus/Sonnet 4.5 (1M/64K), Haiku 4.5 (200K/64K)
+  - OpenAI: GPT-4 Output 4K→8K, GPT-5.4-mini/nano hinzugefügt (400K/128K)
+  - Mistral: Large/Small/Codestral auf 256K, Medium auf 131K, Magistral-Medium auf 40K
+  - DeepSeek-R1 Output 8K→64K, Gemma3 Output 8K→128K, Phi4 Input 128K→16K
 
 ## [0.19.0-multi-ha.88] - 2026-03-21
 
