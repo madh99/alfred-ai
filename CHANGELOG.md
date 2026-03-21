@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.93] - 2026-03-21
+
+### Fixed
+- **Email read/reply/forward/draft/attachment "Unknown account"** — Handler für `read`, `reply`, `forward`, `draft`, `attachment` nutzten `activeProviders` statt `mergedProviders`. Admin-Accounts (z.B. "default") wurden nicht gefunden wenn per-user Providers aktiv waren.
+
 ## [0.19.0-multi-ha.92] - 2026-03-21
 
 ### Fixed

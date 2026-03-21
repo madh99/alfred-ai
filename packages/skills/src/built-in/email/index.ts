@@ -310,7 +310,7 @@ export class EmailSkill extends Skill {
     }
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = (this.activeProviders ?? this.providers).get(account);
+    const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -409,7 +409,7 @@ export class EmailSkill extends Skill {
       if (!body) return { success: false, error: '"body" is required for reply draft.' };
 
       const { account, rawId } = this.decodeId(messageId);
-      const provider = (this.activeProviders ?? this.providers).get(account);
+      const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
       if (!provider) {
         return { success: false, error: `Unknown email account "${account}".` };
       }
@@ -511,7 +511,7 @@ export class EmailSkill extends Skill {
     if (!body) return { success: false, error: '"body" is required for reply.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = (this.activeProviders ?? this.providers).get(account);
+    const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -539,7 +539,7 @@ export class EmailSkill extends Skill {
     if (!to) return { success: false, error: '"to" (recipient email) is required for forward.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = (this.activeProviders ?? this.providers).get(account);
+    const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
@@ -562,7 +562,7 @@ export class EmailSkill extends Skill {
     if (!attachmentId) return { success: false, error: '"attachmentId" is required.' };
 
     const { account, rawId } = this.decodeId(messageId);
-    const provider = (this.activeProviders ?? this.providers).get(account);
+    const provider = (this.mergedProviders ?? this.activeProviders ?? this.providers).get(account);
     if (!provider) {
       return { success: false, error: `Unknown email account "${account}".` };
     }
