@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.91] - 2026-03-21
+
+### Fixed
+- **Kalender createEvent in falschem Kalender** — `createEvent()` war hardcoded auf `/me/events` statt `${this.userPath}/events`. Events im Shared-Kalender (z.B. fam@dohnal.co) landeten im Admin-Kalender. `listEvents`, `updateEvent`, `deleteEvent` waren korrekt.
+
 ## [0.19.0-multi-ha.90] - 2026-03-21
 
 ### Fixed

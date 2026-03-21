@@ -114,7 +114,7 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };
     }
 
-    const data = await this.graphRequest('/me/events', {
+    const data = await this.graphRequest(`${this.userPath}/events`, {
       method: 'POST',
       body: JSON.stringify(event),
     });
