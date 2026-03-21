@@ -18,21 +18,23 @@ export interface EmbeddingResult {
 
 // Known context window sizes for popular models
 const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
-  // Anthropic — Claude 3.5 / 4.x / 4.5
+  // Anthropic — Claude 4.6 / 4.5 / 4.x / 3.5 / 3.x
+  'claude-opus-4-6':              { maxInputTokens: 1_000_000, maxOutputTokens: 128_000 },
+  'claude-sonnet-4-6':            { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
+  'claude-opus-4-5-20251101':     { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
   'claude-opus-4-20250514':       { maxInputTokens: 200_000, maxOutputTokens: 32_000 },
-  'claude-opus-4-5-20251101':     { maxInputTokens: 200_000, maxOutputTokens: 32_000 },
+  'claude-sonnet-4-5-20250929':   { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
   'claude-sonnet-4-20250514':     { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
-  'claude-sonnet-4-5-20250929':   { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
+  'claude-haiku-4-5-20251001':    { maxInputTokens: 200_000, maxOutputTokens: 64_000 },
   'claude-3-5-sonnet-20241022':   { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
   'claude-3-5-sonnet-20240620':   { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
   'claude-3-5-haiku-20241022':    { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
   'claude-haiku-3-5-20241022':    { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
-  'claude-haiku-4-5-20251001':    { maxInputTokens: 200_000, maxOutputTokens: 8_192 },
   'claude-3-opus-20240229':       { maxInputTokens: 200_000, maxOutputTokens: 4_096 },
   'claude-3-sonnet-20240229':     { maxInputTokens: 200_000, maxOutputTokens: 4_096 },
   'claude-3-haiku-20240307':      { maxInputTokens: 200_000, maxOutputTokens: 4_096 },
-  // Generic Claude prefix fallback (any future claude-* model gets 200k)
-  'claude-':                      { maxInputTokens: 200_000, maxOutputTokens: 16_000 },
+  // Generic Claude prefix fallback (future claude-* models default to 1M context)
+  'claude-':                      { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
 
   // OpenAI — GPT-4.1 / GPT-4o / o-series
   'gpt-4.1':                      { maxInputTokens: 1_047_576, maxOutputTokens: 32_768 },

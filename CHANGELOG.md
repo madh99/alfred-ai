@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.89] - 2026-03-21
+
+### Fixed
+- **LLM Context-Window-Größen aktualisiert** — Claude Opus 4.6 (1M/128K), Sonnet 4.6 (1M/64K), Opus 4.5 (1M/64K), Sonnet 4.5 (1M/64K), Haiku 4.5 (200K/64K). Generic `claude-` Fallback auf 1M/64K.
+
 ## [0.19.0-multi-ha.88] - 2026-03-21
 
 ### Added
