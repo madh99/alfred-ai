@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.94] - 2026-03-21
+
+### Fixed
+- **LLM Pricing-Tabelle vollständig korrigiert** — Alle Provider gegen offizielle Preisseiten abgeglichen:
+  - OpenAI: GPT-5.4 cacheRead $1.25→$0.25, GPT-5 $2.00/$8.00→$0.625/$5.00, GPT-4.1-mini/nano halbiert. GPT-5.4-mini/nano neu.
+  - Anthropic: Opus 4.6/4.5 ($5/$25) vs Opus 4.0/4.1 ($15/$75) getrennt. Haiku 3.5 neu ($0.80/$4).
+  - Gemini: Prefix `gemini-3.0-pro` → `gemini-3-pro`, `gemini-3.0-flash` → `gemini-3-flash`. Flash-Lite neu.
+
 ## [0.19.0-multi-ha.93] - 2026-03-21
 
 ### Fixed

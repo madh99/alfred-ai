@@ -2,7 +2,7 @@ import type { LLMUsage } from '@alfred/types';
 
 /**
  * Pricing per 1 million tokens (USD).
- * Updated: 2026-03-09.
+ * Updated: 2026-03-21.
  */
 export interface ModelPricing {
   input: number;
@@ -18,10 +18,12 @@ export interface ModelPricing {
  */
 const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // ── OpenAI ──────────────────────────────────────────────────
-  ['gpt-5.4',         { input: 2.50, output: 15.00, cacheRead: 1.25 }],
-  ['gpt-5',           { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
-  ['gpt-4.1-nano',    { input: 0.10, output: 0.40,  cacheRead: 0.025 }],
-  ['gpt-4.1-mini',    { input: 0.40, output: 1.60,  cacheRead: 0.10 }],
+  ['gpt-5.4-nano',    { input: 0.20, output: 1.25,  cacheRead: 0.02 }],
+  ['gpt-5.4-mini',    { input: 0.75, output: 4.50,  cacheRead: 0.075 }],
+  ['gpt-5.4',         { input: 2.50, output: 15.00, cacheRead: 0.25 }],
+  ['gpt-5',           { input: 0.625, output: 5.00, cacheRead: 0.125 }],
+  ['gpt-4.1-nano',    { input: 0.05, output: 0.20,  cacheRead: 0.025 }],
+  ['gpt-4.1-mini',    { input: 0.20, output: 0.80,  cacheRead: 0.10 }],
   ['gpt-4.1',         { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
   ['gpt-4o-mini',     { input: 0.15, output: 0.60,  cacheRead: 0.075 }],
   ['gpt-4o',          { input: 2.50, output: 10.00, cacheRead: 1.25 }],
@@ -30,17 +32,20 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['o3',              { input: 2.00, output: 8.00,  cacheRead: 0.50 }],
 
   // ── Anthropic ───────────────────────────────────────────────
-  ['claude-opus-4',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
-  ['claude-sonnet-4', { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }],
-  ['claude-haiku-4',  { input: 1.00, output: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }],
+  ['claude-opus-4-6',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
+  ['claude-opus-4-5',   { input: 5.00, output: 25.00, cacheRead: 0.50, cacheWrite: 6.25 }],
+  ['claude-opus-4',     { input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75 }],
+  ['claude-sonnet-4',   { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }],
+  ['claude-haiku-4',    { input: 1.00, output: 5.00,  cacheRead: 0.10, cacheWrite: 1.25 }],
+  ['claude-haiku-3-5',  { input: 0.80, output: 4.00,  cacheRead: 0.08, cacheWrite: 1.00 }],
   ['claude-3.5-sonnet', { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 }],
-  ['claude-3-haiku',  { input: 0.25, output: 1.25,  cacheRead: 0.03 }],
+  ['claude-3-haiku',    { input: 0.25, output: 1.25,  cacheRead: 0.03, cacheWrite: 0.30 }],
 
   // ── Google Gemini ───────────────────────────────────────────
   ['gemini-3.1-pro',  { input: 2.00, output: 12.00, cacheRead: 0.20 }],
-  ['gemini-3.0-pro',  { input: 2.00, output: 12.00, cacheRead: 0.20 }],
   ['gemini-3.1-flash-lite', { input: 0.25, output: 1.50, cacheRead: 0.025 }],
-  ['gemini-3.0-flash', { input: 0.50, output: 3.00, cacheRead: 0.05 }],
+  ['gemini-3-pro',    { input: 2.00, output: 12.00, cacheRead: 0.20 }],
+  ['gemini-3-flash',  { input: 0.50, output: 3.00,  cacheRead: 0.05 }],
   ['gemini-2.5-pro',  { input: 1.25, output: 10.00, cacheRead: 0.125 }],
   ['gemini-2.5-flash', { input: 0.30, output: 2.50, cacheRead: 0.03 }],
   ['gemini-2.0-flash', { input: 0.10, output: 0.40, cacheRead: 0.025 }],
