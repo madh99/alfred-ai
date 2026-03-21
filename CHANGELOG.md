@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.88] - 2026-03-21
+
+### Added
+- **document read Action** — Vollständigen Dokumentinhalt aus RAG-Chunks zurückgeben. `search` gibt nur Snippets, `read` gibt den ganzen Text.
+
+### Fixed
+- **Usage-Tracking Doppelzählung** — `setPersist` und Pipeline schrieben beide in `llm_usage`. Jetzt: `setPersist` → `llm_usage` (global), Pipeline → nur `llm_usage_by_user` (per-user).
+- **Feed-Reader "All feeds failed"** — Ein kaputter Feed (XML-Fehler) ließ alle Feeds scheitern weil `results.length === 0` statt `successCount === 0` geprüft wurde.
+- **MS Token-Refresh public vs. confidential** — Device Code Flow Tokens (public client) scheiterten beim Refresh mit `client_secret` (AADSTS700025). Fix: try mit Secret, bei public client Error retry ohne. Betrifft: Calendar, Email, Contacts, Todo.
+- **Microsoft Todo Token-Refresh Scope** — Todo hatte noch den alten Scope (`Tasks.ReadWrite offline_access`) statt `openid offline_access`.
+
 ## [0.19.0-multi-ha.83] - 2026-03-20
 
 ### Added
