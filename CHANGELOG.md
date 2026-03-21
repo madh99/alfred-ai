@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.96] - 2026-03-21
+
+### Fixed
+- **Gemini Cache-Tokens nicht erfasst** — `cachedContentTokenCount` aus `usageMetadata` wurde ignoriert. Cached Input wurde zum vollen Preis berechnet statt zum Cache-Preis (90% Rabatt auf Gemini 2.5+).
+- **Mistral Pricing veraltet** — Large $2.00→$0.50, Small $0.20→$0.10, Medium und Codestral neu. Alte Preise waren von Mistral Large 2407.
+
 ## [0.19.0-multi-ha.95] - 2026-03-21
 
 ### Fixed

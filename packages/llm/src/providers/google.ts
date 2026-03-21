@@ -85,6 +85,7 @@ export class GoogleProvider extends LLMProvider {
     const toolCalls: ToolCall[] = [];
     let promptTokens = 0;
     let completionTokens = 0;
+    let cachedTokens = 0;
     let lastChunkResponse: GenerateContentResponse | undefined;
 
     for await (const chunk of stream) {
@@ -113,6 +114,7 @@ export class GoogleProvider extends LLMProvider {
       if (chunk.usageMetadata) {
         promptTokens = chunk.usageMetadata.promptTokenCount ?? 0;
         completionTokens = chunk.usageMetadata.candidatesTokenCount ?? 0;
+        cachedTokens = (chunk.usageMetadata as any).cachedContentTokenCount ?? 0;
       }
     }
 
@@ -127,7 +129,7 @@ export class GoogleProvider extends LLMProvider {
         content: fullContent,
         model: this.config.model,
         toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
-        usage: { inputTokens: promptTokens, outputTokens: completionTokens },
+        usage: { inputTokens: promptTokens, outputTokens: completionTokens, cacheReadTokens: cachedTokens },
         stopReason: toolCalls.length > 0 ? 'tool_use' : 'end_turn',
       },
     };
@@ -409,6 +411,7 @@ export class GoogleProvider extends LLMProvider {
       usage: {
         inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
         outputTokens: response.usageMetadata?.candidatesTokenCount ?? 0,
+        cacheReadTokens: (response.usageMetadata as any)?.cachedContentTokenCount ?? 0,
       },
       stopReason: toolCalls && toolCalls.length > 0 ? 'tool_use' : 'end_turn',
     };
