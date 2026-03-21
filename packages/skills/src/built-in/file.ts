@@ -106,11 +106,11 @@ export class FileSkill extends Skill {
         },
         destination: {
           type: 'string',
-          description: 'Destination path for move/copy actions (~ expands to home)',
+          description: 'Destination path for move/copy actions (~ expands to home). For write_store with local file upload: optional S3 key/name override.',
         },
         content: {
           type: 'string',
-          description: 'Content to write (required for write/append; base64-encoded for write_binary)',
+          description: 'Content to write (required for write/append; base64-encoded for write_binary). For write_store: if omitted, "path" is read as a local file and uploaded binary.',
         },
       },
       required: ['action', 'path'],
@@ -170,7 +170,7 @@ export class FileSkill extends Skill {
       case 'delete': return this.deleteFile(resolvedPath);
       case 'send': return this.sendFile(rawPath, _context);
       case 'read_store': return this.readFromStore(rawPath, _context);
-      case 'write_store': return this.writeToStore(rawPath, content, _context);
+      case 'write_store': return this.writeToStore(rawPath, content, destination, _context);
       case 'list_store': return this.listFromStore(_context);
       case 'delete_store': return this.deleteFromStore(rawPath, _context);
       default:
@@ -474,19 +474,31 @@ export class FileSkill extends Skill {
     }
   }
 
-  private async writeToStore(fileName: string, content: string | undefined, context: SkillContext): Promise<SkillResult> {
+  private async writeToStore(fileName: string, content: string | undefined, destination: string | undefined, context: SkillContext): Promise<SkillResult> {
     const store = context.fileStore;
     if (!store) {
       // Fallback: write locally
       if (!content) return { success: false, error: 'Missing "content" for write_store action' };
       return this.writeFile(this.resolvePath(fileName), content);
     }
-    if (!content) return { success: false, error: 'Missing "content" for write_store action' };
     try {
-      // Detect base64 binary content: must have padding AND no whitespace/punctuation
-      const isBase64 = /^[A-Za-z0-9+/\s]+=+$/.test(content.trim()) && content.length > 100 && !content.includes(' ');
-      const data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
-      const stored = await store.save(context.userId, fileName, data);
+      let data: Buffer;
+      let storeKey = fileName;
+      if (!content) {
+        // No content provided — try reading fileName as a local file path
+        const localPath = this.resolvePath(fileName);
+        if (!fs.existsSync(localPath)) {
+          return { success: false, error: 'Missing "content" for write_store action. Alternatively, provide a local file path to upload.' };
+        }
+        data = fs.readFileSync(localPath);
+        // Use destination as store key if provided, otherwise basename
+        storeKey = destination ?? path.basename(localPath);
+      } else {
+        // Detect base64 binary content: must have padding AND no whitespace/punctuation
+        const isBase64 = /^[A-Za-z0-9+/\s]+=+$/.test(content.trim()) && content.length > 100 && !content.includes(' ');
+        data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
+      }
+      const stored = await store.save(context.userId, storeKey, data);
       return {
         success: true,
         data: { key: stored.key, fileName: stored.fileName, size: stored.size },

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.97] - 2026-03-21
+
+### Fixed
+- **write_store konnte keine lokalen Dateien hochladen** — `write_store` akzeptierte nur `content` als String. Binärdateien (PDFs etc.) wurden als Pfad-Text gespeichert (59 Bytes statt echte Datei). Jetzt: wenn kein `content` angegeben, wird `path` als lokale Datei gelesen und binär in S3 hochgeladen. Optional `destination` als S3-Key.
+
 ## [0.19.0-multi-ha.96] - 2026-03-21
 
 ### Fixed
