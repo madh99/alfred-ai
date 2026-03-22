@@ -14,6 +14,7 @@ export interface DocumentProcessorInterface {
     filePath: string,
     filename: string,
     mimeType: string,
+    fileData?: Buffer,
   ): Promise<{ documentId: string; chunkCount: number; existing?: boolean }>;
 }
 
@@ -38,7 +39,8 @@ export class DocumentSkill extends Skill {
           enum: ['ingest', 'search', 'read', 'summarize', 'list', 'delete', 'share', 'unshare'],
           description: 'Action to perform. Use "read" to get the FULL text content of a document (requires document_id). Use "search" for semantic search across all documents.',
         },
-        file_path: { type: 'string', description: 'Path to the file (for ingest)' },
+        file_path: { type: 'string', description: 'Path to the file (for ingest). Not needed if store_key is provided.' },
+        store_key: { type: 'string', description: 'FileStore key to ingest directly from S3 (alternative to file_path). No local file needed.' },
         filename: { type: 'string', description: 'Original filename (for ingest)' },
         mime_type: { type: 'string', description: 'MIME type of the file (for ingest)' },
         query: { type: 'string', description: 'Search query (for search)' },
@@ -104,11 +106,32 @@ export class DocumentSkill extends Skill {
     context: SkillContext,
   ): Promise<SkillResult> {
     const filePath = input.file_path as string | undefined;
+    const storeKey = input.store_key as string | undefined;
     const filename = input.filename as string | undefined;
     const mimeType = input.mime_type as string | undefined;
 
+    // Ingest from FileStore (S3) — no local path needed
+    if (storeKey && typeof storeKey === 'string') {
+      const store = context.fileStore;
+      if (!store) {
+        return { success: false, error: 'No FileStore configured. Use file_path instead.' };
+      }
+      const effectiveFilename = filename ?? storeKey.split('/').pop() ?? storeKey;
+      const effectiveMime = mimeType ?? this.guessMimeType(effectiveFilename);
+      try {
+        const fileData = await store.read(storeKey, context.userId);
+        const result = await this.processor.ingest(effectiveUserId(context), storeKey, effectiveFilename, effectiveMime, fileData);
+        const display = result.existing
+          ? `Document "${effectiveFilename}" already ingested (${result.chunkCount} chunks). Ready for search. ID: ${result.documentId.slice(0, 8)}...`
+          : `Document "${effectiveFilename}" ingested from FileStore (${result.chunkCount} chunks). ID: ${result.documentId.slice(0, 8)}...`;
+        return { success: true, data: result, display };
+      } catch (err) {
+        return { success: false, error: `Failed to ingest from FileStore: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
+
     if (!filePath || typeof filePath !== 'string') {
-      return { success: false, error: 'Missing required field "file_path" for ingest action' };
+      return { success: false, error: 'Missing required field "file_path" or "store_key" for ingest action' };
     }
     if (!filename || typeof filename !== 'string') {
       return { success: false, error: 'Missing required field "filename" for ingest action' };
@@ -146,6 +169,18 @@ export class DocumentSkill extends Skill {
         success: false,
         error: `Failed to ingest document: ${err instanceof Error ? err.message : String(err)}`,
       };
+    }
+  }
+
+  private guessMimeType(filename: string): string {
+    const ext = filename.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'pdf': return 'application/pdf';
+      case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'csv': return 'text/csv';
+      case 'md': return 'text/markdown';
+      case 'txt': return 'text/plain';
+      default: return 'application/octet-stream';
     }
   }
 

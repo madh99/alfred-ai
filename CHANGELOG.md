@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.98] - 2026-03-22
+
+### Added
+- **Document ingest aus FileStore** — Neuer `store_key` Parameter für `document ingest`. PDFs direkt aus S3 FileStore ingestieren ohne lokalen Dateipfad. Löst das Problem dass der Delegate FileStore-PDFs nicht lesen konnte (Security-Block auf `/root/` + kein RAG-Index nach Upload).
+
 ## [0.19.0-multi-ha.97] - 2026-03-21
 
 ### Fixed
