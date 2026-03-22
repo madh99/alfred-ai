@@ -1158,10 +1158,9 @@ export class Alfred {
     }
 
     // Memory consolidation: daily cleanup of stale + duplicate memories (runs at ~3:00 AM)
-    const consolidatorOwnerId = this.config.security?.ownerUserId;
-    if (this.config.activeLearning?.enabled !== false && consolidatorOwnerId && this.memoryRepo) {
+    if (this.config.activeLearning?.enabled !== false && this.memoryRepo) {
       const consolidator = new MemoryConsolidator(this.llmProvider, this.memoryRepo, this.logger.child({ component: 'memory-consolidator' }));
-      const ownerId = consolidatorOwnerId;
+      const userRepoRef = this.userRepo;
       let lastConsolidationDay = '';
       setInterval(async () => {
         const now = new Date();
@@ -1169,9 +1168,12 @@ export class Alfred {
         if (now.getHours() !== 3 || lastConsolidationDay === today) return;
         lastConsolidationDay = today;
         try {
-          const result = await consolidator.consolidate(ownerId);
-          if (result.deleted > 0 || result.merged > 0) {
-            this.logger.info({ userId: ownerId, ...result }, 'Memory consolidation completed');
+          const users = await userRepoRef.listAll();
+          for (const user of users) {
+            const result = await consolidator.consolidate(user.id);
+            if (result.deleted > 0 || result.merged > 0) {
+              this.logger.info({ userId: user.id, ...result }, 'Memory consolidation completed');
+            }
           }
         } catch (err) {
           this.logger.warn({ err }, 'Memory consolidation failed');

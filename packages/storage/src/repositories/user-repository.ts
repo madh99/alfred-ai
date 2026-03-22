@@ -136,6 +136,11 @@ export class UserRepository {
     return row?.master_user_id ?? userId;
   }
 
+  async listAll(): Promise<User[]> {
+    const rows = await this.adapter.query('SELECT * FROM users ORDER BY created_at') as Record<string, string>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   private mapRow(row: Record<string, string>): User {
     return {
       id: row.id,
