@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.99] - 2026-03-22
+
+### Fixed
+- **Document ingest PostgreSQL Null-Byte-Fehler** — `pdf-parse` liefert Text mit `\0` Bytes die PostgreSQL in TEXT-Spalten ablehnt (`invalid byte sequence for encoding "UTF8": 0x00`). Fix: Null-Bytes nach PDF-Extraktion entfernen.
+
 ## [0.19.0-multi-ha.98] - 2026-03-22
 
 ### Added

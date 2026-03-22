@@ -71,7 +71,8 @@ export class DocumentProcessor {
       try {
         const pdfParse = (await import('pdf-parse')).default;
         const data = await pdfParse(buf);
-        return data.text;
+        // Remove null bytes — PostgreSQL TEXT columns reject \0
+        return data.text.replace(/\0/g, '');
       } catch (err) {
         this.logger.error({ err }, 'PDF parsing failed');
         throw new Error('Failed to parse PDF');
