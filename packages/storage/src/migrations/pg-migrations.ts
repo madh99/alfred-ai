@@ -62,4 +62,14 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.exec(`ALTER TABLE watches ADD COLUMN IF NOT EXISTS user_id TEXT DEFAULT NULL`);
     },
   },
+  {
+    version: 38,
+    description: 'Thread/Topic routing for watches and scheduled actions',
+    async up(db) {
+      await db.exec(`
+        ALTER TABLE watches ADD COLUMN IF NOT EXISTS thread_id TEXT DEFAULT NULL;
+        ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS thread_id TEXT DEFAULT NULL
+      `);
+    },
+  },
 ];

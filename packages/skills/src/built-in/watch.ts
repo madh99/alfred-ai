@@ -115,6 +115,10 @@ export class WatchSkill extends Skill {
           enum: ['and', 'or'],
           description: 'Logic for composite conditions: "and" (all must match) or "or" (any must match). Default: "and"',
         },
+        thread_id: {
+          type: 'string',
+          description: 'Telegram topic/thread ID to send alerts to instead of main chat (for create). Use for grouping alerts in topics.',
+        },
         watch_id: {
           type: 'string',
           description: 'Watch ID (for enable, disable, delete)',
@@ -179,6 +183,7 @@ export class WatchSkill extends Skill {
     const actionOnTrigger = (input.action_on_trigger as Watch['actionOnTrigger']) ?? 'alert';
     const requiresConfirmation = input.requires_confirmation as boolean | undefined;
     const triggerWatchId = input.trigger_watch_id as string | undefined;
+    const threadId = input.thread_id as string | undefined;
     const conditionsArray = input.conditions as Array<{ field: string; operator: string; value?: string | number }> | undefined;
     const conditionsLogic = (input.conditions_logic as 'and' | 'or') ?? 'and';
 
@@ -275,6 +280,7 @@ export class WatchSkill extends Skill {
       actionOnTrigger,
       requiresConfirmation,
       triggerWatchId,
+      threadId,
     });
 
     const condDisplay = compositeCondition

@@ -332,7 +332,7 @@ export class WatchEngine {
         const adapter = this.adapters.get(watch.platform as Platform);
         if (adapter) {
           try {
-            await adapter.sendMessage(watch.chatId, alertText);
+            await adapter.sendMessage(watch.chatId, alertText, watch.threadId ? { threadId: watch.threadId } : undefined);
             this.logger.info({ watchId: watch.id, name: watch.name, value: displayValue }, 'Watch alert sent');
             this.activityLogger?.logWatchTrigger({
               watchId: watch.id, watchName: watch.name, value: displayValue,

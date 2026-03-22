@@ -201,6 +201,7 @@ export class ProactiveScheduler {
         try {
           await adapter.sendMessage(action.chatId, resultText, {
             parseMode: resultParseMode !== 'text' ? resultParseMode : undefined,
+            threadId: action.threadId,
           });
 
           // For prompt_template tasks running in an isolated conversation:

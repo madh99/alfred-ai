@@ -782,4 +782,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE watches ADD COLUMN user_id TEXT DEFAULT NULL`);
     },
   },
+  {
+    version: 38,
+    description: 'Thread/Topic routing for watches and scheduled actions',
+    up(db) {
+      db.exec(`ALTER TABLE watches ADD COLUMN thread_id TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE scheduled_actions ADD COLUMN thread_id TEXT DEFAULT NULL`);
+    },
+  },
 ];

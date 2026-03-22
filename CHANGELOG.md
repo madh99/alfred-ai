@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.102] - 2026-03-22
+
+### Added
+- **Thread/Topic-Routing für Watches und Scheduled Actions** — Neuer `thread_id` Parameter bei Watch-Erstellung. Alerts werden in Telegram-Topics gesendet statt den Hauptchat zu fluten. Auch Scheduled Actions unterstützen `thread_id`. Migration v38 (SQLite + PG).
+
 ## [0.19.0-multi-ha.101] - 2026-03-22
 
 ### Added

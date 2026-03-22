@@ -106,6 +106,7 @@ export interface ScheduledAction {
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;
+  threadId?: string;
 }
 
 export interface WatchCondition {
@@ -143,6 +144,7 @@ export interface Watch {
   lastActionError?: string;
   requiresConfirmation?: boolean;
   triggerWatchId?: string;
+  threadId?: string;
 }
 
 export interface PendingConfirmation {

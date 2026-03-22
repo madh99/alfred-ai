@@ -15,8 +15,8 @@ export class WatchRepository {
          condition_field, condition_operator, condition_value,
          interval_minutes, cooldown_minutes, enabled, created_at, message_template,
          action_skill_name, action_skill_params, action_on_trigger, conditions_json,
-         requires_confirmation, trigger_watch_id, user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         requires_confirmation, trigger_watch_id, user_id, thread_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       watch.chatId,
@@ -39,6 +39,7 @@ export class WatchRepository {
       watch.requiresConfirmation ? 1 : 0,
       watch.triggerWatchId ?? null,
       watch.userId ?? null,
+      watch.threadId ?? null,
     ]);
 
     return {
@@ -238,6 +239,7 @@ export class WatchRepository {
       lastActionError: row.last_action_error as string | undefined,
       requiresConfirmation: (row.requires_confirmation as number) === 1,
       triggerWatchId: row.trigger_watch_id as string | undefined,
+      threadId: row.thread_id as string | undefined,
     };
   }
 }
