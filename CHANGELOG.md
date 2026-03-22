@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.104] - 2026-03-22
+
+### Fixed
+- **Review-Fixes (7 Findings):**
+  - WatchRepository.create() gab `threadId` nicht im Return-Objekt zurück
+  - ScheduledActionRepository: `threadId` fehlte in CreateInput, INSERT und mapRow — Thread-Routing für Scheduled Actions war non-funktional
+  - Email-Skill Race Condition: `mergedProviders` als Instance-State → bei gleichzeitigen Requests Provider-Cross-Contamination möglich. Fix: Execute-Lock serialisiert Zugriffe
+  - Base64-Erkennung in write_store: Regex erforderte `=` Padding — ungepadded Base64 (exakte 3-Byte-Vielfache) wurde als UTF-8 gespeichert statt binär → stille Datenkorruption
+  - gemini-3.1-flash fehlte in Pricing-Tabelle — Kosten wurden als $0 getrackt
+
 ## [0.19.0-multi-ha.103] - 2026-03-22
 
 ### Added

@@ -27,6 +27,7 @@ export class EmailSkill extends Skill {
   /** Per-request override for user-specific providers (set in execute, cleared in finally). */
   private activeProviders?: Map<string, EmailProvider>;
   private mergedProviders?: Map<string, EmailProvider>;
+  private executeLock?: Promise<SkillResult>;
 
   constructor(providers?: Map<string, EmailProvider> | EmailProvider) {
     super();
@@ -148,6 +149,13 @@ export class EmailSkill extends Skill {
     input: Record<string, unknown>,
     _context: SkillContext,
   ): Promise<SkillResult> {
+    // Serialize concurrent executions to prevent provider cross-contamination
+    while (this.executeLock) {
+      await this.executeLock;
+    }
+    let releaseLock: () => void;
+    this.executeLock = new Promise<SkillResult>(resolve => { releaseLock = () => resolve(undefined as unknown as SkillResult); });
+
     // Resolve per-user email providers if available
     const userProviders = await this.resolveUserProviders(_context);
     this.activeProviders = userProviders ?? undefined;
@@ -213,6 +221,8 @@ export class EmailSkill extends Skill {
     } finally {
       this.activeProviders = undefined;
       this.mergedProviders = undefined;
+      this.executeLock = undefined;
+      releaseLock!();
     }
   }
 

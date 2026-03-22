@@ -44,6 +44,7 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // ── Google Gemini ───────────────────────────────────────────
   ['gemini-3.1-pro',  { input: 2.00, output: 12.00, cacheRead: 0.20 }],
   ['gemini-3.1-flash-lite', { input: 0.25, output: 1.50, cacheRead: 0.025 }],
+  ['gemini-3.1-flash', { input: 0.50, output: 3.00, cacheRead: 0.05 }],
   ['gemini-3-pro',    { input: 2.00, output: 12.00, cacheRead: 0.20 }],
   ['gemini-3-flash',  { input: 0.50, output: 3.00,  cacheRead: 0.05 }],
   ['gemini-2.5-pro',  { input: 1.25, output: 10.00, cacheRead: 0.125 }],

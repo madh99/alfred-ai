@@ -494,8 +494,9 @@ export class FileSkill extends Skill {
         // Use destination as store key if provided, otherwise basename
         storeKey = destination ?? path.basename(localPath);
       } else {
-        // Detect base64 binary content: must have padding AND no whitespace/punctuation
-        const isBase64 = /^[A-Za-z0-9+/\s]+=+$/.test(content.trim()) && content.length > 100 && !content.includes(' ');
+        // Detect base64 binary content: padded or unpadded, no spaces
+        const stripped = content.replace(/[\r\n]/g, '').trim();
+        const isBase64 = /^[A-Za-z0-9+/]+=*$/.test(stripped) && stripped.length > 100;
         data = isBase64 ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf-8');
       }
       const stored = await store.save(context.userId, storeKey, data);

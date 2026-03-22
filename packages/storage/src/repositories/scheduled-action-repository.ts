@@ -13,6 +13,7 @@ export interface CreateScheduledActionInput {
   skillName: string;
   skillInput: string;
   promptTemplate?: string;
+  threadId?: string;
 }
 
 export class ScheduledActionRepository {
@@ -34,8 +35,8 @@ export class ScheduledActionRepository {
     await this.adapter.execute(`
       INSERT INTO scheduled_actions
         (id, user_id, platform, chat_id, name, description, schedule_type, schedule_value,
-         skill_name, skill_input, prompt_template, enabled, next_run_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+         skill_name, skill_input, prompt_template, enabled, next_run_at, created_at, thread_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
     `, [
       id,
       data.userId,
@@ -50,6 +51,7 @@ export class ScheduledActionRepository {
       data.promptTemplate ?? null,
       nextRunAt,
       now,
+      data.threadId ?? null,
     ]);
 
     return {
@@ -67,6 +69,7 @@ export class ScheduledActionRepository {
       enabled: true,
       nextRunAt: nextRunAt ?? undefined,
       createdAt: now,
+      threadId: data.threadId,
     };
   }
 
@@ -194,6 +197,7 @@ export class ScheduledActionRepository {
       lastRunAt: row.last_run_at as string | undefined,
       nextRunAt: row.next_run_at as string | undefined,
       createdAt: row.created_at as string,
+      threadId: row.thread_id as string | undefined,
     };
   }
 }

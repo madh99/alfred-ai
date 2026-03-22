@@ -65,6 +65,7 @@ export class WatchRepository {
       actionOnTrigger: watch.actionOnTrigger ?? 'alert',
       requiresConfirmation: watch.requiresConfirmation,
       triggerWatchId: watch.triggerWatchId,
+      threadId: watch.threadId,
     };
   }
 
