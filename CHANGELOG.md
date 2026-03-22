@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.101] - 2026-03-22
+
+### Added
+- **Skill-Health Reset als User-Action** — `configure` Skill um `skill_health` (zeigt degradierte/disabled Skills) und `reset_skill` (reaktiviert disabled Skill) erweitert. Kein manueller DB-Zugriff mehr nötig.
+
 ## [0.19.0-multi-ha.100] - 2026-03-22
 
 ### Fixed

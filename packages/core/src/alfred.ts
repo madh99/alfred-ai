@@ -268,6 +268,7 @@ export class Alfred {
     skillRegistry.register(new FileSkill());
     const configureSkill = new ConfigureSkill();
     configureSkill.setReloadCallback((service) => this.reloadService(service as 'proxmox' | 'unifi' | 'homeassistant' | 'todo'));
+    configureSkill.setHealthAdapter(skillHealthTracker);
     skillRegistry.register(configureSkill);
     skillRegistry.register(new ClipboardSkill());
     skillRegistry.register(new ScreenshotSkill());

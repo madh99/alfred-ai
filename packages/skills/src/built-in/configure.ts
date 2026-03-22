@@ -67,36 +67,59 @@ const SERVICES: Record<string, { label: string; fields: ServiceField[] }> = {
 
 export type ReloadCallback = (service: string) => Promise<{ success: boolean; error?: string }>;
 
+export interface SkillHealthInfo {
+  skillName: string;
+  consecutiveFails: number;
+  disabledUntil?: string | null;
+  lastError?: string | null;
+}
+
+export interface SkillHealthAdapter {
+  getDashboard(): Promise<SkillHealthInfo[]>;
+  forceEnable(skillName: string): Promise<void>;
+}
+
 export class ConfigureSkill extends Skill {
   private reloadCallback?: ReloadCallback;
+  private healthAdapter?: SkillHealthAdapter;
 
   setReloadCallback(cb: ReloadCallback): void {
     this.reloadCallback = cb;
+  }
+
+  setHealthAdapter(adapter: SkillHealthAdapter): void {
+    this.healthAdapter = adapter;
   }
 
   readonly metadata: SkillMetadata = {
     name: 'configure',
     category: 'core',
     description:
-      'Configure Alfred services (Proxmox, UniFi, Home Assistant, Contacts, Docker) by writing environment variables. ' +
+      'Configure Alfred services and manage skill health. ' +
       'Use action "list_services" to see available services. ' +
       'Use action "show" to check current config of a service. ' +
       'Use action "set" to write config — provide service name and values. ' +
+      'Use action "skill_health" to see which skills are degraded or disabled. ' +
+      'Use action "reset_skill" to re-enable a disabled skill (provide skill_name). ' +
       'After setting config, the service is activated immediately — no restart needed.',
     riskLevel: 'admin',
-    version: '1.0.0',
+    version: '1.1.0',
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['list_services', 'show', 'set'],
-          description: 'Action to perform',
+          enum: ['list_services', 'show', 'set', 'skill_health', 'reset_skill'],
+          description: 'Action to perform. "skill_health" shows degraded/disabled skills. "reset_skill" re-enables a disabled skill.',
         },
         service: {
           type: 'string',
           enum: ['proxmox', 'unifi', 'homeassistant', 'contacts', 'docker'],
           description: 'Service to configure (required for show/set)',
+        },
+        skill_name: {
+          type: 'string',
+          description: 'Skill name to reset (required for reset_skill)',
         },
         values: {
           type: 'object',
@@ -128,8 +151,12 @@ export class ConfigureSkill extends Skill {
         return this.showService(input.service as string);
       case 'set':
         return this.setService(input.service as string, input.values as Record<string, string> | undefined);
+      case 'skill_health':
+        return this.showSkillHealth();
+      case 'reset_skill':
+        return this.resetSkill(input.skill_name as string | undefined);
       default:
-        return { success: false, error: `Unknown action "${action}". Use list_services, show, or set.` };
+        return { success: false, error: `Unknown action "${action}". Use list_services, show, set, skill_health, or reset_skill.` };
     }
   }
 
@@ -230,6 +257,42 @@ export class ConfigureSkill extends Skill {
     }
 
     return { success: true, data: { envPath, written }, display: lines.join('\n') };
+  }
+
+  private async showSkillHealth(): Promise<SkillResult> {
+    if (!this.healthAdapter) {
+      return { success: false, error: 'Skill health tracking is not available.' };
+    }
+    const all = await this.healthAdapter.getDashboard();
+    const problems = all.filter(s => s.consecutiveFails > 0 || s.disabledUntil);
+    if (problems.length === 0) {
+      return { success: true, data: { skills: [] }, display: 'Alle Skills sind aktiv und fehlerfrei.' };
+    }
+    const lines = problems.map(s => {
+      const status = s.disabledUntil ? `🔴 disabled bis ${s.disabledUntil}` : `🟠 ${s.consecutiveFails} Fehler`;
+      const error = s.lastError ? ` — ${s.lastError.slice(0, 100)}` : '';
+      return `- **${s.skillName}**: ${status}${error}`;
+    });
+    return {
+      success: true,
+      data: { skills: problems },
+      display: `${problems.length} Skill(s) mit Problemen:\n${lines.join('\n')}\n\nZum Zurücksetzen: action "reset_skill", skill_name: "..."`,
+    };
+  }
+
+  private async resetSkill(skillName: string | undefined): Promise<SkillResult> {
+    if (!this.healthAdapter) {
+      return { success: false, error: 'Skill health tracking is not available.' };
+    }
+    if (!skillName) {
+      return { success: false, error: 'Missing "skill_name". Use action "skill_health" to see which skills have problems.' };
+    }
+    await this.healthAdapter.forceEnable(skillName);
+    return {
+      success: true,
+      data: { skillName, reset: true },
+      display: `Skill "${skillName}" wurde zurückgesetzt und ist wieder aktiv.`,
+    };
   }
 }
 
