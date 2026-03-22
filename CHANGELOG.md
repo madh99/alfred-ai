@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.100] - 2026-03-22
+
+### Fixed
+- **Browser-Skill wird vom LLM nicht verwendet** — Description suggerierte Fallback-Rolle ("Use when http skill returns empty"). Jetzt: "Use whenever the user asks to open/visit/browse a URL. Preferred over http skill." Skill-Filter: `brows\b` → `brows\w*` + `öffne`, `webseite`, `website`, `url` als Keywords.
+
 ## [0.19.0-multi-ha.99] - 2026-03-22
 
 ### Fixed

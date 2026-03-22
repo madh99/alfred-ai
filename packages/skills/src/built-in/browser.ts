@@ -40,10 +40,10 @@ export class BrowserSkill extends Skill {
     name: 'browser',
     category: 'media',
     description:
-      'Open web pages in a real browser (Puppeteer/Chromium). Renders JavaScript, ' +
-      'so it works with SPAs and dynamic sites. Can also interact with pages: ' +
-      'click buttons, fill forms, take screenshots. ' +
-      'Use when http skill returns empty/broken content, or when you need to interact with a web page.',
+      'Open web pages and return their text content. Use this whenever the user asks to ' +
+      'open, visit, read, check, or browse a URL or website. Renders JavaScript (SPAs, dynamic sites). ' +
+      'Can also interact with pages: click buttons, fill forms, take screenshots. ' +
+      'Preferred over http skill for real web pages.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
