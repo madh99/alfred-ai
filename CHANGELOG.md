@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.103] - 2026-03-22
+
+### Added
+- **Memory Consolidator aktiviert** — Tägliches Housekeeping um 3:00 Uhr: löscht veraltete Low-Confidence Memories (>60 Tage, <0.5), merged ähnliche Memories per LLM (Jaccard-Similarity ≥50%).
+- **Reasoning Engine Low-Risk Auto-Approve** — Low-Risk Skills (memory, reminder, note, todo, calculator) werden direkt ausgeführt statt in die Confirmation Queue gestellt. High-Risk Skills (homeassistant, email, shell etc.) erfordern weiterhin Bestätigung.
+
 ## [0.19.0-multi-ha.102] - 2026-03-22
 
 ### Added

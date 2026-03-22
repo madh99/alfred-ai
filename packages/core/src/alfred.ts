@@ -63,6 +63,7 @@ import { ConfirmationQueue } from './confirmation-queue.js';
 import { ActiveLearningService } from './active-learning/active-learning-service.js';
 import { FeedbackService } from './feedback/feedback-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
+import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { TodoWatcher } from './todo-watcher.js';
@@ -1154,6 +1155,28 @@ export class Alfred {
     // Skill health: periodic re-enable check (every 5 minutes)
     if (this.skillHealthTracker) {
       this.healthCheckTimer = setInterval(() => this.skillHealthTracker!.checkReEnables(), 5 * 60_000);
+    }
+
+    // Memory consolidation: daily cleanup of stale + duplicate memories (runs at ~3:00 AM)
+    const consolidatorOwnerId = this.config.security?.ownerUserId;
+    if (this.config.activeLearning?.enabled !== false && consolidatorOwnerId && this.memoryRepo) {
+      const consolidator = new MemoryConsolidator(this.llmProvider, this.memoryRepo, this.logger.child({ component: 'memory-consolidator' }));
+      const ownerId = consolidatorOwnerId;
+      let lastConsolidationDay = '';
+      setInterval(async () => {
+        const now = new Date();
+        const today = now.toISOString().slice(0, 10);
+        if (now.getHours() !== 3 || lastConsolidationDay === today) return;
+        lastConsolidationDay = today;
+        try {
+          const result = await consolidator.consolidate(ownerId);
+          if (result.deleted > 0 || result.merged > 0) {
+            this.logger.info({ userId: ownerId, ...result }, 'Memory consolidation completed');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'Memory consolidation failed');
+        }
+      }, 60 * 60_000); // Check every hour, only acts once at 3 AM
     }
 
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)

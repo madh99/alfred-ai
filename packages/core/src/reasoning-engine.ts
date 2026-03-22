@@ -538,8 +538,13 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
     await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
 
+  /** Skills that are safe to execute without user confirmation. */
+  private static readonly LOW_RISK_SKILLS = new Set([
+    'memory', 'reminder', 'note', 'todo', 'calculator',
+  ]);
+
   private async processActions(actions: ProposedAction[]): Promise<void> {
-    if (!this.confirmationQueue || actions.length === 0) return;
+    if (actions.length === 0) return;
     const limit = actions.slice(0, 2); // max 2 actions per pass
     for (const action of limit) {
       if (await this.actionWasRecentlyProposed(action)) {
@@ -547,6 +552,16 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
         continue;
       }
       try {
+        // Low-risk skills: execute directly without confirmation
+        if (ReasoningEngine.LOW_RISK_SKILLS.has(action.skillName)) {
+          await this.executeDirectly(action);
+          await this.markActionProposed(action);
+          this.logger.info({ action: action.description, skillName: action.skillName }, 'Reasoning: low-risk action executed directly');
+          continue;
+        }
+
+        // High-risk skills: require user confirmation
+        if (!this.confirmationQueue) continue;
         await this.confirmationQueue.enqueue({
           chatId: this.defaultChatId,
           platform: this.defaultPlatform,
@@ -560,8 +575,24 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
         await this.markActionProposed(action);
         this.logger.info({ action: action.description }, 'Reasoning: action enqueued for confirmation');
       } catch (err) {
-        this.logger.error({ err, action: action.description }, 'Reasoning: failed to enqueue action');
+        this.logger.error({ err, action: action.description }, 'Reasoning: failed to process action');
       }
+    }
+  }
+
+  private async executeDirectly(action: ProposedAction): Promise<void> {
+    const skill = this.skillRegistry.get(action.skillName);
+    if (!skill) return;
+    try {
+      const { context } = await buildSkillContext(this.userRepo, {
+        userId: this.defaultChatId,
+        platform: this.defaultPlatform,
+        chatId: this.defaultChatId,
+        chatType: 'dm',
+      });
+      await this.skillSandbox.execute(skill, action.skillParams, context);
+    } catch (err) {
+      this.logger.warn({ err, action: action.description }, 'Reasoning: direct action execution failed');
     }
   }
 }
