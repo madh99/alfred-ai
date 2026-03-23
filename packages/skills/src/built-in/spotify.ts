@@ -60,13 +60,13 @@ export class SpotifySkill extends Skill {
           action: {
             type: 'string',
             enum: [
-              'authorize', 'now_playing', 'play', 'pause', 'resume', 'next', 'previous',
+              'authorize', 'confirm_auth', 'now_playing', 'play', 'pause', 'resume', 'next', 'previous',
               'seek', 'volume', 'shuffle', 'repeat', 'devices', 'transfer', 'search',
               'queue', 'queue_list', 'playlists', 'playlist_tracks', 'playlist_create',
               'playlist_add', 'playlist_remove', 'like', 'unlike', 'top_tracks',
               'top_artists', 'recently_played', 'recommend', 'list_accounts',
             ],
-            description: 'Aktion: authorize (Spotify verbinden), now_playing, play, pause, resume, next, previous, seek, volume, shuffle, repeat, devices, transfer, search, queue, queue_list, playlists, playlist_tracks, playlist_create, playlist_add, playlist_remove, like, unlike, top_tracks, top_artists, recently_played, recommend, list_accounts.',
+            description: 'Aktion: authorize (Spotify verbinden), confirm_auth (Callback-URL manuell eingeben wenn Redirect fehlschlägt), now_playing, play, pause, resume, next, previous, seek, volume, shuffle, repeat, devices, transfer, search, queue, queue_list, playlists, playlist_tracks, playlist_create, playlist_add, playlist_remove, like, unlike, top_tracks, top_artists, recently_played, recommend, list_accounts.',
           },
           ...accountProp,
           // play
@@ -95,7 +95,9 @@ export class SpotifySkill extends Skill {
           seed_artists: { type: 'array', items: { type: 'string' }, description: 'Seed Artist-IDs für Empfehlungen.' },
           seed_genres: { type: 'array', items: { type: 'string' }, description: 'Seed Genres für Empfehlungen (z.B. pop, rock, jazz).' },
           // authorize
-          redirect_uri: { type: 'string', description: 'Basis-URL für OAuth Redirect (default: http://localhost:3420).' },
+          redirect_uri: { type: 'string', description: 'Basis-URL für OAuth Redirect (default: aus ALFRED_API_PUBLIC_URL).' },
+          // confirm_auth
+          callback_url: { type: 'string', description: 'Komplette Callback-URL aus der Browser-Adressleiste (für manuelle Auth-Bestätigung bei Self-signed Cert).' },
         },
       },
     };
@@ -169,6 +171,7 @@ export class SpotifySkill extends Skill {
           case 'top_artists': return await this.topArtists(input);
           case 'recently_played': return await this.recentlyPlayed(input);
           case 'recommend': return await this.recommend(input);
+          case 'confirm_auth': return await this.confirmAuth(input, context);
           default:
             return { success: false, error: `Unbekannte Aktion: ${action}` };
         }
@@ -233,8 +236,15 @@ export class SpotifySkill extends Skill {
       `&code_challenge=${codeChallenge}` +
       `&code_challenge_method=S256`;
 
+    const message = `**Spotify verbinden**\n\n` +
+      `1. Öffne diesen Link: ${authUrl}\n` +
+      `2. Melde dich bei Spotify an und erlaube den Zugriff\n` +
+      `3. Du wirst weitergeleitet — **falls die Seite nicht lädt** (Self-signed Cert), ` +
+      `kopiere die komplette URL aus der Adressleiste und schicke sie mir hier im Chat.\n\n` +
+      `⏳ Warte auf Bestätigung (automatisch oder manuell)...`;
+
     if (context.onProgress) {
-      context.onProgress(`**Spotify verbinden**\n\n1. Oeffne: ${authUrl}\n2. Melde dich bei Spotify an\n3. Erlaube den Zugriff\n\nWarte auf Bestaetigung...`);
+      context.onProgress(message);
     }
 
     const deadline = Date.now() + 5 * 60_000;
@@ -242,17 +252,61 @@ export class SpotifySkill extends Skill {
       await new Promise(r => setTimeout(r, 3000));
       const token = this.accessTokens.get(account);
       if (token) {
-        return { success: true, display: 'Spotify erfolgreich verbunden!' };
+        return { success: true, display: '✅ Spotify erfolgreich verbunden!' };
       }
       if (!this.pendingAuths.has(nonce)) {
         const token2 = this.accessTokens.get(account);
-        if (token2) return { success: true, display: 'Spotify erfolgreich verbunden!' };
+        if (token2) return { success: true, display: '✅ Spotify erfolgreich verbunden!' };
         return { success: false, error: 'Autorisierung fehlgeschlagen.' };
       }
     }
 
     this.pendingAuths.delete(nonce);
-    return { success: false, error: 'Timeout — keine Bestaetigung innerhalb von 5 Minuten.' };
+    return { success: false, error: 'Timeout — keine Bestätigung innerhalb von 5 Minuten. Du kannst die Callback-URL auch manuell schicken.' };
+  }
+
+  // ── Manual auth confirmation (user pastes callback URL from browser) ────
+
+  private async confirmAuth(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const callbackUrl = input.url as string ?? input.callback_url as string;
+    if (!callbackUrl) {
+      return { success: false, error: 'URL fehlt. Kopiere die komplette URL aus der Browser-Adressleiste nach dem Spotify-Redirect.' };
+    }
+
+    // Extract code and state from URL
+    let url: URL;
+    try {
+      url = new URL(callbackUrl);
+    } catch {
+      return { success: false, error: 'Ungültige URL. Kopiere die komplette Adresse inkl. https://...' };
+    }
+
+    const code = url.searchParams.get('code');
+    const stateParam = url.searchParams.get('state');
+    const error = url.searchParams.get('error');
+
+    if (error) {
+      return { success: false, error: `Spotify-Autorisierung abgelehnt: ${error}` };
+    }
+
+    if (!code || !stateParam) {
+      return { success: false, error: 'URL enthält keinen Authorization-Code. Stelle sicher dass du die URL nach dem Spotify-Redirect kopiert hast.' };
+    }
+
+    // Decode state
+    let state: Record<string, unknown>;
+    try {
+      state = JSON.parse(Buffer.from(stateParam, 'base64url').toString());
+    } catch {
+      return { success: false, error: 'Ungültiger State-Parameter in der URL.' };
+    }
+
+    // Use handleOAuthCallback to do the token exchange
+    const result = await this.handleOAuthCallback(code, state);
+    if (result.success) {
+      return { success: true, display: '✅ Spotify erfolgreich verbunden!' };
+    }
+    return { success: false, error: result.error ?? 'Token-Exchange fehlgeschlagen.' };
   }
 
   // ── OAuth callback (called from HttpAdapter via alfred.ts) ────

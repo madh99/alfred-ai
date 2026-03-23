@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.119] - 2026-03-23
+## [0.19.0-multi-ha.120] - 2026-03-23
+
+### Added
+- **Spotify confirm_auth Action** — Manuelle Auth-Bestätigung für Self-signed Cert Umgebungen. Wenn der Spotify-Redirect wegen Self-signed Cert fehlschlägt, kann der User die Callback-URL aus der Browser-Adressleiste kopieren und an Alfred schicken. Alfred extrahiert den Auth-Code und vervollständigt die Verbindung.
 
 ### Fixed
 - **Skill-Filter Keywords** — Rezept/Kochen, Spotify/Musik, Sonos/Speaker und Reise/Flug/Hotel Keywords in der Skill-Kategorie-Erkennung ergänzt. Ohne diese Keywords wurden die neuen Skills vom LLM nicht als Tools angeboten.
