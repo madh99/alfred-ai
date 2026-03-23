@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.121] - 2026-03-23
+## [0.19.0-multi-ha.122] - 2026-03-23
 
 ### Fixed
 - **Spotify Premium-Erkennung** — Fehlender OAuth-Scope `user-read-private` ergänzt. Ohne diesen Scope gab `/me` kein `product`-Feld zurück, weshalb Premium-Accounts fälschlich als Free erkannt wurden. **Erfordert erneute Spotify-Autorisierung** (neuer Scope muss genehmigt werden).
