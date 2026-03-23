@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.114] - 2026-03-23
+
+### Added
+- **Spotify-Skill** — Playback-Steuerung (Play, Pause, Skip, Lautstärke, Shuffle, Repeat), Geräte-Wechsel (inkl. Sonos via Spotify Connect), Suche (Tracks, Alben, Artists, Playlists), Playlist-Verwaltung (erstellen, Tracks hinzufügen/entfernen), Queue-Management, Like/Unlike, Top-Tracks/Artists, Zuletzt gehört, Empfehlungen. OAuth2 PKCE Flow für sichere Autorisierung. Multi-Account Support mit per-User Konfiguration. Generischer OAuth-Callback Endpoint `/api/oauth/callback` in HTTP API (wiederverwendbar für zukünftige OAuth-Skills). Setup per Chat (`authorize`) oder ENV (`ALFRED_SPOTIFY_CLIENT_ID`, `ALFRED_SPOTIFY_CLIENT_SECRET`). Benötigt Spotify Premium für Playback-Steuerung, Suche/Playlists funktionieren auch mit Free.
+
 ## [0.19.0-multi-ha.113] - 2026-03-23
 
 ### Added

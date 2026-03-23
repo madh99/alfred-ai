@@ -422,6 +422,12 @@ export interface RecipeConfig {
   edamam?: { appId: string; appKey: string };
 }
 
+export interface SpotifyConfig {
+  clientId: string;
+  clientSecret?: string;
+  refreshToken?: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -459,6 +465,7 @@ export interface AlfredConfig {
   bitpanda?: BitpandaConfig;
   trading?: TradingConfig;
   recipe?: RecipeConfig;
+  spotify?: SpotifyConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

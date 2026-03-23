@@ -437,6 +437,12 @@ export const RecipeConfigSchema = z.object({
   edamam: z.object({ appId: z.string(), appKey: z.string() }).optional(),
 }).optional();
 
+export const SpotifyConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string().optional(),
+  refreshToken: z.string().optional(),
+}).optional();
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -474,6 +480,7 @@ export const AlfredConfigSchema = z.object({
   bitpanda: BitpandaConfigSchema.optional(),
   trading: TradingConfigSchema.optional(),
   recipe: RecipeConfigSchema,
+  spotify: SpotifyConfigSchema,
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),

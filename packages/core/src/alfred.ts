@@ -106,6 +106,7 @@ export class Alfred {
     getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
   private reminderRepo?: ReminderRepository;
+  private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly startedAt = new Date().toISOString();
@@ -516,6 +517,14 @@ export class Alfred {
         hasSpoonacular: !!this.config.recipe?.spoonacular?.apiKey,
         hasEdamam: !!this.config.recipe?.edamam?.appId,
       }, 'Recipe skill registered');
+    }
+
+    // 4p5. Spotify (playback, search, playlists — needs client ID, OAuth PKCE)
+    if (this.config.spotify?.clientId) {
+      const { SpotifySkill } = await import('@alfred/skills');
+      this.spotifySkill = new SpotifySkill(this.config.spotify);
+      skillRegistry.register(this.spotifySkill);
+      this.logger.info('Spotify skill registered');
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
@@ -1170,6 +1179,17 @@ export class Alfred {
           });
           this.logger.info({ name: wh.name, watchId: wh.watchId }, 'Webhook registered');
         }
+      }
+    }
+
+    // Register OAuth callbacks on HTTP adapter
+    if (this.spotifySkill) {
+      const apiAdapter = this.adapters.get('api');
+      if (apiAdapter && 'registerOAuthCallback' in apiAdapter) {
+        (apiAdapter as any).registerOAuthCallback('spotify', (code: string, state: Record<string, unknown>) =>
+          this.spotifySkill!.handleOAuthCallback(code, state)
+        );
+        this.logger.info('Spotify OAuth callback registered');
       }
     }
 

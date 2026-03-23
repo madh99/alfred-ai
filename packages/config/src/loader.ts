@@ -188,6 +188,10 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
   ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],
   ALFRED_RECIPE_EDAMAM_APP_KEY: ['recipe', 'edamam', 'appKey'],
+  // Spotify
+  ALFRED_SPOTIFY_CLIENT_ID: ['spotify', 'clientId'],
+  ALFRED_SPOTIFY_CLIENT_SECRET: ['spotify', 'clientSecret'],
+  ALFRED_SPOTIFY_REFRESH_TOKEN: ['spotify', 'refreshToken'],
 };
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings

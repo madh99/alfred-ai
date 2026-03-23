@@ -47,6 +47,7 @@ export interface HttpAdapterOptions {
     loginWithCode: (code: string) => Promise<{ success: boolean; userId?: string; username?: string; role?: string; token?: string; error?: string }>;
     getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
+  oauthCallbacks?: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>>;
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -71,6 +72,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly tls?: TlsOptions;
   private readonly authCb?: HttpAdapterOptions['authCallback'];
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
+  private readonly oauthCallbacks: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>> = new Map();
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
@@ -89,10 +91,19 @@ export class HttpAdapter extends MessagingAdapter {
         this.webhooks.set(wh.name, wh);
       }
     }
+    if (options?.oauthCallbacks) {
+      for (const [name, cb] of options.oauthCallbacks) {
+        this.oauthCallbacks.set(name, cb);
+      }
+    }
   }
 
   addWebhook(handler: WebhookHandler): void {
     this.webhooks.set(handler.name, handler);
+  }
+
+  registerOAuthCallback(service: string, handler: (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>): void {
+    this.oauthCallbacks.set(service, handler);
   }
 
   async connect(): Promise<void> {
@@ -297,6 +308,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
       this.handleAuthMeProtected(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/oauth/callback' && req.method === 'GET') {
+      this.handleOAuthCallback(url, res);
     } else if (url.pathname.startsWith('/api/webhook/') && req.method === 'POST') {
       const name = url.pathname.slice('/api/webhook/'.length);
       this.handleWebhook(req, res, name);
@@ -623,6 +636,55 @@ export class HttpAdapter extends MessagingAdapter {
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : 'Internal error' }));
       }
     });
+  }
+
+  private async handleOAuthCallback(url: URL, res: http.ServerResponse): Promise<void> {
+    const code = url.searchParams.get('code');
+    const stateParam = url.searchParams.get('state');
+    const error = url.searchParams.get('error');
+
+    if (error) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<html><body><h2>Autorisierung abgelehnt</h2><p>${error}</p><p>Du kannst dieses Fenster schließen.</p></body></html>`);
+      return;
+    }
+
+    if (!code || !stateParam) {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><body><h2>Fehler</h2><p>Code oder State fehlt.</p></body></html>');
+      return;
+    }
+
+    let state: Record<string, unknown>;
+    try {
+      state = JSON.parse(Buffer.from(stateParam, 'base64url').toString());
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end('<html><body><h2>Fehler</h2><p>Ung\u00fcltiger State-Parameter.</p></body></html>');
+      return;
+    }
+
+    const service = state.service as string;
+    const handler = this.oauthCallbacks.get(service);
+    if (!handler) {
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<html><body><h2>Fehler</h2><p>Kein OAuth-Handler f\u00fcr "${service}" registriert.</p></body></html>`);
+      return;
+    }
+
+    try {
+      const result = await handler(code, state);
+      if (result.success) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<html><body><h2>Erfolgreich verbunden!</h2><p>Du kannst dieses Fenster schlie\u00dfen und zu Alfred zur\u00fcckkehren.</p></body></html>');
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(`<html><body><h2>Fehler</h2><p>${result.error ?? 'Unbekannter Fehler'}</p></body></html>`);
+      }
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<html><body><h2>Fehler</h2><p>${err instanceof Error ? err.message : 'Interner Fehler'}</p></body></html>`);
+    }
   }
 
   private writeSseEvent(res: http.ServerResponse, event: string, data: Record<string, unknown>): void {
