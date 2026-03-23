@@ -125,4 +125,43 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_slot ON meal_plans(user_id, week, day, meal)`, []);
     },
   },
+  {
+    version: 41,
+    description: 'Travel plans and plan items',
+    async up(db) {
+      await db.execute(`CREATE TABLE IF NOT EXISTS travel_plans (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        destination TEXT NOT NULL,
+        date_from TEXT NOT NULL,
+        date_to TEXT NOT NULL,
+        budget REAL,
+        budget_spent REAL DEFAULT 0,
+        travelers INTEGER DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'draft',
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT NOW(),
+        updated_at TEXT NOT NULL DEFAULT NOW()
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_plan_user ON travel_plans(user_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_plan_status ON travel_plans(user_id, status)`, []);
+
+      await db.execute(`CREATE TABLE IF NOT EXISTS travel_plan_items (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL REFERENCES travel_plans(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        date_from TEXT,
+        date_to TEXT,
+        price REAL,
+        currency TEXT DEFAULT 'EUR',
+        details_json TEXT,
+        booking_ref TEXT,
+        status TEXT DEFAULT 'planned',
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT NOW()
+      )`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_item_plan ON travel_plan_items(plan_id)`, []);
+    },
+  },
 ];
