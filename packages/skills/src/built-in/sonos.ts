@@ -537,15 +537,23 @@ export class SonosSkill extends Skill {
     } catch (err: any) {
       // UPnP 402 = station not found by TuneIn. Try searching with alternative names.
       if (String(err).includes('402')) {
-        // Try common Austrian radio name mappings
+        // Try common Austrian/German radio name mappings
         const alternatives: Record<string, string[]> = {
-          'ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
-          'ö1': ['OE1', 'ORF Radio OE1'],
-          'fm4': ['FM4', 'ORF FM4'],
+          'ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3', 'Hitradio Ö3'],
+          'ö1': ['OE1', 'ORF Radio OE1', 'Ö1'],
+          'fm4': ['FM4', 'ORF FM4', 'Radio FM4'],
+          'orf hitradio ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
+          'orf hitradio oe3': ['Hitradio OE3', 'OE3'],
+          'hitradio ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
           'radio wien': ['Radio Wien', 'ORF Radio Wien'],
           'radio nö': ['Radio Niederoesterreich', 'ORF Radio NOE'],
+          'radio niederösterreich': ['Radio Niederoesterreich', 'ORF Radio NOE'],
+          'kronehit': ['Kronehit', 'KroneHit'],
+          'radio energy': ['Energy', 'NRJ'],
         };
-        const alts = alternatives[name.toLowerCase()] ?? [];
+        // Normalize: lowercase, strip "spiele"/"spiel" prefixes
+        const normalized = name.toLowerCase().replace(/^(spiele?|play)\s+/i, '').trim();
+        const alts = alternatives[normalized] ?? alternatives[name.toLowerCase()] ?? [];
         for (const alt of alts) {
           try {
             await entry.device.playTuneinRadio(alt);
