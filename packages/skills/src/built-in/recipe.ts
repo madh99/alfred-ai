@@ -70,6 +70,8 @@ export class RecipeSkill extends Skill {
       'Einkaufslisten werden über die bestehenden todo/microsoft_todo Skills erstellt. ' +
       'Nährwert-Daten für Zutaten via Open Food Facts. ' +
       'Diät-Einstellungen (vegetarisch, vegan, Allergien) pro User konfigurierbar. ' +
+      'WICHTIG: Die API liefert englische Rezeptnamen — präsentiere Ergebnisse IMMER auf Deutsch. ' +
+      'Übersetze Rezeptnamen, Zutaten und Zubereitungsschritte ins Deutsche. ' +
       'Keywords: Rezept, kochen, Zutat, Ernährung, Diät, Einkaufsliste, Nährwert, Wochenplan, Mahlzeit, Frühstück, Mittagessen, Abendessen.',
     version: '1.0.0',
     riskLevel: 'write',
