@@ -63,6 +63,7 @@ export type { CrossPlatformAdapter, FindConversationFn } from './built-in/cross-
 export { WatchSkill } from './built-in/watch.js';
 export { WorkflowSkill } from './built-in/workflow.js';
 export { MarketplaceSkill } from './built-in/marketplace/index.js';
+export { TravelSkill } from './built-in/travel/index.js';
 export { BriefingSkill } from './built-in/briefing.js';
 export { FeedReaderSkill } from './built-in/feed-reader.js';
 export { HelpSkill } from './built-in/help.js';
