@@ -443,6 +443,14 @@ export const SpotifyConfigSchema = z.object({
   refreshToken: z.string().optional(),
 }).optional();
 
+export const SonosConfigSchema = z.object({
+  cloud: z.object({
+    clientId: z.string(),
+    clientSecret: z.string(),
+    refreshToken: z.string().optional(),
+  }).optional(),
+}).optional();
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -481,6 +489,7 @@ export const AlfredConfigSchema = z.object({
   trading: TradingConfigSchema.optional(),
   recipe: RecipeConfigSchema,
   spotify: SpotifyConfigSchema,
+  sonos: SonosConfigSchema,
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),

@@ -428,6 +428,14 @@ export interface SpotifyConfig {
   refreshToken?: string;
 }
 
+export interface SonosConfig {
+  cloud?: {
+    clientId: string;
+    clientSecret: string;
+    refreshToken?: string;
+  };
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -466,6 +474,7 @@ export interface AlfredConfig {
   trading?: TradingConfig;
   recipe?: RecipeConfig;
   spotify?: SpotifyConfig;
+  sonos?: SonosConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

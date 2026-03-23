@@ -192,6 +192,10 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_SPOTIFY_CLIENT_ID: ['spotify', 'clientId'],
   ALFRED_SPOTIFY_CLIENT_SECRET: ['spotify', 'clientSecret'],
   ALFRED_SPOTIFY_REFRESH_TOKEN: ['spotify', 'refreshToken'],
+  // Sonos
+  ALFRED_SONOS_CLOUD_CLIENT_ID: ['sonos', 'cloud', 'clientId'],
+  ALFRED_SONOS_CLOUD_CLIENT_SECRET: ['sonos', 'cloud', 'clientSecret'],
+  ALFRED_SONOS_CLOUD_REFRESH_TOKEN: ['sonos', 'cloud', 'refreshToken'],
 };
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
