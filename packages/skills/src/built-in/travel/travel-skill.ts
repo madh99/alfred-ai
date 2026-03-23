@@ -93,11 +93,11 @@ export class TravelSkill extends Skill {
     private readonly repos?: { plans: TravelPlanRepository },
   ) {
     super();
-    if (config?.kiwi?.apiKey) {
-      this.providers.push(new KiwiProvider(config.kiwi.apiKey));
-    }
-    if (config?.booking?.rapidApiKey) {
-      this.providers.push(new BookingProvider(config.booking.rapidApiKey));
+    // Kiwi flights via RapidAPI (same key as Booking.com)
+    const rapidApiKey = config?.booking?.rapidApiKey;
+    if (rapidApiKey) {
+      this.providers.push(new KiwiProvider(rapidApiKey));
+      this.providers.push(new BookingProvider(rapidApiKey));
     }
   }
 

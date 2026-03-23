@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.133] - 2026-03-23
+## [0.19.0-multi-ha.134] - 2026-03-23
+
+### Changed
+- **Flugsuche** — Kiwi-Provider komplett auf RapidAPI umgestellt (`kiwi-com-cheap-flights.p.rapidapi.com`). Nutzt jetzt denselben RapidAPI-Key wie Booking.com — kein separater `ALFRED_TRAVEL_KIWI_API_KEY` mehr nötig. City-Code-Mapping für 50+ Städte (Wien, Barcelona, Berlin etc.). One-Way und Round-Trip Suche.
 
 ### Fixed
 - **Spotify Token-Rotation** — Spotify gibt bei jedem Token-Refresh einen neuen Refresh-Token zurück und revoked den alten. `refreshAccessToken()` speichert den neuen Token jetzt in DB + Memory. Vorher: Token nach erstem Refresh ungültig.
