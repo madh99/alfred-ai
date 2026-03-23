@@ -25,6 +25,8 @@ export class SpotifySkill extends Skill {
   private userServiceResolverRef?: SkillContext['userServiceResolver'];
 
   private readonly apiPublicUrl?: string;
+  /** Injected from alfred.ts — available on ALL nodes, not just the one running authorize(). */
+  private injectedServiceResolver?: { saveServiceConfig: (userId: string, serviceType: string, serviceName: string, config: Record<string, unknown>) => Promise<void> };
 
   constructor(configs?: Map<string, SpotifyConfig> | SpotifyConfig, apiPublicUrl?: string) {
     super();
@@ -328,6 +330,11 @@ export class SpotifySkill extends Skill {
 
   // ── OAuth callback (called from HttpAdapter via alfred.ts) ────
 
+  /** Inject the service resolver from alfred.ts so OAuth callbacks on ANY node can persist tokens. */
+  setServiceResolver(resolver: { saveServiceConfig: (userId: string, serviceType: string, serviceName: string, config: Record<string, unknown>) => Promise<void> }): void {
+    this.injectedServiceResolver = resolver;
+  }
+
   async handleOAuthCallback(code: string, state: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     const nonce = state.nonce as string;
     const account = (state.account as string) ?? 'default';
@@ -370,19 +377,16 @@ export class SpotifySkill extends Skill {
     const data = await res.json() as { access_token: string; refresh_token?: string; expires_in: number };
     this.accessTokens.set(account, data.access_token);
 
-    // Persist refresh token — try pending context, then lastContext, then direct DB via config
-    const ctx = pending?.context ?? this.lastContext;
-    if (data.refresh_token && ctx?.userServiceResolver && userId) {
-      await ctx.userServiceResolver.saveServiceConfig(
-        userId, 'spotify', account,
-        { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
-      );
-    } else if (data.refresh_token && this.userServiceResolverRef && userId) {
-      // Fallback: use stored resolver reference (set during initialize)
-      await this.userServiceResolverRef.saveServiceConfig(
-        userId, 'spotify', account,
-        { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
-      );
+    // Persist refresh token — use injected resolver (HA-safe, available on all nodes)
+    const tokenConfig = { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token };
+    if (data.refresh_token && userId) {
+      const resolver = this.injectedServiceResolver
+        ?? pending?.context?.userServiceResolver
+        ?? this.lastContext?.userServiceResolver
+        ?? this.userServiceResolverRef;
+      if (resolver) {
+        await resolver.saveServiceConfig(userId, 'spotify', account, tokenConfig);
+      }
     } else if (data.refresh_token) {
       console.warn('[SpotifySkill] Refresh-Token erhalten aber kein userServiceResolver — Token nur im Memory!');
     }

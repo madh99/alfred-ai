@@ -970,6 +970,10 @@ export class Alfred {
       this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
       // Wire role access into help skill
       (helpSkill as any).roleAccess = ROLE_SKILL_ACCESS;
+      // Inject service resolver into Spotify skill for HA-safe token persistence
+      if (this.spotifySkill && 'setServiceResolver' in this.spotifySkill) {
+        (this.spotifySkill as any).setServiceResolver(serviceResolver);
+      }
     }
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
