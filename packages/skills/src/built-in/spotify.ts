@@ -222,9 +222,10 @@ export class SpotifySkill extends Skill {
     });
 
     const scopes = [
-      'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
-      'playlist-read-private', 'playlist-modify-public', 'playlist-modify-private',
-      'user-library-read', 'user-library-modify', 'user-top-read', 'user-read-recently-played',
+      'user-read-private', 'user-read-playback-state', 'user-modify-playback-state',
+      'user-read-currently-playing', 'playlist-read-private', 'playlist-modify-public',
+      'playlist-modify-private', 'user-library-read', 'user-library-modify',
+      'user-top-read', 'user-read-recently-played',
     ].join(' ');
 
     const authUrl = `https://accounts.spotify.com/authorize?` +
