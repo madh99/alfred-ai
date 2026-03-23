@@ -500,6 +500,24 @@ export class Alfred {
       this.logger.info({ exchanges: Object.keys(this.config.trading.exchanges) }, 'Trading skill registered');
     }
 
+    // Recipe
+    {
+      const { RecipeSkill } = await import('@alfred/skills');
+      const { RecipeFavoriteRepository, MealPlanRepository, AlfredUserRepository } = await import('@alfred/storage');
+      const recipeFavRepo = new RecipeFavoriteRepository(adapter);
+      const mealPlanRepo = new MealPlanRepository(adapter);
+      const recipeUserRepo = new AlfredUserRepository(adapter);
+      skillRegistry.register(new RecipeSkill(this.config.recipe, {
+        favorites: recipeFavRepo,
+        mealPlans: mealPlanRepo,
+        userRepo: recipeUserRepo,
+      }));
+      this.logger.info({
+        hasSpoonacular: !!this.config.recipe?.spoonacular?.apiKey,
+        hasEdamam: !!this.config.recipe?.edamam?.appId,
+      }, 'Recipe skill registered');
+    }
+
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
     {
       const { MarketplaceSkill } = await import('@alfred/skills');
