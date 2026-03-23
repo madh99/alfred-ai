@@ -43,6 +43,8 @@ export { RecipeFavoriteRepository } from './repositories/recipe-favorite-reposit
 export type { RecipeFavorite } from './repositories/recipe-favorite-repository.js';
 export { MealPlanRepository } from './repositories/meal-plan-repository.js';
 export type { MealPlanEntry } from './repositories/meal-plan-repository.js';
+export { TravelPlanRepository } from './repositories/travel-plan-repository.js';
+export type { TravelPlan, TravelPlanItem } from './repositories/travel-plan-repository.js';
 export { createFileStore, LocalFileStore, S3FileStore } from './file-store.js';
 export { createDbAdapter, SQLiteAsyncAdapter, PostgresAsyncAdapter } from './db-adapter.js';
 export type { AsyncDbAdapter, DbRow, DbRunResult } from './db-adapter.js';
