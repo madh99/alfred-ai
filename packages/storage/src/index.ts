@@ -46,5 +46,6 @@ export type { FileStore, FileStoreConfig, StoredFile } from './file-store.js';
 export type { DatabaseConnection } from './repositories/database-connection-repository.js';
 export type { FeedbackEvent } from './repositories/feedback-repository.js';
 export { ProjectAgentSessionRepository } from './repositories/project-agent-session-repository.js';
+export { ProjectAgentInterjectionRepository } from './repositories/project-agent-interjection-repository.js';
 export { ProcessedMessageRepository } from './repositories/processed-message-repository.js';
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';

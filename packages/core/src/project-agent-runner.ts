@@ -104,7 +104,7 @@ export class ProjectAgentRunner {
         }
 
         // Check for stop signal in inbox
-        const messages = drainInterjections(sessionId);
+        const messages = await drainInterjections(sessionId);
         if (messages.includes('__STOP__')) {
           await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt nach Phase ${phaseIdx}/${plan.phases.length}.`);
           return;

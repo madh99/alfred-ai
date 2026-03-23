@@ -1,23 +1,37 @@
 import type { SkillMetadata, SkillContext, SkillResult, CodeAgentDefinitionConfig, ProjectAgentsConfig } from '@alfred/types';
 import { Skill } from '../../skill.js';
-import type { ProjectAgentSessionRepository } from '@alfred/storage';
+import type { ProjectAgentSessionRepository, ProjectAgentInterjectionRepository } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 
-/** In-memory interjection inbox keyed by task ID. */
-const interjectionInbox = new Map<string, string[]>();
+/** Fallback in-memory inbox (used when no DB repository is available). */
+const interjectionInboxFallback = new Map<string, string[]>();
+
+/** DB-backed interjection repository — set via setInterjectionRepo(). */
+let interjectionRepo: ProjectAgentInterjectionRepository | undefined;
+
+export function setInterjectionRepo(repo: ProjectAgentInterjectionRepository): void {
+  interjectionRepo = repo;
+}
 
 /** Active runner abort controllers keyed by session ID. */
 const activeAbortControllers = new Map<string, AbortController>();
 
-export function pushInterjection(taskId: string, message: string): void {
-  const inbox = interjectionInbox.get(taskId) ?? [];
-  inbox.push(message);
-  interjectionInbox.set(taskId, inbox);
+export async function pushInterjection(taskId: string, message: string): Promise<void> {
+  if (interjectionRepo) {
+    await interjectionRepo.push(taskId, message);
+  } else {
+    const inbox = interjectionInboxFallback.get(taskId) ?? [];
+    inbox.push(message);
+    interjectionInboxFallback.set(taskId, inbox);
+  }
 }
 
-export function drainInterjections(taskId: string): string[] {
-  const messages = interjectionInbox.get(taskId) ?? [];
-  interjectionInbox.delete(taskId);
+export async function drainInterjections(taskId: string): Promise<string[]> {
+  if (interjectionRepo) {
+    return interjectionRepo.drain(taskId);
+  }
+  const messages = interjectionInboxFallback.get(taskId) ?? [];
+  interjectionInboxFallback.delete(taskId);
   return messages;
 }
 
@@ -193,7 +207,7 @@ Actions:
     const session = await this.verifyTaskAccess(taskId, context);
     if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
-    pushInterjection(taskId, message);
+    await pushInterjection(taskId, message);
     return {
       success: true,
       data: { taskId, message },
@@ -209,7 +223,7 @@ Actions:
     if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
     // Push stop signal to inbox
-    pushInterjection(taskId, '__STOP__');
+    await pushInterjection(taskId, '__STOP__');
     // Also abort via controller if available
     const controller = activeAbortControllers.get(taskId);
     if (controller) controller.abort();

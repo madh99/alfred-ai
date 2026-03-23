@@ -374,9 +374,10 @@ export class Alfred {
 
     // 4e2. Project agent (optional, requires code agents)
     if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
-      const { ProjectAgentSkill } = await import('@alfred/skills');
-      const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+      const { ProjectAgentSkill, setInterjectionRepo } = await import('@alfred/skills');
+      const { ProjectAgentSessionRepository, ProjectAgentInterjectionRepository } = await import('@alfred/storage');
       const projectSessionRepo = new ProjectAgentSessionRepository(adapter);
+      setInterjectionRepo(new ProjectAgentInterjectionRepository(adapter));
       const projectAgentSkill = new ProjectAgentSkill(
         { ...this.config.projectAgents, agents: this.config.codeAgents.agents },
         llmProvider,

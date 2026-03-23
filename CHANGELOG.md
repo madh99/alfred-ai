@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.105] - 2026-03-23
+
+### Fixed
+- **Project Agent Stop-Signal bei HA** — Interjection-Inbox von In-Memory Map auf DB-Tabelle umgestellt (`project_agent_interjections`). Stop/Interject-Nachrichten erreichen den Agent jetzt auch wenn sie auf einem anderen Node empfangen werden. Migration v39 (SQLite + PG). Fallback auf In-Memory wenn kein Repo konfiguriert.
+
 ## [0.19.0-multi-ha.104] - 2026-03-22
 
 ### Fixed

@@ -72,4 +72,19 @@ export const PG_MIGRATIONS: PgMigration[] = [
       `);
     },
   },
+  {
+    version: 39,
+    description: 'Project agent interjection inbox in DB for HA',
+    async up(db) {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_interjections (
+          id SERIAL PRIMARY KEY,
+          task_id TEXT NOT NULL,
+          message TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_interjections_task ON project_agent_interjections(task_id)
+      `);
+    },
+  },
 ];

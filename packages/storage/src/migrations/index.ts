@@ -790,4 +790,17 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE scheduled_actions ADD COLUMN thread_id TEXT DEFAULT NULL`);
     },
   },
+  {
+    version: 39,
+    description: 'Project agent interjection inbox in DB for HA',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS project_agent_interjections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_task ON project_agent_interjections(task_id)`);
+    },
+  },
 ];
