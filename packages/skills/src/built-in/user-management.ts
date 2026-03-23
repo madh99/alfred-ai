@@ -346,7 +346,7 @@ Actions:
     if (!serviceName) return { success: false, error: 'service_name ist erforderlich (z.B. "gmx", "gmail", "google-calendar").' };
     if (!config || typeof config !== 'object') return { success: false, error: 'config ist erforderlich. Für Email: {email, password}. Bekannte Provider werden automatisch konfiguriert.' };
 
-    const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo'];
+    const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo', 'recipe', 'travel', 'spotify'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }
@@ -567,7 +567,7 @@ Actions:
     if (!serviceType) return { success: false, error: 'service_type ist erforderlich (email, calendar, contacts, todo).' };
     if (!sharedResource) return { success: false, error: 'shared_resource ist erforderlich (Email-Adresse der freigegebenen Ressource, z.B. "fam@dohnal.co").' };
 
-    const validTypes = ['email', 'calendar', 'contacts', 'todo'];
+    const validTypes = ['email', 'calendar', 'contacts', 'todo', 'recipe', 'travel'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }
