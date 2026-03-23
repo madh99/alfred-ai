@@ -107,6 +107,7 @@ export class Alfred {
   };
   private reminderRepo?: ReminderRepository;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
+  private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private readonly startedAt = new Date().toISOString();
@@ -525,6 +526,14 @@ export class Alfred {
       this.spotifySkill = new SpotifySkill(this.config.spotify);
       skillRegistry.register(this.spotifySkill);
       this.logger.info('Spotify skill registered');
+    }
+
+    // Sonos (always registered — local discovery needs no config)
+    {
+      const { SonosSkill } = await import('@alfred/skills');
+      this.sonosSkill = new SonosSkill(this.config.sonos);
+      skillRegistry.register(this.sonosSkill);
+      this.logger.info({ hasCloud: !!this.config.sonos?.cloud }, 'Sonos skill registered');
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
@@ -1183,13 +1192,21 @@ export class Alfred {
     }
 
     // Register OAuth callbacks on HTTP adapter
-    if (this.spotifySkill) {
+    {
       const apiAdapter = this.adapters.get('api');
       if (apiAdapter && 'registerOAuthCallback' in apiAdapter) {
-        (apiAdapter as any).registerOAuthCallback('spotify', (code: string, state: Record<string, unknown>) =>
-          this.spotifySkill!.handleOAuthCallback(code, state)
-        );
-        this.logger.info('Spotify OAuth callback registered');
+        if (this.spotifySkill) {
+          (apiAdapter as any).registerOAuthCallback('spotify', (code: string, state: Record<string, unknown>) =>
+            this.spotifySkill!.handleOAuthCallback(code, state)
+          );
+          this.logger.info('Spotify OAuth callback registered');
+        }
+        if (this.sonosSkill && this.config.sonos?.cloud?.clientId) {
+          (apiAdapter as any).registerOAuthCallback('sonos', (code: string, state: Record<string, unknown>) =>
+            this.sonosSkill!.handleOAuthCallback(code, state)
+          );
+          this.logger.info('Sonos Cloud OAuth callback registered');
+        }
       }
     }
 
