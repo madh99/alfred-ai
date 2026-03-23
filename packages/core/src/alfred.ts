@@ -486,11 +486,18 @@ export class Alfred {
       this.logger.info('Crypto price skill registered');
     }
 
-    // 4p3. Bitpanda (portfolio + trading — always registered, API key optional for ticker)
+    // 4p3. Bitpanda (portfolio — always registered, API key optional for ticker)
     {
       const { BitpandaSkill } = await import('@alfred/skills');
       skillRegistry.register(new BitpandaSkill(this.config.bitpanda));
       this.logger.info({ hasApiKey: !!this.config.bitpanda?.apiKey }, 'Bitpanda skill registered');
+    }
+
+    // 4p4. Trading / CCXT (exchange trading — registered if exchanges configured)
+    if (this.config.trading?.exchanges && Object.keys(this.config.trading.exchanges).length > 0) {
+      const { TradingSkill } = await import('@alfred/skills');
+      skillRegistry.register(new TradingSkill(this.config.trading));
+      this.logger.info({ exchanges: Object.keys(this.config.trading.exchanges) }, 'Trading skill registered');
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)

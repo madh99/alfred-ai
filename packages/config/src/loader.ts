@@ -144,6 +144,11 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_DOCKER_VERIFY_TLS: ['docker', 'verifyTls'],
   // Bitpanda
   ALFRED_BITPANDA_API_KEY: ['bitpanda', 'apiKey'],
+  // Trading (CCXT)
+  ALFRED_TRADING_DEFAULT_EXCHANGE: ['trading', 'defaultExchange'],
+  ALFRED_TRADING_DEFAULT_QUOTE: ['trading', 'defaultQuote'],
+  ALFRED_TRADING_MAX_ORDER_EUR: ['trading', 'maxOrderEur'],
+  ALFRED_TRADING_SANDBOX: ['trading', 'sandbox'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
   // YouTube
@@ -242,6 +247,24 @@ export class ConfigLoader {
 
     const merged = deepMerge(DEFAULT_CONFIG, fileConfig);
     const withEnv = applyEnvOverrides(merged);
+
+    // Resolve dynamic trading exchange keys from ENV
+    // Pattern: ALFRED_TRADING_{EXCHANGE}_API_KEY / _SECRET
+    const tradingExchanges = (process.env['ALFRED_TRADING_EXCHANGES'] ?? '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (tradingExchanges.length > 0) {
+      const trading = (withEnv.trading ?? {}) as Record<string, unknown>;
+      const exchanges = (trading.exchanges ?? {}) as Record<string, Record<string, string>>;
+      for (const ex of tradingExchanges) {
+        const upper = ex.toUpperCase();
+        const apiKey = process.env[`ALFRED_TRADING_${upper}_API_KEY`];
+        const secret = process.env[`ALFRED_TRADING_${upper}_SECRET`];
+        if (apiKey && secret) {
+          exchanges[ex] = { apiKey, secret };
+        }
+      }
+      trading.exchanges = exchanges;
+      withEnv.trading = trading;
+    }
 
     // Pre-normalize LLM config before Zod validation:
     // When env vars set both flat keys (provider, model) and tier sub-objects

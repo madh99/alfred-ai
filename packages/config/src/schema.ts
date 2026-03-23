@@ -362,6 +362,17 @@ export const BitpandaConfigSchema = z.object({
   apiKey: z.string().optional(),
 });
 
+export const TradingConfigSchema = z.object({
+  exchanges: z.record(z.object({
+    apiKey: z.string(),
+    secret: z.string(),
+  })).optional(),
+  defaultExchange: z.string().optional(),
+  defaultQuote: z.string().optional(),
+  maxOrderEur: z.coerce.number().optional(),
+  sandbox: z.boolean().optional(),
+});
+
 export const EnergyPriceConfigSchema = z.object({
   gridName: z.string().optional(),
   gridUsageCt: z.coerce.number().optional(),
@@ -456,6 +467,7 @@ export const AlfredConfigSchema = z.object({
   todo: MicrosoftTodoConfigSchema.optional(),
   energy: EnergyPriceConfigSchema.optional(),
   bitpanda: BitpandaConfigSchema.optional(),
+  trading: TradingConfigSchema.optional(),
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),

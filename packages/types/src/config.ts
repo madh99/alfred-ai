@@ -351,6 +351,14 @@ export interface BitpandaConfig {
   apiKey?: string;
 }
 
+export interface TradingConfig {
+  exchanges?: Record<string, { apiKey: string; secret: string }>;
+  defaultExchange?: string;
+  defaultQuote?: string;
+  maxOrderEur?: number;
+  sandbox?: boolean;
+}
+
 export interface EnergyPriceConfig {
   gridName?: string;
   gridUsageCt?: number;       // Netznutzungsentgelt ct/kWh
@@ -444,6 +452,7 @@ export interface AlfredConfig {
   todo?: MicrosoftTodoConfig;
   energy?: EnergyPriceConfig;
   bitpanda?: BitpandaConfig;
+  trading?: TradingConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

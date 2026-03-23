@@ -1674,6 +1674,43 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Bitpanda disabled. Ticker/Preise funktionieren trotzdem ohne API Key.')}`);
     }
 
+    // Trading (CCXT)
+    const existingTradingExchanges = existing.env['ALFRED_TRADING_EXCHANGES'] ?? '';
+    const enableTradingDefault = existingTradingExchanges ? 'Y/n' : 'y/N';
+    const enableTradingInput = (
+      await rl.question(`\n  ${BOLD}Enable Crypto Trading (Binance, Kraken, Coinbase etc.)?${RESET} ${dim(`[${enableTradingDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingTradingExchanges ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableTrading = enableTradingInput === 'y' || enableTradingInput === 'yes';
+
+    const tradingExchanges: Array<{ name: string; apiKey: string; secret: string }> = [];
+
+    if (enableTrading) {
+      console.log(`  ${dim('Welche Exchanges? (Komma-getrennt, z.B. binance,kraken)')}`);
+      const exchangeList = (await rl.question(`  ${BOLD}Exchanges${RESET} ${dim(`[${existingTradingExchanges || 'binance'}]`)}: ${YELLOW}`)).trim() || existingTradingExchanges || 'binance';
+      process.stdout.write(RESET);
+      const exchangeNames = exchangeList.split(',').map((s: string) => s.trim().toLowerCase()).filter(Boolean);
+
+      for (const ex of exchangeNames) {
+        const upper = ex.toUpperCase();
+        const existingKey = existing.env[`ALFRED_TRADING_${upper}_API_KEY`] ?? '';
+        const existingSecret = existing.env[`ALFRED_TRADING_${upper}_SECRET`] ?? '';
+        const apiKey = await askWithDefault(rl, `  ${ex} API Key`, existingKey);
+        const secret = await askWithDefault(rl, `  ${ex} Secret`, existingSecret);
+        if (apiKey && secret) {
+          tradingExchanges.push({ name: ex, apiKey, secret });
+        }
+      }
+
+      if (tradingExchanges.length > 0) {
+        console.log(`  ${green('>')} Trading: ${bold(tradingExchanges.map(e => e.name).join(', '))}`);
+      } else {
+        console.log(`  ${dim('Keine Exchange-Credentials eingegeben.')}`);
+      }
+    } else {
+      console.log(`  ${dim('Trading disabled.')}`);
+    }
+
     // BMW CarData
     const existingBmw = existing.config.bmw;
     const existingBmwClientId = existing.env['ALFRED_BMW_CLIENT_ID'] ?? existingBmw?.clientId ?? '';
@@ -2042,6 +2079,19 @@ export async function setupCommand(): Promise<void> {
       envLines.push(`ALFRED_BITPANDA_API_KEY=${bitpandaApiKey}`);
     } else {
       envLines.push('# ALFRED_BITPANDA_API_KEY=');
+    }
+
+    if (tradingExchanges.length > 0) {
+      envLines.push(`ALFRED_TRADING_EXCHANGES=${tradingExchanges.map(e => e.name).join(',')}`);
+      envLines.push(`ALFRED_TRADING_DEFAULT_EXCHANGE=${tradingExchanges[0].name}`);
+      envLines.push('ALFRED_TRADING_MAX_ORDER_EUR=500');
+      for (const ex of tradingExchanges) {
+        const upper = ex.name.toUpperCase();
+        envLines.push(`ALFRED_TRADING_${upper}_API_KEY=${ex.apiKey}`);
+        envLines.push(`ALFRED_TRADING_${upper}_SECRET=${ex.secret}`);
+      }
+    } else {
+      envLines.push('# ALFRED_TRADING_EXCHANGES=binance,kraken');
     }
 
     if (enableBmw) {

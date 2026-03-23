@@ -48,6 +48,7 @@ export { RoutingSkill } from './built-in/routing.js';
 export { EnergyPriceSkill } from './built-in/energy-price.js';
 export { CryptoPriceSkill } from './built-in/crypto-price.js';
 export { BitpandaSkill } from './built-in/bitpanda.js';
+export { TradingSkill } from './built-in/trading.js';
 export { TransitSkill } from './built-in/transit.js';
 export type { TransitClientInterface, TransitStop, TransitJourney, TransitDeparture, TransitLeg, JourneyOptions, DepartureOptions } from './built-in/transit.js';
 export { ConfigureSkill } from './built-in/configure.js';

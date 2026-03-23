@@ -1,6 +1,6 @@
 {
   "name": "@madh-io/alfred-ai",
-  "version": "0.19.0-multi-ha.111",
+  "version": "0.19.0-multi-ha.112",
   "description": "Alfred — Personal AI Assistant across Telegram, Discord, WhatsApp, Matrix & Signal",
   "type": "module",
   "bin": {
@@ -52,6 +52,7 @@
     "pino-pretty": "^13.0.0",
     "docx": "^9.0.0",
     "pdfkit": "^0.16.0",
+    "ccxt": "^4.4.0",
     "puppeteer": "^24.0.0",
     "puppeteer-core": "^24.0.0",
     "rss-parser": "^3.13.0",

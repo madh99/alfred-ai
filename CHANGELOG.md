@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.112] - 2026-03-23
+
+### Added
+- **Trading-Skill (CCXT)** — Crypto-Trading auf 110+ Exchanges (Binance, Kraken, Coinbase, Bitget etc.). Actions: `balance`, `price`, `buy`, `sell`, `limit_buy`, `limit_sell`, `orders`, `cancel`, `history`, `exchanges`. Sicherheitslimit `maxOrderEur` (Default 500€), Sandbox-Modus für Testnets, Admin-only. Setup-Integration mit dynamischen Exchange-Credentials. Watch-kompatibel für Preis-Alerts.
+
 ## [0.19.0-multi-ha.111] - 2026-03-23
 
 ### Fixed
