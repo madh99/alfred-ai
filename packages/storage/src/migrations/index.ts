@@ -803,4 +803,42 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_task ON project_agent_interjections(task_id)`);
     },
   },
+  {
+    version: 40,
+    description: 'Recipe favorites and meal plans',
+    up(db) {
+      db.exec(`CREATE TABLE IF NOT EXISTS recipe_favorites (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        recipe_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        title TEXT NOT NULL,
+        image_url TEXT,
+        prep_time_minutes INTEGER,
+        servings INTEGER,
+        tags TEXT,
+        nutrition_summary TEXT,
+        ingredients_json TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_recipe_fav_user ON recipe_favorites(user_id)`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_fav_unique ON recipe_favorites(user_id, recipe_id)`);
+
+      db.exec(`CREATE TABLE IF NOT EXISTS meal_plans (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        week TEXT NOT NULL,
+        day TEXT NOT NULL,
+        meal TEXT NOT NULL,
+        recipe_id TEXT,
+        source TEXT,
+        title TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_meal_plan_user_week ON meal_plans(user_id, week)`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_slot ON meal_plans(user_id, week, day, meal)`);
+    },
+  },
 ];
