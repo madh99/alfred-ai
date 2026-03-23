@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.116] - 2026-03-23
+
+### Added
+- **Reise-Skill** — Flugsuche (Kiwi/Tequila), Hotelsuche (Booking.com/RapidAPI), optional Mietwagen/Aktivitäten (Amadeus, nur mit Production-Key). Strukturierte Reisepläne in DB mit Budget-Tracking, Kalender-Integration und Pack-/Checklisten-Generierung. Provider-Pattern (erweiterbar). Watch-kompatibel (Preis-Alerts). ReasoningEngine-Integration für Reise-Insights. Migration v41 (travel_plans, travel_plan_items). Setup per Chat oder ENV.
+
 ## [0.19.0-multi-ha.115] - 2026-03-23
 
 ### Added
