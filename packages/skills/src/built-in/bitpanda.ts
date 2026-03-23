@@ -7,6 +7,7 @@ const BASE_URL = 'https://api.bitpanda.com';
 
 interface BitpandaConfig {
   apiKey?: string;
+  maxOrderEur?: number;
 }
 
 export class BitpandaSkill extends Skill {
@@ -79,9 +80,9 @@ export class BitpandaSkill extends Skill {
         case 'trades':
           return await this.getTrades(input.limit as number | undefined, input.type as string | undefined);
         case 'buy':
-          return { success: false, error: 'Buy action is not yet implemented. Use the Bitpanda app for trading.' };
+          return await this.createTrade('buy', input.symbol as string | undefined, input.amount as number | undefined);
         case 'sell':
-          return { success: false, error: 'Sell action is not yet implemented. Use the Bitpanda app for trading.' };
+          return await this.createTrade('sell', input.symbol as string | undefined, input.amount as number | undefined);
         case 'ticker':
           return await this.getTicker(input.symbol as string | undefined, input.symbols as string | undefined);
         default:
@@ -281,6 +282,75 @@ export class BitpandaSkill extends Skill {
     };
   }
 
+  private async createTrade(type: 'buy' | 'sell', symbol: string | undefined, amountEur: number | undefined): Promise<SkillResult> {
+    this.requireKey();
+
+    if (!symbol) return { success: false, error: `Missing "symbol". E.g. "BTC", "ETH", "SOL"` };
+    if (!amountEur || amountEur <= 0) return { success: false, error: `Missing or invalid "amount" (EUR). E.g. amount: 50` };
+
+    // Safety limit
+    const maxOrder = this.config?.maxOrderEur ?? 500;
+    if (amountEur > maxOrder) {
+      return { success: false, error: `Betrag ${this.eur(amountEur)} übersteigt das Sicherheitslimit von ${this.eur(maxOrder)}. Limit anpassen: ALFRED_BITPANDA_MAX_ORDER_EUR in .env` };
+    }
+
+    // Resolve symbol to asset ID
+    const assetId = await this.resolveAssetId(symbol.toUpperCase());
+    if (!assetId) {
+      return { success: false, error: `Asset "${symbol}" nicht gefunden. Verwende das offizielle Symbol (z.B. BTC, ETH, SOL).` };
+    }
+
+    // Create offer (step 1 — no money moves yet, just price preview)
+    const offer = await this.fetchPrivate<{ data: { attributes: Record<string, unknown>; id: string } }>('/v1/offers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type,
+        fiat_id: 1, // EUR
+        asset_id: assetId,
+        amount: String(amountEur),
+        amount_defined_for: 'fiat',
+      }),
+    });
+
+    const attrs = offer.data.attributes;
+    const offerId = offer.data.id;
+    const price = attrs.price as string;
+    const assetAmount = attrs.amount_asset as string ?? attrs.amount_cryptocoin as string ?? '?';
+    const fiatAmount = attrs.amount_fiat as string ?? String(amountEur);
+    const typeLabel = type === 'buy' ? '🟢 Kauf' : '🔴 Verkauf';
+
+    // Accept the offer (step 2 — executes the trade)
+    await this.fetchPrivate(`/v1/offers/${offerId}/accept`, { method: 'POST' });
+
+    return {
+      success: true,
+      data: {
+        type,
+        symbol: symbol.toUpperCase(),
+        assetAmount: parseFloat(assetAmount),
+        fiatAmount: parseFloat(fiatAmount),
+        price: parseFloat(price ?? '0'),
+        offerId,
+      },
+      display: `${typeLabel} ausgeführt: ${assetAmount} **${symbol.toUpperCase()}** für ${this.eur(parseFloat(fiatAmount))} (@ ${this.eur(parseFloat(price ?? '0'))})`,
+    };
+  }
+
+  private assetIdCache?: Map<string, string>;
+
+  private async resolveAssetId(symbol: string): Promise<string | null> {
+    if (!this.assetIdCache) {
+      // Fetch all assets and build symbol → ID map
+      const assets = await this.fetchPublic<{ data: Array<{ attributes: { symbol: string }; id: string }> }>('/v3/assets?type[]=cryptocoin&page_size=500');
+      this.assetIdCache = new Map();
+      for (const a of assets.data) {
+        this.assetIdCache.set(a.attributes.symbol.toUpperCase(), a.id);
+      }
+    }
+    return this.assetIdCache.get(symbol) ?? null;
+  }
+
   // ── Helpers ────────────────────────────────────────────────
 
   private requireKey(): void {
@@ -293,10 +363,11 @@ export class BitpandaSkill extends Skill {
     return value.toLocaleString('de-AT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  private async fetchPrivate<T>(path: string): Promise<T> {
+  private async fetchPrivate<T>(path: string, init?: RequestInit): Promise<T> {
     this.requireKey();
     const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { 'X-Api-Key': this.config!.apiKey! },
+      ...init,
+      headers: { 'X-Api-Key': this.config!.apiKey!, ...init?.headers },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

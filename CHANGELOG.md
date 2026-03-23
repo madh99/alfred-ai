@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.109] - 2026-03-23
+
+### Added
+- **Bitpanda Buy/Sell Trading** — `buy` und `sell` Actions im Bitpanda-Skill implementiert. 2-Schritt-Flow: Offer erstellen → Accept. Sicherheitslimit `maxOrderEur` (Default 500€, konfigurierbar via `ALFRED_BITPANDA_MAX_ORDER_EUR`). Asset-ID Auflösung über Symbol (BTC, ETH etc.).
+
 ## [0.19.0-multi-ha.108] - 2026-03-23
 
 ### Added

@@ -360,6 +360,7 @@ export const RoutingConfigSchema = z.object({
 
 export const BitpandaConfigSchema = z.object({
   apiKey: z.string().optional(),
+  maxOrderEur: z.coerce.number().optional(),
 });
 
 export const EnergyPriceConfigSchema = z.object({

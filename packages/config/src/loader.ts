@@ -144,6 +144,7 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_DOCKER_VERIFY_TLS: ['docker', 'verifyTls'],
   // Bitpanda
   ALFRED_BITPANDA_API_KEY: ['bitpanda', 'apiKey'],
+  ALFRED_BITPANDA_MAX_ORDER_EUR: ['bitpanda', 'maxOrderEur'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
   // YouTube

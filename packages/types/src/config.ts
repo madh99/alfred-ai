@@ -349,6 +349,7 @@ export interface RoutingConfig {
 
 export interface BitpandaConfig {
   apiKey?: string;
+  maxOrderEur?: number;
 }
 
 export interface EnergyPriceConfig {
