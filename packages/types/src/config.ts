@@ -168,6 +168,7 @@ export interface ApiConfig {
   host: string;
   token?: string;
   corsOrigin?: string;
+  publicUrl?: string;
   webUi?: boolean;
   tls?: ApiTlsConfig;
 }

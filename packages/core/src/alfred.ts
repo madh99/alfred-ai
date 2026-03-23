@@ -523,7 +523,8 @@ export class Alfred {
     // 4p5. Spotify (playback, search, playlists — needs client ID, OAuth PKCE)
     if (this.config.spotify?.clientId) {
       const { SpotifySkill } = await import('@alfred/skills');
-      this.spotifySkill = new SpotifySkill(this.config.spotify);
+      const apiPublicUrl = this.config.api?.publicUrl ?? `http://${this.config.api?.host ?? 'localhost'}:${this.config.api?.port ?? 3420}`;
+      this.spotifySkill = new SpotifySkill(this.config.spotify, apiPublicUrl);
       skillRegistry.register(this.spotifySkill);
       this.logger.info('Spotify skill registered');
     }
@@ -531,7 +532,8 @@ export class Alfred {
     // Sonos (always registered — local discovery needs no config)
     {
       const { SonosSkill } = await import('@alfred/skills');
-      this.sonosSkill = new SonosSkill(this.config.sonos);
+      const sonosApiUrl = this.config.api?.publicUrl ?? `http://${this.config.api?.host ?? 'localhost'}:${this.config.api?.port ?? 3420}`;
+      this.sonosSkill = new SonosSkill(this.config.sonos, sonosApiUrl);
       skillRegistry.register(this.sonosSkill);
       this.logger.info({ hasCloud: !!this.config.sonos?.cloud }, 'Sonos skill registered');
     }

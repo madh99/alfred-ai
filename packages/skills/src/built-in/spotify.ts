@@ -22,8 +22,11 @@ export class SpotifySkill extends Skill {
   private mergedConfigs?: Map<string, SpotifyConfig>;
   private lastContext?: SkillContext;
 
-  constructor(configs?: Map<string, SpotifyConfig> | SpotifyConfig) {
+  private readonly apiPublicUrl?: string;
+
+  constructor(configs?: Map<string, SpotifyConfig> | SpotifyConfig, apiPublicUrl?: string) {
     super();
+    this.apiPublicUrl = apiPublicUrl;
 
     if (configs instanceof Map) {
       this.configs = configs;
@@ -195,7 +198,11 @@ export class SpotifySkill extends Skill {
     const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
     const nonce = crypto.randomUUID();
 
-    const redirectUri = `${(input.redirect_uri as string) ?? 'http://localhost:3420'}/api/oauth/callback`;
+    // Derive redirect URI: explicit param > constructor publicUrl > fallback
+    const baseUrl = (input.redirect_uri as string)
+      ?? this.apiPublicUrl
+      ?? 'http://localhost:3420';
+    const redirectUri = `${baseUrl.replace(/\/+$/, '')}/api/oauth/callback`;
 
     const state = Buffer.from(JSON.stringify({
       service: 'spotify',

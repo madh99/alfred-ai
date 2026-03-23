@@ -180,6 +180,7 @@ export const ApiConfigSchema = z.object({
   host: z.string(),
   token: z.string().optional(),
   corsOrigin: z.string().optional(),
+  publicUrl: z.string().optional(),
   webUi: z.boolean().optional(),
   tls: ApiTlsConfigSchema.optional(),
 });

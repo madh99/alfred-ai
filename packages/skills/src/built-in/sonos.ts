@@ -110,8 +110,11 @@ export class SonosSkill extends Skill {
     },
   };
 
-  constructor(private readonly config?: SonosConfig) {
+  private readonly apiPublicUrl?: string;
+
+  constructor(private readonly config?: SonosConfig, apiPublicUrl?: string) {
     super();
+    this.apiPublicUrl = apiPublicUrl;
   }
 
   // ── Execute ─────────────────────────────────────────────────────
@@ -843,7 +846,8 @@ export class SonosSkill extends Skill {
     }
 
     const nonce = crypto.randomUUID();
-    const redirectUri = `${(input.redirect_uri as string) ?? 'http://localhost:3420'}/api/oauth/callback`;
+    const baseUrl = (input.redirect_uri as string) ?? this.apiPublicUrl ?? 'http://localhost:3420';
+    const redirectUri = `${baseUrl.replace(/\/+$/, '')}/api/oauth/callback`;
     const state = Buffer.from(JSON.stringify({
       service: 'sonos',
       nonce,
