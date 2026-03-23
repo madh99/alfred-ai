@@ -536,6 +536,18 @@ export class Alfred {
       this.logger.info({ hasCloud: !!this.config.sonos?.cloud }, 'Sonos skill registered');
     }
 
+    // Travel (requires at least one search API)
+    if (this.config.travel?.kiwi?.apiKey || this.config.travel?.booking?.rapidApiKey) {
+      const { TravelSkill } = await import('@alfred/skills');
+      const { TravelPlanRepository } = await import('@alfred/storage');
+      const travelPlanRepo = new TravelPlanRepository(adapter);
+      skillRegistry.register(new TravelSkill(this.config.travel, { plans: travelPlanRepo }));
+      this.logger.info({
+        hasKiwi: !!this.config.travel.kiwi?.apiKey,
+        hasBooking: !!this.config.travel.booking?.rapidApiKey,
+      }, 'Travel skill registered');
+    }
+
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
     {
       const { MarketplaceSkill } = await import('@alfred/skills');

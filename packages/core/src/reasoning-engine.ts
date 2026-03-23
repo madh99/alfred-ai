@@ -54,6 +54,7 @@ interface ReasoningContext {
   skillHealth: string;
   feedback: string;
   mealPlan: string;
+  travel: string;
 }
 
 export class ReasoningEngine {
@@ -260,8 +261,9 @@ export class ReasoningEngine {
     const skillHealth = await this.fetchSkillHealth();
     const feedback = await this.fetchFeedback();
     const mealPlan = await this.fetchMealPlan();
+    const travel = await this.fetchUpcomingTravel();
 
-    return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth, feedback, mealPlan };
+    return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth, feedback, mealPlan, travel };
   }
 
   private async fetchCalendar(now: Date): Promise<string> {
@@ -407,6 +409,10 @@ export class ReasoningEngine {
     return this.fetchSkillData('recipe', { action: 'meal_plan', sub_action: 'get', week: 'current', day });
   }
 
+  private async fetchUpcomingTravel(): Promise<string> {
+    return this.fetchSkillData('travel', { action: 'plan_list', status: 'booked' });
+  }
+
   // ── Prompt Building ─────────────────────────────────────────
 
   private buildPrompt(ctx: ReasoningContext): string {
@@ -457,6 +463,9 @@ ${ctx.energy}
 
 === Meal-Plan heute ===
 ${ctx.mealPlan}
+
+=== Anstehende Reisen ===
+${ctx.travel}
 
 === Skill-Status ===
 ${ctx.skillHealth}
