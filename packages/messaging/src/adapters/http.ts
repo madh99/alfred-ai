@@ -48,6 +48,7 @@ export interface HttpAdapterOptions {
     getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
   oauthCallbacks?: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>>;
+  publicUrl?: string;
 }
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
@@ -73,6 +74,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly authCb?: HttpAdapterOptions['authCallback'];
   private readonly webhooks: Map<string, WebhookHandler> = new Map();
   private readonly oauthCallbacks: Map<string, (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>> = new Map();
+  private readonly publicUrl?: string;
 
   constructor(port: number, host: string, options?: Omit<HttpAdapterOptions, 'port' | 'host'>) {
     super();
@@ -85,6 +87,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.dashboardFn = options?.dashboardCallback;
     this.webUiPath = options?.webUiPath;
     this.tls = options?.tls;
+    this.publicUrl = options?.publicUrl;
     this.authCb = options?.authCallback;
     if (options?.webhooks) {
       for (const wh of options.webhooks) {
@@ -258,13 +261,29 @@ export class HttpAdapter extends MessagingAdapter {
       fs.mkdirSync(tlsDir, { recursive: true });
       fs.writeFileSync(keyPath, privateKey, { mode: 0o600 });
 
+      // Build SAN with all relevant IPs/hostnames
+      const sanEntries = new Set(['IP:127.0.0.1', 'IP:0.0.0.0', 'DNS:localhost']);
+      // Add configured host if it's a real IP (not 0.0.0.0/127.0.0.1)
+      if (this.host && this.host !== '0.0.0.0' && this.host !== '127.0.0.1' && this.host !== '::') {
+        sanEntries.add(/^\d+\.\d+\.\d+\.\d+$/.test(this.host) ? `IP:${this.host}` : `DNS:${this.host}`);
+      }
+      // Extract IP/hostname from publicUrl if configured
+      if (this.publicUrl) {
+        try {
+          const pubHost = new URL(this.publicUrl).hostname;
+          if (pubHost && pubHost !== 'localhost') {
+            sanEntries.add(/^\d+\.\d+\.\d+\.\d+$/.test(pubHost) ? `IP:${pubHost}` : `DNS:${pubHost}`);
+          }
+        } catch { /* ignore invalid URL */ }
+      }
+
       execFileSync('openssl', [
         'req', '-new', '-x509',
         '-key', keyPath,
         '-out', certPath,
         '-days', '365',
         '-subj', '/CN=Alfred AI/O=Alfred',
-        '-addext', 'subjectAltName=IP:127.0.0.1,IP:0.0.0.0,DNS:localhost',
+        '-addext', `subjectAltName=${[...sanEntries].join(',')}`,
       ], { stdio: 'pipe' });
 
       return { cert: fs.readFileSync(certPath), key: fs.readFileSync(keyPath) };

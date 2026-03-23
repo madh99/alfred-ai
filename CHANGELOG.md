@@ -5,12 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.118] - 2026-03-23
+## [0.19.0-multi-ha.119] - 2026-03-23
 
 ### Fixed
 - **Skill-Filter Keywords** — Rezept/Kochen, Spotify/Musik, Sonos/Speaker und Reise/Flug/Hotel Keywords in der Skill-Kategorie-Erkennung ergänzt. Ohne diese Keywords wurden die neuen Skills vom LLM nicht als Tools angeboten.
 - **Booking.com API** — Fehlenden `filter_by_currency` Parameter ergänzt (422-Fehler bei Hotelsuche).
 - **OAuth Redirect-URI** — Spotify/Sonos OAuth nutzt jetzt `ALFRED_API_PUBLIC_URL` statt hardcoded `localhost:3420`. Konfigurierbar über `.env` für remote-Installationen.
+- **TLS Self-Signed Cert** — Auto-generiertes Zertifikat enthält jetzt die konfigurierte Host-IP und `publicUrl` im SAN (Subject Alternative Name). Altes Cert unter `~/.alfred/tls/` muss gelöscht werden damit es neu generiert wird.
 
 ## [0.19.0-multi-ha.116] - 2026-03-23
 

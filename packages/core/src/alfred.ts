@@ -1055,6 +1055,7 @@ export class Alfred {
       this.adapters.set('api', new HttpAdapter(port, host, {
         apiToken: config.api?.token,
         corsOrigin: config.api?.corsOrigin,
+        publicUrl: config.api?.publicUrl,
         tls: config.api?.tls,
         authCallback: this.webAuthCallback,
         healthCheck: async () => {
