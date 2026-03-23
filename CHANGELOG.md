@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.134] - 2026-03-23
+## [0.19.0-multi-ha.135] - 2026-03-23
+
+### Fixed
+- **Travel-Skill Kategorie** — Von `'information'` auf `'productivity'` geändert. Die Reise-Keywords (flug, hotel, reise, barcelona) standen im productivity-Regex des Skill-Filters, aber der Skill hatte category `'information'` — wurde daher nie dem LLM angeboten.
 
 ### Changed
 - **Flugsuche** — Kiwi-Provider komplett auf RapidAPI umgestellt (`kiwi-com-cheap-flights.p.rapidapi.com`). Nutzt jetzt denselben RapidAPI-Key wie Booking.com — kein separater `ALFRED_TRAVEL_KIWI_API_KEY` mehr nötig. City-Code-Mapping für 50+ Städte (Wien, Barcelona, Berlin etc.). One-Way und Round-Trip Suche.

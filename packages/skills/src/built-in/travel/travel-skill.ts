@@ -24,7 +24,7 @@ function formatPrice(price: number, currency: string): string {
 export class TravelSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'travel',
-    category: 'information',
+    category: 'productivity',
     description:
       'Reise-Skill: Flugsuche (Kiwi/Tequila), Hotelsuche (Booking.com), Reisepläne mit Budget-Tracking. ' +
       'Actions: search_flights (Flug suchen), search_hotels (Hotel suchen), ' +
