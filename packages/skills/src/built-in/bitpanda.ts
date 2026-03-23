@@ -1,7 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-type Action = 'portfolio' | 'balance' | 'trades' | 'buy' | 'sell' | 'ticker';
+type Action = 'portfolio' | 'balance' | 'trades' | 'ticker';
 
 const BASE_URL = 'https://api.bitpanda.com';
 
@@ -20,7 +20,7 @@ export class BitpandaSkill extends Skill {
       'Use action "trades" to see recent trade history. ' +
       'Use action "ticker" to see current prices (no API key needed). ' +
       'Supports Watch conditions on portfolio value, asset prices.',
-    riskLevel: 'write',
+    riskLevel: 'read',
     version: '1.0.0',
     timeoutMs: 15_000,
     inputSchema: {
@@ -28,20 +28,16 @@ export class BitpandaSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['portfolio', 'balance', 'trades', 'buy', 'sell', 'ticker'],
+          enum: ['portfolio', 'balance', 'trades', 'ticker'],
           description: 'Action to perform',
         },
         symbol: {
           type: 'string',
-          description: 'Asset symbol for ticker/buy/sell (e.g. "BTC", "ETH", "NVDA", "XAU")',
+          description: 'Asset symbol for ticker (e.g. "BTC", "ETH", "NVDA", "XAU")',
         },
         symbols: {
           type: 'string',
           description: 'Comma-separated symbols for ticker (e.g. "BTC,ETH,XAU")',
-        },
-        amount: {
-          type: 'number',
-          description: 'Amount in EUR to buy/sell',
         },
         limit: {
           type: 'number',
@@ -76,14 +72,10 @@ export class BitpandaSkill extends Skill {
           return await this.getBalance();
         case 'trades':
           return await this.getTrades(input.limit as number | undefined, input.type as string | undefined);
-        case 'buy':
-          return { success: false, error: 'Kauf über die Bitpanda API ist nicht möglich — die Personal API unterstützt kein Trading. Nutze die Bitpanda App oder den CCXT Trading-Skill für Exchange-Trading.' };
-        case 'sell':
-          return { success: false, error: 'Verkauf über die Bitpanda API ist nicht möglich — die Personal API unterstützt kein Trading. Nutze die Bitpanda App oder den CCXT Trading-Skill für Exchange-Trading.' };
         case 'ticker':
           return await this.getTicker(input.symbol as string | undefined, input.symbols as string | undefined);
         default:
-          return { success: false, error: `Unknown action "${action}". Use: portfolio, balance, trades, buy, sell, ticker` };
+          return { success: false, error: `Unknown action "${action}". Use: portfolio, balance, trades, ticker` };
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -291,11 +283,10 @@ export class BitpandaSkill extends Skill {
     return value.toLocaleString('de-AT', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  private async fetchPrivate<T>(path: string, init?: RequestInit): Promise<T> {
+  private async fetchPrivate<T>(path: string): Promise<T> {
     this.requireKey();
     const res = await fetch(`${BASE_URL}${path}`, {
-      ...init,
-      headers: { 'X-Api-Key': this.config!.apiKey!, ...init?.headers },
+      headers: { 'X-Api-Key': this.config!.apiKey! },
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {

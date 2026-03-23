@@ -5,10 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.110] - 2026-03-23
+## [0.19.0-multi-ha.111] - 2026-03-23
 
 ### Fixed
-- **Bitpanda Buy/Sell entfernt** — Die Bitpanda Personal API (v1) unterstützt kein Trading (kein POST /trades oder /offers Endpoint). Buy/Sell Actions geben jetzt klare Fehlermeldung statt gegen nicht-existente Endpoints aufzurufen. Toter Code (createTrade, resolveAssetId, maxOrderEur Config) entfernt.
+- **Bitpanda Skill Cleanup** — Buy/Sell komplett entfernt (Personal API v1 hat kein Trading). riskLevel auf 'read' korrigiert. Schema-Ballast (amount, buy/sell enum) bereinigt. Gegen offizielle API-Referenz verifiziert.
 
 ## [0.19.0-multi-ha.108] - 2026-03-23
 
