@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.125] - 2026-03-23
+## [0.19.0-multi-ha.126] - 2026-03-23
 
 ### Fixed
+- **Sonos TuneIn Radio** — UPnP 402 Fehler bei österreichischen Sendern (Ö3, Ö1, FM4). Automatisches Mapping auf TuneIn-kompatible Namen (z.B. "Ö3" → "Hitradio OE3", "OE3", "ORF Radio OE3") mit Fallback-Kette.
+- **Sonos Favoriten** — `getFavorites()` Response-Parsing für verschiedene node-sonos Versionen und XML-Formate (items, Result, ContentDirectory).
 - **Spotify OAuth HA-Problem** — Bei Active-Active HA landete der OAuth-Callback auf einem anderen Node als `authorize()`. Die `pendingAuths` (codeVerifier, userId) waren nur im Memory des einen Nodes. Fix: Alle Auth-Daten werden im `state`-Parameter an Spotify übergeben und kommen im Callback zurück — jeder Node kann den Exchange abschließen. Zusätzlich persistenter `userServiceResolverRef` als Fallback für Token-Speicherung.
 - **Spotify Device-Discovery** — Sonos-Speaker über Spotify Connect haben `is_restricted: true` und erscheinen NICHT im `/me/player/devices` Endpoint. Neuer `getAllDevices()` Helper merged `/me/player/devices` mit dem aktiven Device aus `/me/player`. Sonos-Speaker werden jetzt korrekt erkannt und angesteuert.
 - **Spotify OAuth Token-Persistenz** — Refresh-Token wurde bei Re-Autorisierung nicht in DB gespeichert weil der SkillContext aus dem pendingAuth fehlte. Jetzt wird der Context direkt im pendingAuth mitgespeichert. Fehler beim DB-Save werden nicht mehr verschluckt sondern propagiert.

@@ -531,8 +531,31 @@ export class SonosSkill extends Skill {
       return { success: false, error: 'Radio-Wiedergabe nur ueber lokale Verbindung moeglich.' };
     }
 
-    await entry.device.playTuneinRadio(name);
-    return { success: true, display: `Radio "${name}" wird abgespielt.` };
+    try {
+      await entry.device.playTuneinRadio(name);
+      return { success: true, display: `Radio "${name}" wird abgespielt.` };
+    } catch (err: any) {
+      // UPnP 402 = station not found by TuneIn. Try searching with alternative names.
+      if (String(err).includes('402')) {
+        // Try common Austrian radio name mappings
+        const alternatives: Record<string, string[]> = {
+          'ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
+          'ö1': ['OE1', 'ORF Radio OE1'],
+          'fm4': ['FM4', 'ORF FM4'],
+          'radio wien': ['Radio Wien', 'ORF Radio Wien'],
+          'radio nö': ['Radio Niederoesterreich', 'ORF Radio NOE'],
+        };
+        const alts = alternatives[name.toLowerCase()] ?? [];
+        for (const alt of alts) {
+          try {
+            await entry.device.playTuneinRadio(alt);
+            return { success: true, display: `Radio "${alt}" wird abgespielt.` };
+          } catch { /* try next */ }
+        }
+        return { success: false, error: `Sender "${name}" nicht bei TuneIn gefunden. Versuche den englischen Namen oder eine Station-URL.` };
+      }
+      throw err;
+    }
   }
 
   private async handlePlayUri(input: Record<string, unknown>): Promise<SkillResult> {
@@ -800,10 +823,23 @@ export class SonosSkill extends Skill {
     const entry = this.getFirstLocalDevice();
     if (!entry) return { success: false, error: 'Kein lokaler Speaker verfuegbar.' };
     const favs = await entry.device.getFavorites();
-    const items = (favs?.items ?? favs ?? []).map((f: any) => ({
-      name: f.title ?? f.name,
-      uri: f.uri,
-      albumArtUri: f.albumArtURI,
+    // node-sonos returns different structures depending on version:
+    // { items: [...] } or { Result: [...] } or a raw XML-parsed object
+    let favList: any[] = [];
+    if (Array.isArray(favs)) favList = favs;
+    else if (Array.isArray(favs?.items)) favList = favs.items;
+    else if (Array.isArray(favs?.Result)) favList = favs.Result;
+    else if (favs && typeof favs === 'object') {
+      // Try to extract from ContentDirectory browse result
+      const values = Object.values(favs);
+      const arrVal = values.find(v => Array.isArray(v));
+      if (arrVal) favList = arrVal as any[];
+    }
+
+    const items = favList.map((f: any) => ({
+      name: f.title ?? f.Title ?? f.name ?? f['dc:title'] ?? 'Unbekannt',
+      uri: f.uri ?? f.URI ?? f.res ?? '',
+      albumArtUri: f.albumArtURI ?? f.AlbumArtURI ?? f['upnp:albumArtURI'] ?? undefined,
     }));
     return { success: true, data: { favorites: items } };
   }
