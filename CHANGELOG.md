@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.130] - 2026-03-23
+## [0.19.0-multi-ha.131] - 2026-03-23
 
 ### Fixed
+- **Sonos Ö3 Stream** — Stream-URL korrigiert: `oe3shoutcast.sf.apa.at` (tot) → `orf-live.ors-shoutcast.at/oe3-q1a` (funktioniert). Alle ORF-Sender auf einheitliche `ors-shoutcast.at` Domain umgestellt. Alle 9 ORF-Landesradios hinzugefügt.
 - **Sonos Radio** — TuneIn-Suche durch direkte Stream-URLs ersetzt (Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio). `playTuneinRadio()` war unzuverlässig — jetzt `setAVTransportURI()` mit bekannten Streams als Primary, TuneIn als Fallback.
 - **Spotify + Sonos Abgrenzung** — Skill-Description informiert LLM dass Sonos-Speaker über Spotify Connect "restricted" sind. Playback-Start, Lautstärke und Transfer auf Sonos-Speakern müssen über den Sonos-Skill laufen, nicht über Spotify.
 
