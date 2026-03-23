@@ -358,6 +358,10 @@ export const RoutingConfigSchema = z.object({
   apiKey: z.string(),
 });
 
+export const BitpandaConfigSchema = z.object({
+  apiKey: z.string().optional(),
+});
+
 export const EnergyPriceConfigSchema = z.object({
   gridName: z.string().optional(),
   gridUsageCt: z.coerce.number().optional(),
@@ -451,6 +455,7 @@ export const AlfredConfigSchema = z.object({
   routing: RoutingConfigSchema.optional(),
   todo: MicrosoftTodoConfigSchema.optional(),
   energy: EnergyPriceConfigSchema.optional(),
+  bitpanda: BitpandaConfigSchema.optional(),
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),

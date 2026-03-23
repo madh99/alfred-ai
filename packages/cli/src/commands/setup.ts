@@ -1654,6 +1654,26 @@ export async function setupCommand(): Promise<void> {
       console.log(`  ${dim('Docker disabled.')}`);
     }
 
+    // Bitpanda
+    const existingBitpandaKey = existing.env['ALFRED_BITPANDA_API_KEY'] ?? (existing.config as any).bitpanda?.apiKey ?? '';
+    const enableBitpandaDefault = existingBitpandaKey ? 'Y/n' : 'y/N';
+    const enableBitpandaInput = (
+      await rl.question(`\n  ${BOLD}Enable Bitpanda (Portfolio, Crypto/Aktien/ETF Preise)?${RESET} ${dim(`[${enableBitpandaDefault}]`)}: ${YELLOW}`)
+    ).trim().toLowerCase() || (existingBitpandaKey ? 'y' : 'n');
+    process.stdout.write(RESET);
+    const enableBitpanda = enableBitpandaInput === 'y' || enableBitpandaInput === 'yes';
+
+    let bitpandaApiKey = '';
+
+    if (enableBitpanda) {
+      console.log(`  ${dim('API Key erstellen: Bitpanda App → Einstellungen → API Key')}`);
+      console.log(`  ${dim('Berechtigungen: "Read" für Portfolio, "Trade" für Kauf/Verkauf')}`);
+      bitpandaApiKey = await askWithDefault(rl, '  Bitpanda API Key', existingBitpandaKey);
+      console.log(`  ${green('>')} Bitpanda: ${bold('enabled')}`);
+    } else {
+      console.log(`  ${dim('Bitpanda disabled. Ticker/Preise funktionieren trotzdem ohne API Key.')}`);
+    }
+
     // BMW CarData
     const existingBmw = existing.config.bmw;
     const existingBmwClientId = existing.env['ALFRED_BMW_CLIENT_ID'] ?? existingBmw?.clientId ?? '';
@@ -2017,6 +2037,12 @@ export async function setupCommand(): Promise<void> {
     }
 
     envLines.push('', '# === BMW CarData ===', '');
+
+    if (enableBitpanda) {
+      envLines.push(`ALFRED_BITPANDA_API_KEY=${bitpandaApiKey}`);
+    } else {
+      envLines.push('# ALFRED_BITPANDA_API_KEY=');
+    }
 
     if (enableBmw) {
       envLines.push(`ALFRED_BMW_CLIENT_ID=${bmwClientId}`);

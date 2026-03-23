@@ -347,6 +347,10 @@ export interface RoutingConfig {
   apiKey: string;
 }
 
+export interface BitpandaConfig {
+  apiKey?: string;
+}
+
 export interface EnergyPriceConfig {
   gridName?: string;
   gridUsageCt?: number;       // Netznutzungsentgelt ct/kWh
@@ -439,6 +443,7 @@ export interface AlfredConfig {
   routing?: RoutingConfig;
   todo?: MicrosoftTodoConfig;
   energy?: EnergyPriceConfig;
+  bitpanda?: BitpandaConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

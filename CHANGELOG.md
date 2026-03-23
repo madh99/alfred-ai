@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.108] - 2026-03-23
+
+### Added
+- **Bitpanda-Skill** — Portfolio, Fiat-Guthaben, Trade-Historie und Ticker-Preise via Bitpanda REST API. Actions: `portfolio` (alle Holdings mit aktuellem Wert), `balance` (Fiat-Wallets), `trades` (letzte Käufe/Verkäufe), `ticker` (aktuelle Preise ohne API-Key). Watch-kompatibel (data.totalValueEur, data.totalEur). Setup-Integration mit `ALFRED_BITPANDA_API_KEY`.
+
 ## [0.19.0-multi-ha.107] - 2026-03-23
 
 ### Added
