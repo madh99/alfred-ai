@@ -340,6 +340,7 @@ interface ExistingConfig {
   energy?: { gridName?: string; gridUsageCt?: number; gridLossCt?: number; gridCapacityFee?: number; gridMeterFee?: number };
   storage?: { path?: string; backend?: string; connectionString?: string };
   fileStore?: { backend?: string; basePath?: string; s3Endpoint?: string; s3Bucket?: string; s3AccessKey?: string; s3SecretKey?: string };
+  cluster?: { enabled?: boolean; nodeId?: string; role?: string; redisUrl?: string; token?: string };
 }
 
 function loadExistingConfig(projectRoot: string): {
@@ -1289,52 +1290,42 @@ export async function setupCommand(): Promise<void> {
     }
 
     // ── 8d4. Cluster ──────────────────────────────────────────
-    let clusterEnabled = false;
-    let clusterNodeId = '';
-    let clusterRole: 'primary' | 'secondary' = 'primary';
-    let clusterRedisUrl = '';
-    let clusterToken = '';
+    const existingCluster = (existing.config as any).cluster as ExistingConfig['cluster'] | undefined;
+    let clusterEnabled = existingCluster?.enabled ?? false;
+    let clusterNodeId = existingCluster?.nodeId ?? '';
+    let clusterRole: 'primary' | 'secondary' = (existingCluster?.role as 'primary' | 'secondary') ?? 'primary';
+    let clusterRedisUrl = existingCluster?.redisUrl ?? '';
+    let clusterToken = existingCluster?.token ?? '';
 
     console.log(`\n${bold('Cluster / Hochverfügbarkeit?')}`);
     console.log(`${dim('Mehrere Alfred-Nodes für Failover und Last-Verteilung.')}`);
+    const clusterDefault = clusterEnabled ? 'Y/n' : 'y/N';
     const clusterAnswer = (
-      await rl.question(`${YELLOW}> ${RESET}${dim('[y/N] ')}`)
+      await rl.question(`${YELLOW}> ${RESET}${dim(`[${clusterDefault}] `)}`)
     ).trim().toLowerCase();
-    clusterEnabled = clusterAnswer === 'y' || clusterAnswer === 'yes';
+    clusterEnabled = clusterAnswer === '' ? clusterEnabled : (clusterAnswer === 'y' || clusterAnswer === 'yes');
 
     if (clusterEnabled) {
-      console.log(`\n  ${bold('Ist dies der erste Node (Primary) oder ein weiterer?')}`);
-      console.log(`  ${dim('1) Erster Node (Primary) — Redis URL eingeben, Cluster-Token generieren')}`);
-      console.log(`  ${dim('2) Weiterer Node — Primary-Adresse + Cluster-Token eingeben')}`);
-      const modeAnswer = (await rl.question(`  ${YELLOW}> ${RESET}${dim('[1/2] ')}`)).trim();
+      const redisDefault = clusterRedisUrl || 'redis://localhost:6379';
+      clusterRedisUrl = (await rl.question(`\n  ${BOLD}Redis URL${RESET} ${dim(`[${redisDefault}]`)}: ${YELLOW}`)).trim() || redisDefault;
+      process.stdout.write(RESET);
 
-      if (modeAnswer === '2') {
-        clusterRole = 'secondary';
-        console.log(`\n  ${dim('Cluster beitreten:')}`);
-
-        const primaryHost = (await rl.question(`  ${BOLD}Primary-Host (IP:Port)${RESET}: ${YELLOW}`)).trim();
+      if (clusterToken) {
+        const keepToken = (await rl.question(`  ${BOLD}Cluster-Token${RESET} ${dim(`[bestehend beibehalten: Enter]`)}: ${YELLOW}`)).trim();
         process.stdout.write(RESET);
-
-        clusterToken = (await rl.question(`  ${BOLD}Cluster-Token${RESET}: ${YELLOW}`)).trim();
-        process.stdout.write(RESET);
-
-        clusterRedisUrl = (await rl.question(`  ${BOLD}Redis URL${RESET} ${dim('[redis://localhost:6379]')}: ${YELLOW}`)).trim() || 'redis://localhost:6379';
-        process.stdout.write(RESET);
-
-        clusterNodeId = `node-${Math.random().toString(36).slice(2, 8)}`;
-        console.log(`  ${green('>')} Cluster beigetreten als ${bold(clusterNodeId)} (secondary)`);
+        if (keepToken) clusterToken = keepToken;
       } else {
-        clusterRole = 'primary';
-        clusterRedisUrl = (await rl.question(`\n  ${BOLD}Redis URL${RESET} ${dim('[redis://localhost:6379]')}: ${YELLOW}`)).trim() || 'redis://localhost:6379';
-        process.stdout.write(RESET);
-
-        clusterNodeId = `node-${Math.random().toString(36).slice(2, 8)}`;
         clusterToken = `alf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-
-        console.log(`  ${green('>')} Cluster Primary: ${bold(clusterNodeId)}`);
         console.log(`  ${green('>')} Cluster-Token: ${bold(clusterToken)}`);
-        console.log(`  ${dim('  Diesen Token beim 2. Node eingeben.')}`);
+        console.log(`  ${dim('  Diesen Token auf allen Nodes identisch setzen.')}`);
       }
+
+      if (!clusterNodeId) {
+        clusterNodeId = `node-${Math.random().toString(36).slice(2, 8)}`;
+      }
+      console.log(`  ${green('>')} Node-ID: ${bold(clusterNodeId)}`);
+      // Active-Active: no primary/secondary distinction
+      clusterRole = 'primary';
     } else {
       console.log(`  ${dim('Einzelinstanz — kein Cluster.')}`);
     }

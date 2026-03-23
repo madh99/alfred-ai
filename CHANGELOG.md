@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.106] - 2026-03-23
+
+### Fixed
+- **Setup: Cluster-Config bei Re-Setup nicht verloren** — Bestehende Cluster-Werte (nodeId, token, redisUrl) werden als Defaults geladen. Vorher: Re-Setup überschrieb Cluster-Config wenn User "Nein" bei Cluster antwortete.
+- **Setup: `primaryHost` Dead Code entfernt** — HA ist Active-Active ohne Primary. Die verwirrende "Primary-Host" Frage wurde entfernt, Setup fragt jetzt nur Redis URL + Token.
+
 ## [0.19.0-multi-ha.105] - 2026-03-23
 
 ### Fixed
