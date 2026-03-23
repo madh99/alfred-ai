@@ -21,6 +21,8 @@ export class SpotifySkill extends Skill {
   private activeConfigs?: Map<string, SpotifyConfig>;
   private mergedConfigs?: Map<string, SpotifyConfig>;
   private lastContext?: SkillContext;
+  /** Persistent resolver reference — survives across execute() calls for OAuth callbacks on HA nodes. */
+  private userServiceResolverRef?: SkillContext['userServiceResolver'];
 
   private readonly apiPublicUrl?: string;
 
@@ -107,6 +109,7 @@ export class SpotifySkill extends Skill {
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     this.lastContext = context;
+    if (context.userServiceResolver) this.userServiceResolverRef = context.userServiceResolver;
 
     const userConfigs = await this.resolveUserConfigs(context);
     this.activeConfigs = userConfigs ?? undefined;
@@ -207,16 +210,23 @@ export class SpotifySkill extends Skill {
       ?? 'http://localhost:3420';
     const redirectUri = `${baseUrl.replace(/\/+$/, '')}/api/oauth/callback`;
 
+    const userId = context.alfredUserId ?? context.userId;
+
+    // Encode ALL auth data in state so ANY node can handle the callback (HA-safe).
+    // State is opaque to Spotify — they just echo it back.
     const state = Buffer.from(JSON.stringify({
       service: 'spotify',
       account,
-      userId: context.alfredUserId ?? context.userId,
+      userId,
       nonce,
+      codeVerifier,
+      redirectUri,
     })).toString('base64url');
 
+    // Also keep in memory for polling (this node only)
     this.pendingAuths.set(nonce, {
       codeVerifier,
-      userId: context.alfredUserId ?? context.userId,
+      userId,
       redirectUri,
       context,
       expiresAt: Date.now() + 5 * 60_000,
@@ -316,20 +326,27 @@ export class SpotifySkill extends Skill {
   async handleOAuthCallback(code: string, state: Record<string, unknown>): Promise<{ success: boolean; error?: string }> {
     const nonce = state.nonce as string;
     const account = (state.account as string) ?? 'default';
+
+    // HA-safe: pendingAuths may be on another node.
+    // All auth data is encoded in state so ANY node can complete the exchange.
     const pending = this.pendingAuths.get(nonce);
-    if (!pending) return { success: false, error: 'Unbekannte oder abgelaufene Autorisierung.' };
+    const codeVerifier = (pending?.codeVerifier ?? state.codeVerifier) as string;
+    const redirectUri = (pending?.redirectUri ?? state.redirectUri) as string;
+    const userId = (pending?.userId ?? state.userId) as string;
+
+    if (!codeVerifier || !redirectUri) {
+      return { success: false, error: 'Unbekannte oder abgelaufene Autorisierung (fehlende Auth-Daten).' };
+    }
 
     const cfg = (this.mergedConfigs ?? this.configs).get(account);
     if (!cfg) return { success: false, error: `Account "${account}" nicht gefunden.` };
-
-    const redirectUri = pending.redirectUri;
 
     const params: Record<string, string> = {
       grant_type: 'authorization_code',
       code,
       redirect_uri: redirectUri,
       client_id: cfg.clientId,
-      code_verifier: pending.codeVerifier,
+      code_verifier: codeVerifier,
     };
     if (cfg.clientSecret) params.client_secret = cfg.clientSecret;
 
@@ -340,23 +357,29 @@ export class SpotifySkill extends Skill {
     });
 
     if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
       this.pendingAuths.delete(nonce);
-      return { success: false, error: `Token-Exchange fehlgeschlagen: ${res.status}` };
+      return { success: false, error: `Token-Exchange fehlgeschlagen: ${res.status} ${errBody.slice(0, 200)}` };
     }
 
     const data = await res.json() as { access_token: string; refresh_token?: string; expires_in: number };
     this.accessTokens.set(account, data.access_token);
 
-    // Persist refresh token via userServiceResolver
-    const ctx = pending.context ?? this.lastContext;
-    if (data.refresh_token && ctx?.userServiceResolver && pending.userId) {
+    // Persist refresh token — try pending context, then lastContext, then direct DB via config
+    const ctx = pending?.context ?? this.lastContext;
+    if (data.refresh_token && ctx?.userServiceResolver && userId) {
       await ctx.userServiceResolver.saveServiceConfig(
-        pending.userId, 'spotify', account,
+        userId, 'spotify', account,
+        { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
+      );
+    } else if (data.refresh_token && this.userServiceResolverRef && userId) {
+      // Fallback: use stored resolver reference (set during initialize)
+      await this.userServiceResolverRef.saveServiceConfig(
+        userId, 'spotify', account,
         { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
       );
     } else if (data.refresh_token) {
-      // Log warning — token only in memory, will be lost on restart
-      console.warn('[SpotifySkill] Refresh-Token erhalten aber kein userServiceResolver verfügbar — Token nur im Memory!');
+      console.warn('[SpotifySkill] Refresh-Token erhalten aber kein userServiceResolver — Token nur im Memory!');
     }
 
     this.pendingAuths.delete(nonce);
