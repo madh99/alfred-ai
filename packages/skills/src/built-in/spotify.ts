@@ -13,7 +13,7 @@ export class SpotifySkill extends Skill {
   /** Premium status cache (30 min TTL). */
   private premiumCache = new Map<string, { isPremium: boolean; expiresAt: number }>();
   /** Pending OAuth PKCE flows. */
-  private pendingAuths = new Map<string, { codeVerifier: string; userId: string; redirectUri: string; expiresAt: number }>();
+  private pendingAuths = new Map<string, { codeVerifier: string; userId: string; redirectUri: string; expiresAt: number; context?: SkillContext }>();
 
   readonly metadata: SkillMetadata;
 
@@ -218,6 +218,7 @@ export class SpotifySkill extends Skill {
       codeVerifier,
       userId: context.alfredUserId ?? context.userId,
       redirectUri,
+      context,
       expiresAt: Date.now() + 5 * 60_000,
     });
 
@@ -347,13 +348,15 @@ export class SpotifySkill extends Skill {
     this.accessTokens.set(account, data.access_token);
 
     // Persist refresh token via userServiceResolver
-    if (data.refresh_token && this.lastContext?.userServiceResolver && pending.userId) {
-      try {
-        await this.lastContext.userServiceResolver.saveServiceConfig(
-          pending.userId, 'spotify', account,
-          { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
-        );
-      } catch { /* token still cached in memory */ }
+    const ctx = pending.context ?? this.lastContext;
+    if (data.refresh_token && ctx?.userServiceResolver && pending.userId) {
+      await ctx.userServiceResolver.saveServiceConfig(
+        pending.userId, 'spotify', account,
+        { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
+      );
+    } else if (data.refresh_token) {
+      // Log warning — token only in memory, will be lost on restart
+      console.warn('[SpotifySkill] Refresh-Token erhalten aber kein userServiceResolver verfügbar — Token nur im Memory!');
     }
 
     this.pendingAuths.delete(nonce);
