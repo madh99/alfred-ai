@@ -23,6 +23,8 @@ export class SpotifySkill extends Skill {
   private lastContext?: SkillContext;
   /** Persistent resolver reference — survives across execute() calls for OAuth callbacks on HA nodes. */
   private userServiceResolverRef?: SkillContext['userServiceResolver'];
+  /** Last userId for token rotation persistence. */
+  private lastTokenUserId?: string;
 
   private readonly apiPublicUrl?: string;
   /** Injected from alfred.ts — available on ALL nodes, not just the one running authorize(). */
@@ -116,6 +118,7 @@ export class SpotifySkill extends Skill {
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     this.lastContext = context;
+    this.lastTokenUserId = context.alfredUserId ?? context.userId;
     if (context.userServiceResolver) this.userServiceResolverRef = context.userServiceResolver;
 
     const userConfigs = await this.resolveUserConfigs(context);
@@ -457,8 +460,23 @@ export class SpotifySkill extends Skill {
     });
 
     if (!res.ok) throw new Error(`Spotify Token-Refresh fehlgeschlagen: ${res.status}`);
-    const data = await res.json() as { access_token: string };
+    const data = await res.json() as { access_token: string; refresh_token?: string };
     this.accessTokens.set(account, data.access_token);
+
+    // Spotify Token Rotation: new refresh_token may be returned, old one is revoked
+    if (data.refresh_token && data.refresh_token !== cfg.refreshToken) {
+      // Update in-memory config
+      (cfg as any).refreshToken = data.refresh_token;
+      // Persist to DB
+      const resolver = this.injectedServiceResolver ?? this.userServiceResolverRef;
+      if (resolver && this.lastTokenUserId) {
+        resolver.saveServiceConfig(
+          this.lastTokenUserId, 'spotify', account,
+          { clientId: cfg.clientId, clientSecret: cfg.clientSecret, refreshToken: data.refresh_token },
+        ).catch(() => { /* best-effort */ });
+      }
+    }
+
     return data.access_token;
   }
 
@@ -480,6 +498,10 @@ export class SpotifySkill extends Skill {
     if (res.status === 204) return undefined;
     if (!res.ok) {
       const err = await res.text().catch(() => '');
+      // Detect restricted device error and give actionable hint
+      if (err.includes('restricted') || err.includes('PREMIUM_REQUIRED') || res.status === 403) {
+        throw new Error('Dieses Gerät ist eingeschränkt (Sonos/Connect). Nutze den Sonos-Skill für Playback-Steuerung auf Sonos-Speakern (z.B. "Nächster Titel auf Halle mit Sonos").');
+      }
       throw new Error(`Spotify API ${res.status}: ${err.slice(0, 200)}`);
     }
     return res.json();

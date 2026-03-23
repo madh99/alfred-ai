@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.132] - 2026-03-23
+## [0.19.0-multi-ha.133] - 2026-03-23
 
 ### Fixed
+- **Spotify Token-Rotation** — Spotify gibt bei jedem Token-Refresh einen neuen Refresh-Token zurück und revoked den alten. `refreshAccessToken()` speichert den neuen Token jetzt in DB + Memory. Vorher: Token nach erstem Refresh ungültig.
+- **Spotify Restricted Device Hinweis** — Bei 403/restricted Fehlern wird jetzt ein klarer Hinweis gegeben: "Nutze den Sonos-Skill für Playback-Steuerung auf Sonos-Speakern." Statt generischem API-Fehler.
 - **Spotify Token-Persistenz HA-definitiv** — `UserServiceResolver` wird direkt in den SpotifySkill injiziert (`setServiceResolver()`) statt aus SkillContext. Verfügbar auf ALLEN Nodes, nicht nur dem der `authorize()` ausgeführt hat. Resolver-Kaskade: injected → pending.context → lastContext → userServiceResolverRef.
 - **Sonos Ö3 Stream** — Stream-URL korrigiert: `oe3shoutcast.sf.apa.at` (tot) → `orf-live.ors-shoutcast.at/oe3-q1a` (funktioniert). Alle ORF-Sender auf einheitliche `ors-shoutcast.at` Domain umgestellt. Alle 9 ORF-Landesradios hinzugefügt.
 - **Sonos Radio** — TuneIn-Suche durch direkte Stream-URLs ersetzt (Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio). `playTuneinRadio()` war unzuverlässig — jetzt `setAVTransportURI()` mit bekannten Streams als Primary, TuneIn als Fallback.
