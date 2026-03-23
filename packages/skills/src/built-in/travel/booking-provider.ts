@@ -37,10 +37,12 @@ export class BookingProvider extends TravelProvider {
     url.searchParams.set('adults_number', String(adults));
     url.searchParams.set('room_number', '1');
     url.searchParams.set('currency', currency);
+    url.searchParams.set('filter_by_currency', currency);
     url.searchParams.set('locale', 'de');
     url.searchParams.set('units', 'metric');
     url.searchParams.set('order_by', (params.sort as string) ?? 'popularity');
     url.searchParams.set('page_number', '0');
+    url.searchParams.set('include_adjacency', 'true');
 
     if (params.stars) url.searchParams.set('categories_filter_ids', `class::${params.stars}`);
     if (params.priceMin) url.searchParams.set('price_min', String(params.priceMin));
