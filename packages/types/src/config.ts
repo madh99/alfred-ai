@@ -436,6 +436,14 @@ export interface SonosConfig {
   };
 }
 
+export interface TravelConfig {
+  kiwi?: { apiKey: string };
+  booking?: { rapidApiKey: string };
+  amadeus?: { clientId: string; clientSecret: string };
+  defaultCurrency?: string;
+  defaultOrigin?: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -475,6 +483,7 @@ export interface AlfredConfig {
   recipe?: RecipeConfig;
   spotify?: SpotifyConfig;
   sonos?: SonosConfig;
+  travel?: TravelConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

@@ -196,6 +196,13 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_SONOS_CLOUD_CLIENT_ID: ['sonos', 'cloud', 'clientId'],
   ALFRED_SONOS_CLOUD_CLIENT_SECRET: ['sonos', 'cloud', 'clientSecret'],
   ALFRED_SONOS_CLOUD_REFRESH_TOKEN: ['sonos', 'cloud', 'refreshToken'],
+  // Travel
+  ALFRED_TRAVEL_KIWI_API_KEY: ['travel', 'kiwi', 'apiKey'],
+  ALFRED_TRAVEL_BOOKING_RAPID_API_KEY: ['travel', 'booking', 'rapidApiKey'],
+  ALFRED_TRAVEL_AMADEUS_CLIENT_ID: ['travel', 'amadeus', 'clientId'],
+  ALFRED_TRAVEL_AMADEUS_CLIENT_SECRET: ['travel', 'amadeus', 'clientSecret'],
+  ALFRED_TRAVEL_DEFAULT_CURRENCY: ['travel', 'defaultCurrency'],
+  ALFRED_TRAVEL_DEFAULT_ORIGIN: ['travel', 'defaultOrigin'],
 };
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings

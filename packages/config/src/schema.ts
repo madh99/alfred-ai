@@ -451,6 +451,14 @@ export const SonosConfigSchema = z.object({
   }).optional(),
 }).optional();
 
+export const TravelConfigSchema = z.object({
+  kiwi: z.object({ apiKey: z.string() }).optional(),
+  booking: z.object({ rapidApiKey: z.string() }).optional(),
+  amadeus: z.object({ clientId: z.string(), clientSecret: z.string() }).optional(),
+  defaultCurrency: z.string().optional(),
+  defaultOrigin: z.string().optional(),
+}).optional();
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -490,6 +498,7 @@ export const AlfredConfigSchema = z.object({
   recipe: RecipeConfigSchema,
   spotify: SpotifyConfigSchema,
   sonos: SonosConfigSchema,
+  travel: TravelConfigSchema,
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),
