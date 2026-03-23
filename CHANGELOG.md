@@ -5,10 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.128] - 2026-03-23
+## [0.19.0-multi-ha.129] - 2026-03-23
 
 ### Improved
-- **Rezept-Skill** — Skill-Description instruiert LLM Rezeptnamen, Zutaten und Zubereitungsschritte immer auf Deutsch zu präsentieren (API liefert Englisch).
+- **Rezept-Skill** — Rezeptnamen, Zutaten und Zubereitungsschritte werden dynamisch in die Benutzersprache (aus Profil) übersetzt statt hardcoded Deutsch.
 
 ### Fixed
 - **Sonos TuneIn Radio** — Erweiterte Sender-Mappings für "ORF Hitradio Ö3", "Hitradio Ö3", Kronehit, Radio NÖ etc. Input-Normalisierung (Umlaute, Präfixe).
