@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.115] - 2026-03-23
+
+### Added
+- **Sonos-Skill** — Sonos-Speaker im Netzwerk steuern via UPnP (node-sonos). Lokale Auto-Discovery als Primary, Sonos Cloud API als Fallback. Actions: Speaker-Liste, Playback (Play/Pause/Stop/Next/Previous), Lautstärke (einzeln + Gruppe), Gruppierung (group/ungroup/group_all), Radio/TuneIn, Sonos-Favoriten, Sleep-Timer, Nachtmodus, Speech Enhancement, Line-In/TV-Audio, Stereopaare, Queue-Verwaltung. S1+S2 Support. Spotify-Playback läuft über den Spotify-Skill (Spotify Connect). OAuth für Cloud-API per Chat.
+
 ## [0.19.0-multi-ha.114] - 2026-03-23
 
 ### Added
