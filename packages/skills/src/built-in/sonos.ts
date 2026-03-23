@@ -537,30 +537,53 @@ export class SonosSkill extends Skill {
     } catch (err: any) {
       // UPnP 402 = station not found by TuneIn. Try searching with alternative names.
       if (String(err).includes('402')) {
-        // Try common Austrian/German radio name mappings
-        const alternatives: Record<string, string[]> = {
-          'ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3', 'Hitradio Ö3'],
-          'ö1': ['OE1', 'ORF Radio OE1', 'Ö1'],
-          'fm4': ['FM4', 'ORF FM4', 'Radio FM4'],
-          'orf hitradio ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
-          'orf hitradio oe3': ['Hitradio OE3', 'OE3'],
-          'hitradio ö3': ['Hitradio OE3', 'OE3', 'ORF Radio OE3'],
-          'radio wien': ['Radio Wien', 'ORF Radio Wien'],
-          'radio nö': ['Radio Niederoesterreich', 'ORF Radio NOE'],
-          'radio niederösterreich': ['Radio Niederoesterreich', 'ORF Radio NOE'],
-          'kronehit': ['Kronehit', 'KroneHit'],
-          'radio energy': ['Energy', 'NRJ'],
+        // Known stream URLs for popular stations (TuneIn search is unreliable)
+        const streamUrls: Record<string, { url: string; displayName: string }> = {
+          'ö3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'oe3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'hitradio ö3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'hitradio oe3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'orf hitradio ö3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'orf hitradio oe3': { url: 'x-rincon-mp3radio://oe3shoutcast.sf.apa.at/;', displayName: 'Hitradio Ö3' },
+          'ö1': { url: 'x-rincon-mp3radio://oe1shoutcast.sf.apa.at/;', displayName: 'Ö1' },
+          'oe1': { url: 'x-rincon-mp3radio://oe1shoutcast.sf.apa.at/;', displayName: 'Ö1' },
+          'fm4': { url: 'x-rincon-mp3radio://fm4shoutcast.sf.apa.at/;', displayName: 'FM4' },
+          'kronehit': { url: 'x-rincon-mp3radio://onair.krone.at/kronehit.mp3', displayName: 'Kronehit' },
+          'radio wien': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/wie-q1a', displayName: 'Radio Wien' },
+          'radio nö': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
+          'radio niederösterreich': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
+          'lounge fm': { url: 'x-rincon-mp3radio://stream.lounge.fm/live', displayName: 'Lounge FM' },
+          'klassik radio': { url: 'x-rincon-mp3radio://stream.klassikradio.de/live/mp3-192', displayName: 'Klassik Radio' },
         };
-        // Normalize: lowercase, strip "spiele"/"spiel" prefixes
+
         const normalized = name.toLowerCase().replace(/^(spiele?|play)\s+/i, '').trim();
-        const alts = alternatives[normalized] ?? alternatives[name.toLowerCase()] ?? [];
+        const stream = streamUrls[normalized] ?? streamUrls[name.toLowerCase()];
+
+        if (stream) {
+          try {
+            await entry.device.setAVTransportURI(stream.url);
+            await entry.device.play();
+            return { success: true, display: `${stream.displayName} wird abgespielt.` };
+          } catch (streamErr: any) {
+            return { success: false, error: `Stream-Wiedergabe fehlgeschlagen: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}` };
+          }
+        }
+
+        // Fallback: try alternative TuneIn names
+        const tuneinAlts: Record<string, string[]> = {
+          'ö3': ['Hitradio OE3', 'OE3'],
+          'ö1': ['OE1'],
+          'fm4': ['FM4', 'ORF FM4'],
+        };
+        const alts = tuneinAlts[normalized] ?? [];
         for (const alt of alts) {
           try {
             await entry.device.playTuneinRadio(alt);
             return { success: true, display: `Radio "${alt}" wird abgespielt.` };
           } catch { /* try next */ }
         }
-        return { success: false, error: `Sender "${name}" nicht bei TuneIn gefunden. Versuche den englischen Namen oder eine Station-URL.` };
+
+        return { success: false, error: `Sender "${name}" nicht gefunden. Bekannte Sender: Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio.` };
       }
       throw err;
     }

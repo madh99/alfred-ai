@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.129] - 2026-03-23
+## [0.19.0-multi-ha.130] - 2026-03-23
+
+### Fixed
+- **Sonos Radio** — TuneIn-Suche durch direkte Stream-URLs ersetzt (Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio). `playTuneinRadio()` war unzuverlässig — jetzt `setAVTransportURI()` mit bekannten Streams als Primary, TuneIn als Fallback.
+- **Spotify + Sonos Abgrenzung** — Skill-Description informiert LLM dass Sonos-Speaker über Spotify Connect "restricted" sind. Playback-Start, Lautstärke und Transfer auf Sonos-Speakern müssen über den Sonos-Skill laufen, nicht über Spotify.
 
 ### Improved
 - **Rezept-Skill** — Rezeptnamen, Zutaten und Zubereitungsschritte werden dynamisch in die Benutzersprache (aus Profil) übersetzt statt hardcoded Deutsch.

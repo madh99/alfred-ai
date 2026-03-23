@@ -48,9 +48,14 @@ export class SpotifySkill extends Skill {
     this.metadata = {
       name: 'spotify',
       description: 'Spotify-Steuerung: Musik abspielen, pausieren, überspringen, Lautstärke, ' +
-        'Geräte wechseln (inkl. Sonos via Spotify Connect), Suche, Playlists verwalten, ' +
-        'Queue, Empfehlungen. Spotify-Musik, Song, Track, Artist, Album, Playlist, ' +
-        'Wiedergabe, Lautsprecher, Gerät. Benötigt Spotify Premium für Playback-Steuerung.',
+        'Geräte wechseln, Suche, Playlists verwalten, Queue, Empfehlungen. ' +
+        'Spotify-Musik, Song, Track, Artist, Album, Playlist, Wiedergabe, Gerät. ' +
+        'Benötigt Spotify Premium für Playback-Steuerung. ' +
+        'WICHTIG: Sonos-Speaker über Spotify Connect sind "restricted" — Playback-Start, ' +
+        'Lautstärke und Transfer funktionieren NICHT über die Spotify-API. ' +
+        'Nutze stattdessen den Sonos-Skill für Steuerung auf Sonos-Speakern. ' +
+        'Dieser Skill ist für Nicht-Sonos-Geräte (Computer, Handy, etc.) und für ' +
+        'Suche, Playlists, Empfehlungen, Queue, Like/Unlike.',
       version: '1.0.0',
       riskLevel: 'write',
       category: 'media',
