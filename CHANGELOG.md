@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.113] - 2026-03-23
+
+### Added
+- **Rezepte/Kochen-Skill** — Rezeptsuche (Spoonacular + Edamam Fallback), Nährwert-Infos (Open Food Facts), Favoriten-Verwaltung, Wochenplan/Meal-Planning mit Kalender-Sync, Einkaufslisten-Generierung (LLM orchestriert über bestehende todo/microsoft_todo Skills). Diät-Preferences pro User (vegetarisch, Allergien etc.) als Default-Filter, jederzeit überschreibbar. Watch-kompatibel, ReasoningEngine-Integration für cross-domain Insights. Migration v40 (recipe_favorites, meal_plans). Setup per Chat (`setup_service`) oder ENV (`ALFRED_RECIPE_SPOONACULAR_API_KEY`, `ALFRED_RECIPE_EDAMAM_APP_ID`).
+
 ## [0.19.0-multi-ha.112] - 2026-03-23
 
 ### Added
