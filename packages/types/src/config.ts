@@ -417,6 +417,11 @@ export interface ProxmoxBackupConfig {
   verifyTls?: boolean;
 }
 
+export interface RecipeConfig {
+  spoonacular?: { apiKey: string };
+  edamam?: { appId: string; appKey: string };
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -453,6 +458,7 @@ export interface AlfredConfig {
   energy?: EnergyPriceConfig;
   bitpanda?: BitpandaConfig;
   trading?: TradingConfig;
+  recipe?: RecipeConfig;
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;

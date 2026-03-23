@@ -432,6 +432,11 @@ export const ProxmoxBackupConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const RecipeConfigSchema = z.object({
+  spoonacular: z.object({ apiKey: z.string() }).optional(),
+  edamam: z.object({ appId: z.string(), appKey: z.string() }).optional(),
+}).optional();
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -468,6 +473,7 @@ export const AlfredConfigSchema = z.object({
   energy: EnergyPriceConfigSchema.optional(),
   bitpanda: BitpandaConfigSchema.optional(),
   trading: TradingConfigSchema.optional(),
+  recipe: RecipeConfigSchema,
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),

@@ -184,6 +184,10 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_REASONING_ENABLED: ['reasoning', 'enabled'],
   ALFRED_REASONING_SCHEDULE: ['reasoning', 'schedule'],
   ALFRED_REASONING_TIER: ['reasoning', 'tier'],
+  // Recipe
+  ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
+  ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],
+  ALFRED_RECIPE_EDAMAM_APP_KEY: ['recipe', 'edamam', 'appKey'],
 };
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
