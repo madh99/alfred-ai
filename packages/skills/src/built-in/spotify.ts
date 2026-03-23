@@ -464,9 +464,32 @@ export class SpotifySkill extends Skill {
 
   // ── Device Resolution ───────────────────────────────────────────
 
-  private async resolveDevice(cfg: SpotifyConfig, account: string, device: string): Promise<string> {
+  /**
+   * Get all devices — merges /me/player/devices with the active device from /me/player.
+   * Sonos speakers via Spotify Connect have is_restricted=true and often DON'T appear
+   * in /devices, but DO appear as the active device in /player.
+   */
+  private async getAllDevices(cfg: SpotifyConfig, account: string): Promise<Array<{ id: string; name: string; type: string; is_active: boolean; volume_percent: number }>> {
     const data = await this.spotifyRequest(cfg, account, '/me/player/devices');
-    const devices = (data?.devices ?? []) as Array<{ id: string; name: string; is_active: boolean }>;
+    const devices = [...((data?.devices ?? []) as Array<{ id: string | null; name: string; type: string; is_active: boolean; volume_percent: number }>)];
+
+    // Also check /me/player for the active device (Sonos Connect devices often only appear here)
+    try {
+      const player = await this.spotifyRequest(cfg, account, '/me/player');
+      if (player?.device?.name) {
+        const activeDevice = player.device as { id: string | null; name: string; type: string; is_active: boolean; volume_percent: number };
+        const alreadyListed = devices.some(d => d.name === activeDevice.name);
+        if (!alreadyListed) {
+          devices.push({ ...activeDevice, id: activeDevice.id ?? `active:${activeDevice.name}`, is_active: true });
+        }
+      }
+    } catch { /* /me/player may fail if nothing is playing */ }
+
+    return devices.filter(d => d.id != null) as Array<{ id: string; name: string; type: string; is_active: boolean; volume_percent: number }>;
+  }
+
+  private async resolveDevice(cfg: SpotifyConfig, account: string, device: string): Promise<string> {
+    const devices = await this.getAllDevices(cfg, account);
 
     const byName = devices.find(d => d.name.toLowerCase() === device.toLowerCase());
     if (byName) return byName.id;
@@ -475,7 +498,7 @@ export class SpotifySkill extends Skill {
     if (byPartial) return byPartial.id;
 
     const available = devices.map(d => `${d.name}${d.is_active ? ' (aktiv)' : ''}`).join(', ');
-    throw new Error(`Geraet "${device}" nicht gefunden. Verfuegbar: ${available || 'keine'}`);
+    throw new Error(`Gerät "${device}" nicht gefunden. Verfügbar: ${available || 'keine'}`);
   }
 
   // ── Helpers ─────────────────────────────────────────────────────
@@ -652,11 +675,10 @@ export class SpotifySkill extends Skill {
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
-    const data = await this.spotifyRequest(cfg, account, '/me/player/devices');
-    const devices = (data?.devices ?? []) as Array<{ id: string; name: string; type: string; is_active: boolean; volume_percent: number }>;
+    const devices = await this.getAllDevices(cfg, account);
 
     if (devices.length === 0) {
-      return { success: true, data: { devices: [] }, display: 'Keine Spotify-Geraete gefunden. Oeffne Spotify auf einem Geraet.' };
+      return { success: true, data: { devices: [] }, display: 'Keine Spotify-Geräte gefunden. Öffne Spotify auf einem Gerät.' };
     }
 
     const lines = devices.map(d =>
@@ -666,7 +688,7 @@ export class SpotifySkill extends Skill {
     return {
       success: true,
       data: { devices: devices.map(d => ({ id: d.id, name: d.name, type: d.type, is_active: d.is_active, volume_percent: d.volume_percent })) },
-      display: `Spotify-Geraete:\n${lines.join('\n')}`,
+      display: `Spotify-Geräte:\n${lines.join('\n')}`,
     };
   }
 
