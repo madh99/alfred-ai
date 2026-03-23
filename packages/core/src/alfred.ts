@@ -479,6 +479,13 @@ export class Alfred {
       this.logger.info({ grid: this.config.energy?.gridName }, 'Energy price skill registered');
     }
 
+    // 4p2. Crypto price (CoinGecko — always available, no API key needed)
+    {
+      const { CryptoPriceSkill } = await import('@alfred/skills');
+      skillRegistry.register(new CryptoPriceSkill());
+      this.logger.info('Crypto price skill registered');
+    }
+
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
     {
       const { MarketplaceSkill } = await import('@alfred/skills');

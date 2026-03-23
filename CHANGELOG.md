@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.107] - 2026-03-23
+
+### Added
+- **Crypto-Preis-Skill** — Kryptowährungspreise und Marktdaten via CoinGecko API (kostenlos, kein API-Key nötig). Actions: `price` (aktueller Preis), `top` (Top N nach Marktkapitalisierung), `search` (Coin suchen), `history` (Preisverlauf). Watch-kompatibel für Preis-Alerts. 60s Cache für Rate-Limiting. Symbol-Aliase (btc→bitcoin, eth→ethereum etc.).
+
 ## [0.19.0-multi-ha.106] - 2026-03-23
 
 ### Fixed
