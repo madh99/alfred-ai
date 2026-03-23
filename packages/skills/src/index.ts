@@ -51,6 +51,7 @@ export { BitpandaSkill } from './built-in/bitpanda.js';
 export { TradingSkill } from './built-in/trading.js';
 export { RecipeSkill } from './built-in/recipe.js';
 export { SpotifySkill } from './built-in/spotify.js';
+export { SonosSkill } from './built-in/sonos.js';
 export { TransitSkill } from './built-in/transit.js';
 export type { TransitClientInterface, TransitStop, TransitJourney, TransitDeparture, TransitLeg, JourneyOptions, DepartureOptions } from './built-in/transit.js';
 export { ConfigureSkill } from './built-in/configure.js';
