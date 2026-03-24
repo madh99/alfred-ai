@@ -5,9 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.135] - 2026-03-23
+## [0.19.0-multi-ha.136] - 2026-03-24
 
 ### Fixed
+- **Skill-Filter Plural-Bug** — `\b(rezept)\b` matchte "Rezepte" NICHT (Plural), `\b(hotel)\b` matchte "Hotels" NICHT etc. Dadurch FALLBACK auf alle 43 Skills (~13.500 Tokens) statt gezielter Kategorie (~2.500-6.600 Tokens). Alle Keywords auf `\w*`-Suffix umgestellt (rezept→rezept\w*, hotel→hotels?\w* etc.). Massive Token-Reduktion: -50% bis -80% Input pro Request.
+- **Sonos Timeout** — Von 15s auf 30s erhöht. UPnP-Discovery + Stream-Setup brauchen bei langsamem Netzwerk mehr Zeit.
+- **Sonos Discovery-Cache** — Von 5 Min auf 10 Min erhöht. Weniger Re-Discovery bei aufeinanderfolgenden Befehlen.
+- **Media Skill-Filter** — Raumnamen (Halle, Küche, Wohnzimmer, Bad, Schlafzimmer) und "spiel*" als Keywords ergänzt. "Spiel Ö3 auf Halle" wird jetzt korrekt als media-Kategorie erkannt.
 - **Travel-Skill Kategorie** — Von `'information'` auf `'productivity'` geändert. Die Reise-Keywords (flug, hotel, reise, barcelona) standen im productivity-Regex des Skill-Filters, aber der Skill hatte category `'information'` — wurde daher nie dem LLM angeboten.
 
 ### Changed

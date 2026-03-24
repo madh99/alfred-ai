@@ -25,7 +25,7 @@ export class SonosSkill extends Skill {
   private sonosModule: any;
   private devices = new Map<string, DeviceEntry>();
   private lastDiscovery = 0;
-  private readonly DISCOVERY_TTL = 300_000; // 5 min
+  private readonly DISCOVERY_TTL = 600_000; // 10 min
 
   // Cloud API state
   private cloudAccessToken?: string;
@@ -45,7 +45,7 @@ export class SonosSkill extends Skill {
     version: '1.0.0',
     riskLevel: 'write',
     category: 'media',
-    timeoutMs: 15_000,
+    timeoutMs: 30_000,
     inputSchema: {
       type: 'object',
       required: ['action'],
