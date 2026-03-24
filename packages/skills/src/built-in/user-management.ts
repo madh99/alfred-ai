@@ -346,7 +346,7 @@ Actions:
     if (!serviceName) return { success: false, error: 'service_name ist erforderlich (z.B. "gmx", "gmail", "google-calendar").' };
     if (!config || typeof config !== 'object') return { success: false, error: 'config ist erforderlich. Für Email: {email, password}. Bekannte Provider werden automatisch konfiguriert.' };
 
-    const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo', 'recipe', 'travel', 'spotify'];
+    const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo', 'recipe', 'travel', 'spotify', 'onedrive'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }
@@ -431,7 +431,7 @@ Actions:
     const { clientId, clientSecret } = this.msAppCredentials;
     // Use admin's tenantId by default, allow user override for different tenant
     const tenantId = (input.tenant_id as string) || this.msAppCredentials.tenantId || 'common';
-    const scopes = 'offline_access Mail.ReadWrite Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Calendars.ReadWrite Calendars.ReadWrite.Shared Contacts.ReadWrite Contacts.ReadWrite.Shared Tasks.ReadWrite User.Read';
+    const scopes = 'offline_access Mail.ReadWrite Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Calendars.ReadWrite Calendars.ReadWrite.Shared Contacts.ReadWrite Contacts.ReadWrite.Shared Tasks.ReadWrite User.Read Files.ReadWrite.All Sites.Read.All';
 
     // Step 1: Device Code Request
     const deviceCodeRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/devicecode`, {
@@ -573,7 +573,7 @@ Actions:
     if (!serviceType) return { success: false, error: 'service_type ist erforderlich (email, calendar, contacts, todo).' };
     if (!sharedResource) return { success: false, error: 'shared_resource ist erforderlich (Email-Adresse der freigegebenen Ressource, z.B. "fam@dohnal.co").' };
 
-    const validTypes = ['email', 'calendar', 'contacts', 'todo', 'recipe', 'travel'];
+    const validTypes = ['email', 'calendar', 'contacts', 'todo', 'recipe', 'travel', 'onedrive'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }
