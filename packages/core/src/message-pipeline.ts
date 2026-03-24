@@ -34,6 +34,27 @@ const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const MAX_TOOL_RESULT_CHARS = 12_000; // Truncate tool results exceeding this length
+
+/** Sensitive field names to redact from tool results before sending to LLM. */
+const SECRET_PATTERNS = [
+  /("(?:refreshToken|refresh_token|accessToken|access_token|clientSecret|client_secret|apiKey|api_key|password|idToken|id_token|secret|token_secret|app_key|appKey)"\s*:\s*")([^"]{8,})(")/gi,
+  // Also catch long Bearer/JWT tokens that might appear inline
+  /\b(eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})/g,
+];
+
+/**
+ * Redact sensitive secrets from tool result content.
+ * Replaces token values with [REDACTED] while preserving the key name
+ * so the LLM knows a value EXISTS but cannot see or leak it.
+ */
+function redactSecrets(content: string): string {
+  let result = content;
+  // Redact JSON key-value patterns
+  result = result.replace(SECRET_PATTERNS[0], '$1[REDACTED]$3');
+  // Redact inline JWT tokens
+  result = result.replace(SECRET_PATTERNS[1], '[REDACTED_TOKEN]');
+  return result;
+}
 const MAX_CONTINUATION_ROUNDS = 3; // Max continuation rounds when LLM hits max_tokens
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
@@ -725,11 +746,11 @@ export class MessagePipeline {
         );
       }
 
-      // 9. Save final assistant response
+      // 9. Save final assistant response (redact any secrets that may have leaked into the response)
       await this.conversationManager.addMessage(
         conversation.id,
         'assistant',
-        responseText,
+        redactSecrets(responseText),
       );
 
       // 9. Active learning: extract memories from conversation (fire-and-forget)
@@ -975,6 +996,8 @@ export class MessagePipeline {
         const names = result.attachments.map(a => a.fileName).join(', ');
         content += `\n\n[${result.attachments.length} Datei(en) werden dem User gesendet: ${names}]`;
       }
+      // Redact sensitive secrets from tool results before sending to LLM
+      content = redactSecrets(content);
       content = truncateToolResult(content, MAX_TOOL_RESULT_CHARS);
       return {
         type: 'tool_result' as const,

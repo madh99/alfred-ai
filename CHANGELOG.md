@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.137] - 2026-03-24
+## [0.19.0-multi-ha.138] - 2026-03-24
+
+### Added
+- **Secrets-Redaction in LLM Tool-Results** — Sensitive Felder (`refreshToken`, `clientSecret`, `accessToken`, `password`, `apiKey`, JWT-Tokens) werden aus Tool-Results maskiert bevor sie ans LLM gesendet werden. Verhindert dass Tokens in Chat-Antworten oder Conversation-History landen. Auch finale Antworten werden beim Speichern gescrubt.
+- **IMAP-Passwort Sicherheitshinweis** — Bei `setup_service` mit Passwort-Feld wird ein Hinweis angezeigt: App-spezifische Passwörter oder Microsoft 365 (auth_microsoft) empfohlen.
 
 ### Fixed
 - **Skill-Filter Plural-Bug (ALLE Kategorien)** — `\w*`-Suffix auf alle Keywords in ALLEN 7 Kategorien angewendet (automation, files, infrastructure, identity zusätzlich zu productivity, information, media). Vorher: "Watches", "Dateien", "VMs", "Lichter", "Datenbanken", "Nachrichten" etc. wurden nicht erkannt → FALLBACK. 26/26 Test-Nachrichten matchen jetzt korrekt.

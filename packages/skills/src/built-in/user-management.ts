@@ -363,10 +363,16 @@ Actions:
 
     await context.userServiceResolver.saveServiceConfig(callerUser.id, serviceType, serviceName, resolvedConfig);
 
+    // Security hint when plain-text password is stored (IMAP email)
+    const hasPassword = config && typeof config === 'object' && ('password' in config);
+    const securityHint = hasPassword
+      ? '\n\n⚠️ **Sicherheitshinweis:** Dein Passwort wird verschlüsselt gespeichert. Für höhere Sicherheit empfehlen wir App-spezifische Passwörter oder Microsoft 365 (auth_microsoft).'
+      : '';
+
     return {
       success: true,
       data: { serviceType, serviceName },
-      display: `✅ Service "${serviceName}" (${serviceType}) konfiguriert.\n\nDeine persönliche ${serviceType}-Konfiguration wird ab sofort verwendet.`,
+      display: `✅ Service "${serviceName}" (${serviceType}) konfiguriert.\n\nDeine persönliche ${serviceType}-Konfiguration wird ab sofort verwendet.${securityHint}`,
     };
   }
 
