@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.136] - 2026-03-24
+## [0.19.0-multi-ha.137] - 2026-03-24
 
 ### Fixed
+- **Skill-Filter Plural-Bug (ALLE Kategorien)** — `\w*`-Suffix auf alle Keywords in ALLEN 7 Kategorien angewendet (automation, files, infrastructure, identity zusätzlich zu productivity, information, media). Vorher: "Watches", "Dateien", "VMs", "Lichter", "Datenbanken", "Nachrichten" etc. wurden nicht erkannt → FALLBACK. 26/26 Test-Nachrichten matchen jetzt korrekt.
 - **Skill-Filter Plural-Bug** — `\b(rezept)\b` matchte "Rezepte" NICHT (Plural), `\b(hotel)\b` matchte "Hotels" NICHT etc. Dadurch FALLBACK auf alle 43 Skills (~13.500 Tokens) statt gezielter Kategorie (~2.500-6.600 Tokens). Alle Keywords auf `\w*`-Suffix umgestellt (rezept→rezept\w*, hotel→hotels?\w* etc.). Massive Token-Reduktion: -50% bis -80% Input pro Request.
 - **Sonos Timeout** — Von 15s auf 30s erhöht. UPnP-Discovery + Stream-Setup brauchen bei langsamem Netzwerk mehr Zeit.
 - **Sonos Discovery-Cache** — Von 5 Min auf 10 Min erhöht. Weniger Re-Discovery bei aufeinanderfolgenden Befehlen.
