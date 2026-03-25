@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.147] - 2026-03-25
+## [0.19.0-multi-ha.148] - 2026-03-25
+
+### Fixed
+- **Reasoning "No Insights" Filterung** — LLM erklärt manchmal WARUM es keine Insights gibt statt einfach "KEINE_INSIGHTS" zu antworten. Neue `isNoInsights()` Funktion erkennt Varianten: "keine relevanten", "kein Zusammenhang", "keine Verbindung", "keine Handlungsempfehlung" etc. Verhindert dass leere Begründungen als Insights an den User gesendet werden.
+- **Wetter Wien → Missouri** — Geocoding bevorzugt jetzt AT/DE/CH Ergebnisse. Open-Meteo mit `language=de` und `count=5`, dann Auswahl nach Country-Code Priorität. "Wien" gibt jetzt Wien, Österreich statt Vienna, Missouri.
 
 ### Added
 - **Autonomie-Levels** — User kann per Memory (`autonomy_level`) steuern wie autonom Alfred handelt: `confirm_all` (Default, wie bisher — immer fragen), `proactive` (Low/Medium-Risk autonom ausführen + informieren), `autonomous` (alles außer High-Risk autonom). Setzbar per Chat: "Merke dir: autonomy_level = proactive".

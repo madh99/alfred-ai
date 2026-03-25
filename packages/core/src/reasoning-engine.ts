@@ -28,6 +28,26 @@ const MAX_OUTPUT_TOKENS = 1536;
 /** Marker separating text insights from structured actions in LLM response. */
 const ACTION_MARKER = '---ACTIONS---';
 
+/** Check if LLM response means "no insights" — catches variants beyond exact "KEINE_INSIGHTS". */
+function isNoInsights(text: string): boolean {
+  if (!text || text.length < 10) return true;
+  if (text === 'KEINE_INSIGHTS') return true;
+  const lower = text.toLowerCase();
+  // LLM sometimes explains WHY there are no insights instead of just saying KEINE_INSIGHTS
+  if (lower.includes('keine_insights')) return true;
+  if (lower.includes('keine insights')) return true;
+  if (lower.includes('nichts relevantes') || lower.includes('keine relevanten')) return true;
+  if (lower.includes('kein zusammenhang') || lower.includes('keinen zusammenhang')) return true;
+  if (lower.includes('kein bezug') || lower.includes('keinen bezug')) return true;
+  if (lower.includes('keine handlungsempfehlung')) return true;
+  if (lower.includes('keine verbindung') || lower.includes('keine querverbindung')) return true;
+  // If it says "no insights" in a longer explanation, still treat as no insights
+  if ((lower.includes('keine') || lower.includes('kein')) &&
+      (lower.includes('insight') || lower.includes('erkenntnis') || lower.includes('hinweis')) &&
+      !lower.includes('---actions---')) return true;
+  return false;
+}
+
 type ReasoningActionType = 'execute_skill' | 'create_reminder';
 
 interface ProposedAction {
@@ -165,7 +185,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       });
 
       const text = response.content.trim();
-      if (!text || text === 'KEINE_INSIGHTS' || text.length < 10) return;
+      if (isNoInsights(text)) return;
 
       const parsed = this.parseReasoningResponse(text);
 
@@ -263,7 +283,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       const durationMs = Date.now() - startMs;
 
       // Filter: no insights
-      if (!text || text === 'KEINE_INSIGHTS' || text.length < 10) {
+      if (isNoInsights(text)) {
         this.logger.info({ durationMs }, 'Reasoning pass: no insights');
         this.activityLogger?.logScheduledExec({
           actionId: 'reasoning-engine', actionName: 'Reasoning Engine',

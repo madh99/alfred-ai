@@ -113,12 +113,26 @@ export class WeatherSkill extends Skill {
   }
 
   private async geocode(query: string): Promise<GeoResult | undefined> {
-    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=1&language=en&format=json`;
+    // Request multiple results and prefer European locations (AT/DE/CH first)
+    const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=5&language=de&format=json`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Geocoding API returned ${res.status}`);
 
     const data = await res.json() as { results?: GeoResult[] };
-    return data.results?.[0];
+    const results = data.results ?? [];
+    if (results.length === 0) return undefined;
+
+    // Prefer AT > DE > CH > other European > any
+    const preferred = ['AT', 'DE', 'CH'];
+    for (const cc of preferred) {
+      const match = results.find((r: any) => r.country_code === cc);
+      if (match) return match;
+    }
+    // Fallback: first European result or first overall
+    const european = results.find((r: any) =>
+      ['AT', 'DE', 'CH', 'IT', 'FR', 'ES', 'NL', 'BE', 'PL', 'CZ', 'HU', 'SK', 'SI', 'HR', 'GB', 'IE', 'SE', 'NO', 'DK', 'FI', 'PT', 'GR', 'RO', 'BG'].includes(r.country_code)
+    );
+    return european ?? results[0];
   }
 
   private async fetchWeather(lat: number, lon: number): Promise<CurrentWeather> {
