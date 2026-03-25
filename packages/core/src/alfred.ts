@@ -564,6 +564,13 @@ export class Alfred {
       this.logger.info('Marketplace skill registered');
     }
 
+    // Shopping / Preisvergleich (immer registriert — Geizhals braucht keinen Key)
+    {
+      const { ShoppingSkill } = await import('@alfred/skills');
+      skillRegistry.register(new ShoppingSkill());
+      this.logger.info('Shopping skill registered');
+    }
+
     // 4q. Briefing (always available — gathers data from registered skills, reads memories for addresses)
     {
       const { BriefingSkill } = await import('@alfred/skills');
