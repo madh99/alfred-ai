@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.139] - 2026-03-25
+
+### Added
+- **OneDrive-Skill** — Microsoft OneDrive Dateiverwaltung über bestehende MS Graph Integration. Dateien auflisten, suchen, hoch-/herunterladen, Ordner erstellen, verschieben, kopieren, löschen, teilen (View/Edit Links). Zugriff auf eigene Dateien und freigegebene Ordner (SharedUser). Document-Ingest (RAG) direkt aus OneDrive. Nutzt denselben OAuth-Token wie Email/Kalender/Kontakte/Todo — kein zusätzliches Setup. MS Graph Scope um Files.ReadWrite.All + Sites.Read.All erweitert (erfordert erneutes auth_microsoft für OneDrive-Zugriff).
+
 ## [0.19.0-multi-ha.138] - 2026-03-24
 
 ### Added
