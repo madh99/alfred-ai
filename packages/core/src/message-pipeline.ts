@@ -495,8 +495,11 @@ export class MessagePipeline {
             // Get all calendar accounts
             const accountsResult = await this.skillSandbox.execute(calSkill, { action: 'list_accounts' }, baseContext);
             const accounts: string[] = [];
-            if (accountsResult.success && Array.isArray(accountsResult.data)) {
-              for (const a of accountsResult.data as any[]) {
+            if (accountsResult.success && accountsResult.data) {
+              // data is { accounts: string[], default: string } — not a direct array
+              const raw = (accountsResult.data as any).accounts ?? accountsResult.data;
+              const list = Array.isArray(raw) ? raw : [];
+              for (const a of list) {
                 const name = typeof a === 'string' ? a : a?.name ?? a?.account;
                 if (name) accounts.push(name);
               }

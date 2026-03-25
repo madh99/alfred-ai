@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.156] - 2026-03-25
+## [0.19.0-multi-ha.157] - 2026-03-26
 
 ### Fixed
+- **Kalender list_accounts Parsing** — `handleListAccounts()` gibt `{ accounts: string[] }` zurück, nicht ein direktes Array. Pipeline prüfte `Array.isArray(data)` was `false` war → Fallback auf leeren Default-Account. Fix: `data.accounts` extrahieren. Root Cause für "keine Kalendereinträge" trotz Events im Shared Calendar.
+- **Proaktives Denken Prompt** — Überarbeitet: Nur DIREKT relevante Verbindungen (Kalender-Konflikte, Kinder-Termine). Keine erzwungenen Verbindungen (Einkaufsliste hat nichts mit einer Reise zu tun). Explizite Anweisung: "Do NOT stretch connections".
 - **Kalender-Events ALLE Accounts** — Pipeline fragte nur den Default-Kalender ab (war leer). Jetzt: `list_accounts` → für JEDEN Account `list_events` → dedupliziert + sortiert. Shared Calendar (`fam@dohnal.co`) wird korrekt im System-Prompt angezeigt.
 - **Kalender-Events im System-Prompt** — `todayEvents` wurde vom PromptBuilder unterstützt aber von der Pipeline NIE übergeben (war immer `undefined`). Das LLM hat nie Kalender-Termine im Kontext gesehen. Fix: Pipeline lädt jetzt Events der nächsten 7 Tage via Calendar-Skill (mit korrektem Multi-User/Shared-Calendar Context) und übergibt sie an den PromptBuilder. Abschnitt umbenannt zu "Upcoming events (next 7 days)".
 
