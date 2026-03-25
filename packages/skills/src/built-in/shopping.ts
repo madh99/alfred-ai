@@ -465,38 +465,47 @@ export class ShoppingSkill extends Skill {
     this.lastRequestTime = Date.now();
   }
 
+  /** Stored Cloudflare cookies — persisted across requests to avoid repeated challenges. */
+  private cfCookies = '';
+
   private async fetchGeizhals(url: string, ttl: number): Promise<string> {
     await this.throttle();
     const cached = this.getCached<string>(url);
     if (cached) return cached;
 
+    // Include stored Cloudflare cookies from previous requests
+    const headers: Record<string, string> = { ...this.HEADERS };
+    if (this.cfCookies) headers['Cookie'] = this.cfCookies;
+
     let res: Response;
     try {
-      res = await fetch(url, {
-        headers: this.HEADERS,
-        signal: AbortSignal.timeout(15_000),
-      });
+      res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
     } catch (fetchErr: any) {
       throw new Error(`Geizhals fetch fehlgeschlagen: ${fetchErr.message}`);
     }
 
+    // Extract and store Cloudflare cookies for future requests
+    this.extractCookies(res);
+
     if (!res.ok) {
-      // Log debug info for troubleshooting
       const body = await res.text().catch(() => '');
       const isChallenge = body.includes('challenge') || body.includes('Checking');
-      console.warn(`[ShoppingSkill] Geizhals ${res.status} | URL: ${url.slice(0, 100)} | Body: ${body.length} bytes | Challenge: ${isChallenge} | Server: ${res.headers.get('server')}`);
+      console.warn(`[ShoppingSkill] Geizhals ${res.status} | Challenge: ${isChallenge} | Cookies: ${this.cfCookies.length > 0}`);
 
       if (res.status === 403) {
-        // Cloudflare block — retry once after 2s delay
-        await new Promise(r => setTimeout(r, 2000));
-        const retry = await fetch(url, { headers: this.HEADERS, signal: AbortSignal.timeout(15_000) });
-        if (!retry.ok) {
-          const retryBody = await retry.text().catch(() => '');
-          throw new Error(`Geizhals nicht erreichbar (${retry.status}, retry auch ${retry.status}, challenge: ${retryBody.includes('challenge')}, body: ${retryBody.length} bytes)`);
+        // Retry with increasing delays and accumulated cookies (up to 3 attempts)
+        for (const delay of [2000, 3000, 5000]) {
+          await new Promise(r => setTimeout(r, delay));
+          const retryHeaders = { ...this.HEADERS, ...(this.cfCookies ? { Cookie: this.cfCookies } : {}) };
+          const retry = await fetch(url, { headers: retryHeaders, signal: AbortSignal.timeout(15_000) });
+          this.extractCookies(retry);
+          if (retry.ok) {
+            const html = await retry.text();
+            this.setCache(url, html, ttl);
+            return html;
+          }
         }
-        const html = await retry.text();
-        this.setCache(url, html, ttl);
-        return html;
+        throw new Error('Geizhals nicht erreichbar (Cloudflare Challenge). Versuche es in einigen Minuten erneut.');
       }
 
       throw new Error(`Geizhals Fehler: ${res.status}`);
@@ -504,6 +513,31 @@ export class ShoppingSkill extends Skill {
     const html = await res.text();
     this.setCache(url, html, ttl);
     return html;
+  }
+
+  /** Extract Set-Cookie headers and accumulate for future requests. */
+  private extractCookies(res: Response): void {
+    const setCookies = res.headers.getSetCookie?.() ?? [];
+    if (setCookies.length === 0) {
+      // Fallback: try raw header
+      const raw = res.headers.get('set-cookie');
+      if (raw) setCookies.push(...raw.split(/,(?=\s*\w+=)/));
+    }
+    if (setCookies.length > 0) {
+      const existing = new Map<string, string>();
+      // Parse existing cookies
+      for (const c of this.cfCookies.split('; ').filter(Boolean)) {
+        const [k] = c.split('=', 1);
+        if (k) existing.set(k, c);
+      }
+      // Merge new cookies
+      for (const sc of setCookies) {
+        const cookiePart = sc.split(';')[0].trim();
+        const [k] = cookiePart.split('=', 1);
+        if (k) existing.set(k, cookiePart);
+      }
+      this.cfCookies = [...existing.values()].join('; ');
+    }
   }
 
   private decodeEntities(s: string): string {

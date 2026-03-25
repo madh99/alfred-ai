@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.142] - 2026-03-25
+## [0.19.0-multi-ha.144] - 2026-03-25
+
+### Fixed
+- **Shopping-Skill Cloudflare Challenge** — Geizhals nutzt dynamische Cloudflare JS-Challenges die reinen HTTP-Fetch blocken (403). Fix: Cookie-Persistenz über Requests (Cloudflare `__cf_bm` und `_cfuvid` Cookies werden extrahiert und bei Folge-Requests mitgeschickt). Retry-Kette mit steigenden Delays (2s, 3s, 5s). Reduziert 403-Rate deutlich.
 
 ### Added
 - **Shopping/Preisvergleich-Skill** — Produktsuche und Preisvergleich über Geizhals.at (HTML-Parsing, kein API-Key nötig). Actions: search (Freitextsuche), category (Kategorie mit Filtern), detail (alle Anbieter), price_history (Preisverlauf), compare (Produktvergleich), cheapest (günstigstes Angebot, Watch-kompatibel für Preis-Alerts). Unterstützt alle Geizhals-Kategorien (Notebooks, Smartphones, GPUs, TVs etc.). Self-Throttling (2s zwischen Requests). Ergänzt den bestehenden MarketplaceSkill (eBay/Willhaben) um Neuware-Preisvergleich.
