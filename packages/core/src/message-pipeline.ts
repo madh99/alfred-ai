@@ -482,7 +482,7 @@ export class MessagePipeline {
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
-      // Load upcoming calendar events for proactive cross-context awareness
+      // Load upcoming calendar events from ALL accounts for proactive cross-context awareness
       let upcomingEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined;
       if (this.skillRegistry && this.skillSandbox) {
         try {
@@ -490,19 +490,52 @@ export class MessagePipeline {
           if (calSkill) {
             const now = new Date();
             const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-            const result = await this.skillSandbox.execute(calSkill, {
-              action: 'list_events',
-              start: now.toISOString(),
-              end: weekEnd.toISOString(),
-            }, baseContext);
-            if (result.success && Array.isArray(result.data)) {
-              upcomingEvents = (result.data as any[]).map(e => ({
-                title: e.title ?? e.subject ?? '',
-                start: new Date(e.start),
-                end: new Date(e.end),
-                location: e.location,
-                allDay: e.allDay,
-              }));
+            const allEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> = [];
+
+            // Get all calendar accounts
+            const accountsResult = await this.skillSandbox.execute(calSkill, { action: 'list_accounts' }, baseContext);
+            const accounts: string[] = [];
+            if (accountsResult.success && Array.isArray(accountsResult.data)) {
+              for (const a of accountsResult.data as any[]) {
+                const name = typeof a === 'string' ? a : a?.name ?? a?.account;
+                if (name) accounts.push(name);
+              }
+            }
+            if (accounts.length === 0) accounts.push(''); // fallback: default account
+
+            // Query each account
+            for (const account of accounts) {
+              try {
+                const result = await this.skillSandbox.execute(calSkill, {
+                  action: 'list_events',
+                  start: now.toISOString(),
+                  end: weekEnd.toISOString(),
+                  ...(account ? { account } : {}),
+                }, baseContext);
+                if (result.success && Array.isArray(result.data)) {
+                  for (const e of result.data as any[]) {
+                    allEvents.push({
+                      title: e.title ?? e.subject ?? '',
+                      start: new Date(e.start),
+                      end: new Date(e.end),
+                      location: e.location,
+                      allDay: e.allDay,
+                    });
+                  }
+                }
+              } catch { /* skip this account */ }
+            }
+
+            if (allEvents.length > 0) {
+              // Sort by start time, deduplicate by title+start
+              allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
+              const seen = new Set<string>();
+              upcomingEvents = allEvents.filter(e => {
+                const key = `${e.title}:${e.start.toISOString().slice(0, 16)}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+              });
             }
           }
         } catch { /* calendar not available — continue without */ }

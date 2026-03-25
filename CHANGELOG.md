@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.155] - 2026-03-25
+## [0.19.0-multi-ha.156] - 2026-03-25
 
 ### Fixed
+- **Kalender-Events ALLE Accounts** — Pipeline fragte nur den Default-Kalender ab (war leer). Jetzt: `list_accounts` → für JEDEN Account `list_events` → dedupliziert + sortiert. Shared Calendar (`fam@dohnal.co`) wird korrekt im System-Prompt angezeigt.
 - **Kalender-Events im System-Prompt** — `todayEvents` wurde vom PromptBuilder unterstützt aber von der Pipeline NIE übergeben (war immer `undefined`). Das LLM hat nie Kalender-Termine im Kontext gesehen. Fix: Pipeline lädt jetzt Events der nächsten 7 Tage via Calendar-Skill (mit korrektem Multi-User/Shared-Calendar Context) und übergibt sie an den PromptBuilder. Abschnitt umbenannt zu "Upcoming events (next 7 days)".
 
 ### Changed
