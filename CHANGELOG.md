@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.151] - 2026-03-25
+## [0.19.0-multi-ha.154] - 2026-03-25
+
+### Changed
+- **Proaktives Denken im System-Prompt** — Statt eines separaten Parallel-LLM-Calls (`generateProactiveInsight`) wird das LLM jetzt direkt im System-Prompt angewiesen proaktiv zu denken. Neuer Abschnitt "Proactive thinking" instruiert: bei Plänen/Orten/Zeiten → Kalender prüfen, Memories querverweisen, Todos checken, Bedürfnisse antizipieren. Kein extra LLM-Call, keine extra Tokens, nutzt den bereits korrekt aufgebauten Kontext (Multi-User, Shared Kalender, Memories).
+- **Entfernt: `generateProactiveInsight`, `hasReasoningSignal`** — Der Parallel-LLM-Call Ansatz war architektonisch falsch (eigener Context-Aufbau parallel zur Pipeline, Shared Kalender nicht erreichbar, fragile Signal-Regex). Der richtige Ort für proaktives Denken ist der System-Prompt.
 
 ### Fixed
 - **Conversation-Reasoning Kontext** — Nutzt jetzt den echten SkillContext (mit userServiceResolver, masterUserId, linkedPlatformUserIds) statt eines Fake-Contexts. Shared Kalender (`fam@dohnal.co`) und Microsoft Todo werden korrekt abgefragt. Kalender-Fenster auf 7 Tage erweitert statt 48h.
