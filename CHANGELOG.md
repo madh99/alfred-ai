@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.144] - 2026-03-25
+## [0.19.0-multi-ha.145] - 2026-03-25
 
 ### Fixed
+- **Shopping-Skill Puppeteer Fallback** — Bei Cloudflare JS-Challenge (403) wechselt der Skill automatisch auf Puppeteer (headless Chromium). Erster Request via fetch() (schnell), bei 403 Switch auf Puppeteer (löst JS-Challenge). Browser-Instanz wird wiederverwendet. Benötigt Chromium auf dem Server (`apt install chromium-browser`).
 - **Shopping-Skill Cloudflare Challenge** — Geizhals nutzt dynamische Cloudflare JS-Challenges die reinen HTTP-Fetch blocken (403). Fix: Cookie-Persistenz über Requests (Cloudflare `__cf_bm` und `_cfuvid` Cookies werden extrahiert und bei Folge-Requests mitgeschickt). Retry-Kette mit steigenden Delays (2s, 3s, 5s). Reduziert 403-Rate deutlich.
 
 ### Added

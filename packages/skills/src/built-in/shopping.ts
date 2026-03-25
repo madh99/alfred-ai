@@ -8,6 +8,10 @@ export class ShoppingSkill extends Skill {
   private readonly HISTORY_CACHE_TTL = 3600_000;  // 1h
   private lastRequestTime = 0;
   private readonly MIN_REQUEST_INTERVAL = 2000;   // 2s between requests
+  private puppeteerModule: any = null;
+  private puppeteerBrowser: any = null;
+  /** Track if fetch works or if we need Puppeteer */
+  private usePuppeteer = false;
 
   private readonly HEADERS: Record<string, string> = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -473,7 +477,12 @@ export class ShoppingSkill extends Skill {
     const cached = this.getCached<string>(url);
     if (cached) return cached;
 
-    // Include stored Cloudflare cookies from previous requests
+    // If previous requests needed Puppeteer, skip fetch and go straight to browser
+    if (this.usePuppeteer) {
+      return this.fetchWithPuppeteer(url, ttl);
+    }
+
+    // Try fetch first (fast path)
     const headers: Record<string, string> = { ...this.HEADERS };
     if (this.cfCookies) headers['Cookie'] = this.cfCookies;
 
@@ -481,41 +490,72 @@ export class ShoppingSkill extends Skill {
     try {
       res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
     } catch (fetchErr: any) {
-      throw new Error(`Geizhals fetch fehlgeschlagen: ${fetchErr.message}`);
+      // Network error — try Puppeteer
+      return this.fetchWithPuppeteer(url, ttl);
     }
 
-    // Extract and store Cloudflare cookies for future requests
     this.extractCookies(res);
 
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      const isChallenge = body.includes('challenge') || body.includes('Checking');
-      console.warn(`[ShoppingSkill] Geizhals ${res.status} | Challenge: ${isChallenge} | Cookies: ${this.cfCookies.length > 0}`);
-
-      if (res.status === 403) {
-        // Retry with increasing delays and accumulated cookies (up to 3 attempts)
-        for (const delay of [2000, 3000, 5000]) {
-          await new Promise(r => setTimeout(r, delay));
-          const retryHeaders = { ...this.HEADERS, ...(this.cfCookies ? { Cookie: this.cfCookies } : {}) };
-          const retry = await fetch(url, { headers: retryHeaders, signal: AbortSignal.timeout(15_000) });
-          this.extractCookies(retry);
-          if (retry.ok) {
-            const html = await retry.text();
-            this.setCache(url, html, ttl);
-            return html;
-          }
-        }
-        throw new Error('Geizhals nicht erreichbar (Cloudflare Challenge). Versuche es in einigen Minuten erneut.');
-      }
-
-      throw new Error(`Geizhals Fehler: ${res.status}`);
+    if (res.ok) {
+      const html = await res.text();
+      this.setCache(url, html, ttl);
+      return html;
     }
-    const html = await res.text();
-    this.setCache(url, html, ttl);
-    return html;
+
+    if (res.status === 403) {
+      console.warn(`[ShoppingSkill] Geizhals 403 — switching to Puppeteer fallback`);
+      this.usePuppeteer = true;
+      return this.fetchWithPuppeteer(url, ttl);
+    }
+
+    throw new Error(`Geizhals Fehler: ${res.status}`);
   }
 
-  /** Extract Set-Cookie headers and accumulate for future requests. */
+  /** Fallback: use Puppeteer (headless Chromium) to bypass Cloudflare JS challenges. */
+  private async fetchWithPuppeteer(url: string, ttl: number): Promise<string> {
+    const pup = await this.loadPuppeteer();
+    if (!pup) {
+      throw new Error('Geizhals Cloudflare Challenge — Puppeteer/Chromium nicht installiert. Installiere: apt install chromium-browser && npm install puppeteer');
+    }
+
+    if (!this.puppeteerBrowser || !this.puppeteerBrowser.connected) {
+      this.puppeteerBrowser = await pup.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      });
+    }
+
+    const page = await this.puppeteerBrowser.newPage();
+    try {
+      await page.setUserAgent(this.HEADERS['User-Agent']);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+      // Wait briefly for Cloudflare challenge to resolve
+      await new Promise(r => setTimeout(r, 2000));
+      const html = await page.content();
+      this.setCache(url, html, ttl);
+      return html;
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  private async loadPuppeteer(): Promise<any> {
+    if (this.puppeteerModule) return this.puppeteerModule;
+    try {
+      const mod = await (Function('return import("puppeteer")')() as Promise<any>);
+      this.puppeteerModule = mod.default ?? mod;
+      return this.puppeteerModule;
+    } catch {
+      try {
+        const mod = await (Function('return import("puppeteer-core")')() as Promise<any>);
+        this.puppeteerModule = mod.default ?? mod;
+        return this.puppeteerModule;
+      } catch {
+        return null;
+      }
+    }
+  }
+
   private extractCookies(res: Response): void {
     const setCookies = res.headers.getSetCookie?.() ?? [];
     if (setCookies.length === 0) {
