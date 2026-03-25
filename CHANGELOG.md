@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.148] - 2026-03-25
+## [0.19.0-multi-ha.149] - 2026-03-25
+
+### Added
+- **Conversation-Reasoning** — Bei "Signal-Nachrichten" (Ortsangaben, Zeitangaben, Fahrten, Käufe) führt Alfred einen schnellen Cross-Context Check durch: Memories + Kalender + Todos werden gegen die Nachricht geprüft. Proaktive Hinweise (Zeitkonflikte, Gelegenheiten, vergessene Verpflichtungen) werden direkt an die Antwort angehängt. ~250 extra Tokens pro Signal-Nachricht (fast-tier). Reagiert sofort, nicht erst beim nächsten Reasoning-Pass.
 
 ### Fixed
 - **Reasoning "No Insights" Filterung** — LLM erklärt manchmal WARUM es keine Insights gibt statt einfach "KEINE_INSIGHTS" zu antworten. Neue `isNoInsights()` Funktion erkennt Varianten: "keine relevanten", "kein Zusammenhang", "keine Verbindung", "keine Handlungsempfehlung" etc. Verhindert dass leere Begründungen als Insights an den User gesendet werden.

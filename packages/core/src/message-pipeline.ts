@@ -35,6 +35,15 @@ const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
 const MAX_TOOL_RESULT_CHARS = 12_000; // Truncate tool results exceeding this length
 
+/**
+ * Detect if a user message contains "reasoning signals" — mentions of places, times,
+ * travel, purchases, or plans that could benefit from proactive cross-context analysis.
+ */
+function hasReasoningSignal(text: string): boolean {
+  if (!text || text.length < 10) return false;
+  return /\b(fahr\w*|reis\w*|flieg\w*|flug\w*|morgen|übermorgen|nächst\w*\s+(woche|monat|sonntag|montag|dienstag|mittwoch|donnerstag|freitag|samstag)|am\s+(sonntag|montag|dienstag|mittwoch|donnerstag|freitag|samstag)|nach\s+\w{3,}|kauf\w*|bestell\w*|brauch\w*|termin|treffen|abhol\w*|besuch\w*|urlaub|wien|graz|linz|salzburg|innsbruck|münchen|berlin|budapest|prag)\b/i.test(text);
+}
+
 /** Sensitive field names to redact from tool results before sending to LLM. */
 const SECRET_PATTERNS = [
   /("(?:refreshToken|refresh_token|accessToken|access_token|clientSecret|client_secret|apiKey|api_key|password|idToken|id_token|secret|token_secret|app_key|appKey)"\s*:\s*")([^"]{8,})(")/gi,
@@ -799,9 +808,19 @@ export class MessagePipeline {
           await this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
         } catch { /* non-critical */ }
       }
+      // 11. Conversation-Reasoning: proactive insights for signal messages (fire-and-forget append)
+      let proactiveInsight: string | undefined;
+      if (this.memoryRepo && hasReasoningSignal(message.text)) {
+        try {
+          proactiveInsight = await this.generateProactiveInsight(
+            masterUserId, message.text, responseText, resolvedTimezone,
+          );
+        } catch { /* non-critical — don't block response */ }
+      }
+
       this.activeRequests.delete(requestKey);
       return {
-        text: responseText,
+        text: proactiveInsight ? `${responseText}\n\n${proactiveInsight}` : responseText,
         attachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
         usedSkills: usedSkillNames.size > 0 ? [...usedSkillNames] : undefined,
       };
@@ -977,6 +996,104 @@ export class MessagePipeline {
       ? user.content.filter(b => b.type === 'tool_result').map(b => b.content).join(',')
       : '';
     return `${toolUses}|${toolResults}`;
+  }
+
+  /**
+   * Generate a proactive insight by cross-referencing the user's message with
+   * their memories, calendar, and todos. Only called for "signal" messages
+   * (mentions of places, times, travel, purchases).
+   * Returns a short insight string or undefined if nothing relevant.
+   */
+  private async generateProactiveInsight(
+    userId: string,
+    userMessage: string,
+    assistantResponse: string,
+    timezone?: string,
+  ): Promise<string | undefined> {
+    if (!this.memoryRepo) return undefined;
+
+    // Load context: memories + calendar events + todos (lightweight)
+    let memoriesText = '';
+    let calendarText = '';
+    let todosText = '';
+
+    try {
+      const memories = await this.memoryRepo.getRecentForPrompt(userId, 15);
+      if (memories.length > 0) {
+        memoriesText = memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+      }
+    } catch { /* skip */ }
+
+    // Try to get calendar data via skill execution
+    if (this.skillRegistry && this.skillSandbox) {
+      try {
+        const calSkill = this.skillRegistry.get('calendar');
+        if (calSkill) {
+          const now = new Date();
+          const tomorrow = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+          const result = await this.skillSandbox.execute(calSkill, {
+            action: 'list_events',
+            start: now.toISOString(),
+            end: tomorrow.toISOString(),
+          }, { userId, chatId: userId, platform: 'cli', chatType: 'dm' as const, timezone: timezone ?? 'Europe/Vienna', conversationId: '' });
+          if (result.success && result.display) calendarText = result.display;
+        }
+      } catch { /* skip */ }
+
+      try {
+        const todoSkill = this.skillRegistry.get('todo');
+        if (todoSkill) {
+          const result = await this.skillSandbox.execute(todoSkill, {
+            action: 'list',
+          }, { userId, chatId: userId, platform: 'cli', chatType: 'dm' as const, timezone: timezone ?? 'Europe/Vienna', conversationId: '' });
+          if (result.success && result.display) todosText = result.display;
+        }
+      } catch { /* skip */ }
+    }
+
+    // Skip if no context available
+    if (!memoriesText && !calendarText && !todosText) return undefined;
+
+    const prompt = `Du bist Alfreds proaktives Cross-Context Modul. Der User hat gerade geschrieben:
+"${userMessage.slice(0, 300)}"
+
+Alfred hat bereits geantwortet:
+"${assistantResponse.slice(0, 300)}"
+
+Dein Job: Prüfe ob es ZUSÄTZLICHE, NICHT-OFFENSICHTLICHE Hinweise gibt die Alfred NOCH NICHT erwähnt hat.
+Verbinde die Nachricht mit den bestehenden Daten des Users:
+
+=== Erinnerungen ===
+${memoriesText || '(keine)'}
+
+=== Kalender (nächste 48h) ===
+${calendarText || '(kein Kalender)'}
+
+=== Offene Todos ===
+${todosText || '(keine Todos)'}
+
+REGELN:
+- NUR antworten wenn du etwas findest was Alfred NOCH NICHT gesagt hat
+- Zeitkonflikte, Gelegenheiten (Shop in der Nähe), vergessene Verpflichtungen
+- Max 2 kurze Sätze, konkret
+- Wenn nichts Relevantes: antworte exakt "SKIP"
+- Kein Smalltalk, keine Wiederholung von Alfreds Antwort`;
+
+    try {
+      const response = await this.llm.complete({
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: 256,
+        tier: 'fast',
+      });
+
+      const text = response.content.trim();
+      if (!text || text === 'SKIP' || text.length < 10) return undefined;
+      if (text.toLowerCase().includes('skip') || text.toLowerCase().includes('nichts relevant')) return undefined;
+
+      return `💡 ${text}`;
+    } catch {
+      return undefined;
+    }
   }
 
   private async executeToolCallsParallel(
