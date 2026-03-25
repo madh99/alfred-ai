@@ -90,7 +90,7 @@ export class ReasoningEngine {
     private readonly adapter?: AsyncDbAdapter,
   ) {
     this.enabled = config?.enabled !== false;
-    this.schedule = config?.schedule ?? 'morning_noon_evening';
+    this.schedule = config?.schedule ?? 'hourly';
     this.tier = config?.tier ?? 'fast';
     this.deduplicationHours = config?.deduplicationHours ?? 12;
   }
@@ -109,6 +109,88 @@ export class ReasoningEngine {
     if (this.tickTimer) {
       clearInterval(this.tickTimer);
       this.tickTimer = undefined;
+    }
+  }
+
+  /**
+   * Trigger a focused reasoning pass in response to an event (watch alert, etc.).
+   * Uses minimal context — only the event data + most relevant memories.
+   */
+  async triggerOnEvent(eventType: string, eventDescription: string, eventData: Record<string, unknown> = {}): Promise<void> {
+    if (!this.enabled) return;
+
+    // Distributed dedup: use event-specific slot (prevent both nodes from processing)
+    if (this.adapter && this.adapter.type === 'postgres') {
+      const slotKey = `reasoning-event:${Date.now().toString(36)}:${eventType}`;
+      const result = await this.adapter.execute(
+        'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+        [slotKey, this.nodeId, new Date().toISOString()],
+      );
+      if (result.changes === 0) return;
+    }
+
+    try {
+      // Focused context: only event + memories + calendar + todos (not full context)
+      const memories = await this.fetchMemories();
+      const events = await this.fetchCalendar(new Date());
+      const todos = await this.fetchTodos();
+
+      const prompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
+
+EVENT: ${eventType}
+DETAILS: ${eventDescription}
+DATEN: ${JSON.stringify(eventData).slice(0, 500)}
+
+KONTEXT:
+=== Kalender (n\u00E4chste 24h) ===
+${events}
+
+=== Offene Todos ===
+${todos}
+
+=== Erinnerungen \u00FCber den User ===
+${memories}
+
+Aufgabe: Analysiere ob dieses Event im Kontext der User-Daten eine SOFORTIGE Handlungsempfehlung oder einen wichtigen Hinweis ergibt.
+- Nur antworten wenn der Hinweis NICHT offensichtlich ist (der User hat das Event schon als Alert bekommen)
+- Suche nach Verbindungen: Hat der User einen Termin in der N\u00E4he des Angebots? Zeitkonflikt? Gelegenheit?
+- Max 1-2 S\u00E4tze, konkret und actionable
+- Wenn nichts Relevantes: antworte exakt "KEINE_INSIGHTS"
+${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00E4nge sie als JSON an (gleicher ${ACTION_MARKER} Format wie beim regul\u00E4ren Reasoning).` : ''}`;
+
+      const response = await this.llm.complete({
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: 512,
+        tier: this.tier,
+      });
+
+      const text = response.content.trim();
+      if (!text || text === 'KEINE_INSIGHTS' || text.length < 10) return;
+
+      const parsed = this.parseReasoningResponse(text);
+
+      // Send insights
+      if (parsed.insights.length > 0) {
+        const newInsights: string[] = [];
+        for (const insight of parsed.insights) {
+          if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
+        }
+        if (newInsights.length > 0) {
+          const message = `\u{1F4A1} **Alfred Insight**\n\n${newInsights.join('\n\n')}`;
+          const adapter = this.adapters.get(this.defaultPlatform);
+          if (adapter) {
+            await adapter.sendMessage(this.defaultChatId, message);
+            for (const insight of newInsights) await this.markSent(insight);
+          }
+        }
+      }
+
+      // Process actions with autonomy level
+      if (parsed.actions.length > 0) {
+        await this.processActions(parsed.actions);
+      }
+    } catch (err) {
+      this.logger.warn({ err, eventType }, 'Event-triggered reasoning failed');
     }
   }
 
@@ -557,31 +639,86 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
     await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
 
-  /** Skills that are safe to execute without user confirmation (read-only or low-impact write). */
-  private static readonly LOW_RISK_SKILLS = new Set([
-    'memory', 'reminder', 'note', 'todo', 'calculator',
-    'weather', 'energy_price', 'crypto_price', 'shopping',
-    'recipe', 'transit', 'routing', 'feed_reader',
+  /** Read-only skills — safe to execute silently. */
+  private static readonly AUTO_SKILLS = new Set([
+    'memory', 'calculator', 'weather', 'energy_price',
+    'crypto_price', 'routing', 'transit', 'feed_reader', 'shopping',
   ]);
+
+  /** Low-impact write skills — safe to execute and inform user. */
+  private static readonly PROACTIVE_SKILLS = new Set([
+    'reminder', 'note', 'todo', 'recipe', 'calendar',
+    'homeassistant', 'sonos', 'spotify',
+  ]);
+
+  // Everything else = HIGH_RISK -> always confirmation
+
+  private async getAutonomyLevel(): Promise<'confirm_all' | 'proactive' | 'autonomous'> {
+    try {
+      const mem = await this.memoryRepo.recall(this.defaultChatId, 'autonomy_level');
+      if (mem) {
+        const level = mem.value.toLowerCase().trim();
+        if (level.includes('autonomous') || level.includes('autonom')) return 'autonomous';
+        if (level.includes('proactive') || level.includes('proaktiv')) return 'proactive';
+      }
+    } catch { /* use default */ }
+    return 'confirm_all';
+  }
 
   private async processActions(actions: ProposedAction[]): Promise<void> {
     if (actions.length === 0) return;
-    const limit = actions.slice(0, 2); // max 2 actions per pass
+
+    // Load user autonomy preference
+    const autonomyLevel = await this.getAutonomyLevel();
+
+    const limit = actions.slice(0, 2);
     for (const action of limit) {
       if (await this.actionWasRecentlyProposed(action)) {
         this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
         continue;
       }
+
       try {
-        // Low-risk skills: execute directly without confirmation
-        if (ReasoningEngine.LOW_RISK_SKILLS.has(action.skillName)) {
+        const isAuto = ReasoningEngine.AUTO_SKILLS.has(action.skillName);
+        const isProactive = ReasoningEngine.PROACTIVE_SKILLS.has(action.skillName);
+
+        // Determine execution mode based on autonomy level
+        let executeDirectly = false;
+        let informUser = false;
+
+        switch (autonomyLevel) {
+          case 'autonomous':
+            executeDirectly = true;
+            informUser = !isAuto; // Inform for proactive+high, silent for auto
+            break;
+          case 'proactive':
+            executeDirectly = isAuto || isProactive;
+            informUser = isProactive; // Inform for proactive, silent for auto
+            break;
+          case 'confirm_all':
+          default:
+            executeDirectly = isAuto; // Only auto skills run silently
+            informUser = false;
+            break;
+        }
+
+        if (executeDirectly) {
           await this.executeDirectly(action);
           await this.markActionProposed(action);
-          this.logger.info({ action: action.description, skillName: action.skillName }, 'Reasoning: low-risk action executed directly');
+
+          if (informUser) {
+            const adapter = this.adapters.get(this.defaultPlatform);
+            if (adapter) {
+              await adapter.sendMessage(this.defaultChatId,
+                `\u26A1 **Proaktiv ausgef\u00FChrt:** ${action.description}`);
+            }
+          }
+
+          this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action executed');
           continue;
         }
 
-        // High-risk skills: require user confirmation
+        // High-risk or confirm_all mode -> confirmation queue
         if (!this.confirmationQueue) continue;
         await this.confirmationQueue.enqueue({
           chatId: this.defaultChatId,
@@ -594,7 +731,7 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
           timeoutMinutes: 60,
         });
         await this.markActionProposed(action);
-        this.logger.info({ action: action.description }, 'Reasoning: action enqueued for confirmation');
+        this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action enqueued for confirmation');
       } catch (err) {
         this.logger.error({ err, action: action.description }, 'Reasoning: failed to process action');
       }

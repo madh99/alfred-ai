@@ -26,6 +26,9 @@ export class WatchEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly tickIntervalMs = 60_000;
 
+  /** Optional callback invoked when a watch fires — used by ReasoningEngine for event-triggered reasoning. */
+  public onWatchTriggered?: (watchName: string, value: string, watchData: Record<string, unknown>) => void;
+
   constructor(
     private readonly watchRepo: WatchRepository,
     private readonly skillRegistry: SkillRegistry,
@@ -225,6 +228,7 @@ export class WatchEngine {
           lastValue: newLastValue,
           lastTriggeredAt: now,
         });
+        this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {});
         return; // Don't execute action directly
       }
 
@@ -356,6 +360,7 @@ export class WatchEngine {
         lastValue: newLastValue,
         lastTriggeredAt: now,
       });
+      this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {});
     } else {
       await this.watchRepo.updateAfterCheck(watch.id, {
         lastCheckedAt: now,

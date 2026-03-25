@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.147] - 2026-03-25
+
+### Added
+- **Autonomie-Levels** — User kann per Memory (`autonomy_level`) steuern wie autonom Alfred handelt: `confirm_all` (Default, wie bisher — immer fragen), `proactive` (Low/Medium-Risk autonom ausführen + informieren), `autonomous` (alles außer High-Risk autonom). Setzbar per Chat: "Merke dir: autonomy_level = proactive".
+- **Event-getriebenes Reasoning** — Watch-Alerts triggern sofort einen fokussierten Reasoning-Pass der das Event im Kontext (Kalender, Todos, Memories) analysiert. Beispiel: "RTX 5090 Preis gefallen" + "User hat morgen Termin in Wien" → "Abholung bei Cyberport Wien wäre auf dem Weg möglich."
+- **Reasoning Default auf hourly** — Statt 3x/Tag (morning_noon_evening) denkt Alfred jetzt stündlich. Konfigurierbar über `ALFRED_REASONING_SCHEDULE`.
+
 ## [0.19.0-multi-ha.146] - 2026-03-25
 
 ### Added

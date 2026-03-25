@@ -968,6 +968,14 @@ export class Alfred {
       }
     }
 
+    // Wire watch events -> reasoning engine for event-triggered reasoning
+    if (this.reasoningEngine) {
+      this.watchEngine.onWatchTriggered = (name, value, data) => {
+        this.reasoningEngine!.triggerOnEvent('watch_alert', `Watch "${name}" ausgelöst: ${value}`, data)
+          .catch(err => this.logger.warn({ err }, 'Event-triggered reasoning failed'));
+      };
+    }
+
     // Wire confirmation queue, activity logger, and skill health tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
