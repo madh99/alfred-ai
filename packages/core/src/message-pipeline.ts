@@ -529,6 +529,7 @@ export class MessagePipeline {
               } catch { /* skip this account */ }
             }
 
+            this.logger.info({ totalEvents: allEvents.length, accounts: accounts.join(',') }, 'Calendar events loaded for system prompt');
             if (allEvents.length > 0) {
               // Sort by start time, deduplicate by title+start
               allEvents.sort((a, b) => a.start.getTime() - b.start.getTime());
@@ -541,7 +542,7 @@ export class MessagePipeline {
               });
             }
           }
-        } catch { /* calendar not available — continue without */ }
+        } catch (calErr) { this.logger.warn({ err: calErr instanceof Error ? calErr.message : String(calErr) }, 'Calendar loading for system prompt failed'); }
       }
 
       let system = this.promptBuilder.buildSystemPrompt({
