@@ -470,22 +470,37 @@ export class ShoppingSkill extends Skill {
     const cached = this.getCached<string>(url);
     if (cached) return cached;
 
-    const res = await fetch(url, {
-      headers: this.HEADERS,
-      signal: AbortSignal.timeout(15_000),
-    });
-
-    if (res.status === 403) {
-      // Cloudflare block — retry once after delay
-      await new Promise(r => setTimeout(r, 1000));
-      const retry = await fetch(url, { headers: this.HEADERS, signal: AbortSignal.timeout(15_000) });
-      if (!retry.ok) throw new Error(`Geizhals nicht erreichbar (${retry.status})`);
-      const html = await retry.text();
-      this.setCache(url, html, ttl);
-      return html;
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        headers: this.HEADERS,
+        signal: AbortSignal.timeout(15_000),
+      });
+    } catch (fetchErr: any) {
+      throw new Error(`Geizhals fetch fehlgeschlagen: ${fetchErr.message}`);
     }
 
-    if (!res.ok) throw new Error(`Geizhals Fehler: ${res.status}`);
+    if (!res.ok) {
+      // Log debug info for troubleshooting
+      const body = await res.text().catch(() => '');
+      const isChallenge = body.includes('challenge') || body.includes('Checking');
+      console.warn(`[ShoppingSkill] Geizhals ${res.status} | URL: ${url.slice(0, 100)} | Body: ${body.length} bytes | Challenge: ${isChallenge} | Server: ${res.headers.get('server')}`);
+
+      if (res.status === 403) {
+        // Cloudflare block — retry once after 2s delay
+        await new Promise(r => setTimeout(r, 2000));
+        const retry = await fetch(url, { headers: this.HEADERS, signal: AbortSignal.timeout(15_000) });
+        if (!retry.ok) {
+          const retryBody = await retry.text().catch(() => '');
+          throw new Error(`Geizhals nicht erreichbar (${retry.status}, retry auch ${retry.status}, challenge: ${retryBody.includes('challenge')}, body: ${retryBody.length} bytes)`);
+        }
+        const html = await retry.text();
+        this.setCache(url, html, ttl);
+        return html;
+      }
+
+      throw new Error(`Geizhals Fehler: ${res.status}`);
+    }
     const html = await res.text();
     this.setCache(url, html, ttl);
     return html;
