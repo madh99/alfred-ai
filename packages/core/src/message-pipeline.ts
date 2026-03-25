@@ -482,10 +482,37 @@ export class MessagePipeline {
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
+      // Load upcoming calendar events for proactive cross-context awareness
+      let upcomingEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined;
+      if (this.skillRegistry && this.skillSandbox) {
+        try {
+          const calSkill = this.skillRegistry.get('calendar');
+          if (calSkill) {
+            const now = new Date();
+            const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+            const result = await this.skillSandbox.execute(calSkill, {
+              action: 'list_events',
+              start: now.toISOString(),
+              end: weekEnd.toISOString(),
+            }, baseContext);
+            if (result.success && Array.isArray(result.data)) {
+              upcomingEvents = (result.data as any[]).map(e => ({
+                title: e.title ?? e.subject ?? '',
+                start: new Date(e.start),
+                end: new Date(e.end),
+                location: e.location,
+                allDay: e.allDay,
+              }));
+            }
+          }
+        } catch { /* calendar not available — continue without */ }
+      }
+
       let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
         userProfile,
+        todayEvents: upcomingEvents,
         conversationSummary: summary?.summary,
       });
 

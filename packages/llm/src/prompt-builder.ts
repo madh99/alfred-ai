@@ -347,9 +347,9 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
       prompt += `\n- Server timezone: ${serverTimezone}`;
     }
 
-    // Today's calendar events
+    // Upcoming calendar events (next 7 days)
     if (todayEvents && todayEvents.length > 0) {
-      prompt += '\n\n## Today\'s events';
+      prompt += '\n\n## Upcoming events (next 7 days)';
       for (const event of todayEvents) {
         const startTime = event.allDay
           ? 'All day'

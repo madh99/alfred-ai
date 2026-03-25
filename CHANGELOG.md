@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.154] - 2026-03-25
+## [0.19.0-multi-ha.155] - 2026-03-25
+
+### Fixed
+- **Kalender-Events im System-Prompt** — `todayEvents` wurde vom PromptBuilder unterstützt aber von der Pipeline NIE übergeben (war immer `undefined`). Das LLM hat nie Kalender-Termine im Kontext gesehen. Fix: Pipeline lädt jetzt Events der nächsten 7 Tage via Calendar-Skill (mit korrektem Multi-User/Shared-Calendar Context) und übergibt sie an den PromptBuilder. Abschnitt umbenannt zu "Upcoming events (next 7 days)".
 
 ### Changed
 - **Proaktives Denken im System-Prompt** — Statt eines separaten Parallel-LLM-Calls (`generateProactiveInsight`) wird das LLM jetzt direkt im System-Prompt angewiesen proaktiv zu denken. Neuer Abschnitt "Proactive thinking" instruiert: bei Plänen/Orten/Zeiten → Kalender prüfen, Memories querverweisen, Todos checken, Bedürfnisse antizipieren. Kein extra LLM-Call, keine extra Tokens, nutzt den bereits korrekt aufgebauten Kontext (Multi-User, Shared Kalender, Memories).
