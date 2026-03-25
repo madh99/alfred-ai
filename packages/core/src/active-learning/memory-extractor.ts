@@ -6,6 +6,7 @@ import type { EmbeddingService } from '../embedding-service.js';
 const VALID_TYPES: MemoryType[] = [
   'fact', 'preference', 'correction', 'entity', 'decision',
   'relationship', 'principle', 'commitment', 'moment', 'skill',
+  'connection',
 ];
 
 interface ExtractedMemory {
@@ -16,23 +17,33 @@ interface ExtractedMemory {
   category: string;
 }
 
-const EXTRACTION_PROMPT = `You are a memory extraction system. Analyze the user message and extract personal facts about the USER (not about what they're asking).
+const EXTRACTION_PROMPT = `You are a memory extraction and cross-context reasoning system. Analyze the conversation AND existing memories to:
+1. Extract NEW personal facts about the user
+2. Detect CONNECTIONS between what the user says and what you already know
 
-Rules:
-- Only extract information the user STATES about themselves
+Rules for extraction:
+- Only extract information the user STATES or IMPLIES about themselves
 - Do NOT extract questions, requests, or commands
-- Do NOT extract information about topics they're asking about
 - Each memory needs: key (snake_case identifier), value (concise fact), type, confidence, category
-- Types: fact, preference, correction, entity, decision, relationship, principle, commitment, moment, skill
-- Confidence: 0.9+ for explicitly stated facts, 0.6-0.8 for implied, 0.4-0.6 for inferred
-- Category: personal, work, preferences, relationships, health, hobbies, education, location, other
-- Return a JSON array. If nothing worth extracting, return []
 
-Example input: "Ich lebe in Altlengbach und arbeite als Softwareentwickler"
-Example output: [{"key":"location","value":"Lebt in Altlengbach","type":"fact","confidence":0.95,"category":"location"},{"key":"occupation","value":"Softwareentwickler","type":"fact","confidence":0.95,"category":"work"}]
+Rules for connections (IMPORTANT — this is what makes you proactive):
+- Compare the new conversation against EXISTING MEMORIES below
+- If you spot a useful connection, create a memory with type "connection"
+- Connections should be ACTIONABLE — something the user would benefit from knowing
+- Examples: scheduling conflicts, opportunities (nearby shop for watched product), time-sensitive advice
+- Only create connections with confidence >= 0.6 (real, non-obvious insights)
 
-Extract memories from this conversation:
+Types: fact, preference, correction, entity, decision, relationship, principle, commitment, moment, skill, connection
+- "connection" = cross-context insight linking new information to existing memories
 
+Confidence: 0.9+ for explicitly stated, 0.6-0.8 for implied/connected, 0.4-0.6 for inferred
+Category: personal, work, preferences, relationships, health, hobbies, education, location, shopping, travel, schedule, other
+
+If nothing worth extracting or connecting, return []
+
+{EXISTING_MEMORIES}
+
+Conversation:
 User: {USER_MESSAGE}
 Assistant: {ASSISTANT_RESPONSE}
 
@@ -53,7 +64,18 @@ export class MemoryExtractor {
     assistantResponse: string,
   ): Promise<number> {
     try {
+      // Load existing memories for cross-context reasoning
+      let existingMemoriesBlock = '';
+      try {
+        const recent = await this.memoryRepo.getRecentForPrompt(userId, 20);
+        if (recent.length > 0) {
+          const lines = recent.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+          existingMemoriesBlock = `Existing memories about this user:\n${lines}\n\nLook for CONNECTIONS between these and the new conversation.\n`;
+        }
+      } catch { /* proceed without existing memories */ }
+
       const prompt = EXTRACTION_PROMPT
+        .replace('{EXISTING_MEMORIES}', existingMemoriesBlock)
         .replace('{USER_MESSAGE}', userMessage)
         .replace('{ASSISTANT_RESPONSE}', assistantResponse);
 

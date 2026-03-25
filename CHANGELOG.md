@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.145] - 2026-03-25
+## [0.19.0-multi-ha.146] - 2026-03-25
+
+### Added
+- **Cross-Context Memory Enrichment** — Memory-Extraktion erkennt jetzt Verbindungen zwischen neuen Aussagen und bestehenden Memories. Neuer Memory-Typ `connection` für cross-domain Insights (z.B. "User fährt morgen nach Wien + RTX 5090 Watch aktiv → Abholung bei Cyberport Wien möglich"). Die letzten 20 Memories werden als Kontext mitgegeben, das LLM sucht proaktiv nach Querverbindungen. Kostet ~200-400 extra Tokens pro Extraktion.
+- **Erweiterte Low-Risk Skills im Reasoning** — Weather, Energy, CryptoPrice, Shopping, Recipe, Transit, Routing, FeedReader als autonome read-only Skills im ReasoningEngine. Können ohne User-Bestätigung ausgeführt werden für proaktive Informationsbeschaffung.
 
 ### Fixed
 - **Shopping-Skill Puppeteer Fallback** — Bei Cloudflare JS-Challenge (403) wechselt der Skill automatisch auf Puppeteer (headless Chromium). Erster Request via fetch() (schnell), bei 403 Switch auf Puppeteer (löst JS-Challenge). Browser-Instanz wird wiederverwendet. Benötigt Chromium auf dem Server (`apt install chromium-browser`).

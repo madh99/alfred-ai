@@ -557,9 +557,11 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
     await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
 
-  /** Skills that are safe to execute without user confirmation. */
+  /** Skills that are safe to execute without user confirmation (read-only or low-impact write). */
   private static readonly LOW_RISK_SKILLS = new Set([
     'memory', 'reminder', 'note', 'todo', 'calculator',
+    'weather', 'energy_price', 'crypto_price', 'shopping',
+    'recipe', 'transit', 'routing', 'feed_reader',
   ]);
 
   private async processActions(actions: ProposedAction[]): Promise<void> {
