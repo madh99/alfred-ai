@@ -808,13 +808,16 @@ export class MessagePipeline {
           await this.usageRepo.record(lastModel ?? 'unknown', totalInputTokens, totalOutputTokens, 0, 0, requestCostUsd, alfredUser.id);
         } catch { /* non-critical */ }
       }
-      // 11. Conversation-Reasoning: proactive insights for signal messages (fire-and-forget append)
+      // 11. Conversation-Reasoning: proactive insights for signal messages
       let proactiveInsight: string | undefined;
-      if (this.memoryRepo && hasReasoningSignal(message.text)) {
+      const isSignal = hasReasoningSignal(message.text);
+      if (this.memoryRepo && isSignal) {
+        this.logger.info({ signal: true, text: message.text.slice(0, 50) }, 'Conversation-Reasoning triggered');
         try {
           proactiveInsight = await this.generateProactiveInsight(
             masterUserId, message.text, responseText, resolvedTimezone,
           );
+          this.logger.info({ hasInsight: !!proactiveInsight }, 'Conversation-Reasoning complete');
         } catch { /* non-critical — don't block response */ }
       }
 
