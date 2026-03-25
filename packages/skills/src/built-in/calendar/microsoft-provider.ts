@@ -122,7 +122,22 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };
     }
 
-    const data = await this.graphRequest(`${this.userPath}/events`, {
+    // Deduplicate: check if event with same title + start already exists (±5 min window)
+    try {
+      const checkStart = new Date(input.start.getTime() - 5 * 60_000);
+      const checkEnd = new Date(input.start.getTime() + 5 * 60_000);
+      const existing = await this.listEvents(checkStart, checkEnd);
+      const duplicate = existing.find(e =>
+        e.title?.toLowerCase() === input.title.toLowerCase() &&
+        Math.abs(e.start.getTime() - input.start.getTime()) < 5 * 60_000
+      );
+      if (duplicate) {
+        return duplicate; // Already exists — return without creating again
+      }
+    } catch { /* ignore dedup check failures — proceed with create */ }
+
+    // Use /calendar/events (not /events) — required for shared calendars
+    const data = await this.graphRequest(`${this.userPath}/calendar/events`, {
       method: 'POST',
       body: JSON.stringify(event),
     });
@@ -142,7 +157,8 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       patch.end = { dateTime: this.formatDateInTz(input.end, this.timezone), timeZone: this.timezone };
     }
 
-    const data = await this.graphRequest(`${this.userPath}/events/${id}`, {
+    // Use /calendar/events (not /events) — required for shared calendars
+    const data = await this.graphRequest(`${this.userPath}/calendar/events/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(patch),
     });
@@ -151,7 +167,8 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
   }
 
   async deleteEvent(id: string): Promise<void> {
-    await this.graphRequest(`${this.userPath}/events/${id}`, { method: 'DELETE' });
+    // Use /calendar/events (not /events) — required for shared calendars
+    await this.graphRequest(`${this.userPath}/calendar/events/${id}`, { method: 'DELETE' });
   }
 
   async checkAvailability(start: Date, end: Date): Promise<{ available: boolean; conflicts: CalendarEvent[] }> {
