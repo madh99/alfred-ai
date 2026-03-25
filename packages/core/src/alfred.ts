@@ -462,6 +462,13 @@ export class Alfred {
       this.logger.info('Microsoft To Do skill enabled');
     }
 
+    // OneDrive (uses same MS Graph token as Microsoft Todo)
+    if (this.config.todo) {
+      const { OneDriveSkill } = await import('@alfred/skills');
+      skillRegistry.register(new OneDriveSkill(this.config.todo));
+      this.logger.info('OneDrive skill registered');
+    }
+
     // 4n. Infrastructure Monitor (auto-enabled when any infra skill is configured)
     if (this.config.proxmox || this.config.unifi || this.config.homeassistant || this.config.proxmoxBackup) {
       const { MonitorSkill } = await import('@alfred/skills');
@@ -1610,7 +1617,7 @@ export class Alfred {
 
         // Group privacy: redirect sensitive skill responses to DM
         const PRIVATE_SKILLS = new Set([
-          'email', 'calendar', 'contacts', 'bmw', 'todo', 'microsoft_todo',
+          'email', 'calendar', 'contacts', 'bmw', 'todo', 'microsoft_todo', 'onedrive',
           'database', 'memory', 'note', 'reminder', 'file', 'shell',
         ]);
         const isGroup = message.chatType === 'group';
