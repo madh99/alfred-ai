@@ -1082,6 +1082,13 @@ export class MessagePipeline {
       } catch { /* skip */ }
     }
 
+    // Log context sizes for debugging
+    this.logger.info({
+      memoriesLen: memoriesText.length,
+      calendarLen: calendarText.length,
+      todosLen: todosText.length,
+    }, 'Conversation-Reasoning context loaded');
+
     // Skip if no context available at all
     if (!memoriesText && !calendarText && !todosText) return undefined;
 
