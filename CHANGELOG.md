@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.140] - 2026-03-25
+## [0.19.0-multi-ha.141] - 2026-03-25
 
 ### Fixed
+- **Kalender Event-ID Account-Zuordnung** — Bei Multi-Account Kalendern (z.B. `microsoft` + `fam@dohnal.co`) wurde die Event-ID beim Löschen/Updaten dem falschen Account zugeordnet. Root Cause: `listEvents` gab rohe IDs ohne Account-Prefix zurück → `decodeId` fiel auf den Default-Account (`microsoft`) zurück → Delete ging an `/me/calendar/events/` statt `/users/fam@dohnal.co/calendar/events/`. Fix: (1) Event-IDs werden jetzt mit `account::rawId` Prefix zurückgegeben, (2) `updateEvent`/`deleteEvent` akzeptieren expliziten `account` Parameter als Override.
 - **Kalender Update/Delete 404 auf Shared Calendars** — Microsoft Graph API Pfad von `/users/{email}/events/{id}` auf `/users/{email}/calendar/events/{id}` geändert. Ohne `/calendar/` gibt Graph 404 für Events auf freigegebenen Kalendern zurück. Betrifft `updateEvent`, `deleteEvent` und `createEvent`.
 - **Kalender Duplikat-Erkennung** — Vor `createEvent` wird geprüft ob ein Event mit gleichem Titel und Start-Zeit (±5 Min) bereits existiert. Falls ja, wird das bestehende Event zurückgegeben statt ein Duplikat zu erstellen. Verhindert mehrfache Einträge bei LLM-Retries.
 

@@ -255,11 +255,14 @@ export class CalendarSkill extends Skill {
         return { success: true, data: [], display: this.accountLabel(account, 'No events found in this time range.') };
       }
 
+      // Encode event IDs with account prefix so update/delete can resolve the correct provider
+      const encodedEvents = events.map(e => ({ ...e, id: this.encodeId(account, e.id) }));
+
       const display = events
         .map(e => this.formatEvent(e, provider))
         .join('\n');
 
-      return { success: true, data: events, display: this.accountLabel(account, `${events.length} event(s):\n${display}`) };
+      return { success: true, data: encodedEvents, display: this.accountLabel(account, `${events.length} event(s):\n${display}`) };
     } catch (err) {
       return { success: false, error: `Failed to list events: ${err instanceof Error ? err.message : String(err)}` };
     }
@@ -311,7 +314,10 @@ export class CalendarSkill extends Skill {
     const eventId = input.event_id as string;
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
-    const { account, rawId } = this.decodeId(eventId);
+    const decoded = this.decodeId(eventId);
+    // Allow explicit account override from input (LLM often sends account separately)
+    const account = (input.account as string) ?? decoded.account;
+    const rawId = decoded.rawId;
     const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const provider = providers.get(account);
     if (!provider) {
@@ -342,7 +348,10 @@ export class CalendarSkill extends Skill {
     const eventId = input.event_id as string;
     if (!eventId) return { success: false, error: 'Missing required field "event_id"' };
 
-    const { account, rawId } = this.decodeId(eventId);
+    const decoded = this.decodeId(eventId);
+    // Allow explicit account override from input (LLM often sends account separately)
+    const account = (input.account as string) ?? decoded.account;
+    const rawId = decoded.rawId;
     const providers = this.mergedProviders ?? this.activeProviders ?? this.providers;
     const provider = providers.get(account);
     if (!provider) {
