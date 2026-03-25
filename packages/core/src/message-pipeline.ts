@@ -815,9 +815,9 @@ export class MessagePipeline {
         this.logger.info({ signal: true, text: message.text.slice(0, 50) }, 'Conversation-Reasoning triggered');
         try {
           proactiveInsight = await this.generateProactiveInsight(
-            masterUserId, message.text, responseText, resolvedTimezone,
+            masterUserId, message.text, responseText, baseContext,
           );
-          this.logger.info({ hasInsight: !!proactiveInsight }, 'Conversation-Reasoning complete');
+          this.logger.info({ hasInsight: !!proactiveInsight, insight: proactiveInsight?.slice(0, 80) }, 'Conversation-Reasoning complete');
         } catch { /* non-critical — don't block response */ }
       }
 
@@ -1011,34 +1011,49 @@ export class MessagePipeline {
     userId: string,
     userMessage: string,
     assistantResponse: string,
-    timezone?: string,
+    skillContext: SkillContext,
   ): Promise<string | undefined> {
     if (!this.memoryRepo) return undefined;
 
-    // Load context: memories + calendar events + todos (lightweight)
+    // Load context: memories + calendar events + todos (using REAL skill context for multi-user/shared)
     let memoriesText = '';
     let calendarText = '';
     let todosText = '';
 
+    // Memories from all linked user IDs
+    const userIds = [userId];
+    if (skillContext.masterUserId && skillContext.masterUserId !== userId) userIds.push(skillContext.masterUserId);
+    if (skillContext.linkedPlatformUserIds) {
+      for (const id of skillContext.linkedPlatformUserIds) {
+        if (!userIds.includes(id)) userIds.push(id);
+      }
+    }
+
     try {
-      const memories = await this.memoryRepo.getRecentForPrompt(userId, 15);
-      if (memories.length > 0) {
-        memoriesText = memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+      const seen = new Set<string>();
+      const allMemories: Array<{ type: string; key: string; value: string }> = [];
+      for (const uid of userIds) {
+        for (const m of await this.memoryRepo.getRecentForPrompt(uid, 10)) {
+          if (!seen.has(m.key)) { seen.add(m.key); allMemories.push(m); }
+        }
+      }
+      if (allMemories.length > 0) {
+        memoriesText = allMemories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
       }
     } catch { /* skip */ }
 
-    // Try to get calendar data via skill execution
+    // Calendar via skill — uses real context with userServiceResolver for shared calendars
     if (this.skillRegistry && this.skillSandbox) {
       try {
         const calSkill = this.skillRegistry.get('calendar');
         if (calSkill) {
           const now = new Date();
-          const tomorrow = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+          const futureEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // next 7 days
           const result = await this.skillSandbox.execute(calSkill, {
             action: 'list_events',
             start: now.toISOString(),
-            end: tomorrow.toISOString(),
-          }, { userId, chatId: userId, platform: 'cli', chatType: 'dm' as const, timezone: timezone ?? 'Europe/Vienna', conversationId: '' });
+            end: futureEnd.toISOString(),
+          }, skillContext);
           if (result.success && result.display) calendarText = result.display;
         }
       } catch { /* skip */ }
@@ -1048,39 +1063,56 @@ export class MessagePipeline {
         if (todoSkill) {
           const result = await this.skillSandbox.execute(todoSkill, {
             action: 'list',
-          }, { userId, chatId: userId, platform: 'cli', chatType: 'dm' as const, timezone: timezone ?? 'Europe/Vienna', conversationId: '' });
+          }, skillContext);
           if (result.success && result.display) todosText = result.display;
+        }
+      } catch { /* skip */ }
+
+      // Also check Microsoft Todo
+      try {
+        const msTodoSkill = this.skillRegistry.get('microsoft_todo');
+        if (msTodoSkill) {
+          const result = await this.skillSandbox.execute(msTodoSkill, {
+            action: 'list_tasks',
+          }, skillContext);
+          if (result.success && result.display) {
+            todosText += (todosText ? '\n\n' : '') + result.display;
+          }
         }
       } catch { /* skip */ }
     }
 
-    // Skip if no context available
+    // Skip if no context available at all
     if (!memoriesText && !calendarText && !todosText) return undefined;
 
-    const prompt = `Du bist Alfreds proaktives Cross-Context Modul. Der User hat gerade geschrieben:
-"${userMessage.slice(0, 300)}"
+    const prompt = `Du bist Alfreds proaktives Cross-Context Modul. Analysiere die User-Nachricht im Kontext ALLER verfügbaren Daten.
 
-Alfred hat bereits geantwortet:
-"${assistantResponse.slice(0, 300)}"
+User-Nachricht: "${userMessage.slice(0, 300)}"
 
-Dein Job: Prüfe ob es ZUSÄTZLICHE, NICHT-OFFENSICHTLICHE Hinweise gibt die Alfred NOCH NICHT erwähnt hat.
-Verbinde die Nachricht mit den bestehenden Daten des Users:
+Alfreds bisherige Antwort (nur Wetter/Route — KEIN Cross-Context):
+"${assistantResponse.slice(0, 200)}"
 
-=== Erinnerungen ===
+=== User-Erinnerungen/Profil ===
 ${memoriesText || '(keine)'}
 
-=== Kalender (nächste 48h) ===
-${calendarText || '(kein Kalender)'}
+=== Kalender (nächste 7 Tage) ===
+${calendarText || '(kein Kalender verfügbar)'}
 
-=== Offene Todos ===
+=== Offene Todos/Aufgaben ===
 ${todosText || '(keine Todos)'}
 
+AUFGABE: Finde Verbindungen zwischen der Nachricht und den Daten oben. Beispiele:
+- Kalender-Konflikte: "Am Sonntag hast du bereits einen Termin um 10:00 — Zeitkonflikt mit der Wien-Fahrt?"
+- Kinder/Familie: "Linus hat am Sonntag Training — wer bringt ihn?"
+- Shopping: "Du suchst eine RTX 5090 — Cyberport Wien hätte Lager"
+- Todos: "Du hast noch offene Aufgaben die bis Montag fällig sind"
+- Vergessenes: "Dein BMW muss noch geladen werden vor der Fahrt"
+
 REGELN:
-- NUR antworten wenn du etwas findest was Alfred NOCH NICHT gesagt hat
-- Zeitkonflikte, Gelegenheiten (Shop in der Nähe), vergessene Verpflichtungen
-- Max 2 kurze Sätze, konkret
-- Wenn nichts Relevantes: antworte exakt "SKIP"
-- Kein Smalltalk, keine Wiederholung von Alfreds Antwort`;
+- Antworte mit 1-3 konkreten Hinweisen die Alfred NICHT erwähnt hat
+- Nur wenn du ECHTE Verbindungen findest (Kalender, Todos, Memories)
+- Wenn WIRKLICH nichts: antworte exakt "SKIP"
+- KEIN Smalltalk, KEINE Wiederholung von Alfreds Antwort, KEIN allgemeiner Rat`;
 
     try {
       const response = await this.llm.complete({

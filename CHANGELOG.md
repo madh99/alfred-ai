@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.149] - 2026-03-25
+## [0.19.0-multi-ha.151] - 2026-03-25
+
+### Fixed
+- **Conversation-Reasoning Kontext** — Nutzt jetzt den echten SkillContext (mit userServiceResolver, masterUserId, linkedPlatformUserIds) statt eines Fake-Contexts. Shared Kalender (`fam@dohnal.co`) und Microsoft Todo werden korrekt abgefragt. Kalender-Fenster auf 7 Tage erweitert statt 48h.
+- **Conversation-Reasoning Prompt** — Überarbeitet für bessere Cross-Context Verbindungen. Explizite Beispiele (Kalender-Konflikte, Kinder-Termine, Shopping-Watches, offene Todos, BMW-Akku). Weniger streng — findet jetzt auch implizite Verbindungen.
 
 ### Added
 - **Conversation-Reasoning** — Bei "Signal-Nachrichten" (Ortsangaben, Zeitangaben, Fahrten, Käufe) führt Alfred einen schnellen Cross-Context Check durch: Memories + Kalender + Todos werden gegen die Nachricht geprüft. Proaktive Hinweise (Zeitkonflikte, Gelegenheiten, vergessene Verpflichtungen) werden direkt an die Antwort angehängt. ~250 extra Tokens pro Signal-Nachricht (fast-tier). Reagiert sofort, nicht erst beim nächsten Reasoning-Pass.
