@@ -1042,19 +1042,38 @@ export class MessagePipeline {
       }
     } catch { /* skip */ }
 
-    // Calendar via skill — uses real context with userServiceResolver for shared calendars
+    // Calendar via skill — query ALL accounts (including shared calendars)
     if (this.skillRegistry && this.skillSandbox) {
       try {
         const calSkill = this.skillRegistry.get('calendar');
         if (calSkill) {
           const now = new Date();
-          const futureEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // next 7 days
-          const result = await this.skillSandbox.execute(calSkill, {
-            action: 'list_events',
-            start: now.toISOString(),
-            end: futureEnd.toISOString(),
-          }, skillContext);
-          if (result.success && result.display) calendarText = result.display;
+          const futureEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+          // First: get all calendar accounts
+          const accountsResult = await this.skillSandbox.execute(calSkill, { action: 'list_accounts' }, skillContext);
+          const accountNames: string[] = [];
+          if (accountsResult.success && Array.isArray(accountsResult.data)) {
+            for (const a of accountsResult.data) accountNames.push(typeof a === 'string' ? a : (a as any).name ?? (a as any).account ?? '');
+          }
+
+          // Query each account (or default if no accounts returned)
+          const calParts: string[] = [];
+          const targets = accountNames.length > 0 ? accountNames : [undefined];
+          for (const account of targets) {
+            try {
+              const result = await this.skillSandbox.execute(calSkill, {
+                action: 'list_events',
+                start: now.toISOString(),
+                end: futureEnd.toISOString(),
+                ...(account ? { account } : {}),
+              }, skillContext);
+              if (result.success && result.display && !result.display.includes('No events found')) {
+                calParts.push(account ? `[${account}]\n${result.display}` : result.display);
+              }
+            } catch { /* skip this account */ }
+          }
+          calendarText = calParts.join('\n\n');
         }
       } catch { /* skip */ }
 
