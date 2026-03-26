@@ -224,9 +224,16 @@ export class MqttSkill extends Skill {
   private async loadMqtt(): Promise<any> {
     if (!this.mqttModule) {
       try {
-        this.mqttModule = await (Function('return import("mqtt")')() as Promise<any>);
+        // Direct import — mqtt is bundled inline (not externalized)
+        // @ts-ignore — no type declarations in monorepo
+        this.mqttModule = await import('mqtt');
       } catch {
-        throw new Error('mqtt Paket nicht installiert. Installiere mit: npm install mqtt');
+        try {
+          // Fallback: dynamic import for external installs
+          this.mqttModule = await (Function('return import("mqtt")')() as Promise<any>);
+        } catch {
+          throw new Error('mqtt Paket nicht verfügbar.');
+        }
       }
     }
     return this.mqttModule;
