@@ -351,6 +351,10 @@ export const DockerConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+export const GoeChargerConfigSchema = z.object({
+  host: z.string(),
+}).optional();
+
 export const BMWCarDataConfigSchema = z.object({
   clientId: z.string(),
 });
@@ -490,6 +494,7 @@ export const AlfredConfigSchema = z.object({
   homeassistant: HomeAssistantConfigSchema.optional(),
   contacts: ContactsConfigSchema.optional(),
   docker: DockerConfigSchema.optional(),
+  goeCharger: GoeChargerConfigSchema,
   bmw: BMWCarDataConfigSchema.optional(),
   routing: RoutingConfigSchema.optional(),
   todo: MicrosoftTodoConfigSchema.optional(),

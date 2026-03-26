@@ -346,7 +346,7 @@ Actions:
     if (!serviceName) return { success: false, error: 'service_name ist erforderlich (z.B. "gmx", "gmail", "google-calendar").' };
     if (!config || typeof config !== 'object') return { success: false, error: 'config ist erforderlich. Für Email: {email, password}. Bekannte Provider werden automatisch konfiguriert.' };
 
-    const validTypes = ['email', 'calendar', 'bmw', 'contacts', 'todo', 'recipe', 'travel', 'spotify', 'onedrive'];
+    const validTypes = ['email', 'calendar', 'bmw', 'goe_charger', 'contacts', 'todo', 'recipe', 'travel', 'spotify', 'onedrive'];
     if (!validTypes.includes(serviceType)) {
       return { success: false, error: `Ungültiger service_type. Erlaubt: ${validTypes.join(', ')}` };
     }

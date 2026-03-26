@@ -340,6 +340,10 @@ export interface DockerConfig {
   verifyTls?: boolean;
 }
 
+export interface GoeChargerConfig {
+  host: string;
+}
+
 export interface BMWCarDataConfig {
   clientId: string;
 }
@@ -475,6 +479,7 @@ export interface AlfredConfig {
   homeassistant?: HomeAssistantConfig;
   contacts?: ContactsConfig;
   docker?: DockerConfig;
+  goeCharger?: GoeChargerConfig;
   bmw?: BMWCarDataConfig;
   routing?: RoutingConfig;
   todo?: MicrosoftTodoConfig;

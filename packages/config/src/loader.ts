@@ -150,6 +150,8 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_TRADING_DEFAULT_QUOTE: ['trading', 'defaultQuote'],
   ALFRED_TRADING_MAX_ORDER_EUR: ['trading', 'maxOrderEur'],
   ALFRED_TRADING_SANDBOX: ['trading', 'sandbox'],
+  // go-e Charger
+  ALFRED_GOE_HOST: ['goeCharger', 'host'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
   // YouTube
