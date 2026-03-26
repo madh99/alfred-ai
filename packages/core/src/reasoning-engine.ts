@@ -73,6 +73,7 @@ interface ReasoningContext {
   energy: string;
   skillHealth: string;
   feedback: string;
+  charger: string;
   mealPlan: string;
   travel: string;
 }
@@ -348,11 +349,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       hour: '2-digit', minute: '2-digit',
     });
 
-    // Parallel: calendar + weather + energy (async), rest is sync SQLite
-    const [events, weather, energy] = await Promise.all([
+    // Parallel: calendar + weather + energy + charger (async), rest is sync SQLite
+    const [events, weather, energy, charger] = await Promise.all([
       this.fetchCalendar(now),
       this.fetchSkillData('weather', { action: 'current', ...(this.defaultLocation ? { location: this.defaultLocation } : {}) }),
       this.fetchSkillData('energy_price', { action: 'current' }),
+      this.fetchChargerStatus(),
     ]);
 
     // SQLite queries (now async)
@@ -365,7 +367,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
     const mealPlan = await this.fetchMealPlan();
     const travel = await this.fetchUpcomingTravel();
 
-    return { dateTime, events, todos, watches, memories, activity, weather, energy, skillHealth, feedback, mealPlan, travel };
+    return { dateTime, events, todos, watches, memories, activity, weather, energy, charger, skillHealth, feedback, mealPlan, travel };
   }
 
   private async fetchCalendar(now: Date): Promise<string> {
@@ -515,6 +517,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
     return this.fetchSkillData('travel', { action: 'plan_list', status: 'booked' });
   }
 
+  private async fetchChargerStatus(): Promise<string> {
+    return this.fetchSkillData('goe_charger', { action: 'status' });
+  }
+
   // ── Prompt Building ─────────────────────────────────────────
 
   private buildPrompt(ctx: ReasoningContext): string {
@@ -562,6 +568,9 @@ ${ctx.weather}
 
 === Energiepreise ===
 ${ctx.energy}
+
+=== Wallbox ===
+${ctx.charger}
 
 === Meal-Plan heute ===
 ${ctx.mealPlan}

@@ -448,7 +448,14 @@ export class Alfred {
       this.logger.info('BMW CarData skill enabled');
     }
 
-    // 4l. Routing (optional)
+    // 4l. go-e Charger (optional)
+    if (this.config.goeCharger?.host) {
+      const { GoeChargerSkill } = await import('@alfred/skills');
+      skillRegistry.register(new GoeChargerSkill(this.config.goeCharger, this.config.energy));
+      this.logger.info({ host: this.config.goeCharger.host }, 'go-e Charger skill registered');
+    }
+
+    // 4m. Routing (optional)
     if (this.config.routing) {
       const { RoutingSkill } = await import('@alfred/skills');
       skillRegistry.register(new RoutingSkill(this.config.routing));
@@ -1431,6 +1438,12 @@ export class Alfred {
         this.skillRegistry.register(new BMWSkill(freshConfig.bmw));
         this.config.bmw = freshConfig.bmw;
         this.logger.info('BMW CarData skill hot-reloaded');
+      }
+      if (service === 'goe_charger' && freshConfig.goeCharger?.host) {
+        const { GoeChargerSkill } = await import('@alfred/skills');
+        this.skillRegistry.register(new GoeChargerSkill(freshConfig.goeCharger, freshConfig.energy));
+        this.config.goeCharger = freshConfig.goeCharger;
+        this.logger.info('go-e Charger skill hot-reloaded');
       }
       if (service === 'routing' && freshConfig.routing) {
         const { RoutingSkill } = await import('@alfred/skills');
