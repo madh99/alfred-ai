@@ -223,12 +223,10 @@ export class MqttSkill extends Skill {
 
   private async loadMqtt(): Promise<any> {
     if (!this.mqttModule) {
-      // mqtt must be externalized (can't be bundled — filename conflict with mqtt.ts)
-      // npm install -g mqtt on target machine, or postinstall script
       try {
         this.mqttModule = await (Function('return import("mqtt")')() as Promise<any>);
       } catch {
-        throw new Error('mqtt Paket nicht verfügbar. Installiere: npm install -g mqtt && ln -sf $(npm root -g)/mqtt $(npm root -g)/@madh-io/alfred-ai/node_modules/mqtt');
+        throw new Error('mqtt Paket nicht verfügbar.');
       }
     }
     return this.mqttModule;

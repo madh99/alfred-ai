@@ -194,18 +194,10 @@ export class SonosSkill extends Skill {
   private async loadSonos(): Promise<any> {
     if (!this.sonosModule) {
       try {
-        // Direct import — sonos is bundled inline
-        // @ts-ignore — no type declarations in monorepo
-        const mod = await import('sonos');
+        const mod = await (Function('return import("sonos")')() as Promise<any>);
         this.sonosModule = mod.default ?? mod;
       } catch {
-        try {
-          // Fallback: dynamic import for external installs
-          const mod = await (Function('return import("sonos")')() as Promise<any>);
-          this.sonosModule = mod.default ?? mod;
-        } catch {
-          throw new Error('sonos Paket nicht verfügbar.');
-        }
+        throw new Error('sonos Paket nicht verfügbar.');
       }
     }
     return this.sonosModule;

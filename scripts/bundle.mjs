@@ -28,13 +28,7 @@ await build({
       setup(b) {
         // Bundle @alfred/* workspace packages (inline them).
         // Mark everything else (npm packages, node built-ins) as external.
-        // Packages to bundle inline (not externalize) — either workspace or small enough
-        // Packages to bundle inline (not externalize)
-        // NOTE: 'mqtt' CANNOT be inlined — filename conflict (mqtt.ts → mqtt.js confuses esbuild)
-        const INLINE_PACKAGES = new Set([
-          'sonos',  // Sonos UPnP — required by sonos skill
-        ]);
-
+        // External deps are installed at runtime via dependencies in package.json.
         b.onResolve({ filter: /^[^.]/ }, (args) => {
           if (args.path.startsWith('@alfred/')) {
             return null; // let esbuild resolve & bundle it
@@ -42,11 +36,6 @@ await build({
           // Don't externalize absolute paths (entry points, resolved files)
           if (args.path.startsWith('/') || /^[a-zA-Z]:/.test(args.path)) {
             return null;
-          }
-          // Inline specific packages instead of externalizing
-          const pkgName = args.path.split('/')[0];
-          if (INLINE_PACKAGES.has(pkgName)) {
-            return null; // bundle it
           }
           return { path: args.path, external: true };
         });
