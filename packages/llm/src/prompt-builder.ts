@@ -405,6 +405,7 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           skill: 'Skills',
           feedback: 'Behavior Feedback',
           pattern: 'Behavioral Patterns',
+          connection: 'Cross-Context Connections',
           general: 'General',
         };
 

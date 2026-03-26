@@ -475,6 +475,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
   private async fetchMemories(): Promise<string> {
     try {
       const memories = await this.memoryRepo.getRecentForPrompt(this.defaultChatId, 30);
+      // Ensure pattern + connection memories are always included (they describe the user, not a topic)
+      const existingKeys = new Set(memories.map(m => m.key));
+      for (const type of ['pattern', 'connection'] as const) {
+        try {
+          const typed = await this.memoryRepo.getByType(this.defaultChatId, type, 5);
+          for (const m of typed) {
+            if (!existingKeys.has(m.key)) { existingKeys.add(m.key); memories.push(m); }
+          }
+        } catch { /* skip */ }
+      }
       if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
       return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
     } catch (err) {

@@ -439,6 +439,27 @@ export class MessagePipeline {
         memories = this.applyMemoryBudget(memories);
       }
 
+      // 5a2. Ensure pattern/connection/insight memories are ALWAYS present.
+      // These describe the user's behavior and preferences — not topic-specific,
+      // so keyword/semantic retrieval often misses them.
+      if (this.memoryRepo && !skipMemories) {
+        try {
+          const existingKeys = new Set((memories ?? []).map(m => m.key));
+          const userIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
+          for (const uid of userIds) {
+            for (const type of ['pattern', 'connection'] as const) {
+              const typed = await this.memoryRepo.getByType(uid, type, 5);
+              for (const m of typed) {
+                if (!existingKeys.has(m.key)) {
+                  existingKeys.add(m.key);
+                  (memories ??= []).push({ key: m.key, value: m.value, category: m.category, type: m.type });
+                }
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+      }
+
       // 5b. Load user profile for prompt injection
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {

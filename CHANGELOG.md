@@ -5,7 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.166] - 2026-03-26
+## [0.19.0-multi-ha.173] - 2026-03-26
+
+### Fixed
+- **Pattern/Connection Memories immer im Prompt** — Pattern-Memories (Verhaltensmuster) und Connection-Memories (Cross-Context Verbindungen) werden jetzt IMMER geladen, unabhängig von Keyword/Semantic-Relevanz zur aktuellen Nachricht. Vorher: Nur geladen wenn zufällig relevant zur Nachricht oder in den neuesten 20 Memories. Betrifft sowohl Pipeline (System-Prompt) als auch ReasoningEngine.
+- **`getByType()` Methode** in MemoryRepository — Lädt Memories nach Type (pattern, connection) sortiert nach Confidence.
+- **`connection` Label im Prompt** — Connection-Memories werden jetzt als "Cross-Context Connections" gruppiert statt unter dem rohen Type-Namen.
 
 ### Fixed
 - **Bundle: mqtt + sonos inline** — `mqtt` und `sonos` npm-Pakete werden jetzt ins Bundle eingebunden statt externalisiert. User muss keine Pakete mehr manuell installieren (`npm install mqtt/sonos`). Funktioniert sofort nach `npm install -g @madh-io/alfred-ai`.

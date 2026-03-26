@@ -223,6 +223,14 @@ export class MemoryRepository {
     return result.changes > 0;
   }
 
+  async getByType(userId: string, type: string, limit = 10): Promise<MemoryEntry[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM memories WHERE user_id = ? AND type = ? ORDER BY confidence DESC, updated_at DESC LIMIT ?',
+      [userId, type, limit],
+    ) as Record<string, unknown>[];
+    return rows.map((row) => this.mapRow(row));
+  }
+
   async getRecentForPrompt(userId: string, limit = 20): Promise<MemoryEntry[]> {
     const rows = await this.adapter.query(
       'SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
