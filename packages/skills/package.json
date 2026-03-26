@@ -27,7 +27,7 @@
     "pino": "^9.6.0",
     "rss-parser": "^3.13.0",
     "mqtt": "^5.0.0",
-    "sonos": "^2.6.0",
+    "sonos": "^1.14.0",
     "tsdav": "^2.1.1"
   },
   "devDependencies": {
