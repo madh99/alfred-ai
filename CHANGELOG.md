@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.160] - 2026-03-26
+## [0.19.0-multi-ha.162] - 2026-03-26
 
 ### Fixed
+- **Kalender Dedup Root Cause** — Duplikate entstanden weil das LLM den Titel leicht variiert ("Sommercamp SVA" vs "Sommercamp des SVA"). Der exakte Titel-Match fand das existierende Event nicht. Fix: Flexibler Titel-Match (contains + gemeinsame Schlüsselwörter) mit ±5 Min Zeitfenster (nicht 30 Min oder 2h — das würde echte separate Termine blockieren).
 - **Kalender Duplikat-Erkennung verstärkt** — Zeitfenster von ±5 Min auf ±2 Stunden erweitert (fängt Timezone-Shifts). Titel-Vergleich flexibler: exact match ODER contains ODER gemeinsame Schlüsselwörter (fängt "Linus – Sommercamp" vs "Sommercamp des SVA"). Verhindert wiederholtes Eintragen des gleichen Events bei Watch-Runs.
 
 ### Added
