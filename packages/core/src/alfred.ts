@@ -1388,7 +1388,7 @@ export class Alfred {
     this.logger.info('Alfred stopped');
   }
 
-  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker' | 'bmw' | 'routing' | 'todo'): Promise<{ success: boolean; error?: string }> {
+  async reloadService(service: 'proxmox' | 'unifi' | 'homeassistant' | 'contacts' | 'docker' | 'bmw' | 'goe_charger' | 'routing' | 'todo'): Promise<{ success: boolean; error?: string }> {
     try {
       // 1. Reload .env → process.env updated
       reloadDotenv();
