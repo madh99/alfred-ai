@@ -464,6 +464,14 @@ export const TravelConfigSchema = z.object({
   defaultOrigin: z.string().optional(),
 }).optional();
 
+export const MqttConfigSchema = z.object({
+  brokerUrl: z.string(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+  clientId: z.string().optional(),
+  topicPrefix: z.string().optional(),
+});
+
 export const AlfredConfigSchema = z.object({
   name: z.string(),
   telegram: TelegramConfigSchema,
@@ -510,5 +518,6 @@ export const AlfredConfigSchema = z.object({
   reasoning: ReasoningConfigSchema.optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),
   proxmoxBackup: ProxmoxBackupConfigSchema.optional(),
+  mqtt: MqttConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

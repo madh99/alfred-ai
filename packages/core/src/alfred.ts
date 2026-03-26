@@ -64,6 +64,7 @@ import { ActiveLearningService } from './active-learning/active-learning-service
 import { FeedbackService } from './feedback/feedback-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
+import { PatternAnalyzer } from './active-learning/pattern-analyzer.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { TodoWatcher } from './todo-watcher.js';
@@ -562,6 +563,13 @@ export class Alfred {
         hasFlights: true,
         hasHotels: true,
       }, 'Travel skill registered');
+    }
+
+    // MQTT (requires broker URL)
+    if (this.config.mqtt?.brokerUrl) {
+      const { MqttSkill } = await import('@alfred/skills');
+      skillRegistry.register(new MqttSkill(this.config.mqtt));
+      this.logger.info({ broker: this.config.mqtt.brokerUrl }, 'MQTT skill registered');
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
@@ -1304,6 +1312,29 @@ export class Alfred {
           this.logger.warn({ err }, 'Memory consolidation failed');
         }
       }, 60 * 60_000); // Check every hour, only acts once at 3 AM
+
+      // Pattern analysis: daily extraction of behavioral patterns (runs at ~3:30 AM, after consolidation)
+      if (this.activityRepo) {
+        const patternAnalyzer = new PatternAnalyzer(this.llmProvider, this.memoryRepo, this.activityRepo, this.logger.child({ component: 'pattern-analyzer' }));
+        let lastPatternDay = '';
+        setInterval(async () => {
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          if (now.getHours() !== 3 || now.getMinutes() < 30 || lastPatternDay === today) return;
+          lastPatternDay = today;
+          try {
+            const users = await userRepoRef.listAll();
+            for (const user of users) {
+              const count = await patternAnalyzer.analyze(user.id);
+              if (count > 0) {
+                this.logger.info({ userId: user.id, patterns: count }, 'Pattern analysis completed');
+              }
+            }
+          } catch (err) {
+            this.logger.warn({ err }, 'Pattern analysis failed');
+          }
+        }, 60 * 60_000); // Check every hour, only acts at 3:30 AM
+      }
     }
 
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)

@@ -449,6 +449,14 @@ export interface TravelConfig {
   defaultOrigin?: string;
 }
 
+export interface MqttConfig {
+  brokerUrl: string;
+  username?: string;
+  password?: string;
+  clientId?: string;
+  topicPrefix?: string;
+}
+
 export interface AlfredConfig {
   name: string;
   telegram: TelegramConfig;
@@ -495,6 +503,7 @@ export interface AlfredConfig {
   reasoning?: ReasoningConfig;
   webhooks?: WebhookConfig[];
   proxmoxBackup?: ProxmoxBackupConfig;
+  mqtt?: MqttConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

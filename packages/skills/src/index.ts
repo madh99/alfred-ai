@@ -50,6 +50,7 @@ export { EnergyPriceSkill } from './built-in/energy-price.js';
 export { CryptoPriceSkill } from './built-in/crypto-price.js';
 export { BitpandaSkill } from './built-in/bitpanda.js';
 export { TradingSkill } from './built-in/trading.js';
+export { MqttSkill } from './built-in/mqtt.js';
 export { RecipeSkill } from './built-in/recipe.js';
 export { SpotifySkill } from './built-in/spotify.js';
 export { SonosSkill } from './built-in/sonos.js';

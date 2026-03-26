@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.164] - 2026-03-26
+
+### Added
+- **Continuous Conversation-Learning (Pattern-Analyzer)** — Analysiert das Nutzungsverhalten der letzten 7 Tage (Activity-Log) und extrahiert Verhaltensmuster: Timing-Gewohnheiten, Themen-Affinität, Kommunikationsstil, Routinen. Läuft täglich nachts, speichert Muster als `pattern` Memories. LLM sieht die Muster im System-Prompt und passt sich an.
+- **MQTT-Skill** — Direkte Kommunikation mit MQTT-Brokern (Mosquitto etc.). 6 Actions: publish, subscribe, status, devices (Zigbee2MQTT Discovery), set/get (Zigbee2MQTT Shortcut). Persistente Broker-Verbindung, Auto-Reconnect. Watch-kompatibel für Sensor-Alerts. Setup per ENV (`ALFRED_MQTT_BROKER_URL`).
+
 ## [0.19.0-multi-ha.163] - 2026-03-26
 
 ### Changed

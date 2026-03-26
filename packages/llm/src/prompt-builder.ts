@@ -404,6 +404,7 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           moment: 'Moments',
           skill: 'Skills',
           feedback: 'Behavior Feedback',
+          pattern: 'Behavioral Patterns',
           general: 'General',
         };
 

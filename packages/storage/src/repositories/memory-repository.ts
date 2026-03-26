@@ -12,6 +12,7 @@ export type MemoryType =
   | 'commitment'
   | 'moment'
   | 'skill'
+  | 'pattern'
   | 'connection'
   | 'feedback'
   | 'general';

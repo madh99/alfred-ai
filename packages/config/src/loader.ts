@@ -206,6 +206,12 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_TRAVEL_AMADEUS_CLIENT_SECRET: ['travel', 'amadeus', 'clientSecret'],
   ALFRED_TRAVEL_DEFAULT_CURRENCY: ['travel', 'defaultCurrency'],
   ALFRED_TRAVEL_DEFAULT_ORIGIN: ['travel', 'defaultOrigin'],
+  // MQTT
+  ALFRED_MQTT_BROKER_URL: ['mqtt', 'brokerUrl'],
+  ALFRED_MQTT_USERNAME: ['mqtt', 'username'],
+  ALFRED_MQTT_PASSWORD: ['mqtt', 'password'],
+  ALFRED_MQTT_CLIENT_ID: ['mqtt', 'clientId'],
+  ALFRED_MQTT_TOPIC_PREFIX: ['mqtt', 'topicPrefix'],
 };
 
 /** Coerce ENV string "true"/"false" to boolean. Numbers stay as strings
