@@ -72,6 +72,7 @@ import { ActivityLogger } from './activity-logger.js';
 import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
 import { ReasoningEngine } from './reasoning-engine.js';
+import { InsightTracker } from './insight-tracker.js';
 
 export class Alfred {
   private readonly logger: Logger;
@@ -952,9 +953,14 @@ export class Alfred {
     workflowSkill.setRunner(workflowRunner);
 
     // 7g. Initialize reasoning engine — proactive cross-domain insights
+    let insightTracker: InsightTracker | undefined;
     {
       const ownerUserId = this.config.security?.ownerUserId;
       if (ownerUserId && this.config.reasoning?.enabled !== false) {
+        insightTracker = new InsightTracker(
+          memoryRepo,
+          this.logger.child({ component: 'insight-tracker' }),
+        );
         const reasoningNotifRepo = new CalendarNotificationRepository(adapter);
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
@@ -979,6 +985,7 @@ export class Alfred {
           this.confirmationQueue,
           this.config.cluster?.nodeId ?? 'single',
           adapter,
+          insightTracker,
         );
       }
     }
@@ -991,10 +998,11 @@ export class Alfred {
       };
     }
 
-    // Wire confirmation queue, activity logger, and skill health tracker into pipeline
+    // Wire confirmation queue, activity logger, skill health tracker, and insight tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
+    if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
 
     // 7b. Wire multi-user support into pipeline
     {

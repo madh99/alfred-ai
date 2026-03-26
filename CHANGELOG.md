@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.165] - 2026-03-26
+
+### Added
+- **Insight-Preference Learning** — Alfred lernt welche proaktiven Hinweise der User schätzt. Tracking: positive Reaktion (<30 Min, "danke/super/ok"), negative ("stopp/nervig"), ignoriert (keine Reaktion). Nach 5+ Interaktionen pro Kategorie wird eine Präferenz als pattern-Memory gespeichert. ReasoningEngine sieht die Präferenzen im Prompt und priorisiert/reduziert Insight-Kategorien entsprechend.
+
 ## [0.19.0-multi-ha.164] - 2026-03-26
 
 ### Added

@@ -18,6 +18,7 @@ import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skil
 import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
+import { InsightTracker } from './insight-tracker.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
@@ -109,6 +110,7 @@ export class ReasoningEngine {
     private readonly confirmationQueue?: ConfirmationQueue,
     private readonly nodeId: string = 'single',
     private readonly adapter?: AsyncDbAdapter,
+    private readonly insightTracker?: InsightTracker,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -202,6 +204,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
           if (adapter) {
             await adapter.sendMessage(this.defaultChatId, message);
             for (const insight of newInsights) await this.markSent(insight);
+          }
+          if (this.insightTracker) {
+            for (const insight of newInsights) {
+              const category = InsightTracker.categorizeInsight(insight);
+              this.insightTracker.trackInsightSent(category);
+            }
           }
         }
       }
@@ -316,6 +324,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
             await this.markSent(insight);
           }
           this.logger.info({ durationMs, insights: newInsights.length }, 'Reasoning pass: insights sent');
+        }
+        if (this.insightTracker) {
+          for (const insight of newInsights) {
+            const category = InsightTracker.categorizeInsight(insight);
+            this.insightTracker.trackInsightSent(category);
+          }
         }
       }
 

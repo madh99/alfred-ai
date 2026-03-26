@@ -168,6 +168,7 @@ export class MessagePipeline {
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
+  private insightTracker?: import('./insight-tracker.js').InsightTracker;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -214,6 +215,10 @@ export class MessagePipeline {
 
   setSkillHealthTracker(tracker: import('./skill-health-tracker.js').SkillHealthTracker): void {
     this.skillHealthTracker = tracker;
+  }
+
+  setInsightTracker(tracker: import('./insight-tracker.js').InsightTracker): void {
+    this.insightTracker = tracker;
   }
 
   setAlfredUserRepo(
@@ -326,6 +331,11 @@ export class MessagePipeline {
           displayName: message.displayName,
         },
       );
+
+      // 1a. Track insight reactions (non-blocking, fire-and-forget)
+      if (this.insightTracker && message.text) {
+        this.insightTracker.onUserMessage(masterUserId, message.text).catch(() => {});
+      }
 
       // 1b. Resolve Alfred user + role for multi-user support
       let alfredUser: { id: string; role: string; active: boolean; username: string } | undefined;
