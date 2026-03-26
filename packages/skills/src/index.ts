@@ -44,6 +44,7 @@ export type { Contact, CreateContactInput } from './built-in/contacts/index.js';
 export { TodoSkill } from './built-in/todo.js';
 export { DockerSkill } from './built-in/docker.js';
 export { BMWSkill } from './built-in/bmw.js';
+export { GoeChargerSkill } from './built-in/goe-charger.js';
 export { RoutingSkill } from './built-in/routing.js';
 export { EnergyPriceSkill } from './built-in/energy-price.js';
 export { CryptoPriceSkill } from './built-in/crypto-price.js';
