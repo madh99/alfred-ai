@@ -124,7 +124,11 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
 
     // Duplicate prevention via Microsoft Graph transactionId.
     // Deterministic GUID from normalized title + date → Graph blocks duplicate creation server-side.
-    const normalizedTitle = input.title.toLowerCase().replace(/[^a-z0-9äöüß]/g, '');
+    // Normalize: lowercase, remove stopwords (der/die/das/des/dem/den/ein/eine/und/oder/für/von/zu/am/im),
+    // remove non-alphanumeric → "Linus Sommercamp des SVA" and "Linus Sommercamp SVA" produce same hash
+    const normalizedTitle = input.title.toLowerCase()
+      .replace(/\b(der|die|das|des|dem|den|ein|eine|eines|einem|einen|einer|und|oder|für|von|vom|zu|zum|zur|am|im|in|an|auf|bei|mit|nach|über|unter|vor|zwischen)\b/g, '')
+      .replace(/[^a-z0-9äöüß]/g, '');
     const startDate = this.formatDateInTz(input.start, tz).slice(0, 10);
     const hash = await import('node:crypto').then(c =>
       c.createHash('md5').update(`${normalizedTitle}:${startDate}`).digest('hex')
