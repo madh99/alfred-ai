@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.159] - 2026-03-26
+## [0.19.0-multi-ha.160] - 2026-03-26
+
+### Fixed
+- **Kalender Duplikat-Erkennung verstärkt** — Zeitfenster von ±5 Min auf ±2 Stunden erweitert (fängt Timezone-Shifts). Titel-Vergleich flexibler: exact match ODER contains ODER gemeinsame Schlüsselwörter (fängt "Linus – Sommercamp" vs "Sommercamp des SVA"). Verhindert wiederholtes Eintragen des gleichen Events bei Watch-Runs.
 
 ### Added
 - **go-e Charger Skill** — Wallbox-Steuerung über lokale HTTP API (kein Cloud nötig). 13 Actions: Status, Laden starten/stoppen, Ampere setzen (6-32A), Phasenumschaltung (1-phasig/Auto/3-phasig), 5 Lademodi (Off/PV/MinSoC/Zeitgesteuert/PV-Überschuss), aWATTar Eco-Laden mit automatischer Endpreis→Marktpreis Umrechnung, Energielimit pro Session, Trip-Planung (Abfahrtszeit). API v1+v2 Auto-Detection (go-e V2/V3/V4/Gemini/HOMEfix). ReasoningEngine-Integration (Wallbox + BMW + Energiepreis = autonomes Lademanagement). Setup per Chat oder ENV (`ALFRED_GOE_HOST`).

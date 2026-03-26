@@ -122,15 +122,24 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };
     }
 
-    // Deduplicate: check if event with same title + start already exists (±5 min window)
+    // Deduplicate: check if event with same title + similar start already exists
+    // Use ±2h window and flexible title matching to catch duplicates across timezone shifts
     try {
-      const checkStart = new Date(input.start.getTime() - 5 * 60_000);
-      const checkEnd = new Date(input.start.getTime() + 5 * 60_000);
+      const checkStart = new Date(input.start.getTime() - 2 * 60 * 60_000);
+      const checkEnd = new Date(input.start.getTime() + 2 * 60 * 60_000);
       const existing = await this.listEvents(checkStart, checkEnd);
-      const duplicate = existing.find(e =>
-        e.title?.toLowerCase() === input.title.toLowerCase() &&
-        Math.abs(e.start.getTime() - input.start.getTime()) < 5 * 60_000
-      );
+      const inputTitleLower = input.title.toLowerCase();
+      const duplicate = existing.find(e => {
+        const titleLower = (e.title ?? '').toLowerCase();
+        // Exact match or one contains the other (catches "Linus – Sommercamp" vs "Sommercamp des SVA")
+        const titleMatch = titleLower === inputTitleLower
+          || titleLower.includes(inputTitleLower)
+          || inputTitleLower.includes(titleLower)
+          || (inputTitleLower.split(/[\s–—-]+/).filter(w => w.length > 3).some(w => titleLower.includes(w))
+              && titleLower.split(/[\s–—-]+/).filter(w => w.length > 3).some(w => inputTitleLower.includes(w)));
+        const timeClose = Math.abs(e.start.getTime() - input.start.getTime()) < 2 * 60 * 60_000;
+        return titleMatch && timeClose;
+      });
       if (duplicate) {
         return duplicate; // Already exists — return without creating again
       }
