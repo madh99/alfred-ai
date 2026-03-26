@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.162] - 2026-03-26
+## [0.19.0-multi-ha.163] - 2026-03-26
+
+### Changed
+- **Kalender Duplikat-Prävention via Microsoft Graph `transactionId`** — Eigene Dedup-Logik (listEvents + Titel-Match + Zeitfenster) komplett entfernt. Stattdessen: Deterministischer `transactionId` aus normalisiertem Titel + Datum (MD5 → GUID). Microsoft Graph blockiert Duplikate serverseitig — zuverlässiger als clientseitige Prüfung. Titel-Varianten ("Sommercamp SVA" vs "Sommercamp des SVA") und Zeit-Varianz (±10 Min) werden durch Normalisierung abgefangen.
 
 ### Fixed
 - **Kalender Dedup Root Cause** — Duplikate entstanden weil das LLM den Titel leicht variiert ("Sommercamp SVA" vs "Sommercamp des SVA"). Der exakte Titel-Match fand das existierende Event nicht. Fix: Flexibler Titel-Match (contains + gemeinsame Schlüsselwörter) mit ±5 Min Zeitfenster (nicht 30 Min oder 2h — das würde echte separate Termine blockieren).

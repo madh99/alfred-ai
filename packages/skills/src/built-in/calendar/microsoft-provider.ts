@@ -122,28 +122,14 @@ export class MicrosoftCalendarProvider extends CalendarProvider {
       event.end = { dateTime: this.formatDateInTz(input.end, tz), timeZone: tz };
     }
 
-    // Deduplicate: check if event with similar title + same start already exists (±5 min)
-    // Flexible title matching catches LLM variations ("Sommercamp SVA" vs "Sommercamp des SVA")
-    try {
-      const checkStart = new Date(input.start.getTime() - 5 * 60_000);
-      const checkEnd = new Date(input.start.getTime() + 5 * 60_000);
-      const existing = await this.listEvents(checkStart, checkEnd);
-      const inputTitleLower = input.title.toLowerCase();
-      const duplicate = existing.find(e => {
-        const titleLower = (e.title ?? '').toLowerCase();
-        // Exact match or one contains the other (catches "Linus – Sommercamp" vs "Sommercamp des SVA")
-        const titleMatch = titleLower === inputTitleLower
-          || titleLower.includes(inputTitleLower)
-          || inputTitleLower.includes(titleLower)
-          || (inputTitleLower.split(/[\s–—-]+/).filter(w => w.length > 3).some(w => titleLower.includes(w))
-              && titleLower.split(/[\s–—-]+/).filter(w => w.length > 3).some(w => inputTitleLower.includes(w)));
-        const timeClose = Math.abs(e.start.getTime() - input.start.getTime()) < 5 * 60_000;
-        return titleMatch && timeClose;
-      });
-      if (duplicate) {
-        return duplicate; // Already exists — return without creating again
-      }
-    } catch { /* ignore dedup check failures — proceed with create */ }
+    // Duplicate prevention via Microsoft Graph transactionId.
+    // Deterministic GUID from normalized title + date → Graph blocks duplicate creation server-side.
+    const normalizedTitle = input.title.toLowerCase().replace(/[^a-z0-9äöüß]/g, '');
+    const startDate = this.formatDateInTz(input.start, tz).slice(0, 10);
+    const hash = await import('node:crypto').then(c =>
+      c.createHash('md5').update(`${normalizedTitle}:${startDate}`).digest('hex')
+    );
+    event.transactionId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 
     // Use /calendar/events (not /events) — required for shared calendars
     const data = await this.graphRequest(`${this.userPath}/calendar/events`, {
