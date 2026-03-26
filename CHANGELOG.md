@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.165] - 2026-03-26
+## [0.19.0-multi-ha.166] - 2026-03-26
+
+### Fixed
+- **Bundle: mqtt + sonos inline** — `mqtt` und `sonos` npm-Pakete werden jetzt ins Bundle eingebunden statt externalisiert. User muss keine Pakete mehr manuell installieren (`npm install mqtt/sonos`). Funktioniert sofort nach `npm install -g @madh-io/alfred-ai`.
 
 ### Added
 - **Insight-Preference Learning** — Alfred lernt welche proaktiven Hinweise der User schätzt. Tracking: positive Reaktion (<30 Min, "danke/super/ok"), negative ("stopp/nervig"), ignoriert (keine Reaktion). Nach 5+ Interaktionen pro Kategorie wird eine Präferenz als pattern-Memory gespeichert. ReasoningEngine sieht die Präferenzen im Prompt und priorisiert/reduziert Insight-Kategorien entsprechend.
