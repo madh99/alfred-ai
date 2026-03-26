@@ -29,8 +29,9 @@ await build({
         // Bundle @alfred/* workspace packages (inline them).
         // Mark everything else (npm packages, node built-ins) as external.
         // Packages to bundle inline (not externalize) — either workspace or small enough
+        // Packages to bundle inline (not externalize)
+        // NOTE: 'mqtt' CANNOT be inlined — filename conflict (mqtt.ts → mqtt.js confuses esbuild)
         const INLINE_PACKAGES = new Set([
-          'mqtt',   // MQTT client — small, required by mqtt skill
           'sonos',  // Sonos UPnP — required by sonos skill
         ]);
 
