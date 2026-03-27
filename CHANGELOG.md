@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.180] - 2026-03-27
+
+### Fixed
+- **YouTube-Skill Error-Handling** — Bei 403/429-Fehlern wird jetzt der Google-API-Fehlergrund angezeigt (z.B. `quotaExceeded`, `accessNotConfigured`, `forbidden`) statt nur `403 Forbidden`. Ermöglicht Diagnose ob API nicht aktiviert, Quota erschöpft oder Key-Restriction das Problem ist.
+
 ## [0.19.0-multi-ha.179] - 2026-03-27
 
 ### Added

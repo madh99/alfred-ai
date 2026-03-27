@@ -4,6 +4,18 @@ import { Skill } from '../skill.js';
 const YT_API_BASE = 'https://www.googleapis.com/youtube/v3';
 const MAX_TRANSCRIPT_CHARS = 15_000;
 
+/** Parse Google API error body for detailed reason */
+async function ytErrorDetail(res: Response): Promise<string> {
+  try {
+    const body = await res.json() as { error?: { message?: string; errors?: Array<{ reason?: string }> } };
+    const reason = body.error?.errors?.[0]?.reason;
+    const msg = body.error?.message;
+    if (reason) return `YouTube API: ${res.status} (${reason}: ${msg})`;
+    if (msg) return `YouTube API: ${res.status} (${msg})`;
+  } catch { /* ignore parse error */ }
+  return `YouTube API: ${res.status} ${res.statusText}`;
+}
+
 export class YouTubeSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'youtube',
@@ -96,7 +108,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     });
 
     const res = await fetch(`${YT_API_BASE}/search?${params}`);
-    if (!res.ok) return { success: false, error: `YouTube API: ${res.status} ${res.statusText}` };
+    if (!res.ok) return { success: false, error: await ytErrorDetail(res) };
     const data = await res.json() as { items?: Array<{ id: { videoId: string }; snippet: Record<string, unknown> }> };
 
     const videos = (data.items ?? []).map(item => ({
@@ -132,7 +144,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     });
 
     const res = await fetch(`${YT_API_BASE}/videos?${params}`);
-    if (!res.ok) return { success: false, error: `YouTube API: ${res.status}` };
+    if (!res.ok) return { success: false, error: await ytErrorDetail(res) };
     const data = await res.json() as { items?: Array<{ snippet: Record<string, unknown>; statistics: Record<string, string>; contentDetails: Record<string, string> }> };
 
     const item = data.items?.[0];
@@ -300,7 +312,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     });
 
     const res = await fetch(`${YT_API_BASE}/search?${params}`);
-    if (!res.ok) return { success: false, error: `YouTube API: ${res.status}` };
+    if (!res.ok) return { success: false, error: await ytErrorDetail(res) };
     const data = await res.json() as { items?: Array<{ id: { videoId: string }; snippet: Record<string, unknown> }> };
 
     const videos = (data.items ?? []).map(item => ({
