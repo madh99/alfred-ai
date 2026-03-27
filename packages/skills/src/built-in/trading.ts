@@ -11,8 +11,63 @@ interface TradingConfig {
   sandbox?: boolean;
 }
 
+/** Minimal interface for a ccxt exchange instance (dynamically loaded). */
+interface CcxtExchange {
+  id: string;
+  setSandboxMode(enable: boolean): void;
+  loadMarkets(): Promise<unknown>;
+  fetchBalance(): Promise<{
+    total: Record<string, number>;
+    free: Record<string, number>;
+    used: Record<string, number>;
+  }>;
+  fetchTicker(symbol: string): Promise<{
+    symbol: string;
+    last: number | null;
+    bid: number | null;
+    ask: number | null;
+    high: number | null;
+    low: number | null;
+    percentage: number | null;
+    baseVolume: number | null;
+  }>;
+  createOrder(symbol: string, type: string, side: string, amount: number, price?: number): Promise<{
+    id: string;
+    symbol: string;
+    side: string;
+    type: string;
+    amount: number;
+    filled: number | null;
+    cost: number | null;
+    average: number | null;
+    status: string;
+    fee: unknown;
+  }>;
+  fetchOpenOrders(symbol?: string): Promise<Array<{
+    id: string;
+    symbol: string;
+    side: string;
+    type: string;
+    amount: number;
+    price: number | null;
+    status: string;
+  }>>;
+  cancelOrder(id: string, symbol?: string): Promise<unknown>;
+  fetchMyTrades(symbol?: string, since?: number, limit?: number): Promise<Array<{
+    id: string;
+    symbol: string;
+    side: string;
+    amount: number;
+    price: number;
+    cost: number;
+    timestamp: number;
+    datetime: string;
+    fee: unknown;
+  }>>;
+}
+
 export class TradingSkill extends Skill {
-  private exchangeInstances = new Map<string, any>();
+  private exchangeInstances = new Map<string, CcxtExchange>();
   private ccxtModule?: any;
 
   readonly metadata: SkillMetadata = {
@@ -259,7 +314,7 @@ export class TradingSkill extends Skill {
 
     return {
       success: true,
-      data: { exchange: exchange.id, orders: orders.map((o: any) => ({ id: o.id, symbol: o.symbol, side: o.side, type: o.type, amount: o.amount, price: o.price, status: o.status })), count: orders.length },
+      data: { exchange: exchange.id, orders: orders.map((o) => ({ id: o.id, symbol: o.symbol, side: o.side, type: o.type, amount: o.amount, price: o.price, status: o.status })), count: orders.length },
       display: lines.join('\n'),
     };
   }
@@ -297,7 +352,7 @@ export class TradingSkill extends Skill {
 
     return {
       success: true,
-      data: { exchange: exchange.id, trades: trades.map((t: any) => ({ id: t.id, symbol: t.symbol, side: t.side, amount: t.amount, price: t.price, cost: t.cost, date: t.datetime, fee: t.fee })), count: trades.length },
+      data: { exchange: exchange.id, trades: trades.map((t) => ({ id: t.id, symbol: t.symbol, side: t.side, amount: t.amount, price: t.price, cost: t.cost, date: t.datetime, fee: t.fee })), count: trades.length },
       display: lines.join('\n'),
     };
   }
@@ -312,7 +367,7 @@ export class TradingSkill extends Skill {
     return this.ccxtModule;
   }
 
-  private async getExchange(name?: string): Promise<any> {
+  private async getExchange(name?: string): Promise<CcxtExchange> {
     const exchanges = this.config?.exchanges;
     if (!exchanges || Object.keys(exchanges).length === 0) {
       throw new Error('Keine Exchanges konfiguriert. Setze ALFRED_TRADING_EXCHANGES in der .env Datei.');
@@ -342,7 +397,7 @@ export class TradingSkill extends Skill {
       this.exchangeInstances.set(exchangeName, instance);
     }
 
-    return this.exchangeInstances.get(exchangeName);
+    return this.exchangeInstances.get(exchangeName)!;
   }
 
   private resolvePair(input: string): string {
@@ -352,7 +407,7 @@ export class TradingSkill extends Skill {
     return `${trimmed}/${quote}`;
   }
 
-  private async checkOrderLimit(exchange: any, symbol: string, amount: number): Promise<void> {
+  private async checkOrderLimit(exchange: CcxtExchange, symbol: string, amount: number): Promise<void> {
     const maxOrder = this.config?.maxOrderEur ?? 500;
     try {
       const ticker = await exchange.fetchTicker(symbol);

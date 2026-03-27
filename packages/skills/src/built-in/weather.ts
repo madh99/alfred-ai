@@ -4,6 +4,7 @@ import { Skill } from '../skill.js';
 interface GeoResult {
   name: string;
   country: string;
+  country_code: string;
   latitude: number;
   longitude: number;
   admin1?: string;
@@ -125,11 +126,11 @@ export class WeatherSkill extends Skill {
     // Prefer AT > DE > CH > other European > any
     const preferred = ['AT', 'DE', 'CH'];
     for (const cc of preferred) {
-      const match = results.find((r: any) => r.country_code === cc);
+      const match = results.find((r: GeoResult) => r.country_code === cc);
       if (match) return match;
     }
     // Fallback: first European result or first overall
-    const european = results.find((r: any) =>
+    const european = results.find((r: GeoResult) =>
       ['AT', 'DE', 'CH', 'IT', 'FR', 'ES', 'NL', 'BE', 'PL', 'CZ', 'HU', 'SK', 'SI', 'HR', 'GB', 'IE', 'SE', 'NO', 'DK', 'FI', 'PT', 'GR', 'RO', 'BG'].includes(r.country_code)
     );
     return european ?? results[0];

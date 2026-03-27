@@ -3,9 +3,19 @@ import type { SkillMetadata, SkillContext, SkillResult, MqttConfig } from '@alfr
 
 type Action = 'publish' | 'subscribe' | 'status' | 'devices' | 'set' | 'get';
 
+/** Minimal interface for an mqtt.js client instance (dynamically loaded). */
+interface MqttClient {
+  on(event: string, listener: (...args: any[]) => void): void;
+  removeListener(event: string, listener: (...args: any[]) => void): void;
+  publish(topic: string, payload: string, opts: { retain: boolean; qos: number }, cb: (err: Error | null) => void): void;
+  subscribe(topic: string, opts: { qos: number }): void;
+  unsubscribe(topic: string): void;
+  end(force?: boolean): void;
+}
+
 export class MqttSkill extends Skill {
   private mqttModule: any;
-  private client: any;
+  private client: MqttClient | null = null;
   private connected = false;
   private subscribedTopics = new Set<string>();
   private readonly prefix: string;
@@ -163,7 +173,7 @@ export class MqttSkill extends Skill {
     return {
       success: true,
       data: summary,
-      display: `${summary.length} Zigbee-Geräte gefunden:\n${summary.map((d: any) => `- ${d.name} (${d.vendor ?? ''} ${d.model ?? d.type})`).join('\n')}`,
+      display: `${summary.length} Zigbee-Geräte gefunden:\n${summary.map((d) => `- ${d.name} (${d.vendor ?? ''} ${d.model ?? d.type})`).join('\n')}`,
     };
   }
 
@@ -255,25 +265,26 @@ export class MqttSkill extends Skill {
     return new Promise<void>((resolve, reject) => {
       const timeoutId = setTimeout(() => reject(new Error('MQTT-Verbindung Timeout (10s)')), 10_000);
 
-      this.client = (mqtt.connect ?? mqtt.default?.connect)(this.config.brokerUrl, options);
+      const client: MqttClient = (mqtt.connect ?? mqtt.default?.connect)(this.config.brokerUrl, options);
+      this.client = client;
 
-      this.client.on('connect', () => {
+      client.on('connect', () => {
         clearTimeout(timeoutId);
         this.connected = true;
         resolve();
       });
 
-      this.client.on('error', (err: Error) => {
+      client.on('error', (err: Error) => {
         clearTimeout(timeoutId);
         this.connected = false;
         reject(new Error(`MQTT-Fehler: ${err.message}`));
       });
 
-      this.client.on('close', () => {
+      client.on('close', () => {
         this.connected = false;
       });
 
-      this.client.on('reconnect', () => {
+      client.on('reconnect', () => {
         // Auto-reconnect handled by mqtt library
       });
     });
@@ -281,7 +292,7 @@ export class MqttSkill extends Skill {
 
   private publishAsync(topic: string, payload: string, retain: boolean): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.client.publish(topic, payload, { retain, qos: 1 }, (err: Error | null) => {
+      this.client!.publish(topic, payload, { retain, qos: 1 }, (err: Error | null) => {
         if (err) reject(new Error(`Publish fehlgeschlagen: ${err.message}`));
         else resolve();
       });
@@ -289,9 +300,10 @@ export class MqttSkill extends Skill {
   }
 
   private waitForMessage(topic: string, timeoutMs: number): Promise<{ topic: string; payload: string } | null> {
+    const client = this.client!;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
-        this.client.unsubscribe(topic);
+        client.unsubscribe(topic);
         this.subscribedTopics.delete(topic);
         resolve(null);
       }, timeoutMs);
@@ -300,15 +312,15 @@ export class MqttSkill extends Skill {
         // Check if topic matches (supports wildcards via mqtt lib matching)
         if (receivedTopic === topic || this.topicMatches(topic, receivedTopic)) {
           clearTimeout(timer);
-          this.client.removeListener('message', handler);
-          this.client.unsubscribe(topic);
+          client.removeListener('message', handler);
+          client.unsubscribe(topic);
           this.subscribedTopics.delete(topic);
           resolve({ topic: receivedTopic, payload: message.toString('utf-8') });
         }
       };
 
-      this.client.on('message', handler);
-      this.client.subscribe(topic, { qos: 1 });
+      client.on('message', handler);
+      client.subscribe(topic, { qos: 1 });
       this.subscribedTopics.add(topic);
     });
   }

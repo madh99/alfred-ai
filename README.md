@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.177-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.178-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -80,7 +80,7 @@ llm:
     model: llama3.2
 ```
 
-### Built-in Skills (46+)
+### Built-in Skills (60+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
@@ -90,16 +90,18 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
 | **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
-| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring, **YouTube** (Suche, Video-Info, Transkript-Extraktion, Channel-Monitoring) |
+| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube`, `recipe` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring, **YouTube** (Suche, Video-Info, Transkript-Extraktion, Channel-Monitoring), Rezeptsuche (Spoonacular/Edamam/Open Food Facts) |
 | **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
 | **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration, **autonomous project agent** (plan → code → validate → fix → commit loop, Telegram-controlled) |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor`, `database` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server) |
-| **Navigation** | `routing`, `transit_search` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS) |
-| **Energy** | `energy_price` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben |
-| **Marketplace** | `marketplace` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor`, `database`, `mqtt` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server), MQTT publish/subscribe (Zigbee2MQTT Discovery) |
+| **Navigation & Travel** | `routing`, `transit_search`, `travel` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS), Flugsuche & Reiseplanung (Kiwi/Booking.com) |
+| **Energy** | `energy_price`, `goe_charger` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben, go-e Charger Wallbox-Steuerung |
+| **Finance** | `crypto_price`, `bitpanda`, `trading` | Kryptowährungs-Preise (CoinGecko), Bitpanda Portfolio/Trades/Ticker, Crypto-Trading auf 110+ Exchanges (CCXT) |
+| **Marketplace & Shopping** | `marketplace`, `shopping` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts, Produktsuche & Preisvergleich (Geizhals) |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
-| **Media** | `browser`, `tts`, `image_generate` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google) |
+| **Media** | `browser`, `tts`, `image_generate`, `spotify`, `sonos` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google), Spotify (OAuth PKCE, Playback, Playlists, Suche), Sonos (UPnP + Cloud, Multi-Room, Radio) |
 | **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot` und `check_conflicts` |
+| **Productivity** | `onedrive` | Microsoft OneDrive (Graph API) — Dateien durchsuchen, hoch-/herunterladen, teilen |
 | **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
 | **Multi-User** | `user_management`, `sharing`, `help` | Roles (admin/user/family/guest/service), invite codes, platform linking, per-user service config, share notes/todos/documents/services between users, interactive help |
 

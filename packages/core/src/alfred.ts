@@ -89,7 +89,7 @@ export class Alfred {
   private userRepo!: UserRepository;
   private skillRegistry!: SkillRegistry;
   private mcpManager?: import('@alfred/skills').MCPManager;
-  private calendarSkill?: any; // CalendarSkill instance for today's events
+  private calendarSkill?: CalendarSkill;
   private calendarWatcher?: CalendarWatcher;
   private todoWatcher?: TodoWatcher;
   private reasoningEngine?: ReasoningEngine;

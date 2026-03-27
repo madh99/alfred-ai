@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.178] - 2026-03-27
+
+### Added
+- **Tests: condition-evaluator** — 65 Tests für extractField, evaluateCondition (alle 16 Operatoren inkl. always_*), Baseline-Verhalten, State-Change, evaluateCompositeCondition (AND/OR)
+- **Tests: feed-reader** — 14 Tests für findLastKnownIndex (Multi-Identifier), fallbackByDate, checkSingleFeed
+- **Tests: calendar-skill** — 11 Tests für Vergangenheits-Check, Duplikat-Erkennung, Provider-Resolution
+
+### Improved
+- **README Skills-Tabelle aktualisiert** — Von "46+" auf "60+" Skills. Neue Kategorien: Finance (crypto_price, bitpanda, trading), Productivity (onedrive). Fehlende Skills ergänzt: recipe, mqtt, travel, goe_charger, shopping, spotify, sonos.
+- **any-Reduktion** — `calendarSkill?: any` → `CalendarSkill`, WeatherSkill `GeoResult` um `country_code` ergänzt, TradingSkill `CcxtExchange` Interface statt `any`, MqttSkill `MqttClient` Interface statt `any`.
+
 ## [0.19.0-multi-ha.177] - 2026-03-27
 
 ### Security
