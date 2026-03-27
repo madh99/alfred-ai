@@ -187,6 +187,13 @@ export class WatchRepository {
     );
   }
 
+  async updateSkillParams(id: string, params: Record<string, unknown>): Promise<void> {
+    await this.adapter.execute(
+      `UPDATE watches SET skill_params = ? WHERE id = ?`,
+      [JSON.stringify(params), id],
+    );
+  }
+
   async getById(id: string): Promise<Watch | undefined> {
     const row = await this.adapter.queryOne(
       `SELECT * FROM watches WHERE id = ?`,

@@ -116,7 +116,15 @@ export class WatchEngine {
       chatId: watch.chatId,
     });
 
+    const paramsBefore = JSON.stringify(watch.skillParams);
     const result = await this.skillSandbox.execute(skill, watch.skillParams, context);
+
+    // If the skill mutated its input params (e.g. YouTube resolving channelName → channelId),
+    // persist the updated params so future polls use the resolved values directly.
+    const paramsAfter = JSON.stringify(watch.skillParams);
+    if (paramsBefore !== paramsAfter) {
+      await this.watchRepo.updateSkillParams(watch.id, watch.skillParams);
+    }
 
     if (!result.success) {
       this.logger.warn({ watchId: watch.id, error: result.error }, 'Watch skill execution failed');

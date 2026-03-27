@@ -314,6 +314,13 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     // Cache resolved channelId for future calls (Watch polls every 30-60 min)
     if (cacheKey) this.channelIdCache.set(cacheKey, channelId);
 
+    // Normalize input: replace channelName with channelId for future Watch polls
+    // This avoids repeated Search API calls (100 units each) on every poll
+    if (channelName && channelId && !input.channelId) {
+      input.channelId = channelId;
+      delete input.channelName;
+    }
+
     const params = new URLSearchParams({
       part: 'snippet',
       channelId,

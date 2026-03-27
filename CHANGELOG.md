@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.182] - 2026-03-28
+
+### Improved
+- **YouTube Watch: automatische Channel-ID-Auflösung** — Wenn ein Watch mit `channelName` (z.B. "Citystate") angelegt wird, löst der YouTube-Skill beim ersten Poll den Namen zur stabilen `channelId` (UC...) auf und **schreibt die ID dauerhaft in die Watch-Params**. Alle folgenden Polls verwenden direkt die ID — kein Search-API-Call mehr, 100 Quota-Units/Poll gespart, keine inkonsistenten Ergebnisse mehr.
+- **Watch-Engine: Skill-Param-Mutation** — Wenn ein Skill seine Input-Parameter ändert (z.B. Name→ID Auflösung), werden die geänderten Params automatisch in der DB persistiert via `updateSkillParams()`.
+
 ## [0.19.0-multi-ha.181] - 2026-03-27
 
 ### Fixed
