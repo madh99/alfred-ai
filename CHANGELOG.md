@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.181] - 2026-03-27
+
+### Fixed
+- **YouTube Channel-ID Caching** — Aufgelöste Channel-IDs werden im Speicher gecacht. Watches mit `channelName` müssen die Search API (100 Quota-Units) nur beim ersten Poll aufrufen, danach wird die stabile `UC...`-ID aus dem Cache verwendet. Verhindert Fehler wenn die Search API inkonsistente Ergebnisse liefert (z.B. "Citystate" wurde nach ein paar Stunden nicht mehr gefunden).
+- **YouTube Channel-ID Hinweis** — Bei Channel-Abfragen per Name wird die aufgelöste Channel-ID im Ergebnis angezeigt, damit Watches direkt mit der stabilen ID angelegt werden können.
+
 ## [0.19.0-multi-ha.180] - 2026-03-27
 
 ### Fixed

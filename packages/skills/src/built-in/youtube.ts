@@ -17,6 +17,9 @@ async function ytErrorDetail(res: Response): Promise<string> {
 }
 
 export class YouTubeSkill extends Skill {
+  /** Cache: channelName → channelId (avoids repeated Search API calls, saves 100 quota units per hit) */
+  private readonly channelIdCache = new Map<string, string>();
+
   readonly metadata: SkillMetadata = {
     name: 'youtube',
     category: 'information',
@@ -269,7 +272,13 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       channelId = channelIdMatch[1];
     }
 
-    // Resolve handle (@...) via Channels API
+    // Check cache before any API calls (saves quota, prevents inconsistent Search results)
+    const cacheKey = (channelName ?? '').toLowerCase().trim();
+    if (!channelId && cacheKey && this.channelIdCache.has(cacheKey)) {
+      channelId = this.channelIdCache.get(cacheKey);
+    }
+
+    // Resolve handle (@...) via Channels API (1 unit)
     if (!channelId && handleMatch) {
       const handleParams = new URLSearchParams({
         part: 'snippet',
@@ -283,7 +292,7 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       }
     }
 
-    // Resolve channel name via Search API
+    // Resolve channel name via Search API (100 units — last resort)
     if (!channelId && channelName) {
       const cleanName = channelName.replace(/^@/, '').replace(/https?:\/\/.*youtube\.com\//, '');
       const searchParams = new URLSearchParams({
@@ -301,6 +310,9 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
     }
 
     if (!channelId) return { success: false, error: `Could not resolve channel "${channelName ?? channelId}". Try a channel ID (starts with UC) or handle (@name).` };
+
+    // Cache resolved channelId for future calls (Watch polls every 30-60 min)
+    if (cacheKey) this.channelIdCache.set(cacheKey, channelId);
 
     const params = new URLSearchParams({
       part: 'snippet',
@@ -328,10 +340,14 @@ Watch-compatible: channel action returns "newCount" for new video alerts.`,
       `${i + 1}. **${v.title}** (${v.publishedAt})\n   ${v.url}`
     ).join('\n\n');
 
+    const channelHint = channelName && channelId !== channelName
+      ? `\n\n💡 Channel-ID: \`${channelId}\` — für stabilere Watches \`channelId\` statt \`channelName\` verwenden.`
+      : '';
+
     return {
       success: true,
       data: { channelId, channelName: channelTitle, count: videos.length, newCount: videos.length, videos },
-      display: `**${channelTitle}** — letzte ${videos.length} Videos\n\n${display}`,
+      display: `**${channelTitle}** — letzte ${videos.length} Videos\n\n${display}${channelHint}`,
     };
   }
 
