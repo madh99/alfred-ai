@@ -9,6 +9,7 @@ type WatchAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
 const VALID_OPERATORS: WatchCondition['operator'][] = [
   'lt', 'gt', 'lte', 'gte', 'eq', 'neq',
   'contains', 'not_contains', 'changed', 'increased', 'decreased',
+  'always_gt', 'always_lt', 'always_gte', 'always_lte',
 ];
 
 export class WatchSkill extends Skill {
@@ -18,8 +19,9 @@ export class WatchSkill extends Skill {
     description:
       'Create and manage condition-based alerts (watches). ' +
       'A watch polls a skill at regular intervals, extracts a field from the result, and sends a notification when a condition is met — no LLM involved. ' +
-      'Operators: lt, gt, lte, gte (numeric), eq, neq (string), contains, not_contains (substring), changed, increased, decreased (vs. last value). ' +
-      'The first check stores a baseline and never triggers. ' +
+      'Operators: lt, gt, lte, gte (numeric, state-change), eq, neq (string), contains, not_contains (substring), changed, increased, decreased (vs. last value), ' +
+      'always_gt, always_lt, always_gte, always_lte (numeric, trigger EVERY poll where condition is met — no state-change detection, useful for recurring alerts). ' +
+      'The first check stores a baseline and never triggers (except threshold operators which trigger immediately). ' +
       'IMPORTANT: skill_params must contain ALL parameters the target skill needs (action, query, etc.). The watch engine calls the skill with ONLY skill_params as input. ' +
       'Common condition_field paths by skill: ' +
       'marketplace {action:"search", query:"...", platform:"willhaben"} → "minPrice" (lt for price drop), "count" (increased for new listings); ' +
@@ -57,8 +59,8 @@ export class WatchSkill extends Skill {
         },
         condition_operator: {
           type: 'string',
-          enum: ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased'],
-          description: 'Comparison operator (for create)',
+          enum: ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased', 'always_gt', 'always_lt', 'always_gte', 'always_lte'],
+          description: 'Comparison operator (for create). always_* variants trigger on EVERY poll where condition is met (no state-change detection).',
         },
         condition_value: {
           type: ['string', 'number'],
@@ -104,7 +106,7 @@ export class WatchSkill extends Skill {
             type: 'object',
             properties: {
               field: { type: 'string' },
-              operator: { type: 'string', enum: ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased'] },
+              operator: { type: 'string', enum: ['lt', 'gt', 'lte', 'gte', 'eq', 'neq', 'contains', 'not_contains', 'changed', 'increased', 'decreased', 'always_gt', 'always_lt', 'always_gte', 'always_lte'] },
               value: { type: ['string', 'number'] },
             },
             required: ['field', 'operator'],

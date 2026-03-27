@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.179] - 2026-03-27
+
+### Added
+- **always_* Watch-Operatoren aktiviert** — `always_gt`, `always_lt`, `always_gte`, `always_lte` sind jetzt über die Watch-Skill API verfügbar. Triggern bei JEDEM Poll wo Bedingung erfüllt ist (kein State-Change nötig). Nützlich für wiederkehrende Alerts (z.B. "Temperatur > 30°C bei jedem Check melden"). Waren zuvor vollständig implementiert (Typ, Evaluierung, Labels) aber nicht im InputSchema/VALID_OPERATORS registriert.
+
 ## [0.19.0-multi-ha.178] - 2026-03-27
 
 ### Added
