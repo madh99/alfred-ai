@@ -10,6 +10,8 @@ interface FeedEntry {
   label: string;
   lastCheckedAt: string | null;
   lastEntryId: string | null;
+  /** Fallback: multiple identifiers for robust matching */
+  lastEntryIds?: { guid?: string; link?: string; title?: string } | null;
 }
 
 export class FeedReaderSkill extends Skill {
@@ -183,21 +185,24 @@ export class FeedReaderSkill extends Skill {
     const items = feed.items ?? [];
     let newItems: typeof items;
 
-    if (entry.lastEntryId) {
-      // Find items newer than the last known one
-      const lastIdx = items.findIndex((i: any) => (i.guid ?? i.link ?? i.title) === entry.lastEntryId);
-      newItems = lastIdx > 0 ? items.slice(0, lastIdx) : lastIdx === 0 ? [] : items.slice(0, 10);
+    if (entry.lastEntryId || entry.lastEntryIds) {
+      // Try to find the last known item using multiple identifiers
+      const lastIdx = this.findLastKnownIndex(items, entry);
+      newItems = lastIdx > 0 ? items.slice(0, lastIdx) : lastIdx === 0 ? [] : this.fallbackByDate(items, entry.lastCheckedAt);
     } else {
       // First check — return up to 5 latest
       newItems = items.slice(0, 5);
     }
 
-    // Update memory with latest entry ID
-    const latestId = items[0] ? (items[0].guid ?? items[0].link ?? items[0].title ?? null) : null;
+    // Update memory with latest entry identifiers (robust: store all available IDs)
+    const top = items[0] as any;
+    const latestId = top ? (top.guid ?? top.link ?? top.title ?? null) : null;
+    const latestIds = top ? { guid: top.guid, link: top.link, title: top.title } : null;
     const updated: FeedEntry = {
       ...entry,
       lastCheckedAt: new Date().toISOString(),
       lastEntryId: latestId,
+      lastEntryIds: latestIds,
     };
     await this.memoryRepo.save(userId, `feed:${entry.url}`, JSON.stringify(updated), 'feed');
 
@@ -218,5 +223,58 @@ export class FeedReaderSkill extends Skill {
         };
       }),
     };
+  }
+
+  /**
+   * Find the index of the last known item using multiple identification strategies:
+   * 1. Composite match (guid + link + title)
+   * 2. Legacy single-ID match (backward compat)
+   * 3. Individual field matches (guid, link, title separately)
+   * Returns -1 if not found.
+   */
+  private findLastKnownIndex(items: any[], entry: FeedEntry): number {
+    const ids = entry.lastEntryIds;
+
+    // Strategy 1: Match by any stored identifier field (most robust)
+    if (ids) {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        // guid match is strongest
+        if (ids.guid && item.guid === ids.guid) return i;
+        // link match (stable for most feeds)
+        if (ids.link && item.link === ids.link) return i;
+        // title match as last resort
+        if (ids.title && item.title === ids.title) return i;
+      }
+    }
+
+    // Strategy 2: Legacy single lastEntryId (backward compat with old feed entries)
+    if (entry.lastEntryId) {
+      const idx = items.findIndex((i: any) => (i.guid ?? i.link ?? i.title) === entry.lastEntryId);
+      if (idx !== -1) return idx;
+    }
+
+    return -1; // Not found — will fall back to date-based filtering
+  }
+
+  /**
+   * Fallback: filter items newer than lastCheckedAt.
+   * If no date info available, return empty (no false positives).
+   */
+  private fallbackByDate(items: any[], lastCheckedAt: string | null): any[] {
+    if (!lastCheckedAt) return items.slice(0, 5); // No date info → treat as first check
+
+    const cutoff = new Date(lastCheckedAt).getTime();
+    if (isNaN(cutoff)) return [];
+
+    const newer = items.filter((i: any) => {
+      const pub = i.pubDate ?? i.isoDate;
+      if (!pub) return false;
+      const pubTime = new Date(pub).getTime();
+      return !isNaN(pubTime) && pubTime > cutoff;
+    });
+
+    // If no items have dates, return empty — better than false positives
+    return newer;
   }
 }

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.175] - 2026-03-27
+
+### Fixed
+- **Feed-Reader GUID-Instabilität** — RSS-Watches triggerten nur einmal statt bei jedem neuen Artikel. Ursache: Wenn ein Feed instabile GUIDs hat (z.B. Tracking-Parameter in URLs), fand `lastEntryId` den letzten bekannten Artikel nicht mehr → immer "neue" Items → `newCount` blieb dauerhaft >0 → kein State-Change → Watch triggert nie wieder. Fix: Robuste Multi-Identifier-Erkennung (guid, link, title separat) + Fallback auf pubDate wenn kein ID-Match. Keine false Positives mehr bei instabilen Feeds.
+
 ## [0.19.0-multi-ha.174] - 2026-03-27
 
 ### Fixed
