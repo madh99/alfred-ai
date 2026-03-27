@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.173] - 2026-03-26
+## [0.19.0-multi-ha.174] - 2026-03-27
+
+### Fixed
+- **Watch Baseline-Bug** — Neue Watches mit Schwellwert-Operatoren (gt, lt, eq, contains etc.) triggerten beim ersten Poll NIE, auch wenn die Bedingung sofort erfüllt war. Ursache: Baseline-Check (`lastValue === null → never trigger`) galt für ALLE Operatoren. Fix: Baseline-Check nur noch für Change-Detection Operatoren (changed, increased, decreased). Schwellwert-Operatoren triggern sofort wenn die Bedingung erfüllt ist.
 
 ### Fixed
 - **Pattern/Connection Memories immer im Prompt** — Pattern-Memories (Verhaltensmuster) und Connection-Memories (Cross-Context Verbindungen) werden jetzt IMMER geladen, unabhängig von Keyword/Semantic-Relevanz zur aktuellen Nachricht. Vorher: Nur geladen wenn zufällig relevant zur Nachricht oder in den neuesten 20 Memories. Betrifft sowohl Pipeline (System-Prompt) als auch ReasoningEngine.

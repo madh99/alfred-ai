@@ -40,9 +40,14 @@ export function evaluateCondition(
 ): { triggered: boolean; displayValue: string } {
   const displayValue = formatValue(currentValue);
 
-  // Baseline check — never trigger on first poll
+  // Baseline check — only needed for change-detection operators (changed/increased/decreased).
+  // Threshold operators (gt/lt/eq/contains etc.) should trigger on first poll if condition is met.
   if (lastValue === null) {
-    return { triggered: false, displayValue };
+    const needsBaseline = operator === 'changed' || operator === 'increased' || operator === 'decreased';
+    if (needsBaseline) {
+      return { triggered: false, displayValue };
+    }
+    // For threshold operators: fall through to normal evaluation (no state-change check)
   }
 
   switch (operator) {
