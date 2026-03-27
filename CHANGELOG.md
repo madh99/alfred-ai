@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.176] - 2026-03-27
+
+### Fixed
+- **Kalender Duplikat-Prävention (alle Provider)** — Provider-agnostischer Duplikat-Check direkt im CalendarSkill: Vor jedem `create_event` werden existierende Events im selben Zeitfenster abgefragt und auf gleichen Titel geprüft (case-insensitive, ±5 Min Toleranz). Schützt ALLE Codepaths: User-Request, ReasoningEngine-Autonomie, Watch-Actions. Vorher: Nur Microsoft hatte `transactionId`, CalDAV und Google hatten NULL Duplikatschutz.
+- **Kalender Vergangenheits-Check** — Events in der Vergangenheit werden abgelehnt mit klarer Fehlermeldung. Vorher: LLM konnte beliebige vergangene Daten senden und Alfred erstellte den Termin ohne Warnung.
+
 ## [0.19.0-multi-ha.175] - 2026-03-27
 
 ### Fixed

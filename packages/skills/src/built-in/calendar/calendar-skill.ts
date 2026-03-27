@@ -286,15 +286,43 @@ export class CalendarSkill extends Skill {
     if (!start) return { success: false, error: 'Missing required field "start"' };
     if (!end) return { success: false, error: 'Missing required field "end"' };
 
+    const startDate = this.parseLocalTime(start);
+    const endDate = this.parseLocalTime(end);
+
+    // Guard: reject events in the past (with 5 min tolerance for clock skew)
+    if (startDate.getTime() < Date.now() - 5 * 60_000) {
+      return { success: false, error: `Termin liegt in der Vergangenheit (${start}). Erstelle keine Events für vergangene Zeitpunkte.` };
+    }
+
     const resolved = this.resolveProvider(input);
     if ('success' in resolved) return resolved;
     const { provider, account } = resolved;
 
+    // Guard: check for duplicate (same title + overlapping time window)
+    try {
+      const windowStart = new Date(startDate.getTime() - 60_000); // 1 min buffer
+      const windowEnd = new Date(endDate.getTime() + 60_000);
+      const existing = await provider.listEvents(windowStart, windowEnd);
+      const normalizedTitle = title.trim().toLowerCase();
+      const duplicate = existing.find(e =>
+        e.title.trim().toLowerCase() === normalizedTitle &&
+        Math.abs(new Date(e.start).getTime() - startDate.getTime()) < 5 * 60_000,
+      );
+      if (duplicate) {
+        return {
+          success: false,
+          error: `Termin existiert bereits: "${duplicate.title}" am ${this.formatEvent(duplicate, provider)}. Kein Duplikat erstellt.`,
+        };
+      }
+    } catch {
+      // If listEvents fails, proceed with creation (don't block on check failure)
+    }
+
     try {
       const event = await provider.createEvent({
         title,
-        start: this.parseLocalTime(start),
-        end: this.parseLocalTime(end),
+        start: startDate,
+        end: endDate,
         location: input.location as string | undefined,
         description: input.description as string | undefined,
         allDay: input.all_day as boolean | undefined,
