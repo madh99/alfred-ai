@@ -362,9 +362,6 @@ export class HttpAdapter extends MessagingAdapter {
       if (user) return true;
     }
 
-    // No API token configured and no auth callback = open access
-    if (!this.apiToken) return true;
-
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Unauthorized' }));
     return false;

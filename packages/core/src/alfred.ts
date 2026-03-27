@@ -112,6 +112,12 @@ export class Alfred {
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
+  private memoryConsolidatorTimer?: ReturnType<typeof setInterval>;
+  private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
+  private insightExpiryTimer?: ReturnType<typeof setInterval>;
+  private clusterMonitorTimer?: ReturnType<typeof setInterval>;
+  private insightTracker?: InsightTracker;
+  private ownerMasterUserId?: string;
   private readonly startedAt = new Date().toISOString();
 
   constructor(private config: AlfredConfig) {
@@ -307,6 +313,9 @@ export class Alfred {
     }
     this.calendarSkill = calendarSkill;
 
+    // Determine the default platform for proactive notifications (watchers, reasoning)
+    const defaultProactivePlatform = ([...this.adapters.keys()][0] ?? 'telegram') as Platform;
+
     // 4b2. Initialize calendar vorlauf watcher (optional)
     if (calendarProvider && this.config.calendar?.vorlauf?.enabled) {
       const calNotifRepo = new CalendarNotificationRepository(adapter);
@@ -317,7 +326,7 @@ export class Alfred {
           calNotifRepo,
           this.adapters,
           ownerUserId,
-          'telegram' as Platform,
+          defaultProactivePlatform,
           this.config.calendar.vorlauf,
           this.logger.child({ component: 'calendar-watcher' }),
           activityLogger,
@@ -335,7 +344,7 @@ export class Alfred {
           calNotifRepo,
           this.adapters,
           ownerUserId,
-          'telegram' as Platform,
+          defaultProactivePlatform,
           { minutesBefore: 30 },
           this.logger.child({ component: 'todo-watcher' }),
           activityLogger,
@@ -631,6 +640,7 @@ export class Alfred {
             try { await alfredUserRepo.linkPlatform(adminUser.id, platform, ownerUid); } catch { /* already linked */ }
           }
         }
+        this.ownerMasterUserId = adminUser.id;
       }
 
       // Resolve Microsoft App credentials for Device Code Flow + shared resource setup
@@ -961,6 +971,7 @@ export class Alfred {
           memoryRepo,
           this.logger.child({ component: 'insight-tracker' }),
         );
+        this.insightTracker = insightTracker;
         const reasoningNotifRepo = new CalendarNotificationRepository(adapter);
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
@@ -976,7 +987,7 @@ export class Alfred {
           this.adapters,
           userRepo,
           ownerUserId,
-          'telegram' as Platform,
+          defaultProactivePlatform,
           this.config.reasoning,
           this.logger.child({ component: 'reasoning-engine' }),
           activityLogger,
@@ -1303,7 +1314,7 @@ export class Alfred {
       const consolidator = new MemoryConsolidator(this.llmProvider, this.memoryRepo, this.logger.child({ component: 'memory-consolidator' }));
       const userRepoRef = this.userRepo;
       let lastConsolidationDay = '';
-      setInterval(async () => {
+      this.memoryConsolidatorTimer = setInterval(async () => {
         const now = new Date();
         const today = now.toISOString().slice(0, 10);
         if (now.getHours() !== 3 || lastConsolidationDay === today) return;
@@ -1325,7 +1336,7 @@ export class Alfred {
       if (this.activityRepo) {
         const patternAnalyzer = new PatternAnalyzer(this.llmProvider, this.memoryRepo, this.activityRepo, this.logger.child({ component: 'pattern-analyzer' }));
         let lastPatternDay = '';
-        setInterval(async () => {
+        this.patternAnalyzerTimer = setInterval(async () => {
           const now = new Date();
           const today = now.toISOString().slice(0, 10);
           if (now.getHours() !== 3 || now.getMinutes() < 30 || lastPatternDay === today) return;
@@ -1347,7 +1358,7 @@ export class Alfred {
 
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)
     if (this.clusterManager) {
-      setInterval(async () => {
+      this.clusterMonitorTimer = setInterval(async () => {
         try {
           const nodes = await this.clusterManager!.getNodesAny();
           if (nodes.length > 0) {
@@ -1355,6 +1366,18 @@ export class Alfred {
           }
         } catch { /* ignore */ }
       }, 60_000);
+    }
+
+    // Insight expiry: process expired insights every 30 minutes for preference learning
+    if (this.insightTracker && this.ownerMasterUserId) {
+      const ownerMasterUserId = this.ownerMasterUserId;
+      this.insightExpiryTimer = setInterval(() => {
+        try {
+          this.insightTracker!.processExpired(ownerMasterUserId);
+        } catch (err) {
+          this.logger.warn({ err }, 'Insight expiry processing failed');
+        }
+      }, 30 * 60_000);
     }
 
     if (this.adapters.size === 0) {
@@ -1396,6 +1419,22 @@ export class Alfred {
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;
+    }
+    if (this.memoryConsolidatorTimer) {
+      clearInterval(this.memoryConsolidatorTimer);
+      this.memoryConsolidatorTimer = undefined;
+    }
+    if (this.patternAnalyzerTimer) {
+      clearInterval(this.patternAnalyzerTimer);
+      this.patternAnalyzerTimer = undefined;
+    }
+    if (this.insightExpiryTimer) {
+      clearInterval(this.insightExpiryTimer);
+      this.insightExpiryTimer = undefined;
+    }
+    if (this.clusterMonitorTimer) {
+      clearInterval(this.clusterMonitorTimer);
+      this.clusterMonitorTimer = undefined;
     }
 
     // Shutdown MCP servers

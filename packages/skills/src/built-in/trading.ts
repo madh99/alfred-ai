@@ -373,7 +373,7 @@ export class TradingSkill extends Skill {
       }
     } catch (err: any) {
       if (err.message?.includes('Limit')) throw err;
-      // If ticker fetch fails, skip limit check
+      throw new Error(`Limit-Check fehlgeschlagen (Ticker nicht verfügbar): ${err.message ?? err}. Order aus Sicherheitsgründen abgelehnt.`);
     }
   }
 

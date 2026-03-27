@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.177] - 2026-03-27
+
+### Security
+- **SQL-Injection in Database-Skill behoben** — MySQL `describeTable()` und MSSQL `describeTable()` verwendeten unsichere String-Interpolation für Tabellennamen. Jetzt parameterisierte Queries (`INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ?` bzw. `@tableName`).
+- **HTTP-Adapter Auth-Bypass behoben** — `checkAuth()` gab fälschlich `true` zurück wenn kein apiToken aber authCb konfiguriert war. Jetzt: 401 Unauthorized wenn kein gültiger Token vorgelegt wird.
+- **Code-Sandbox ENV-Isolation** — Sandbox-Prozesse erben nicht mehr alle Umgebungsvariablen. ALFRED_*, ANTHROPIC_*, OPENAI_*, AWS_* und andere Secret-Patterns werden gefiltert. Verhindert Exfiltration von API-Keys durch kompromittierten Code.
+- **Skill-Input-Logging redaktiert** — Sensible Felder (password, token, secret, apiKey etc.) werden vor dem Logging auf `[REDACTED]` gesetzt.
+- **TradingSkill Limit-Check fail-safe** — Bei Ticker-Fehler wird die Order jetzt abgelehnt statt ohne Limit-Prüfung ausgeführt.
+
+### Fixed
+- **SpotifySkill Race Condition (Multi-User)** — `activeConfigs`/`mergedConfigs` waren Instanzvariablen die bei parallelen Requests im `finally`-Block zurückgesetzt wurden. Jetzt lokale Variablen pro Request — kein Singleton-Konflikt mehr bei Multi-User.
+- **Memory Leak: anonyme setInterval** — Memory-Consolidator, Pattern-Analyzer und Cluster-Monitor Intervalle werden jetzt in `stop()` korrekt bereinigt.
+- **InsightTracker.processExpired()** — Wird jetzt alle 30 Min aufgerufen. Vorher: nie aufgerufen → "ignorierte" Insights wurden nie gezählt → Preference-Learning unvollständig.
+- **Telegram-Hardcode für Proaktivität entfernt** — ReasoningEngine, CalendarWatcher und TodoWatcher verwenden jetzt den ersten aktiven Adapter statt hart `telegram`. Proaktive Nachrichten erreichen jetzt auch Discord/Signal/Matrix-User.
+
 ## [0.19.0-multi-ha.176] - 2026-03-27
 
 ### Fixed

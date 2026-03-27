@@ -34,7 +34,11 @@ export class SkillSandbox {
     timeoutMs = timeoutMs ?? skill.metadata.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const { name } = skill.metadata;
 
-    this.logger.info({ skill: name, input }, 'Skill execution started');
+    const safeInput = { ...input };
+    for (const key of ['password', 'secret', 'token', 'apiKey', 'api_key', 'accessToken', 'refreshToken', 'clientSecret']) {
+      if (key in safeInput) safeInput[key] = '[REDACTED]';
+    }
+    this.logger.info({ skill: name, input: safeInput }, 'Skill execution started');
 
     if (tracker) {
       return this.executeWithTracker(skill, input, context, name, timeoutMs, tracker);

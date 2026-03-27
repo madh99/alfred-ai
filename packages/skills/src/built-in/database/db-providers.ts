@@ -112,10 +112,13 @@ export class MySQLProvider implements DbProvider {
   }
 
   async describeTable(name: string): Promise<ColumnInfo[]> {
-    const [rows] = await this.pool.query(`DESCRIBE \`${name.replace(/`/g, '')}\``);
+    const [rows] = await this.pool.query(
+      `SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE() ORDER BY ORDINAL_POSITION`,
+      [name],
+    );
     return rows.map((row: any) => ({
-      name: row.Field, type: row.Type, nullable: row.Null === 'YES',
-      defaultValue: row.Default, primaryKey: row.Key === 'PRI',
+      name: row.COLUMN_NAME, type: row.DATA_TYPE, nullable: row.IS_NULLABLE === 'YES',
+      defaultValue: row.COLUMN_DEFAULT, primaryKey: row.COLUMN_KEY === 'PRI',
     }));
   }
 
@@ -153,7 +156,9 @@ export class MSSQLProvider implements DbProvider {
   }
 
   async describeTable(name: string): Promise<ColumnInfo[]> {
-    const r = await this.pool.query(`SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${name.replace(/'/g, '')}' ORDER BY ORDINAL_POSITION`);
+    const r = await this.pool.request()
+      .input('tableName', name)
+      .query(`SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = @tableName ORDER BY ORDINAL_POSITION`);
     return r.recordset.map((row: any) => ({ name: row.COLUMN_NAME, type: row.DATA_TYPE, nullable: row.IS_NULLABLE === 'YES', defaultValue: row.COLUMN_DEFAULT }));
   }
 

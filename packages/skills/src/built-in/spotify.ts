@@ -18,8 +18,8 @@ export class SpotifySkill extends Skill {
   readonly metadata: SkillMetadata;
 
   private readonly configs: Map<string, SpotifyConfig>;
-  private activeConfigs?: Map<string, SpotifyConfig>;
-  private mergedConfigs?: Map<string, SpotifyConfig>;
+  /** @deprecated kept only for handleOAuthCallback (external entry-point). Use local cfgs in execute(). */
+  private currentRequestConfigs?: Map<string, SpotifyConfig>;
   private lastContext?: SkillContext;
   /** Persistent resolver reference — survives across execute() calls for OAuth callbacks on HA nodes. */
   private userServiceResolverRef?: SkillContext['userServiceResolver'];
@@ -122,85 +122,81 @@ export class SpotifySkill extends Skill {
     if (context.userServiceResolver) this.userServiceResolverRef = context.userServiceResolver;
 
     const userConfigs = await this.resolveUserConfigs(context);
-    this.activeConfigs = userConfigs ?? undefined;
+    const activeConfigs = userConfigs ?? undefined;
+
+    let cfgs: Map<string, SpotifyConfig>;
+    if (activeConfigs) {
+      if (context.userRole === 'admin' || !context.alfredUserId) {
+        cfgs = new Map([...this.configs, ...activeConfigs]);
+      } else {
+        cfgs = activeConfigs;
+      }
+    } else {
+      cfgs = (context.userRole === 'admin' || !context.alfredUserId) ? this.configs : new Map();
+    }
+    // Keep a reference for handleOAuthCallback (external entry-point that has no cfgs parameter)
+    this.currentRequestConfigs = cfgs;
+
+    const action = input.action as string;
+
+    if (action === 'list_accounts') return this.handleListAccounts(cfgs);
+    if (action === 'authorize') return await this.authorize(input, context, cfgs);
+
+    if (cfgs.size === 0) {
+      return { success: false, error: 'Spotify ist nicht konfiguriert. Nutze "authorize" oder "setup_service" um Spotify zu verbinden.' };
+    }
+
+    // Premium check for playback actions
+    if (PREMIUM_ACTIONS.has(action)) {
+      const resolved = this.resolveConfig(input, cfgs);
+      if ('success' in resolved) return resolved;
+      const isPremium = await this.checkPremium(resolved.cfg, resolved.account);
+      if (!isPremium) {
+        return { success: false, error: 'Spotify Premium erforderlich für Playback-Steuerung. Dein Account ist Free/Open.' };
+      }
+    }
 
     try {
-      let cfgs: Map<string, SpotifyConfig>;
-      if (this.activeConfigs) {
-        if (context.userRole === 'admin' || !context.alfredUserId) {
-          cfgs = new Map([...this.configs, ...this.activeConfigs]);
-        } else {
-          cfgs = this.activeConfigs;
-        }
-      } else {
-        cfgs = (context.userRole === 'admin' || !context.alfredUserId) ? this.configs : new Map();
+      switch (action) {
+        case 'now_playing': return await this.nowPlaying(input, cfgs);
+        case 'play': return await this.play(input, cfgs);
+        case 'pause': return await this.pausePlayback(input, cfgs);
+        case 'resume': return await this.resumePlayback(input, cfgs);
+        case 'next': return await this.next(input, cfgs);
+        case 'previous': return await this.previous(input, cfgs);
+        case 'seek': return await this.seek(input, cfgs);
+        case 'volume': return await this.setVolume(input, cfgs);
+        case 'shuffle': return await this.setShuffle(input, cfgs);
+        case 'repeat': return await this.setRepeat(input, cfgs);
+        case 'devices': return await this.listDevices(input, cfgs);
+        case 'transfer': return await this.transferPlayback(input, cfgs);
+        case 'search': return await this.search(input, cfgs);
+        case 'queue': return await this.addToQueue(input, cfgs);
+        case 'queue_list': return await this.getQueue(input, cfgs);
+        case 'playlists': return await this.listPlaylists(input, cfgs);
+        case 'playlist_tracks': return await this.playlistTracks(input, cfgs);
+        case 'playlist_create': return await this.createPlaylist(input, cfgs);
+        case 'playlist_add': return await this.playlistAdd(input, cfgs);
+        case 'playlist_remove': return await this.playlistRemove(input, cfgs);
+        case 'like': return await this.likeTracks(input, cfgs);
+        case 'unlike': return await this.unlikeTracks(input, cfgs);
+        case 'top_tracks': return await this.topTracks(input, cfgs);
+        case 'top_artists': return await this.topArtists(input, cfgs);
+        case 'recently_played': return await this.recentlyPlayed(input, cfgs);
+        case 'recommend': return await this.recommend(input, cfgs);
+        case 'confirm_auth': return await this.confirmAuth(input, context, cfgs);
+        default:
+          return { success: false, error: `Unbekannte Aktion: ${action}` };
       }
-      this.mergedConfigs = cfgs;
-
-      const action = input.action as string;
-
-      if (action === 'list_accounts') return this.handleListAccounts(cfgs);
-      if (action === 'authorize') return await this.authorize(input, context);
-
-      if (cfgs.size === 0) {
-        return { success: false, error: 'Spotify ist nicht konfiguriert. Nutze "authorize" oder "setup_service" um Spotify zu verbinden.' };
-      }
-
-      // Premium check for playback actions
-      if (PREMIUM_ACTIONS.has(action)) {
-        const resolved = this.resolveConfig(input);
-        if ('success' in resolved) return resolved;
-        const isPremium = await this.checkPremium(resolved.cfg, resolved.account);
-        if (!isPremium) {
-          return { success: false, error: 'Spotify Premium erforderlich für Playback-Steuerung. Dein Account ist Free/Open.' };
-        }
-      }
-
-      try {
-        switch (action) {
-          case 'now_playing': return await this.nowPlaying(input);
-          case 'play': return await this.play(input);
-          case 'pause': return await this.pausePlayback(input);
-          case 'resume': return await this.resumePlayback(input);
-          case 'next': return await this.next(input);
-          case 'previous': return await this.previous(input);
-          case 'seek': return await this.seek(input);
-          case 'volume': return await this.setVolume(input);
-          case 'shuffle': return await this.setShuffle(input);
-          case 'repeat': return await this.setRepeat(input);
-          case 'devices': return await this.listDevices(input);
-          case 'transfer': return await this.transferPlayback(input);
-          case 'search': return await this.search(input);
-          case 'queue': return await this.addToQueue(input);
-          case 'queue_list': return await this.getQueue(input);
-          case 'playlists': return await this.listPlaylists(input);
-          case 'playlist_tracks': return await this.playlistTracks(input);
-          case 'playlist_create': return await this.createPlaylist(input);
-          case 'playlist_add': return await this.playlistAdd(input);
-          case 'playlist_remove': return await this.playlistRemove(input);
-          case 'like': return await this.likeTracks(input);
-          case 'unlike': return await this.unlikeTracks(input);
-          case 'top_tracks': return await this.topTracks(input);
-          case 'top_artists': return await this.topArtists(input);
-          case 'recently_played': return await this.recentlyPlayed(input);
-          case 'recommend': return await this.recommend(input);
-          case 'confirm_auth': return await this.confirmAuth(input, context);
-          default:
-            return { success: false, error: `Unbekannte Aktion: ${action}` };
-        }
-      } catch (err) {
-        return { success: false, error: err instanceof Error ? err.message : String(err) };
-      }
-    } finally {
-      this.activeConfigs = undefined;
-      this.mergedConfigs = undefined;
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
 
   // ── OAuth authorize ─────────────────────────────────────────────
 
-  private async authorize(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const cfgs = this.mergedConfigs ?? this.configs;
+  private async authorize(input: Record<string, unknown>, context: SkillContext, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    cfgs = cfgs ?? this.configs;
     const account = (input.account as string) ?? [...cfgs.keys()][0] ?? 'default';
     const cfg = cfgs.get(account);
 
@@ -289,7 +285,7 @@ export class SpotifySkill extends Skill {
 
   // ── Manual auth confirmation (user pastes callback URL from browser) ────
 
-  private async confirmAuth(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+  private async confirmAuth(input: Record<string, unknown>, context: SkillContext, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
     const callbackUrl = input.url as string ?? input.callback_url as string;
     if (!callbackUrl) {
       return { success: false, error: 'URL fehlt. Kopiere die komplette URL aus der Browser-Adressleiste nach dem Spotify-Redirect.' };
@@ -353,7 +349,7 @@ export class SpotifySkill extends Skill {
       return { success: false, error: 'Unbekannte oder abgelaufene Autorisierung (fehlende Auth-Daten).' };
     }
 
-    const cfg = (this.mergedConfigs ?? this.configs).get(account);
+    const cfg = (this.currentRequestConfigs ?? this.configs).get(account);
     if (!cfg) return { success: false, error: `Account "${account}" nicht gefunden.` };
 
     const params: Record<string, string> = {
@@ -414,8 +410,8 @@ export class SpotifySkill extends Skill {
     return cfgs.size > 0 ? cfgs : null;
   }
 
-  private resolveConfig(input: Record<string, unknown>): { cfg: SpotifyConfig; account: string } | SkillResult {
-    const cfgs = this.mergedConfigs ?? this.activeConfigs ?? this.configs;
+  private resolveConfig(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): { cfg: SpotifyConfig; account: string } | SkillResult {
+    cfgs = cfgs ?? this.currentRequestConfigs ?? this.configs;
     const accountNames = [...cfgs.keys()];
     const defaultAccount = accountNames[0] ?? 'default';
     const account = (input.account as string) ?? defaultAccount;
@@ -571,8 +567,8 @@ export class SpotifySkill extends Skill {
 
   // ── Actions ─────────────────────────────────────────────────────
 
-  private async nowPlaying(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async nowPlaying(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -602,8 +598,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async play(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async play(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -647,8 +643,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: input.query ? `Spiele: ${input.query}` : 'Wiedergabe gestartet.' };
   }
 
-  private async pausePlayback(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async pausePlayback(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -656,8 +652,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: 'Wiedergabe pausiert.' };
   }
 
-  private async resumePlayback(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async resumePlayback(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -665,8 +661,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: 'Wiedergabe fortgesetzt.' };
   }
 
-  private async next(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async next(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -674,8 +670,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: 'Naechster Track.' };
   }
 
-  private async previous(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async previous(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -683,8 +679,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: 'Vorheriger Track.' };
   }
 
-  private async seek(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async seek(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -693,8 +689,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `Position: ${this.formatDuration(posMs)}` };
   }
 
-  private async setVolume(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async setVolume(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -703,8 +699,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `Lautstaerke: ${vol}%` };
   }
 
-  private async setShuffle(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async setShuffle(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -713,8 +709,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `Zufallswiedergabe: ${state ? 'An' : 'Aus'}` };
   }
 
-  private async setRepeat(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async setRepeat(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -724,8 +720,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `Wiederholung: ${labels[state] ?? state}` };
   }
 
-  private async listDevices(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async listDevices(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -746,8 +742,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async transferPlayback(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async transferPlayback(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -762,8 +758,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `Wiedergabe auf "${input.device}" uebertragen.` };
   }
 
-  private async search(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async search(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -798,8 +794,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async addToQueue(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async addToQueue(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -808,8 +804,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: 'Zur Warteschlange hinzugefuegt.' };
   }
 
-  private async getQueue(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async getQueue(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -836,8 +832,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async listPlaylists(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async listPlaylists(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -856,8 +852,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async playlistTracks(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async playlistTracks(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -886,8 +882,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async createPlaylist(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async createPlaylist(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -915,8 +911,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async playlistAdd(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async playlistAdd(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -932,8 +928,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `${uris.length} Track(s) zur Playlist hinzugefuegt.` };
   }
 
-  private async playlistRemove(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async playlistRemove(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -949,8 +945,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `${uris.length} Track(s) aus Playlist entfernt.` };
   }
 
-  private async likeTracks(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async likeTracks(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -961,8 +957,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `${ids.length} Track(s) geliked.` };
   }
 
-  private async unlikeTracks(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async unlikeTracks(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -973,8 +969,8 @@ export class SpotifySkill extends Skill {
     return { success: true, display: `${ids.length} Track(s) aus Bibliothek entfernt.` };
   }
 
-  private async topTracks(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async topTracks(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -1006,8 +1002,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async topArtists(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async topArtists(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -1034,8 +1030,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async recentlyPlayed(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async recentlyPlayed(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 
@@ -1064,8 +1060,8 @@ export class SpotifySkill extends Skill {
     };
   }
 
-  private async recommend(input: Record<string, unknown>): Promise<SkillResult> {
-    const resolved = this.resolveConfig(input);
+  private async recommend(input: Record<string, unknown>, cfgs?: Map<string, SpotifyConfig>): Promise<SkillResult> {
+    const resolved = this.resolveConfig(input, cfgs);
     if ('success' in resolved) return resolved;
     const { cfg, account } = resolved;
 

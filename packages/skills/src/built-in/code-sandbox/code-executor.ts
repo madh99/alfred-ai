@@ -69,12 +69,23 @@ export class CodeExecutor {
 
       const startTime = Date.now();
 
+      // Build a safe env that excludes secrets and API keys
+      const safeEnv: Record<string, string> = {};
+      for (const [key, val] of Object.entries(process.env)) {
+        if (val === undefined) continue;
+        // Exclude Alfred secrets and common sensitive env vars
+        if (/^ALFRED_/i.test(key)) continue;
+        if (/^(ANTHROPIC|OPENAI|GOOGLE|AWS|AZURE|GITHUB|GITLAB|SLACK)_/i.test(key)) continue;
+        if (/token|secret|password|api.?key|credentials/i.test(key)) continue;
+        safeEnv[key] = val;
+      }
+
       return await new Promise<ExecutionResult>((resolve) => {
         const proc = spawn(cmd, args, {
           cwd: tmpDir,
           timeout,
           env: {
-            ...process.env,
+            ...safeEnv,
             NODE_ENV: 'sandbox',
             PYTHONDONTWRITEBYTECODE: '1',
             ...options?.env,
