@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
@@ -109,6 +109,11 @@ export async function executeAgent(
   // Auto-create working directory if it doesn't exist
   if (!fs.existsSync(cwd)) {
     fs.mkdirSync(cwd, { recursive: true });
+  }
+  // If command runs as a different user (sudo -u <user>), ensure cwd is owned by that user
+  if (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1]) {
+    const runAsUser = agentDef.argsTemplate[1];
+    try { execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, cwd], { timeout: 5000 }); } catch { /* best effort */ }
   }
   const rawTimeout = options.timeoutMs ?? agentDef.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);

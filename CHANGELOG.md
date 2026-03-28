@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.190] - 2026-03-28
+
+### Fixed
+- **CodeAgent: chown cwd bei sudo -u** — Wenn der Agent via `sudo -u <user>` als nicht-root User läuft, wird das Arbeitsverzeichnis automatisch dem User zugewiesen (`chown -R`). Behebt das Problem dass Claude Code als `madh` keine Dateien in root-owned Verzeichnissen schreiben kann.
+
 ## [0.19.0-multi-ha.189] - 2026-03-28
 
 ### Fixed
