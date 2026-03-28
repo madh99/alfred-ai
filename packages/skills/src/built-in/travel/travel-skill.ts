@@ -131,7 +131,7 @@ export class TravelSkill extends Skill {
 
   private async searchFlights(params: Record<string, unknown>): Promise<SkillResult> {
     const provider = this.providers.find(p => p.type === 'flights') as KiwiProvider | undefined;
-    if (!provider) return { success: false, error: 'Kein Flug-Provider konfiguriert. Bitte ALFRED_TRAVEL_KIWI_API_KEY setzen.' };
+    if (!provider) return { success: false, error: 'Kein Flug-Provider konfiguriert. Bitte ALFRED_TRAVEL_BOOKING_RAPID_API_KEY setzen (RapidAPI-Key für Kiwi + Booking.com).' };
 
     const origin = (params.origin as string) ?? this.config?.defaultOrigin;
     if (!origin) return { success: false, error: 'Abflugort (origin) fehlt' };

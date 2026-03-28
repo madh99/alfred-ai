@@ -5,6 +5,8 @@ function createMockWatchRepo(watches: any[] = []) {
   return {
     claimDue: vi.fn(() => watches),
     updateAfterCheck: vi.fn(),
+    updateActionError: vi.fn(),
+    updateSkillParams: vi.fn(),
   } as any;
 }
 

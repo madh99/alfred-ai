@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.184] - 2026-03-28
+
+### Fixed
+- **5 Test-Failures behoben** — WatchEngine-Tests (4): `updateActionError` und `updateSkillParams` Mock fehlte in `createMockWatchRepo()`. Skill-Filter-Test (1): Trennbares Verb "lade...herunter" — `herunter\w*` als separates Keyword zum `files`-Regex hinzugefügt.
+- **Travel-Skill Fehlermeldung** — Verwies fälschlich auf `ALFRED_TRAVEL_KIWI_API_KEY` (Dead Code). Korrigiert zu `ALFRED_TRAVEL_BOOKING_RAPID_API_KEY`.
+
 ## [0.19.0-multi-ha.183] - 2026-03-28
 
 ### Fixed
