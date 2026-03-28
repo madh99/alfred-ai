@@ -1372,11 +1372,9 @@ export class Alfred {
     if (this.insightTracker && this.ownerMasterUserId) {
       const ownerMasterUserId = this.ownerMasterUserId;
       this.insightExpiryTimer = setInterval(() => {
-        try {
-          this.insightTracker!.processExpired(ownerMasterUserId);
-        } catch (err) {
+        this.insightTracker!.processExpired(ownerMasterUserId).catch(err => {
           this.logger.warn({ err }, 'Insight expiry processing failed');
-        }
+        });
       }, 30 * 60_000);
     }
 

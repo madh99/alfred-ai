@@ -72,7 +72,7 @@ export class MemoryExtractor {
           const lines = recent.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
           existingMemoriesBlock = `Existing memories about this user:\n${lines}\n\nLook for CONNECTIONS between these and the new conversation.\n`;
         }
-      } catch { /* proceed without existing memories */ }
+      } catch (err) { this.logger.warn({ err }, 'Failed to load existing memories for extraction'); }
 
       const prompt = EXTRACTION_PROMPT
         .replace('{EXISTING_MEMORIES}', existingMemoriesBlock)
@@ -126,6 +126,64 @@ export class MemoryExtractor {
       this.logger.error({ err }, 'Memory extraction failed');
       return 0;
     }
+  }
+
+  /**
+   * Connection-only extraction: runs only when user has ≥5 memories.
+   * Used for low-signal messages that still might trigger cross-context insights.
+   */
+  async extractConnectionsOnly(
+    userId: string,
+    userMessage: string,
+    assistantResponse: string,
+  ): Promise<number> {
+    // Only run if user has enough memories to connect against
+    const existing = await this.memoryRepo.getRecentForPrompt(userId, 20);
+    if (existing.length < 5) return 0;
+
+    const lines = existing.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+    const existingMemoriesBlock = `Existing memories about this user:\n${lines}\n\nLook for CONNECTIONS between these and the new conversation.\n`;
+
+    const prompt = EXTRACTION_PROMPT
+      .replace('{EXISTING_MEMORIES}', existingMemoriesBlock)
+      .replace('{USER_MESSAGE}', userMessage)
+      .replace('{ASSISTANT_RESPONSE}', assistantResponse);
+
+    const response = await this.llm.complete({
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      tier: 'fast',
+      maxTokens: 512,
+    });
+
+    const memories = this.parseResponse(response.content)
+      .filter(m => m.type === 'connection');
+
+    if (memories.length === 0) return 0;
+
+    let savedCount = 0;
+    for (const mem of memories) {
+      if (mem.confidence < 0.6) continue;
+      try {
+        const entry = await this.memoryRepo.saveWithMetadata(
+          userId, mem.key, mem.value, mem.category,
+          mem.type, mem.confidence, 'auto' as MemorySource,
+        );
+        if (this.embeddingService) {
+          this.embeddingService
+            .embedAndStore(userId, `${mem.key}: ${mem.value}`, 'memory', entry.id)
+            .catch(err => this.logger.debug({ err }, 'Auto-embed failed'));
+        }
+        savedCount++;
+        this.logger.info(
+          { key: mem.key, type: 'connection', confidence: mem.confidence },
+          'Cross-context connection extracted',
+        );
+      } catch (err) {
+        this.logger.warn({ err, key: mem.key }, 'Failed to save connection memory');
+      }
+    }
+    return savedCount;
   }
 
   private parseResponse(content: string): ExtractedMemory[] {

@@ -74,7 +74,19 @@ export class ActiveLearningService {
     // Signal scan (pure function, ~1ms)
     const signal = scanSignal(userMessage);
     if (signal.level === 'low') {
-      this.logger.debug({ signal: 'low' }, 'Skipping extraction — low signal');
+      this.logger.debug({ signal: 'low' }, 'Skipping fact extraction — low signal');
+
+      // Even on low signal, try connection extraction if user has enough memories
+      this.extractor.extractConnectionsOnly(userId, userMessage, assistantResponse)
+        .then(count => {
+          if (count > 0) {
+            this.logger.info({ userId, connectionCount: count }, 'Connection extraction on low-signal message');
+          }
+        })
+        .catch(err => {
+          this.logger.debug({ err }, 'Connection extraction skipped or failed');
+        });
+
       return;
     }
 
@@ -115,7 +127,8 @@ export class ActiveLearningService {
     // Remove old timestamps
     const recent = timestamps.filter(t => t > oneMinuteAgo);
     if (recent.length === 0) {
-      this.extractionTimestamps.delete(userId);
+      timestamps.length = 0;
+      timestamps.push(now);
       return true;
     }
     this.extractionTimestamps.set(userId, recent);

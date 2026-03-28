@@ -13,10 +13,14 @@ interface CategoryStats {
 }
 
 export class InsightTracker {
+  private static readonly STATS_MEMORY_KEY = 'insight_tracker_stats';
+
   /** Insights awaiting user reaction (max 30 min window). */
   private pending: PendingInsight[] = [];
   /** Accumulated stats per category. */
   private stats = new Map<string, CategoryStats>();
+  /** Whether stats have been loaded from DB. */
+  private loaded = false;
   /** Minimum interactions before saving preference. */
   private readonly MIN_SAMPLES = 5;
 
@@ -24,6 +28,27 @@ export class InsightTracker {
     private readonly memoryRepo: MemoryRepository,
     private readonly logger: Logger,
   ) {}
+
+  private async ensureLoaded(userId: string): Promise<void> {
+    if (this.loaded) return;
+    try {
+      const entry = await this.memoryRepo.recall(userId, InsightTracker.STATS_MEMORY_KEY);
+      if (entry?.value) {
+        const obj = JSON.parse(entry.value) as Record<string, CategoryStats>;
+        for (const [cat, stat] of Object.entries(obj)) {
+          this.stats.set(cat, stat);
+        }
+      }
+    } catch {
+      // No persisted state yet — fine on fresh start
+    }
+    this.loaded = true;
+  }
+
+  private async persistStats(userId: string): Promise<void> {
+    const obj = Object.fromEntries(this.stats);
+    await this.memoryRepo.save(userId, InsightTracker.STATS_MEMORY_KEY, JSON.stringify(obj), 'system');
+  }
 
   /**
    * Called by ReasoningEngine after sending an insight.
@@ -41,6 +66,7 @@ export class InsightTracker {
    * Checks if it's a reaction to a recent insight.
    */
   async onUserMessage(userId: string, text: string): Promise<void> {
+    await this.ensureLoaded(userId);
     if (this.pending.length === 0) return;
 
     const cutoff = Date.now() - 30 * 60_000;
@@ -66,6 +92,7 @@ export class InsightTracker {
     }
 
     this.stats.set(latest.category, stat);
+    await this.persistStats(userId).catch(() => {});
 
     // Remove the reacted-to insight from pending
     this.pending = this.pending.filter(p => p !== latest);
@@ -77,7 +104,8 @@ export class InsightTracker {
   /**
    * Called periodically (e.g. hourly) to mark unreacted insights as "ignored".
    */
-  processExpired(userId: string): void {
+  async processExpired(userId: string): Promise<void> {
+    await this.ensureLoaded(userId);
     const cutoff = Date.now() - 30 * 60_000;
     const expired = this.pending.filter(p => p.sentAt <= cutoff);
 
@@ -91,6 +119,7 @@ export class InsightTracker {
 
     // Save if enough data
     if (expired.length > 0) {
+      await this.persistStats(userId).catch(() => {});
       this.savePreferences(userId).catch(() => {});
     }
   }

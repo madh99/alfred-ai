@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.183] - 2026-03-28
+
+### Fixed
+- **Cross-Context Connection-Memories funktionieren jetzt** — Signal-Scanner blockierte aktionsorientierte Nachrichten (Fragen, Requests "kannst du", "zeig mir") als `low` Signal → Memory-Extraktion wurde übersprungen → Connections nie extrahiert. Fix: Separater Connection-Scan-Path der unabhängig vom Signal-Level läuft wenn User ≥5 Memories hat. Neue `extractConnectionsOnly()` Methode im MemoryExtractor.
+- **InsightTracker Persistence** — Stats (positive/negative/ignored Counts pro Insight-Kategorie) werden jetzt in der DB persistiert statt nur In-Memory. Bei Deploy/Restart wird der State aus der DB geladen. Preferences können jetzt über mehrere Restarts akkumulieren und die MIN_SAMPLES-Schwelle (5) erreichen.
+- **Rate-Limit Counter in Active-Learning** — Erster Extraktions-Call pro User/Tag wurde nicht im Counter registriert. Fix: Timestamp wird jetzt auch beim ersten Call gespeichert.
+- **Memory-Extractor Silent Catch** — DB-Fehler beim Laden existierender Memories für Cross-Context-Analyse wurden verschluckt. Jetzt geloggt als Warning.
+- **getRecentForPrompt Sortierung** — Memories für LLM-Prompt werden jetzt nach `confidence DESC` statt `updated_at DESC` sortiert. Hochwertige Memories (Adresse, Arbeitgeber) haben Priorität über kürzlich aktualisierte Feed-Entries.
+
 ## [0.19.0-multi-ha.182] - 2026-03-28
 
 ### Improved

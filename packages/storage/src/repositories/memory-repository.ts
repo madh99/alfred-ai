@@ -233,7 +233,7 @@ export class MemoryRepository {
 
   async getRecentForPrompt(userId: string, limit = 20): Promise<MemoryEntry[]> {
     const rows = await this.adapter.query(
-      'SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?',
+      'SELECT * FROM memories WHERE user_id = ? ORDER BY confidence DESC, updated_at DESC LIMIT ?',
       [userId, limit],
     ) as Record<string, unknown>[];
 
