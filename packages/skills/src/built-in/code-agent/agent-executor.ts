@@ -106,6 +106,10 @@ export async function executeAgent(
   } = {},
 ): Promise<AgentExecutionResult> {
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
+  // Auto-create working directory if it doesn't exist
+  if (!fs.existsSync(cwd)) {
+    fs.mkdirSync(cwd, { recursive: true });
+  }
   const rawTimeout = options.timeoutMs ?? agentDef.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);
 

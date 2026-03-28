@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.189] - 2026-03-28
+
+### Fixed
+- **CodeAgent: cwd Auto-Erstellung** — Arbeitsverzeichnis wird automatisch erstellt wenn es nicht existiert. Vorher: `spawn` schlug mit Exit 127/ENOENT fehl wenn das Verzeichnis fehlte.
+
 ## [0.19.0-multi-ha.188] - 2026-03-28
 
 ### Fixed
