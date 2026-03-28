@@ -437,14 +437,8 @@ export class ShoppingSkill extends Skill {
       return true;
     });
 
-    // Prefer real products (v-IDs) over accessories (a-IDs)
-    const hasMainProducts = unique.some(p => /-(v\d+)\.html/.test(p.url));
-    const mainProducts = hasMainProducts
-      ? unique.filter(p => !/-a\d+\.html/.test(p.url))
-      : unique;
-
     // Try to extract price near each product link for accurate association
-    return mainProducts.slice(0, limit).map(p => {
+    return unique.slice(0, limit).map(p => {
       // Find price closest to this product's link in the HTML
       const linkIdx = html.indexOf(p.url);
       let price: number | null = null;

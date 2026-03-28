@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.187] - 2026-03-28
+
+### Fixed
+- **Shopping: Zubehör-Filter entfernt** — Der Filter der Accessoire-URLs (`-a\d+.html`) entfernte war falsch: User die Zubehör suchen (Kabel, Adapter) bekamen leere Ergebnisse. Relevanz-Entscheidung wird dem LLM überlassen — das erkennt korrekt wenn Treffer nicht zum Suchbegriff passen und wechselt automatisch auf Kategorie-Suche.
+
 ## [0.19.0-multi-ha.186] - 2026-03-28
 
 ### Fixed
