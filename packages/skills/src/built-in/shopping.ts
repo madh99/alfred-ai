@@ -108,12 +108,15 @@ export class ShoppingSkill extends Skill {
     if (maxPrice) url += `&bpmax=${maxPrice}`;
 
     // Prefer DOM extraction via Puppeteer (Geizhals is a JS SPA)
-    let results = await this.extractProductsFromPage(url, limit);
+    let results = await this.extractProductsFromPage(url, limit * 3); // fetch more for relevance filtering
     if (results.length === 0) {
       // Fallback: regex on HTML (works if Geizhals returns server-rendered HTML)
       const html = await this.fetchGeizhals(url, this.SEARCH_CACHE_TTL);
-      results = this.parseSearchResults(html, limit);
+      results = this.parseSearchResults(html, limit * 3);
     }
+
+    // Filter by relevance to query, then apply limit
+    results = this.filterByRelevance(results, query).slice(0, limit);
 
     if (results.length === 0) {
       return {
@@ -363,11 +366,12 @@ export class ShoppingSkill extends Skill {
     if (!query) return { success: false, error: 'query oder url/productId fehlt' };
 
     const searchUrl = `https://geizhals.at/?fs=${encodeURIComponent(query)}&hloc=at&sort=p`;
-    let results = await this.extractProductsFromPage(searchUrl, 1);
+    let results = await this.extractProductsFromPage(searchUrl, 10);
     if (results.length === 0) {
       const html = await this.fetchGeizhals(searchUrl, this.SEARCH_CACHE_TTL);
-      results = this.parseSearchResults(html, 1);
+      results = this.parseSearchResults(html, 10);
     }
+    results = this.filterByRelevance(results, query).slice(0, 1);
 
     if (results.length === 0) {
       return {
@@ -394,6 +398,30 @@ export class ShoppingSkill extends Skill {
   }
 
   // ── Helpers ──────────────────────────────────────────────────
+
+  /**
+   * Filter results by relevance to the search query.
+   * Keeps products whose name contains at least one significant query word (3+ chars).
+   * If no relevant results remain, returns all results (let the LLM decide).
+   */
+  private filterByRelevance(
+    results: Array<{ name: string; price: number | null; url: string; productId: string | undefined }>,
+    query: string,
+  ): Array<{ name: string; price: number | null; url: string; productId: string | undefined }> {
+    // Extract significant words (3+ chars, no stopwords)
+    const stopwords = new Set(['und', 'oder', 'für', 'mit', 'von', 'the', 'and', 'for', 'with']);
+    const queryWords = query.toLowerCase().split(/\s+/)
+      .filter(w => w.length >= 3 && !stopwords.has(w));
+    if (queryWords.length === 0) return results;
+
+    const relevant = results.filter(r => {
+      const nameLower = r.name.toLowerCase();
+      return queryWords.some(w => nameLower.includes(w));
+    });
+
+    // If filtering removes everything, return unfiltered (let LLM decide)
+    return relevant.length > 0 ? relevant : results;
+  }
 
   private mapSort(sort: string | undefined): string {
     switch (sort) {

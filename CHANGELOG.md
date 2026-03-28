@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.188] - 2026-03-28
+
+### Fixed
+- **Shopping: Relevanz-Filter** — Geizhals-Freitextsuche liefert oft irrelevante Zubehör-Treffer (z.B. "RTX 5090" → DisplayPort-Kabel). Neuer `filterByRelevance()`: Prüft ob der Produktname mindestens ein signifikantes Wort (≥3 Zeichen) aus der Suchanfrage enthält. "DisplayPort Kabel" wird bei "RTX 5090"-Suche gefiltert, bleibt aber bei "DisplayPort Kabel"-Suche. Wenn kein relevantes Ergebnis bleibt, werden alle zurückgegeben (Fallback ans LLM).
+
 ## [0.19.0-multi-ha.187] - 2026-03-28
 
 ### Fixed
