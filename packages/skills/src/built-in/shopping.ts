@@ -417,13 +417,21 @@ export class ShoppingSkill extends Skill {
   }
 
   private parseSearchResults(html: string, limit: number): Array<{ name: string; price: number | null; url: string; productId: string | undefined }> {
-    const products = [...html.matchAll(/href="(https:\/\/geizhals\.at\/[^"]+\.html)"[^>]*title="([^"]+)"/g)]
-      .map(m => ({ url: m[1], name: this.decodeEntities(m[2]) }))
-      .filter(p => p.name.length > 10);
+    // Geizhals uses galleryview__name-link with title and href attributes (order varies)
+    const products: Array<{ url: string; name: string }> = [];
+    // Pattern 1: href before title
+    for (const m of html.matchAll(/href="(https:\/\/geizhals\.at\/[^"]+\.html)"[^>]*title="([^"]+)"/g)) {
+      products.push({ url: m[1], name: this.decodeEntities(m[2]) });
+    }
+    // Pattern 2: title before href (galleryview__name-link order)
+    for (const m of html.matchAll(/title="([^"]+)"[^>]*href="(https:\/\/geizhals\.at\/[^"]+\.html)"/g)) {
+      products.push({ url: m[2], name: this.decodeEntities(m[1]) });
+    }
+    const filtered = products.filter(p => p.name.length > 10);
 
     // Deduplicate by URL
     const seen = new Set<string>();
-    const unique = products.filter(p => {
+    const unique = filtered.filter(p => {
       if (seen.has(p.url)) return false;
       seen.add(p.url);
       return true;
@@ -431,12 +439,12 @@ export class ShoppingSkill extends Skill {
 
     // Prefer real products (v-IDs) over accessories (a-IDs)
     const hasMainProducts = unique.some(p => /-(v\d+)\.html/.test(p.url));
-    const filtered = hasMainProducts
+    const mainProducts = hasMainProducts
       ? unique.filter(p => !/-a\d+\.html/.test(p.url))
       : unique;
 
     // Try to extract price near each product link for accurate association
-    return filtered.slice(0, limit).map(p => {
+    return mainProducts.slice(0, limit).map(p => {
       // Find price closest to this product's link in the HTML
       const linkIdx = html.indexOf(p.url);
       let price: number | null = null;
@@ -558,7 +566,7 @@ export class ShoppingSkill extends Skill {
       await page.setUserAgent(this.HEADERS['User-Agent']);
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 25_000 });
       // Wait for JS-rendered product list (Geizhals is a SPA)
-      await page.waitForSelector('.productlist__item, .listview__item, .cat_list, [data-productid], .productlist', {
+      await page.waitForSelector('.galleryview__item, .productlist__item, .listview__item, .cat_list, [data-productid]', {
         timeout: 8000,
       }).catch(() => {});
       const html = await page.content();
@@ -595,9 +603,9 @@ export class ShoppingSkill extends Skill {
       const products: Array<{ name: string; price: number | null; url: string }> = await page.evaluate((maxResults: number) => {
         const items: Array<{ name: string; price: number | null; url: string }> = [];
         const selectors = [
+          '.galleryview__item',
           '.productlist__item',
           '.listview__item',
-          '.cat-list-item',
           '[data-productid]',
         ];
         let elements: any[] = [];
@@ -606,9 +614,9 @@ export class ShoppingSkill extends Skill {
           if (elements.length > 0) break;
         }
         for (const el of elements.slice(0, maxResults)) {
-          const linkEl = el.querySelector('a[href*="geizhals.at/"]') ?? el.querySelector('a[href$=".html"]') ?? el.querySelector('a');
-          const nameEl = el.querySelector('.productlist__name, .listview__name, .productlist__link, a[title]');
-          const priceEl = el.querySelector('.productlist__price, .listview__price, .price');
+          const linkEl = el.querySelector('.galleryview__name-link, .productlist__link, a[href$=".html"]') ?? el.querySelector('a');
+          const nameEl = el.querySelector('.galleryview__name-link, .productlist__name, .listview__name, a[title]');
+          const priceEl = el.querySelector('.galleryview__price-link .price, .galleryview__price, .productlist__price, .listview__price, .price');
           const name = ((nameEl?.textContent ?? linkEl?.getAttribute('title')) || '').trim();
           const href = linkEl?.getAttribute('href') ?? '';
           const priceText = priceEl?.textContent ?? '';

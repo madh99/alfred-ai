@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.186] - 2026-03-28
+
+### Fixed
+- **Shopping/Geizhals: Korrekte CSS-Selektoren** — Geizhals verwendet `galleryview__item`, `galleryview__name-link`, `galleryview__price-link` Klassen. Puppeteer DOM-Extraktion und Regex-Parser jetzt auf die tatsächliche Geizhals-HTML-Struktur angepasst. Regex-Parser erkennt beide Attribut-Reihenfolgen (`href...title` und `title...href`).
+
 ## [0.19.0-multi-ha.185] - 2026-03-28
 
 ### Fixed
