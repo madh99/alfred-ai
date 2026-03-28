@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.185] - 2026-03-28
+
+### Fixed
+- **Shopping/Geizhals: DOM-basierte Produktextraktion** — Geizhals ist eine JS-SPA, der bisherige Regex-Ansatz auf statischem HTML lieferte Zubehör/Banner statt echte Suchergebnisse. Neuer primärer Pfad: Puppeteer mit `networkidle2` + `waitForSelector` wartet auf vollständiges JS-Rendering, dann `page.evaluate()` extrahiert Produkte direkt aus dem DOM (Name, Preis, URL strukturiert). Regex-Parsing als Fallback beibehalten.
+- **Shopping: Zubehör-Filter** — Im Regex-Fallback werden Accessoire-URLs (`-a\d+.html`) gefiltert wenn echte Produkte (`-v\d+.html`) vorhanden sind.
+- **Shopping: Preiszuordnung** — Positionsbasierte Preis-Zuordnung (`allPrices[i]`) ersetzt durch kontextbasierte Extraktion: Preis wird im HTML-Fenster um den jeweiligen Produkt-Link gesucht.
+
 ## [0.19.0-multi-ha.184] - 2026-03-28
 
 ### Fixed

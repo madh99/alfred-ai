@@ -107,8 +107,13 @@ export class ShoppingSkill extends Skill {
     let url = `https://geizhals.at/?fs=${encodeURIComponent(query)}&hloc=at&sort=${sort}`;
     if (maxPrice) url += `&bpmax=${maxPrice}`;
 
-    const html = await this.fetchGeizhals(url, this.SEARCH_CACHE_TTL);
-    const results = this.parseSearchResults(html, limit);
+    // Prefer DOM extraction via Puppeteer (Geizhals is a JS SPA)
+    let results = await this.extractProductsFromPage(url, limit);
+    if (results.length === 0) {
+      // Fallback: regex on HTML (works if Geizhals returns server-rendered HTML)
+      const html = await this.fetchGeizhals(url, this.SEARCH_CACHE_TTL);
+      results = this.parseSearchResults(html, limit);
+    }
 
     if (results.length === 0) {
       return {
@@ -142,8 +147,12 @@ export class ShoppingSkill extends Skill {
     if (filter) url += `&xf=${encodeURIComponent(filter)}`;
     if (maxPrice) url += `&bpmax=${maxPrice}`;
 
-    const html = await this.fetchGeizhals(url, this.SEARCH_CACHE_TTL);
-    const results = this.parseSearchResults(html, limit);
+    // Prefer DOM extraction via Puppeteer (Geizhals is a JS SPA)
+    let results = await this.extractProductsFromPage(url, limit);
+    if (results.length === 0) {
+      const html = await this.fetchGeizhals(url, this.SEARCH_CACHE_TTL);
+      results = this.parseSearchResults(html, limit);
+    }
 
     if (results.length === 0) {
       return {
@@ -354,8 +363,11 @@ export class ShoppingSkill extends Skill {
     if (!query) return { success: false, error: 'query oder url/productId fehlt' };
 
     const searchUrl = `https://geizhals.at/?fs=${encodeURIComponent(query)}&hloc=at&sort=p`;
-    const html = await this.fetchGeizhals(searchUrl, this.SEARCH_CACHE_TTL);
-    const results = this.parseSearchResults(html, 1);
+    let results = await this.extractProductsFromPage(searchUrl, 1);
+    if (results.length === 0) {
+      const html = await this.fetchGeizhals(searchUrl, this.SEARCH_CACHE_TTL);
+      results = this.parseSearchResults(html, 1);
+    }
 
     if (results.length === 0) {
       return {
@@ -417,17 +429,33 @@ export class ShoppingSkill extends Skill {
       return true;
     });
 
-    // Extract prices in order from the page
-    const allPrices = [...html.matchAll(/€\s*([\d.,]+)/g)]
-      .map(m => parseFloat(m[1].replace('.', '').replace(',', '.')))
-      .filter(p => !isNaN(p) && p > 0);
+    // Prefer real products (v-IDs) over accessories (a-IDs)
+    const hasMainProducts = unique.some(p => /-(v\d+)\.html/.test(p.url));
+    const filtered = hasMainProducts
+      ? unique.filter(p => !/-a\d+\.html/.test(p.url))
+      : unique;
 
-    return unique.slice(0, limit).map((p, i) => ({
-      name: p.name,
-      price: allPrices[i] ?? null,
-      url: p.url,
-      productId: this.extractProductId(p.url),
-    }));
+    // Try to extract price near each product link for accurate association
+    return filtered.slice(0, limit).map(p => {
+      // Find price closest to this product's link in the HTML
+      const linkIdx = html.indexOf(p.url);
+      let price: number | null = null;
+      if (linkIdx >= 0) {
+        // Search in a window around the link for the nearest price
+        const window = html.slice(Math.max(0, linkIdx - 200), linkIdx + 500);
+        const priceMatch = window.match(/€\s*([\d.,]+)/);
+        if (priceMatch) {
+          const parsed = parseFloat(priceMatch[1].replace(/\./g, '').replace(',', '.'));
+          if (!isNaN(parsed) && parsed > 0) price = parsed;
+        }
+      }
+      return {
+        name: p.name,
+        price,
+        url: p.url,
+        productId: this.extractProductId(p.url),
+      };
+    });
   }
 
   private parseOffers(html: string): Array<{ shop: string; price: number }> {
@@ -528,12 +556,80 @@ export class ShoppingSkill extends Skill {
     const page = await this.puppeteerBrowser.newPage();
     try {
       await page.setUserAgent(this.HEADERS['User-Agent']);
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-      // Wait briefly for Cloudflare challenge to resolve
-      await new Promise(r => setTimeout(r, 2000));
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 25_000 });
+      // Wait for JS-rendered product list (Geizhals is a SPA)
+      await page.waitForSelector('.productlist__item, .listview__item, .cat_list, [data-productid], .productlist', {
+        timeout: 8000,
+      }).catch(() => {});
       const html = await page.content();
       this.setCache(url, html, ttl);
       return html;
+    } finally {
+      await page.close().catch(() => {});
+    }
+  }
+
+  /**
+   * Extract products directly from the rendered DOM via Puppeteer.
+   * Much more reliable than regex on HTML since Geizhals is a JS SPA.
+   */
+  private async extractProductsFromPage(url: string, limit: number): Promise<Array<{ name: string; price: number | null; url: string; productId: string | undefined }>> {
+    const pup = await this.loadPuppeteer();
+    if (!pup) return []; // fall back to regex parsing
+
+    if (!this.puppeteerBrowser || !this.puppeteerBrowser.connected) {
+      this.puppeteerBrowser = await pup.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+      });
+    }
+
+    const page = await this.puppeteerBrowser.newPage();
+    try {
+      await page.setUserAgent(this.HEADERS['User-Agent']);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 25_000 });
+      await page.waitForSelector('.productlist__item, .listview__item, .cat_list, [data-productid]', {
+        timeout: 8000,
+      }).catch(() => {});
+
+      const products: Array<{ name: string; price: number | null; url: string }> = await page.evaluate((maxResults: number) => {
+        const items: Array<{ name: string; price: number | null; url: string }> = [];
+        const selectors = [
+          '.productlist__item',
+          '.listview__item',
+          '.cat-list-item',
+          '[data-productid]',
+        ];
+        let elements: any[] = [];
+        for (const sel of selectors) {
+          elements = Array.from((globalThis as any).document.querySelectorAll(sel));
+          if (elements.length > 0) break;
+        }
+        for (const el of elements.slice(0, maxResults)) {
+          const linkEl = el.querySelector('a[href*="geizhals.at/"]') ?? el.querySelector('a[href$=".html"]') ?? el.querySelector('a');
+          const nameEl = el.querySelector('.productlist__name, .listview__name, .productlist__link, a[title]');
+          const priceEl = el.querySelector('.productlist__price, .listview__price, .price');
+          const name = ((nameEl?.textContent ?? linkEl?.getAttribute('title')) || '').trim();
+          const href = linkEl?.getAttribute('href') ?? '';
+          const priceText = priceEl?.textContent ?? '';
+          const priceMatch = priceText.match(/[\d.,]+/);
+          let price: number | null = null;
+          if (priceMatch) {
+            price = parseFloat(priceMatch[0].replace(/\./g, '').replace(',', '.'));
+            if (isNaN(price)) price = null;
+          }
+          if (name.length > 5 && href) {
+            const fullUrl = href.startsWith('http') ? href : `https://geizhals.at${href}`;
+            items.push({ name, price, url: fullUrl });
+          }
+        }
+        return items;
+      }, limit);
+
+      return products.map((p: { name: string; price: number | null; url: string }) => ({
+        ...p,
+        productId: this.extractProductId(p.url),
+      }));
     } finally {
       await page.close().catch(() => {});
     }
