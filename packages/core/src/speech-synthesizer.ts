@@ -35,13 +35,15 @@ export class SpeechSynthesizer {
     const effectiveVoice = (this.ttsProvider === 'mistral' && this.defaultVoiceId) ? this.defaultVoiceId : this.voice;
     this.logger.info({ textLength: text.length, model: this.model, voice: effectiveVoice, provider: this.ttsProvider }, 'Synthesizing speech');
 
+    // Mistral TTS REQUIRES a voice_id — there is no default voice fallback
+    const MISTRAL_BUILTIN_VOICE = 'c69964a6-ab8b-4f8a-9465-ec0925096ec8'; // Paul - Neutral
+    const mistralVoiceId = (effectiveVoice && /^[0-9a-f]{8}-/.test(effectiveVoice))
+      ? effectiveVoice
+      : MISTRAL_BUILTIN_VOICE;
+
     const body: Record<string, unknown> = this.ttsProvider === 'mistral'
-      ? { model: this.model, input: text, response_format: 'mp3' }
+      ? { model: this.model, input: text, voice_id: mistralVoiceId, response_format: 'mp3' }
       : { model: this.model, input: text, voice: effectiveVoice, response_format: 'opus' };
-    // For Mistral: only set voice_id if it looks like a UUID (not an OpenAI voice name like "nova")
-    if (this.ttsProvider === 'mistral' && effectiveVoice && /^[0-9a-f]{8}-/.test(effectiveVoice)) {
-      body.voice_id = effectiveVoice;
-    }
 
     const response = await fetch(`${this.baseUrl}/audio/speech`, {
       method: 'POST',
