@@ -1098,6 +1098,101 @@ export async function setupCommand(): Promise<void> {
       }
     }
 
+    // ── 8a2. Mistral AI services (optional, independent of LLM provider) ──
+    let mistralApiKey = '';
+    let enableModeration = false;
+    let mistralStt = false;
+    let mistralTts = false;
+
+    // Only ask if Mistral is NOT already the main LLM provider (otherwise key is already set)
+    const isMistralLlm = provider.name === 'mistral';
+    const existingMistralKey = existing.env['ALFRED_MISTRAL_API_KEY'] ?? (existing.config as Record<string, any>).mistralApiKey ?? '';
+
+    if (!isMistralLlm) {
+      console.log(`\n${bold('Mistral AI services (optional, independent of LLM provider):')}`);
+      console.log(`${dim('OCR (PDF/image extraction), content moderation, STT, TTS, embeddings.')}`);
+      console.log(`${dim('Requires a Mistral API key from https://console.mistral.ai/')}`);
+
+      const mistralDefault = existingMistralKey ? 'Y/n' : 'y/N';
+      const mistralAnswer = (
+        await rl.question(`${YELLOW}> ${RESET}${dim(`[${mistralDefault}] `)}`)
+      ).trim().toLowerCase();
+      const enableMistral = mistralAnswer === '' ? !!existingMistralKey : (mistralAnswer === 'y' || mistralAnswer === 'yes');
+
+      if (enableMistral) {
+        if (existingMistralKey) {
+          mistralApiKey = await askWithDefault(rl, '  Mistral API key', existingMistralKey);
+        } else {
+          mistralApiKey = await askRequired(rl, '  Mistral API key');
+        }
+        console.log(`  ${green('>')} Mistral API key: ${dim(maskKey(mistralApiKey))}`);
+
+        // OCR is automatic when the key is set — no question needed
+        console.log(`  ${green('>')} OCR: ${bold('enabled')} (automatic with Mistral key)`);
+
+        // Moderation
+        const existingMod = (existing.config as Record<string, any>).security?.moderation?.enabled ?? false;
+        const modDefault = existingMod ? 'Y/n' : 'y/N';
+        console.log('');
+        console.log(`  ${bold('Enable content moderation (safety filter for input & output)?')}`);
+        const modAnswer = (
+          await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${modDefault}] `)}`)
+        ).trim().toLowerCase();
+        enableModeration = modAnswer === '' ? existingMod : (modAnswer === 'y' || modAnswer === 'yes');
+        if (enableModeration) {
+          console.log(`    ${green('>')} Moderation: ${bold('enabled')}`);
+        } else {
+          console.log(`    ${dim('Moderation disabled.')}`);
+        }
+
+        // STT via Mistral
+        const existingSttProvider = (existing.config as Record<string, any>).speech?.sttProvider ?? '';
+        if (!speechProvider) {
+          console.log('');
+          console.log(`  ${bold('Use Mistral for Speech-to-Text (voice message transcription)?')}`);
+          const sttDefault = existingSttProvider === 'mistral' ? 'Y/n' : 'y/N';
+          const sttAnswer = (
+            await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${sttDefault}] `)}`)
+          ).trim().toLowerCase();
+          mistralStt = sttAnswer === '' ? (existingSttProvider === 'mistral') : (sttAnswer === 'y' || sttAnswer === 'yes');
+          if (mistralStt) {
+            console.log(`    ${green('>')} STT: Mistral`);
+          }
+        }
+
+        // TTS via Mistral
+        const existingTtsProvider = (existing.config as Record<string, any>).speech?.ttsProvider ?? '';
+        console.log('');
+        console.log(`  ${bold('Use Mistral for Text-to-Speech (voice responses)?')}`);
+        const ttsMistralDefault = existingTtsProvider === 'mistral' ? 'Y/n' : 'y/N';
+        const ttsMistralAnswer = (
+          await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${ttsMistralDefault}] `)}`)
+        ).trim().toLowerCase();
+        mistralTts = ttsMistralAnswer === '' ? (existingTtsProvider === 'mistral') : (ttsMistralAnswer === 'y' || ttsMistralAnswer === 'yes');
+        if (mistralTts) {
+          console.log(`    ${green('>')} TTS: Mistral`);
+        }
+      } else {
+        console.log(`  ${dim('Mistral services disabled — you can configure them later.')}`);
+      }
+    } else {
+      // Mistral is the LLM provider — key is already set via apiKey
+      mistralApiKey = apiKey;
+      console.log(`\n${bold('Mistral AI services:')}`);
+      console.log(`  ${green('>')} OCR: ${bold('enabled')} (using LLM provider key)`);
+
+      const existingMod = (existing.config as Record<string, any>).security?.moderation?.enabled ?? false;
+      const modDefault = existingMod ? 'Y/n' : 'y/N';
+      console.log(`  ${bold('Enable content moderation?')}`);
+      const modAnswer = (
+        await rl.question(`  ${YELLOW}> ${RESET}${dim(`[${modDefault}] `)}`)
+      ).trim().toLowerCase();
+      enableModeration = modAnswer === '' ? existingMod : (modAnswer === 'y' || modAnswer === 'yes');
+      if (enableModeration) {
+        console.log(`    ${green('>')} Moderation: ${bold('enabled')}`);
+      }
+    }
+
     // ── 8b. Code Sandbox (Python/JavaScript execution) ────────
     const sandboxDefault = existing.codeSandboxEnabled ? 'Y/n' : 'y/N';
     console.log(`\n${bold('Code Sandbox (execute Python/JavaScript in a sandboxed environment)?')}`);
@@ -1994,6 +2089,27 @@ export async function setupCommand(): Promise<void> {
     } else {
       envLines.push('# ALFRED_SPEECH_PROVIDER=groq');
       envLines.push('# ALFRED_SPEECH_API_KEY=');
+    }
+
+    // Mistral AI services
+    envLines.push('', '# === Mistral AI Services ===', '');
+    if (mistralApiKey && !isMistralLlm) {
+      // Only write dedicated key if Mistral is NOT the LLM provider (otherwise it's already in the LLM section)
+      envLines.push(`ALFRED_MISTRAL_API_KEY=${mistralApiKey}`);
+    }
+    if (enableModeration) {
+      envLines.push('ALFRED_MODERATION_ENABLED=true');
+      envLines.push('ALFRED_MODERATION_PROVIDER=mistral');
+    } else {
+      envLines.push('# ALFRED_MODERATION_ENABLED=true');
+    }
+    if (mistralStt) {
+      envLines.push('ALFRED_STT_PROVIDER=mistral');
+      envLines.push(`ALFRED_STT_API_KEY=${mistralApiKey}`);
+    }
+    if (mistralTts) {
+      envLines.push('ALFRED_TTS_PROVIDER=mistral');
+      envLines.push(`ALFRED_TTS_API_KEY=${mistralApiKey}`);
     }
 
     envLines.push('', '# === Forge (GitHub / GitLab) ===', '');

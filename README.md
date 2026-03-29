@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.197-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.198-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -79,6 +79,21 @@ llm:
     provider: ollama
     model: llama3.2
 ```
+
+### Mistral AI Dienste (optional)
+
+Alfred kann Mistral AI Dienste unabhängig vom Haupt-LLM-Provider nutzen:
+
+| Dienst | ENV-Variable | Beschreibung |
+|---|---|---|
+| API-Key | `ALFRED_MISTRAL_API_KEY` | Eigenständiger Key für alle Mistral-Dienste |
+| Moderation | `ALFRED_MODERATION_ENABLED=true` | Content-Safety für Input + Output |
+| OCR | Automatisch bei Mistral-Key | PDF/Bild → strukturierter Text |
+| STT | `ALFRED_STT_PROVIDER=mistral` | Voice-Messages → Text |
+| TTS | `ALFRED_TTS_PROVIDER=mistral` | Text → Sprache |
+| Embeddings | `ALFRED_LLM_EMBEDDINGS_PROVIDER=mistral` | Semantic Memory Search |
+
+Kein Dienst ist eine Pflicht-Abhängigkeit. Alfred funktioniert ohne Mistral-Key wie bisher.
 
 ### Built-in Skills (60+)
 
@@ -873,7 +888,7 @@ ALFRED_SIGNAL_ENABLED=true
 ALFRED_ANTHROPIC_API_KEY=
 ALFRED_OPENAI_API_KEY=
 ALFRED_GOOGLE_API_KEY=
-ALFRED_MISTRAL_API_KEY=
+ALFRED_MISTRAL_API_KEY=              # also enables OCR, moderation, STT, TTS independently
 ALFRED_OPENROUTER_API_KEY=
 
 # Forge (GitHub / GitLab)

@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.198] - 2026-03-29
+
+### Improved
+- **Mistral-Dienste unabhängig vom LLM-Provider** — Neuer `ALFRED_MISTRAL_API_KEY` als eigenständiger Key. OCR, Moderation, STT, TTS und Embeddings funktionieren jetzt auch wenn der Haupt-LLM-Provider Anthropic, OpenAI oder ein anderer ist. Beispiel: Claude als Haupt-LLM + Mistral für OCR und Moderation.
+- **Setup-Wizard erweitert** — Fragt jetzt nach Mistral API-Key, Moderation, STT/TTS Provider-Wahl.
+- **README: Mistral AI Dienste Sektion** — Dokumentation aller optionalen Mistral-Dienste mit ENV-Variablen.
+- **Key-Propagierung** — `ALFRED_MISTRAL_API_KEY` wird automatisch an LLM-Tiers, Embeddings, STT, TTS und Moderation weitergereicht wenn deren Provider auf `mistral` steht aber kein eigener Key gesetzt ist.
+
 ## [0.19.0-multi-ha.197] - 2026-03-29
 
 ### Added

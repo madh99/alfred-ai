@@ -472,6 +472,8 @@ export interface MqttConfig {
 
 export interface AlfredConfig {
   name: string;
+  /** Standalone Mistral API key — enables OCR, moderation, STT, TTS, embeddings independently of LLM provider. */
+  mistralApiKey?: string;
   telegram: TelegramConfig;
   discord?: DiscordConfig;
   whatsapp?: WhatsAppConfig;

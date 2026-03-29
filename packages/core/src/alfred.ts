@@ -1048,13 +1048,18 @@ export class Alfred {
         ? 'mistral-moderation-latest'
         : 'omni-moderation-latest');
 
-      // Derive API key from the matching LLM provider config
+      // Derive API key: dedicated mistralApiKey → matching LLM tier → default tier
       let apiKey: string | undefined;
-      for (const tier of ['default', 'strong', 'fast'] as const) {
-        const tierConfig = this.config.llm[tier];
-        if (tierConfig?.provider === provider && tierConfig.apiKey) {
-          apiKey = tierConfig.apiKey;
-          break;
+      if (provider === 'mistral' && this.config.mistralApiKey) {
+        apiKey = this.config.mistralApiKey;
+      }
+      if (!apiKey) {
+        for (const tier of ['default', 'strong', 'fast'] as const) {
+          const tierConfig = this.config.llm[tier];
+          if (tierConfig?.provider === provider && tierConfig.apiKey) {
+            apiKey = tierConfig.apiKey;
+            break;
+          }
         }
       }
       // Fallback: use default provider's API key
@@ -1910,8 +1915,15 @@ export class Alfred {
     return undefined;
   }
 
-  /** Find a Mistral API key from any configured LLM tier. Used for OCR and audio services. */
+  /** Find a Mistral API key. Checks dedicated mistralApiKey first, then LLM tiers.
+   *  This allows using Mistral services (OCR, moderation, STT, TTS, embeddings)
+   *  independently of the main LLM provider. */
   private detectMistralApiKey(): string | undefined {
+    // 1. Dedicated standalone key (ALFRED_MISTRAL_API_KEY → config.mistralApiKey)
+    if (this.config.mistralApiKey) {
+      return this.config.mistralApiKey;
+    }
+    // 2. Any LLM tier using Mistral as provider
     const tiers = ['default', 'strong', 'fast', 'embeddings', 'local'] as const;
     for (const tier of tiers) {
       const tierConfig = this.config.llm[tier];

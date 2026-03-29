@@ -30,6 +30,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
 }
 
 const ENV_MAP: Record<string, string[]> = {
+  ALFRED_MISTRAL_API_KEY: ['mistralApiKey'],
   ALFRED_TELEGRAM_TOKEN: ['telegram', 'token'],
   ALFRED_TELEGRAM_ENABLED: ['telegram', 'enabled'],
   ALFRED_DISCORD_TOKEN: ['discord', 'token'],
@@ -344,6 +345,23 @@ export class ConfigLoader {
           if (tierConfig && !tierConfig.apiKey) {
             tierConfig.apiKey = sharedApiKey;
           }
+        }
+      }
+    }
+
+    // Propagate standalone mistralApiKey into LLM default tier when provider is mistral
+    // (fixes: ALFRED_MISTRAL_API_KEY must work both as standalone key AND as LLM provider key)
+    const mistralApiKey = validated.mistralApiKey as string | undefined;
+    if (mistralApiKey && llmConfig) {
+      const defaultTier = llmConfig.default as Record<string, unknown> | undefined;
+      if (defaultTier?.provider === 'mistral' && !defaultTier.apiKey) {
+        defaultTier.apiKey = mistralApiKey;
+      }
+      // Also fill tier keys when tier provider is mistral but has no key
+      for (const tier of ['strong', 'fast', 'embeddings', 'local']) {
+        const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
+        if (tierConfig?.provider === 'mistral' && !tierConfig.apiKey) {
+          tierConfig.apiKey = mistralApiKey;
         }
       }
     }

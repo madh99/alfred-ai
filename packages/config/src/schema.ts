@@ -485,6 +485,7 @@ export const MqttConfigSchema = z.object({
 
 export const AlfredConfigSchema = z.object({
   name: z.string(),
+  mistralApiKey: z.string().optional(),
   telegram: TelegramConfigSchema,
   discord: DiscordConfigSchema.optional(),
   whatsapp: WhatsAppConfigSchema.optional(),
