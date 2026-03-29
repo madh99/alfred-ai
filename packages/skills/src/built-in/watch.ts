@@ -4,7 +4,7 @@ import type { SkillRegistry } from '../skill-registry.js';
 import type { WatchRepository } from '@alfred/storage';
 import { effectiveUserId } from '../user-utils.js';
 
-type WatchAction = 'create' | 'list' | 'enable' | 'disable' | 'delete';
+type WatchAction = 'create' | 'list' | 'enable' | 'disable' | 'delete' | 'update';
 
 const VALID_OPERATORS: WatchCondition['operator'][] = [
   'lt', 'gt', 'lte', 'gte', 'eq', 'neq',
@@ -38,7 +38,7 @@ export class WatchSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'enable', 'disable', 'delete'],
+          enum: ['create', 'list', 'enable', 'disable', 'delete', 'update'],
           description: 'The watch action to perform',
         },
         name: {
@@ -121,9 +121,17 @@ export class WatchSkill extends Skill {
           type: 'string',
           description: 'Telegram topic/thread ID to send alerts to instead of main chat (for create). Use for grouping alerts in topics.',
         },
+        quiet_hours_start: {
+          type: 'string',
+          description: 'Start of quiet window in "HH:MM" format — alerts are suppressed during this window (for create, update)',
+        },
+        quiet_hours_end: {
+          type: 'string',
+          description: 'End of quiet window in "HH:MM" format — alerts are suppressed during this window (for create, update)',
+        },
         watch_id: {
           type: 'string',
-          description: 'Watch ID (for enable, disable, delete)',
+          description: 'Watch ID (for enable, disable, delete, update)',
         },
       },
       required: ['action'],
@@ -159,10 +167,12 @@ export class WatchSkill extends Skill {
         return this.toggleWatch(input, context, false);
       case 'delete':
         return this.deleteWatch(input, context);
+      case 'update':
+        return this.updateWatch(input, context);
       default:
         return {
           success: false,
-          error: `Unknown action: "${String(action)}". Valid: create, list, enable, disable, delete`,
+          error: `Unknown action: "${String(action)}". Valid: create, list, enable, disable, delete, update`,
         };
     }
   }
@@ -188,6 +198,8 @@ export class WatchSkill extends Skill {
     const threadId = input.thread_id as string | undefined;
     const conditionsArray = input.conditions as Array<{ field: string; operator: string; value?: string | number }> | undefined;
     const conditionsLogic = (input.conditions_logic as 'and' | 'or') ?? 'and';
+    const quietHoursStart = input.quiet_hours_start as string | undefined;
+    const quietHoursEnd = input.quiet_hours_end as string | undefined;
 
     if (!name) return { success: false, error: 'Missing required field "name"' };
     if (!skillName) return { success: false, error: 'Missing required field "skill_name"' };
@@ -283,6 +295,8 @@ export class WatchSkill extends Skill {
       requiresConfirmation,
       triggerWatchId,
       threadId,
+      quietHoursStart: quietHoursStart ?? null,
+      quietHoursEnd: quietHoursEnd ?? null,
     });
 
     const condDisplay = compositeCondition
@@ -371,6 +385,54 @@ export class WatchSkill extends Skill {
       success: true,
       data: { watchId },
       display: `Watch "${watchId}" gelöscht.`,
+    };
+  }
+
+  private async updateWatch(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const watchId = input.watch_id as string | undefined;
+    if (!watchId) return { success: false, error: 'Missing "watch_id" for update' };
+
+    const watch = await this.verifyOwnership(watchId, context);
+    if (!watch) return { success: false, error: `Watch "${watchId}" nicht gefunden oder keine Berechtigung.` };
+
+    const cooldownMinutes = input.cooldown_minutes as number | undefined;
+    const intervalMinutes = input.interval_minutes as number | undefined;
+    const quietHoursStart = input.quiet_hours_start as string | undefined;
+    const quietHoursEnd = input.quiet_hours_end as string | undefined;
+    const enabled = input.enabled as boolean | undefined;
+
+    if (intervalMinutes !== undefined && intervalMinutes < 1) {
+      return { success: false, error: 'interval_minutes must be >= 1' };
+    }
+    if (cooldownMinutes !== undefined && cooldownMinutes < 0) {
+      return { success: false, error: 'cooldown_minutes must be >= 0' };
+    }
+
+    const settings: Record<string, unknown> = {};
+    const changes: string[] = [];
+
+    if (cooldownMinutes !== undefined) { settings.cooldownMinutes = cooldownMinutes; changes.push(`cooldown=${cooldownMinutes}min`); }
+    if (intervalMinutes !== undefined) { settings.intervalMinutes = intervalMinutes; changes.push(`interval=${intervalMinutes}min`); }
+    if (quietHoursStart !== undefined) { settings.quietHoursStart = quietHoursStart || null; changes.push(`quiet_start=${quietHoursStart || 'off'}`); }
+    if (quietHoursEnd !== undefined) { settings.quietHoursEnd = quietHoursEnd || null; changes.push(`quiet_end=${quietHoursEnd || 'off'}`); }
+    if (enabled !== undefined) { settings.enabled = enabled; changes.push(`enabled=${enabled}`); }
+
+    if (changes.length === 0) {
+      return { success: false, error: 'Keine Änderungen angegeben. Unterstützt: cooldown_minutes, interval_minutes, quiet_hours_start, quiet_hours_end, enabled' };
+    }
+
+    await this.watchRepo.updateSettings(watchId, settings as {
+      cooldownMinutes?: number;
+      intervalMinutes?: number;
+      quietHoursStart?: string | null;
+      quietHoursEnd?: string | null;
+      enabled?: boolean;
+    });
+
+    return {
+      success: true,
+      data: { watchId, ...settings },
+      display: `Watch "${watch.name}" aktualisiert: ${changes.join(', ')}`,
     };
   }
 }

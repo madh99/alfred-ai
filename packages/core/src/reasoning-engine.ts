@@ -42,10 +42,7 @@ function isNoInsights(text: string): boolean {
   if (lower.includes('kein bezug') || lower.includes('keinen bezug')) return true;
   if (lower.includes('keine handlungsempfehlung')) return true;
   if (lower.includes('keine verbindung') || lower.includes('keine querverbindung')) return true;
-  // If it says "no insights" in a longer explanation, still treat as no insights
-  if ((lower.includes('keine') || lower.includes('kein')) &&
-      (lower.includes('insight') || lower.includes('erkenntnis') || lower.includes('hinweis')) &&
-      !lower.includes('---actions---')) return true;
+  if (lower.includes('nichts zu berichten')) return true;
   return false;
 }
 
@@ -485,6 +482,14 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
           }
         } catch { /* skip */ }
       }
+      // Limit to 25 entries, prioritizing pattern + connection memories
+      if (memories.length > 25) {
+        const priority = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
+        const rest = memories.filter(m => m.type !== 'pattern' && m.type !== 'connection');
+        const limited = [...priority, ...rest.slice(0, 25 - priority.length)];
+        memories.length = 0;
+        memories.push(...limited);
+      }
       if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
       return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
     } catch (err) {
@@ -701,7 +706,7 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
   /** Low-impact write skills — safe to execute and inform user. */
   private static readonly PROACTIVE_SKILLS = new Set([
     'reminder', 'note', 'todo', 'recipe', 'calendar',
-    'homeassistant', 'sonos', 'spotify',
+    'homeassistant', 'sonos', 'spotify', 'watch',
   ]);
 
   // Everything else = HIGH_RISK -> always confirmation

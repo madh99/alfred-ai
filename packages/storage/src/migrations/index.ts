@@ -880,4 +880,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_travel_item_plan ON travel_plan_items(plan_id)`);
     },
   },
+  {
+    version: 42,
+    description: 'Watch quiet hours — suppresses alerts during defined time windows',
+    up(db) {
+      db.exec(`ALTER TABLE watches ADD COLUMN quiet_hours_start TEXT DEFAULT NULL`);
+      db.exec(`ALTER TABLE watches ADD COLUMN quiet_hours_end TEXT DEFAULT NULL`);
+    },
+  },
 ];

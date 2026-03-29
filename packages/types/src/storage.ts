@@ -145,6 +145,8 @@ export interface Watch {
   requiresConfirmation?: boolean;
   triggerWatchId?: string;
   threadId?: string;
+  quietHoursStart?: string | null;
+  quietHoursEnd?: string | null;
 }
 
 export interface PendingConfirmation {

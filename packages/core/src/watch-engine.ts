@@ -186,6 +186,15 @@ export class WatchEngine {
       newLastValue = currentValue !== undefined ? JSON.stringify(currentValue) : 'null';
     }
 
+    if (triggered && this.isInQuietHours(watch)) {
+      this.logger.debug({ watchId: watch.id, name: watch.name }, 'Watch triggered but in quiet hours, suppressing alert');
+      await this.watchRepo.updateAfterCheck(watch.id, {
+        lastCheckedAt: now,
+        lastValue: newLastValue,
+      });
+      return;
+    }
+
     if (triggered && this.isCooldownExpired(watch)) {
       const actionMode = watch.actionOnTrigger ?? 'alert';
 
@@ -375,6 +384,21 @@ export class WatchEngine {
         lastValue: newLastValue,
       });
     }
+  }
+
+  private isInQuietHours(watch: Watch): boolean {
+    if (!watch.quietHoursStart || !watch.quietHoursEnd) return false;
+    const now = new Date();
+    const [startH, startM] = watch.quietHoursStart.split(':').map(Number);
+    const [endH, endM] = watch.quietHoursEnd.split(':').map(Number);
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    // Handle overnight ranges (e.g., 22:00 - 06:30)
+    if (startMinutes > endMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+    }
+    return currentMinutes >= startMinutes && currentMinutes < endMinutes;
   }
 
   private isCooldownExpired(watch: Watch): boolean {

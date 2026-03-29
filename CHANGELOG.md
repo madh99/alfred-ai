@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.191] - 2026-03-29
+
+### Added
+- **Watch: Quiet-Hours** — Neues `quiet_hours_start` / `quiet_hours_end` Feld (HH:MM Format). Alerts werden während des Quiet-Windows unterdrückt (last_value wird trotzdem aktualisiert). Unterstützt Overnight-Ranges (z.B. 22:00-06:30). Migration v42.
+- **Watch: `update`-Action** — Bestehende Watches können jetzt geändert werden: `cooldown_minutes`, `interval_minutes`, `quiet_hours_start`, `quiet_hours_end`, `enabled`. Ownership-Check inkludiert.
+- **ReasoningEngine: `watch` in PROACTIVE_SKILLS** — Reasoning kann jetzt autonom Watch-Parameter anpassen (Quiet-Hours setzen, Cooldown ändern) und den User darüber informieren.
+
+### Fixed
+- **Reasoning: `isNoInsights()` entschärft** — Die breite Catch-all-Regel (jeder Text mit "keine"+"erkenntnis/hinweis") filterte echte Insights. Entfernt — nur noch exakte Marker und Kurztext-Check (< 50 Zeichen). Behebt das Problem dass seit v183 ALLE scheduled Reasoning-Passes "no insights" meldeten.
+- **Reasoning: Memory-Volumen begrenzt** — Max 25 Memories im Reasoning-Prompt. Pattern + Connection haben Vorrang, Rest wird mit Recent aufgefüllt. Verhindert Prompt-Überladung die den LLM zu zusammenfassenden "keine Erkenntnisse"-Phrasen verleitet.
+
 ## [0.19.0-multi-ha.190] - 2026-03-28
 
 ### Fixed

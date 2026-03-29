@@ -164,4 +164,14 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_item_plan ON travel_plan_items(plan_id)`, []);
     },
   },
+  {
+    version: 42,
+    description: 'Watch quiet hours — suppresses alerts during defined time windows',
+    async up(db) {
+      await db.exec(`
+        ALTER TABLE watches ADD COLUMN IF NOT EXISTS quiet_hours_start TEXT DEFAULT NULL;
+        ALTER TABLE watches ADD COLUMN IF NOT EXISTS quiet_hours_end TEXT DEFAULT NULL
+      `);
+    },
+  },
 ];

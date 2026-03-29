@@ -15,8 +15,9 @@ export class WatchRepository {
          condition_field, condition_operator, condition_value,
          interval_minutes, cooldown_minutes, enabled, created_at, message_template,
          action_skill_name, action_skill_params, action_on_trigger, conditions_json,
-         requires_confirmation, trigger_watch_id, user_id, thread_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         requires_confirmation, trigger_watch_id, user_id, thread_id,
+         quiet_hours_start, quiet_hours_end)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id,
       watch.chatId,
@@ -40,6 +41,8 @@ export class WatchRepository {
       watch.triggerWatchId ?? null,
       watch.userId ?? null,
       watch.threadId ?? null,
+      watch.quietHoursStart ?? null,
+      watch.quietHoursEnd ?? null,
     ]);
 
     return {
@@ -66,6 +69,8 @@ export class WatchRepository {
       requiresConfirmation: watch.requiresConfirmation,
       triggerWatchId: watch.triggerWatchId,
       threadId: watch.threadId,
+      quietHoursStart: watch.quietHoursStart,
+      quietHoursEnd: watch.quietHoursEnd,
     };
   }
 
@@ -187,6 +192,46 @@ export class WatchRepository {
     );
   }
 
+  async updateSettings(id: string, settings: {
+    cooldownMinutes?: number;
+    intervalMinutes?: number;
+    quietHoursStart?: string | null;
+    quietHoursEnd?: string | null;
+    enabled?: boolean;
+  }): Promise<void> {
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+
+    if (settings.cooldownMinutes !== undefined) {
+      setClauses.push('cooldown_minutes = ?');
+      values.push(settings.cooldownMinutes);
+    }
+    if (settings.intervalMinutes !== undefined) {
+      setClauses.push('interval_minutes = ?');
+      values.push(settings.intervalMinutes);
+    }
+    if (settings.quietHoursStart !== undefined) {
+      setClauses.push('quiet_hours_start = ?');
+      values.push(settings.quietHoursStart);
+    }
+    if (settings.quietHoursEnd !== undefined) {
+      setClauses.push('quiet_hours_end = ?');
+      values.push(settings.quietHoursEnd);
+    }
+    if (settings.enabled !== undefined) {
+      setClauses.push('enabled = ?');
+      values.push(settings.enabled ? 1 : 0);
+    }
+
+    if (setClauses.length === 0) return;
+
+    values.push(id);
+    await this.adapter.execute(
+      `UPDATE watches SET ${setClauses.join(', ')} WHERE id = ?`,
+      values,
+    );
+  }
+
   async updateSkillParams(id: string, params: Record<string, unknown>): Promise<void> {
     await this.adapter.execute(
       `UPDATE watches SET skill_params = ? WHERE id = ?`,
@@ -248,6 +293,8 @@ export class WatchRepository {
       requiresConfirmation: (row.requires_confirmation as number) === 1,
       triggerWatchId: row.trigger_watch_id as string | undefined,
       threadId: row.thread_id as string | undefined,
+      quietHoursStart: (row.quiet_hours_start as string) ?? null,
+      quietHoursEnd: (row.quiet_hours_end as string) ?? null,
     };
   }
 }
