@@ -12,6 +12,7 @@ export class FeedbackService {
   private readonly threshold: number;
   private readonly staleDays: number;
   private llm?: LLMProvider;
+  private lastRuleExtractionAt = 0;
 
   constructor(
     private readonly feedbackRepo: FeedbackRepository,
@@ -151,12 +152,31 @@ export class FeedbackService {
 
     this.logger.info({ rawRule }, 'Feedback: conversation correction saved as feedback memory');
 
+    // Limit feedback memories to 20 — prune oldest beyond that
+    try {
+      const allFeedback = await this.memoryRepo.getByType(opts.userId, 'feedback', 100);
+      if (allFeedback.length > 20) {
+        // getByType returns sorted by confidence DESC, updated_at DESC — remove the tail
+        const toDelete = allFeedback.slice(20).map(f => f.id);
+        await this.memoryRepo.deleteByIds(toDelete);
+        this.logger.debug({ pruned: toDelete.length }, 'Feedback: pruned excess feedback memories');
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'Feedback: failed to prune old feedback memories');
+    }
+
     // Try to extract a generalized rule via LLM and handle existing rules
     if (this.llm) {
-      try {
-        await this.extractAndSaveRule(opts);
-      } catch (err) {
-        this.logger.debug({ err }, 'Feedback: LLM rule extraction failed, raw feedback already saved');
+      const now = Date.now();
+      if (now - this.lastRuleExtractionAt < 60_000) {
+        this.logger.debug('Feedback: skipping LLM rule extraction (cooldown)');
+      } else {
+        try {
+          this.lastRuleExtractionAt = now;
+          await this.extractAndSaveRule(opts);
+        } catch (err) {
+          this.logger.debug({ err }, 'Feedback: LLM rule extraction failed, raw feedback already saved');
+        }
       }
     }
   }
@@ -175,6 +195,7 @@ export class FeedbackService {
     const prompt = `Extrahiere eine generalisierbare, kurze Verhaltensregel (max 1 Satz, Imperativ) aus dieser User-Korrektur.
 Kontext der Korrektur: ${opts.userMessage.slice(0, 500)}
 Letzte Antwort: ${opts.assistantResponse.slice(0, 500)}
+Antworte auf Deutsch.
 Regel:`;
 
     const response = await this.llm.complete({
@@ -206,7 +227,8 @@ Regel:`;
         const refinePrompt = `Die folgende Verhaltensregel hat einen Fehler nicht verhindert.
 Alte Regel: ${matchingRule.value}
 Neue Korrektur: ${opts.userMessage.slice(0, 300)}
-Formuliere die Regel präziser (max 1 Satz, Imperativ), damit sie künftig besser greift:`;
+Formuliere die Regel präziser (max 1 Satz, Imperativ), damit sie künftig besser greift. Antworte auf Deutsch.
+Regel:`;
 
         const refineResponse = await this.llm.complete({
           messages: [{ role: 'user', content: refinePrompt }],

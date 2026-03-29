@@ -177,8 +177,8 @@ export class MemoryRepository {
   async findStale(userId: string, olderThanDays: number, maxConfidence: number): Promise<MemoryEntry[]> {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
     const rows = await this.adapter.query(
-      'SELECT * FROM memories WHERE user_id = ? AND updated_at < ? AND confidence <= ? ORDER BY confidence ASC',
-      [userId, cutoff, maxConfidence],
+      'SELECT * FROM memories WHERE user_id = ? AND updated_at < ? AND confidence <= ? AND type != ? ORDER BY confidence ASC',
+      [userId, cutoff, maxConfidence, 'rule'],
     ) as Record<string, unknown>[];
 
     return rows.map(row => this.mapRow(row));

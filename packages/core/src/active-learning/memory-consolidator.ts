@@ -103,9 +103,9 @@ export class MemoryConsolidator {
    * Find groups of similar memories using Jaccard similarity on key tokens.
    */
   private findSimilarGroups(memories: MemoryEntry[]): MemoryEntry[][] {
-    // Filter out protected memories: entity/fact types and manually created memories
+    // Filter out protected memories: entity/fact/rule types and manually created memories
     const candidates = memories.filter(
-      m => !(m.type === 'entity' || m.type === 'fact' || m.source === 'manual'),
+      m => !(m.type === 'entity' || m.type === 'fact' || m.type === 'rule' || m.source === 'manual'),
     );
 
     const groups: MemoryEntry[][] = [];

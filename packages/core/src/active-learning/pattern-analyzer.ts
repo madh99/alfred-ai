@@ -2,6 +2,7 @@ import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
 import type { MemoryRepository } from '@alfred/storage';
 import type { ActivityRepository } from '@alfred/storage';
+import { createHash } from 'node:crypto';
 
 export class PatternAnalyzer {
   constructor(
@@ -89,6 +90,7 @@ Regeln:
 - Max 5 Muster, priorisiert nach Aussagekraft
 - Wenn keine klaren Muster erkennbar: return []
 
+Antworte auf Deutsch.
 Return NUR ein JSON-Array:`;
 
       // 3. LLM call (fast tier, cheap)
@@ -178,13 +180,13 @@ Return NUR ein JSON-Array:`;
       if (group.count < 3) continue;
 
       // Check if we already have a rule for this error pattern
-      const hash = fingerprint.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+      const hash = createHash('md5').update(fingerprint).digest('hex').slice(0, 12);
       const ruleKey = `rule_skill_${group.skillName}_${hash}`;
       const existing = await this.memoryRepo.recall(userId, ruleKey);
       if (existing) continue; // Already have a rule for this
 
       try {
-        const prompt = `Skill '${group.skillName}' ist ${group.count}x mit folgendem Fehler fehlgeschlagen: '${group.errorMessage}'. Leite eine kurze Verhaltensregel ab (max 1 Satz) die Alfred helfen würde, diesen Fehler in Zukunft zu vermeiden oder zu umgehen.
+        const prompt = `Skill '${group.skillName}' ist ${group.count}x mit folgendem Fehler fehlgeschlagen: '${group.errorMessage}'. Leite eine kurze Verhaltensregel ab (max 1 Satz) die Alfred helfen würde, diesen Fehler in Zukunft zu vermeiden oder zu umgehen. Antworte auf Deutsch.
 Regel:`;
 
         const response = await this.llm.complete({
@@ -220,26 +222,52 @@ Regel:`;
     const rules = await this.memoryRepo.getByType(userId, 'rule', 50);
     if (rules.length === 0) return;
 
-    // Check if there were any corrections in the period
-    const corrections = await this.activityRepo.query({
-      eventType: 'skill_exec',
-      since,
-      limit: 1, // We just need to know if any exist
-    });
+    // Load feedback memories from the last 7 days (corrections)
+    const feedbackMemories = await this.memoryRepo.getByType(userId, 'feedback', 100);
+    const sinceDate = new Date(since);
+    const recentFeedback = feedbackMemories.filter(
+      f => new Date(f.updatedAt) >= sinceDate,
+    );
 
-    // Only boost if there was actual activity (otherwise the rules weren't tested)
-    if (corrections.length === 0) return;
+    // Tokenize feedback values for similarity comparison
+    const feedbackTokenSets = recentFeedback.map(f =>
+      new Set(f.value.toLowerCase().split(/\s+/).filter(t => t.length >= 3)),
+    );
 
-    // Boost rules that were updated before the analysis period
-    // (meaning they were already active and available for prompt injection)
     for (const rule of rules) {
       if (rule.confidence >= 1.0) continue;
+
+      // Only boost rules that existed before the analysis period
       const ruleDate = new Date(rule.updatedAt);
-      const sinceDate = new Date(since);
-      if (ruleDate < sinceDate) {
-        await this.memoryRepo.updateConfidence(rule.id, 0.05);
-        this.logger.debug({ ruleKey: rule.key, newConfidence: Math.min(1.0, rule.confidence + 0.05) }, 'Rule confidence boosted (uncontested)');
+      if (ruleDate >= sinceDate) continue;
+
+      // Race condition guard: skip if already boosted today (updated_at < 20h ago)
+      const twentyHoursAgo = new Date(Date.now() - 20 * 60 * 60_000);
+      if (ruleDate >= twentyHoursAgo) continue;
+
+      // Check if any recent feedback is semantically similar to this rule
+      const ruleTokens = new Set(rule.value.toLowerCase().split(/\s+/).filter(t => t.length >= 3));
+      const hasSimilarFeedback = feedbackTokenSets.some(feedbackTokens => {
+        if (ruleTokens.size === 0 || feedbackTokens.size === 0) return false;
+        let intersection = 0;
+        for (const t of ruleTokens) { if (feedbackTokens.has(t)) intersection++; }
+        const union = ruleTokens.size + feedbackTokens.size - intersection;
+        return union > 0 && (intersection / union) >= 0.3;
+      });
+
+      if (hasSimilarFeedback) {
+        this.logger.debug({ ruleKey: rule.key }, 'Rule boost skipped (similar feedback exists)');
+        continue;
       }
+
+      // Boost via saveWithMetadata (UPSERT) to avoid double-boost race condition on multi-node
+      const newConfidence = Math.min(1.0, rule.confidence + 0.05);
+      await this.memoryRepo.saveWithMetadata(
+        userId, rule.key, rule.value,
+        rule.category, 'rule',
+        newConfidence, rule.source,
+      );
+      this.logger.debug({ ruleKey: rule.key, newConfidence }, 'Rule confidence boosted (uncontested)');
     }
   }
 }

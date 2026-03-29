@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.195] - 2026-03-29
+
+### Fixed
+- **Regel-Boost-Semantik** — Regeln werden nur noch geboostet wenn keine ähnlichen Korrekturen in den letzten 7 Tagen vorliegen (Jaccard-Similarity gegen Feedback-Memories). Vorher: Boost bei jeder beliebigen User-Aktivität.
+- **Fingerprint-Kollision** — Skill-Error-Keys verwenden jetzt MD5-Hash (12 Hex-Zeichen) statt Truncation. Zwei verschiedene Fehler erzeugen nie denselben Key.
+- **Race Condition Multi-Node** — Boost verwendet UPSERT statt additivem Delta + 20h-Guard gegen Double-Boost am selben Tag. Beide Nodes können gleichzeitig analysieren ohne Duplikate.
+- **Rule-Merge-Schutz** — `rule`-Memories werden jetzt wie `entity`/`fact` vom Consolidator-Merge ausgeschlossen.
+- **Stale-Deletion schließt Regeln aus** — `findStale()` ignoriert jetzt `type='rule'`. Regeln haben ihr eigenes Cleanup (confidence < 0.3 + 30 Tage).
+- **Sprachbindung** — Alle Regel-LLM-Prompts erzwingen jetzt deutsche Ausgabe ("Antworte auf Deutsch").
+- **Rate-Limiting** — Maximal 1 Regel-Extraktion pro 60 Sekunden, verhindert LLM-Kosten bei Korrektur-Spam.
+- **Feedback-Akkumulation** — Maximal 20 Feedback-Memories pro User, älteste werden automatisch gelöscht.
+
 ## [0.19.0-multi-ha.194] - 2026-03-29
 
 ### Added
