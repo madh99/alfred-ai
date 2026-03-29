@@ -39,9 +39,18 @@ export class MemorySkill extends Skill {
           type: 'string',
           description: 'Optional category (for save/list)',
         },
+        type: {
+          type: 'string',
+          enum: ['entity', 'fact', 'general', 'preference'],
+          description: 'Memory type: entity (people, pets, orgs), fact (addresses, dates, accounts), preference, or general (default)',
+        },
         query: {
           type: 'string',
           description: 'Search query (for search)',
+        },
+        confirm: {
+          type: 'boolean',
+          description: 'Set to true to confirm deletion of protected (entity/fact) memories',
         },
       },
       required: ['action'],
@@ -89,6 +98,11 @@ export class MemorySkill extends Skill {
     const key = input.key as string | undefined;
     const value = input.value as string | undefined;
     const category = input.category as string | undefined;
+    const rawType = input.type as string | undefined;
+    const allowedTypes = ['entity', 'fact', 'general', 'preference'] as const;
+    const type = rawType && (allowedTypes as readonly string[]).includes(rawType)
+      ? (rawType as typeof allowedTypes[number])
+      : 'general';
 
     if (!key || typeof key !== 'string') {
       return {
@@ -104,11 +118,14 @@ export class MemorySkill extends Skill {
       };
     }
 
-    const entry = await this.memoryRepo.save(
+    const entry = await this.memoryRepo.saveWithMetadata(
       effectiveUserId(context),
       key,
       value,
       category ?? 'general',
+      type,
+      1.0,
+      'manual',
     );
 
     // Auto-embed for semantic search
@@ -236,12 +253,26 @@ export class MemorySkill extends Skill {
     context: SkillContext,
   ): Promise<SkillResult> {
     const key = input.key as string | undefined;
+    const confirm = input.confirm === true;
 
     if (!key || typeof key !== 'string') {
       return {
         success: false,
         error: 'Missing required field "key" for delete action',
       };
+    }
+
+    // Check if memory is protected (entity/fact) — require explicit confirmation
+    if (!confirm) {
+      for (const uid of allUserIds(context)) {
+        const existing = await this.memoryRepo.recall(uid, key);
+        if (existing && (existing.type === 'entity' || existing.type === 'fact')) {
+          return {
+            success: false,
+            error: `Dieses Memory ist als "${existing.type}" klassifiziert und geschützt. Um es zu löschen, rufe delete mit confirm: true auf.`,
+          };
+        }
+      }
     }
 
     // Try deleting across all linked user IDs (old data may be under platform ID)

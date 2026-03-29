@@ -421,9 +421,21 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         }
       }
 
-      prompt += '\nUse these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.';
+      prompt += `\nUse these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.
+
+When saving memories, set the type parameter:
+- entity: People (family, contacts), pets, organizations the user is closely connected to
+- fact: Addresses, employment, birthdays, important dates, account details
+- general: Temporary info, preferences, notes, tasks (default)
+Entity and fact memories are protected from automatic changes. Use them for information that should persist long-term.`;
     } else {
-      prompt += '\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.';
+      prompt += `\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.
+
+When saving memories, set the type parameter:
+- entity: People (family, contacts), pets, organizations the user is closely connected to
+- fact: Addresses, employment, birthdays, important dates, account details
+- general: Temporary info, preferences, notes, tasks (default)
+Entity and fact memories are protected from automatic changes. Use them for information that should persist long-term.`;
     }
 
     return prompt;

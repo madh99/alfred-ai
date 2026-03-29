@@ -84,23 +84,28 @@ export class MemoryConsolidator {
    * Find groups of similar memories using Jaccard similarity on key tokens.
    */
   private findSimilarGroups(memories: MemoryEntry[]): MemoryEntry[][] {
+    // Filter out protected memories: entity/fact types and manually created memories
+    const candidates = memories.filter(
+      m => !(m.type === 'entity' || m.type === 'fact' || m.source === 'manual'),
+    );
+
     const groups: MemoryEntry[][] = [];
     const used = new Set<string>();
 
-    for (let i = 0; i < memories.length; i++) {
-      if (used.has(memories[i].id)) continue;
+    for (let i = 0; i < candidates.length; i++) {
+      if (used.has(candidates[i].id)) continue;
 
-      const group = [memories[i]];
-      const tokensA = this.tokenize(memories[i].key);
+      const group = [candidates[i]];
+      const tokensA = this.tokenize(candidates[i].key);
 
-      for (let j = i + 1; j < memories.length; j++) {
-        if (used.has(memories[j].id)) continue;
+      for (let j = i + 1; j < candidates.length; j++) {
+        if (used.has(candidates[j].id)) continue;
 
-        const tokensB = this.tokenize(memories[j].key);
+        const tokensB = this.tokenize(candidates[j].key);
         const similarity = this.jaccardSimilarity(tokensA, tokensB);
 
         if (similarity >= 0.5) {
-          group.push(memories[j]);
+          group.push(candidates[j]);
         }
       }
 

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.193] - 2026-03-29
+
+### Added
+- **Memory-Schutz für Kern-Erinnerungen** — 4-Ebenen-Schutz für wichtige Memories:
+  1. **Type-Parameter im MemorySkill**: LLM kann `entity` (Personen), `fact` (Adressen, Arbeitgeber), `general` (Default) oder `preference` als Type setzen
+  2. **UPSERT-Schutz**: Manuell gespeicherte Memories (`source='manual'`) werden nicht mehr von automatischer Extraktion (`source='auto'`) überschrieben
+  3. **Consolidator-Guard**: Entity-, Fact- und Manual-Memories werden nie automatisch gemergt oder gelöscht
+  4. **Delete-Guard**: Entity/Fact-Memories brauchen `confirm: true` beim Löschen — verhindert autonomes Löschen durch das LLM
+- **System-Prompt Memory-Instruktion**: LLM wird instruiert wann entity/fact/general zu verwenden ist
+
 ## [0.19.0-multi-ha.192] - 2026-03-29
 
 ### Improved
