@@ -229,7 +229,8 @@ export class VoiceSkill extends Skill {
     if (!text) return { success: false, error: 'Missing required parameter: text' };
 
     const voiceId = await this.resolveVoiceId(input.voice_id as string | undefined, context);
-    const format = (input.format as string | undefined) ?? 'mp3';
+    // Default to opus for Telegram compatibility (sendVoice requires OGG/Opus)
+    const format = (input.format as string | undefined) ?? 'opus';
 
     const body: Record<string, unknown> = {
       model: this.model,
@@ -384,7 +385,7 @@ export class VoiceSkill extends Skill {
     switch (format) {
       case 'mp3': return 'audio/mpeg';
       case 'wav': return 'audio/wav';
-      case 'opus': return 'audio/opus';
+      case 'opus': return 'audio/ogg';
       case 'flac': return 'audio/flac';
       case 'aac': return 'audio/aac';
       case 'pcm': return 'audio/pcm';
