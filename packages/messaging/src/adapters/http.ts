@@ -2,6 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import crypto from 'node:crypto';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
@@ -337,6 +338,8 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (this.webUiPath && url.pathname === '/alfred' && req.method === 'GET') {
       res.writeHead(302, { Location: '/alfred/' });
       res.end();
+    } else if (url.pathname.startsWith('/files/tts/') && req.method === 'GET') {
+      this.serveTtsFile(url.pathname, res);
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
@@ -486,6 +489,69 @@ export class HttpAdapter extends MessagingAdapter {
       'Cache-Control': cacheControl,
     });
     fs.createReadStream(target).pipe(res);
+  }
+
+  private serveTtsFile(pathname: string, res: http.ServerResponse): void {
+    const TTS_MIME: Record<string, string> = {
+      '.mp3': 'audio/mpeg',
+      '.opus': 'audio/ogg',
+      '.wav': 'audio/wav',
+      '.flac': 'audio/flac',
+      '.aac': 'audio/aac',
+      '.ogg': 'audio/ogg',
+    };
+
+    const filename = pathname.slice('/files/tts/'.length);
+
+    // Security: prevent path traversal
+    if (!filename || filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid filename' }));
+      return;
+    }
+
+    const ttsDir = path.join(os.tmpdir(), 'alfred-tts');
+    const filePath = path.join(ttsDir, filename);
+
+    // Double-check resolved path stays inside ttsDir
+    if (!path.resolve(filePath).startsWith(path.resolve(ttsDir))) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden' }));
+      return;
+    }
+
+    // Auto-cleanup: remove files older than 5 minutes
+    try {
+      if (fs.existsSync(ttsDir)) {
+        const now = Date.now();
+        for (const entry of fs.readdirSync(ttsDir)) {
+          try {
+            const entryPath = path.join(ttsDir, entry);
+            const stat = fs.statSync(entryPath);
+            if (now - stat.mtimeMs > 5 * 60 * 1000) {
+              fs.unlinkSync(entryPath);
+            }
+          } catch { /* ignore cleanup errors for individual files */ }
+        }
+      }
+    } catch { /* ignore cleanup errors */ }
+
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'File not found' }));
+      return;
+    }
+
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(filename).toLowerCase();
+    const contentType = TTS_MIME[ext] ?? 'audio/mpeg';
+
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Content-Length': stat.size,
+      'Cache-Control': 'no-cache',
+    });
+    fs.createReadStream(filePath).pipe(res);
   }
 
   private safeError(res: http.ServerResponse, err: unknown): void {

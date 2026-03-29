@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.212] - 2026-03-30
+
+### Added
+- **Sonos-Durchsage-Integration** — VoiceSkill `announce` spielt Audio direkt auf Sonos ab:
+  1. Mistral TTS generiert Audio (MP3)
+  2. Audio wird als Temp-Datei gespeichert (`/tmp/alfred-tts/<uuid>.mp3`)
+  3. Alfred HTTP-Server serviert die Datei unter `/files/tts/<uuid>.mp3` (kein Auth, Sonos-kompatibel)
+  4. Sonos-Skill `play_uri` wird mit der URL aufgerufen
+  5. Temp-Datei wird nach 5 Min automatisch gelöscht
+- **HTTP-Endpoint `/files/tts/`** — Serviert temporäre Audio-Dateien für Sonos. Kein Auth (Sonos braucht direkten Zugriff). Path-Traversal-Schutz. Auto-Cleanup > 5 Min.
+- **Auto-Detect LAN-IP** — Wenn `ALFRED_API_PUBLIC_URL` nicht gesetzt, wird die erste nicht-Loopback IPv4-Adresse für Sonos-URLs verwendet.
+- **Fallback:** Wenn Sonos nicht verfügbar → Audio als Telegram-Attachment (wie bisher).
+
 ## [0.19.0-multi-ha.202] - 2026-03-29
 
 ### Fixed

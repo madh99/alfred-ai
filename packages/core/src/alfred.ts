@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
@@ -788,8 +789,31 @@ export class Alfred {
         && speechCfg.voiceManagement !== false;
       const voiceApiKey = speechCfg?.ttsApiKey ?? mistralApiKey;
       if (voiceMgmtEnabled && voiceApiKey && memoryRepo) {
-        skillRegistry.register(new VoiceSkill(voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603', memoryRepo));
-        this.logger.info('Voice management skill registered');
+        // Determine announce base URL for Sonos TTS integration
+        let announceBaseUrl = this.config.api?.publicUrl;
+        if (!announceBaseUrl) {
+          // Find first non-loopback IPv4 address for LAN accessibility
+          let lanIp = 'localhost';
+          const interfaces = os.networkInterfaces();
+          for (const nets of Object.values(interfaces)) {
+            if (!nets) continue;
+            for (const net of nets) {
+              if (net.family === 'IPv4' && !net.internal) {
+                lanIp = net.address;
+                break;
+              }
+            }
+            if (lanIp !== 'localhost') break;
+          }
+          const port = this.config.api?.port ?? 3420;
+          const proto = this.config.api?.tls?.enabled ? 'https' : 'http';
+          announceBaseUrl = `${proto}://${lanIp}:${port}`;
+        }
+        skillRegistry.register(new VoiceSkill(
+          voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603',
+          memoryRepo, skillRegistry, announceBaseUrl,
+        ));
+        this.logger.info({ announceBaseUrl }, 'Voice management skill registered');
       }
     }
 

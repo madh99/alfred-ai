@@ -1,5 +1,10 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
+import type { SkillRegistry } from '../skill-registry.js';
 import type { MemoryRepository } from '@alfred/storage';
 import { effectiveUserId } from '../user-utils.js';
 
@@ -61,6 +66,8 @@ export class VoiceSkill extends Skill {
     private readonly baseUrl: string = 'https://api.mistral.ai/v1',
     private readonly model: string = 'voxtral-mini-tts-2603',
     private readonly memoryRepo: MemoryRepository,
+    private readonly skillRegistry?: SkillRegistry,
+    private readonly announceBaseUrl?: string,
   ) {
     super();
   }
@@ -304,11 +311,71 @@ export class VoiceSkill extends Skill {
     if (!data.audio_data) throw new Error('Mistral TTS: No audio_data in response');
     const audioBuffer = Buffer.from(data.audio_data, 'base64');
 
-    // Return audio with guidance on Sonos playback
+    // If Sonos available + room specified + base URL configured → play via Sonos
+    const sonosSkill = this.skillRegistry?.get('sonos');
+    if (sonosSkill && room && this.announceBaseUrl) {
+      try {
+        // Save audio to temp file
+        const ttsDir = path.join(os.tmpdir(), 'alfred-tts');
+        fs.mkdirSync(ttsDir, { recursive: true });
+        const uuid = crypto.randomUUID();
+        const filename = `${uuid}.mp3`;
+        const filePath = path.join(ttsDir, filename);
+        fs.writeFileSync(filePath, audioBuffer);
+
+        // Build URL for Sonos to fetch
+        const audioUrl = `${this.announceBaseUrl}/files/tts/${filename}`;
+
+        // Call Sonos skill with play_uri
+        const sonosResult = await sonosSkill.execute(
+          { action: 'play_uri', speaker: room, uri: audioUrl },
+          context,
+        );
+
+        // Schedule cleanup after 5 minutes
+        setTimeout(() => {
+          try { fs.unlinkSync(filePath); } catch { /* file may already be gone */ }
+        }, 5 * 60 * 1000).unref();
+
+        if (sonosResult.success) {
+          return {
+            success: true,
+            display: `Durchsage auf "${room}" abgespielt.`,
+            data: { room, voiceId, format, audioUrl },
+          };
+        }
+
+        // Sonos failed → fall through to attachment fallback
+        return {
+          success: true,
+          display: `Sonos-Wiedergabe auf "${room}" fehlgeschlagen: ${sonosResult.error ?? 'Unbekannter Fehler'}. Audio als Anhang.`,
+          data: { room, voiceId, format, sonosError: sonosResult.error },
+          attachments: [{
+            fileName: 'announcement.mp3',
+            data: audioBuffer,
+            mimeType: 'audio/mpeg',
+          }],
+        };
+      } catch (err) {
+        // Sonos integration error → fall through to attachment fallback
+        return {
+          success: true,
+          display: `Sonos-Durchsage fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}. Audio als Anhang.`,
+          data: { room, voiceId, format },
+          attachments: [{
+            fileName: 'announcement.mp3',
+            data: audioBuffer,
+            mimeType: 'audio/mpeg',
+          }],
+        };
+      }
+    }
+
+    // Fallback: no Sonos skill, no room, or no base URL → return audio as attachment
     const roomHint = room ? ` im Raum "${room}"` : '';
     return {
       success: true,
-      display: `Audio-Durchsage generiert${roomHint}. Sage "Spiel das auf ${room ?? '[Raumname]'} ab" um es über Sonos abzuspielen.`,
+      display: `Audio-Durchsage generiert${roomHint}.${!sonosSkill ? ' Sonos-Skill nicht verfügbar.' : !this.announceBaseUrl ? ' Announce-URL nicht konfiguriert.' : ''}`,
       data: { room, voiceId, format },
       attachments: [{
         fileName: 'announcement.mp3',
