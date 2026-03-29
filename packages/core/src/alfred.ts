@@ -1874,10 +1874,14 @@ export class Alfred {
           for (const att of result.attachments) {
             try {
               const isImage = att.mimeType?.startsWith('image/') ?? false;
+              const isAudio = att.mimeType?.startsWith('audio/') ?? false;
               const isVoice = att.mimeType === 'audio/ogg' || att.mimeType === 'audio/opus';
               if (isImage) {
                 await adapter.sendPhoto(message.chatId, att.data, att.fileName);
               } else if (isVoice) {
+                await adapter.sendVoice(message.chatId, att.data);
+              } else if (isAudio) {
+                // Send as audio (playable in Telegram) — MP3, WAV, etc.
                 await adapter.sendVoice(message.chatId, att.data);
               } else {
                 await adapter.sendFile(message.chatId, att.data, att.fileName);
