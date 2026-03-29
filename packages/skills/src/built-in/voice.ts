@@ -250,7 +250,10 @@ export class VoiceSkill extends Skill {
       throw new Error(`Mistral TTS API: ${resp.status} ${errText}`);
     }
 
-    const audioBuffer = Buffer.from(await resp.arrayBuffer());
+    // Mistral TTS returns JSON with base64-encoded audio_data, NOT raw audio
+    const data = await resp.json() as { audio_data?: string };
+    if (!data.audio_data) throw new Error('Mistral TTS: No audio_data in response');
+    const audioBuffer = Buffer.from(data.audio_data, 'base64');
     const mimeType = this.formatToMime(format);
     const ext = format === 'pcm' ? 'raw' : format;
 
@@ -296,7 +299,10 @@ export class VoiceSkill extends Skill {
       throw new Error(`Mistral TTS API: ${resp.status} ${errText}`);
     }
 
-    const audioBuffer = Buffer.from(await resp.arrayBuffer());
+    // Mistral TTS returns JSON with base64-encoded audio_data
+    const data = await resp.json() as { audio_data?: string };
+    if (!data.audio_data) throw new Error('Mistral TTS: No audio_data in response');
+    const audioBuffer = Buffer.from(data.audio_data, 'base64');
 
     // Return audio with guidance on Sonos playback
     const roomHint = room ? ` im Raum "${room}"` : '';

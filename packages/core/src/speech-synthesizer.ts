@@ -57,7 +57,16 @@ export class SpeechSynthesizer {
       throw new Error(`TTS (${this.ttsProvider}) failed: ${response.status} ${errorText}`);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
+    let buffer: Buffer;
+    if (this.ttsProvider === 'mistral') {
+      // Mistral TTS returns JSON with base64-encoded audio_data
+      const data = await response.json() as { audio_data?: string };
+      if (!data.audio_data) throw new Error('Mistral TTS: No audio_data in response');
+      buffer = Buffer.from(data.audio_data, 'base64');
+    } else {
+      // OpenAI returns raw audio stream
+      buffer = Buffer.from(await response.arrayBuffer());
+    }
     this.logger.info({ audioBytes: buffer.length, provider: this.ttsProvider }, 'Speech synthesized');
     return buffer;
   }
