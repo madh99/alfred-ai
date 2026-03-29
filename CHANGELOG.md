@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.200] - 2026-03-29
+
+### Fixed
+- **Mistral STT Modellname** — `mistral-stt-latest` existiert nicht. Korrigiert zu `voxtral-mini-transcribe-2602` (das tatsächliche Mistral STT Modell).
+- **Mistral TTS Modellname** — `mistral-tts-latest` existiert nicht. Korrigiert zu `voxtral-mini-tts-2603` (das tatsächliche Voxtral TTS Modell).
+
 ## [0.19.0-multi-ha.199] - 2026-03-29
 
 ### Added

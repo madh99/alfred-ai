@@ -21,7 +21,7 @@ export class SpeechSynthesizer {
 
     if (this.ttsProvider === 'mistral') {
       this.baseUrl = 'https://api.mistral.ai/v1';
-      this.model = config.ttsModel ?? 'mistral-tts-latest';
+      this.model = config.ttsModel ?? 'voxtral-mini-tts-2603';
       this.voice = config.ttsVoice ?? 'alloy';
     } else {
       this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
