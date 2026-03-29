@@ -32,7 +32,7 @@ export class VoiceSkill extends Skill {
           description: 'The voice action to perform',
         },
         name: { type: 'string', description: 'Voice name (for create_voice)' },
-        voice_id: { type: 'string', description: 'Voice ID (for delete_voice, speak, announce, set_default)' },
+        voice_id: { type: 'string', description: 'Voice name or UUID (for speak, announce, delete_voice, set_default). Names like "Markus" are automatically resolved to the UUID.' },
         text: { type: 'string', description: 'Text to speak (for speak, announce)' },
         room: { type: 'string', description: 'Sonos room name (for announce)' },
         sample_audio: { type: 'string', description: 'Base64-encoded audio sample (for create_voice)' },
@@ -340,9 +340,41 @@ export class VoiceSkill extends Skill {
     explicitId: string | undefined,
     context: SkillContext,
   ): Promise<string | undefined> {
-    if (explicitId) return explicitId;
+    if (explicitId) {
+      // If it's already a UUID, use it directly
+      if (/^[0-9a-f]{8}-/.test(explicitId)) return explicitId;
 
-    // Check for a user-specific default voice in memory
+      // It's a name — resolve to UUID via memory first
+      const userId = effectiveUserId(context);
+      const nameLower = explicitId.toLowerCase();
+      const memKey = `voice_${nameLower.replace(/\s+/g, '_')}`;
+      const mem = await this.memoryRepo.recall(userId, memKey);
+      if (mem?.value) {
+        try {
+          const parsed = JSON.parse(mem.value);
+          if (parsed.voice_id) return parsed.voice_id;
+        } catch { /* not JSON, try as raw value */ }
+      }
+
+      // Fallback: search Mistral API for voice by name
+      try {
+        const resp = await fetch(`${this.baseUrl}/audio/voices`, {
+          method: 'GET',
+          headers: this.headers(),
+        });
+        if (resp.ok) {
+          const data = await resp.json() as { items?: Array<{ id: string; name: string }> };
+          const voices = data.items ?? [];
+          const match = voices.find(v => v.name.toLowerCase() === nameLower);
+          if (match) return match.id;
+        }
+      } catch { /* ignore API errors */ }
+
+      // Nothing found — return undefined (will use default voice)
+      return undefined;
+    }
+
+    // No explicit ID — check for user-specific default voice in memory
     const userId = effectiveUserId(context);
     const defaultMem = await this.memoryRepo.recall(userId, 'voice_default');
     return defaultMem?.value ?? undefined;
