@@ -82,31 +82,33 @@ llm:
 
 ### Mistral AI Dienste (optional)
 
-Alfred kann Mistral AI Dienste unabhängig vom Haupt-LLM-Provider nutzen:
+Alfred kann Mistral AI Dienste unabhängig vom Haupt-LLM-Provider nutzen — z.B. Claude als Haupt-LLM + Mistral für OCR und Moderation:
 
-| Dienst | ENV-Variable | Beschreibung |
-|---|---|---|
-| API-Key | `ALFRED_MISTRAL_API_KEY` | Eigenständiger Key für alle Mistral-Dienste |
-| Moderation | `ALFRED_MODERATION_ENABLED=true` | Content-Safety für Input + Output |
-| OCR | Automatisch bei Mistral-Key | PDF/Bild → strukturierter Text |
-| STT | `ALFRED_STT_PROVIDER=mistral` | Voice-Messages → Text |
-| TTS | `ALFRED_TTS_PROVIDER=mistral` | Text → Sprache |
-| Embeddings | `ALFRED_LLM_EMBEDDINGS_PROVIDER=mistral` | Semantic Memory Search |
+| Dienst | Modell | ENV-Variable | Beschreibung |
+|---|---|---|---|
+| API-Key | — | `ALFRED_MISTRAL_API_KEY` | Eigenständiger Key für alle Mistral-Dienste |
+| Embeddings | `mistral-embed` | `ALFRED_LLM_EMBEDDINGS_PROVIDER=mistral` | Semantic Memory Search |
+| OCR | `mistral-ocr-latest` | Automatisch bei Mistral-Key | PDF/Bild → strukturierter Markdown (Handschrift, Tabellen, Rechnungen) |
+| STT | `voxtral-mini-2602` | `ALFRED_STT_PROVIDER=mistral` | Voice-Messages → Text |
+| TTS | `voxtral-mini-tts-2603` | `ALFRED_TTS_PROVIDER=mistral` | Text → Sprache, Voice Cloning |
+| Voice Cloning | `voxtral-mini-tts-2603` | `ALFRED_VOICE_MANAGEMENT=true` | Eigene Stimmen aus Audio-Samples erstellen |
+| Moderation | `mistral-moderation-latest` | `ALFRED_MODERATION_ENABLED=true` | Content-Safety für Input + Output |
+| Sonos-Durchsagen | TTS + Sonos | `ALFRED_TTS_VOICE_ID=<voice-id>` | TTS-Audio direkt auf Sonos abspielen |
 
-Kein Dienst ist eine Pflicht-Abhängigkeit. Alfred funktioniert ohne Mistral-Key wie bisher.
+Kein Dienst ist eine Pflicht-Abhängigkeit. Alfred funktioniert ohne Mistral-Key wie bisher. Der Key wird automatisch an alle Dienste weitergereicht wenn deren Provider auf `mistral` steht.
 
-### Built-in Skills (60+)
+### Built-in Skills (65+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
 | Category | Skills | Description |
 |----------|--------|-------------|
-| **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search |
+| **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search. **Memory-Schutz**: entity/fact Protection (UPSERT-Guard, Consolidator-Guard, Delete-Confirm), Cross-Context Connection-Memories, Insight-Preference Learning |
 | **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
+| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations, **quiet-hours** mit Digest-Zusammenfassung, **update**-Action für Live-Anpassung, **always_\* Operatoren** für wiederkehrende Alerts), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
 | **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube`, `recipe` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring, **YouTube** (Suche, Video-Info, Transkript-Extraktion, Channel-Monitoring), Rezeptsuche (Spoonacular/Edamam/Open Food Facts) |
-| **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search |
+| **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search. **OCR** via Mistral für Handschrift, Tabellen, Rechnungen → strukturierter Markdown |
 | **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration, **autonomous project agent** (plan → code → validate → fix → commit loop, Telegram-controlled) |
 | **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor`, `database`, `mqtt` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server), MQTT publish/subscribe (Zigbee2MQTT Discovery) |
 | **Navigation & Travel** | `routing`, `transit_search`, `travel` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS), Flugsuche & Reiseplanung (Kiwi/Booking.com) |
@@ -114,8 +116,8 @@ Alfred exposes capabilities as **skills** — tools the LLM can call autonomousl
 | **Finance** | `crypto_price`, `bitpanda`, `trading` | Kryptowährungs-Preise (CoinGecko), Bitpanda Portfolio/Trades/Ticker, Crypto-Trading auf 110+ Exchanges (CCXT) |
 | **Marketplace & Shopping** | `marketplace`, `shopping` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts, Produktsuche & Preisvergleich (Geizhals) |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
-| **Media** | `browser`, `tts`, `image_generate`, `spotify`, `sonos` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google), Spotify (OAuth PKCE, Playback, Playlists, Suche), Sonos (UPnP + Cloud, Multi-Room, Radio) |
-| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot` und `check_conflicts` |
+| **Media** | `browser`, `tts`, `image_generate`, `spotify`, `sonos`, `voice` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google), Spotify (OAuth PKCE, Playback, Playlists, Suche), Sonos (UPnP + Cloud, Multi-Room, Radio), **Voice Management** (Voice Cloning aus Audio-Samples, Sonos-Durchsagen, Custom TTS-Stimmen via Mistral Voxtral) |
+| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot`, `check_conflicts`, **Duplikat-Prävention** (provider-agnostisch + Microsoft `transactionId`), **Vergangenheits-Check** |
 | **Productivity** | `onedrive` | Microsoft OneDrive (Graph API) — Dateien durchsuchen, hoch-/herunterladen, teilen |
 | **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
 | **Multi-User** | `user_management`, `sharing`, `help` | Roles (admin/user/family/guest/service), invite codes, platform linking, per-user service config, share notes/todos/documents/services between users, interactive help |
@@ -133,7 +135,7 @@ Alfred → code_agent orchestrate:
   4. Git: Auto-branch, commit, push, and create PR/MR
 ```
 
-Supported agents are auto-detected during setup: **Claude Code**, **Codex**, **Aider**, **Gemini CLI**, or any custom CLI tool.
+Supported agents are auto-detected during setup: **Claude Code**, **Codex**, **Aider**, **Gemini CLI**, or any custom CLI tool. Auto-creates working directories and handles permission management for non-root execution.
 
 **Forge Integration** — Automatically creates branches, commits, pushes, and opens Pull Requests (GitHub) or Merge Requests (GitLab). Owner/repo is detected from `git remote` at runtime — no manual config needed.
 
@@ -555,8 +557,10 @@ After linking:
 
 ### Speech
 
-- **Speech-to-Text** — Send voice messages on any platform. Alfred transcribes via OpenAI Whisper, Groq, or Google STT.
-- **Text-to-Speech** — Ask Alfred to respond with a voice message. Uses OpenAI TTS with multiple voice options.
+- **Speech-to-Text** — Send voice messages on any platform. Alfred transcribes via OpenAI Whisper, Groq, Google STT, or Mistral Voxtral.
+- **Text-to-Speech** — Ask Alfred to respond with a voice message. Uses OpenAI TTS or Mistral Voxtral TTS with multiple voice options.
+- **Voice Cloning** — Create custom voices from audio samples (min. 2-3 Sek). Use your own voice for TTS and Sonos announcements.
+- **Sonos-Durchsagen** — TTS-Audio direkt auf Sonos-Speaker abspielen. Auto-Fallback auf Telegram-Attachment wenn Sonos nicht verfügbar.
 
 ### Active Learning
 
@@ -566,6 +570,10 @@ Alfred picks up on things you mention in conversation and stores them as memorie
 - Detects patterns like names, dates, goals, opinions
 - Consolidates related memories over time
 - Runs asynchronously, rate-limited per user
+- **Cross-Context Connection-Memories** — Erkennt Verbindungen zwischen neuen Aussagen und bestehenden Memories (z.B. "User fährt morgen nach Wien" + "RTX 5090 Watch aktiv" = "Abholung bei Cyberport Wien möglich")
+- **Regel-Lernsystem (MetaClaw-inspiriert)** — Lernt aus Fehlern und User-Korrekturen. Korrekturen werden zu generalisierbaren Verhaltensregeln destilliert. Skill-Fehler werden zu Vermeidungsregeln. Confidence-basiertes Lifecycle-Management (0.7 Start, auto-boost/decay, Cleanup < 0.3). Pro Prompt die 10 relevantesten Regeln via Hybrid-Retrieval.
+- **Memory-Schutz** — Entity/Fact-Memories (Personen, Adressen, Arbeitgeber) sind vor automatischem Merge, Überschreiben und Löschen geschützt. 4-Ebenen-Schutz: UPSERT-Guard, Consolidator-Guard, Delete-Confirm, Type-Klassifikation.
+- **Insight-Preference Learning** — Trackt User-Reaktionen auf proaktive Hinweise (positiv/negativ/ignoriert). Erlernte Präferenzen steuern zukünftige Insight-Priorisierung.
 
 ### Document Intelligence (RAG)
 
@@ -577,7 +585,7 @@ You: "What's the termination clause?"
 Alfred: "According to section 8.2..."
 ```
 
-Supported formats: PDF, DOCX, TXT, CSV, Markdown. Additional formats (XLSX, HTML, JSON) can be processed via the code sandbox.
+Supported formats: PDF, DOCX, TXT, CSV, Markdown. Additional formats (XLSX, HTML, JSON) can be processed via the code sandbox. **OCR** via Mistral erkennt Handschrift, Tabellen und Rechnungen in PDFs und Bildern — automatisch aktiv wenn Mistral-Key vorhanden, Fallback auf bisheriges pdf-parse.
 
 ### MCP (Model Context Protocol)
 
@@ -891,6 +899,15 @@ ALFRED_GOOGLE_API_KEY=
 ALFRED_MISTRAL_API_KEY=              # also enables OCR, moderation, STT, TTS independently
 ALFRED_OPENROUTER_API_KEY=
 
+# Mistral AI Dienste (optional, unabhängig vom Haupt-LLM-Provider)
+ALFRED_MODERATION_ENABLED=false      # Content-Safety für Input + Output
+ALFRED_MODERATION_PROVIDER=mistral   # mistral oder openai
+ALFRED_MODERATION_MODEL=             # Default: mistral-moderation-latest
+ALFRED_STT_PROVIDER=openai           # openai oder mistral (voxtral-mini-2602)
+ALFRED_TTS_PROVIDER=openai           # openai oder mistral (voxtral-mini-tts-2603)
+ALFRED_VOICE_MANAGEMENT=true         # Voice Cloning + Sonos-Durchsagen (auto wenn Mistral TTS)
+ALFRED_TTS_VOICE_ID=                 # Default-Stimme für TTS (Voice-ID aus create_voice)
+
 # Forge (GitHub / GitLab)
 ALFRED_GITHUB_TOKEN=
 ALFRED_GITLAB_TOKEN=
@@ -1173,7 +1190,7 @@ alfred start > /tmp/alfred.log 2>&1 &
 - [ ] Google Cloud TTS & ElevenLabs voice providers
 - [ ] Plugin marketplace
 - [ ] End-to-end encrypted Matrix rooms
-- [ ] Multi-user household support
+- [x] Multi-user household support
 - [ ] Mobile companion app
 
 ---
