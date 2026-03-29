@@ -90,7 +90,7 @@ Regeln:
 - Max 5 Muster, priorisiert nach Aussagekraft
 - Wenn keine klaren Muster erkennbar: return []
 
-Antworte auf Deutsch.
+Antworte in der Sprache des Users. Hinweis: Bisherige Memories und Patterns sind auf Deutsch.
 Return NUR ein JSON-Array:`;
 
       // 3. LLM call (fast tier, cheap)
@@ -186,7 +186,7 @@ Return NUR ein JSON-Array:`;
       if (existing) continue; // Already have a rule for this
 
       try {
-        const prompt = `Skill '${group.skillName}' ist ${group.count}x mit folgendem Fehler fehlgeschlagen: '${group.errorMessage}'. Leite eine kurze Verhaltensregel ab (max 1 Satz) die Alfred helfen würde, diesen Fehler in Zukunft zu vermeiden oder zu umgehen. Antworte auf Deutsch.
+        const prompt = `Skill '${group.skillName}' ist ${group.count}x mit folgendem Fehler fehlgeschlagen: '${group.errorMessage}'. Leite eine kurze Verhaltensregel ab (max 1 Satz) die Alfred helfen würde, diesen Fehler in Zukunft zu vermeiden oder zu umgehen. Antworte in der Sprache des Users (bisherige Daten sind auf Deutsch).
 Regel:`;
 
         const response = await this.llm.complete({

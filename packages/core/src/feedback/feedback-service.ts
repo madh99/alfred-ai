@@ -195,7 +195,7 @@ export class FeedbackService {
     const prompt = `Extrahiere eine generalisierbare, kurze Verhaltensregel (max 1 Satz, Imperativ) aus dieser User-Korrektur.
 Kontext der Korrektur: ${opts.userMessage.slice(0, 500)}
 Letzte Antwort: ${opts.assistantResponse.slice(0, 500)}
-Antworte auf Deutsch.
+Antworte in derselben Sprache wie die User-Korrektur.
 Regel:`;
 
     const response = await this.llm.complete({
@@ -227,7 +227,7 @@ Regel:`;
         const refinePrompt = `Die folgende Verhaltensregel hat einen Fehler nicht verhindert.
 Alte Regel: ${matchingRule.value}
 Neue Korrektur: ${opts.userMessage.slice(0, 300)}
-Formuliere die Regel präziser (max 1 Satz, Imperativ), damit sie künftig besser greift. Antworte auf Deutsch.
+Formuliere die Regel präziser (max 1 Satz, Imperativ), damit sie künftig besser greift. Antworte in derselben Sprache wie die Korrektur.
 Regel:`;
 
         const refineResponse = await this.llm.complete({

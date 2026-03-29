@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.196] - 2026-03-29
+
+### Improved
+- **Sprachbindung dynamisch** — Regel-LLM-Prompts verwenden jetzt "Antworte in derselben Sprache wie die User-Nachricht/Korrektur" statt hardcodiertem "Antworte auf Deutsch". PatternAnalyzer (nachts) leitet Sprache aus bestehenden Memories ab. Funktioniert für alle Sprachen ohne Konfiguration.
+
 ## [0.19.0-multi-ha.195] - 2026-03-29
 
 ### Fixed
