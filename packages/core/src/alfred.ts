@@ -790,25 +790,26 @@ export class Alfred {
       const voiceApiKey = speechCfg?.ttsApiKey ?? mistralApiKey;
       if (voiceMgmtEnabled && voiceApiKey && memoryRepo) {
         // Determine announce base URL for Sonos TTS integration
-        let announceBaseUrl = this.config.api?.publicUrl;
-        if (!announceBaseUrl) {
-          // Find first non-loopback IPv4 address for LAN accessibility
-          let lanIp = 'localhost';
-          const interfaces = os.networkInterfaces();
-          for (const nets of Object.values(interfaces)) {
-            if (!nets) continue;
-            for (const net of nets) {
-              if (net.family === 'IPv4' && !net.internal) {
-                lanIp = net.address;
-                break;
-              }
+        // IMPORTANT: Sonos speakers cannot access HTTPS with self-signed certs.
+        // Always use HTTP for announce URLs. Sonos and Alfred are on the same LAN.
+        let announceBaseUrl: string;
+        // Find first non-loopback IPv4 address for LAN accessibility
+        let lanIp = 'localhost';
+        const interfaces = os.networkInterfaces();
+        for (const nets of Object.values(interfaces)) {
+          if (!nets) continue;
+          for (const net of nets) {
+            if (net.family === 'IPv4' && !net.internal) {
+              lanIp = net.address;
+              break;
             }
-            if (lanIp !== 'localhost') break;
           }
-          const port = this.config.api?.port ?? 3420;
-          const proto = this.config.api?.tls?.enabled ? 'https' : 'http';
-          announceBaseUrl = `${proto}://${lanIp}:${port}`;
+          if (lanIp !== 'localhost') break;
         }
+        const port = this.config.api?.port ?? 3420;
+        // When TLS is enabled, the HTTP fallback for Sonos runs on port+1 (e.g., 3421)
+        const announcePort = this.config.api?.tls?.enabled ? port + 1 : port;
+        announceBaseUrl = `http://${lanIp}:${announcePort}`;
         skillRegistry.register(new VoiceSkill(
           voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603',
           memoryRepo, skillRegistry, announceBaseUrl,

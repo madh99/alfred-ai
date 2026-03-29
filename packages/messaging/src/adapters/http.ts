@@ -61,6 +61,7 @@ const MAX_BODY_SIZE = 1_048_576; // 1 MB
 export class HttpAdapter extends MessagingAdapter {
   readonly platform: Platform = 'api';
   private server: http.Server | https.Server | null = null;
+  private httpFallbackServer: http.Server | null = null;
   private readonly streams = new Map<string, http.ServerResponse>();
   private messageCounter = 0;
   private readonly port: number;
@@ -120,6 +121,22 @@ export class HttpAdapter extends MessagingAdapter {
     const tlsOpts = await this.resolveTls();
     if (tlsOpts) {
       this.server = https.createServer(tlsOpts, handler);
+      // Also start a plain HTTP server for Sonos TTS file serving
+      // Sonos speakers cannot access HTTPS with self-signed certs
+      const httpPort = this.port + 1; // e.g., 3421 if main port is 3420
+      const httpHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
+        // Only serve /files/tts/ on the plain HTTP port — reject everything else
+        if (req.url?.startsWith('/files/tts/')) {
+          this.handleRequest(req, res);
+        } else {
+          res.writeHead(403, { 'Content-Type': 'text/plain' });
+          res.end('Use HTTPS for API access');
+        }
+      };
+      this.httpFallbackServer = http.createServer(httpHandler);
+      this.httpFallbackServer.listen(httpPort, this.host, () => {
+        console.log(`[HttpAdapter] HTTP fallback for Sonos TTS file serving on port ${httpPort}`);
+      });
     } else {
       this.server = http.createServer(handler);
     }
@@ -143,7 +160,11 @@ export class HttpAdapter extends MessagingAdapter {
       this.streams.delete(chatId);
     }
 
-    // Close the server
+    // Close the servers
+    if (this.httpFallbackServer) {
+      this.httpFallbackServer.close();
+      this.httpFallbackServer = null;
+    }
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => resolve());
