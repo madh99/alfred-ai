@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.199] - 2026-03-29
+
+### Added
+- **VoiceSkill** — Voice-Management über Mistral Voxtral TTS:
+  - `create_voice`: Stimme aus Audio-Sample erstellen (min. 2-3 Sek, Voice Cloning)
+  - `list_voices`: Alle gespeicherten Stimmen anzeigen
+  - `delete_voice`: Stimme löschen
+  - `speak`: Text zu Audio mit eigener Stimme, Rückgabe als Audio-Attachment
+  - `announce`: Text zu Audio für Sonos-Durchsagen
+  - `set_default`: Stimme als Alfreds Standard-TTS setzen
+- **Default Voice-ID in TTS-Pipeline** — Wenn eine Voice per `set_default` oder `ALFRED_TTS_VOICE_ID` gesetzt ist, verwendet Alfreds TTS automatisch diese Stimme.
+- **Config:** `ALFRED_VOICE_MANAGEMENT`, `ALFRED_TTS_VOICE_ID` ENV-Variablen
+- **Skill-Filter:** Voice-Keywords (stimme, durchsage, ansage, vorlesen, klonen) im media-Regex
+- Automatisch aktiv wenn Mistral TTS Provider + API-Key konfiguriert. Explizit deaktivierbar mit `ALFRED_VOICE_MANAGEMENT=false`.
+
 ## [0.19.0-multi-ha.198] - 2026-03-29
 
 ### Improved

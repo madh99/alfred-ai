@@ -9,6 +9,7 @@ export class SpeechSynthesizer {
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly voice: string;
+  private readonly defaultVoiceId?: string;
   private readonly ttsProvider: TtsProvider;
 
   constructor(config: SpeechConfig, private readonly logger: Logger) {
@@ -16,6 +17,7 @@ export class SpeechSynthesizer {
 
     // Use dedicated TTS API key if provided, otherwise fall back to main speech key
     this.apiKey = config.ttsApiKey ?? config.apiKey;
+    this.defaultVoiceId = config.defaultVoiceId;
 
     if (this.ttsProvider === 'mistral') {
       this.baseUrl = 'https://api.mistral.ai/v1';
@@ -29,11 +31,13 @@ export class SpeechSynthesizer {
   }
 
   async synthesize(text: string): Promise<Buffer> {
-    this.logger.info({ textLength: text.length, model: this.model, voice: this.voice, provider: this.ttsProvider }, 'Synthesizing speech');
+    // For Mistral: prefer defaultVoiceId (custom voice) over generic ttsVoice
+    const effectiveVoice = (this.ttsProvider === 'mistral' && this.defaultVoiceId) ? this.defaultVoiceId : this.voice;
+    this.logger.info({ textLength: text.length, model: this.model, voice: effectiveVoice, provider: this.ttsProvider }, 'Synthesizing speech');
 
     const body: Record<string, unknown> = this.ttsProvider === 'mistral'
-      ? { model: this.model, input: text, voice_id: this.voice, response_format: 'opus' }
-      : { model: this.model, input: text, voice: this.voice, response_format: 'opus' };
+      ? { model: this.model, input: text, voice_id: effectiveVoice, response_format: 'opus' }
+      : { model: this.model, input: text, voice: effectiveVoice, response_format: 'opus' };
 
     const response = await fetch(`${this.baseUrl}/audio/speech`, {
       method: 'POST',

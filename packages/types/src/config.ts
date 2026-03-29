@@ -109,6 +109,10 @@ export interface SpeechConfig {
   sttApiKey?: string;
   /** API key for the TTS provider (if different from main speech apiKey). */
   ttsApiKey?: string;
+  /** Enable voice management skill (create/manage custom Mistral voices). Default: true when ttsProvider is mistral. */
+  voiceManagement?: boolean;
+  /** Default Mistral voice ID for TTS (overrides default voice). */
+  defaultVoiceId?: string;
 }
 
 export interface CalDAVConfig {

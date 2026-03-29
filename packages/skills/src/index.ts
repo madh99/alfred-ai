@@ -77,5 +77,6 @@ export { UserManagementSkill, ROLE_SKILL_ACCESS } from './built-in/user-manageme
 export { SharingSkill } from './built-in/sharing.js';
 export { OneDriveSkill } from './built-in/onedrive.js';
 export { ShoppingSkill } from './built-in/shopping.js';
+export { VoiceSkill } from './built-in/voice.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl, ProjectAgentSkill, validateBuild, createProjectPlan, executeAgent, drainInterjections, pushInterjection, setInterjectionRepo, registerAbortController, removeAbortController } from './built-in/code-agent/index.js';
 export type { CodeAgentSkillConfig, AgentExecutionResult, OrchestrationPlan, SubTask, SubTaskResult, OrchestrationResult, GitOrchestrationResult, GitOrchestrationOptions, GitInfo, RepoIdentifier, PullRequestInput, PullRequestResult, PipelineStatus, CreateProjectInput, CreateProjectResult, RemoteInfo, BuildValidationResult, ProjectPlan } from './built-in/code-agent/index.js';

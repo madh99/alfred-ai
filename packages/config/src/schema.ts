@@ -119,6 +119,8 @@ export const SpeechConfigSchema = z.object({
   ttsProvider: z.enum(['openai', 'mistral']).optional(),
   sttApiKey: z.string().optional(),
   ttsApiKey: z.string().optional(),
+  voiceManagement: z.boolean().optional(),
+  defaultVoiceId: z.string().optional(),
 });
 
 export const CalDAVConfigSchema = z.object({

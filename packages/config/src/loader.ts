@@ -105,6 +105,8 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_TTS_PROVIDER: ['speech', 'ttsProvider'],
   ALFRED_STT_API_KEY: ['speech', 'sttApiKey'],
   ALFRED_TTS_API_KEY: ['speech', 'ttsApiKey'],
+  ALFRED_VOICE_MANAGEMENT: ['speech', 'voiceManagement'],
+  ALFRED_TTS_VOICE_ID: ['speech', 'defaultVoiceId'],
   ALFRED_CALENDAR_PROVIDER: ['calendar', 'provider'],
   ALFRED_CALDAV_SERVER_URL: ['calendar', 'caldav', 'serverUrl'],
   ALFRED_CALDAV_USERNAME: ['calendar', 'caldav', 'username'],

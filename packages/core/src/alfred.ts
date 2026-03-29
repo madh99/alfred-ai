@@ -38,6 +38,7 @@ import {
   WorkflowSkill,
   DocumentSkill,
   TTSSkill,
+  VoiceSkill,
   ImageGenerateSkill,
   TransitSkill,
   ConfigureSkill,
@@ -777,6 +778,18 @@ export class Alfred {
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
+    }
+
+    // 5b2. Initialize voice management skill (optional — requires Mistral TTS + API key)
+    {
+      const speechCfg = this.config.speech;
+      const voiceMgmtEnabled = speechCfg?.ttsProvider === 'mistral'
+        && speechCfg.voiceManagement !== false;
+      const voiceApiKey = speechCfg?.ttsApiKey ?? mistralApiKey;
+      if (voiceMgmtEnabled && voiceApiKey && memoryRepo) {
+        skillRegistry.register(new VoiceSkill(voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603', memoryRepo));
+        this.logger.info('Voice management skill registered');
+      }
     }
 
     // 5c. Initialize image generation (auto-detect from LLM config)
