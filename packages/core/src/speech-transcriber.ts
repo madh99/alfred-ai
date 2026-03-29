@@ -24,7 +24,7 @@ export class SpeechTranscriber {
     switch (this.sttProvider) {
       case 'mistral':
         this.baseUrl = 'https://api.mistral.ai/v1';
-        this.model = 'voxtral-mini-transcribe-2602';
+        this.model = 'voxtral-mini-2602';
         break;
       case 'groq':
         this.baseUrl = config.baseUrl ?? 'https://api.groq.com/openai/v1';
