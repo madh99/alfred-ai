@@ -105,8 +105,10 @@ export class VoiceSkill extends Skill {
 
     if (!name) return { success: false, error: 'Missing required parameter: name' };
 
-    // Try to get audio from: 1) explicit parameter, 2) message attachments (voice message)
-    let audioBase64 = sampleAudio;
+    // Try to get audio from: 1) message attachments (voice message), 2) explicit base64 parameter
+    // LLMs often send placeholder strings like "from_attachment" — ignore those
+    const isRealBase64 = sampleAudio && sampleAudio.length > 100 && !/^[a-zA-Z_]/.test(sampleAudio);
+    let audioBase64 = isRealBase64 ? sampleAudio : undefined;
     if (!audioBase64 && context.messageAttachments) {
       const audioAttachment = context.messageAttachments.find(a => a.type === 'audio' || a.mimeType.startsWith('audio/'));
       if (audioAttachment) {
