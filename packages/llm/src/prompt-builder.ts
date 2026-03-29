@@ -37,6 +37,7 @@ export interface SystemPromptContext {
   userProfile?: UserProfile;
   todayEvents?: CalendarEvent[];
   conversationSummary?: string;
+  rules?: string[];
 }
 
 /**
@@ -369,6 +370,15 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
       }
     }
 
+    // Learned behavior rules (before memories, so they take precedence)
+    if (context.rules && context.rules.length > 0) {
+      prompt += '\n\n## Verhaltensregeln (aus Erfahrung gelernt)';
+      for (const rule of context.rules) {
+        prompt += `\n- ${rule}`;
+      }
+      prompt += '\nDiese Regeln wurden aus deinen Fehlern und User-Feedback abgeleitet. Befolge sie strikt.';
+    }
+
     if (conversationSummary) {
       prompt += '\n\n## Conversation context\n';
       prompt += conversationSummary;
@@ -404,6 +414,7 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           moment: 'Moments',
           skill: 'Skills',
           feedback: 'Behavior Feedback',
+          rule: 'Learned Rules',
           pattern: 'Behavioral Patterns',
           connection: 'Cross-Context Connections',
           general: 'General',

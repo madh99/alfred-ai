@@ -460,6 +460,54 @@ export class MessagePipeline {
         } catch { /* non-critical */ }
       }
 
+      // 5a3. Load rule memories for prompt injection (learned behavior rules).
+      // Select the most relevant rules based on user message (via retriever) or by confidence.
+      let rules: string[] | undefined;
+      if (this.memoryRepo && !skipMemories) {
+        try {
+          const userIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
+          const allRules: { key: string; value: string; confidence: number; score?: number }[] = [];
+          const seenRuleKeys = new Set<string>();
+          for (const uid of userIds) {
+            const typed = await this.memoryRepo.getByType(uid, 'rule', 50);
+            for (const m of typed) {
+              if (!seenRuleKeys.has(m.key)) {
+                seenRuleKeys.add(m.key);
+                allRules.push({ key: m.key, value: m.value, confidence: m.confidence });
+              }
+            }
+          }
+
+          if (allRules.length > 0) {
+            // Try to use MemoryRetriever for relevance-based selection
+            if (this.memoryRetriever && message.text) {
+              try {
+                const retrieved = await this.memoryRetriever.retrieve(masterUserId, message.text, 50, linkedPlatformUserIds);
+                const retrievedRuleKeys = new Set(
+                  retrieved.filter(m => m.type === 'rule').map(m => m.key),
+                );
+                // Score rules: retrieved ones get a boost
+                for (const r of allRules) {
+                  if (retrievedRuleKeys.has(r.key)) {
+                    r.score = r.confidence + 0.5;
+                  } else {
+                    r.score = r.confidence;
+                  }
+                }
+                allRules.sort((a, b) => (b.score ?? b.confidence) - (a.score ?? a.confidence));
+              } catch {
+                // Fallback: sort by confidence
+                allRules.sort((a, b) => b.confidence - a.confidence);
+              }
+            } else {
+              allRules.sort((a, b) => b.confidence - a.confidence);
+            }
+
+            rules = allRules.slice(0, 10).map(r => r.value);
+          }
+        } catch { /* non-critical */ }
+      }
+
       // 5b. Load user profile for prompt injection
       let userProfile: import('@alfred/llm').UserProfile | undefined;
       try {
@@ -582,6 +630,7 @@ export class MessagePipeline {
         userProfile,
         todayEvents: upcomingEvents,
         conversationSummary: summary?.summary,
+        rules,
       });
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"

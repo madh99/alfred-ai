@@ -41,6 +41,25 @@ export class MemoryConsolidator {
       this.logger.error({ err }, 'Failed to delete stale memories');
     }
 
+    // 1b. Delete low-confidence rule memories older than 30 days
+    try {
+      const ruleCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const rules = await this.memoryRepo.getByType(userId, 'rule', 100);
+      const expiredRules = rules.filter(
+        r => r.confidence < 0.3 && r.updatedAt < ruleCutoff,
+      );
+      if (expiredRules.length > 0) {
+        const ruleDeleted = await this.memoryRepo.deleteByIds(expiredRules.map(r => r.id));
+        deleted += ruleDeleted;
+        this.logger.info(
+          { userId, ruleDeleted, keys: expiredRules.map(r => r.key) },
+          'Deleted expired low-confidence rules',
+        );
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to delete expired rules');
+    }
+
     // 2. Find and merge similar memories
     try {
       const allMemories = await this.memoryRepo.listAll(userId);

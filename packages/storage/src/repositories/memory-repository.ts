@@ -15,6 +15,7 @@ export type MemoryType =
   | 'pattern'
   | 'connection'
   | 'feedback'
+  | 'rule'
   | 'general';
 
 export type MemorySource = 'manual' | 'auto';
@@ -230,6 +231,16 @@ export class MemoryRepository {
       [userId, type, limit],
     ) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
+  }
+
+  /**
+   * Adjust the confidence of a memory by a delta (clamped to [0, 1]).
+   */
+  async updateConfidence(id: string, delta: number): Promise<void> {
+    await this.adapter.execute(
+      `UPDATE memories SET confidence = MIN(1.0, MAX(0.0, confidence + ?)), updated_at = ? WHERE id = ?`,
+      [delta, new Date().toISOString(), id],
+    );
   }
 
   async getRecentForPrompt(userId: string, limit = 20): Promise<MemoryEntry[]> {

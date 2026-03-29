@@ -929,6 +929,7 @@ export class Alfred {
       memoryRepo,
       this.logger.child({ component: 'feedback' }),
     );
+    feedbackService.setLLM(llmProvider);
     this.confirmationQueue.setFeedbackService(feedbackService);
     if (activeLearning) {
       activeLearning.setFeedbackService(feedbackService);

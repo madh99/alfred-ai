@@ -1,4 +1,5 @@
 import type { Logger } from 'pino';
+import type { LLMProvider } from '@alfred/llm';
 import type { FeedbackRepository } from '@alfred/storage';
 import type { MemoryRepository } from '@alfred/storage';
 
@@ -10,6 +11,7 @@ export interface FeedbackServiceOptions {
 export class FeedbackService {
   private readonly threshold: number;
   private readonly staleDays: number;
+  private llm?: LLMProvider;
 
   constructor(
     private readonly feedbackRepo: FeedbackRepository,
@@ -19,6 +21,13 @@ export class FeedbackService {
   ) {
     this.threshold = options?.rejectionThreshold ?? 3;
     this.staleDays = options?.staleDays ?? 90;
+  }
+
+  /**
+   * Inject LLM provider for rule extraction from corrections.
+   */
+  setLLM(llm: LLMProvider): void {
+    this.llm = llm;
   }
 
   /**
@@ -115,16 +124,16 @@ export class FeedbackService {
     const dateKey = new Date().toISOString().slice(0, 10);
     const contextKey = `correction:${opts.userId}:${dateKey}`;
 
-    // Extract a concise rule from the correction
-    const rule = this.extractCorrectionRule(opts.userMessage);
-    if (!rule) return;
+    // Extract a concise rule from the correction (pattern-based, fast)
+    const rawRule = this.extractCorrectionRule(opts.userMessage);
+    if (!rawRule) return;
 
     await this.feedbackRepo.recordEvent(
       opts.userId,
       'conversation_correction',
       undefined,
       contextKey,
-      rule,
+      rawRule,
       { userMessage: opts.userMessage.slice(0, 500) },
     );
 
@@ -133,14 +142,122 @@ export class FeedbackService {
     await this.memoryRepo.saveWithMetadata(
       opts.userId,
       memoryKey,
-      rule,
+      rawRule,
       'general',
       'feedback',
       0.8,
       'auto',
     );
 
-    this.logger.info({ rule }, 'Feedback: conversation correction saved as feedback memory');
+    this.logger.info({ rawRule }, 'Feedback: conversation correction saved as feedback memory');
+
+    // Try to extract a generalized rule via LLM and handle existing rules
+    if (this.llm) {
+      try {
+        await this.extractAndSaveRule(opts);
+      } catch (err) {
+        this.logger.debug({ err }, 'Feedback: LLM rule extraction failed, raw feedback already saved');
+      }
+    }
+  }
+
+  /**
+   * Use LLM to extract a generalized rule from a user correction.
+   * Also checks for existing rules that should have prevented the error.
+   */
+  private async extractAndSaveRule(opts: {
+    userId: string;
+    userMessage: string;
+    assistantResponse: string;
+  }): Promise<void> {
+    if (!this.llm) return;
+
+    const prompt = `Extrahiere eine generalisierbare, kurze Verhaltensregel (max 1 Satz, Imperativ) aus dieser User-Korrektur.
+Kontext der Korrektur: ${opts.userMessage.slice(0, 500)}
+Letzte Antwort: ${opts.assistantResponse.slice(0, 500)}
+Regel:`;
+
+    const response = await this.llm.complete({
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      tier: 'fast',
+      maxTokens: 128,
+    });
+
+    const generatedRule = response.content.trim();
+    if (!generatedRule || generatedRule.length < 5 || generatedRule.length > 200) return;
+
+    // Check for existing rule memories that semantically overlap
+    const existingRules = await this.memoryRepo.getByType(opts.userId, 'rule', 50);
+    const matchingRule = existingRules.find(r =>
+      this.isSemanticallySimilar(r.value, generatedRule),
+    );
+
+    if (matchingRule) {
+      // Existing rule should have prevented this error — lower confidence
+      await this.memoryRepo.updateConfidence(matchingRule.id, -0.1);
+      this.logger.info(
+        { ruleKey: matchingRule.key, newConfidence: Math.max(0, matchingRule.confidence - 0.1) },
+        'Feedback: existing rule confidence lowered (failed to prevent correction)',
+      );
+
+      // Refine the rule with the new correction context
+      try {
+        const refinePrompt = `Die folgende Verhaltensregel hat einen Fehler nicht verhindert.
+Alte Regel: ${matchingRule.value}
+Neue Korrektur: ${opts.userMessage.slice(0, 300)}
+Formuliere die Regel präziser (max 1 Satz, Imperativ), damit sie künftig besser greift:`;
+
+        const refineResponse = await this.llm.complete({
+          messages: [{ role: 'user', content: refinePrompt }],
+          temperature: 0.1,
+          tier: 'fast',
+          maxTokens: 128,
+        });
+
+        const refined = refineResponse.content.trim();
+        if (refined && refined.length >= 5 && refined.length <= 200) {
+          await this.memoryRepo.saveWithMetadata(
+            opts.userId,
+            matchingRule.key,
+            refined,
+            matchingRule.category,
+            'rule',
+            Math.max(0.1, matchingRule.confidence - 0.1),
+            'auto',
+          );
+          this.logger.info({ ruleKey: matchingRule.key, refined }, 'Feedback: existing rule refined');
+        }
+      } catch { /* refinement is best-effort */ }
+    } else {
+      // New rule — save with initial confidence
+      const ruleKey = `rule_correction_${Date.now()}`;
+      await this.memoryRepo.saveWithMetadata(
+        opts.userId,
+        ruleKey,
+        generatedRule,
+        'behavior',
+        'rule',
+        0.7,
+        'auto',
+      );
+      this.logger.info({ ruleKey, generatedRule }, 'Feedback: new rule extracted from correction');
+    }
+  }
+
+  /**
+   * Simple semantic similarity check: Jaccard on lowercased word tokens.
+   * Returns true if similarity >= 0.4 (indicating overlapping meaning).
+   */
+  private isSemanticallySimilar(a: string, b: string): boolean {
+    const tokenize = (s: string) => new Set(s.toLowerCase().split(/\s+/).filter(t => t.length >= 3));
+    const tokA = tokenize(a);
+    const tokB = tokenize(b);
+    if (tokA.size === 0 || tokB.size === 0) return false;
+    let intersection = 0;
+    for (const t of tokA) { if (tokB.has(t)) intersection++; }
+    const union = tokA.size + tokB.size - intersection;
+    return union > 0 && (intersection / union) >= 0.4;
   }
 
   /**

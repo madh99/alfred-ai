@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.194] - 2026-03-29
+
+### Added
+- **Regel-Lernsystem (MetaClaw-inspiriert)** — Alfred lernt jetzt aus Fehlern und User-Korrekturen:
+  1. **Korrektur → Regel:** User-Korrekturen werden via LLM zu generalisierbaren Verhaltensregeln destilliert (z.B. "Antworte immer in 2-3 Sätzen"). Bisherige Feedback-Speicherung bleibt als Rohdaten-Archiv erhalten.
+  2. **Skill-Error-Learning:** PatternAnalyzer erkennt nachts wiederkehrende Skill-Fehler (≥3x gleicher Typ) und leitet Vermeidungsregeln ab (z.B. "YouTube immer mit Channel-ID statt Name").
+  3. **Regel-Confidence:** Neue Regeln starten bei 0.7. Regeln die funktionieren steigen nachts (+0.05), Regeln die trotzdem zu Korrekturen führen werden verfeinert oder sinken. Regeln mit confidence < 0.3 nach 30 Tagen werden automatisch entfernt.
+  4. **Dynamische Auswahl:** Unbegrenzte Regel-Bibliothek in der DB. Pro Prompt werden die 10 relevantesten Regeln via Hybrid-Retrieval (Keyword + Confidence) ausgewählt.
+  5. **Prompt-Sektion:** Eigene "Verhaltensregeln"-Sektion VOR den Memories im System-Prompt.
+- **Memory-Type `rule`** — Neuer persistenter Type für gelernte Verhaltensregeln mit Confidence-Scoring und automatischem Lifecycle.
+
 ## [0.19.0-multi-ha.193] - 2026-03-29
 
 ### Added

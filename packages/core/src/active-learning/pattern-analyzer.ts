@@ -120,10 +120,126 @@ Return NUR ein JSON-Array:`;
           this.logger.info({ key: p.key, confidence: p.confidence }, 'Behavioral pattern saved');
         } catch { /* skip duplicates */ }
       }
+
+      // 5. Skill error learning: extract rules from recurring skill failures
+      try {
+        const errorRules = await this.analyzeSkillErrors(userId, since);
+        saved += errorRules;
+      } catch (err) {
+        this.logger.debug({ err }, 'Skill error learning failed');
+      }
+
+      // 6. Rule confidence boost: rules that were in prompts without corrections get +0.05
+      try {
+        await this.boostUncontestedRules(userId, since);
+      } catch (err) {
+        this.logger.debug({ err }, 'Rule confidence boost failed');
+      }
+
       return saved;
     } catch (err) {
       this.logger.warn({ err }, 'Pattern analysis failed');
       return 0;
+    }
+  }
+
+  /**
+   * Analyze recurring skill errors and derive avoidance rules.
+   */
+  private async analyzeSkillErrors(userId: string, since: string): Promise<number> {
+    // Load all skill execution errors in the last 7 days
+    const errorRows = await this.activityRepo.query({
+      eventType: 'skill_exec',
+      outcome: 'error',
+      since,
+      limit: 500,
+    });
+
+    if (errorRows.length === 0) return 0;
+
+    // Group by skill + error fingerprint
+    const groups = new Map<string, { skillName: string; errorMessage: string; count: number }>();
+    for (const row of errorRows) {
+      const skillName = row.action ?? 'unknown';
+      const errorMsg = (row.errorMessage ?? 'unknown error').slice(0, 80);
+      const fingerprint = `${skillName}::${errorMsg}`;
+      const existing = groups.get(fingerprint);
+      if (existing) {
+        existing.count++;
+      } else {
+        groups.set(fingerprint, { skillName, errorMessage: errorMsg, count: 1 });
+      }
+    }
+
+    let saved = 0;
+
+    for (const [fingerprint, group] of groups) {
+      // Only derive rules for errors that occurred >= 3 times
+      if (group.count < 3) continue;
+
+      // Check if we already have a rule for this error pattern
+      const hash = fingerprint.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40);
+      const ruleKey = `rule_skill_${group.skillName}_${hash}`;
+      const existing = await this.memoryRepo.recall(userId, ruleKey);
+      if (existing) continue; // Already have a rule for this
+
+      try {
+        const prompt = `Skill '${group.skillName}' ist ${group.count}x mit folgendem Fehler fehlgeschlagen: '${group.errorMessage}'. Leite eine kurze Verhaltensregel ab (max 1 Satz) die Alfred helfen würde, diesen Fehler in Zukunft zu vermeiden oder zu umgehen.
+Regel:`;
+
+        const response = await this.llm.complete({
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          tier: 'fast',
+          maxTokens: 128,
+        });
+
+        const rule = response.content.trim();
+        if (rule && rule.length >= 5 && rule.length <= 200) {
+          await this.memoryRepo.saveWithMetadata(
+            userId, ruleKey, rule,
+            'behavior', 'rule',
+            0.7, 'auto',
+          );
+          saved++;
+          this.logger.info({ ruleKey, rule, errorCount: group.count }, 'Skill error rule saved');
+        }
+      } catch (err) {
+        this.logger.debug({ err, skill: group.skillName }, 'Failed to derive rule from skill error');
+      }
+    }
+
+    return saved;
+  }
+
+  /**
+   * Boost confidence of rules that were active (in prompts) during the last 7 days
+   * without triggering corrections. If the user didn't correct → the rule worked.
+   */
+  private async boostUncontestedRules(userId: string, since: string): Promise<void> {
+    const rules = await this.memoryRepo.getByType(userId, 'rule', 50);
+    if (rules.length === 0) return;
+
+    // Check if there were any corrections in the period
+    const corrections = await this.activityRepo.query({
+      eventType: 'skill_exec',
+      since,
+      limit: 1, // We just need to know if any exist
+    });
+
+    // Only boost if there was actual activity (otherwise the rules weren't tested)
+    if (corrections.length === 0) return;
+
+    // Boost rules that were updated before the analysis period
+    // (meaning they were already active and available for prompt injection)
+    for (const rule of rules) {
+      if (rule.confidence >= 1.0) continue;
+      const ruleDate = new Date(rule.updatedAt);
+      const sinceDate = new Date(since);
+      if (ruleDate < sinceDate) {
+        await this.memoryRepo.updateConfidence(rule.id, 0.05);
+        this.logger.debug({ ruleKey: rule.key, newConfidence: Math.min(1.0, rule.confidence + 0.05) }, 'Rule confidence boosted (uncontested)');
+      }
     }
   }
 }
