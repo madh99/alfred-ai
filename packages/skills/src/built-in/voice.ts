@@ -104,11 +104,20 @@ export class VoiceSkill extends Skill {
     const gender = input.gender as string | undefined;
 
     if (!name) return { success: false, error: 'Missing required parameter: name' };
-    if (!sampleAudio) return { success: false, error: 'Missing required parameter: sample_audio (base64-encoded audio)' };
+
+    // Try to get audio from: 1) explicit parameter, 2) message attachments (voice message)
+    let audioBase64 = sampleAudio;
+    if (!audioBase64 && context.messageAttachments) {
+      const audioAttachment = context.messageAttachments.find(a => a.type === 'audio' || a.mimeType.startsWith('audio/'));
+      if (audioAttachment) {
+        audioBase64 = audioAttachment.data.toString('base64');
+      }
+    }
+    if (!audioBase64) return { success: false, error: 'Bitte sende eine Sprachnachricht oder Audio-Datei zusammen mit dem Befehl, um eine Stimme zu erstellen.' };
 
     const body: Record<string, unknown> = {
       name,
-      sample_audio: sampleAudio,
+      sample_audio: audioBase64,
       sample_filename: 'sample.wav',
       languages,
     };

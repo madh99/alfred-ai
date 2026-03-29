@@ -371,6 +371,13 @@ export class MessagePipeline {
         baseContext.fileStore = this.fileStore as SkillContext['fileStore'];
       }
 
+      // Pass message attachments to skill context (e.g. voice audio for VoiceSkill)
+      if (message.attachments && message.attachments.length > 0) {
+        baseContext.messageAttachments = message.attachments
+          .filter(a => a.data)
+          .map(a => ({ type: a.type, mimeType: a.mimeType ?? 'application/octet-stream', data: a.data! }));
+      }
+
       // 1c. Group conversation isolation: use chatId:userId as conversation key in groups
       const conversationChatId = message.chatType === 'group'
         ? `${message.chatId}:${message.userId}`

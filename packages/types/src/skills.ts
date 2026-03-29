@@ -53,6 +53,8 @@ export interface SkillContext {
   nodeId?: string;
   /** Whether HA cluster mode is active. */
   clusterEnabled?: boolean;
+  /** Audio/image attachments from the current message (e.g. voice messages, photos). */
+  messageAttachments?: Array<{ type: string; mimeType: string; data: Buffer }>;
   /** ActivityTracker instance (avoid circular dep with skills package). */
   tracker?: unknown;
   /** Progress callback for reporting status updates. */

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.202] - 2026-03-29
+
+### Fixed
+- **VoiceSkill: Audio aus Sprachnachrichten** — Voice-Messages wurden transkribiert und das Audio verworfen. VoiceSkill konnte kein Sample für Voice Cloning bekommen. Fix: `messageAttachments` Feld im SkillContext — Pipeline behält Audio-Daten für Skills. VoiceSkill liest Audio automatisch aus der Sprachnachricht wenn kein expliziter `sample_audio` Parameter gegeben ist.
+
 ## [0.19.0-multi-ha.201] - 2026-03-29
 
 ### Fixed
