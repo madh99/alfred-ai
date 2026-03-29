@@ -40,10 +40,17 @@ export const LoggerConfigSchema = z.object({
   auditLogPath: z.string().optional(),
 });
 
+export const ModerationConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.enum(['mistral', 'openai']).optional(),
+  model: z.string().optional(),
+});
+
 export const SecurityConfigSchema = z.object({
   rulesPath: z.string(),
   defaultEffect: z.enum(['allow', 'deny']),
   ownerUserId: z.string().optional(),
+  moderation: ModerationConfigSchema.optional(),
 });
 
 export const LLMProviderConfigSchema = z.object({
@@ -108,6 +115,10 @@ export const SpeechConfigSchema = z.object({
   ttsEnabled: z.boolean().optional(),
   ttsModel: z.string().optional(),
   ttsVoice: z.string().optional(),
+  sttProvider: z.enum(['openai', 'groq', 'mistral']).optional(),
+  ttsProvider: z.enum(['openai', 'mistral']).optional(),
+  sttApiKey: z.string().optional(),
+  ttsApiKey: z.string().optional(),
 });
 
 export const CalDAVConfigSchema = z.object({

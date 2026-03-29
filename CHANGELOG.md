@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.197] - 2026-03-29
+
+### Added
+- **Mistral Embeddings aktiviert** — `supportsEmbeddings()` auf `true` gesetzt. Mistral-Embeddings API ist OpenAI-kompatibel, funktioniert sofort für Semantic Memory Search.
+- **Preistabelle erweitert** — 7 neue Mistral-Modelle: mistral-small/medium/large-latest, magistral-medium/small-latest, ministral-8b-latest, mistral-embed.
+- **Optionaler Moderation-Service** — Content-Safety-Check für User-Input UND LLM-Output. Unterstützt Mistral (`/v1/moderations`) und OpenAI. Vollständig optional: `ALFRED_MODERATION_ENABLED=true`. Kein separater API-Key nötig (nutzt den LLM-Provider-Key). Wenn nicht konfiguriert → Alfred funktioniert wie bisher.
+- **OCR im Document-Skill** — Mistral OCR für PDFs und Bilder (Handschrift, Tabellen, Rechnungen → strukturierter Markdown). Automatisch aktiv wenn Mistral als LLM-Provider konfiguriert ist. Fallback auf bisheriges pdf-parse wenn OCR fehlschlägt oder nicht verfügbar.
+- **STT/TTS Provider-Wahl** — Speech-to-Text und Text-to-Speech unterstützen jetzt Mistral als Alternative zu OpenAI. Config: `ALFRED_STT_PROVIDER=mistral`, `ALFRED_TTS_PROVIDER=mistral`. Kein separater Key nötig. Fallback auf OpenAI wenn Mistral nicht konfiguriert.
+
 ## [0.19.0-multi-ha.196] - 2026-03-29
 
 ### Improved

@@ -294,6 +294,15 @@ export class Alfred {
     // 4a. Document intelligence
     const documentRepo = new DocumentRepository(adapter);
     const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: 'documents' }));
+
+    // 4a-ocr. Wire up Mistral OCR if a Mistral LLM provider is configured
+    const mistralApiKey = this.detectMistralApiKey();
+    if (mistralApiKey) {
+      const { OcrService } = await import('@alfred/skills');
+      documentProcessor.setOcrService(new OcrService(mistralApiKey));
+      this.logger.info('Mistral OCR enabled for document processing');
+    }
+
     // SharedResourceRepo for document sharing — created later, set after user management init
     const documentSkill = new DocumentSkill(documentRepo, documentProcessor, embeddingService);
     skillRegistry.register(documentSkill);
@@ -739,13 +748,24 @@ export class Alfred {
     this.logger.info({ skills: skillRegistry.getAll().map(s => s.metadata.name) }, 'Skills registered');
 
     // 5. Initialize speech-to-text (optional)
+    // Auto-populate STT/TTS API keys from Mistral LLM provider when not explicitly set
+    if (this.config.speech) {
+      if (this.config.speech.sttProvider === 'mistral' && !this.config.speech.sttApiKey && mistralApiKey) {
+        this.config.speech.sttApiKey = mistralApiKey;
+      }
+      if (this.config.speech.ttsProvider === 'mistral' && !this.config.speech.ttsApiKey && mistralApiKey) {
+        this.config.speech.ttsApiKey = mistralApiKey;
+      }
+    }
+
     let speechTranscriber: SpeechTranscriber | undefined;
     if (this.config.speech?.apiKey) {
       speechTranscriber = new SpeechTranscriber(
         this.config.speech,
         this.logger.child({ component: 'speech' }),
       );
-      this.logger.info({ provider: this.config.speech.provider }, 'Speech-to-text initialized');
+      const effectiveSttProvider = this.config.speech.sttProvider ?? this.config.speech.provider;
+      this.logger.info({ provider: effectiveSttProvider }, 'Speech-to-text initialized');
     }
 
     // 5b. Initialize text-to-speech (optional)
@@ -755,7 +775,8 @@ export class Alfred {
         this.logger.child({ component: 'tts' }),
       );
       skillRegistry.register(new TTSSkill(synthesizer));
-      this.logger.info('Text-to-speech skill registered');
+      const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
+      this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
     }
 
     // 5c. Initialize image generation (auto-detect from LLM config)
@@ -1015,6 +1036,46 @@ export class Alfred {
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
+
+    // 7a2. Wire optional moderation service into pipeline
+    if (this.config.security?.moderation?.enabled) {
+      const modConfig = this.config.security.moderation;
+      const provider = modConfig.provider ?? 'mistral';
+      const baseUrl = provider === 'mistral'
+        ? 'https://api.mistral.ai/v1'
+        : 'https://api.openai.com/v1';
+      const model = modConfig.model ?? (provider === 'mistral'
+        ? 'mistral-moderation-latest'
+        : 'omni-moderation-latest');
+
+      // Derive API key from the matching LLM provider config
+      let apiKey: string | undefined;
+      for (const tier of ['default', 'strong', 'fast'] as const) {
+        const tierConfig = this.config.llm[tier];
+        if (tierConfig?.provider === provider && tierConfig.apiKey) {
+          apiKey = tierConfig.apiKey;
+          break;
+        }
+      }
+      // Fallback: use default provider's API key
+      if (!apiKey) {
+        apiKey = this.config.llm.default?.apiKey;
+      }
+
+      if (apiKey) {
+        const { ModerationService } = await import('@alfred/security');
+        const moderationService = new ModerationService(
+          apiKey,
+          baseUrl,
+          model,
+          this.logger.child({ component: 'moderation' }),
+        );
+        this.pipeline.setModerationService(moderationService);
+        this.logger.info({ provider, model }, 'Moderation service enabled');
+      } else {
+        this.logger.warn('Moderation enabled but no API key found — skipping');
+      }
+    }
 
     // 7b. Wire multi-user support into pipeline
     {
@@ -1844,6 +1905,18 @@ export class Alfred {
         if (tierConfig?.provider === preferred && tierConfig.apiKey) {
           return { provider: preferred, apiKey: tierConfig.apiKey, baseUrl: tierConfig.baseUrl };
         }
+      }
+    }
+    return undefined;
+  }
+
+  /** Find a Mistral API key from any configured LLM tier. Used for OCR and audio services. */
+  private detectMistralApiKey(): string | undefined {
+    const tiers = ['default', 'strong', 'fast', 'embeddings', 'local'] as const;
+    for (const tier of tiers) {
+      const tierConfig = this.config.llm[tier];
+      if (tierConfig?.provider === 'mistral' && tierConfig.apiKey) {
+        return tierConfig.apiKey;
       }
     }
     return undefined;

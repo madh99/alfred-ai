@@ -17,6 +17,6 @@ export class MistralProvider extends OpenAIProvider {
   }
 
   supportsEmbeddings(): boolean {
-    return false;
+    return true;
   }
 }

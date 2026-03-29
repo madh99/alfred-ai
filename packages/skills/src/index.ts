@@ -33,6 +33,8 @@ export type { MCPTool, MCPToolResult } from './mcp/index.js';
 export { CodeExecutionSkill, CodeExecutor } from './built-in/code-sandbox/index.js';
 export type { ExecutionResult } from './built-in/code-sandbox/index.js';
 export { DocumentSkill } from './built-in/document.js';
+export { OcrService } from './built-in/ocr-service.js';
+export type { OcrResult, OcrPage, OcrDocumentInput } from './built-in/ocr-service.js';
 export { TTSSkill } from './built-in/tts.js';
 export { ImageGenerateSkill } from './built-in/image-generate.js';
 export type { ImageGeneratorInterface } from './built-in/image-generate.js';

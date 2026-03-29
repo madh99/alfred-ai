@@ -3,12 +3,24 @@ import type { EmbeddingService } from './embedding-service.js';
 import type { DocumentRepository } from '@alfred/storage';
 import { createHash } from 'node:crypto';
 
+/** Minimal OCR service interface to avoid circular dep on @alfred/skills. */
+export interface OcrServiceInterface {
+  processBuffer(buffer: Buffer, mimeType: string): Promise<string | null>;
+}
+
 export class DocumentProcessor {
+  private ocrService?: OcrServiceInterface;
+
   constructor(
     private readonly docRepo: DocumentRepository,
     private readonly embeddingService: EmbeddingService,
     private readonly logger: Logger,
   ) {}
+
+  /** Set an optional OCR service for enhanced PDF/image text extraction. */
+  setOcrService(service: OcrServiceInterface): void {
+    this.ocrService = service;
+  }
 
   async ingest(
     userId: string,
@@ -66,6 +78,20 @@ export class DocumentProcessor {
   async extractText(filePath: string, mimeType: string, fileBuffer?: Buffer): Promise<string> {
     const fs = await import('node:fs');
     const buf = fileBuffer ?? fs.readFileSync(filePath);
+
+    // Try OCR first for PDFs and images (if OCR service is available)
+    if (this.ocrService && (mimeType === 'application/pdf' || mimeType.startsWith('image/'))) {
+      try {
+        const ocrText = await this.ocrService.processBuffer(buf, mimeType);
+        if (ocrText && ocrText.trim().length > 0) {
+          this.logger.info({ mimeType, textLength: ocrText.length }, 'OCR extraction successful');
+          return ocrText.replace(/\0/g, '');
+        }
+        this.logger.debug({ mimeType }, 'OCR returned empty result, falling back to standard extraction');
+      } catch (err) {
+        this.logger.warn({ err, mimeType }, 'OCR extraction failed, falling back to standard extraction');
+      }
+    }
 
     if (mimeType === 'application/pdf') {
       try {

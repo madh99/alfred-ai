@@ -14,6 +14,7 @@ export { ProactiveScheduler } from './proactive-scheduler.js';
 export { buildSkillContext } from './context-factory.js';
 export type { ContextSource, ContextResult } from './context-factory.js';
 export { DocumentProcessor } from './document-processor.js';
+export type { OcrServiceInterface } from './document-processor.js';
 export { ImageGenerator } from './image-generator.js';
 export { TransitClient } from './transit-client.js';
 export { ActiveLearningService } from './active-learning/active-learning-service.js';

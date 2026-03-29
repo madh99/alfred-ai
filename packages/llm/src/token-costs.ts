@@ -56,10 +56,17 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['text-embedding-3-large', { input: 0.13, output: 0 }],
 
   // ── Mistral ─────────────────────────────────────────────────
-  ['codestral',       { input: 0.30, output: 0.90, cacheRead: 0.03 }],
-  ['mistral-large',   { input: 0.50, output: 1.50, cacheRead: 0.05 }],
-  ['mistral-medium',  { input: 0.40, output: 2.00, cacheRead: 0.04 }],
-  ['mistral-small',   { input: 0.10, output: 0.30, cacheRead: 0.01 }],
+  ['codestral',               { input: 0.30, output: 0.90, cacheRead: 0.03 }],
+  ['magistral-medium-latest', { input: 0.40, output: 2.00, cacheRead: 0.04 }],
+  ['magistral-small-latest',  { input: 0.10, output: 0.30, cacheRead: 0.01 }],
+  ['ministral-8b-latest',     { input: 0.10, output: 0.10, cacheRead: 0.01 }],
+  ['mistral-large-latest',    { input: 0.50, output: 1.50, cacheRead: 0.05 }],
+  ['mistral-medium-latest',   { input: 0.40, output: 2.00, cacheRead: 0.04 }],
+  ['mistral-small-latest',    { input: 0.10, output: 0.30, cacheRead: 0.01 }],
+  ['mistral-embed',           { input: 0.10, output: 0.10, cacheRead: 0.01 }],
+  ['mistral-large',           { input: 0.50, output: 1.50, cacheRead: 0.05 }],
+  ['mistral-medium',          { input: 0.40, output: 2.00, cacheRead: 0.04 }],
+  ['mistral-small',           { input: 0.10, output: 0.30, cacheRead: 0.01 }],
 ];
 
 /**

@@ -44,6 +44,11 @@ export interface SecurityConfig {
   rulesPath: string;
   defaultEffect: 'allow' | 'deny';
   ownerUserId?: string;
+  moderation?: {
+    enabled?: boolean;
+    provider?: 'mistral' | 'openai';
+    model?: string;
+  };
 }
 
 export interface SearchConfig {
@@ -96,6 +101,14 @@ export interface SpeechConfig {
   ttsEnabled?: boolean;
   ttsModel?: string;
   ttsVoice?: string;
+  /** Override STT provider (default: uses main speech provider). */
+  sttProvider?: 'openai' | 'groq' | 'mistral';
+  /** Override TTS provider (default: uses main speech provider). */
+  ttsProvider?: 'openai' | 'mistral';
+  /** API key for the STT provider (if different from main speech apiKey). */
+  sttApiKey?: string;
+  /** API key for the TTS provider (if different from main speech apiKey). */
+  ttsApiKey?: string;
 }
 
 export interface CalDAVConfig {

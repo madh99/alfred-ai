@@ -1,20 +1,39 @@
 import type { SpeechConfig } from '@alfred/types';
 import type { Logger } from 'pino';
 
+/** Resolved STT provider: 'openai' | 'groq' | 'mistral'. */
+type SttProvider = 'openai' | 'groq' | 'mistral';
+
 export class SpeechTranscriber {
   private readonly apiKey: string;
   private readonly baseUrl: string;
+  private readonly sttProvider: SttProvider;
+  private readonly model: string;
 
   constructor(
     config: SpeechConfig,
     private readonly logger: Logger,
   ) {
-    this.apiKey = config.apiKey;
+    // Determine effective STT provider
+    this.sttProvider = config.sttProvider ?? (config.provider === 'groq' ? 'groq' : 'openai');
 
-    if (config.provider === 'groq') {
-      this.baseUrl = config.baseUrl ?? 'https://api.groq.com/openai/v1';
-    } else {
-      this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
+    // Use dedicated STT API key if provided, otherwise fall back to main speech key
+    this.apiKey = config.sttApiKey ?? config.apiKey;
+
+    // Resolve base URL and model per provider
+    switch (this.sttProvider) {
+      case 'mistral':
+        this.baseUrl = 'https://api.mistral.ai/v1';
+        this.model = 'mistral-stt-latest';
+        break;
+      case 'groq':
+        this.baseUrl = config.baseUrl ?? 'https://api.groq.com/openai/v1';
+        this.model = 'whisper-1';
+        break;
+      default:
+        this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
+        this.model = 'whisper-1';
+        break;
     }
   }
 
@@ -22,7 +41,7 @@ export class SpeechTranscriber {
     const ext = this.mimeToExtension(mimeType);
     const formData = new FormData();
     formData.append('file', new Blob([audioBuffer], { type: mimeType }), `audio.${ext}`);
-    formData.append('model', 'whisper-1');
+    formData.append('model', this.model);
 
     try {
       const response = await fetch(`${this.baseUrl}/audio/transcriptions`, {
@@ -35,14 +54,14 @@ export class SpeechTranscriber {
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Whisper API ${response.status}: ${errorText}`);
+        throw new Error(`STT API (${this.sttProvider}) ${response.status}: ${errorText}`);
       }
 
       const data = await response.json() as { text: string };
-      this.logger.info({ textLength: data.text.length }, 'Voice transcribed');
+      this.logger.info({ textLength: data.text.length, provider: this.sttProvider }, 'Voice transcribed');
       return data.text;
     } catch (err) {
-      this.logger.error({ err }, 'Voice transcription failed');
+      this.logger.error({ err, provider: this.sttProvider }, 'Voice transcription failed');
       throw err;
     }
   }

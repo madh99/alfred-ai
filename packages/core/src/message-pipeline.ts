@@ -169,6 +169,7 @@ export class MessagePipeline {
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
   private insightTracker?: import('./insight-tracker.js').InsightTracker;
+  private moderationService?: import('@alfred/security').ModerationService;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -219,6 +220,10 @@ export class MessagePipeline {
 
   setInsightTracker(tracker: import('./insight-tracker.js').InsightTracker): void {
     this.insightTracker = tracker;
+  }
+
+  setModerationService(service: import('@alfred/security').ModerationService): void {
+    this.moderationService = service;
   }
 
   setAlfredUserRepo(
@@ -666,6 +671,24 @@ export class MessagePipeline {
       let budgetMultiplier = 1.0;
       let messages = this.trimToContextWindow(system, allMessages, toolTokens, budgetMultiplier);
 
+      // 6b. Input moderation (optional — skipped when no moderationService configured)
+      if (this.moderationService && message.text) {
+        try {
+          const modResult = await this.moderationService.moderate(message.text);
+          if (modResult?.flagged) {
+            const flaggedCats = Object.entries(modResult.categories)
+              .filter(([, v]) => v)
+              .map(([k]) => k)
+              .join(', ');
+            this.logger.warn({ flaggedCats }, 'User input flagged by moderation');
+            this.activeRequests.delete(requestKey);
+            return { text: 'Deine Nachricht wurde vom Content-Filter abgelehnt. Bitte formuliere deine Anfrage anders.' };
+          }
+        } catch {
+          // Moderation failure must not block the pipeline
+        }
+      }
+
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;
       let iteration = 0;
@@ -879,6 +902,19 @@ export class MessagePipeline {
         }
       }
       if (!responseText) responseText = '(no response)';
+
+      // 7b. Output moderation (optional — skipped when no moderationService configured)
+      if (this.moderationService && responseText && responseText !== '(no response)') {
+        try {
+          const outMod = await this.moderationService.moderate(responseText);
+          if (outMod?.flagged) {
+            this.logger.warn({ }, 'LLM output flagged by moderation, replacing with safe message');
+            responseText = 'Die generierte Antwort wurde vom Content-Filter blockiert. Bitte versuche es mit einer anderen Formulierung.';
+          }
+        } catch {
+          // Moderation failure must not block the pipeline
+        }
+      }
 
       // 8. Save accumulated tool interactions as a single consolidated pair
       //    (instead of 2 messages per iteration, this stores at most 2 total)
