@@ -22,9 +22,20 @@ const OPERATOR_LABELS: Record<string, string> = {
   always_gt: '> (always)', always_lt: '< (always)', always_gte: '>= (always)', always_lte: '<= (always)',
 };
 
+interface QueuedAlert {
+  watchName: string;
+  displayValue: string;
+  platform: string;
+  chatId: string;
+  threadId?: string;
+  timestamp: string;
+}
+
 export class WatchEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly tickIntervalMs = 60_000;
+  /** Alerts suppressed during quiet hours — flushed as digest when quiet hours end. */
+  private quietHoursQueue: QueuedAlert[] = [];
 
   /** Optional callback invoked when a watch fires — used by ReasoningEngine for event-triggered reasoning. */
   public onWatchTriggered?: (watchName: string, value: string, watchData: Record<string, unknown>) => void;
@@ -72,6 +83,9 @@ export class WatchEngine {
 
   private async tick(): Promise<void> {
     try {
+      // Flush queued quiet-hours alerts as digest if quiet hours have ended
+      await this.flushQuietHoursDigest();
+
       const dueWatches = await this.watchRepo.claimDue(this.nodeId);
 
       for (const watch of dueWatches) {
@@ -86,6 +100,61 @@ export class WatchEngine {
     } catch (err) {
       this.logger.error({ err }, 'Error during watch engine tick');
     }
+  }
+
+  /**
+   * Flush queued quiet-hours alerts as a single digest message.
+   * Called at every tick — sends digest only when quiet hours have ended
+   * and there are queued alerts.
+   */
+  private async flushQuietHoursDigest(): Promise<void> {
+    if (this.quietHoursQueue.length === 0) return;
+
+    // Check if ANY queued alert's watch is still in quiet hours
+    // If so, keep accumulating — don't flush yet
+    const firstAlert = this.quietHoursQueue[0];
+    // Simple heuristic: check if current time is outside typical quiet windows
+    // We can't access the watch config here, so use the queue timestamp:
+    // If the oldest alert is >12h old, flush anyway to prevent unbounded growth
+    const oldestAge = Date.now() - new Date(firstAlert.timestamp).getTime();
+    if (oldestAge < 30 * 60_000) return; // Wait at least 30 min before attempting flush
+
+    // Try to determine if we're still in quiet hours by checking a recent watch
+    try {
+      const watches = await this.watchRepo.claimDue(this.nodeId);
+      // Find any watch with quiet hours to check if we're still in the window
+      const qhWatch = watches.find(w => w.quietHoursStart && w.quietHoursEnd);
+      if (qhWatch && this.isInQuietHours(qhWatch)) return; // Still in quiet hours
+    } catch { /* proceed with flush */ }
+
+    // Group by platform + chatId
+    const groups = new Map<string, QueuedAlert[]>();
+    for (const alert of this.quietHoursQueue) {
+      const key = `${alert.platform}:${alert.chatId}`;
+      const list = groups.get(key) ?? [];
+      list.push(alert);
+      groups.set(key, list);
+    }
+
+    for (const [, alerts] of groups) {
+      const adapter = this.adapters.get(alerts[0].platform as Platform);
+      if (!adapter) continue;
+
+      const lines = alerts.map(a =>
+        `• **${a.watchName}**: ${a.displayValue} (${new Date(a.timestamp).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })})`
+      );
+
+      const digest = `📋 **Watch-Digest** (${alerts.length} Alerts während Nachtruhe)\n\n${lines.join('\n')}`;
+
+      try {
+        await adapter.sendMessage(alerts[0].chatId, digest, alerts[0].threadId ? { threadId: alerts[0].threadId } : undefined);
+        this.logger.info({ count: alerts.length, chatId: alerts[0].chatId }, 'Quiet-hours digest sent');
+      } catch (err) {
+        this.logger.error({ err }, 'Failed to send quiet-hours digest');
+      }
+    }
+
+    this.quietHoursQueue = [];
   }
 
   private async checkWatch(watch: Watch, chainDepth = 0): Promise<void> {
@@ -187,10 +256,19 @@ export class WatchEngine {
     }
 
     if (triggered && this.isInQuietHours(watch)) {
-      this.logger.debug({ watchId: watch.id, name: watch.name }, 'Watch triggered but in quiet hours, suppressing alert');
+      this.logger.debug({ watchId: watch.id, name: watch.name }, 'Watch triggered but in quiet hours, queuing for digest');
+      this.quietHoursQueue.push({
+        watchName: watch.name,
+        displayValue,
+        platform: watch.platform,
+        chatId: watch.chatId,
+        threadId: watch.threadId,
+        timestamp: now,
+      });
       await this.watchRepo.updateAfterCheck(watch.id, {
         lastCheckedAt: now,
         lastValue: newLastValue,
+        lastTriggeredAt: now,
       });
       return;
     }

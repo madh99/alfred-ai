@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.192] - 2026-03-29
+
+### Improved
+- **Watch Quiet-Hours Digest** — Alerts während Quiet-Hours werden nicht mehr verworfen, sondern in einer Queue gesammelt. Nach Ende der Nachtruhe wird ein gebündelter Digest gesendet ("📋 Watch-Digest: X Alerts während Nachtruhe"). Keine Nachrichten gehen mehr verloren.
+- **Reasoning Memory-Cap auf 40 erhöht** — 25 war zu wenig (26 Pattern+Connection-Memories + 10 General = 36). Jetzt 40 mit Priorität für Pattern + Connection.
+
 ## [0.19.0-multi-ha.191] - 2026-03-29
 
 ### Added

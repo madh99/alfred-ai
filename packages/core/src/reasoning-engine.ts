@@ -482,11 +482,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
           }
         } catch { /* skip */ }
       }
-      // Limit to 25 entries, prioritizing pattern + connection memories
-      if (memories.length > 25) {
+      // Limit entries, prioritizing pattern + connection memories
+      const MAX_REASONING_MEMORIES = 40;
+      if (memories.length > MAX_REASONING_MEMORIES) {
         const priority = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
         const rest = memories.filter(m => m.type !== 'pattern' && m.type !== 'connection');
-        const limited = [...priority, ...rest.slice(0, 25 - priority.length)];
+        const limited = [...priority, ...rest.slice(0, MAX_REASONING_MEMORIES - priority.length)];
         memories.length = 0;
         memories.push(...limited);
       }
