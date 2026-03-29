@@ -3,7 +3,7 @@ import { Skill } from '../skill.js';
 
 /** Minimal synthesizer interface to avoid circular dep on @alfred/core. */
 export interface SpeechSynthesizerInterface {
-  synthesize(text: string): Promise<Buffer>;
+  synthesize(text: string, userId?: string): Promise<Buffer>;
 }
 
 export class TTSSkill extends Skill {
@@ -28,7 +28,7 @@ export class TTSSkill extends Skill {
 
   async execute(
     input: Record<string, unknown>,
-    _context: SkillContext,
+    context: SkillContext,
   ): Promise<SkillResult> {
     const text = input.text as string;
     if (!text) {
@@ -36,7 +36,8 @@ export class TTSSkill extends Skill {
     }
 
     try {
-      const audioBuffer = await this.synthesizer.synthesize(text);
+      const userId = context.masterUserId ?? context.userId;
+      const audioBuffer = await this.synthesizer.synthesize(text, userId);
       return {
         success: true,
         display: 'Voice message sent.',

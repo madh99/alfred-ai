@@ -1,4 +1,5 @@
 import type { SpeechConfig } from '@alfred/types';
+import type { MemoryRepository } from '@alfred/storage';
 import type { Logger } from 'pino';
 
 /** Resolved TTS provider. */
@@ -11,6 +12,11 @@ export class SpeechSynthesizer {
   private readonly voice: string;
   private readonly defaultVoiceId?: string;
   private readonly ttsProvider: TtsProvider;
+  private memoryRepo?: MemoryRepository;
+  private cachedVoiceId?: string;
+
+  /** Inject memory repo for reading user's default voice from DB. */
+  setMemoryRepo(repo: MemoryRepository): void { this.memoryRepo = repo; }
 
   constructor(config: SpeechConfig, private readonly logger: Logger) {
     this.ttsProvider = config.ttsProvider ?? 'openai';
@@ -30,9 +36,23 @@ export class SpeechSynthesizer {
     }
   }
 
-  async synthesize(text: string): Promise<Buffer> {
-    // For Mistral: prefer defaultVoiceId (custom voice) over generic ttsVoice
-    const effectiveVoice = (this.ttsProvider === 'mistral' && this.defaultVoiceId) ? this.defaultVoiceId : this.voice;
+  async synthesize(text: string, userId?: string): Promise<Buffer> {
+    // Resolve voice: 1) config defaultVoiceId, 2) DB voice_default memory, 3) built-in fallback
+    let effectiveVoice = this.defaultVoiceId;
+
+    if (!effectiveVoice && this.ttsProvider === 'mistral' && this.memoryRepo && userId) {
+      // Read user's default voice from DB (cached for performance)
+      if (!this.cachedVoiceId) {
+        try {
+          const mem = await this.memoryRepo.recall(userId, 'voice_default');
+          if (mem?.value) this.cachedVoiceId = mem.value;
+        } catch { /* ignore */ }
+      }
+      effectiveVoice = this.cachedVoiceId;
+    }
+
+    if (!effectiveVoice) effectiveVoice = this.voice;
+
     this.logger.info({ textLength: text.length, model: this.model, voice: effectiveVoice, provider: this.ttsProvider }, 'Synthesizing speech');
 
     // Mistral TTS REQUIRES a voice_id — there is no default voice fallback

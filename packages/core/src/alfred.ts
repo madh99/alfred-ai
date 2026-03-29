@@ -775,6 +775,7 @@ export class Alfred {
         this.config.speech,
         this.logger.child({ component: 'tts' }),
       );
+      synthesizer.setMemoryRepo(memoryRepo);
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
