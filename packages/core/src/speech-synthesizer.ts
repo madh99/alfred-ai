@@ -36,8 +36,12 @@ export class SpeechSynthesizer {
     this.logger.info({ textLength: text.length, model: this.model, voice: effectiveVoice, provider: this.ttsProvider }, 'Synthesizing speech');
 
     const body: Record<string, unknown> = this.ttsProvider === 'mistral'
-      ? { model: this.model, input: text, voice_id: effectiveVoice, response_format: 'opus' }
+      ? { model: this.model, input: text, response_format: 'mp3' }
       : { model: this.model, input: text, voice: effectiveVoice, response_format: 'opus' };
+    // For Mistral: only set voice_id if it looks like a UUID (not an OpenAI voice name like "nova")
+    if (this.ttsProvider === 'mistral' && effectiveVoice && /^[0-9a-f]{8}-/.test(effectiveVoice)) {
+      body.voice_id = effectiveVoice;
+    }
 
     const response = await fetch(`${this.baseUrl}/audio/speech`, {
       method: 'POST',
