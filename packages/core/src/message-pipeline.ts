@@ -1760,7 +1760,7 @@ export class MessagePipeline {
             const label = message.text === '[Voice message]' ? '' : `${message.text}\n\n`;
             blocks.push({
               type: 'text',
-              text: `${label}[Voice transcript]: ${transcript}`,
+              text: `${label}[Voice transcript]: ${transcript}\n[Note: The original audio file is available as attachment for skills that need it, e.g. voice.create_voice]`,
             });
             this.logger.info({ transcriptLength: transcript.length }, 'Voice message transcribed');
             if (attachments.length === 1) {
