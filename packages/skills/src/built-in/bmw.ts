@@ -103,11 +103,10 @@ export class BMWSkill extends Skill {
     category: 'infrastructure',
     description:
       'BMW CarData — Fahrzeugdaten abrufen. ' +
-      '"authorize" startet den Device-Auth-Flow (einmalig). ' +
-      'WICHTIG: authorize ist ein 2-Schritt-Prozess. ' +
-      'Schritt 1 (ohne device_code) liefert einen User-Code + URL. ' +
-      'Schritt 2: Nachdem der User im Browser bestätigt hat, rufe authorize ERNEUT auf — ' +
-      'entweder mit dem device_code aus Schritt 1, oder einfach ohne Parameter (auto-resume). ' +
+      'WICHTIG: Rufe IMMER zuerst "status" oder die gewünschte Action auf — NICHT "authorize". ' +
+      'authorize ist NUR nötig wenn der Skill einen Auth-Fehler zurückgibt. Der Token wird automatisch gespeichert und überlebt Restarts. ' +
+      'Wenn authorize nötig ist: Schritt 1 (ohne device_code) liefert User-Code + URL. ' +
+      'Schritt 2: Nach Browser-Bestätigung, authorize ERNEUT ohne Parameter (auto-resume). ' +
       'NIEMALS Schritt 1 wiederholen wenn bereits ein Code ausgegeben wurde! ' +
       '"status" zeigt SoC, Reichweite, Modell, Batterie-Gesundheit. ' +
       '"charging" zeigt Ladestatus, Leistung, Restzeit, Ziel-SoC, Stecker. ' +
