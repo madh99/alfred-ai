@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.218] - 2026-03-30
+
+### Fixed
+- **Regel-Explosion (117 → max 30)** — Skill-Error-Learning hatte keine Limits. Fix: Max 3 Regeln pro Skill, max 30 total. Cleanup löscht Regeln mit Confidence < 0.5 und die ältesten über dem Limit.
+- **Voice-Messages: fehlende Skills** — Skill-Filter lief auf `"[Voice message]"` bevor die Transkription stattfand → Infrastructure-Skills (HomeAssistant, MQTT, BMW) fehlten. Fix: Bei Audio-Attachments wird der Skill-Filter übersprungen, alle Kategorien geladen.
+- **InsightTracker: kein Bug** — System funktioniert korrekt. Reasoning hat seit dem isNoInsights-Fix keine Insights gesendet → pending leer → nichts zu tracken. Wird sich lösen sobald Reasoning wieder Insights produziert.
+
 ## [0.19.0-multi-ha.216] - 2026-03-30
 
 ### Fixed

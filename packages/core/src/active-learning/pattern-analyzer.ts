@@ -18,6 +18,9 @@ export class PatternAnalyzer {
    */
   async analyze(userId: string): Promise<number> {
     try {
+      // Cleanup: enforce max 30 rules total
+      await this.cleanupExcessRules(userId);
+
       const since = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
 
       // 1. Load detailed activity data (not just aggregated stats)
@@ -175,9 +178,27 @@ Return NUR ein JSON-Array:`;
 
     let saved = 0;
 
+    // Pre-load all existing rules for limit checks
+    const allRules = await this.memoryRepo.getByType(userId, 'rule', 200);
+    const totalRuleCount = allRules.length;
+    const perSkillCounts = new Map<string, number>();
+    for (const r of allRules) {
+      const match = r.key.match(/^rule_skill_([^_]+)_/);
+      if (match) {
+        perSkillCounts.set(match[1], (perSkillCounts.get(match[1]) ?? 0) + 1);
+      }
+    }
+
     for (const [fingerprint, group] of groups) {
       // Only derive rules for errors that occurred >= 3 times
       if (group.count < 3) continue;
+
+      // Max 30 rules total
+      if (totalRuleCount + saved >= 30) break;
+
+      // Max 3 rules per skill
+      const skillRuleCount = perSkillCounts.get(group.skillName) ?? 0;
+      if (skillRuleCount >= 3) continue;
 
       // Check if we already have a rule for this error pattern
       const hash = createHash('md5').update(fingerprint).digest('hex').slice(0, 12);
@@ -204,6 +225,7 @@ Regel:`;
             0.7, 'auto',
           );
           saved++;
+          perSkillCounts.set(group.skillName, (perSkillCounts.get(group.skillName) ?? 0) + 1);
           this.logger.info({ ruleKey, rule, errorCount: group.count }, 'Skill error rule saved');
         }
       } catch (err) {
@@ -268,6 +290,41 @@ Regel:`;
         newConfidence, rule.source,
       );
       this.logger.debug({ ruleKey: rule.key, newConfidence }, 'Rule confidence boosted (uncontested)');
+    }
+  }
+
+  /**
+   * Cleanup excess rules: enforce max 30 total.
+   * First delete all with confidence < 0.5, then oldest until <= 30 remain.
+   */
+  private async cleanupExcessRules(userId: string): Promise<void> {
+    const allRules = await this.memoryRepo.getByType(userId, 'rule', 200);
+    if (allRules.length <= 30) return;
+
+    this.logger.info({ ruleCount: allRules.length }, 'Too many rules, cleaning up (max 30)');
+
+    // Phase 1: delete low-confidence rules (< 0.5)
+    const lowConfidence = allRules.filter(r => r.confidence < 0.5);
+    for (const r of lowConfidence) {
+      try {
+        await this.memoryRepo.delete(userId, r.key);
+        this.logger.debug({ ruleKey: r.key, confidence: r.confidence }, 'Deleted low-confidence rule');
+      } catch { /* skip */ }
+    }
+
+    // Phase 2: if still over 30, delete oldest by updatedAt
+    const remaining = allRules
+      .filter(r => r.confidence >= 0.5)
+      .sort((a, b) => new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime());
+
+    let toDelete = remaining.length - 30;
+    for (const r of remaining) {
+      if (toDelete <= 0) break;
+      try {
+        await this.memoryRepo.delete(userId, r.key);
+        toDelete--;
+        this.logger.debug({ ruleKey: r.key }, 'Deleted oldest rule (over limit)');
+      } catch { /* skip */ }
     }
   }
 }

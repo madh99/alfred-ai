@@ -545,17 +545,22 @@ export class MessagePipeline {
         : undefined;
       let skillMetas = allSkillMetas;
       if (allSkillMetas && message.text) {
-        const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
-        // Include recent user messages from conversation history so follow-up
-        // questions retain the skill category context of earlier messages.
-        const recentUserTexts = history
-          .filter(m => m.role === 'user')
-          .slice(-3)
-          .map(m => m.content)
-          .join(' ');
-        const categoryInput = recentUserTexts ? `${message.text} ${recentUserTexts}` : message.text;
-        const selectedCategories = selectCategories(categoryInput, availableCategories);
-        skillMetas = filterSkills(allSkillMetas, selectedCategories);
+        // Voice messages: skip skill filter — text is not yet transcribed
+        if (hasAudioAttachment) {
+          skillMetas = allSkillMetas;
+        } else {
+          const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
+          // Include recent user messages from conversation history so follow-up
+          // questions retain the skill category context of earlier messages.
+          const recentUserTexts = history
+            .filter(m => m.role === 'user')
+            .slice(-3)
+            .map(m => m.content)
+            .join(' ');
+          const categoryInput = recentUserTexts ? `${message.text} ${recentUserTexts}` : message.text;
+          const selectedCategories = selectCategories(categoryInput, availableCategories);
+          skillMetas = filterSkills(allSkillMetas, selectedCategories);
+        }
       }
 
       // 6b. Role-based skill filtering (multi-user)
