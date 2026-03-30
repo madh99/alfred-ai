@@ -253,16 +253,28 @@ export class ProjectAgentRunner {
 
   /**
    * Push the current branch to the git remote after all phases are done.
-   * - If no .git/ directory → skip (not a git project)
-   * - If .git/ but no remote → log warning, skip
+   * - If no .git/ directory → git init + create repo on forge if configured
+   * - If .git/ but no remote → create repo on forge if configured
    * - If remote exists → push, embedding forge token temporarily if needed
    */
   private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string): Promise<void> {
-    // Check if this is a git repository at all
+    // Check if this is a git repository — if not, initialize one
     const hasGitDir = existsSync(path.join(cwd, '.git'));
     if (!hasGitDir) {
-      this.logger.debug({ cwd }, 'Project agent: no .git/ directory, skipping push');
-      return;
+      if (!this.forgeConfig) {
+        this.logger.debug({ cwd }, 'Project agent: no .git/ and no forge config — skipping push');
+        return;
+      }
+      // Init git repo
+      try {
+        await gitExec(['init'], cwd, runAsUser);
+        await gitExec(['add', '-A'], cwd, runAsUser);
+        await gitExec(['commit', '-m', 'Initial commit'], cwd, runAsUser);
+        this.logger.info({ cwd }, 'Project agent: git init + initial commit');
+      } catch (err) {
+        this.logger.warn({ err, cwd }, 'Project agent: git init failed');
+        return;
+      }
     }
 
     // Get remote URL
@@ -273,8 +285,72 @@ export class ProjectAgentRunner {
       remoteUrl = null;
     }
 
+    // No remote → create repo on forge and add remote
+    if (!remoteUrl && this.forgeConfig) {
+      const token = this.forgeConfig.github?.token ?? this.forgeConfig.gitlab?.token;
+      if (token) {
+        // Derive repo name from directory name
+        const repoName = path.basename(cwd);
+        const baseUrl = this.forgeConfig.gitlab?.baseUrl ?? this.forgeConfig.github?.baseUrl ?? 'https://gitlab.com';
+        const providerLabel = this.forgeConfig.provider === 'gitlab' ? 'GitLab' : 'GitHub';
+
+        try {
+          // Try to create repo (ignore error if already exists)
+          if (this.forgeConfig.provider === 'gitlab') {
+            await fetch(`${baseUrl}/api/v4/projects`, {
+              method: 'POST',
+              headers: { 'PRIVATE-TOKEN': token, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: repoName, visibility: 'private' }),
+            });
+          } else {
+            const ghBase = this.forgeConfig.github?.baseUrl ?? 'https://api.github.com';
+            await fetch(`${ghBase}/user/repos`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: repoName, private: true }),
+            });
+          }
+          this.logger.info({ repoName, provider: providerLabel }, 'Project agent: repo created or already exists');
+        } catch (err) {
+          this.logger.debug({ err, repoName }, 'Project agent: repo creation failed (may already exist)');
+        }
+
+        // Determine remote URL — extract username from API
+        let remoteBase: string;
+        if (this.forgeConfig.provider === 'gitlab') {
+          // GitLab: get current user namespace
+          try {
+            const userRes = await fetch(`${baseUrl}/api/v4/user`, { headers: { 'PRIVATE-TOKEN': token } });
+            const userData = await userRes.json() as { username?: string };
+            remoteBase = `${baseUrl}/${userData.username ?? 'user'}/${repoName}.git`;
+          } catch {
+            remoteBase = `${baseUrl}/user/${repoName}.git`;
+          }
+        } else {
+          try {
+            const ghBase = this.forgeConfig.github?.baseUrl ?? 'https://api.github.com';
+            const userRes = await fetch(`${ghBase}/user`, { headers: { 'Authorization': `Bearer ${token}` } });
+            const userData = await userRes.json() as { login?: string };
+            remoteBase = `https://github.com/${userData.login ?? 'user'}/${repoName}.git`;
+          } catch {
+            remoteBase = `https://github.com/user/${repoName}.git`;
+          }
+        }
+
+        try {
+          await gitExec(['remote', 'add', 'origin', remoteBase], cwd, runAsUser);
+          remoteUrl = remoteBase;
+          await this.sendProgress(platform, chatId, `📦 ${providerLabel}-Repo "${repoName}" erstellt.`);
+        } catch (err) {
+          this.logger.warn({ err, cwd }, 'Project agent: failed to add remote');
+          await this.sendProgress(platform, chatId, `⚠️ Remote konnte nicht gesetzt werden.`);
+          return;
+        }
+      }
+    }
+
     if (!remoteUrl) {
-      this.logger.warn({ cwd }, 'Project agent: .git/ exists but no remote "origin" — skipping push');
+      this.logger.warn({ cwd }, 'Project agent: no remote and no forge config — skipping push');
       await this.sendProgress(platform, chatId, '⚠️ Kein Git-Remote konfiguriert — Push übersprungen.');
       return;
     }
