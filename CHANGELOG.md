@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.220] - 2026-03-30
+
+### Fixed
+- **Sonos Radio: 6 Fixes** —
+  1. Memory-Lookup: Gelernte Sender-URLs werden zuerst geprüft (sofortiger Start)
+  2. Sonos-Favoriten: `getFavorites()` wird vor TuneIn durchsucht
+  3. URL-Speicherung: Funktionierende Stream-URLs werden als Memory gespeichert
+  4. play_favorite: `setAVTransportURI` + `play()` statt `playNotification` (Radio hing)
+  5. play_uri: `play()` nach `setAVTransportURI` hinzugefügt
+  6. Skill-Description: LLM wird angeleitet URLs als Memory zu speichern
+
 ## [0.19.0-multi-ha.219] - 2026-03-30
 
 ### Fixed

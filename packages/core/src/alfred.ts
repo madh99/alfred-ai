@@ -572,7 +572,7 @@ export class Alfred {
     {
       const { SonosSkill } = await import('@alfred/skills');
       const sonosApiUrl = this.config.api?.publicUrl ?? `http://${this.config.api?.host ?? 'localhost'}:${this.config.api?.port ?? 3420}`;
-      this.sonosSkill = new SonosSkill(this.config.sonos, sonosApiUrl);
+      this.sonosSkill = new SonosSkill(this.config.sonos, sonosApiUrl, memoryRepo);
       skillRegistry.register(this.sonosSkill);
       this.logger.info({ hasCloud: !!this.config.sonos?.cloud }, 'Sonos skill registered');
     }

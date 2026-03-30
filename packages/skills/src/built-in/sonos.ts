@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Skill } from '../skill.js';
 import type { SkillMetadata, SkillContext, SkillResult, SonosConfig } from '@alfred/types';
+import type { MemoryRepository } from '@alfred/storage';
 
 type Action =
   | 'speakers' | 'speaker_info'
@@ -41,7 +42,8 @@ export class SonosSkill extends Skill {
       'Sonos-Speaker steuern: Gruppierung, Lautstärke, Radio/TuneIn, ' +
       'Sleep-Timer, Nachtmodus, Line-In, TV-Audio, Stereopaare. ' +
       'Sonos, Lautsprecher, Speaker, Musik, Radio, Raum, Gruppe, Zimmerlautstärke. ' +
-      'Fuer Spotify-Playback nutze den Spotify-Skill (Spotify Connect).',
+      'Fuer Spotify-Playback nutze den Spotify-Skill (Spotify Connect). ' +
+      'Wenn ein Radiosender erfolgreich gestartet wurde, speichere die funktionierende Stream-URL als Memory (key: sonos_radio_<sendername>) fuer zukuenftige Nutzung.',
     version: '1.0.0',
     riskLevel: 'write',
     category: 'media',
@@ -112,7 +114,11 @@ export class SonosSkill extends Skill {
 
   private readonly apiPublicUrl?: string;
 
-  constructor(private readonly config?: SonosConfig, apiPublicUrl?: string) {
+  constructor(
+    private readonly config?: SonosConfig,
+    apiPublicUrl?: string,
+    private readonly memoryRepo?: MemoryRepository,
+  ) {
     super();
     this.apiPublicUrl = apiPublicUrl;
   }
@@ -518,8 +524,24 @@ export class SonosSkill extends Skill {
     const match = items.find((f: any) => (f.title ?? f.name ?? '').toLowerCase().includes(lower));
     if (!match) return { success: false, error: `Favorit "${name}" nicht gefunden. Verfuegbar: ${items.map((f: any) => f.title ?? f.name).join(', ')}` };
 
-    await entry.device.playNotification({ uri: match.uri, onlyWhenPlaying: false });
+    await entry.device.setAVTransportURI(match.uri);
+    await entry.device.play();
     return { success: true, display: `Favorit "${match.title ?? match.name}" wird abgespielt.` };
+  }
+
+  /** Normalize radio name to a stable memory key: lowercase, spaces→underscores */
+  private radioMemoryKey(name: string): string {
+    return `sonos_radio_${name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_äöüß]/g, '')}`;
+  }
+
+  /** Save a working radio URL as memory for future fast lookup */
+  private async saveRadioMemory(context: SkillContext, name: string, uri: string): Promise<void> {
+    if (!this.memoryRepo) return;
+    const uid = context.masterUserId ?? context.alfredUserId ?? context.userId;
+    const key = this.radioMemoryKey(name);
+    try {
+      await this.memoryRepo.save(uid, key, uri, 'sonos');
+    } catch { /* non-critical */ }
   }
 
   private async handlePlayRadio(input: Record<string, unknown>): Promise<SkillResult> {
@@ -531,69 +553,112 @@ export class SonosSkill extends Skill {
       return { success: false, error: 'Radio-Wiedergabe nur ueber lokale Verbindung moeglich.' };
     }
 
+    const context = this.lastContext!;
+    const uid = context.masterUserId ?? context.alfredUserId ?? context.userId;
+    const normalized = name.toLowerCase().replace(/^(spiele?|play)\s+/i, '').trim();
+
+    // ── 1. Check memories for previously saved stream URL ──
+    if (this.memoryRepo) {
+      try {
+        const memKey = this.radioMemoryKey(normalized);
+        const mem = await this.memoryRepo.recall(uid, memKey);
+        if (mem?.value) {
+          await entry.device.setAVTransportURI(mem.value);
+          await entry.device.play();
+          return { success: true, display: `Radio "${name}" wird abgespielt (gespeicherte URL).` };
+        }
+      } catch { /* memory lookup failed, continue */ }
+    }
+
+    // ── 2. Check Sonos favorites ──
+    try {
+      const favs = await entry.device.getFavorites();
+      const items = favs?.items ?? favs ?? [];
+      const lower = normalized.toLowerCase();
+      const match = items.find((f: any) => {
+        const title = (f.title ?? f.name ?? '').toLowerCase();
+        return title.includes(lower) || lower.includes(title);
+      });
+      if (match?.uri) {
+        await entry.device.setAVTransportURI(match.uri);
+        await entry.device.play();
+        await this.saveRadioMemory(context, normalized, match.uri);
+        return { success: true, display: `Radio "${match.title ?? match.name}" wird abgespielt (Sonos-Favorit).` };
+      }
+    } catch { /* favorites lookup failed, continue */ }
+
+    // ── 3. Try TuneIn ──
     try {
       await entry.device.playTuneinRadio(name);
+      // TuneIn succeeded — try to capture the URI for memory
+      try {
+        const track = await entry.device.currentTrack();
+        if (track?.uri) await this.saveRadioMemory(context, normalized, track.uri);
+      } catch { /* non-critical */ }
       return { success: true, display: `Radio "${name}" wird abgespielt.` };
     } catch (err: any) {
-      // UPnP 402 = station not found by TuneIn. Try searching with alternative names.
-      if (String(err).includes('402')) {
-        // Known stream URLs for popular stations (TuneIn search is unreliable)
-        const streamUrls: Record<string, { url: string; displayName: string }> = {
-          'ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'hitradio ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'hitradio oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'orf hitradio ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'orf hitradio oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
-          'ö1': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe1-q1a', displayName: 'Ö1' },
-          'oe1': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe1-q1a', displayName: 'Ö1' },
-          'fm4': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/fm4-q1a', displayName: 'FM4' },
-          'kronehit': { url: 'x-rincon-mp3radio://onair.krone.at/kronehit.mp3', displayName: 'Kronehit' },
-          'radio wien': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/wie-q1a', displayName: 'Radio Wien' },
-          'radio nö': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
-          'radio niederösterreich': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
-          'radio burgenland': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/bgl-q1a', displayName: 'Radio Burgenland' },
-          'radio steiermark': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/stm-q1a', displayName: 'Radio Steiermark' },
-          'radio kärnten': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/ktn-q1a', displayName: 'Radio Kärnten' },
-          'radio oberösterreich': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/ooe-q1a', displayName: 'Radio OÖ' },
-          'radio salzburg': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/sbg-q1a', displayName: 'Radio Salzburg' },
-          'radio tirol': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/tir-q1a', displayName: 'Radio Tirol' },
-          'radio vorarlberg': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/vbg-q1a', displayName: 'Radio Vorarlberg' },
-          'lounge fm': { url: 'x-rincon-mp3radio://stream.lounge.fm/live', displayName: 'Lounge FM' },
-          'klassik radio': { url: 'x-rincon-mp3radio://stream.klassikradio.de/live/mp3-192', displayName: 'Klassik Radio' },
-        };
-
-        const normalized = name.toLowerCase().replace(/^(spiele?|play)\s+/i, '').trim();
-        const stream = streamUrls[normalized] ?? streamUrls[name.toLowerCase()];
-
-        if (stream) {
-          try {
-            await entry.device.setAVTransportURI(stream.url);
-            await entry.device.play();
-            return { success: true, display: `${stream.displayName} wird abgespielt.` };
-          } catch (streamErr: any) {
-            return { success: false, error: `Stream-Wiedergabe fehlgeschlagen: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}` };
-          }
-        }
-
-        // Fallback: try alternative TuneIn names
-        const tuneinAlts: Record<string, string[]> = {
-          'ö3': ['Hitradio OE3', 'OE3'],
-          'ö1': ['OE1'],
-          'fm4': ['FM4', 'ORF FM4'],
-        };
-        const alts = tuneinAlts[normalized] ?? [];
-        for (const alt of alts) {
-          try {
-            await entry.device.playTuneinRadio(alt);
-            return { success: true, display: `Radio "${alt}" wird abgespielt.` };
-          } catch { /* try next */ }
-        }
-
-        return { success: false, error: `Sender "${name}" nicht gefunden. Bekannte Sender: Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio.` };
-      }
-      throw err;
+      // UPnP 402 = station not found by TuneIn, continue to hardcoded URLs
+      if (!String(err).includes('402')) throw err;
     }
+
+    // ── 4. Hardcoded stream URLs for popular Austrian/German stations ──
+    const streamUrls: Record<string, { url: string; displayName: string }> = {
+      'ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'hitradio ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'hitradio oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'orf hitradio ö3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'orf hitradio oe3': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe3-q1a', displayName: 'Hitradio Ö3' },
+      'ö1': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe1-q1a', displayName: 'Ö1' },
+      'oe1': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/oe1-q1a', displayName: 'Ö1' },
+      'fm4': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/fm4-q1a', displayName: 'FM4' },
+      'kronehit': { url: 'x-rincon-mp3radio://onair.krone.at/kronehit.mp3', displayName: 'Kronehit' },
+      'radio wien': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/wie-q1a', displayName: 'Radio Wien' },
+      'radio nö': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
+      'radio niederösterreich': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/noe-q1a', displayName: 'Radio NÖ' },
+      'radio burgenland': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/bgl-q1a', displayName: 'Radio Burgenland' },
+      'radio steiermark': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/stm-q1a', displayName: 'Radio Steiermark' },
+      'radio kärnten': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/ktn-q1a', displayName: 'Radio Kärnten' },
+      'radio oberösterreich': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/ooe-q1a', displayName: 'Radio OÖ' },
+      'radio salzburg': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/sbg-q1a', displayName: 'Radio Salzburg' },
+      'radio tirol': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/tir-q1a', displayName: 'Radio Tirol' },
+      'radio vorarlberg': { url: 'x-rincon-mp3radio://orf-live.ors-shoutcast.at/vbg-q1a', displayName: 'Radio Vorarlberg' },
+      'lounge fm': { url: 'x-rincon-mp3radio://stream.lounge.fm/live', displayName: 'Lounge FM' },
+      'klassik radio': { url: 'x-rincon-mp3radio://stream.klassikradio.de/live/mp3-192', displayName: 'Klassik Radio' },
+    };
+
+    const stream = streamUrls[normalized] ?? streamUrls[name.toLowerCase()];
+
+    if (stream) {
+      try {
+        await entry.device.setAVTransportURI(stream.url);
+        await entry.device.play();
+        await this.saveRadioMemory(context, normalized, stream.url);
+        return { success: true, display: `${stream.displayName} wird abgespielt.` };
+      } catch (streamErr: any) {
+        return { success: false, error: `Stream-Wiedergabe fehlgeschlagen: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}` };
+      }
+    }
+
+    // ── 5. Fallback: try alternative TuneIn names ──
+    const tuneinAlts: Record<string, string[]> = {
+      'ö3': ['Hitradio OE3', 'OE3'],
+      'ö1': ['OE1'],
+      'fm4': ['FM4', 'ORF FM4'],
+    };
+    const alts = tuneinAlts[normalized] ?? [];
+    for (const alt of alts) {
+      try {
+        await entry.device.playTuneinRadio(alt);
+        try {
+          const track = await entry.device.currentTrack();
+          if (track?.uri) await this.saveRadioMemory(context, normalized, track.uri);
+        } catch { /* non-critical */ }
+        return { success: true, display: `Radio "${alt}" wird abgespielt.` };
+      } catch { /* try next */ }
+    }
+
+    return { success: false, error: `Sender "${name}" nicht gefunden. Bekannte Sender: Ö3, Ö1, FM4, Kronehit, Radio Wien, Radio NÖ, Lounge FM, Klassik Radio.` };
   }
 
   private async handlePlayUri(input: Record<string, unknown>): Promise<SkillResult> {
@@ -606,6 +671,7 @@ export class SonosSkill extends Skill {
     }
 
     await entry.device.setAVTransportURI(uri);
+    await entry.device.play();
     return { success: true, display: `URI wird abgespielt.` };
   }
 
