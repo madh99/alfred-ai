@@ -9,6 +9,7 @@ import {
   gitPush,
   slugifyBranch,
   gitGetRemoteUrl,
+  gitSetRemoteUrl,
   gitInitRepo,
   gitAddRemote,
   parseRemoteUrl,
@@ -460,6 +461,22 @@ export async function orchestrateWithGit(
     return { ...result, git: gitInfo };
   }
 
+  // Inject forge token into remote URL if needed (temporarily)
+  const urlHasAuth = /^https?:\/\/[^@]+@/.test(currentRemoteUrl);
+  let tokenInjected = false;
+  if (!urlHasAuth && forgeConfig) {
+    const token = forgeConfig.github?.token ?? forgeConfig.gitlab?.token;
+    if (token) {
+      try {
+        const urlObj = new URL(currentRemoteUrl);
+        urlObj.username = 'oauth2';
+        urlObj.password = token;
+        await gitSetRemoteUrl('origin', urlObj.toString(), { cwd });
+        tokenInjected = true;
+      } catch { /* proceed without token */ }
+    }
+  }
+
   try {
     await gitPush('origin', branchName, { cwd });
     onProgress?.(`Pushed branch: ${branchName}`);
@@ -467,7 +484,16 @@ export async function orchestrateWithGit(
     const msg = err instanceof Error ? err.message : String(err);
     gitInfo.warnings.push(`Push failed: ${msg}`);
     onProgress?.(`Warning: push failed — ${msg}`);
+    // Restore URL before returning
+    if (tokenInjected) {
+      try { await gitSetRemoteUrl('origin', currentRemoteUrl, { cwd }); } catch { /* best effort */ }
+    }
     return { ...result, git: gitInfo };
+  }
+
+  // Always restore original URL (remove token)
+  if (tokenInjected) {
+    try { await gitSetRemoteUrl('origin', currentRemoteUrl, { cwd }); } catch { /* best effort */ }
   }
 
   // 8. Create PR/MR (only if forge + repoId available)

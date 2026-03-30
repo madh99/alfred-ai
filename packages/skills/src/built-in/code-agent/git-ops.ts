@@ -65,6 +65,10 @@ export async function gitPush(remote: string, branch: string, opts: GitCmdOption
   await git(['push', '-u', remote, branch], opts);
 }
 
+export async function gitSetRemoteUrl(remote: string, url: string, opts: GitCmdOptions): Promise<void> {
+  await git(['remote', 'set-url', remote, url], opts);
+}
+
 export function slugifyBranch(task: string): string {
   const slug = task
     .toLowerCase()
