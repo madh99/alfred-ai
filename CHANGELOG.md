@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.219] - 2026-03-30
+
+### Fixed
+- **Reasoning Insights: `isNoInsights()` komplett vereinfacht** — Alle natürlichsprachlichen Phrasen-Filter entfernt. Nur noch exakter `KEINE_INSIGHTS`-Marker wird geprüft. Vorher: 6 Phrasen wie "keine relevanten", "kein Zusammenhang" filterten echte Insights die diese Wörter als Teilsatz enthielten. Jetzt: Alles außer exakt "KEINE_INSIGHTS" ist ein Insight.
+- **Reasoning LLM-Response wird geloggt** — Debug-Log zeigt die ersten 500 Zeichen der LLM-Antwort. Bei "no insights" werden die ersten 200 Zeichen im Info-Log angezeigt. Ermöglicht Diagnose was das LLM tatsächlich antwortet.
+- **Reasoning-Prompt verbessert** — Weniger restriktiv formuliert ("finde Zusammenhänge" statt "nur nicht-offensichtliche"). Klare Instruktion: "KEINE_INSIGHTS" ist die EINZIGE akzeptierte Antwort wenn nichts zu melden ist. Event-triggered Prompt ebenfalls entschärft.
+
 ## [0.19.0-multi-ha.218] - 2026-03-30
 
 ### Fixed

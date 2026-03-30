@@ -30,19 +30,18 @@ const MAX_OUTPUT_TOKENS = 1536;
 const ACTION_MARKER = '---ACTIONS---';
 
 /** Check if LLM response means "no insights" — catches variants beyond exact "KEINE_INSIGHTS". */
+/**
+ * Check if the LLM response indicates no insights.
+ * ONLY checks for the explicit KEINE_INSIGHTS marker — no natural language parsing.
+ * The LLM is instructed to respond with exactly "KEINE_INSIGHTS" when there's nothing to report.
+ * Any other response is treated as a real insight, even if it contains phrases like
+ * "keine Verbindung zwischen X und Y, aber..." — that's still valuable context.
+ */
 function isNoInsights(text: string): boolean {
   if (!text || text.length < 10) return true;
-  if (text === 'KEINE_INSIGHTS') return true;
-  const lower = text.toLowerCase();
-  // LLM sometimes explains WHY there are no insights instead of just saying KEINE_INSIGHTS
-  if (lower.includes('keine_insights')) return true;
-  if (lower.includes('keine insights')) return true;
-  if (lower.includes('nichts relevantes') || lower.includes('keine relevanten')) return true;
-  if (lower.includes('kein zusammenhang') || lower.includes('keinen zusammenhang')) return true;
-  if (lower.includes('kein bezug') || lower.includes('keinen bezug')) return true;
-  if (lower.includes('keine handlungsempfehlung')) return true;
-  if (lower.includes('keine verbindung') || lower.includes('keine querverbindung')) return true;
-  if (lower.includes('nichts zu berichten')) return true;
+  const trimmed = text.trim();
+  if (trimmed === 'KEINE_INSIGHTS') return true;
+  if (trimmed.toLowerCase() === 'keine_insights') return true;
   return false;
 }
 
@@ -171,11 +170,10 @@ ${todos}
 === Erinnerungen \u00FCber den User ===
 ${memories}
 
-Aufgabe: Analysiere ob dieses Event im Kontext der User-Daten eine SOFORTIGE Handlungsempfehlung oder einen wichtigen Hinweis ergibt.
-- Nur antworten wenn der Hinweis NICHT offensichtlich ist (der User hat das Event schon als Alert bekommen)
-- Suche nach Verbindungen: Hat der User einen Termin in der N\u00E4he des Angebots? Zeitkonflikt? Gelegenheit?
+Aufgabe: Analysiere ob dieses Event im Kontext der User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
+- Suche nach Verbindungen: Termin in der N\u00E4he? Zeitkonflikt? Gelegenheit? Preisalert + Fahrt?
 - Max 1-2 S\u00E4tze, konkret und actionable
-- Wenn nichts Relevantes: antworte exakt "KEINE_INSIGHTS"
+- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS" — nichts anderes, keine Erkl\u00E4rung
 ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00E4nge sie als JSON an (gleicher ${ACTION_MARKER} Format wie beim regul\u00E4ren Reasoning).` : ''}`;
 
       const response = await this.llm.complete({
@@ -288,9 +286,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       const text = response.content.trim();
       const durationMs = Date.now() - startMs;
 
-      // Filter: no insights
+      // Log the actual LLM response for diagnostics
+      this.logger.debug({ response: text.slice(0, 500), durationMs }, 'Reasoning LLM response');
+
+      // Filter: no insights — ONLY checks for explicit KEINE_INSIGHTS marker
       if (isNoInsights(text)) {
-        this.logger.info({ durationMs }, 'Reasoning pass: no insights');
+        this.logger.info({ durationMs, response: text.slice(0, 200) }, 'Reasoning pass: no insights');
         this.activityLogger?.logScheduledExec({
           actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
           platform: this.defaultPlatform, chatId: this.defaultChatId,
@@ -557,10 +558,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
     return `Du bist Alfreds Denk-Modul. Deine Aufgabe: Analysiere ALLE folgenden Daten und finde Zusammenhänge, Konflikte, Optimierungen oder Handlungsempfehlungen für den User.
 
 REGELN:
-- Nur ECHTE, nicht-offensichtliche Erkenntnisse melden
-- KEINE Wiederholung von Fakten die der User schon kennt (z.B. "du hast 3 Termine" ohne Mehrwert)
+- Finde Zusammenhänge zwischen verschiedenen Datenbereichen (Kalender+Wetter, Todos+Energie, Watches+Termine etc.)
+- Priorisiere neue Verbindungen und Handlungsempfehlungen über reine Fakten-Wiederholungen
 - KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
-- Wenn es nichts Relevantes gibt: antworte exakt "KEINE_INSIGHTS"
+- Wenn es WIRKLICH nichts Relevantes gibt: antworte EXAKT mit dem Wort "KEINE_INSIGHTS" — nichts anderes, keine Erklärung warum
+- WICHTIG: "KEINE_INSIGHTS" ist die EINZIGE akzeptierte Antwort wenn du nichts findest. Antworte NICHT mit Sätzen wie "Es gibt keine relevanten Verbindungen" oder "Nichts zu berichten" — das wird als Insight behandelt
 - Max 5 Insights, priorisiert nach Dringlichkeit
 - Jeder Insight: 1-2 Sätze, konkret und actionable
 - Schreibe auf Deutsch
