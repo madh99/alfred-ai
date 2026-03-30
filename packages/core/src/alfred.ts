@@ -67,6 +67,7 @@ import { FeedbackService } from './feedback/feedback-service.js';
 import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 import { PatternAnalyzer } from './active-learning/pattern-analyzer.js';
+import { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { TodoWatcher } from './todo-watcher.js';
@@ -75,6 +76,14 @@ import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
 import { ReasoningEngine } from './reasoning-engine.js';
 import { InsightTracker } from './insight-tracker.js';
+
+/** Get ISO week number for a date. */
+function getISOWeek(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
 
 export class Alfred {
   private readonly logger: Logger;
@@ -117,6 +126,7 @@ export class Alfred {
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private memoryConsolidatorTimer?: ReturnType<typeof setInterval>;
   private patternAnalyzerTimer?: ReturnType<typeof setInterval>;
+  private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
@@ -1535,6 +1545,28 @@ export class Alfred {
             this.logger.warn({ err }, 'Pattern analysis failed');
           }
         }, 60 * 60_000); // Check every hour, only acts at 3:30 AM
+
+        // Temporal analysis: weekly trends + anomalies (Sunday 4:00 AM)
+        const temporalAnalyzer = new TemporalAnalyzer(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'temporal-analyzer' }));
+        let lastTemporalWeek = '';
+        this.temporalAnalyzerTimer = setInterval(async () => {
+          const now = new Date();
+          const isoWeek = `${now.getFullYear()}-W${String(getISOWeek(now)).padStart(2, '0')}`;
+          // Only run on Sundays at 4:00 AM, once per week
+          if (now.getDay() !== 0 || now.getHours() !== 4 || lastTemporalWeek === isoWeek) return;
+          lastTemporalWeek = isoWeek;
+          try {
+            const users = await userRepoRef.listAll();
+            for (const user of users) {
+              const report = await temporalAnalyzer.analyze(user.id);
+              if (report.trends.length > 0 || report.anomalies.length > 0) {
+                this.logger.info({ userId: user.id, trends: report.trends.length, anomalies: report.anomalies.length }, 'Temporal analysis completed');
+              }
+            }
+          } catch (err) {
+            this.logger.warn({ err }, 'Temporal analysis failed');
+          }
+        }, 60 * 60_000); // Check every hour, only acts on Sunday 4 AM
       }
     }
 
@@ -1607,6 +1639,10 @@ export class Alfred {
     if (this.patternAnalyzerTimer) {
       clearInterval(this.patternAnalyzerTimer);
       this.patternAnalyzerTimer = undefined;
+    }
+    if (this.temporalAnalyzerTimer) {
+      clearInterval(this.temporalAnalyzerTimer);
+      this.temporalAnalyzerTimer = undefined;
     }
     if (this.insightExpiryTimer) {
       clearInterval(this.insightExpiryTimer);

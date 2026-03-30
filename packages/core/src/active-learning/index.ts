@@ -7,3 +7,5 @@ export { MemoryRetriever } from './memory-retriever.js';
 export type { RetrievedMemory } from './memory-retriever.js';
 export { MemoryConsolidator } from './memory-consolidator.js';
 export { PatternAnalyzer } from './pattern-analyzer.js';
+export { TemporalAnalyzer } from './temporal-analyzer.js';
+export type { Trend, Anomaly, TemporalReport } from './temporal-analyzer.js';

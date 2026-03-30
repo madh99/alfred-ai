@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.237] - 2026-03-31
+
+### Added
+- **Temporale Analyse (TemporalAnalyzer)** — Neues Modul erkennt wöchentliche Trends (↑/↓ >30% vs. 3-Wochen-Baseline) und Anomalien (Error-Spikes, Usage-Spikes, Performance-Degradation, Usage-Drops) über ein 4-Wochen-Fenster. Läuft automatisch Sonntag 4:00 AM.
+- **Weekly Skill Stats** — `ActivityRepository.weeklySkillStats()`: SQL-basierte wöchentliche Aggregation (Calls, Errors, Avg Duration pro Woche pro Skill). Unterstützt SQLite + PostgreSQL.
+- **Stündliche Verteilung** — `ActivityRepository.hourlyDistribution()`: Aktivität nach Tageszeit für Anomalie-Erkennung.
+- **Trends im Reasoning** — Neue Priority-2-Section "Trends & Anomalien (4 Wochen)" im ReasoningContextCollector. Reasoning sieht Veränderungen über die Zeit, nicht nur den aktuellen Zustand.
+- **Enrichment-Topic trend_analysis** — Scan kann bei Bedarf detaillierte Trend-Daten aus der temporalen Analyse anfordern.
+
 ## [0.19.0-multi-ha.236] - 2026-03-31
 
 ### Added

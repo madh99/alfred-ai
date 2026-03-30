@@ -458,6 +458,7 @@ Verfügbare Topics für Detaildaten:
 - smarthome_detail — Smart Home Geräte-Status
 - crypto_detail — Crypto/Bitpanda Portfolio
 - energy_forecast — Energiepreis-Prognose
+- trend_analysis — Detaillierte Trend- und Anomalie-Daten (4-Wochen-Vergleich)
 
 Wenn KEINE Topics nötig: lass den ${TOPICS_MARKER} Block weg.`;
   }

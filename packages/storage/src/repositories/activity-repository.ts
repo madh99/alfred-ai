@@ -2,6 +2,21 @@ import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { ActivityEntry, ActivityQuery, ActivityStats } from '@alfred/types';
 
+export interface WeeklySkillStats {
+  week: string;          // e.g. '2026-W13'
+  skillName: string;
+  calls: number;
+  errors: number;
+  avgDurationMs: number;
+}
+
+export interface HourlyStats {
+  hour: number;          // 0-23
+  totalCalls: number;
+  errorCalls: number;
+  avgDurationMs: number;
+}
+
 export class ActivityRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
@@ -118,6 +133,68 @@ export class ActivityRepository {
       calls: r.calls as number,
       successes: r.successes as number,
       errors: r.errors as number,
+    }));
+  }
+
+  // ── Temporal Analysis Queries ──────────────────────────────
+
+  /** Get skill usage bucketed by ISO week for trend analysis. */
+  async weeklySkillStats(since: string, userId?: string): Promise<WeeklySkillStats[]> {
+    const userFilter = userId ? ' AND user_id = ?' : '';
+    const params: unknown[] = [since];
+    if (userId) params.push(userId);
+
+    // Use adapter-specific week bucketing
+    const weekExpr = this.adapter.type === 'postgres'
+      ? "to_char(timestamp::timestamp, 'IYYY-\"W\"IW')"
+      : "strftime('%Y-W%W', timestamp)";
+
+    const rows = await this.adapter.query(`
+      SELECT ${weekExpr} as week, action as skill_name,
+             COUNT(*) as calls,
+             SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) as errors,
+             AVG(duration_ms) as avg_duration_ms
+      FROM activity_log
+      WHERE event_type = 'skill_exec' AND timestamp >= ?${userFilter}
+      GROUP BY week, action
+      ORDER BY week ASC, calls DESC
+    `, params) as Record<string, unknown>[];
+
+    return rows.map(r => ({
+      week: r.week as string,
+      skillName: r.skill_name as string,
+      calls: Number(r.calls),
+      errors: Number(r.errors),
+      avgDurationMs: Math.round(Number(r.avg_duration_ms ?? 0)),
+    }));
+  }
+
+  /** Get hourly activity distribution for anomaly detection. */
+  async hourlyDistribution(since: string, userId?: string): Promise<HourlyStats[]> {
+    const userFilter = userId ? ' AND user_id = ?' : '';
+    const params: unknown[] = [since];
+    if (userId) params.push(userId);
+
+    const hourExpr = this.adapter.type === 'postgres'
+      ? "EXTRACT(HOUR FROM timestamp::timestamp)::int"
+      : "CAST(strftime('%H', timestamp) AS INTEGER)";
+
+    const rows = await this.adapter.query(`
+      SELECT ${hourExpr} as hour,
+             COUNT(*) as total_calls,
+             SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) as error_calls,
+             AVG(duration_ms) as avg_duration_ms
+      FROM activity_log
+      WHERE timestamp >= ?${userFilter}
+      GROUP BY hour
+      ORDER BY hour ASC
+    `, params) as Record<string, unknown>[];
+
+    return rows.map(r => ({
+      hour: Number(r.hour),
+      totalCalls: Number(r.total_calls),
+      errorCalls: Number(r.error_calls),
+      avgDurationMs: Math.round(Number(r.avg_duration_ms ?? 0)),
     }));
   }
 

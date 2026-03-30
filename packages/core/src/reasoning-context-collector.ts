@@ -154,6 +154,12 @@ export class ReasoningContextCollector {
       }
     }
 
+    // ── Priority 2: Temporal trends (from TemporalAnalyzer memories) ──
+    defs.push({
+      key: 'trends', label: 'Trends & Anomalien (4 Wochen)', priority: 2, maxTokens: 250,
+      fetch: () => this.fetchTemporalInsights(),
+    });
+
     // ── Priority 3: Nice-to-have ──────────────────────────────
     defs.push(
       { key: 'activity', label: 'Aktivität 24h', priority: 3, maxTokens: 150, fetch: () => this.fetchActivity() },
@@ -356,6 +362,23 @@ export class ReasoningContextCollector {
     }
   }
 
+  private async fetchTemporalInsights(): Promise<string> {
+    try {
+      const trends = await this.memoryRepo.recall(this.defaultChatId, 'temporal_trends_weekly');
+      const anomalies = await this.memoryRepo.recall(this.defaultChatId, 'temporal_anomalies_weekly');
+      const parts: string[] = [];
+      if (trends?.value && trends.value !== 'Keine signifikanten Trends.') {
+        parts.push(`Trends:\n${trends.value}`);
+      }
+      if (anomalies?.value && anomalies.value !== 'Keine Anomalien.') {
+        parts.push(`Anomalien:\n${anomalies.value}`);
+      }
+      return parts.length > 0 ? parts.join('\n\n') : 'Keine temporalen Auffälligkeiten.';
+    } catch {
+      return '(Trend-Daten nicht verfügbar)';
+    }
+  }
+
   // ── Enrichment ───────────────────────────────────────────
 
   /** Topic-to-skill mapping for deep enrichment fetches after Scan identifies concerns. */
@@ -382,6 +405,16 @@ export class ReasoningContextCollector {
    */
   async enrichTopics(topics: Array<{ topic: string; params?: Record<string, unknown> }>): Promise<Map<string, string>> {
     const results = new Map<string, string>();
+
+    // Handle memory-based topics (no skill call needed)
+    for (const t of topics) {
+      if (t.topic === 'trend_analysis') {
+        const content = await this.fetchTemporalInsights();
+        if (content && !content.startsWith('(') && content !== 'Keine temporalen Auffälligkeiten.') {
+          results.set('trend_analysis', content);
+        }
+      }
+    }
 
     // Deduplicate: don't call same skill twice
     const toFetch = new Map<string, { topic: string; skill: string; input: Record<string, unknown> }>();
