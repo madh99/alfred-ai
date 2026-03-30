@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.224] - 2026-03-30
+
+### Fixed
+- **Embedding-Modell-Wechsel: Automatische Invalidierung + Re-Generierung** — Beim Wechsel des Embedding-Providers (z.B. OpenAI → Mistral) wurden alte Embeddings nicht invalidiert. Cosine-Similarity zwischen verschiedenen Modellen/Dimensionen (1536 vs 256) ergibt Nonsens → Semantic Memory Search fand nichts. Fix: Beim Start wird das aktuelle Modell mit dem DB-Modell verglichen. Bei Mismatch: alle alten Embeddings löschen + im Hintergrund mit dem neuen Modell neu generieren. Memories bleiben intakt.
+
 ## [0.19.0-multi-ha.222] - 2026-03-30
 
 ### Changed

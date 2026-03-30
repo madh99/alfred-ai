@@ -88,6 +88,19 @@ export class EmbeddingRepository {
     return result.changes > 0;
   }
 
+  async getDistinctModel(): Promise<string | null> {
+    const row = await this.adapter.queryOne(
+      'SELECT DISTINCT model FROM embeddings LIMIT 1',
+      [],
+    ) as Record<string, unknown> | undefined;
+    return row ? (row.model as string) : null;
+  }
+
+  async deleteAll(): Promise<number> {
+    const result = await this.adapter.execute('DELETE FROM embeddings', []);
+    return result.changes;
+  }
+
   private mapRow(row: Record<string, unknown>): EmbeddingEntry {
     const blob = row.embedding as Buffer;
     const float32 = new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4);

@@ -17,6 +17,25 @@ export class EmbeddingService {
     private readonly logger: Logger,
   ) {}
 
+  /**
+   * Check stored embeddings model against current provider and invalidate if mismatched.
+   * Returns the number of deleted embeddings, or 0 if no mismatch.
+   */
+  async validateModelConsistency(currentModel: string): Promise<number> {
+    const existingModel = await this.embeddingRepo.getDistinctModel();
+    if (!existingModel || existingModel === currentModel) {
+      return 0;
+    }
+
+    this.logger.warn(
+      { oldModel: existingModel, newModel: currentModel },
+      'Embedding model changed — invalidating old embeddings',
+    );
+    const deleted = await this.embeddingRepo.deleteAll();
+    this.logger.info({ deleted }, 'Deleted stale embeddings');
+    return deleted;
+  }
+
   async embedAndStore(
     userId: string,
     content: string,

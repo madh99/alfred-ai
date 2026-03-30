@@ -197,6 +197,45 @@ export class Alfred {
       this.logger.child({ component: 'embeddings' }),
     );
 
+    // Validate embedding model consistency — invalidate + re-embed if model changed
+    const embeddingModelName = this.config.llm.embeddings?.model
+      ?? this.config.llm.default?.model
+      ?? 'unknown';
+    if (llmProvider.supportsEmbeddings()) {
+      try {
+        const deleted = await embeddingService.validateModelConsistency(embeddingModelName);
+        if (deleted > 0) {
+          // Re-embed all memories in the background (non-blocking)
+          setTimeout(async () => {
+            try {
+              const users = await userRepo.listAll();
+              let total = 0;
+              for (const user of users) {
+                const memories = await memoryRepo.listAll(user.id);
+                for (const mem of memories) {
+                  await embeddingService.embedAndStore(
+                    user.id,
+                    `${mem.key}: ${mem.value}`,
+                    'memory',
+                    mem.id,
+                  );
+                  total++;
+                }
+              }
+              this.logger.info(
+                { count: total, model: embeddingModelName },
+                'Re-embedded all memories with new model',
+              );
+            } catch (err) {
+              this.logger.error({ err }, 'Background re-embedding failed');
+            }
+          }, 5000);
+        }
+      } catch (err) {
+        this.logger.error({ err }, 'Embedding model consistency check failed');
+      }
+    }
+
     // 3b. Active learning & memory retriever
     const activeLearningEnabled = this.config.activeLearning?.enabled !== false;
     let activeLearning: ActiveLearningService | undefined;
