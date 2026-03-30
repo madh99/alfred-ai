@@ -322,8 +322,16 @@ export class BMWSkill extends Skill {
   }
 
   private async pollToken(deviceCode: string): Promise<SkillResult> {
-    // Load PKCE verifier from partial tokens
-    const partial = await this.loadTokens();
+    // Load PKCE verifier from PARTIAL tokens (not the main access tokens)
+    let partial: BMWTokens | null = null;
+    const db = this.resolveDbAccess();
+    if (db) {
+      try {
+        const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'partial');
+        if (svc) partial = svc as unknown as BMWTokens;
+      } catch { /* fallback to disk */ }
+    }
+    if (!partial) partial = await this.loadTokensFromDisk();
     const codeVerifier = partial?.codeVerifier;
     if (!codeVerifier) {
       throw new Error('Kein code_verifier gefunden. Bitte zuerst "authorize" ohne device_code aufrufen.');
