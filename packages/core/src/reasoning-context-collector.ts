@@ -356,6 +356,82 @@ export class ReasoningContextCollector {
     }
   }
 
+  // ── Enrichment ───────────────────────────────────────────
+
+  /** Topic-to-skill mapping for deep enrichment fetches after Scan identifies concerns. */
+  private static readonly ENRICHMENT_MAP: Record<string, { skill: string; input: Record<string, unknown>; maxTokens: number }> = {
+    vehicle_battery:  { skill: 'bmw',          input: { action: 'status' },                  maxTokens: 300 },
+    routing:          { skill: 'routing',       input: { action: 'route' },                   maxTokens: 300 },
+    weather_forecast: { skill: 'weather',       input: { action: 'forecast' },                maxTokens: 250 },
+    email_detail:     { skill: 'email',         input: { action: 'inbox', limit: 3 },         maxTokens: 300 },
+    calendar_detail:  { skill: 'calendar',      input: { action: 'list_events', days: 3 },    maxTokens: 300 },
+    smarthome_detail: { skill: 'homeassistant', input: { action: 'states' },                  maxTokens: 300 },
+    crypto_detail:    { skill: 'bitpanda',      input: { action: 'portfolio' },               maxTokens: 250 },
+    energy_forecast:  { skill: 'energy_price',  input: { action: 'today' },                   maxTokens: 200 },
+  };
+
+  /** Timeout for enrichment skill fetches (longer than base context). */
+  private static readonly ENRICHMENT_TIMEOUT_MS = 8_000;
+
+  /** Separate token budget for enrichment data. */
+  private static readonly MAX_ENRICHMENT_TOKENS = 1500;
+
+  /**
+   * Fetch deeper data for topics identified by the Scan pass.
+   * Runs in parallel with per-skill dedup and token budget enforcement.
+   */
+  async enrichTopics(topics: Array<{ topic: string; params?: Record<string, unknown> }>): Promise<Map<string, string>> {
+    const results = new Map<string, string>();
+
+    // Deduplicate: don't call same skill twice
+    const toFetch = new Map<string, { topic: string; skill: string; input: Record<string, unknown> }>();
+    for (const t of topics) {
+      const def = ReasoningContextCollector.ENRICHMENT_MAP[t.topic];
+      if (!def || !this.skillRegistry.has(def.skill)) continue;
+      if (toFetch.has(def.skill)) continue;
+      const mergedInput = { ...def.input, ...(t.params ?? {}) };
+      toFetch.set(t.topic, { topic: t.topic, skill: def.skill, input: mergedInput });
+    }
+
+    if (toFetch.size === 0) return results;
+
+    // Parallel fetch with timeout
+    const fetches = [...toFetch.values()].map(async (entry) => {
+      try {
+        const content = await Promise.race([
+          this.fetchSkillData(entry.skill, entry.input),
+          new Promise<string>((_, rej) =>
+            setTimeout(() => rej(new Error('enrichment timeout')), ReasoningContextCollector.ENRICHMENT_TIMEOUT_MS),
+          ),
+        ]);
+        return { topic: entry.topic, content };
+      } catch {
+        return { topic: entry.topic, content: '' };
+      }
+    });
+
+    const settled = await Promise.allSettled(fetches);
+    let usedTokens = 0;
+
+    for (const r of settled) {
+      if (r.status !== 'fulfilled' || !r.value.content) continue;
+      const est = Math.ceil(r.value.content.length / 4);
+      if (usedTokens + est > ReasoningContextCollector.MAX_ENRICHMENT_TOKENS) {
+        const remaining = (ReasoningContextCollector.MAX_ENRICHMENT_TOKENS - usedTokens) * 4;
+        if (remaining > 100) {
+          results.set(r.value.topic, r.value.content.slice(0, remaining) + '\n...(gekürzt)');
+        }
+        break;
+      }
+      results.set(r.value.topic, r.value.content);
+      usedTokens += est;
+    }
+
+    return results;
+  }
+
+  // ── Skill Data Fetcher ──────────────────────────────────────
+
   private async fetchSkillData(skillName: string, input: Record<string, unknown>): Promise<string> {
     const skill = this.skillRegistry.get(skillName);
     if (!skill) return `(${skillName} nicht verfügbar)`;

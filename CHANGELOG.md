@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.236] - 2026-03-31
+
+### Added
+- **Multi-Step Reasoning mit Enrichment** — Scan-Pass identifiziert Themen (z.B. "BMW Akku niedrig + Termin in Linz"), System fetcht gezielt tiefere Daten (BMW Detail-Status, Routing, Wetter-Prognose, etc.), Detail-Pass bekommt angereicherten Kontext für quantitative Empfehlungen.
+- **Topic-Extraktion** — LLM gibt nach Scan strukturierte Topics aus (---TOPICS--- JSON), die automatisch zu Skill-Aufrufen gemappt werden. 8 Enrichment-Topics: vehicle_battery, routing, weather_forecast, email_detail, calendar_detail, smarthome_detail, crypto_detail, energy_forecast.
+- **Enrichment Token-Budget** — Separates 1500-Token-Budget für Enrichment-Daten mit 8s Timeout pro Skill, unabhängig vom Basis-Kontext (3500 Tokens). Graceful Degradation bei fehlenden Skills oder Timeouts.
+- **Event-Reasoning mit Enrichment** — Auch event-getriggerte Reasoning-Passes (Watch, Calendar, Todo, Post-Skill) nutzen jetzt Two-Pass + Enrichment für tiefere Analyse.
+
 ## [0.19.0-multi-ha.235] - 2026-03-31
 
 ### Added

@@ -33,6 +33,9 @@ const ACTION_MARKER = '---ACTIONS---';
 /** Cooldown between event-triggered reasoning passes (ms). */
 const EVENT_COOLDOWN_MS = 5 * 60 * 1000;
 
+/** Marker separating scan findings from structured topic requests in scan response. */
+const TOPICS_MARKER = '---TOPICS---';
+
 /**
  * Check if the LLM response indicates no insights.
  * ONLY checks for the explicit KEINE_INSIGHTS marker — no natural language parsing.
@@ -57,6 +60,12 @@ interface ProposedAction {
 interface ParsedReasoningResponse {
   insights: string[];
   actions: ProposedAction[];
+}
+
+interface ScanTopic {
+  topic: string;
+  reason?: string;
+  params?: Record<string, unknown>;
 }
 
 export class ReasoningEngine {
@@ -155,7 +164,8 @@ export class ReasoningEngine {
       // Use collector for full context (holistic reasoning)
       const context = await this.collector.collect();
 
-      const prompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
+      // Scan pass: quick analysis of event in context
+      const scanPrompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
 
 EVENT: ${eventType}
 DETAILS: ${eventDescription}
@@ -166,17 +176,37 @@ ${this.formatSections(context)}
 
 Aufgabe: Analysiere ob dieses Event im Kontext ALLER User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
 - Suche nach Verbindungen zwischen VERSCHIEDENEN Bereichen: Termin + Ort + Shopping? Zeitkonflikt? Preisalert + Fahrt? E-Mail + Meeting?
-- Max 1-2 Sätze, konkret und actionable
-- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS" — nichts anderes, keine Erklärung
-${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, hänge sie als JSON an (${ACTION_MARKER} Format).` : ''}`;
+- Max 3 Stichpunkte
+- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
-      const response = await this.llm.complete({
-        messages: [{ role: 'user', content: prompt }],
+${this.buildTopicInstructions()}`;
+
+      const scanResponse = await this.llm.complete({
+        messages: [{ role: 'user', content: scanPrompt }],
         maxTokens: 512,
         tier: this.tier,
       });
 
-      const text = response.content.trim();
+      const scanText = scanResponse.content.trim();
+      if (isNoInsights(scanText)) return;
+
+      // Extract topics and enrich
+      const { findings, topics } = this.extractTopics(scanText);
+
+      let enrichedContext = new Map<string, string>();
+      if (topics.length > 0) {
+        enrichedContext = await this.collector.enrichTopics(topics);
+      }
+
+      // Detail pass with enriched context
+      const detailPrompt = this.buildEventDetailPrompt(context, eventType, eventDescription, findings, enrichedContext);
+      const detailResponse = await this.llm.complete({
+        messages: [{ role: 'user', content: detailPrompt }],
+        maxTokens: MAX_OUTPUT_TOKENS,
+        tier: this.tier,
+      });
+
+      const text = detailResponse.content.trim();
       if (isNoInsights(text)) return;
 
       const parsed = this.parseReasoningResponse(text);
@@ -296,8 +326,18 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, hänge si
         return;
       }
 
-      // PHASE 3: Detail-Pass — elaborate on findings from scan
-      const detailPrompt = this.buildDetailPrompt(context, scanText);
+      // PHASE 2b: Extract topics for enrichment
+      const { findings, topics } = this.extractTopics(scanText);
+
+      let enrichedContext = new Map<string, string>();
+      if (topics.length > 0) {
+        this.logger.info({ topics: topics.map(t => t.topic) }, 'Reasoning: enriching topics');
+        enrichedContext = await this.collector.enrichTopics(topics);
+        this.logger.debug({ enriched: [...enrichedContext.keys()] }, 'Reasoning: enrichment complete');
+      }
+
+      // PHASE 3: Detail-Pass — elaborate on findings with enriched context
+      const detailPrompt = this.buildDetailPrompt(context, findings, enrichedContext);
       const detailResponse = await this.llm.complete({
         messages: [{ role: 'user', content: detailPrompt }],
         maxTokens: MAX_OUTPUT_TOKENS,
@@ -365,10 +405,61 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, hänge si
     }
   }
 
+  // ── Topic Extraction ─────────────────────────────────────────
+
+  /**
+   * Extract structured topics from scan response for enrichment.
+   * Graceful fallback: if no ---TOPICS--- marker, returns empty topics array.
+   */
+  private extractTopics(scanText: string): { findings: string; topics: ScanTopic[] } {
+    const idx = scanText.indexOf(TOPICS_MARKER);
+    if (idx === -1) return { findings: scanText, topics: [] };
+
+    const findings = scanText.slice(0, idx).trim();
+    const jsonText = scanText.slice(idx + TOPICS_MARKER.length).trim();
+
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!Array.isArray(parsed)) return { findings, topics: [] };
+      const topics = parsed.filter((t: unknown) =>
+        t && typeof t === 'object' && typeof (t as Record<string, unknown>).topic === 'string',
+      ) as ScanTopic[];
+      return { findings, topics: topics.slice(0, 5) };
+    } catch {
+      this.logger.debug('Reasoning: failed to parse topics JSON, continuing without enrichment');
+      return { findings, topics: [] };
+    }
+  }
+
   // ── Prompt Building ─────────────────────────────────────────
 
   private formatSections(ctx: CollectedContext): string {
     return ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
+  }
+
+  private formatEnrichedContext(enriched: Map<string, string>): string {
+    if (enriched.size === 0) return '';
+    const parts = [...enriched.entries()].map(([topic, data]) => `--- ${topic} ---\n${data}`);
+    return `\n=== VERTIEFTE DATEN (gezielt nachgeladen) ===\n${parts.join('\n\n')}\n\nHINWEIS: Nutze diese Daten für KONKRETE, quantitative Empfehlungen.`;
+  }
+
+  private buildTopicInstructions(): string {
+    return `Falls du Auffälligkeiten findest, hänge nach deiner Analyse ein strukturiertes JSON an:
+${TOPICS_MARKER}
+[{"topic": "vehicle_battery", "reason": "BMW Akku niedrig, Termin morgen"},
+ {"topic": "routing", "params": {"from": "home", "to": "Linz"}, "reason": "Distanz prüfen"}]
+
+Verfügbare Topics für Detaildaten:
+- vehicle_battery — BMW Detailstatus (Akku, Reichweite, Ladezeit)
+- routing — Route berechnen (params: from/to aus dem Kontext)
+- weather_forecast — Mehrtages-Wetter für bestimmten Ort (params: location)
+- email_detail — E-Mail Inbox Details
+- calendar_detail — Kalender-Event Details (Teilnehmer, Beschreibung)
+- smarthome_detail — Smart Home Geräte-Status
+- crypto_detail — Crypto/Bitpanda Portfolio
+- energy_forecast — Energiepreis-Prognose
+
+Wenn KEINE Topics nötig: lass den ${TOPICS_MARKER} Block weg.`;
   }
 
   private buildScanPrompt(ctx: CollectedContext): string {
@@ -388,10 +479,16 @@ ${changedInfo}
 ${this.formatSections(ctx)}
 
 Antworte mit max 3 kurzen Stichpunkten was du an Verbindungen, Konflikten oder Gelegenheiten gefunden hast.
-Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"`;
+Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+
+${this.buildTopicInstructions()}`;
   }
 
-  private buildDetailPrompt(ctx: CollectedContext, scanFindings: string): string {
+  private buildDetailPrompt(ctx: CollectedContext, scanFindings: string, enrichedContext?: Map<string, string>): string {
+    const enrichedSection = enrichedContext && enrichedContext.size > 0
+      ? this.formatEnrichedContext(enrichedContext)
+      : '';
+
     return `Du bist Alfreds Denk-Modul. In der Vorab-Analyse wurden folgende Auffälligkeiten erkannt:
 
 ${scanFindings}
@@ -403,16 +500,16 @@ REGELN:
 - KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
+- Nutze die VERTIEFTEN DATEN für konkrete Zahlen (Distanz, Ladezeit, Preis, Temperatur)
 
 BEISPIELE guter Insights:
-- "Du hast um 14:00 einen Termin in Linz, aber die RTX 5090 Watch zeigt ein Angebot in Wien — Abholung wäre auf dem Rückweg möglich."
-- "3 deiner 5 Todos sind morgen fällig, aber dein Kalender ist voll — eventuell heute Abend erledigen."
-- "Strompreis ist bis 15:00 unter 5 ct/kWh — BMW laden wäre jetzt günstig (Akku war beim letzten Check bei 45%)."
-- "Morgen früh -3°C, du hast einen 8:00 Termin — Auto vorheizen einplanen."
-- "Du hast 2 überfällige Todos und 3 neue E-Mails zum selben Thema — eventuell zusammenhängend?"
+- "Du hast um 14:00 einen Termin in Linz (78km), BMW hat 15% Akku → brauchst ~45%. Lade heute Nacht — Strom ab 22 Uhr unter 5ct."
+- "3 deiner 5 Todos sind morgen fällig, aber dein Kalender ist voll (8h Meetings) — eventuell heute Abend erledigen."
+- "Morgen früh -3°C in Linz, du hast einen 8:00 Termin dort — Auto vorheizen einplanen."
 
 AKTUELLE DATEN:
 ${this.formatSections(ctx)}
+${enrichedSection}
 ${this.confirmationQueue ? `
 === AKTIONEN ===
 Wenn du eine sinnvolle, sofort ausführbare Aktion erkennst, kannst du sie vorschlagen.
@@ -422,6 +519,29 @@ Format: nach deinen Text-Insights, trenne mit "${ACTION_MARKER}", dann ein JSON-
 ${ACTION_MARKER}
 [{"type":"execute_skill","description":"Wallbox ein (Strom <5ct, BMW 45%)","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}]
 Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
+  }
+
+  private buildEventDetailPrompt(
+    ctx: CollectedContext, eventType: string, eventDescription: string,
+    scanFindings: string, enrichedContext: Map<string, string>,
+  ): string {
+    const enrichedSection = enrichedContext.size > 0
+      ? this.formatEnrichedContext(enrichedContext)
+      : '';
+
+    return `Du bist Alfreds proaktives Denk-Modul. Ein ${eventType}-Event wurde analysiert:
+${eventDescription}
+
+Scan-Ergebnis:
+${scanFindings}
+
+Formuliere daraus max 2 konkrete, actionable Insights.
+- Nutze die VERTIEFTEN DATEN für spezifische Zahlen und Empfehlungen
+- Max 1-2 Sätze pro Insight, auf Deutsch
+
+${this.formatSections(ctx)}
+${enrichedSection}
+${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, trenne mit "${ACTION_MARKER}" und hänge JSON an.` : ''}`;
   }
 
   // ── Dedup & Parsing ─────────────────────────────────────────
