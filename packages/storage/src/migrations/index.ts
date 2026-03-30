@@ -918,10 +918,16 @@ export const MIGRATIONS: Migration[] = [
         SELECT id, user_id, 'sonos', key, value, updated_at FROM memories WHERE category = 'sonos'
       `);
 
-      // Migrate insight_tracker_stats
+      // Migrate voice entries
       db.exec(`
         INSERT OR IGNORE INTO skill_state (id, user_id, skill, key, value, updated_at)
-        SELECT id, user_id, 'insight_tracker', key, value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
+        SELECT id, user_id, 'voice', key, value, updated_at FROM memories WHERE category = 'voice'
+      `);
+
+      // Migrate insight_tracker_stats (key transformed: insight_tracker_stats → stats)
+      db.exec(`
+        INSERT OR IGNORE INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'insight_tracker', 'stats', value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
       `);
 
       // Cleanup migrated entries from memories

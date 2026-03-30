@@ -206,10 +206,17 @@ export const PG_MIGRATIONS: PgMigration[] = [
         ON CONFLICT (user_id, skill, key) DO NOTHING
       `, []);
 
-      // Migrate insight_tracker_stats
+      // Migrate voice entries
       await db.execute(`
         INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
-        SELECT id, user_id, 'insight_tracker', key, value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
+        SELECT id, user_id, 'voice', key, value, updated_at FROM memories WHERE category = 'voice'
+        ON CONFLICT (user_id, skill, key) DO NOTHING
+      `, []);
+
+      // Migrate insight_tracker_stats (key transformed: insight_tracker_stats → stats)
+      await db.execute(`
+        INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'insight_tracker', 'stats', value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
         ON CONFLICT (user_id, skill, key) DO NOTHING
       `, []);
 
