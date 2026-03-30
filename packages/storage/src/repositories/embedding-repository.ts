@@ -89,8 +89,10 @@ export class EmbeddingRepository {
   }
 
   async getDistinctModel(): Promise<string | null> {
+    // Return any model that differs from the majority, or the only model if all are the same.
+    // If multiple models exist, return the OLDEST one (most likely the stale one).
     const row = await this.adapter.queryOne(
-      'SELECT DISTINCT model FROM embeddings LIMIT 1',
+      'SELECT model FROM embeddings ORDER BY created_at ASC LIMIT 1',
       [],
     ) as Record<string, unknown> | undefined;
     return row ? (row.model as string) : null;
