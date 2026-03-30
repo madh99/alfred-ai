@@ -29,20 +29,29 @@ async function runCommand(
   command: string,
   cwd: string,
   timeoutMs: number,
+  runAsUser?: string,
 ): Promise<CommandResult> {
   const startTime = Date.now();
-  const parts = command.split(/\s+/);
-  const cmd = parts[0];
-  const args = parts.slice(1);
+  // If runAsUser is specified, wrap command with sudo -u <user>
+  let finalCmd: string;
+  let finalArgs: string[];
+  if (runAsUser) {
+    finalCmd = 'sudo';
+    finalArgs = ['-u', runAsUser, 'bash', '-c', command];
+  } else {
+    const parts = command.split(/\s+/);
+    finalCmd = parts[0];
+    finalArgs = parts.slice(1);
+  }
 
   return new Promise<CommandResult>((resolve) => {
     let stdout = '';
     let stderr = '';
     let killed = false;
 
-    const child = spawn(cmd, args, {
+    const child = spawn(finalCmd, finalArgs, {
       cwd,
-      shell: true,
+      shell: !runAsUser, // Don't use shell when wrapping with sudo (already using bash -c)
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, CI: 'true', FORCE_COLOR: '0' },
     });
@@ -91,13 +100,14 @@ export async function validateBuild(
   buildCommands: string[],
   testCommands: string[],
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  runAsUser?: string,
 ): Promise<BuildValidationResult> {
   const startTime = Date.now();
   const commands: CommandResult[] = [];
   const allCommands = [...buildCommands, ...testCommands];
 
   for (const cmd of allCommands) {
-    const result = await runCommand(cmd, cwd, timeoutMs);
+    const result = await runCommand(cmd, cwd, timeoutMs, runAsUser);
     commands.push(result);
     // Stop on first failure — no point running tests if build fails
     if (result.exitCode !== 0) break;

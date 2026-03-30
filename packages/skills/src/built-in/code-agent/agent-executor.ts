@@ -111,9 +111,13 @@ export async function executeAgent(
     fs.mkdirSync(cwd, { recursive: true });
   }
   // If command runs as a different user (sudo -u <user>), ensure cwd is owned by that user
+  // Safety: only chown if cwd is not a system directory (/root, /home, /, /etc etc.)
   if (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1]) {
     const runAsUser = agentDef.argsTemplate[1];
-    try { execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, cwd], { timeout: 5000 }); } catch { /* best effort */ }
+    const cwdDepth = cwd.split('/').filter(Boolean).length;
+    if (cwdDepth >= 2) { // Only chown paths like /root/project, /home/user/project — never /root or /home
+      try { execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, cwd], { timeout: 5000 }); } catch { /* best effort */ }
+    }
   }
   const rawTimeout = options.timeoutMs ?? agentDef.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);

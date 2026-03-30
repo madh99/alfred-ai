@@ -51,6 +51,11 @@ export class ProjectAgentRunner {
       return;
     }
 
+    // Detect if agent runs as a different user (sudo -u <user>) — build commands must run as same user
+    const runAsUser = (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1])
+      ? agentDef.argsTemplate[1]
+      : undefined;
+
     // Register abort controller for stop signals
     const abortController = new AbortController();
     registerAbortController(sessionId, abortController);
@@ -147,7 +152,7 @@ export class ProjectAgentRunner {
           }
 
           const buildResult = await validateBuild(
-            config.cwd, config.buildCommands, config.testCommands, config.buildTimeoutMs,
+            config.cwd, config.buildCommands, config.testCommands, config.buildTimeoutMs, runAsUser,
           );
           state.lastBuildOutput = buildResult.combinedOutput;
 
