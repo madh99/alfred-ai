@@ -1,13 +1,23 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { Logger } from 'pino';
-import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig } from '@alfred/types';
+import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig } from '@alfred/types';
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
 import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController } from '@alfred/skills';
 
 const execFileAsync = promisify(execFile);
+
+/** Run a git command, optionally as a different user via sudo -u. */
+async function gitExec(args: string[], cwd: string, runAsUser?: string): Promise<string> {
+  const cmd = runAsUser ? 'sudo' : 'git';
+  const cmdArgs = runAsUser ? ['-u', runAsUser, 'git', ...args] : args;
+  const { stdout } = await execFileAsync(cmd, cmdArgs, { cwd, maxBuffer: 10 * 1024 * 1024 });
+  return stdout.trim();
+}
 
 export interface ProjectAgentConfig {
   goal: string;
@@ -30,6 +40,7 @@ export class ProjectAgentRunner {
     private readonly sessionRepo: ProjectAgentSessionRepository,
     private readonly adapters: Map<Platform, MessagingAdapter>,
     private readonly logger: Logger,
+    private readonly forgeConfig?: ForgeConfig,
   ) {}
 
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
@@ -198,10 +209,9 @@ export class ProjectAgentRunner {
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
           try {
-            await execFileAsync('git', ['add', '-A'], { cwd: config.cwd });
+            await gitExec(['add', '-A'], config.cwd, runAsUser);
             const commitMsg = `Phase ${phaseIdx + 1}: ${phase}`;
-            // Use execFile with array args to avoid shell injection
-            const { stdout } = await execFileAsync('git', ['commit', '-m', commitMsg, '--allow-empty'], { cwd: config.cwd });
+            const stdout = await gitExec(['commit', '-m', commitMsg, '--allow-empty'], config.cwd, runAsUser);
             const shaMatch = stdout.match(/\[[\w-]+ ([a-f0-9]+)\]/);
             state.lastCommitSha = shaMatch?.[1];
             if (state.lastCommitSha) {
@@ -222,6 +232,9 @@ export class ProjectAgentRunner {
       state.projectPhase = 'done';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
+      // ── GIT PUSH ──
+      await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+
       await this.sendProgress(platform, chatId,
         `🎉 Project Agent fertig!\n` +
         `${state.projectIteration} Phasen, ${state.totalFilesChanged} Dateien geändert.\n` +
@@ -235,6 +248,119 @@ export class ProjectAgentRunner {
       await this.sendProgress(platform, chatId, `💥 Project Agent Fehler: ${msg}`);
     } finally {
       removeAbortController(sessionId);
+    }
+  }
+
+  /**
+   * Push the current branch to the git remote after all phases are done.
+   * - If no .git/ directory → skip (not a git project)
+   * - If .git/ but no remote → log warning, skip
+   * - If remote exists → push, embedding forge token temporarily if needed
+   */
+  private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string): Promise<void> {
+    // Check if this is a git repository at all
+    const hasGitDir = existsSync(path.join(cwd, '.git'));
+    if (!hasGitDir) {
+      this.logger.debug({ cwd }, 'Project agent: no .git/ directory, skipping push');
+      return;
+    }
+
+    // Get remote URL
+    let remoteUrl: string | null;
+    try {
+      remoteUrl = (await gitExec(['remote', 'get-url', 'origin'], cwd, runAsUser)) || null;
+    } catch {
+      remoteUrl = null;
+    }
+
+    if (!remoteUrl) {
+      this.logger.warn({ cwd }, 'Project agent: .git/ exists but no remote "origin" — skipping push');
+      await this.sendProgress(platform, chatId, '⚠️ Kein Git-Remote konfiguriert — Push übersprungen.');
+      return;
+    }
+
+    // Detect current branch
+    let branch: string;
+    try {
+      branch = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], cwd, runAsUser);
+    } catch {
+      this.logger.warn({ cwd }, 'Project agent: could not determine current branch');
+      return;
+    }
+
+    // Check if remote URL already contains credentials (token embedded)
+    const urlAlreadyHasAuth = /^https?:\/\/[^@]+@/.test(remoteUrl);
+
+    if (urlAlreadyHasAuth) {
+      // Remote URL already has credentials → push directly
+      try {
+        await this.sendProgress(platform, chatId, `📤 Pushe nach Remote...`);
+        await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
+        await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn({ err, cwd }, 'Project agent: git push failed');
+        await this.sendProgress(platform, chatId, `⚠️ Push fehlgeschlagen: ${msg}`);
+      }
+      return;
+    }
+
+    // No auth in URL — try to inject forge token temporarily
+    if (this.forgeConfig) {
+      const token = this.forgeConfig.github?.token ?? this.forgeConfig.gitlab?.token;
+      if (token) {
+        let authedUrl: string | null = null;
+        try {
+          // Parse remote URL to inject token: http(s)://host/path → http(s)://oauth2:token@host/path
+          const urlObj = new URL(remoteUrl);
+          urlObj.username = 'oauth2';
+          urlObj.password = token;
+          authedUrl = urlObj.toString();
+
+          // Temporarily set authenticated URL
+          await gitExec(['remote', 'set-url', 'origin', authedUrl], cwd, runAsUser);
+
+          const providerLabel = this.forgeConfig.provider === 'gitlab' ? 'GitLab' : 'GitHub';
+          await this.sendProgress(platform, chatId, `📤 Pushe nach ${providerLabel}...`);
+          await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
+          await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.logger.warn({ err, cwd }, 'Project agent: git push with forge token failed');
+          await this.sendProgress(platform, chatId, `⚠️ Push fehlgeschlagen: ${msg}`);
+        } finally {
+          // ALWAYS restore original URL (without token)
+          try {
+            await gitExec(['remote', 'set-url', 'origin', remoteUrl], cwd, runAsUser);
+          } catch (restoreErr) {
+            this.logger.error({ err: restoreErr, cwd }, 'Project agent: failed to restore remote URL after push');
+          }
+        }
+        return;
+      }
+    }
+
+    // No forge config, no auth in URL → try push anyway (might work with credential helper)
+    try {
+      await this.sendProgress(platform, chatId, `📤 Pushe nach Remote...`);
+      await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
+      await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn({ err, cwd }, 'Project agent: git push failed (no credentials)');
+      await this.sendProgress(platform, chatId, `⚠️ Push fehlgeschlagen: ${msg}`);
+    }
+  }
+
+  /** Strip credentials from a URL for safe display. */
+  private sanitizeUrl(url: string): string {
+    try {
+      const u = new URL(url);
+      u.username = '';
+      u.password = '';
+      return u.toString();
+    } catch {
+      return url;
     }
   }
 

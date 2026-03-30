@@ -458,6 +458,7 @@ export class Alfred {
         projectSessionRepo,
         this.adapters,
         this.logger.child({ component: 'project-agent' }),
+        this.config.codeAgents.forge,
       );
       projectAgentSkill.setRunner(projectRunner);
 

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.229] - 2026-03-30
+
+### Added
+- **ProjectAgent: Git Push nach Fertigstellung** — Nach der letzten Phase wird automatisch gepusht. Token aus Forge-Config wird temporär in die Remote-URL injiziert und danach entfernt. Wenn ein Remote bereits existiert wird es wiederverwendet (kein neues Repo). Git-Befehle laufen als der richtige User (runAsUser). Push-Fehler brechen das Projekt nicht ab.
+
+### Fixed
+- **ProjectAgent + CodeAgent: chown-Safety** — `chown -R` nur bei Pfad-Tiefe ≥ 2 (verhindert versehentliches Ownership-Ändern von `/root/` oder `/home/`).
+- **Build-Validator: User-Awareness** — Build-Commands laufen jetzt als gleicher User wie der Agent (sudo -u madh) statt als root.
+
 ## [0.19.0-multi-ha.226] - 2026-03-30
 
 ### Fixed
