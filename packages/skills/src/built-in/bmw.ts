@@ -156,6 +156,10 @@ export class BMWSkill extends Skill {
   private cacheByUser: Map<string, Map<string, CacheEntry>> = new Map();
   private activeUserId = 'default';
 
+  /** Injected from alfred.ts — available on ALL nodes, not just the one running execute(). */
+  private injectedServiceResolver?: SkillContext['userServiceResolver'];
+  private injectedAlfredUserId?: string;
+
   private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.activeUserId) ?? null; }
   private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.activeUserId, t); }
   private get cache(): Map<string, CacheEntry> {
@@ -181,6 +185,12 @@ export class BMWSkill extends Skill {
   constructor(config: BMWCarDataConfig) {
     super();
     this.config = config;
+  }
+
+  /** Inject service resolver from alfred.ts so token persistence works on ALL HA nodes. */
+  setServiceResolver(resolver: SkillContext['userServiceResolver'], alfredUserId?: string): void {
+    this.injectedServiceResolver = resolver;
+    this.injectedAlfredUserId = alfredUserId;
   }
 
   private activeContext?: SkillContext;
@@ -247,7 +257,16 @@ export class BMWSkill extends Skill {
     }
 
     // Auto-resume: if a pending device code exists, poll it instead of generating a new one
-    const pending = await this.loadTokensFromDisk();
+    // Try DB first (HA-safe), then disk fallback
+    let pending: BMWTokens | null = null;
+    const db = this.resolveDbAccess();
+    if (db) {
+      try {
+        const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'partial');
+        if (svc) pending = svc as unknown as BMWTokens;
+      } catch { /* fallback to disk */ }
+    }
+    if (!pending) pending = await this.loadTokensFromDisk();
     if (pending?.deviceCode && pending?.codeVerifier) {
       try {
         return await this.pollToken(pending.deviceCode);
@@ -498,14 +517,21 @@ export class BMWSkill extends Skill {
 
   // ── Token management ────────────────────────────────────
 
+  /** Resolve the best available service resolver + userId for DB token persistence. */
+  private resolveDbAccess(): { resolver: SkillContext['userServiceResolver']; userId: string } | null {
+    const resolver = this.injectedServiceResolver ?? this.activeContext?.userServiceResolver;
+    const userId = this.activeContext?.alfredUserId ?? this.injectedAlfredUserId ?? '__global__';
+    if (!resolver) return null;
+    return { resolver, userId };
+  }
+
   private async loadTokens(): Promise<BMWTokens | null> {
     if (this.tokens) return this.tokens;
     // Try DB first (HA-safe), then file fallback
-    if (this.activeContext?.userServiceResolver && this.activeContext.alfredUserId) {
+    const db = this.resolveDbAccess();
+    if (db) {
       try {
-        const svc = await this.activeContext.userServiceResolver.getServiceConfig(
-          this.activeContext.alfredUserId, 'bmw_tokens', 'tokens',
-        );
+        const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'tokens');
         if (svc) { this.tokens = svc as unknown as BMWTokens; return this.tokens; }
       } catch { /* fallback to disk */ }
     }
@@ -526,22 +552,24 @@ export class BMWSkill extends Skill {
 
   private async saveTokens(tokens: BMWTokens): Promise<void> {
     // Save to DB if available (HA-safe)
-    if (this.activeContext?.userServiceResolver && this.activeContext.alfredUserId) {
+    const db = this.resolveDbAccess();
+    if (db) {
       try {
-        await this.activeContext.userServiceResolver.saveServiceConfig(
-          this.activeContext.alfredUserId, 'bmw_tokens', 'tokens', tokens as unknown as Record<string, unknown>,
+        await db.resolver!.saveServiceConfig(
+          db.userId, 'bmw_tokens', 'tokens', tokens as unknown as Record<string, unknown>,
         );
-        return;
-      } catch { /* fallback to disk */ }
+      } catch { /* best-effort DB write */ }
     }
-    // Fallback: file
-    await mkdir(join(homedir(), '.alfred'), { recursive: true });
-    await writeFile(getTokenPath(this.activeUserId), JSON.stringify(tokens, null, 2), 'utf-8');
-    try { await chmod(getTokenPath(this.activeUserId), 0o600); } catch { /* Windows has no chmod */ }
+    // Always write to disk as backup (backward compat + fallback)
+    try {
+      await mkdir(join(homedir(), '.alfred'), { recursive: true });
+      await writeFile(getTokenPath(this.activeUserId), JSON.stringify(tokens, null, 2), 'utf-8');
+      try { await chmod(getTokenPath(this.activeUserId), 0o600); } catch { /* Windows has no chmod */ }
+    } catch { /* best-effort disk write */ }
   }
 
   private async savePartialTokens(partial: Partial<BMWTokens>): Promise<void> {
-    await mkdir(join(homedir(), '.alfred'), { recursive: true });
+    // Merge with existing data
     let existing: Partial<BMWTokens> = {};
     try {
       const raw = await readFile(getTokenPath(this.activeUserId), 'utf-8');
@@ -549,7 +577,23 @@ export class BMWSkill extends Skill {
     } catch {
       // no existing file
     }
-    await writeFile(getTokenPath(this.activeUserId), JSON.stringify({ ...existing, ...partial }, null, 2), 'utf-8');
+    const merged = { ...existing, ...partial };
+
+    // Save to DB if available (HA-safe)
+    const db = this.resolveDbAccess();
+    if (db) {
+      try {
+        await db.resolver!.saveServiceConfig(
+          db.userId, 'bmw_tokens', 'partial', merged as unknown as Record<string, unknown>,
+        );
+      } catch { /* best-effort DB write */ }
+    }
+
+    // Always write to disk as backup
+    try {
+      await mkdir(join(homedir(), '.alfred'), { recursive: true });
+      await writeFile(getTokenPath(this.activeUserId), JSON.stringify(merged, null, 2), 'utf-8');
+    } catch { /* best-effort disk write */ }
   }
 
   private async ensureToken(): Promise<string> {

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.214] - 2026-03-30
+
+### Fixed
+- **BMW Token-Persistierung HA-safe** — Tokens werden jetzt in der DB gespeichert (analog zum Spotify-Fix v125-133). Injizierter `ServiceResolver` unabhängig vom Request-Context. Globale Config nutzt `'__global__'` als User-Key. Partial Tokens (Device-Auth-Flow) ebenfalls DB-fähig. Disk-Fallback bleibt für Single-Node-Setups. Tokens überleben Restarts und Node-Wechsel im HA-Betrieb.
+
 ## [0.19.0-multi-ha.212] - 2026-03-30
 
 ### Added

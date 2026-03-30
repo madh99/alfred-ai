@@ -111,6 +111,7 @@ export class Alfred {
   };
   private reminderRepo?: ReminderRepository;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
+  private bmwSkill?: import('@alfred/skills').BMWSkill;
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -120,6 +121,7 @@ export class Alfred {
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   private ownerMasterUserId?: string;
+  private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
 
   constructor(private config: AlfredConfig) {
@@ -466,7 +468,8 @@ export class Alfred {
     // 4k. BMW CarData (optional)
     if (this.config.bmw) {
       const { BMWSkill } = await import('@alfred/skills');
-      skillRegistry.register(new BMWSkill(this.config.bmw));
+      this.bmwSkill = new BMWSkill(this.config.bmw);
+      skillRegistry.register(this.bmwSkill);
       this.logger.info('BMW CarData skill enabled');
     }
 
@@ -1129,12 +1132,17 @@ export class Alfred {
       const pipelineUserRepo = new AlfredUserRepository(adapter);
       const { UserServiceResolver } = await import('./user-service-resolver.js');
       const serviceResolver = new UserServiceResolver(pipelineUserRepo);
+      this.userServiceResolverRef = serviceResolver;
       this.pipeline.setAlfredUserRepo(pipelineUserRepo, ROLE_SKILL_ACCESS, this.usageRepo, serviceResolver);
       // Wire role access into help skill
       (helpSkill as any).roleAccess = ROLE_SKILL_ACCESS;
       // Inject service resolver into Spotify skill for HA-safe token persistence
       if (this.spotifySkill && 'setServiceResolver' in this.spotifySkill) {
         (this.spotifySkill as any).setServiceResolver(serviceResolver);
+      }
+      // Inject service resolver into BMW skill for HA-safe token persistence
+      if (this.bmwSkill && 'setServiceResolver' in this.bmwSkill) {
+        (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId);
       }
     }
 
@@ -1617,7 +1625,12 @@ export class Alfred {
       }
       if (service === 'bmw' && freshConfig.bmw) {
         const { BMWSkill } = await import('@alfred/skills');
-        this.skillRegistry.register(new BMWSkill(freshConfig.bmw));
+        this.bmwSkill = new BMWSkill(freshConfig.bmw);
+        this.skillRegistry.register(this.bmwSkill);
+        // Re-inject service resolver for HA-safe token persistence
+        if (this.userServiceResolverRef && 'setServiceResolver' in this.bmwSkill) {
+          (this.bmwSkill as any).setServiceResolver(this.userServiceResolverRef, this.ownerMasterUserId);
+        }
         this.config.bmw = freshConfig.bmw;
         this.logger.info('BMW CarData skill hot-reloaded');
       }
