@@ -30,6 +30,11 @@ const NODE_LOCAL_SKILLS = new Set([
   'docker', 'code_sandbox', 'code_agent', 'project_agent', 'browser',
 ]);
 
+/** Skills whose successful execution triggers a focused reasoning pass (cross-domain connections). */
+const REASONING_TRIGGER_SKILLS = new Set([
+  'calendar', 'todo', 'microsoft_todo', 'email', 'homeassistant',
+]);
+
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
@@ -170,6 +175,7 @@ export class MessagePipeline {
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
   private insightTracker?: import('./insight-tracker.js').InsightTracker;
   private moderationService?: import('@alfred/security').ModerationService;
+  private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -220,6 +226,10 @@ export class MessagePipeline {
 
   setInsightTracker(tracker: import('./insight-tracker.js').InsightTracker): void {
     this.insightTracker = tracker;
+  }
+
+  setReasoningEngine(engine: import('./reasoning-engine.js').ReasoningEngine): void {
+    this.reasoningEngine = engine;
   }
 
   setModerationService(service: import('@alfred/security').ModerationService): void {
@@ -1374,6 +1384,14 @@ export class MessagePipeline {
           } else {
             await this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
           }
+        }
+        // Post-skill reasoning trigger (fire-and-forget)
+        if (result.success && this.reasoningEngine && REASONING_TRIGGER_SKILLS.has(toolCall.name)) {
+          this.reasoningEngine.triggerOnEvent(
+            'skill_completed',
+            `Skill "${toolCall.name}" ausgeführt: ${JSON.stringify(toolCall.input).slice(0, 200)}`,
+            { skillName: toolCall.name, input: toolCall.input },
+          ).catch(() => {});
         }
         let content = result.display ?? (result.success ? JSON.stringify(result.data) : result.error ?? 'Unknown error');
         // HA: annotate node-local skill results with nodeId

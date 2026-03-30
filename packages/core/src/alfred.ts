@@ -1115,11 +1115,37 @@ export class Alfred {
       };
     }
 
+    // Wire calendar/todo watcher events → reasoning engine for holistic reasoning
+    if (this.reasoningEngine && this.calendarWatcher) {
+      this.calendarWatcher.onEventNotified = (event) => {
+        this.reasoningEngine!.triggerOnEvent(
+          'calendar_upcoming',
+          `Termin in Kürze: ${event.title}${event.location ? ` (${event.location})` : ''}`,
+          { eventId: event.id, title: event.title, location: event.location, start: event.start.toISOString() },
+        ).catch(err => this.logger.warn({ err }, 'Calendar-triggered reasoning failed'));
+      };
+    }
+
+    if (this.reasoningEngine && this.todoWatcher) {
+      this.todoWatcher.onTodoNotified = (todoId, title, kind) => {
+        this.reasoningEngine!.triggerOnEvent(
+          `todo_${kind}`,
+          `Todo ${kind === 'overdue' ? 'überfällig' : 'bald fällig'}: ${title}`,
+          { todoId, title, kind },
+        ).catch(err => this.logger.warn({ err }, 'Todo-triggered reasoning failed'));
+      };
+    }
+
     // Wire confirmation queue, activity logger, skill health tracker, and insight tracker into pipeline
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
+
+    // Wire reasoning engine into pipeline for post-skill triggers
+    if (this.reasoningEngine) {
+      this.pipeline.setReasoningEngine(this.reasoningEngine);
+    }
 
     // 7a2. Wire optional moderation service into pipeline
     if (this.config.security?.moderation?.enabled) {

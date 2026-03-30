@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.235] - 2026-03-31
+
+### Added
+- **Holistisches Reasoning-System** — Reasoning analysiert jetzt 20+ Datenquellen statt 12: E-Mail, BMW, Smart Home, RSS-Feeds, Crypto/Bitpanda, Microsoft To Do, Infrastruktur-Monitoring kommen zu Kalender, Todos, Watches, Wetter, Energie, Charger, Meal-Plan, Travel hinzu.
+- **Two-Pass Reasoning** — Scan-Pass (schnell, max 512 Tokens) prüft ob Auffälligkeiten existieren. Detail-Pass (max 1536 Tokens) nur wenn der Scan etwas findet. Spart LLM-Kosten wenn nichts Relevantes passiert.
+- **ReasoningContextCollector** — Neues Modul für strukturierte Datensammlung mit Priority-Tiers (1=kritisch, 2=wichtig, 3=nice-to-have), Change-Detection zwischen Läufen, und Token-Budget-Management mit Priority-basierter Truncation.
+- **CalendarWatcher → Reasoning** — Kalender-Benachrichtigungen triggern fokussiertes Reasoning (Querverbindungen: Termin + Ort + Shopping-Watch? Zeitkonflikt mit Todos?).
+- **TodoWatcher → Reasoning** — Todo-Erinnerungen (fällig/überfällig) triggern fokussiertes Reasoning.
+- **Post-Skill Reasoning** — Nach erfolgreicher Ausführung von calendar, todo, microsoft_todo, email, homeassistant wird ein fokussierter Reasoning-Pass gestartet.
+- **Event-Trigger Debounce** — Max ein event-getriggertes Reasoning pro 5 Minuten (verhindert Trigger-Storms).
+
+### Changed
+- **Reasoning Tier: fast → default** — Standard-Tier von Haiku auf Sonnet/GPT-5.4 geändert für bessere Cross-Domain-Inferenz. ENV `ALFRED_REASONING_TIER=fast` weiterhin verfügbar für Kostenkontrolle.
+- **Kalender-Fenster: 24h → 48h** — Reasoning sieht jetzt Termine der nächsten 48 Stunden statt nur 24.
+
 ## [0.19.0-multi-ha.229] - 2026-03-30
 
 ### Added

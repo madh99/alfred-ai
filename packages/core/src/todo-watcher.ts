@@ -19,6 +19,9 @@ export class TodoWatcher {
   private readonly overdueCheck: boolean;
   private lastOverdueCheck = 0;
 
+  /** Optional callback when a todo notification is sent (for reasoning triggers). */
+  public onTodoNotified?: (todoId: string, title: string, kind: 'upcoming' | 'overdue') => void;
+
   constructor(
     private readonly todoRepo: TodoRepository,
     private readonly notifRepo: CalendarNotificationRepository,
@@ -109,6 +112,7 @@ export class TodoWatcher {
       await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
       await this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
       this.logger.info({ todoId, title, kind }, 'Todo reminder sent');
+      this.onTodoNotified?.(todoId, title, kind);
       this.activityLogger?.logCalendarNotify({
         eventId: notifKey, eventTitle: `[Todo] ${title}`,
         platform: this.defaultPlatform, chatId: this.defaultChatId, outcome: 'success',

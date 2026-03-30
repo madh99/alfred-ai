@@ -11,6 +11,9 @@ export class CalendarWatcher {
   private readonly minutesBefore: number;
   private lastCleanup = 0;
 
+  /** Optional callback when a calendar event notification is sent (for reasoning triggers). */
+  public onEventNotified?: (event: CalendarEvent) => void;
+
   constructor(
     private readonly calendarProvider: CalendarProvider,
     private readonly notifRepo: CalendarNotificationRepository,
@@ -115,6 +118,7 @@ export class CalendarWatcher {
         await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
         await this.notifRepo.markNotified(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
         this.logger.info({ eventId: event.id, title: event.title }, 'Calendar vorlauf notification sent');
+        this.onEventNotified?.(event);
         this.activityLogger?.logCalendarNotify({
           eventId: event.id, eventTitle: event.title,
           platform: this.defaultPlatform, chatId: this.defaultChatId, outcome: 'success',

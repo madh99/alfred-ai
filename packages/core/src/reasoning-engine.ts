@@ -15,27 +15,27 @@ import type {
   AsyncDbAdapter,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
-import { buildSkillContext } from './context-factory.js';
 import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
+import { ReasoningContextCollector, type CollectedContext } from './reasoning-context-collector.js';
+import { buildSkillContext } from './context-factory.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
 
-/** Maximum tokens for reasoning response. */
+/** Maximum tokens for reasoning detail response. */
 const MAX_OUTPUT_TOKENS = 1536;
 
 /** Marker separating text insights from structured actions in LLM response. */
 const ACTION_MARKER = '---ACTIONS---';
 
-/** Check if LLM response means "no insights" — catches variants beyond exact "KEINE_INSIGHTS". */
+/** Cooldown between event-triggered reasoning passes (ms). */
+const EVENT_COOLDOWN_MS = 5 * 60 * 1000;
+
 /**
  * Check if the LLM response indicates no insights.
  * ONLY checks for the explicit KEINE_INSIGHTS marker — no natural language parsing.
- * The LLM is instructed to respond with exactly "KEINE_INSIGHTS" when there's nothing to report.
- * Any other response is treated as a real insight, even if it contains phrases like
- * "keine Verbindung zwischen X und Y, aber..." — that's still valuable context.
  */
 function isNoInsights(text: string): boolean {
   if (!text || text.length < 10) return true;
@@ -59,29 +59,15 @@ interface ParsedReasoningResponse {
   actions: ProposedAction[];
 }
 
-interface ReasoningContext {
-  dateTime: string;
-  events: string;
-  todos: string;
-  watches: string;
-  memories: string;
-  activity: string;
-  weather: string;
-  energy: string;
-  skillHealth: string;
-  feedback: string;
-  charger: string;
-  mealPlan: string;
-  travel: string;
-}
-
 export class ReasoningEngine {
   private tickTimer?: ReturnType<typeof setInterval>;
   private lastRunHour = -1;
+  private lastEventTriggerAt = 0;
   private readonly enabled: boolean;
   private readonly schedule: ReasoningConfig['schedule'];
   private readonly tier: 'fast' | 'default';
   private readonly deduplicationHours: number;
+  private readonly collector: ReasoningContextCollector;
 
   constructor(
     private readonly calendarProvider: CalendarProvider | undefined,
@@ -107,11 +93,20 @@ export class ReasoningEngine {
     private readonly nodeId: string = 'single',
     private readonly adapter?: AsyncDbAdapter,
     private readonly insightTracker?: InsightTracker,
+    collector?: ReasoningContextCollector,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
-    this.tier = config?.tier ?? 'fast';
+    this.tier = config?.tier ?? 'default';
     this.deduplicationHours = config?.deduplicationHours ?? 12;
+
+    this.collector = collector ?? new ReasoningContextCollector(
+      this.skillRegistry, this.skillSandbox, this.userRepo,
+      this.calendarProvider, this.todoRepo, this.watchRepo,
+      this.memoryRepo, this.activityRepo, this.skillHealthRepo,
+      this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
+      this.defaultLocation, this.logger,
+    );
   }
 
   start(): void {
@@ -132,11 +127,19 @@ export class ReasoningEngine {
   }
 
   /**
-   * Trigger a focused reasoning pass in response to an event (watch alert, etc.).
-   * Uses minimal context — only the event data + most relevant memories.
+   * Trigger a focused reasoning pass in response to an event (watch alert, calendar, todo, post-skill).
+   * Debounced: max one event-triggered reasoning per 5 minutes.
    */
   async triggerOnEvent(eventType: string, eventDescription: string, eventData: Record<string, unknown> = {}): Promise<void> {
     if (!this.enabled) return;
+
+    // Debounce: prevent trigger storms
+    const now = Date.now();
+    if (now - this.lastEventTriggerAt < EVENT_COOLDOWN_MS) {
+      this.logger.debug({ eventType }, 'Event-triggered reasoning debounced');
+      return;
+    }
+    this.lastEventTriggerAt = now;
 
     // Distributed dedup: use event-specific slot (prevent both nodes from processing)
     if (this.adapter && this.adapter.type === 'postgres') {
@@ -149,10 +152,8 @@ export class ReasoningEngine {
     }
 
     try {
-      // Focused context: only event + memories + calendar + todos (not full context)
-      const memories = await this.fetchMemories();
-      const events = await this.fetchCalendar(new Date());
-      const todos = await this.fetchTodos();
+      // Use collector for full context (holistic reasoning)
+      const context = await this.collector.collect();
 
       const prompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
 
@@ -160,21 +161,14 @@ EVENT: ${eventType}
 DETAILS: ${eventDescription}
 DATEN: ${JSON.stringify(eventData).slice(0, 500)}
 
-KONTEXT:
-=== Kalender (n\u00E4chste 24h) ===
-${events}
+KONTEXT (alle verfügbaren Datenquellen):
+${this.formatSections(context)}
 
-=== Offene Todos ===
-${todos}
-
-=== Erinnerungen \u00FCber den User ===
-${memories}
-
-Aufgabe: Analysiere ob dieses Event im Kontext der User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
-- Suche nach Verbindungen: Termin in der N\u00E4he? Zeitkonflikt? Gelegenheit? Preisalert + Fahrt?
-- Max 1-2 S\u00E4tze, konkret und actionable
-- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS" — nichts anderes, keine Erkl\u00E4rung
-${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00E4nge sie als JSON an (gleicher ${ACTION_MARKER} Format wie beim regul\u00E4ren Reasoning).` : ''}`;
+Aufgabe: Analysiere ob dieses Event im Kontext ALLER User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
+- Suche nach Verbindungen zwischen VERSCHIEDENEN Bereichen: Termin + Ort + Shopping? Zeitkonflikt? Preisalert + Fahrt? E-Mail + Meeting?
+- Max 1-2 Sätze, konkret und actionable
+- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS" — nichts anderes, keine Erklärung
+${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, hänge sie als JSON an (${ACTION_MARKER} Format).` : ''}`;
 
       const response = await this.llm.complete({
         messages: [{ role: 'user', content: prompt }],
@@ -218,6 +212,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
     }
   }
 
+  // ── Scheduling ──────────────────────────────────────────────
+
   private shouldRun(): boolean {
     const now = new Date();
     const hour = now.getHours();
@@ -225,7 +221,6 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
 
     switch (this.schedule) {
       case 'morning_noon_evening':
-        // Run at the first tick of each target hour (within first minute)
         if (MNE_HOURS.includes(hour) && minute === 0 && this.lastRunHour !== hour) {
           return true;
         }
@@ -236,7 +231,6 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
         return false;
 
       case 'half_hourly':
-        // Tolerance window: fire at :00/:30 or :01/:31 (event loop delay tolerance)
         if ((minute <= 1 || (minute >= 30 && minute <= 31)) && this.lastRunHour !== hour * 100 + (minute < 2 ? 0 : 30)) return true;
         return false;
 
@@ -253,6 +247,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       this.lastRunHour = now.getHours();
     }
   }
+
+  // ── Main Tick: Two-Pass Reasoning ───────────────────────────
 
   private async tick(): Promise<void> {
     if (!this.shouldRun()) return;
@@ -275,32 +271,49 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
       this.logger.info('Reasoning pass starting');
       const startMs = Date.now();
 
-      const context = await this.collectContext();
-      const prompt = this.buildPrompt(context);
-      const response = await this.llm.complete({
-        messages: [{ role: 'user', content: prompt }],
-        maxTokens: MAX_OUTPUT_TOKENS,
+      // PHASE 1: Collect context from all available data sources
+      const context = await this.collector.collect();
+
+      // PHASE 2: Scan-Pass — quick check for concerns/opportunities
+      const scanPrompt = this.buildScanPrompt(context);
+      const scanResponse = await this.llm.complete({
+        messages: [{ role: 'user', content: scanPrompt }],
+        maxTokens: 512,
         tier: this.tier,
       });
 
-      const text = response.content.trim();
-      const durationMs = Date.now() - startMs;
+      const scanText = scanResponse.content.trim();
+      const scanDurationMs = Date.now() - startMs;
+      this.logger.debug({ response: scanText.slice(0, 500), durationMs: scanDurationMs }, 'Reasoning scan response');
 
-      // Log the actual LLM response for diagnostics
-      this.logger.debug({ response: text.slice(0, 500), durationMs }, 'Reasoning LLM response');
-
-      // Filter: no insights — ONLY checks for explicit KEINE_INSIGHTS marker
-      if (isNoInsights(text)) {
-        this.logger.info({ durationMs, response: text.slice(0, 200) }, 'Reasoning pass: no insights');
+      if (isNoInsights(scanText)) {
+        this.logger.info({ durationMs: scanDurationMs, response: scanText.slice(0, 200) }, 'Reasoning pass: no insights (scan)');
         this.activityLogger?.logScheduledExec({
           actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
           platform: this.defaultPlatform, chatId: this.defaultChatId,
-          userId: this.defaultChatId, outcome: 'success', durationMs,
+          userId: this.defaultChatId, outcome: 'success', durationMs: scanDurationMs,
         });
         return;
       }
 
-      // Parse insights and optional actions
+      // PHASE 3: Detail-Pass — elaborate on findings from scan
+      const detailPrompt = this.buildDetailPrompt(context, scanText);
+      const detailResponse = await this.llm.complete({
+        messages: [{ role: 'user', content: detailPrompt }],
+        maxTokens: MAX_OUTPUT_TOKENS,
+        tier: this.tier,
+      });
+
+      const text = detailResponse.content.trim();
+      const durationMs = Date.now() - startMs;
+      this.logger.debug({ response: text.slice(0, 500), durationMs }, 'Reasoning detail response');
+
+      if (isNoInsights(text)) {
+        this.logger.info({ durationMs }, 'Reasoning pass: no insights (detail)');
+        return;
+      }
+
+      // PHASE 4: Parse, dedup, send
       const parsed = this.parseReasoningResponse(text);
       const newInsights: string[] = [];
       for (const insight of parsed.insights) {
@@ -352,267 +365,54 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion m\u00F6glich ist, h\u00
     }
   }
 
-  // ── Data Collection ─────────────────────────────────────────
-
-  private async collectContext(): Promise<ReasoningContext> {
-    const now = new Date();
-    const dateTime = now.toLocaleString('de-AT', {
-      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    });
-
-    // Parallel: calendar + weather + energy + charger (async), rest is sync SQLite
-    const [events, weather, energy, charger] = await Promise.all([
-      this.fetchCalendar(now),
-      this.fetchSkillData('weather', { action: 'current', ...(this.defaultLocation ? { location: this.defaultLocation } : {}) }),
-      this.fetchSkillData('energy_price', { action: 'current' }),
-      this.fetchChargerStatus(),
-    ]);
-
-    // SQLite queries (now async)
-    const todos = await this.fetchTodos();
-    const watches = await this.fetchWatches();
-    const memories = await this.fetchMemories();
-    const activity = await this.fetchActivity();
-    const skillHealth = await this.fetchSkillHealth();
-    const feedback = await this.fetchFeedback();
-    const mealPlan = await this.fetchMealPlan();
-    const travel = await this.fetchUpcomingTravel();
-
-    return { dateTime, events, todos, watches, memories, activity, weather, energy, charger, skillHealth, feedback, mealPlan, travel };
-  }
-
-  private async fetchCalendar(now: Date): Promise<string> {
-    if (!this.calendarProvider) return '(Kalender nicht konfiguriert)';
-    try {
-      const start = now;
-      const end = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-      const events = await this.calendarProvider.listEvents(start, end);
-      if (events.length === 0) return 'Keine Termine in den nächsten 24h.';
-      return events.map(e => {
-        const time = e.start instanceof Date
-          ? e.start.toLocaleTimeString('de-AT', { hour: '2-digit', minute: '2-digit' })
-          : String(e.start);
-        const loc = e.location ? ` (${e.location})` : '';
-        return `- ${time}: ${e.title ?? 'Termin'}${loc}`;
-      }).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: calendar fetch failed');
-      return '(Kalender-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchSkillData(skillName: string, input: Record<string, unknown>): Promise<string> {
-    const skill = this.skillRegistry.get(skillName);
-    if (!skill) return `(${skillName} nicht verfügbar)`;
-    try {
-      const { context } = await buildSkillContext(this.userRepo, {
-        userId: this.defaultChatId,
-        platform: this.defaultPlatform,
-        chatId: this.defaultChatId,
-        chatType: 'dm',
-      });
-      const result = await this.skillSandbox.execute(skill, input, context);
-      if (!result.success) return `(${skillName}: ${result.error})`;
-      return result.display ?? JSON.stringify(result.data);
-    } catch (err) {
-      this.logger.warn({ err, skillName }, 'Reasoning: skill fetch failed');
-      return `(${skillName}-Abfrage fehlgeschlagen)`;
-    }
-  }
-
-  private async fetchTodos(): Promise<string> {
-    try {
-      const overdue = await this.todoRepo.getOverdue();
-      const windowEnd = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-      const upcoming = await this.todoRepo.getDueInWindow(windowEnd);
-      const allOpen = await this.todoRepo.list(this.defaultChatId);
-
-      const lines: string[] = [];
-      if (overdue.length > 0) {
-        lines.push(`Überfällig (${overdue.length}):`);
-        for (const t of overdue.slice(0, 10)) {
-          lines.push(`  - [${t.priority}] ${t.title} (fällig: ${t.dueDate})`);
-        }
-      }
-      if (upcoming.length > 0) {
-        lines.push(`Bald fällig (${upcoming.length}):`);
-        for (const t of upcoming.slice(0, 10)) {
-          lines.push(`  - [${t.priority}] ${t.title} (fällig: ${t.dueDate})`);
-        }
-      }
-      if (allOpen.length > 0) {
-        lines.push(`Gesamt offene Todos: ${allOpen.length}`);
-      }
-      return lines.length > 0 ? lines.join('\n') : 'Keine offenen Todos.';
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: todo fetch failed');
-      return '(Todo-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchWatches(): Promise<string> {
-    try {
-      const watches = await this.watchRepo.getEnabled();
-      if (watches.length === 0) return 'Keine aktiven Watches.';
-      return watches.map(w => {
-        const lastVal = w.lastValue
-          ? (() => { try { const p = JSON.parse(w.lastValue!); return typeof p === 'object' ? JSON.stringify(p).slice(0, 200) : String(p); } catch { return w.lastValue!.slice(0, 200); } })()
-          : 'noch kein Ergebnis';
-        const lastTrigger = w.lastTriggeredAt
-          ? `letzter Alert: ${new Date(w.lastTriggeredAt).toLocaleString('de-AT')}`
-          : 'noch nie ausgelöst';
-        return `- "${w.name}" (${w.skillName}, alle ${w.intervalMinutes} Min) → ${lastTrigger}\n  Letzter Wert: ${lastVal}`;
-      }).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: watch fetch failed');
-      return '(Watch-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchMemories(): Promise<string> {
-    try {
-      const memories = await this.memoryRepo.getRecentForPrompt(this.defaultChatId, 30);
-      // Ensure pattern + connection memories are always included (they describe the user, not a topic)
-      const existingKeys = new Set(memories.map(m => m.key));
-      for (const type of ['pattern', 'connection'] as const) {
-        try {
-          const typed = await this.memoryRepo.getByType(this.defaultChatId, type, 5);
-          for (const m of typed) {
-            if (!existingKeys.has(m.key)) { existingKeys.add(m.key); memories.push(m); }
-          }
-        } catch { /* skip */ }
-      }
-      // Limit entries, prioritizing pattern + connection memories
-      const MAX_REASONING_MEMORIES = 40;
-      if (memories.length > MAX_REASONING_MEMORIES) {
-        const priority = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
-        const rest = memories.filter(m => m.type !== 'pattern' && m.type !== 'connection');
-        const limited = [...priority, ...rest.slice(0, MAX_REASONING_MEMORIES - priority.length)];
-        memories.length = 0;
-        memories.push(...limited);
-      }
-      if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
-      return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: memory fetch failed');
-      return '(Memory-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchActivity(): Promise<string> {
-    try {
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const stats = await this.activityRepo.stats(since);
-      if (stats.length === 0) return 'Keine Aktivität in den letzten 24h.';
-      return stats.map(s => `- ${s.eventType} (${s.outcome}): ${s.count}×`).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: activity fetch failed');
-      return '(Aktivitäts-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchSkillHealth(): Promise<string> {
-    try {
-      const disabled = await this.skillHealthRepo.getDisabled();
-      if (disabled.length === 0) return 'Alle Skills aktiv.';
-      return disabled.map(s =>
-        `- ${s.skillName}: deaktiviert bis ${s.disabledUntil} (${s.consecutiveFails} Fehler: ${s.lastError ?? '?'})`,
-      ).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: skill health fetch failed');
-      return '(Skill-Health-Abfrage fehlgeschlagen)';
-    }
-  }
-
-  private async fetchFeedback(): Promise<string> {
-    if (!this.feedbackRepo) return '';
-    try {
-      const events = await this.feedbackRepo.getRecentEvents(this.defaultChatId, 20);
-      if (events.length === 0) return 'Kein Feedback zu Watches oder Korrekturen.';
-      return events.map(e =>
-        `- [${e.feedbackType}] ${e.description} (${e.occurredAt.slice(0, 10)})`,
-      ).join('\n');
-    } catch (err) {
-      this.logger.warn({ err }, 'Reasoning: feedback fetch failed');
-      return '';
-    }
-  }
-
-  private async fetchMealPlan(): Promise<string> {
-    const day = new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-    return this.fetchSkillData('recipe', { action: 'meal_plan', sub_action: 'get', week: 'current', day });
-  }
-
-  private async fetchUpcomingTravel(): Promise<string> {
-    return this.fetchSkillData('travel', { action: 'plan_list', status: 'booked' });
-  }
-
-  private async fetchChargerStatus(): Promise<string> {
-    return this.fetchSkillData('goe_charger', { action: 'status' });
-  }
-
   // ── Prompt Building ─────────────────────────────────────────
 
-  private buildPrompt(ctx: ReasoningContext): string {
-    return `Du bist Alfreds Denk-Modul. Deine Aufgabe: Analysiere ALLE folgenden Daten und finde Zusammenhänge, Konflikte, Optimierungen oder Handlungsempfehlungen für den User.
+  private formatSections(ctx: CollectedContext): string {
+    return ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
+  }
+
+  private buildScanPrompt(ctx: CollectedContext): string {
+    const changedInfo = ctx.changedSections.length > 0
+      ? ctx.changedSections.map(k => ctx.sections.find(s => s.key === k)?.label).filter(Boolean).join(', ')
+      : 'Keine Änderungen';
+
+    return `Du bist Alfreds Denk-Modul. Scanne ALLE folgenden Daten nach:
+1. Konflikten (Terminüberschneidungen, überfällige Todos bei vollem Kalender, Zeitdruck)
+2. Gelegenheiten (Preis-Alerts + Termine am selben Ort, günstiger Strom + Auto laden, Shopping + Reise)
+3. Querverbindungen zwischen VERSCHIEDENEN Bereichen (E-Mail-Thema = Kalender-Meeting, Todo + Wetter, BMW-Akku + Termin morgen)
+4. Ungewöhnlichem (plötzliche Änderungen, Anomalien, Muster)
+
+GEÄNDERT SEIT LETZTEM LAUF:
+${changedInfo}
+
+${this.formatSections(ctx)}
+
+Antworte mit max 3 kurzen Stichpunkten was du an Verbindungen, Konflikten oder Gelegenheiten gefunden hast.
+Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"`;
+  }
+
+  private buildDetailPrompt(ctx: CollectedContext, scanFindings: string): string {
+    return `Du bist Alfreds Denk-Modul. In der Vorab-Analyse wurden folgende Auffälligkeiten erkannt:
+
+${scanFindings}
+
+Formuliere daraus max 5 konkrete, actionable Insights für den User.
 
 REGELN:
-- Finde Zusammenhänge zwischen verschiedenen Datenbereichen (Kalender+Wetter, Todos+Energie, Watches+Termine etc.)
-- Priorisiere neue Verbindungen und Handlungsempfehlungen über reine Fakten-Wiederholungen
+- Priorisiere Verbindungen zwischen VERSCHIEDENEN Datenbereichen über reine Fakten-Wiederholung
 - KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
-- Wenn es WIRKLICH nichts Relevantes gibt: antworte EXAKT mit dem Wort "KEINE_INSIGHTS" — nichts anderes, keine Erklärung warum
-- WICHTIG: "KEINE_INSIGHTS" ist die EINZIGE akzeptierte Antwort wenn du nichts findest. Antworte NICHT mit Sätzen wie "Es gibt keine relevanten Verbindungen" oder "Nichts zu berichten" — das wird als Insight behandelt
-- Max 5 Insights, priorisiert nach Dringlichkeit
-- Jeder Insight: 1-2 Sätze, konkret und actionable
-- Schreibe auf Deutsch
+- Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
+- Priorisiert nach Dringlichkeit
 
 BEISPIELE guter Insights:
 - "Du hast um 14:00 einen Termin in Linz, aber die RTX 5090 Watch zeigt ein Angebot in Wien — Abholung wäre auf dem Rückweg möglich."
 - "3 deiner 5 Todos sind morgen fällig, aber dein Kalender ist voll — eventuell heute Abend erledigen."
 - "Strompreis ist bis 15:00 unter 5 ct/kWh — BMW laden wäre jetzt günstig (Akku war beim letzten Check bei 45%)."
-- "Der Willhaben-Watch hat seit 3 Tagen keine neuen Treffer — eventuell Suchkriterien erweitern?"
 - "Morgen früh -3°C, du hast einen 8:00 Termin — Auto vorheizen einplanen."
 - "Du hast 2 überfällige Todos und 3 neue E-Mails zum selben Thema — eventuell zusammenhängend?"
 
 AKTUELLE DATEN:
-
-=== Datum & Uhrzeit ===
-${ctx.dateTime}
-
-=== Kalender (nächste 24h) ===
-${ctx.events}
-
-=== Offene Todos ===
-${ctx.todos}
-
-=== Aktive Watches & letzte Ergebnisse ===
-${ctx.watches}
-
-=== Erinnerungen über den User ===
-${ctx.memories}
-
-=== Aktivität letzte 24h ===
-${ctx.activity}
-
-=== Wetter ===
-${ctx.weather}
-
-=== Energiepreise ===
-${ctx.energy}
-
-=== Wallbox ===
-${ctx.charger}
-
-=== Meal-Plan heute ===
-${ctx.mealPlan}
-
-=== Anstehende Reisen ===
-${ctx.travel}
-
-=== Skill-Status ===
-${ctx.skillHealth}
-${ctx.feedback ? `\n=== Nutzer-Feedback & Korrekturen ===\n${ctx.feedback}` : ''}
+${this.formatSections(ctx)}
 ${this.confirmationQueue ? `
 === AKTIONEN ===
 Wenn du eine sinnvolle, sofort ausführbare Aktion erkennst, kannst du sie vorschlagen.
@@ -627,15 +427,12 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
   // ── Dedup & Parsing ─────────────────────────────────────────
 
   private parseInsights(text: string): string[] {
-    // Split by numbered list (1. ..., 2. ...) or double-newline
     const lines = text.split(/\n{2,}|\n(?=\d+\.\s)/).map(l => l.trim()).filter(l => l.length > 10);
-    // If only one block, return as-is
     if (lines.length <= 1) return [text.trim()];
     return lines;
   }
 
   private insightHash(text: string): string {
-    // Hash first 100 chars to catch near-duplicates
     const normalized = text.slice(0, 100).toLowerCase().replace(/\s+/g, ' ');
     return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
   }
@@ -649,7 +446,6 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
   private async markSent(insight: string): Promise<void> {
     const hash = this.insightHash(insight);
     const key = `reasoning:${hash}`;
-    // Use event_start as expiry marker (dedup window)
     const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
     await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
   }
@@ -729,7 +525,6 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
   private async processActions(actions: ProposedAction[]): Promise<void> {
     if (actions.length === 0) return;
 
-    // Load user autonomy preference
     const autonomyLevel = await this.getAutonomyLevel();
 
     const limit = actions.slice(0, 2);
@@ -743,22 +538,21 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
         const isAuto = ReasoningEngine.AUTO_SKILLS.has(action.skillName);
         const isProactive = ReasoningEngine.PROACTIVE_SKILLS.has(action.skillName);
 
-        // Determine execution mode based on autonomy level
         let executeDirectly = false;
         let informUser = false;
 
         switch (autonomyLevel) {
           case 'autonomous':
             executeDirectly = true;
-            informUser = !isAuto; // Inform for proactive+high, silent for auto
+            informUser = !isAuto;
             break;
           case 'proactive':
             executeDirectly = isAuto || isProactive;
-            informUser = isProactive; // Inform for proactive, silent for auto
+            informUser = isProactive;
             break;
           case 'confirm_all':
           default:
-            executeDirectly = isAuto; // Only auto skills run silently
+            executeDirectly = isAuto;
             informUser = false;
             break;
         }
@@ -771,7 +565,7 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
             const adapter = this.adapters.get(this.defaultPlatform);
             if (adapter) {
               await adapter.sendMessage(this.defaultChatId,
-                `\u26A1 **Proaktiv ausgef\u00FChrt:** ${action.description}`);
+                `\u26A1 **Proaktiv ausgeführt:** ${action.description}`);
             }
           }
 

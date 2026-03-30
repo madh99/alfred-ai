@@ -43,4 +43,6 @@ export { SkillHealthTracker } from './skill-health-tracker.js';
 export { WorkflowRunner } from './workflow-runner.js';
 export type { WorkflowRunResult } from './workflow-runner.js';
 export { ReasoningEngine } from './reasoning-engine.js';
+export { ReasoningContextCollector } from './reasoning-context-collector.js';
+export type { ReasoningSection, CollectedContext } from './reasoning-context-collector.js';
 export { InsightTracker } from './insight-tracker.js';
