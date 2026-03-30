@@ -18,8 +18,18 @@ const LN2 = Math.LN2;
 const KEYWORD_WEIGHT = 0.3;
 const SEMANTIC_WEIGHT = 0.7;
 
-// Diversity: max memories per type
-const MAX_PER_TYPE = 3;
+// Diversity: max memories per type (type-specific limits)
+const MAX_PER_TYPE: Record<string, number> = {
+  entity: 8,
+  fact: 8,
+  rule: 10,
+  connection: 5,
+  pattern: 5,
+  general: 5,
+  feedback: 3,
+  preference: 3,
+};
+const DEFAULT_MAX_PER_TYPE = 5;
 
 export class MemoryRetriever {
   constructor(
@@ -153,7 +163,8 @@ export class MemoryRetriever {
 
       for (const { memory } of allResults) {
         const count = typeCounts.get(memory.type) || 0;
-        if (count >= MAX_PER_TYPE) continue;
+        const maxForType = MAX_PER_TYPE[memory.type] ?? DEFAULT_MAX_PER_TYPE;
+        if (count >= maxForType) continue;
 
         typeCounts.set(memory.type, count + 1);
         diverseResults.push(memory);

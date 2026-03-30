@@ -432,7 +432,10 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         }
       }
 
-      prompt += `\nUse these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.
+      prompt += `\nNote: These memories are a SELECTION based on relevance to your current conversation. If the user asks about specific facts (address, birthday, preferences) that are not shown above, use the \`memory\` tool with action \`search\` or \`recall\` to look them up — they may exist but not be loaded in this context.
+
+Use these memories to personalize your responses. When the user tells you new facts or preferences, use the memory tool to save them.
+When the user asks about personal facts you don't see in your memories above, ALWAYS search for them using the memory tool before saying you don't know.
 
 When saving memories, set the type parameter:
 - entity: People (family, contacts), pets, organizations the user is closely connected to
@@ -441,6 +444,7 @@ When saving memories, set the type parameter:
 Entity and fact memories are protected from automatic changes. Use them for information that should persist long-term.`;
     } else {
       prompt += `\n\nWhen the user tells you facts about themselves or preferences, use the memory tool to save them for future reference.
+When the user asks about personal facts you don't see in your memories above, ALWAYS search for them using the memory tool before saying you don't know.
 
 When saving memories, set the type parameter:
 - entity: People (family, contacts), pets, organizations the user is closely connected to

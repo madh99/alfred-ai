@@ -95,7 +95,7 @@ export class EmbeddingService {
       const topResults = scored.slice(0, limit);
 
       return topResults.map(r => ({
-        key: r.sourceId,
+        key: r.content.includes(':') ? r.content.split(':')[0].trim() : r.sourceId,
         value: r.content,
         category: r.sourceType,
         score: r.score,

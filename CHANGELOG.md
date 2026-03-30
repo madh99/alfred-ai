@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.226] - 2026-03-30
+
+### Fixed
+- **Semantic Search: UUID statt Memory-Key** — `semanticSearch()` gab die Memory-UUID als Key zurück statt den echten Key (z.B. `home_address`). Der MemoryRetriever konnte Semantic-Ergebnisse nicht mit Keyword-Ergebnissen zusammenführen → halbe Scores, doppelte Einträge, Kern-Memories nicht gefunden. Fix: Key wird jetzt aus dem Embedding-Content extrahiert.
+- **Diversity-Filter: Type-spezifische Limits** — `MAX_PER_TYPE` war pauschal 3 für alle Types. entity/fact (Kern-Daten) fielen heraus wenn mehr als 3 vorhanden. Jetzt: entity(8), fact(8), rule(10), connection(5), pattern(5), general(5), default(5).
+- **System-Prompt: Memory-Recall-Instruktion** — LLM wusste nicht dass der Memory-Block im Prompt eine AUSWAHL ist. Jetzt: Explizite Instruktion bei fehlenden Fakten den Memory-Skill zu nutzen statt "weiß ich nicht" zu sagen.
+
 ## [0.19.0-multi-ha.224] - 2026-03-30
 
 ### Fixed
