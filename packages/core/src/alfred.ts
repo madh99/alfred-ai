@@ -810,8 +810,8 @@ export class Alfred {
           if (lanIp !== 'localhost') break;
         }
         const port = this.config.api?.port ?? 3420;
-        // When TLS is enabled, the HTTP fallback for Sonos runs on port+1 (e.g., 3421)
-        const announcePort = this.config.api?.tls?.enabled ? port + 1 : port;
+        // When TLS is enabled, the HTTP fallback for Sonos runs on port+2 (e.g., 3422; port+1 is cluster discovery)
+        const announcePort = this.config.api?.tls?.enabled ? port + 2 : port;
         announceBaseUrl = `http://${lanIp}:${announcePort}`;
         skillRegistry.register(new VoiceSkill(
           voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603',

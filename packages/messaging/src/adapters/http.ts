@@ -123,7 +123,7 @@ export class HttpAdapter extends MessagingAdapter {
       this.server = https.createServer(tlsOpts, handler);
       // Also start a plain HTTP server for Sonos TTS file serving
       // Sonos speakers cannot access HTTPS with self-signed certs
-      const httpPort = this.port + 1; // e.g., 3421 if main port is 3420
+      const httpPort = this.port + 2; // e.g., 3422 if main port is 3420 (port+1 is used by cluster discovery)
       const httpHandler = (req: http.IncomingMessage, res: http.ServerResponse) => {
         // Only serve /files/tts/ on the plain HTTP port — reject everything else
         if (req.url?.startsWith('/files/tts/')) {

@@ -359,10 +359,11 @@ export class ConfigLoader {
       if (defaultTier?.provider === 'mistral' && !defaultTier.apiKey) {
         defaultTier.apiKey = mistralApiKey;
       }
-      // Also fill tier keys when tier provider is mistral but has no key
+      // Also fill tier keys when tier provider is mistral
+      // (override any inherited default-tier key — e.g. Anthropic key from shared propagation)
       for (const tier of ['strong', 'fast', 'embeddings', 'local']) {
         const tierConfig = llmConfig[tier] as Record<string, unknown> | undefined;
-        if (tierConfig?.provider === 'mistral' && !tierConfig.apiKey) {
+        if (tierConfig?.provider === 'mistral') {
           tierConfig.apiKey = mistralApiKey;
         }
       }

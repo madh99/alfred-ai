@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.216] - 2026-03-30
+
+### Fixed
+- **Embeddings 401** — Mistral-Key wurde vom Default-Tier-Key überschrieben. Fix: Mistral-Key-Propagierung überschreibt jetzt immer wenn der Tier-Provider `mistral` ist.
+- **Kalender Timeout** — Ein nicht erreichbarer CalDAV-Account (fam@dohnal.co) blockierte jeden Request 30 Sekunden. Fix: 5-Sekunden-Timeout pro Account mit `Promise.race`. Nicht erreichbare Accounts werden übersprungen mit Warning.
+- **Port-Kollision** — Sonos HTTP-Fallback und Cluster Discovery nutzten beide Port 3421. Fix: Sonos HTTP jetzt auf Port+2 (3422).
+
 ## [0.19.0-multi-ha.214] - 2026-03-30
 
 ### Fixed

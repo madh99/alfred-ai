@@ -597,15 +597,20 @@ export class MessagePipeline {
             }
             if (accounts.length === 0) accounts.push(''); // fallback: default account
 
-            // Query each account
+            // Query each account with per-account timeout (5s) to avoid slow accounts blocking the pipeline
+            const CALENDAR_ACCOUNT_TIMEOUT = 5_000;
             for (const account of accounts) {
               try {
-                const result = await this.skillSandbox.execute(calSkill, {
+                const fetchPromise = this.skillSandbox.execute(calSkill, {
                   action: 'list_events',
                   start: now.toISOString(),
                   end: weekEnd.toISOString(),
                   ...(account ? { account } : {}),
                 }, baseContext);
+                const timeoutPromise = new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error(`Calendar account "${account}" timed out after ${CALENDAR_ACCOUNT_TIMEOUT}ms`)), CALENDAR_ACCOUNT_TIMEOUT),
+                );
+                const result = await Promise.race([fetchPromise, timeoutPromise]);
                 if (result.success && Array.isArray(result.data)) {
                   for (const e of result.data as any[]) {
                     allEvents.push({
@@ -617,7 +622,9 @@ export class MessagePipeline {
                     });
                   }
                 }
-              } catch { /* skip this account */ }
+              } catch (accountErr) {
+                this.logger.warn({ account, err: accountErr instanceof Error ? accountErr.message : String(accountErr) }, 'Calendar account skipped (timeout or error)');
+              }
             }
 
             this.logger.info({ totalEvents: allEvents.length, accounts: accounts.join(',') }, 'Calendar events loaded for system prompt');
