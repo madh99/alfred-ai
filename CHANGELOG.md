@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.221] - 2026-03-30
+
+### Fixed
+- **Memory-Search nutzt keywordSearch statt LIKE** — `memory.search` nutzte den gesamten Query-String als einen LIKE-Pattern (`%Heimadresse Zuhause Adresse%`), was nie matcht. Jetzt wird `keywordSearch()` verwendet die den Query in einzelne Wörter aufteilt und JEDES Wort separat sucht. "Adresse" findet jetzt `home_address`.
+- **Kern-Memories auf korrekte Types migriert** — `home_address`, `work_address`, `current_employment` etc. waren noch `type: "general"` (vor v193). Jetzt `type: "fact"`. `children` → `type: "entity"`.
+
 ## [0.19.0-multi-ha.220] - 2026-03-30
 
 ### Fixed

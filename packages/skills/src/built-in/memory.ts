@@ -194,10 +194,14 @@ export class MemorySkill extends Skill {
     }
 
     // Search across all linked user IDs for cross-platform access
+    // Use keywordSearch (splits query into terms) instead of search (single LIKE pattern)
     const seen = new Set<string>();
     const entries: Awaited<ReturnType<typeof this.memoryRepo.search>> = [];
     for (const uid of allUserIds(context)) {
-      for (const e of await this.memoryRepo.search(uid, query)) {
+      const results = this.memoryRepo.keywordSearch
+        ? await this.memoryRepo.keywordSearch(uid, query, 20)
+        : await this.memoryRepo.search(uid, query);
+      for (const e of results) {
         if (!seen.has(e.id)) {
           seen.add(e.id);
           entries.push(e);
