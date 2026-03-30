@@ -58,7 +58,7 @@ export class AlfredUserRepository {
   }
 
   async getByUsername(username: string): Promise<AlfredUser | undefined> {
-    const row = await this.adapter.queryOne('SELECT * FROM alfred_users WHERE username = ?', [username]) as Record<string, unknown> | undefined;
+    const row = await this.adapter.queryOne('SELECT * FROM alfred_users WHERE LOWER(username) = LOWER(?)', [username]) as Record<string, unknown> | undefined;
     return row ? this.mapUser(row) : undefined;
   }
 
