@@ -1,5 +1,5 @@
 import type { SpeechConfig } from '@alfred/types';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, SkillStateRepository } from '@alfred/storage';
 import type { Logger } from 'pino';
 
 /** Resolved TTS provider. */
@@ -13,9 +13,12 @@ export class SpeechSynthesizer {
   private readonly defaultVoiceId?: string;
   private readonly ttsProvider: TtsProvider;
   private memoryRepo?: MemoryRepository;
+  private skillState?: SkillStateRepository;
   private cachedVoiceId?: string;
 
-  /** Inject memory repo for reading user's default voice from DB. */
+  /** Inject skill state repo for reading user's default voice from DB. */
+  setSkillState(repo: SkillStateRepository): void { this.skillState = repo; }
+  /** @deprecated Use setSkillState instead. Kept for backward compatibility. */
   setMemoryRepo(repo: MemoryRepository): void { this.memoryRepo = repo; }
 
   constructor(config: SpeechConfig, private readonly logger: Logger) {
@@ -40,12 +43,17 @@ export class SpeechSynthesizer {
     // Resolve voice: 1) config defaultVoiceId, 2) DB voice_default memory, 3) built-in fallback
     let effectiveVoice = this.defaultVoiceId;
 
-    if (!effectiveVoice && this.ttsProvider === 'mistral' && this.memoryRepo && userId) {
+    if (!effectiveVoice && this.ttsProvider === 'mistral' && userId) {
       // Read user's default voice from DB (cached for performance)
       if (!this.cachedVoiceId) {
         try {
-          const mem = await this.memoryRepo.recall(userId, 'voice_default');
-          if (mem?.value) this.cachedVoiceId = mem.value;
+          if (this.skillState) {
+            const val = await this.skillState.get(userId, 'voice', 'voice_default');
+            if (val) this.cachedVoiceId = val;
+          } else if (this.memoryRepo) {
+            const mem = await this.memoryRepo.recall(userId, 'voice_default');
+            if (mem?.value) this.cachedVoiceId = mem.value;
+          }
         } catch { /* ignore */ }
       }
       effectiveVoice = this.cachedVoiceId;

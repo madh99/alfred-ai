@@ -55,3 +55,4 @@ export { ProjectAgentSessionRepository } from './repositories/project-agent-sess
 export { ProjectAgentInterjectionRepository } from './repositories/project-agent-interjection-repository.js';
 export { ProcessedMessageRepository } from './repositories/processed-message-repository.js';
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';
+export { SkillStateRepository, type SkillStateEntry } from './repositories/skill-state-repository.js';

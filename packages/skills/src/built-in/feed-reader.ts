@@ -1,5 +1,5 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
-import type { MemoryRepository } from '@alfred/storage';
+import type { SkillStateRepository } from '@alfred/storage';
 import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import { Skill } from '../skill.js';
@@ -42,7 +42,7 @@ export class FeedReaderSkill extends Skill {
     },
   };
 
-  constructor(private readonly memoryRepo: MemoryRepository) {
+  constructor(private readonly skillState: SkillStateRepository) {
     super();
   }
 
@@ -77,7 +77,7 @@ export class FeedReaderSkill extends Skill {
       lastCheckedAt: null,
       lastEntryId: null,
     };
-    await this.memoryRepo.save(userId, `feed:${url}`, JSON.stringify(entry), 'feed');
+    await this.skillState.set(userId, 'feed_reader', `feed:${url}`, JSON.stringify(entry));
     return {
       success: true,
       data: entry,
@@ -88,15 +88,15 @@ export class FeedReaderSkill extends Skill {
   private async unsubscribe(userId: string, url?: string): Promise<SkillResult> {
     if (!url) return { success: false, error: 'URL is required for unsubscribe' };
 
-    const deleted = await this.memoryRepo.delete(userId, `feed:${url}`);
+    const deleted = await this.skillState.delete(userId, 'feed_reader', `feed:${url}`);
     if (!deleted) return { success: false, error: `No subscription found for ${url}` };
     return { success: true, display: `Unsubscribed from feed: ${url}` };
   }
 
   private async listFeeds(userId: string): Promise<SkillResult> {
-    const memories = await this.memoryRepo.listByCategory(userId, 'feed');
-    const feeds = memories.map(m => {
-      try { return JSON.parse(m.value) as FeedEntry; } catch { return null; }
+    const entries = await this.skillState.listBySkill(userId, 'feed_reader');
+    const feeds = entries.map(e => {
+      try { return JSON.parse(e.value) as FeedEntry; } catch { return null; }
     }).filter(Boolean) as FeedEntry[];
 
     if (feeds.length === 0) {
@@ -114,17 +114,17 @@ export class FeedReaderSkill extends Skill {
   private async check(userId: string, url?: string): Promise<SkillResult> {
     if (!url) {
       // Check all feeds
-      const memories = await this.memoryRepo.listByCategory(userId, 'feed');
-      if (memories.length === 0) {
+      const entries = await this.skillState.listBySkill(userId, 'feed_reader');
+      if (entries.length === 0) {
         return { success: true, data: { newCount: 0 }, display: 'No feed subscriptions to check.' };
       }
       let totalNew = 0;
       let successCount = 0;
       const results: Array<{ label: string; newCount: number; items: Array<{ title: string; link?: string; snippet?: string }> }> = [];
       const errors: string[] = [];
-      for (const mem of memories) {
+      for (const ent of entries) {
         try {
-          const entry = JSON.parse(mem.value) as FeedEntry;
+          const entry = JSON.parse(ent.value) as FeedEntry;
           const result = await this.checkSingleFeed(userId, entry);
           successCount++;
           if (result.newCount > 0) {
@@ -132,7 +132,7 @@ export class FeedReaderSkill extends Skill {
             results.push(result);
           }
         } catch (err) {
-          const label = (() => { try { return (JSON.parse(mem.value) as FeedEntry).label; } catch { return mem.key; } })();
+          const label = (() => { try { return (JSON.parse(ent.value) as FeedEntry).label; } catch { return ent.key; } })();
           errors.push(`${label}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
@@ -150,11 +150,10 @@ export class FeedReaderSkill extends Skill {
     }
 
     // Check single feed
-    const mem = (await this.memoryRepo.listByCategory(userId, 'feed'))
-      .find(m => m.key === `feed:${url}`);
-    if (!mem) return { success: false, error: `Not subscribed to ${url}. Use subscribe first.` };
+    const stateValue = await this.skillState.get(userId, 'feed_reader', `feed:${url}`);
+    if (!stateValue) return { success: false, error: `Not subscribed to ${url}. Use subscribe first.` };
 
-    const entry = JSON.parse(mem.value) as FeedEntry;
+    const entry = JSON.parse(stateValue) as FeedEntry;
     const result = await this.checkSingleFeed(userId, entry);
     const lines = result.items.map(i => `• ${i.title}${i.link ? ` — ${i.link}` : ''}${i.snippet ? `\n  ${i.snippet}` : ''}`);
     return {
@@ -204,7 +203,7 @@ export class FeedReaderSkill extends Skill {
       lastEntryId: latestId,
       lastEntryIds: latestIds,
     };
-    await this.memoryRepo.save(userId, `feed:${entry.url}`, JSON.stringify(updated), 'feed');
+    await this.skillState.set(userId, 'feed_reader', `feed:${entry.url}`, JSON.stringify(updated));
 
     return {
       label: entry.label,

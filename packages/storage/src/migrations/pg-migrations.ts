@@ -174,4 +174,48 @@ export const PG_MIGRATIONS: PgMigration[] = [
       `);
     },
   },
+  {
+    version: 43,
+    description: 'Skill state table — separates transient skill data from semantic memories',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS skill_state (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          skill TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT NOW(),
+          expires_at TEXT DEFAULT NULL,
+          UNIQUE(user_id, skill, key)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_skill_state_user_skill ON skill_state(user_id, skill)`, []);
+
+      // Migrate feed entries
+      await db.execute(`
+        INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'feed_reader', key, value, updated_at FROM memories WHERE category = 'feed'
+        ON CONFLICT (user_id, skill, key) DO NOTHING
+      `, []);
+
+      // Migrate sonos entries
+      await db.execute(`
+        INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'sonos', key, value, updated_at FROM memories WHERE category = 'sonos'
+        ON CONFLICT (user_id, skill, key) DO NOTHING
+      `, []);
+
+      // Migrate insight_tracker_stats
+      await db.execute(`
+        INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'insight_tracker', key, value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
+        ON CONFLICT (user_id, skill, key) DO NOTHING
+      `, []);
+
+      // Cleanup migrated entries from memories
+      await db.execute(`DELETE FROM memories WHERE category IN ('feed', 'sonos', 'voice')`, []);
+      await db.execute(`DELETE FROM memories WHERE key = 'insight_tracker_stats'`, []);
+    },
+  },
 ];

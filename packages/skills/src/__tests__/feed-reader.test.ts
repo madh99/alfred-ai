@@ -6,12 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Since FeedReaderSkill has private methods we need to test, we access them
 // via the instance using bracket notation.
 
-const mockMemoryRepo = {
-  save: vi.fn().mockResolvedValue(undefined),
+const mockSkillState = {
+  get: vi.fn().mockResolvedValue(undefined),
+  set: vi.fn().mockResolvedValue(undefined),
   delete: vi.fn().mockResolvedValue(true),
-  listByCategory: vi.fn().mockResolvedValue([]),
-  get: vi.fn().mockResolvedValue(null),
-  getByType: vi.fn().mockResolvedValue([]),
+  listBySkill: vi.fn().mockResolvedValue([]),
+  cleanupExpired: vi.fn().mockResolvedValue(0),
 };
 
 // Mock rss-parser before importing FeedReaderSkill
@@ -29,7 +29,7 @@ const { FeedReaderSkill } = await import('../built-in/feed-reader.js');
 type FeedReaderInstance = InstanceType<typeof FeedReaderSkill>;
 
 function createSkill(): FeedReaderInstance {
-  return new FeedReaderSkill(mockMemoryRepo as any);
+  return new FeedReaderSkill(mockSkillState as any);
 }
 
 // ── findLastKnownIndex ────────────────────────────────────────────────
@@ -213,7 +213,7 @@ describe('FeedReaderSkill.checkSingleFeed', () => {
 
     expect(result.newCount).toBe(1); // only g3 is newer than g2
     expect(result.items[0].title).toBe('Third');
-    expect(mockMemoryRepo.save).toHaveBeenCalled();
+    expect(mockSkillState.set).toHaveBeenCalled();
   });
 
   it('returns up to 5 items on first check (no lastEntryId)', async () => {

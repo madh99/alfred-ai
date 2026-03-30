@@ -888,4 +888,45 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`ALTER TABLE watches ADD COLUMN quiet_hours_end TEXT DEFAULT NULL`);
     },
   },
+  {
+    version: 43,
+    description: 'Skill state table — separates transient skill data from semantic memories',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_state (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          skill TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          expires_at TEXT DEFAULT NULL,
+          UNIQUE(user_id, skill, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_skill_state_user_skill ON skill_state(user_id, skill);
+      `);
+
+      // Migrate feed entries
+      db.exec(`
+        INSERT OR IGNORE INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'feed_reader', key, value, updated_at FROM memories WHERE category = 'feed'
+      `);
+
+      // Migrate sonos entries
+      db.exec(`
+        INSERT OR IGNORE INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'sonos', key, value, updated_at FROM memories WHERE category = 'sonos'
+      `);
+
+      // Migrate insight_tracker_stats
+      db.exec(`
+        INSERT OR IGNORE INTO skill_state (id, user_id, skill, key, value, updated_at)
+        SELECT id, user_id, 'insight_tracker', key, value, updated_at FROM memories WHERE key = 'insight_tracker_stats'
+      `);
+
+      // Cleanup migrated entries from memories
+      db.exec(`DELETE FROM memories WHERE category IN ('feed', 'sonos', 'voice')`);
+      db.exec(`DELETE FROM memories WHERE key = 'insight_tracker_stats'`);
+    },
+  },
 ];

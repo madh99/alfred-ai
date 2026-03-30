@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, SkillStateRepository } from '@alfred/storage';
 
 interface PendingInsight {
   category: string;
@@ -27,14 +27,21 @@ export class InsightTracker {
   constructor(
     private readonly memoryRepo: MemoryRepository,
     private readonly logger: Logger,
+    private readonly skillState?: SkillStateRepository,
   ) {}
 
   private async ensureLoaded(userId: string): Promise<void> {
     if (this.loaded) return;
     try {
-      const entry = await this.memoryRepo.recall(userId, InsightTracker.STATS_MEMORY_KEY);
-      if (entry?.value) {
-        const obj = JSON.parse(entry.value) as Record<string, CategoryStats>;
+      let raw: string | undefined;
+      if (this.skillState) {
+        raw = await this.skillState.get(userId, 'insight_tracker', 'stats');
+      } else {
+        const entry = await this.memoryRepo.recall(userId, InsightTracker.STATS_MEMORY_KEY);
+        raw = entry?.value;
+      }
+      if (raw) {
+        const obj = JSON.parse(raw) as Record<string, CategoryStats>;
         for (const [cat, stat] of Object.entries(obj)) {
           this.stats.set(cat, stat);
         }
@@ -47,7 +54,11 @@ export class InsightTracker {
 
   private async persistStats(userId: string): Promise<void> {
     const obj = Object.fromEntries(this.stats);
-    await this.memoryRepo.save(userId, InsightTracker.STATS_MEMORY_KEY, JSON.stringify(obj), 'system');
+    if (this.skillState) {
+      await this.skillState.set(userId, 'insight_tracker', 'stats', JSON.stringify(obj));
+    } else {
+      await this.memoryRepo.save(userId, InsightTracker.STATS_MEMORY_KEY, JSON.stringify(obj), 'system');
+    }
   }
 
   /**

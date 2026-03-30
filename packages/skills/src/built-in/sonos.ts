@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Skill } from '../skill.js';
 import type { SkillMetadata, SkillContext, SkillResult, SonosConfig } from '@alfred/types';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, SkillStateRepository } from '@alfred/storage';
 
 type Action =
   | 'speakers' | 'speaker_info'
@@ -118,6 +118,7 @@ export class SonosSkill extends Skill {
     private readonly config?: SonosConfig,
     apiPublicUrl?: string,
     private readonly memoryRepo?: MemoryRepository,
+    private readonly skillState?: SkillStateRepository,
   ) {
     super();
     this.apiPublicUrl = apiPublicUrl;
@@ -534,13 +535,16 @@ export class SonosSkill extends Skill {
     return `sonos_radio_${name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_äöüß]/g, '')}`;
   }
 
-  /** Save a working radio URL as memory for future fast lookup */
+  /** Save a working radio URL as skill state for future fast lookup */
   private async saveRadioMemory(context: SkillContext, name: string, uri: string): Promise<void> {
-    if (!this.memoryRepo) return;
     const uid = context.masterUserId ?? context.alfredUserId ?? context.userId;
     const key = this.radioMemoryKey(name);
     try {
-      await this.memoryRepo.save(uid, key, uri, 'sonos');
+      if (this.skillState) {
+        await this.skillState.set(uid, 'sonos', key, uri);
+      } else if (this.memoryRepo) {
+        await this.memoryRepo.save(uid, key, uri, 'sonos');
+      }
     } catch { /* non-critical */ }
   }
 
@@ -557,17 +561,23 @@ export class SonosSkill extends Skill {
     const uid = context.masterUserId ?? context.alfredUserId ?? context.userId;
     const normalized = name.toLowerCase().replace(/^(spiele?|play)\s+/i, '').trim();
 
-    // ── 1. Check memories for previously saved stream URL ──
-    if (this.memoryRepo) {
+    // ── 1. Check skill state for previously saved stream URL ──
+    {
+      const memKey = this.radioMemoryKey(normalized);
       try {
-        const memKey = this.radioMemoryKey(normalized);
-        const mem = await this.memoryRepo.recall(uid, memKey);
-        if (mem?.value) {
-          await entry.device.setAVTransportURI(mem.value);
+        let savedUri: string | undefined;
+        if (this.skillState) {
+          savedUri = await this.skillState.get(uid, 'sonos', memKey);
+        } else if (this.memoryRepo) {
+          const mem = await this.memoryRepo.recall(uid, memKey);
+          savedUri = mem?.value;
+        }
+        if (savedUri) {
+          await entry.device.setAVTransportURI(savedUri);
           await entry.device.play();
           return { success: true, display: `Radio "${name}" wird abgespielt (gespeicherte URL).` };
         }
-      } catch { /* memory lookup failed, continue */ }
+      } catch { /* lookup failed, continue */ }
     }
 
     // ── 2. Check Sonos favorites ──

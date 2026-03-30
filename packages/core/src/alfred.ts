@@ -6,7 +6,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -145,6 +145,7 @@ export class Alfred {
     this.auditRepo = auditRepo;
     const memoryRepo = new MemoryRepository(adapter);
     this.memoryRepo = memoryRepo;
+    const skillStateRepo = new SkillStateRepository(adapter);
     const reminderRepo = new ReminderRepository(adapter);
     this.reminderRepo = reminderRepo;
     const noteRepo = new NoteRepository(adapter);
@@ -572,7 +573,7 @@ export class Alfred {
     {
       const { SonosSkill } = await import('@alfred/skills');
       const sonosApiUrl = this.config.api?.publicUrl ?? `http://${this.config.api?.host ?? 'localhost'}:${this.config.api?.port ?? 3420}`;
-      this.sonosSkill = new SonosSkill(this.config.sonos, sonosApiUrl, memoryRepo);
+      this.sonosSkill = new SonosSkill(this.config.sonos, sonosApiUrl, memoryRepo, skillStateRepo);
       skillRegistry.register(this.sonosSkill);
       this.logger.info({ hasCloud: !!this.config.sonos?.cloud }, 'Sonos skill registered');
     }
@@ -617,8 +618,8 @@ export class Alfred {
       this.logger.info('Briefing skill registered');
     }
 
-    // 4s. Feed reader (always available — stores subscriptions in memory)
-    skillRegistry.register(new FeedReaderSkill(memoryRepo));
+    // 4s. Feed reader (always available — stores subscriptions in skill_state)
+    skillRegistry.register(new FeedReaderSkill(skillStateRepo));
     this.logger.info('Feed reader skill registered');
 
     // 4s2. Help skill (always available — shows available skills)
@@ -779,7 +780,7 @@ export class Alfred {
         this.config.speech,
         this.logger.child({ component: 'tts' }),
       );
-      synthesizer.setMemoryRepo(memoryRepo);
+      synthesizer.setSkillState(skillStateRepo);
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
@@ -815,7 +816,7 @@ export class Alfred {
         announceBaseUrl = `http://${lanIp}:${announcePort}`;
         skillRegistry.register(new VoiceSkill(
           voiceApiKey, 'https://api.mistral.ai/v1', 'voxtral-mini-tts-2603',
-          memoryRepo, skillRegistry, announceBaseUrl,
+          memoryRepo, skillRegistry, announceBaseUrl, skillStateRepo,
         ));
         this.logger.info({ announceBaseUrl }, 'Voice management skill registered');
       }
@@ -1034,6 +1035,7 @@ export class Alfred {
         insightTracker = new InsightTracker(
           memoryRepo,
           this.logger.child({ component: 'insight-tracker' }),
+          skillStateRepo,
         );
         this.insightTracker = insightTracker;
         const reasoningNotifRepo = new CalendarNotificationRepository(adapter);

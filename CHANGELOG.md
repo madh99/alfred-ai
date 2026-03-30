@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.222] - 2026-03-30
+
+### Changed
+- **Memory-Architektur bereinigt** — Neue `skill_state`-Tabelle (Migration v43) für internen Skill-State. Feed-Subscriptions, Sonos-Radio-Cache, Voice-IDs und InsightTracker-Stats aus `memories` in `skill_state` migriert. Die `memories`-Tabelle enthält jetzt NUR noch LLM-relevante User-Daten (Fakten, Entities, Patterns, Connections, Regeln, Feedback). Feed-Entries verdrängen nie wieder `home_address` aus dem System-Prompt.
+- **SkillStateRepository** — Neues Repository für transienten Skill-State mit CRUD, TTL-Support und Skill-Isolation.
+- **FeedReaderSkill** nutzt `SkillStateRepository` statt `MemoryRepository`
+- **SonosSkill** Radio-Cache nutzt `SkillStateRepository`
+- **VoiceSkill** Voice-Profile nutzen `SkillStateRepository`
+- **InsightTracker** Stats nutzen `SkillStateRepository`
+- **SpeechSynthesizer** Voice-Default aus `SkillStateRepository`
+- Alle Refactors mit Fallback auf `MemoryRepository` für Backward-Kompatibilität
+
 ## [0.19.0-multi-ha.221] - 2026-03-30
 
 ### Fixed

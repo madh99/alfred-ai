@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { SkillRegistry } from '../skill-registry.js';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, SkillStateRepository } from '@alfred/storage';
 import { effectiveUserId } from '../user-utils.js';
 
 type VoiceAction = 'create_voice' | 'list_voices' | 'delete_voice' | 'speak' | 'announce' | 'set_default';
@@ -68,6 +68,7 @@ export class VoiceSkill extends Skill {
     private readonly memoryRepo: MemoryRepository,
     private readonly skillRegistry?: SkillRegistry,
     private readonly announceBaseUrl?: string,
+    private readonly skillState?: SkillStateRepository,
   ) {
     super();
   }
@@ -145,12 +146,13 @@ export class VoiceSkill extends Skill {
 
     const voice = await resp.json() as MistralVoice;
     const userId = effectiveUserId(context);
-    await this.memoryRepo.save(
-      userId,
-      `voice_${name.toLowerCase().replace(/\s+/g, '_')}`,
-      JSON.stringify({ voice_id: voice.id, name: voice.name, languages: voice.languages }),
-      'voice',
-    );
+    const voiceKey = `voice_${name.toLowerCase().replace(/\s+/g, '_')}`;
+    const voicePayload = JSON.stringify({ voice_id: voice.id, name: voice.name, languages: voice.languages });
+    if (this.skillState) {
+      await this.skillState.set(userId, 'voice', voiceKey, voicePayload);
+    } else {
+      await this.memoryRepo.save(userId, voiceKey, voicePayload, 'voice');
+    }
 
     return {
       success: true,
@@ -206,19 +208,31 @@ export class VoiceSkill extends Skill {
       throw new Error(`Mistral Voices API: ${resp.status} ${errText}`);
     }
 
-    // Clean up matching memory entries
+    // Clean up matching entries
     const userId = effectiveUserId(context);
-    const memories = await this.memoryRepo.search(userId, voiceId);
-    for (const mem of memories) {
-      if (mem.category === 'voice' && mem.value.includes(voiceId)) {
-        await this.memoryRepo.delete(userId, mem.key);
+    if (this.skillState) {
+      const entries = await this.skillState.listBySkill(userId, 'voice');
+      for (const ent of entries) {
+        if (ent.value.includes(voiceId)) {
+          await this.skillState.delete(userId, 'voice', ent.key);
+        }
       }
-    }
-
-    // If this was the default voice, remove the default memory too
-    const defaultMem = await this.memoryRepo.recall(userId, 'voice_default');
-    if (defaultMem?.value === voiceId) {
-      await this.memoryRepo.delete(userId, 'voice_default');
+      // If this was the default voice, remove the default too
+      const defaultVal = await this.skillState.get(userId, 'voice', 'voice_default');
+      if (defaultVal === voiceId) {
+        await this.skillState.delete(userId, 'voice', 'voice_default');
+      }
+    } else {
+      const memories = await this.memoryRepo.search(userId, voiceId);
+      for (const mem of memories) {
+        if (mem.category === 'voice' && mem.value.includes(voiceId)) {
+          await this.memoryRepo.delete(userId, mem.key);
+        }
+      }
+      const defaultMem = await this.memoryRepo.recall(userId, 'voice_default');
+      if (defaultMem?.value === voiceId) {
+        await this.memoryRepo.delete(userId, 'voice_default');
+      }
     }
 
     return {
@@ -394,7 +408,11 @@ export class VoiceSkill extends Skill {
     if (!voiceId) return { success: false, error: 'Missing required parameter: voice_id' };
 
     const userId = effectiveUserId(context);
-    await this.memoryRepo.save(userId, 'voice_default', voiceId, 'voice');
+    if (this.skillState) {
+      await this.skillState.set(userId, 'voice', 'voice_default', voiceId);
+    } else {
+      await this.memoryRepo.save(userId, 'voice_default', voiceId, 'voice');
+    }
 
     return {
       success: true,
@@ -418,14 +436,20 @@ export class VoiceSkill extends Skill {
       // If it's already a UUID, use it directly
       if (/^[0-9a-f]{8}-/.test(explicitId)) return explicitId;
 
-      // It's a name — resolve to UUID via memory first
+      // It's a name — resolve to UUID via skill state first, then memory fallback
       const userId = effectiveUserId(context);
       const nameLower = explicitId.toLowerCase();
       const memKey = `voice_${nameLower.replace(/\s+/g, '_')}`;
-      const mem = await this.memoryRepo.recall(userId, memKey);
-      if (mem?.value) {
+      let rawValue: string | undefined;
+      if (this.skillState) {
+        rawValue = await this.skillState.get(userId, 'voice', memKey);
+      } else {
+        const mem = await this.memoryRepo.recall(userId, memKey);
+        rawValue = mem?.value;
+      }
+      if (rawValue) {
         try {
-          const parsed = JSON.parse(mem.value);
+          const parsed = JSON.parse(rawValue);
           if (parsed.voice_id) return parsed.voice_id;
         } catch { /* not JSON, try as raw value */ }
       }
@@ -448,8 +472,11 @@ export class VoiceSkill extends Skill {
       return undefined;
     }
 
-    // No explicit ID — check for user-specific default voice in memory
+    // No explicit ID — check for user-specific default voice
     const userId = effectiveUserId(context);
+    if (this.skillState) {
+      return await this.skillState.get(userId, 'voice', 'voice_default');
+    }
     const defaultMem = await this.memoryRepo.recall(userId, 'voice_default');
     return defaultMem?.value ?? undefined;
   }
