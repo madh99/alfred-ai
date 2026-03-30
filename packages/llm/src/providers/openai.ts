@@ -163,14 +163,15 @@ export class OpenAIProvider extends LLMProvider {
 
   async embed(text: string): Promise<import('../provider.js').EmbeddingResult | undefined> {
     try {
+      const embeddingModel = this.config.model ?? 'text-embedding-3-small';
       const response = await this.client.embeddings.create({
-        model: 'text-embedding-3-small',
+        model: embeddingModel,
         input: text,
       });
       const data = response.data[0];
       return {
         embedding: data.embedding,
-        model: 'text-embedding-3-small',
+        model: embeddingModel,
         dimensions: data.embedding.length,
         totalTokens: response.usage?.total_tokens ?? 0,
       };
