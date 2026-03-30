@@ -1338,7 +1338,7 @@ export class MessagePipeline {
       // For delegate skill: create per-invocation tracker and pass via context
       let tracker: import('@alfred/skills').ActivityTracker | undefined;
       let agentId: string | undefined;
-      if (toolCall.name === 'delegate') {
+      if (['delegate', 'code_agent'].includes(toolCall.name)) {
         const { ActivityTracker } = await import('@alfred/skills');
         tracker = new ActivityTracker(onProgress);
 
