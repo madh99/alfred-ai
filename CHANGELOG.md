@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.243] - 2026-03-31
+
+### Changed
+- **Reasoning-Prompts für holistisches System aktualisiert** — Scan-, Detail- und Event-Prompts referenzieren jetzt explizit die VERBINDUNGSKARTE (Cross-Domain Entities/Relations aus dem Knowledge Graph), Trends & Anomalien, User-Feedback, und Enrichment-Daten. LLM wird instruiert BELIEBIGE Domain-Kombinationen zu finden statt nur die in Beispielen genannten. Keine Beschränkung auf bestimmte Empfehlungstypen.
+
 ## [0.19.0-multi-ha.242] - 2026-03-31
 
 ### Changed

@@ -2803,17 +2803,19 @@ ${t.value}`),s.length>0?s.join(`
 
 `):"Keine temporalen Auff\xE4lligkeiten."}catch{return"(Trend-Daten nicht verf\xFCgbar)"}}async fetchActionFeedback(){try{let e=[],t=await this.memoryRepo.recall(this.defaultChatId,"action_feedback_summary");t?.value&&e.push(t.value);let s=await this.memoryRepo.search(this.defaultChatId,"insight_pref_");if(s.length>0){let i=s.filter(a=>a.value.includes("positiv")).map(a=>a.key.replace("insight_pref_","")),n=s.filter(a=>a.value.includes("ablehnt")||a.value.includes("ignoriert")).map(a=>a.key.replace("insight_pref_",""));i.length>0&&e.push(`Insight-Pr\xE4ferenz positiv: ${i.join(", ")}`),n.length>0&&e.push(`Insight-Pr\xE4ferenz negativ: ${n.join(", ")}`)}let r=await this.memoryRepo.recall(this.defaultChatId,"autonomy_suggestion");return r?.value&&e.push(r.value),e.length>0?e.join(`
 `):"Noch kein Feedback zu Aktionen gesammelt."}catch{return"(Feedback-Daten nicht verf\xFCgbar)"}}static ENRICHMENT_MAP={vehicle_battery:{skill:"bmw",input:{action:"status"},maxTokens:300},routing:{skill:"routing",input:{action:"route"},maxTokens:300},weather_forecast:{skill:"weather",input:{action:"forecast"},maxTokens:250},email_detail:{skill:"email",input:{action:"inbox",limit:3},maxTokens:300},calendar_detail:{skill:"calendar",input:{action:"list_events",days:3},maxTokens:300},smarthome_detail:{skill:"homeassistant",input:{action:"states"},maxTokens:300},crypto_detail:{skill:"bitpanda",input:{action:"portfolio"},maxTokens:250},energy_forecast:{skill:"energy_price",input:{action:"today"},maxTokens:200}};static ENRICHMENT_TIMEOUT_MS=8e3;static MAX_ENRICHMENT_TOKENS=1500;async enrichTopics(e){let t=new Map;for(let a of e)if(a.topic==="trend_analysis"){let o=await this.fetchTemporalInsights();o&&!o.startsWith("(")&&o!=="Keine temporalen Auff\xE4lligkeiten."&&t.set("trend_analysis",o)}let s=new Map;for(let a of e){let o=d.ENRICHMENT_MAP[a.topic];if(!o||!this.skillRegistry.has(o.skill)||s.has(o.skill))continue;let c={...o.input,...a.params??{}};s.set(a.topic,{topic:a.topic,skill:o.skill,input:c})}if(s.size===0)return t;let r=[...s.values()].map(async a=>{try{let o=await Promise.race([this.fetchSkillData(a.skill,a.input),new Promise((c,l)=>setTimeout(()=>l(new Error("enrichment timeout")),d.ENRICHMENT_TIMEOUT_MS))]);return{topic:a.topic,content:o}}catch{return{topic:a.topic,content:""}}}),i=await Promise.allSettled(r),n=0;for(let a of i){if(a.status!=="fulfilled"||!a.value.content)continue;let o=Math.ceil(a.value.content.length/4);if(n+o>d.MAX_ENRICHMENT_TOKENS){let c=(d.MAX_ENRICHMENT_TOKENS-n)*4;c>100&&t.set(a.value.topic,a.value.content.slice(0,c)+`
-...(gek\xFCrzt)`);break}t.set(a.value.topic,a.value.content),n+=o}return t}async fetchSkillData(e,t){let s=this.skillRegistry.get(e);if(!s)return`(${e} nicht verf\xFCgbar)`;try{let{context:r}=await je(this.userRepo,{userId:this.defaultChatId,platform:this.defaultPlatform,chatId:this.defaultChatId,chatType:"dm"}),i=await Promise.race([this.skillSandbox.execute(s,t,r),new Promise((n,a)=>setTimeout(()=>a(new Error(`${e} timeout`)),RE))]);return i.success?i.display??JSON.stringify(i.data):`(${e}: ${i.error})`}catch(r){return this.logger.warn({err:r,skillName:e},"ReasoningCollector: skill fetch failed"),`(${e}-Abfrage fehlgeschlagen)`}}}});import lg from"node:crypto";function zo(d){if(!d||d.length<10)return!0;let e=d.trim();return e==="KEINE_INSIGHTS"||e.toLowerCase()==="keine_insights"}var $E,dg,Jr,IE,qo,Bn,iu=_(()=>{"use strict";Ho();ru();Xo();Ft();$E=[7,12,18],dg=1536,Jr="---ACTIONS---",IE=300*1e3,qo="---TOPICS---";m(zo,"isNoInsights");Bn=class d{static{m(this,"ReasoningEngine")}calendarProvider;todoRepo;watchRepo;memoryRepo;activityRepo;skillHealthRepo;notifRepo;skillRegistry;skillSandbox;llm;adapters;userRepo;defaultChatId;defaultPlatform;logger;activityLogger;defaultLocation;feedbackRepo;confirmationQueue;nodeId;adapter;insightTracker;kgService;tickTimer;lastRunHour=-1;lastEventTriggerAt=0;enabled;schedule;tier;deduplicationHours;collector;constructor(e,t,s,r,i,n,a,o,c,l,u,h,p,f,y,g,T,E,A,v,L="single",D,ee,W,j){this.calendarProvider=e,this.todoRepo=t,this.watchRepo=s,this.memoryRepo=r,this.activityRepo=i,this.skillHealthRepo=n,this.notifRepo=a,this.skillRegistry=o,this.skillSandbox=c,this.llm=l,this.adapters=u,this.userRepo=h,this.defaultChatId=p,this.defaultPlatform=f,this.logger=g,this.activityLogger=T,this.defaultLocation=E,this.feedbackRepo=A,this.confirmationQueue=v,this.nodeId=L,this.adapter=D,this.insightTracker=ee,this.kgService=j,this.enabled=y?.enabled!==!1,this.schedule=y?.schedule??"hourly",this.tier=y?.tier??"default",this.deduplicationHours=y?.deduplicationHours??12,this.collector=W??new jn(this.skillRegistry,this.skillSandbox,this.userRepo,this.calendarProvider,this.todoRepo,this.watchRepo,this.memoryRepo,this.activityRepo,this.skillHealthRepo,this.feedbackRepo,this.defaultChatId,this.defaultPlatform,this.defaultLocation,this.logger)}start(){if(!this.enabled){this.logger.info("Reasoning engine disabled");return}this.tickTimer=setInterval(()=>this.tick(),6e4),this.logger.info({schedule:this.schedule,tier:this.tier},"Reasoning engine started")}stop(){this.tickTimer&&(clearInterval(this.tickTimer),this.tickTimer=void 0)}async triggerOnEvent(e,t,s={}){if(!this.enabled)return;let r=Date.now();if(r-this.lastEventTriggerAt<IE){this.logger.debug({eventType:e},"Event-triggered reasoning debounced");return}if(this.lastEventTriggerAt=r,this.adapter&&this.adapter.type==="postgres"){let i=`reasoning-event:${Date.now().toString(36)}:${e}`;if((await this.adapter.execute("INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",[i,this.nodeId,new Date().toISOString()])).changes===0)return}try{let i=await this.collector.collect();await this.enrichWithKnowledgeGraph(i);let n=`Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
+...(gek\xFCrzt)`);break}t.set(a.value.topic,a.value.content),n+=o}return t}async fetchSkillData(e,t){let s=this.skillRegistry.get(e);if(!s)return`(${e} nicht verf\xFCgbar)`;try{let{context:r}=await je(this.userRepo,{userId:this.defaultChatId,platform:this.defaultPlatform,chatId:this.defaultChatId,chatType:"dm"}),i=await Promise.race([this.skillSandbox.execute(s,t,r),new Promise((n,a)=>setTimeout(()=>a(new Error(`${e} timeout`)),RE))]);return i.success?i.display??JSON.stringify(i.data):`(${e}: ${i.error})`}catch(r){return this.logger.warn({err:r,skillName:e},"ReasoningCollector: skill fetch failed"),`(${e}-Abfrage fehlgeschlagen)`}}}});import lg from"node:crypto";function zo(d){if(!d||d.length<10)return!0;let e=d.trim();return e==="KEINE_INSIGHTS"||e.toLowerCase()==="keine_insights"}var $E,dg,Jr,IE,qo,Bn,iu=_(()=>{"use strict";Ho();ru();Xo();Ft();$E=[7,12,18],dg=1536,Jr="---ACTIONS---",IE=300*1e3,qo="---TOPICS---";m(zo,"isNoInsights");Bn=class d{static{m(this,"ReasoningEngine")}calendarProvider;todoRepo;watchRepo;memoryRepo;activityRepo;skillHealthRepo;notifRepo;skillRegistry;skillSandbox;llm;adapters;userRepo;defaultChatId;defaultPlatform;logger;activityLogger;defaultLocation;feedbackRepo;confirmationQueue;nodeId;adapter;insightTracker;kgService;tickTimer;lastRunHour=-1;lastEventTriggerAt=0;enabled;schedule;tier;deduplicationHours;collector;constructor(e,t,s,r,i,n,a,o,c,l,u,h,p,f,y,g,T,E,A,v,L="single",D,ee,W,j){this.calendarProvider=e,this.todoRepo=t,this.watchRepo=s,this.memoryRepo=r,this.activityRepo=i,this.skillHealthRepo=n,this.notifRepo=a,this.skillRegistry=o,this.skillSandbox=c,this.llm=l,this.adapters=u,this.userRepo=h,this.defaultChatId=p,this.defaultPlatform=f,this.logger=g,this.activityLogger=T,this.defaultLocation=E,this.feedbackRepo=A,this.confirmationQueue=v,this.nodeId=L,this.adapter=D,this.insightTracker=ee,this.kgService=j,this.enabled=y?.enabled!==!1,this.schedule=y?.schedule??"hourly",this.tier=y?.tier??"default",this.deduplicationHours=y?.deduplicationHours??12,this.collector=W??new jn(this.skillRegistry,this.skillSandbox,this.userRepo,this.calendarProvider,this.todoRepo,this.watchRepo,this.memoryRepo,this.activityRepo,this.skillHealthRepo,this.feedbackRepo,this.defaultChatId,this.defaultPlatform,this.defaultLocation,this.logger)}start(){if(!this.enabled){this.logger.info("Reasoning engine disabled");return}this.tickTimer=setInterval(()=>this.tick(),6e4),this.logger.info({schedule:this.schedule,tier:this.tier},"Reasoning engine started")}stop(){this.tickTimer&&(clearInterval(this.tickTimer),this.tickTimer=void 0)}async triggerOnEvent(e,t,s={}){if(!this.enabled)return;let r=Date.now();if(r-this.lastEventTriggerAt<IE){this.logger.debug({eventType:e},"Event-triggered reasoning debounced");return}if(this.lastEventTriggerAt=r,this.adapter&&this.adapter.type==="postgres"){let i=`reasoning-event:${Date.now().toString(36)}:${e}`;if((await this.adapter.execute("INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",[i,this.nodeId,new Date().toISOString()])).changes===0)return}try{let i=await this.collector.collect();await this.enrichWithKnowledgeGraph(i);let n=`Du bist Alfreds holistisches Denk-Modul. Ein Event ist eingetreten:
 
 EVENT: ${e}
 DETAILS: ${t}
 DATEN: ${JSON.stringify(s).slice(0,500)}
 
-KONTEXT (alle verf\xFCgbaren Datenquellen):
+KONTEXT (alle verf\xFCgbaren Datenquellen + Knowledge Graph):
 ${this.formatSections(i)}
 
-Aufgabe: Analysiere ob dieses Event im Kontext ALLER User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
-- Suche nach Verbindungen zwischen VERSCHIEDENEN Bereichen: Termin + Ort + Shopping? Zeitkonflikt? Preisalert + Fahrt? E-Mail + Meeting?
+Aufgabe: Analysiere ob dieses Event im Kontext ALLER Daten \u2014 insbesondere der VERBINDUNGSKARTE (Cross-Domain Entities/Relations) \u2014 eine Handlungsempfehlung ergibt.
+- Nutze die VERBINDUNGSKARTE als prim\xE4ren Ausgangspunkt f\xFCr Querverbindungen
+- Verbinde BELIEBIGE Domains: nicht nur die offensichtlichen, sondern auch indirekte Zusammenh\xE4nge
+- Ber\xFCcksichtige Trends, Feedback und bemerkenswerte Attribute
 - Max 3 Stichpunkte
 - Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
@@ -2851,11 +2853,21 @@ Verf\xFCgbare Topics f\xFCr Detaildaten:
 - energy_forecast \u2014 Energiepreis-Prognose
 - trend_analysis \u2014 Detaillierte Trend- und Anomalie-Daten (4-Wochen-Vergleich)
 
-Wenn KEINE Topics n\xF6tig: lass den ${qo} Block weg.`}buildScanPrompt(e){return`Du bist Alfreds Denk-Modul. Scanne ALLE folgenden Daten nach:
-1. Konflikten (Termin\xFCberschneidungen, \xFCberf\xE4llige Todos bei vollem Kalender, Zeitdruck)
-2. Gelegenheiten (Preis-Alerts + Termine am selben Ort, g\xFCnstiger Strom + Auto laden, Shopping + Reise)
-3. Querverbindungen zwischen VERSCHIEDENEN Bereichen (E-Mail-Thema = Kalender-Meeting, Todo + Wetter, BMW-Akku + Termin morgen)
-4. Ungew\xF6hnlichem (pl\xF6tzliche \xC4nderungen, Anomalien, Muster)
+Wenn KEINE Topics n\xF6tig: lass den ${qo} Block weg.`}buildScanPrompt(e){return`Du bist Alfreds holistisches Denk-Modul. Du hast Zugriff auf 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
+
+AUFGABE: Finde Cross-Domain-Verbindungen, Konflikte, Gelegenheiten und Handlungsbedarf.
+
+WICHTIG \u2014 VERBINDUNGSKARTE:
+Die Section "VERBINDUNGSKARTE" zeigt dir STRUKTURIERT welche Entities (Personen, Orte, Items, Events) in MEHREREN Datenquellen vorkommen und wie sie verbunden sind. Nutze sie als PRIM\xC4REN Ausgangspunkt \u2014 dort sind die Querverbindungen bereits vorstrukturiert. Du musst sie nur interpretieren und bewerten.
+
+WONACH DU SUCHST:
+1. Cross-Domain-Verbindungen (Entity taucht in calendar+email+todos auf \u2192 warum? Zusammenhang?)
+2. Konflikte (Ressourcen-Engpass, Zeit\xFCberschneidung, \xFCberf\xE4llige Pflichten bei bevorstehenden Terminen)
+3. Gelegenheiten (gleicher Ort f\xFCr verschiedene Zwecke, g\xFCnstiger Zeitpunkt f\xFCr Aktion)
+4. Trends & Anomalien (wenn Trend-Daten vorhanden: was hat sich ver\xE4ndert? Ist das relevant?)
+5. Feedback-basiert (wenn User-Feedback vorhanden: welche Insight-Typen bevorzugt/ablehnt der User?)
+
+Du bist NICHT auf bestimmte Empfehlungstypen beschr\xE4nkt. Jede sinnvolle Verbindung zwischen BELIEBIGEN Domains ist relevant \u2014 Crypto+Reise, RSS+Meeting, SmartHome+Wetter, E-Mail+Kalender, alles.
 
 GE\xC4NDERT SEIT LETZTEM LAUF:
 ${e.changedSections.length>0?e.changedSections.map(s=>e.sections.find(r=>r.key===s)?.label).filter(Boolean).join(", "):"Keine \xC4nderungen"}
@@ -2865,23 +2877,28 @@ ${this.formatSections(e)}
 Antworte mit max 3 kurzen Stichpunkten was du an Verbindungen, Konflikten oder Gelegenheiten gefunden hast.
 Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
-${this.buildTopicInstructions()}`}buildDetailPrompt(e,t,s){let r=s&&s.size>0?this.formatEnrichedContext(s):"";return`Du bist Alfreds Denk-Modul. In der Vorab-Analyse wurden folgende Auff\xE4lligkeiten erkannt:
+${this.buildTopicInstructions()}`}buildDetailPrompt(e,t,s){let r=s&&s.size>0?this.formatEnrichedContext(s):"";return`Du bist Alfreds holistisches Denk-Modul. In der Vorab-Analyse wurden folgende Auff\xE4lligkeiten erkannt:
 
 ${t}
 
 Formuliere daraus max 5 konkrete, actionable Insights f\xFCr den User.
 
 REGELN:
-- Priorisiere Verbindungen zwischen VERSCHIEDENEN Datenbereichen \xFCber reine Fakten-Wiederholung
+- Nutze die VERBINDUNGSKARTE als Basis \u2014 dort sind Cross-Domain-Entities und Relations strukturiert aufbereitet
+- Nutze VERTIEFTE DATEN (falls vorhanden) f\xFCr konkrete Zahlen und quantitative Empfehlungen
+- Ber\xFCcksichtige TRENDS & ANOMALIEN (falls vorhanden) \u2014 was hat sich ver\xE4ndert?
+- Ber\xFCcksichtige USER-FEEDBACK (falls vorhanden) \u2014 welche Insight-Typen werden bevorzugt/abgelehnt?
+- Verbinde BELIEBIGE Domains: Kalender+E-Mail, Shopping+Reise, SmartHome+Wetter, Crypto+Budget, RSS+Meeting \u2014 alles ist erlaubt
 - KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
 - Jeder Insight: 1-2 S\xE4tze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
-- Nutze die VERTIEFTEN DATEN f\xFCr konkrete Zahlen (Distanz, Ladezeit, Preis, Temperatur)
 
-BEISPIELE guter Insights:
-- "Du hast um 14:00 einen Termin in Linz (78km), BMW hat 15% Akku \u2192 brauchst ~45%. Lade heute Nacht \u2014 Strom ab 22 Uhr unter 5ct."
-- "3 deiner 5 Todos sind morgen f\xE4llig, aber dein Kalender ist voll (8h Meetings) \u2014 eventuell heute Abend erledigen."
-- "Morgen fr\xFCh -3\xB0C in Linz, du hast einen 8:00 Termin dort \u2014 Auto vorheizen einplanen."
+BEISPIELE (illustrativ \u2014 du bist NICHT auf diese Typen beschr\xE4nkt):
+- Entity in 3 Quellen: "M\xFCller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt \u2014 heute erledigen!"
+- Ort-Cluster: "RTX 5090 in Wien verf\xFCgbar + Zahnarzt-Termin Wien Mittwoch \u2192 Abholung nach Termin"
+- Ressourcen-Engpass: "BMW 15% Akku (45km), Termin in Linz (150km) \u2192 laden, Strom gerade g\xFCnstig"
+- Trend + Kontext: "Spotify-Fehler diese Woche 5x h\xE4ufiger als normal \u2192 Service pr\xFCfen"
+- Beliebige Kombination: Alles was aus den Daten sinnvoll hervorgeht
 
 AKTUELLE DATEN:
 ${this.formatSections(e)}
@@ -2894,14 +2911,16 @@ Aktionstypen: "execute_skill" (Skill ausf\xFChren) oder "create_reminder" (Erinn
 Format: nach deinen Text-Insights, trenne mit "${Jr}", dann ein JSON-Array:
 ${Jr}
 [{"type":"execute_skill","description":"Wallbox ein (Strom <5ct, BMW 45%)","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}]
-Wenn keine Aktionen sinnvoll: lass den ${Jr} Block weg.`:""}`}buildEventDetailPrompt(e,t,s,r,i){let n=i.size>0?this.formatEnrichedContext(i):"";return`Du bist Alfreds proaktives Denk-Modul. Ein ${t}-Event wurde analysiert:
+Wenn keine Aktionen sinnvoll: lass den ${Jr} Block weg.`:""}`}buildEventDetailPrompt(e,t,s,r,i){let n=i.size>0?this.formatEnrichedContext(i):"";return`Du bist Alfreds holistisches Denk-Modul. Ein ${t}-Event wurde analysiert:
 ${s}
 
 Scan-Ergebnis:
 ${r}
 
 Formuliere daraus max 2 konkrete, actionable Insights.
-- Nutze die VERTIEFTEN DATEN f\xFCr spezifische Zahlen und Empfehlungen
+- Nutze die VERBINDUNGSKARTE f\xFCr Cross-Domain-Zusammenh\xE4nge
+- Nutze VERTIEFTE DATEN f\xFCr spezifische Zahlen und quantitative Empfehlungen
+- Verbinde beliebige Domains \u2014 nicht auf bestimmte Typen beschr\xE4nkt
 - Max 1-2 S\xE4tze pro Insight, auf Deutsch
 
 ${this.formatSections(e)}

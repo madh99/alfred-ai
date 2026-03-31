@@ -169,17 +169,19 @@ export class ReasoningEngine {
       await this.enrichWithKnowledgeGraph(context);
 
       // Scan pass: quick analysis of event in context
-      const scanPrompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
+      const scanPrompt = `Du bist Alfreds holistisches Denk-Modul. Ein Event ist eingetreten:
 
 EVENT: ${eventType}
 DETAILS: ${eventDescription}
 DATEN: ${JSON.stringify(eventData).slice(0, 500)}
 
-KONTEXT (alle verfügbaren Datenquellen):
+KONTEXT (alle verfügbaren Datenquellen + Knowledge Graph):
 ${this.formatSections(context)}
 
-Aufgabe: Analysiere ob dieses Event im Kontext ALLER User-Daten eine Handlungsempfehlung oder einen Hinweis ergibt.
-- Suche nach Verbindungen zwischen VERSCHIEDENEN Bereichen: Termin + Ort + Shopping? Zeitkonflikt? Preisalert + Fahrt? E-Mail + Meeting?
+Aufgabe: Analysiere ob dieses Event im Kontext ALLER Daten — insbesondere der VERBINDUNGSKARTE (Cross-Domain Entities/Relations) — eine Handlungsempfehlung ergibt.
+- Nutze die VERBINDUNGSKARTE als primären Ausgangspunkt für Querverbindungen
+- Verbinde BELIEBIGE Domains: nicht nur die offensichtlichen, sondern auch indirekte Zusammenhänge
+- Berücksichtige Trends, Feedback und bemerkenswerte Attribute
 - Max 3 Stichpunkte
 - Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
@@ -499,11 +501,21 @@ Wenn KEINE Topics nötig: lass den ${TOPICS_MARKER} Block weg.`;
       ? ctx.changedSections.map(k => ctx.sections.find(s => s.key === k)?.label).filter(Boolean).join(', ')
       : 'Keine Änderungen';
 
-    return `Du bist Alfreds Denk-Modul. Scanne ALLE folgenden Daten nach:
-1. Konflikten (Terminüberschneidungen, überfällige Todos bei vollem Kalender, Zeitdruck)
-2. Gelegenheiten (Preis-Alerts + Termine am selben Ort, günstiger Strom + Auto laden, Shopping + Reise)
-3. Querverbindungen zwischen VERSCHIEDENEN Bereichen (E-Mail-Thema = Kalender-Meeting, Todo + Wetter, BMW-Akku + Termin morgen)
-4. Ungewöhnlichem (plötzliche Änderungen, Anomalien, Muster)
+    return `Du bist Alfreds holistisches Denk-Modul. Du hast Zugriff auf 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
+
+AUFGABE: Finde Cross-Domain-Verbindungen, Konflikte, Gelegenheiten und Handlungsbedarf.
+
+WICHTIG — VERBINDUNGSKARTE:
+Die Section "VERBINDUNGSKARTE" zeigt dir STRUKTURIERT welche Entities (Personen, Orte, Items, Events) in MEHREREN Datenquellen vorkommen und wie sie verbunden sind. Nutze sie als PRIMÄREN Ausgangspunkt — dort sind die Querverbindungen bereits vorstrukturiert. Du musst sie nur interpretieren und bewerten.
+
+WONACH DU SUCHST:
+1. Cross-Domain-Verbindungen (Entity taucht in calendar+email+todos auf → warum? Zusammenhang?)
+2. Konflikte (Ressourcen-Engpass, Zeitüberschneidung, überfällige Pflichten bei bevorstehenden Terminen)
+3. Gelegenheiten (gleicher Ort für verschiedene Zwecke, günstiger Zeitpunkt für Aktion)
+4. Trends & Anomalien (wenn Trend-Daten vorhanden: was hat sich verändert? Ist das relevant?)
+5. Feedback-basiert (wenn User-Feedback vorhanden: welche Insight-Typen bevorzugt/ablehnt der User?)
+
+Du bist NICHT auf bestimmte Empfehlungstypen beschränkt. Jede sinnvolle Verbindung zwischen BELIEBIGEN Domains ist relevant — Crypto+Reise, RSS+Meeting, SmartHome+Wetter, E-Mail+Kalender, alles.
 
 GEÄNDERT SEIT LETZTEM LAUF:
 ${changedInfo}
@@ -521,23 +533,28 @@ ${this.buildTopicInstructions()}`;
       ? this.formatEnrichedContext(enrichedContext)
       : '';
 
-    return `Du bist Alfreds Denk-Modul. In der Vorab-Analyse wurden folgende Auffälligkeiten erkannt:
+    return `Du bist Alfreds holistisches Denk-Modul. In der Vorab-Analyse wurden folgende Auffälligkeiten erkannt:
 
 ${scanFindings}
 
 Formuliere daraus max 5 konkrete, actionable Insights für den User.
 
 REGELN:
-- Priorisiere Verbindungen zwischen VERSCHIEDENEN Datenbereichen über reine Fakten-Wiederholung
+- Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities und Relations strukturiert aufbereitet
+- Nutze VERTIEFTE DATEN (falls vorhanden) für konkrete Zahlen und quantitative Empfehlungen
+- Berücksichtige TRENDS & ANOMALIEN (falls vorhanden) — was hat sich verändert?
+- Berücksichtige USER-FEEDBACK (falls vorhanden) — welche Insight-Typen werden bevorzugt/abgelehnt?
+- Verbinde BELIEBIGE Domains: Kalender+E-Mail, Shopping+Reise, SmartHome+Wetter, Crypto+Budget, RSS+Meeting — alles ist erlaubt
 - KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
-- Nutze die VERTIEFTEN DATEN für konkrete Zahlen (Distanz, Ladezeit, Preis, Temperatur)
 
-BEISPIELE guter Insights:
-- "Du hast um 14:00 einen Termin in Linz (78km), BMW hat 15% Akku → brauchst ~45%. Lade heute Nacht — Strom ab 22 Uhr unter 5ct."
-- "3 deiner 5 Todos sind morgen fällig, aber dein Kalender ist voll (8h Meetings) — eventuell heute Abend erledigen."
-- "Morgen früh -3°C in Linz, du hast einen 8:00 Termin dort — Auto vorheizen einplanen."
+BEISPIELE (illustrativ — du bist NICHT auf diese Typen beschränkt):
+- Entity in 3 Quellen: "Müller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt — heute erledigen!"
+- Ort-Cluster: "RTX 5090 in Wien verfügbar + Zahnarzt-Termin Wien Mittwoch → Abholung nach Termin"
+- Ressourcen-Engpass: "BMW 15% Akku (45km), Termin in Linz (150km) → laden, Strom gerade günstig"
+- Trend + Kontext: "Spotify-Fehler diese Woche 5x häufiger als normal → Service prüfen"
+- Beliebige Kombination: Alles was aus den Daten sinnvoll hervorgeht
 
 AKTUELLE DATEN:
 ${this.formatSections(ctx)}
@@ -561,14 +578,16 @@ Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
       ? this.formatEnrichedContext(enrichedContext)
       : '';
 
-    return `Du bist Alfreds proaktives Denk-Modul. Ein ${eventType}-Event wurde analysiert:
+    return `Du bist Alfreds holistisches Denk-Modul. Ein ${eventType}-Event wurde analysiert:
 ${eventDescription}
 
 Scan-Ergebnis:
 ${scanFindings}
 
 Formuliere daraus max 2 konkrete, actionable Insights.
-- Nutze die VERTIEFTEN DATEN für spezifische Zahlen und Empfehlungen
+- Nutze die VERBINDUNGSKARTE für Cross-Domain-Zusammenhänge
+- Nutze VERTIEFTE DATEN für spezifische Zahlen und quantitative Empfehlungen
+- Verbinde beliebige Domains — nicht auf bestimmte Typen beschränkt
 - Max 1-2 Sätze pro Insight, auf Deutsch
 
 ${this.formatSections(ctx)}
