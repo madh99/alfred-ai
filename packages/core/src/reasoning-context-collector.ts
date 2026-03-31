@@ -55,6 +55,8 @@ export class ReasoningContextCollector {
   private previousContent = new Map<string, string>();
   /** In-memory error tracking: was this section successful on the previous run? */
   private previousSuccess = new Map<string, boolean>();
+  /** Resolved master user ID (cached after first resolve). */
+  private resolvedUserId?: string;
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -73,7 +75,22 @@ export class ReasoningContextCollector {
     private readonly logger: Logger,
   ) {}
 
+  /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
+  private async getEffectiveUserId(): Promise<string> {
+    if (this.resolvedUserId) return this.resolvedUserId;
+    try {
+      const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId);
+      this.resolvedUserId = user.masterUserId ?? user.id;
+    } catch {
+      this.resolvedUserId = this.defaultChatId;
+    }
+    return this.resolvedUserId;
+  }
+
   async collect(): Promise<CollectedContext> {
+    // Resolve master user ID once per collect() for all memory lookups
+    this.resolvedUserId = await this.getEffectiveUserId();
+
     const now = new Date();
     const dateTime = now.toLocaleString('de-AT', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -346,11 +363,11 @@ export class ReasoningContextCollector {
 
   private async fetchMemories(): Promise<string> {
     try {
-      const memories = await this.memoryRepo.getRecentForPrompt(this.defaultChatId, 20);
+      const memories = await this.memoryRepo.getRecentForPrompt(this.resolvedUserId!, 20);
       const existingKeys = new Set(memories.map(m => m.key));
       for (const type of ['pattern', 'connection'] as const) {
         try {
-          const typed = await this.memoryRepo.getByType(this.defaultChatId, type, 5);
+          const typed = await this.memoryRepo.getByType(this.resolvedUserId!, type, 5);
           for (const m of typed) {
             if (!existingKeys.has(m.key)) { existingKeys.add(m.key); memories.push(m); }
           }
@@ -441,7 +458,7 @@ export class ReasoningContextCollector {
 
     // 3. User-configured additional domains (ADDITIVE, from memory "briefing_ha_domains")
     try {
-      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_domain');
+      const mems = await this.memoryRepo.search(this.resolvedUserId!, 'ha_domain');
       const domainMem = mems.find(m => /ha_domain|home.?assistant.*domain|briefing.*domain/i.test(m.key));
       if (domainMem) {
         const userDomains = domainMem.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
@@ -455,7 +472,7 @@ export class ReasoningContextCollector {
 
     // 4. User-configured specific entities (ADDITIVE, from memory "briefing_ha_entities")
     try {
-      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_entit');
+      const mems = await this.memoryRepo.search(this.resolvedUserId!, 'ha_entit');
       const entityMem = mems.find(m => /ha_entit|home.?assistant.*entit|briefing.*entit/i.test(m.key));
       if (entityMem) {
         const entityIds = entityMem.value.split(/[,;]\s*/).map(e => e.trim()).filter(Boolean);
@@ -529,7 +546,7 @@ export class ReasoningContextCollector {
     if (!location) {
       try {
         for (const query of ['heim', 'home', 'adress', 'wohn']) {
-          const results = await this.memoryRepo.search(this.defaultChatId, query);
+          const results = await this.memoryRepo.search(this.resolvedUserId!, query);
           if (results.length > 0) {
             // Extract city from address value
             const value = results[0].value;
@@ -549,8 +566,8 @@ export class ReasoningContextCollector {
 
   private async fetchTemporalInsights(): Promise<string> {
     try {
-      const trends = await this.memoryRepo.recall(this.defaultChatId, 'temporal_trends_weekly');
-      const anomalies = await this.memoryRepo.recall(this.defaultChatId, 'temporal_anomalies_weekly');
+      const trends = await this.memoryRepo.recall(this.resolvedUserId!, 'temporal_trends_weekly');
+      const anomalies = await this.memoryRepo.recall(this.resolvedUserId!, 'temporal_anomalies_weekly');
       const parts: string[] = [];
       if (trends?.value && trends.value !== 'Keine signifikanten Trends.') {
         parts.push(`Trends:\n${trends.value}`);
@@ -569,13 +586,13 @@ export class ReasoningContextCollector {
       const parts: string[] = [];
 
       // Action acceptance rates
-      const summary = await this.memoryRepo.recall(this.defaultChatId, 'action_feedback_summary');
+      const summary = await this.memoryRepo.recall(this.resolvedUserId!, 'action_feedback_summary');
       if (summary?.value) {
         parts.push(summary.value);
       }
 
       // Insight preferences
-      const prefs = await this.memoryRepo.search(this.defaultChatId, 'insight_pref_');
+      const prefs = await this.memoryRepo.search(this.resolvedUserId!, 'insight_pref_');
       if (prefs.length > 0) {
         const positive = prefs.filter(p => p.value.includes('positiv')).map(p => p.key.replace('insight_pref_', ''));
         const negative = prefs.filter(p => p.value.includes('ablehnt') || p.value.includes('ignoriert')).map(p => p.key.replace('insight_pref_', ''));
@@ -584,7 +601,7 @@ export class ReasoningContextCollector {
       }
 
       // Autonomy suggestion
-      const suggestion = await this.memoryRepo.recall(this.defaultChatId, 'autonomy_suggestion');
+      const suggestion = await this.memoryRepo.recall(this.resolvedUserId!, 'autonomy_suggestion');
       if (suggestion?.value) parts.push(suggestion.value);
 
       return parts.length > 0 ? parts.join('\n') : 'Noch kein Feedback zu Aktionen gesammelt.';

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.260] - 2026-03-31
+
+### Fixed
+- **Collector: masterUserId Auflösung** — Alle Memory-Lookups im Collector nutzten `defaultChatId` (Telegram-ID `5060785419`) statt `masterUserId` (interne ID `f165df7a-...`). Memories (HA-Entities, Wetter-Adresse, Trends, Feedback, Insight-Prefs) wurden nie gefunden. Fix: `getEffectiveUserId()` löst beim ersten `collect()` die masterUserId auf und cached sie.
+
 ## [0.19.0-multi-ha.259] - 2026-03-31
 
 ### Fixed
