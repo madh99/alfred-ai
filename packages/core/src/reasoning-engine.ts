@@ -19,6 +19,7 @@ import type { ActivityLogger } from './activity-logger.js';
 import type { ConfirmationQueue } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { ReasoningContextCollector, type CollectedContext } from './reasoning-context-collector.js';
+import { KnowledgeGraphService } from './knowledge-graph.js';
 import { buildSkillContext } from './context-factory.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
@@ -103,6 +104,7 @@ export class ReasoningEngine {
     private readonly adapter?: AsyncDbAdapter,
     private readonly insightTracker?: InsightTracker,
     collector?: ReasoningContextCollector,
+    private readonly kgService?: KnowledgeGraphService,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -163,6 +165,7 @@ export class ReasoningEngine {
     try {
       // Use collector for full context (holistic reasoning)
       const context = await this.collector.collect();
+      await this.enrichWithKnowledgeGraph(context);
 
       // Scan pass: quick analysis of event in context
       const scanPrompt = `Du bist Alfreds proaktives Denk-Modul. Ein Event ist eingetreten:
@@ -303,6 +306,7 @@ ${this.buildTopicInstructions()}`;
 
       // PHASE 1: Collect context from all available data sources
       const context = await this.collector.collect();
+      await this.enrichWithKnowledgeGraph(context);
 
       // PHASE 2: Scan-Pass — quick check for concerns/opportunities
       const scanPrompt = this.buildScanPrompt(context);
@@ -402,6 +406,32 @@ ${this.buildTopicInstructions()}`;
         userId: this.defaultChatId, outcome: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  // ── Knowledge Graph ──────────────────────────────────────────
+
+  /**
+   * Ingest entities/relations from sections into the persistent KG,
+   * then add the connection map as a Priority-1 section.
+   */
+  private async enrichWithKnowledgeGraph(ctx: CollectedContext): Promise<void> {
+    if (!this.kgService) return;
+    try {
+      await this.kgService.ingest(this.defaultChatId, ctx.sections);
+      const connectionMap = await this.kgService.buildConnectionMap(this.defaultChatId);
+      if (connectionMap) {
+        ctx.sections.push({
+          key: 'knowledge_graph',
+          label: 'VERBINDUNGSKARTE',
+          content: connectionMap,
+          priority: 1,
+          tokenEstimate: Math.ceil(connectionMap.length / 4),
+          changed: true,
+        });
+      }
+    } catch (err) {
+      this.logger.warn({ err }, 'Knowledge graph enrichment failed, using raw sections');
     }
   }
 

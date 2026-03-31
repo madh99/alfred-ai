@@ -6,7 +6,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -68,6 +68,7 @@ import { MemoryRetriever } from './active-learning/memory-retriever.js';
 import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 import { PatternAnalyzer } from './active-learning/pattern-analyzer.js';
 import { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
+import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { TodoWatcher } from './todo-watcher.js';
@@ -1113,6 +1114,11 @@ export class Alfred {
           this.config.cluster?.nodeId ?? 'single',
           adapter,
           insightTracker,
+          undefined, // collector (auto-created internally)
+          new KnowledgeGraphService(
+            new KnowledgeGraphRepository(adapter),
+            this.logger.child({ component: 'knowledge-graph' }),
+          ),
         );
       }
     }
@@ -1557,11 +1563,16 @@ export class Alfred {
           lastTemporalWeek = isoWeek;
           try {
             const users = await userRepoRef.listAll();
+            const kgService = this.reasoningEngine
+              ? new KnowledgeGraphService(new KnowledgeGraphRepository(this.database.getAdapter()), this.logger.child({ component: 'knowledge-graph' }))
+              : undefined;
             for (const user of users) {
               const report = await temporalAnalyzer.analyze(user.id);
               if (report.trends.length > 0 || report.anomalies.length > 0) {
                 this.logger.info({ userId: user.id, trends: report.trends.length, anomalies: report.anomalies.length }, 'Temporal analysis completed');
               }
+              // KG maintenance: decay old entities, prune weak ones
+              if (kgService) await kgService.maintenance(user.id);
             }
           } catch (err) {
             this.logger.warn({ err }, 'Temporal analysis failed');

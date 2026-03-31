@@ -32,6 +32,8 @@ export type { UsageRecord, DailyUsageSummary } from './repositories/usage-reposi
 export { CalendarNotificationRepository } from './repositories/calendar-notification-repository.js';
 export { ActivityRepository } from './repositories/activity-repository.js';
 export type { WeeklySkillStats, HourlyStats } from './repositories/activity-repository.js';
+export { KnowledgeGraphRepository } from './repositories/knowledge-graph-repository.js';
+export type { KGEntity, KGRelation, KGEntityType } from './repositories/knowledge-graph-repository.js';
 export { SkillHealthRepository } from './repositories/skill-health-repository.js';
 export { WorkflowRepository } from './repositories/workflow-repository.js';
 export { FeedbackRepository } from './repositories/feedback-repository.js';

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.238] - 2026-03-31
+
+### Added
+- **Persistenter Knowledge Graph (Migration v44)** — Neue Tabellen `kg_entities` und `kg_relations` für persistente Entity-Extraktion und Relation-Building über alle Datenquellen. Entities wachsen mit der Zeit: Confidence steigt bei jeder Wiederbestätigung (+0.1), mention_count trackt Häufigkeit. Alte Entities verfallen (30d Decay, Prune bei <0.2).
+- **Entity-Deduplication** — "Müller" im Kalender + "Müller" im Todo = eine Entity mit sources: ["calendar", "todos"]. Normalisierung via UNIQUE(user_id, entity_type, normalized_name).
+- **Verbindungskarte** — Strukturierte Priority-1-Section im Reasoning-Prompt: Personen-Cluster (multi-source), Ort-Verbindungen, Konflikte (BMW-Reichweite vs. Distanz), Gelegenheiten (Shopping + Arzttermin am selben Ort).
+- **Relation Strength** — Relationen werden stärker je öfter sie bestätigt werden (strength +0.1). Schwache Relations (<0.2) werden wöchentlich bereinigt.
+- **Graph Traversal** — `getConnectedEntities()`, `getRelationsFrom()/To()`, `getFullGraph()` für Abfragen über den Graphen.
+- **KG Maintenance** — Wöchentliches Decay + Prune zusammen mit TemporalAnalyzer (Sonntag 4 AM).
+
 ## [0.19.0-multi-ha.237] - 2026-03-31
 
 ### Added

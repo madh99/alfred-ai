@@ -46,5 +46,6 @@ export { ReasoningEngine } from './reasoning-engine.js';
 export { ReasoningContextCollector } from './reasoning-context-collector.js';
 export type { ReasoningSection, CollectedContext } from './reasoning-context-collector.js';
 export { InsightTracker } from './insight-tracker.js';
+export { KnowledgeGraphService } from './knowledge-graph.js';
 export { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
 export type { Trend, Anomaly, TemporalReport } from './active-learning/temporal-analyzer.js';

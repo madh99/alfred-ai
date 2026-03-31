@@ -935,4 +935,47 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`DELETE FROM memories WHERE key = 'insight_tracker_stats'`);
     },
   },
+  {
+    version: 44,
+    description: 'Knowledge Graph — persistent entities and relations',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS kg_entities (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          normalized_name TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          attributes TEXT DEFAULT '{}',
+          sources TEXT DEFAULT '[]',
+          confidence REAL NOT NULL DEFAULT 0.5,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          mention_count INTEGER NOT NULL DEFAULT 1,
+          UNIQUE(user_id, entity_type, normalized_name)
+        );
+        CREATE INDEX IF NOT EXISTS idx_kg_entities_user ON kg_entities(user_id);
+        CREATE INDEX IF NOT EXISTS idx_kg_entities_type ON kg_entities(user_id, entity_type);
+        CREATE INDEX IF NOT EXISTS idx_kg_entities_name ON kg_entities(user_id, normalized_name);
+
+        CREATE TABLE IF NOT EXISTS kg_relations (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_entity_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+          target_entity_id TEXT NOT NULL REFERENCES kg_entities(id) ON DELETE CASCADE,
+          relation_type TEXT NOT NULL,
+          strength REAL NOT NULL DEFAULT 0.5,
+          context TEXT,
+          source_section TEXT,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          mention_count INTEGER NOT NULL DEFAULT 1,
+          UNIQUE(user_id, source_entity_id, target_entity_id, relation_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_kg_relations_source ON kg_relations(source_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_kg_relations_target ON kg_relations(target_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_kg_relations_user ON kg_relations(user_id);
+      `);
+    },
+  },
 ];
