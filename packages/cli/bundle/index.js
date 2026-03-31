@@ -2833,7 +2833,7 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenh\xE4nge
 - Wenn NICHTS EINDEUTIG Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
-${this.buildTopicInstructions()}`,o=(await this.llm.complete({messages:[{role:"user",content:n}],maxTokens:512,tier:this.tier})).content.trim();if(qo(o))return;let{findings:c,topics:l}=this.extractTopics(o),u=new Map;l.length>0&&(u=await this.collector.enrichTopics(l));let h=this.buildEventDetailPrompt(i,e,t,c,u),f=(await this.llm.complete({messages:[{role:"user",content:h}],maxTokens:dg,tier:this.tier})).content.trim();if(qo(f))return;let y=this.parseReasoningResponse(f);if(y.insights.length>0){let g=[];for(let T of y.insights)await this.wasRecentlySent(T)||g.push(T);if(g.length>0){let T=`\u{1F4A1} **Alfred Insight**
+${this.buildTopicInstructions()}`,o=(await this.llm.complete({messages:[{role:"user",content:n}],maxTokens:512,tier:this.tier})).content.trim();if(qo(o))return;let{findings:c,topics:l}=this.extractTopics(o),u=new Map;l.length>0&&(u=await this.collector.enrichTopics(l));let h=this.buildEventDetailPrompt(i,e,t,c,u),f=(await this.llm.complete({messages:[{role:"user",content:h}],maxTokens:dg,tier:this.tier})).content.trim();if(qo(f))return;let y=this.parseReasoningResponse(f);if(y.insights.length>0){let g=[];for(let T of y.insights)await this.wasRecentlySent(T)||g.push(T);if(g.length>0){let T=`\u{1F4A1} **Alfred Insights**
 
 ${g.join(`
 
@@ -2882,22 +2882,23 @@ DATENQUELLEN-TYPEN (WICHTIG \u2014 nicht verwechseln!):
 - Crypto/Bitpanda: PORTFOLIO-Daten. Finanzen.
 - Infra/Monitor: SERVER-Status. IT-Infrastruktur.
 
-STRIKTE REGELN:
-- Verbinde nur Entities die TATS\xC4CHLICH die gleiche Sache sind (gleiche Person, gleicher Ort, gleiches Thema)
-- NICHT verbinden nur weil ein \xE4hnliches Wort vorkommt! BMW-Akku \u2260 Hausbatterie. RSS-Feed \u2260 Preis-Monitor. Willhaben-Antworten \u2260 Spam.
-- Wenn du dir NICHT SICHER bist ob eine Verbindung real ist: WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
-- KEINE Vermutungen, KEINE Spekulationen. Nur was aus den Daten EINDEUTIG hervorgeht.
-- KEIN Werten von Nutzerverhalten ("Risiko f\xFCr unkurierte Informationsansammlung" ist bevormundend).
+QUALIT\xC4TSREGELN:
+- Alle Datenquellen D\xDCRFEN miteinander kombiniert werden \u2014 es gibt keine verbotenen Kombinationen
+- ABER: Verwechsle nicht verschiedene Dinge nur weil ein \xE4hnliches Wort vorkommt!
+  Beispiele: BMW-Akku (Auto) \u2260 Hausbatterie (Victron/PV). RSS-Feed (News-Artikel) \u2260 Watch-Monitor (Skill). E-Mail-Antworten auf Anfragen \u2260 Spam.
+- Wenn du zwei Dinge verbindest, stelle sicher dass es die GLEICHE reale Entit\xE4t ist (gleiche Person, gleicher Ort) oder ein SINNVOLLER kausaler Zusammenhang besteht
+- KEINE Vermutungen oder Spekulationen \u2014 nur was aus den Daten hervorgeht
+- KEIN Werten von Nutzerverhalten (nicht bevormundend sein)
 
 VERBINDUNGSKARTE:
 Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als prim\xE4ren Ausgangspunkt.
 
 WONACH DU SUCHST:
-1. Cross-Domain-Verbindungen (GLEICHE Person/Ort/Sache in verschiedenen Quellen)
+1. Cross-Domain-Verbindungen (gleiche Person/Ort/Sache in verschiedenen Quellen \u2192 warum relevant?)
 2. Konflikte (echte Ressourcen-Engp\xE4sse, Zeit\xFCberschneidungen)
-3. Gelegenheiten (gleicher Ort f\xFCr verschiedene Zwecke)
+3. Gelegenheiten (gleicher Ort f\xFCr verschiedene Zwecke, g\xFCnstiger Zeitpunkt)
 4. Trends & Anomalien (wenn vorhanden: echte Ver\xE4nderungen)
-5. Handlungsbedarf (\xFCberf\xE4llige Todos, Fehler die behoben werden m\xFCssen)
+5. Handlungsbedarf (\xFCberf\xE4llige Todos, Fehler die behoben werden m\xFCssen, Skill-Probleme)
 
 GE\xC4NDERT SEIT LETZTEM LAUF:
 ${e.changedSections.length>0?e.changedSections.map(s=>e.sections.find(r=>r.key===s)?.label).filter(Boolean).join(", "):"Keine \xC4nderungen"}
@@ -2922,24 +2923,22 @@ REGELN:
 - Jeder Insight: 1-2 S\xE4tze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
 
-QUALIT\xC4TSREGELN (STRIKT):
-- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort) \u2014 NICHT \xE4hnliche W\xF6rter!
-- BMW-Akku (Fahrzeug) \u2260 Hausbatterie (Smart Home/PV). NIEMALS vermischen.
-- RSS-Feed-Artikel (News) \u2260 Watch-Monitor (Skill-basiert). NIEMALS einen RSS-Feed als Preis-Monitor vorschlagen.
-- E-Mail-Antworten auf Anfragen \u2260 Spam. Mehrere Nachrichten kurz hintereinander k\xF6nnen normale Konversation sein.
-- Watches nutzen SKILLS (energy_price, shopping, etc.) \u2014 RSS-Feeds sind KEINE Watches.
-- Wenn du dir NICHT SICHER bist \u2192 WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+QUALIT\xC4TSREGELN:
+- Alle Domains D\xDCRFEN kombiniert werden \u2014 aber verwechsle nicht verschiedene Dinge!
+  BMW-Akku (Auto) \u2260 Hausbatterie (Victron/PV). RSS-Feed (News) \u2260 Watch (Skill-Monitor). E-Mail-Antworten \u2260 Spam.
+- Verbinde Entities wenn es die GLEICHE reale Sache ist oder ein SINNVOLLER Zusammenhang besteht
+- KEINE Vermutungen, KEINE Bewertung des Nutzerverhaltens
 
 BEISPIELE guter Insights:
-- Entity in 3 Quellen: "M\xFCller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt \u2014 heute erledigen!"
-- Ort-Cluster: "RTX 5090 in Wien verf\xFCgbar + Zahnarzt-Termin Wien Mittwoch \u2192 Abholung nach Termin"
-- Echter Engpass: "BMW 15% Akku (45km Reichweite), Termin in Linz (150km) \u2192 laden n\xF6tig"
-- Skill-Fehler: "BMW-API seit 24h offline \u2192 Token erneuern"
+- "M\xFCller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt \u2014 heute erledigen!"
+- "RTX 5090 in Wien verf\xFCgbar + Zahnarzt-Termin Wien Mittwoch \u2192 Abholung nach Termin"
+- "BMW 15% Akku (45km), Termin in Linz (150km) \u2192 laden n\xF6tig, Strom gerade g\xFCnstig"
+- "BMW-API seit 24h offline \u2192 Token erneuern"
 
 BEISPIELE SCHLECHTER Insights (NICHT generieren!):
-- "RSS-Feed f\xFCr Strompreise einrichten" \u2190 RSS ist kein Monitor, daf\xFCr gibt es Watches
-- "Hausbatterie und BMW gleichzeitig laden" \u2190 Zwei verschiedene Systeme
-- "3 gleiche Willhaben-Nachrichten = Spam" \u2190 K\xF6nnen normale Antworten sein
+- "RSS-Feed f\xFCr Strompreise einrichten" \u2190 RSS ist kein Monitor, daf\xFCr gibt es Watches mit energy_price Skill
+- "Hausbatterie und BMW gleichzeitig laden" \u2190 Zwei verschiedene Systeme, nicht vermischen
+- "3 gleiche Willhaben-Nachrichten = Spam" \u2190 K\xF6nnen normale Antworten auf eine Anfrage sein
 - "Du liest zu viele News" \u2190 Bevormundend, kein Insight
 
 AKTUELLE DATEN:
@@ -2962,8 +2961,8 @@ ${r}
 Formuliere daraus max 2 konkrete, actionable Insights.
 - Nutze die VERBINDUNGSKARTE f\xFCr Cross-Domain-Zusammenh\xE4nge zwischen IDENTISCHEN Entities
 - Nutze VERTIEFTE DATEN f\xFCr spezifische Zahlen
-- NUR Verbindungen die FAKTISCH belegt sind \u2014 nicht raten, nicht vermuten
-- BMW-Akku \u2260 Hausbatterie, RSS \u2260 Monitor, E-Mail-Antworten \u2260 Spam
+- Alle Domains kombinierbar, aber Typen nicht verwechseln (BMW-Akku \u2260 Hausbatterie, RSS \u2260 Monitor)
+- Nicht raten, nicht vermuten \u2014 nur was aus den Daten hervorgeht
 - Max 1-2 S\xE4tze pro Insight, auf Deutsch
 
 ${this.formatSections(e)}

@@ -232,7 +232,7 @@ ${this.buildTopicInstructions()}`;
           if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
         }
         if (newInsights.length > 0) {
-          const message = `\u{1F4A1} **Alfred Insight**\n\n${newInsights.join('\n\n')}`;
+          const message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
           const adapter = this.adapters.get(this.defaultPlatform);
           if (adapter) {
             await adapter.sendMessage(this.defaultChatId, message);
@@ -524,22 +524,23 @@ DATENQUELLEN-TYPEN (WICHTIG — nicht verwechseln!):
 - Crypto/Bitpanda: PORTFOLIO-Daten. Finanzen.
 - Infra/Monitor: SERVER-Status. IT-Infrastruktur.
 
-STRIKTE REGELN:
-- Verbinde nur Entities die TATSÄCHLICH die gleiche Sache sind (gleiche Person, gleicher Ort, gleiches Thema)
-- NICHT verbinden nur weil ein ähnliches Wort vorkommt! BMW-Akku ≠ Hausbatterie. RSS-Feed ≠ Preis-Monitor. Willhaben-Antworten ≠ Spam.
-- Wenn du dir NICHT SICHER bist ob eine Verbindung real ist: WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
-- KEINE Vermutungen, KEINE Spekulationen. Nur was aus den Daten EINDEUTIG hervorgeht.
-- KEIN Werten von Nutzerverhalten ("Risiko für unkurierte Informationsansammlung" ist bevormundend).
+QUALITÄTSREGELN:
+- Alle Datenquellen DÜRFEN miteinander kombiniert werden — es gibt keine verbotenen Kombinationen
+- ABER: Verwechsle nicht verschiedene Dinge nur weil ein ähnliches Wort vorkommt!
+  Beispiele: BMW-Akku (Auto) ≠ Hausbatterie (Victron/PV). RSS-Feed (News-Artikel) ≠ Watch-Monitor (Skill). E-Mail-Antworten auf Anfragen ≠ Spam.
+- Wenn du zwei Dinge verbindest, stelle sicher dass es die GLEICHE reale Entität ist (gleiche Person, gleicher Ort) oder ein SINNVOLLER kausaler Zusammenhang besteht
+- KEINE Vermutungen oder Spekulationen — nur was aus den Daten hervorgeht
+- KEIN Werten von Nutzerverhalten (nicht bevormundend sein)
 
 VERBINDUNGSKARTE:
 Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als primären Ausgangspunkt.
 
 WONACH DU SUCHST:
-1. Cross-Domain-Verbindungen (GLEICHE Person/Ort/Sache in verschiedenen Quellen)
+1. Cross-Domain-Verbindungen (gleiche Person/Ort/Sache in verschiedenen Quellen → warum relevant?)
 2. Konflikte (echte Ressourcen-Engpässe, Zeitüberschneidungen)
-3. Gelegenheiten (gleicher Ort für verschiedene Zwecke)
+3. Gelegenheiten (gleicher Ort für verschiedene Zwecke, günstiger Zeitpunkt)
 4. Trends & Anomalien (wenn vorhanden: echte Veränderungen)
-5. Handlungsbedarf (überfällige Todos, Fehler die behoben werden müssen)
+5. Handlungsbedarf (überfällige Todos, Fehler die behoben werden müssen, Skill-Probleme)
 
 GEÄNDERT SEIT LETZTEM LAUF:
 ${changedInfo}
@@ -572,24 +573,22 @@ REGELN:
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
 
-QUALITÄTSREGELN (STRIKT):
-- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort) — NICHT ähnliche Wörter!
-- BMW-Akku (Fahrzeug) ≠ Hausbatterie (Smart Home/PV). NIEMALS vermischen.
-- RSS-Feed-Artikel (News) ≠ Watch-Monitor (Skill-basiert). NIEMALS einen RSS-Feed als Preis-Monitor vorschlagen.
-- E-Mail-Antworten auf Anfragen ≠ Spam. Mehrere Nachrichten kurz hintereinander können normale Konversation sein.
-- Watches nutzen SKILLS (energy_price, shopping, etc.) — RSS-Feeds sind KEINE Watches.
-- Wenn du dir NICHT SICHER bist → WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+QUALITÄTSREGELN:
+- Alle Domains DÜRFEN kombiniert werden — aber verwechsle nicht verschiedene Dinge!
+  BMW-Akku (Auto) ≠ Hausbatterie (Victron/PV). RSS-Feed (News) ≠ Watch (Skill-Monitor). E-Mail-Antworten ≠ Spam.
+- Verbinde Entities wenn es die GLEICHE reale Sache ist oder ein SINNVOLLER Zusammenhang besteht
+- KEINE Vermutungen, KEINE Bewertung des Nutzerverhaltens
 
 BEISPIELE guter Insights:
-- Entity in 3 Quellen: "Müller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt — heute erledigen!"
-- Ort-Cluster: "RTX 5090 in Wien verfügbar + Zahnarzt-Termin Wien Mittwoch → Abholung nach Termin"
-- Echter Engpass: "BMW 15% Akku (45km Reichweite), Termin in Linz (150km) → laden nötig"
-- Skill-Fehler: "BMW-API seit 24h offline → Token erneuern"
+- "Müller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt — heute erledigen!"
+- "RTX 5090 in Wien verfügbar + Zahnarzt-Termin Wien Mittwoch → Abholung nach Termin"
+- "BMW 15% Akku (45km), Termin in Linz (150km) → laden nötig, Strom gerade günstig"
+- "BMW-API seit 24h offline → Token erneuern"
 
 BEISPIELE SCHLECHTER Insights (NICHT generieren!):
-- "RSS-Feed für Strompreise einrichten" ← RSS ist kein Monitor, dafür gibt es Watches
-- "Hausbatterie und BMW gleichzeitig laden" ← Zwei verschiedene Systeme
-- "3 gleiche Willhaben-Nachrichten = Spam" ← Können normale Antworten sein
+- "RSS-Feed für Strompreise einrichten" ← RSS ist kein Monitor, dafür gibt es Watches mit energy_price Skill
+- "Hausbatterie und BMW gleichzeitig laden" ← Zwei verschiedene Systeme, nicht vermischen
+- "3 gleiche Willhaben-Nachrichten = Spam" ← Können normale Antworten auf eine Anfrage sein
 - "Du liest zu viele News" ← Bevormundend, kein Insight
 
 AKTUELLE DATEN:
@@ -623,8 +622,8 @@ ${scanFindings}
 Formuliere daraus max 2 konkrete, actionable Insights.
 - Nutze die VERBINDUNGSKARTE für Cross-Domain-Zusammenhänge zwischen IDENTISCHEN Entities
 - Nutze VERTIEFTE DATEN für spezifische Zahlen
-- NUR Verbindungen die FAKTISCH belegt sind — nicht raten, nicht vermuten
-- BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor, E-Mail-Antworten ≠ Spam
+- Alle Domains kombinierbar, aber Typen nicht verwechseln (BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor)
+- Nicht raten, nicht vermuten — nur was aus den Daten hervorgeht
 - Max 1-2 Sätze pro Insight, auf Deutsch
 
 ${this.formatSections(ctx)}

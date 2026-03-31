@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.248] - 2026-03-31
+
+### Fixed
+- **Reasoning-Prompts: Balance Offenheit vs Korrektheit** — "NUR IDENTISCHE Entities" (zu restriktiv) ersetzt durch "Alle Domains kombinierbar, aber Typen nicht verwechseln". Datenquellen-Definitionen und negative Beispiele bleiben (BMW≠Hausbatterie, RSS≠Monitor), Cross-Domain-Kombinationen sind weiterhin erlaubt.
+- **Insight-Nachrichten konsistent** — Event-getriggerte und geplante Insights nutzen jetzt beide "💡 Alfred Insights" (vorher: Singular vs Plural).
+
 ## [0.19.0-multi-ha.247] - 2026-03-31
 
 ### Fixed
