@@ -405,72 +405,91 @@ export class ReasoningContextCollector {
   }
 
   private async fetchSmartHome(): Promise<string> {
-    // Strategy 1: If user configured specific entities via memory → fetch those individually
-    // User can store "briefing_ha_entities" = "sensor.victron_system_battery_soc, sensor.battery_charge_plan_text, ..."
+    // ADDITIVE system: Default-Domains + User-Domains + User-Entities — all combined
+    const DEFAULT_DOMAINS = ['light', 'person', 'input_boolean', 'climate'];
+
+    // binary_sensor needs special filtering (only door/window/motion/occupancy/smoke/plug)
+    const BINARY_SENSOR_FILTER = /door|window|motion|occupancy|smoke|plug/i;
+
+    const parts: string[] = [];
+
+    // 1. Default domains (always loaded)
+    await this.fetchSmartHomeByDomains(DEFAULT_DOMAINS, parts);
+
+    // 2. binary_sensor filtered by device_class (door, motion, smoke, plug — not the 74 "none" and 57 "problem")
+    try {
+      const result = await this.fetchSkillData('homeassistant', { action: 'states', domain: 'binary_sensor' });
+      if (result && !result.startsWith('(')) {
+        const lines = result.split('\n').filter(l => {
+          if (!l.startsWith('|') || l.startsWith('|---') || l.includes('Entity ID')) return false;
+          // Only include lines where name suggests door/window/motion/smoke/plug
+          return BINARY_SENSOR_FILTER.test(l);
+        });
+        if (lines.length > 0) {
+          parts.push(`binary_sensor (${lines.length} gefiltert):`);
+          for (const line of lines.slice(0, 20)) parts.push(line);
+        }
+      }
+    } catch { /* skip */ }
+
+    // 3. User-configured additional domains (ADDITIVE, from memory "briefing_ha_domains")
+    try {
+      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_domain');
+      const domainMem = mems.find(m => /ha_domain|home.?assistant.*domain|briefing.*domain/i.test(m.key));
+      if (domainMem) {
+        const userDomains = domainMem.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
+        // Only fetch domains not already in defaults
+        const additional = userDomains.filter(d => !DEFAULT_DOMAINS.includes(d) && d !== 'binary_sensor');
+        if (additional.length > 0) {
+          await this.fetchSmartHomeByDomains(additional, parts);
+        }
+      }
+    } catch { /* skip */ }
+
+    // 4. User-configured specific entities (ADDITIVE, from memory "briefing_ha_entities")
     try {
       const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_entit');
       const entityMem = mems.find(m => /ha_entit|home.?assistant.*entit|briefing.*entit/i.test(m.key));
       if (entityMem) {
         const entityIds = entityMem.value.split(/[,;]\s*/).map(e => e.trim()).filter(Boolean);
         if (entityIds.length > 0) {
-          return this.fetchSmartHomeByEntities(entityIds);
+          await this.fetchSmartHomeByEntities(entityIds, parts);
         }
       }
-    } catch { /* fall through to domain-based */ }
+    } catch { /* skip */ }
 
-    // Strategy 2: Fetch small domains directly (light, switch, climate — usually <50 entities each)
-    // Skip "sensor" (1000+) and "binary_sensor" (150+) — too many for unfiltered fetch
-    const SMALL_DOMAINS = ['light', 'switch', 'climate'];
-
-    // Also check user-configured domains from memory
-    try {
-      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_domain');
-      const domainMem = mems.find(m => /ha_domain|home.?assistant.*domain|briefing.*domain/i.test(m.key));
-      if (domainMem) {
-        const parsed = domainMem.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
-        if (parsed.length > 0) return this.fetchSmartHomeByDomains(parsed);
-      }
-    } catch { /* use defaults */ }
-
-    return this.fetchSmartHomeByDomains(SMALL_DOMAINS);
+    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine relevanten Entities)';
   }
 
-  private async fetchSmartHomeByEntities(entityIds: string[]): Promise<string> {
-    const parts: string[] = [];
+  private async fetchSmartHomeByEntities(entityIds: string[], parts: string[]): Promise<void> {
+    parts.push('Konfigurierte Entities:');
     for (const eid of entityIds.slice(0, 20)) {
       try {
         const result = await this.fetchSkillData('homeassistant', { action: 'state', entity_id: eid });
         if (result && !result.startsWith('(')) {
-          // Extract key info from the detailed state response
           const stateMatch = result.match(/\*\*State:\*\*\s*(.+)/);
           const nameMatch = result.match(/^##\s*(.+)/m);
           if (stateMatch) {
-            const name = nameMatch?.[1] ?? eid;
-            parts.push(`${name}: ${stateMatch[1].trim()}`);
+            parts.push(`  ${nameMatch?.[1] ?? eid}: ${stateMatch[1].trim()}`);
           }
         }
       } catch { /* skip entity */ }
     }
-    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine Entities erreichbar)';
   }
 
-  private async fetchSmartHomeByDomains(domains: string[]): Promise<string> {
-    const parts: string[] = [];
-    for (const domain of domains.slice(0, 6)) {
+  private async fetchSmartHomeByDomains(domains: string[], parts: string[]): Promise<void> {
+    for (const domain of domains.slice(0, 8)) {
       try {
         const result = await this.fetchSkillData('homeassistant', { action: 'states', domain });
         if (result && !result.startsWith('(')) {
           const lines = result.split('\n').filter(l => l.startsWith('|') && !l.startsWith('|---') && !l.includes('Entity ID'));
           if (lines.length > 0) {
             parts.push(`${domain} (${lines.length}):`);
-            for (const line of lines.slice(0, 15)) {
-              parts.push(line);
-            }
+            for (const line of lines.slice(0, 15)) parts.push(line);
           }
         }
       } catch { /* skip domain */ }
     }
-    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine relevanten Entities)';
   }
 
   private async fetchFeeds(): Promise<string> {

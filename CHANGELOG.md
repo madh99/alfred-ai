@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.258] - 2026-03-31
+
+### Changed
+- **Smart Home: Additives 4-Schichten-System** — Alle Schichten werden KOMBINIERT (nicht überschrieben):
+  1. Default-Domains (light, person, input_boolean, climate) — immer geladen
+  2. binary_sensor gefiltert nach device_class (door, window, motion, occupancy, smoke, plug) — Türen, Bewegungsmelder, Rauchmelder, Fahrzeug-Verbindung
+  3. User-Domains via Memory (`briefing_ha_domains`) — ZUSÄTZLICH zu Defaults
+  4. User-Entities via Memory (`briefing_ha_entities`) — ZUSÄTZLICH zu Domains
+- Verifiziert gegen echte HA-Installation: 1909 Entities, 1015 Sensoren, 213 Switches (151 davon UniFi). Default-System liefert ~43 relevante Entities statt 1909.
+
 ## [0.19.0-multi-ha.257] - 2026-03-31
 
 ### Changed
