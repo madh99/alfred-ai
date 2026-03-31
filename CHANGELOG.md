@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.255] - 2026-03-31
+
+### Fixed
+- **KG SmartHome Extractor** — Komplett neugeschrieben für HA Pipe-Format (`| entity_id | state | name | unit |`). Vorher: Regex erwartete "Licht: an" Format, erzeugte Müll-Entities aus Sensor-IDs + Timestamps. Jetzt: Parsed Markdown-Tabelle korrekt, nutzt friendly_name, filtert System-Entities (sun, conversation, geo_location), überspringt Timestamp-States und unavailable. Max 20 Entities pro Lauf. 12 Müll-Entities aus DB bereinigt.
+
 ## [0.19.0-multi-ha.254] - 2026-03-31
 
 ### Fixed

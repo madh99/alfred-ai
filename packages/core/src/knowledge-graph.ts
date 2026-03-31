@@ -474,15 +474,43 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromSmartHome(userId: string, content: string): Promise<void> {
-    // Extract device states: "Licht Wohnzimmer: an", "Temperatur Schlafzimmer: 21°C"
-    const deviceRe = /(?:^|\n)\s*[-•]?\s*(.+?):\s*(an|aus|on|off|\d+(?:\.\d+)?(?:\s*°C)?)/gim;
+    // HA states come as pipe-delimited markdown table: | entity_id | state | friendly_name | unit |
+    const tableRe = /^\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|$/gm;
+
+    // Domains to skip (system entities, not real devices)
+    const SKIP_DOMAINS = /^(sun\.|conversation\.|geo_location\.|weather\.|persistent_notification\.|zone\.)/;
+    // States that are timestamps (not real device states)
+    const IS_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]/;
+
     let match;
-    while ((match = deviceRe.exec(content)) !== null) {
-      const [, name, state] = match;
-      if (name.length > 3 && name.length < 50) {
-        await this.kgRepo.upsertEntity(userId, name.trim(), 'item',
-          { state: state.trim().toLowerCase() }, 'smarthome');
-      }
+    let count = 0;
+    while ((match = tableRe.exec(content)) !== null && count < 20) {
+      const [, entityId, state, friendlyName, unit] = match;
+      const eid = entityId.trim();
+      const st = state.trim();
+
+      // Skip table header and separator rows
+      if (eid === 'Entity ID' || eid.startsWith('---')) continue;
+
+      // Skip system entities
+      if (SKIP_DOMAINS.test(eid)) continue;
+
+      // Skip entities where state is a timestamp (sun sensors, etc.)
+      if (IS_TIMESTAMP.test(st)) continue;
+
+      // Skip unavailable/unknown states
+      if (st === 'unavailable' || st === 'unknown') continue;
+
+      // Use friendly_name as entity name (human-readable), fallback to entity_id
+      const name = friendlyName.trim() !== '-' && friendlyName.trim().length > 1
+        ? friendlyName.trim()
+        : eid;
+
+      const attrs: Record<string, unknown> = { entity_id: eid, state: st };
+      if (unit.trim() !== '-' && unit.trim().length > 0) attrs.unit = unit.trim();
+
+      await this.kgRepo.upsertEntity(userId, name, 'item', attrs, 'smarthome');
+      count++;
     }
   }
 
