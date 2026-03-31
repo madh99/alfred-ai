@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.252] - 2026-03-31
+
+### Added
+- **Dynamischer Geräte-Kontext aus Knowledge Graph** — Chat-System-Prompt und Reasoning-Prompts bekommen eine user-spezifische "Konfigurierte Geräte & Systeme" Section. Keine hardcodierten "BMW", "Victron" etc. — Geräte werden aus KG-Entities (vehicle, item, metric) gelesen. Fallback auf registrierte Skills wenn KG noch leer.
+- **`KnowledgeGraphService.buildDeviceContext()`** — Generiert Geräteliste aus KG für Chat + Reasoning.
+- **`SystemPromptContext.deviceContext`** — Neues Feld im prompt-builder für dynamische Geräte-Section.
+- **Pipeline KG-Zugang** — `setKnowledgeGraphService()` auf MessagePipeline für device context im Chat.
+
+### Changed
+- **Reasoning-Prompts: Hardcoded entfernt** — "BMW: FAHRZEUG-Daten" Block ersetzt durch generische Typen-Definitionen + dynamischen Device-Block aus KG. Alle BMW/Victron-Referenzen durch "Fahrzeug"/"Hausbatterie" ersetzt.
+
 ## [0.19.0-multi-ha.251] - 2026-03-31
 
 ### Fixed

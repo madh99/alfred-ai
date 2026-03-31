@@ -1081,6 +1081,7 @@ export class Alfred {
 
     // 7g. Initialize reasoning engine — proactive cross-domain insights
     let insightTracker: InsightTracker | undefined;
+    let kgServiceInstance: KnowledgeGraphService | undefined;
     {
       const ownerUserId = this.config.security?.ownerUserId;
       if (ownerUserId && this.config.reasoning?.enabled !== false) {
@@ -1091,6 +1092,12 @@ export class Alfred {
         );
         this.insightTracker = insightTracker;
         const reasoningNotifRepo = new CalendarNotificationRepository(adapter);
+        kgServiceInstance = new KnowledgeGraphService(
+          new KnowledgeGraphRepository(adapter),
+          this.logger.child({ component: 'knowledge-graph' }),
+          memoryRepo, skillRegistry, skillSandbox, userRepo,
+          ownerUserId, defaultProactivePlatform,
+        );
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
           todoRepo,
@@ -1116,14 +1123,14 @@ export class Alfred {
           adapter,
           insightTracker,
           undefined, // collector (auto-created internally)
-          new KnowledgeGraphService(
-            new KnowledgeGraphRepository(adapter),
-            this.logger.child({ component: 'knowledge-graph' }),
-            memoryRepo, skillRegistry, skillSandbox, userRepo,
-            ownerUserId, defaultProactivePlatform,
-          ),
+          kgServiceInstance,
         );
       }
+    }
+
+    // Wire KG service into pipeline for dynamic device context in chat prompts
+    if (kgServiceInstance) {
+      this.pipeline.setKnowledgeGraphService(kgServiceInstance);
     }
 
     // Wire watch events -> reasoning engine for event-triggered reasoning

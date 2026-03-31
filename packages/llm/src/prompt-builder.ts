@@ -38,6 +38,8 @@ export interface SystemPromptContext {
   todayEvents?: CalendarEvent[];
   conversationSummary?: string;
   rules?: string[];
+  /** Dynamic device/system context from Knowledge Graph — user-specific, not hardcoded. */
+  deviceContext?: string;
 }
 
 /**
@@ -368,6 +370,13 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
         const location = event.location ? ` @ ${event.location}` : '';
         prompt += `\n- ${startTime}${endTime}: ${event.title}${location}`;
       }
+    }
+
+    // Dynamic device/system context from Knowledge Graph
+    if (context.deviceContext) {
+      prompt += '\n\n## Konfigurierte Geräte & Systeme des Users\n';
+      prompt += context.deviceContext;
+      prompt += '\nWICHTIG: Verwechsle diese Geräte nicht! Fahrzeug-Akku ≠ Hausbatterie. Jedes Gerät hat seinen eigenen Skill/Quelle.';
     }
 
     // Learned behavior rules (before memories, so they take precedence)

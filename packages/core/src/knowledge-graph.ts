@@ -202,6 +202,77 @@ export class KnowledgeGraphService {
   }
 
   /**
+   * Build a dynamic device/system context string from KG entities.
+   * Used in both chat system prompt and reasoning prompts.
+   * Returns user-specific device descriptions, not hardcoded.
+   */
+  async buildDeviceContext(userId: string): Promise<string> {
+    try {
+      const lines: string[] = [];
+
+      // Vehicles (BMW, Tesla, etc.)
+      const vehicles = await this.kgRepo.getEntitiesByType(userId, 'vehicle');
+      for (const v of vehicles) {
+        const attrs = Object.entries(v.attributes)
+          .filter(([k]) => !['skillName', 'type'].includes(k))
+          .map(([k, val]) => `${k}: ${val}`).join(', ');
+        lines.push(`- ${v.name} [Fahrzeug, Skill: ${v.sources.join('/')}]${attrs ? ` — ${attrs}` : ''}`);
+      }
+
+      // Smart Home items (batteries, wallbox, lights, etc.)
+      const items = await this.kgRepo.getEntitiesByType(userId, 'item');
+      const smarthomeItems = items.filter(i => i.sources.includes('smarthome') || i.sources.includes('charger'));
+      for (const item of smarthomeItems.slice(0, 10)) {
+        const attrs = Object.entries(item.attributes)
+          .filter(([k]) => !['skillName', 'type'].includes(k))
+          .map(([k, val]) => `${k}: ${val}`).join(', ');
+        lines.push(`- ${item.name} [Smart Home, Skill: ${item.sources.join('/')}]${attrs ? ` — ${attrs}` : ''}`);
+      }
+
+      // Metrics (energy price, weather)
+      const metrics = await this.kgRepo.getEntitiesByType(userId, 'metric');
+      for (const m of metrics.slice(0, 5)) {
+        const attrs = Object.entries(m.attributes)
+          .filter(([k]) => !['skillName', 'type'].includes(k))
+          .map(([k, val]) => `${k}: ${val}`).join(', ');
+        lines.push(`- ${m.name} [Messwert, Quelle: ${m.sources.join('/')}]${attrs ? ` — ${attrs}` : ''}`);
+      }
+
+      if (lines.length === 0) {
+        // Fallback: generate from registered skills if KG is empty
+        return this.buildDeviceContextFromSkills();
+      }
+
+      return lines.join('\n');
+    } catch (err) {
+      this.logger.debug({ err }, 'KG buildDeviceContext failed, using skill fallback');
+      return this.buildDeviceContextFromSkills();
+    }
+  }
+
+  /** Fallback when KG has no entities: describe available skills. */
+  private buildDeviceContextFromSkills(): string {
+    if (!this.skillRegistry) return '';
+    const lines: string[] = [];
+    const skillMap: Record<string, string> = {
+      bmw: 'Fahrzeug (BMW Connected Drive)',
+      homeassistant: 'Smart Home (Home Assistant)',
+      goe_charger: 'Wallbox (go-e Charger)',
+      energy_price: 'Strommarkt-Daten',
+      weather: 'Wetterdaten',
+      bitpanda: 'Crypto-Portfolio (Bitpanda)',
+      sonos: 'Lautsprecher (Sonos)',
+      spotify: 'Musik (Spotify)',
+    };
+    for (const [skill, desc] of Object.entries(skillMap)) {
+      if (this.skillRegistry.has(skill)) {
+        lines.push(`- ${desc} [Skill: ${skill}]`);
+      }
+    }
+    return lines.length > 0 ? lines.join('\n') : '';
+  }
+
+  /**
    * Maintenance: decay old entities and prune weak ones.
    * Called weekly (alongside TemporalAnalyzer).
    */

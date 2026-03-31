@@ -176,6 +176,7 @@ export class MessagePipeline {
   private insightTracker?: import('./insight-tracker.js').InsightTracker;
   private moderationService?: import('@alfred/security').ModerationService;
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
+  private kgService?: import('./knowledge-graph.js').KnowledgeGraphService;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -230,6 +231,10 @@ export class MessagePipeline {
 
   setReasoningEngine(engine: import('./reasoning-engine.js').ReasoningEngine): void {
     this.reasoningEngine = engine;
+  }
+
+  setKnowledgeGraphService(service: import('./knowledge-graph.js').KnowledgeGraphService): void {
+    this.kgService = service;
   }
 
   setModerationService(service: import('@alfred/security').ModerationService): void {
@@ -658,6 +663,14 @@ export class MessagePipeline {
         } catch (calErr) { this.logger.warn({ err: calErr instanceof Error ? calErr.message : String(calErr) }, 'Calendar loading for system prompt failed'); }
       }
 
+      // Build dynamic device context from KG (user-specific, not hardcoded)
+      let deviceContext: string | undefined;
+      if (this.kgService) {
+        try {
+          deviceContext = await this.kgService.buildDeviceContext(masterUserId) || undefined;
+        } catch { /* skip, not critical */ }
+      }
+
       let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
@@ -665,6 +678,7 @@ export class MessagePipeline {
         todayEvents: upcomingEvents,
         conversationSummary: summary?.summary,
         rules,
+        deviceContext,
       });
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"

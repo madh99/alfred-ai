@@ -188,7 +188,7 @@ ${this.formatSections(context)}
 
 Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlungsempfehlung ergibt.
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
-- NICHT raten oder vermuten. BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor.
+- NICHT raten oder vermuten. Fahrzeug-Akku ≠ Hausbatterie, RSS ≠ Monitor.
 - Berücksichtige Trends, Feedback und bemerkenswerte Attribute
 - KEINE_INSIGHTS ist BEVORZUGT — nur melden wenn KONKRETER HANDLUNGSBEDARF besteht
 - "Alles läuft" oder "kein Handlungsbedarf" ist KEIN Insight → KEINE_INSIGHTS
@@ -422,6 +422,26 @@ ${this.buildTopicInstructions()}`;
     }
   }
 
+  /** Build dynamic device types section from collected context sections. */
+  private buildDeviceTypesSection(ctx: CollectedContext): string {
+    // Check which skill-based sections have data (not error)
+    const lines: string[] = [];
+    for (const section of ctx.sections) {
+      if (section.content.startsWith('(') && section.content.includes('fehlgeschlagen')) continue;
+      switch (section.key) {
+        case 'bmw': lines.push(`- Fahrzeug: ${section.content.slice(0, 80).split('\n')[0]}`); break;
+        case 'crypto': lines.push('- Crypto-Portfolio: Finanzdaten'); break;
+      }
+    }
+    // Device context from KG (injected as VERBINDUNGSKARTE section)
+    const kgSection = ctx.sections.find(s => s.key === 'knowledge_graph');
+    if (kgSection) {
+      // KG already contains device entities — no need to duplicate
+      return lines.length > 0 ? '\n' + lines.join('\n') : '';
+    }
+    return lines.length > 0 ? '\n' + lines.join('\n') : '';
+  }
+
   // ── Knowledge Graph ──────────────────────────────────────────
 
   /**
@@ -489,11 +509,11 @@ ${this.buildTopicInstructions()}`;
   private buildTopicInstructions(): string {
     return `Falls du Auffälligkeiten findest, hänge nach deiner Analyse ein strukturiertes JSON an:
 ${TOPICS_MARKER}
-[{"topic": "vehicle_battery", "reason": "BMW Akku niedrig, Termin morgen"},
+[{"topic": "vehicle_battery", "reason": "Fahrzeug-Akku niedrig, Termin morgen"},
  {"topic": "routing", "params": {"from": "home", "to": "Linz"}, "reason": "Distanz prüfen"}]
 
 Verfügbare Topics für Detaildaten:
-- vehicle_battery — BMW Detailstatus (Akku, Reichweite, Ladezeit)
+- vehicle_battery — Fahrzeug Detailstatus (Akku, Reichweite, Ladezeit)
 - routing — Route berechnen (params: from/to aus dem Kontext)
 - weather_forecast — Mehrtages-Wetter für bestimmten Ort (params: location)
 - email_detail — E-Mail Inbox Details
@@ -514,25 +534,24 @@ Wenn KEINE Topics nötig: lass den ${TOPICS_MARKER} Block weg.`;
     return `Du bist Alfreds holistisches Denk-Modul. Du analysierst 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
 
 DATENQUELLEN-TYPEN (WICHTIG — nicht verwechseln!):
-- Kalender: TERMINE mit Ort, Zeit, Teilnehmern. Planungsdaten.
-- Todos: AUFGABEN mit Fälligkeitsdatum und Priorität.
-- Watches: SKILL-BASIERTE MONITORE — jeder Watch nutzt einen bestimmten Skill (z.B. shopping, energy_price). Watches sind NICHT RSS-Feeds.
-- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Read-only. Können NICHT als Monitoring-Tool umkonfiguriert werden.
+- Kalender: TERMINE mit Ort, Zeit, Teilnehmern
+- Todos: AUFGABEN mit Fälligkeitsdatum und Priorität
+- Watches: SKILL-BASIERTE MONITORE — jeder Watch nutzt einen bestimmten Skill. Watches sind NICHT RSS-Feeds.
+- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Read-only. KEIN Monitoring-Tool.
 - E-Mail: NACHRICHTEN von Personen. Antworten auf Anfragen sind KEIN Spam.
-- BMW: FAHRZEUG-Daten (Akku, Reichweite). Ist ein AUTO, keine Hausbatterie.
-- Smart Home: HAUS-Geräte (Licht, Heizung, Hausbatterie/PV, Wallbox). Hausbatterie ≠ Auto-Batterie.
-- Energiepreise: STROMMARKT-Daten (ct/kWh). Für Lade-Optimierung.
-- Wetter: WETTERDATEN für Ort. Für Planung.
-- Crypto/Bitpanda: PORTFOLIO-Daten. Finanzen.
-- Infra/Monitor: SERVER-Status. IT-Infrastruktur.
+- Smart Home: HAUS-Geräte (Licht, Heizung, Hausbatterie/PV, Wallbox)
+- Energiepreise: STROMMARKT-Daten (ct/kWh)
+- Wetter: WETTERDATEN
+- Infra/Monitor: SERVER-Status
+${this.buildDeviceTypesSection(ctx)}
 
 QUALITÄTSREGELN:
-- Alle Datenquellen DÜRFEN miteinander kombiniert werden — es gibt keine verbotenen Kombinationen
-- ABER: Verwechsle nicht verschiedene Dinge nur weil ein ähnliches Wort vorkommt!
-  Beispiele: BMW-Akku (Auto) ≠ Hausbatterie (Victron/PV). RSS-Feed (News-Artikel) ≠ Watch-Monitor (Skill). E-Mail-Antworten auf Anfragen ≠ Spam.
-- Wenn du zwei Dinge verbindest, stelle sicher dass es die GLEICHE reale Entität ist (gleiche Person, gleicher Ort) oder ein SINNVOLLER kausaler Zusammenhang besteht
+- Alle Datenquellen DÜRFEN miteinander kombiniert werden — keine verbotenen Kombinationen
+- ABER: Verwechsle nicht verschiedene Geräte! Fahrzeug-Akku ≠ Hausbatterie. RSS-Feed ≠ Watch-Monitor. E-Mail-Antworten ≠ Spam.
+  Achte auf die VERBINDUNGSKARTE und "Konfigurierte Geräte" Section — dort steht welches Gerät was ist.
+- Verbinde nur wenn GLEICHE reale Entität oder SINNVOLLER kausaler Zusammenhang
 - KEINE Vermutungen oder Spekulationen — nur was aus den Daten hervorgeht
-- KEIN Werten von Nutzerverhalten (nicht bevormundend sein)
+- KEIN Werten von Nutzerverhalten
 
 VERBINDUNGSKARTE:
 Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als primären Ausgangspunkt.
@@ -589,14 +608,14 @@ REGELN:
 
 QUALITÄTSREGELN:
 - Alle Domains DÜRFEN kombiniert werden — aber verwechsle nicht verschiedene Dinge!
-  BMW-Akku (Auto) ≠ Hausbatterie (Victron/PV). RSS-Feed (News) ≠ Watch (Skill-Monitor). E-Mail-Antworten ≠ Spam.
+  BMW-Akku (Auto) ≠ Hausbatterie (PV/Speicher). RSS-Feed (News) ≠ Watch (Skill-Monitor). E-Mail-Antworten ≠ Spam.
 - Verbinde Entities wenn es die GLEICHE reale Sache ist oder ein SINNVOLLER Zusammenhang besteht
 - KEINE Vermutungen, KEINE Bewertung des Nutzerverhaltens
 
 BEISPIELE guter Insights:
 - "Müller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt — heute erledigen!"
 - "RTX 5090 in Wien verfügbar + Zahnarzt-Termin Wien Mittwoch → Abholung nach Termin"
-- "BMW 15% Akku (45km), Termin in Linz (150km) → laden nötig, Strom gerade günstig"
+- "Fahrzeug 15% Akku (45km), Termin in 150km Entfernung → laden nötig, Strom gerade günstig"
 - "BMW-API seit 24h offline → Token erneuern"
 
 BEISPIELE SCHLECHTER Insights (NICHT generieren!):
@@ -636,7 +655,7 @@ ${scanFindings}
 Formuliere daraus max 2 konkrete, actionable Insights.
 - Nutze die VERBINDUNGSKARTE für Cross-Domain-Zusammenhänge zwischen IDENTISCHEN Entities
 - Nutze VERTIEFTE DATEN für spezifische Zahlen
-- Alle Domains kombinierbar, aber Typen nicht verwechseln (BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor)
+- Alle Domains kombinierbar, aber Typen nicht verwechseln (Fahrzeug-Akku ≠ Hausbatterie, RSS ≠ Monitor)
 - Nicht raten, nicht vermuten — nur was aus den Daten hervorgeht
 - Max 1-2 Sätze pro Insight, auf Deutsch
 
