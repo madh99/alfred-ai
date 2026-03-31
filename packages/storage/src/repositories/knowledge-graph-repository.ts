@@ -76,7 +76,7 @@ export class KnowledgeGraphRepository {
         UPDATE kg_entities SET
           attributes = ?,
           sources = ?,
-          confidence = MIN(CAST(1.0 AS REAL), confidence + 0.1),
+          confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END,
           last_seen_at = ?,
           mention_count = mention_count + 1
         WHERE id = ?
@@ -107,7 +107,7 @@ export class KnowledgeGraphRepository {
         await this.adapter.execute(`
           UPDATE kg_entities SET
             name = ?, normalized_name = ?, attributes = ?, sources = ?,
-            confidence = MIN(CAST(1.0 AS REAL), confidence + 0.1), last_seen_at = ?, mention_count = mention_count + 1
+            confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END, last_seen_at = ?, mention_count = mention_count + 1
           WHERE id = ?
         `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
 
@@ -122,7 +122,7 @@ export class KnowledgeGraphRepository {
       INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
       ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
-        confidence = MIN(CAST(1.0 AS REAL), kg_entities.confidence + 0.1),
+        confidence = CASE WHEN kg_entities.confidence + 0.1 > 1.0 THEN 1.0 ELSE kg_entities.confidence + 0.1 END,
         last_seen_at = excluded.last_seen_at,
         mention_count = kg_entities.mention_count + 1
     `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
@@ -203,7 +203,7 @@ export class KnowledgeGraphRepository {
     if (existing) {
       await this.adapter.execute(`
         UPDATE kg_relations SET
-          strength = MIN(CAST(1.0 AS REAL), strength + 0.1),
+          strength = CASE WHEN strength + 0.1 > 1.0 THEN 1.0 ELSE strength + 0.1 END,
           context = COALESCE(?, context),
           last_seen_at = ?,
           mention_count = mention_count + 1
@@ -219,7 +219,7 @@ export class KnowledgeGraphRepository {
       INSERT INTO kg_relations (id, user_id, source_entity_id, target_entity_id, relation_type, strength, context, source_section, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, 0.5, ?, ?, ?, ?, 1)
       ON CONFLICT (user_id, source_entity_id, target_entity_id, relation_type) DO UPDATE SET
-        strength = MIN(CAST(1.0 AS REAL), kg_relations.strength + 0.1),
+        strength = CASE WHEN kg_relations.strength + 0.1 > 1.0 THEN 1.0 ELSE kg_relations.strength + 0.1 END,
         context = COALESCE(excluded.context, kg_relations.context),
         last_seen_at = excluded.last_seen_at,
         mention_count = kg_relations.mention_count + 1

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.251] - 2026-03-31
+
+### Fixed
+- **KG: PostgreSQL MIN() Skalarfunktion existiert nicht** — `MIN(1.0, confidence + 0.1)` durch `CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END` ersetzt. Funktioniert auf SQLite UND PostgreSQL. KG-Entities und Relations werden jetzt korrekt upsertet.
+- **Reasoning: Insight-Qualität — KEINE_INSIGHTS bevorzugt** — Prompts instruieren das LLM jetzt explizit: "Alles läuft gut" ist KEIN Insight. Status-Berichte ohne Handlung sind KEINE Insights. Lieber 0-2 echte Insights als 5 Füller. KEINE_INSIGHTS ist die bevorzugte Antwort.
+
 ## [0.19.0-multi-ha.250] - 2026-03-31
 
 ### Added

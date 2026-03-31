@@ -190,8 +190,10 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
 - NICHT raten oder vermuten. BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor.
 - Berücksichtige Trends, Feedback und bemerkenswerte Attribute
-- Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
-- Wenn NICHTS EINDEUTIG Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+- KEINE_INSIGHTS ist BEVORZUGT — nur melden wenn KONKRETER HANDLUNGSBEDARF besteht
+- "Alles läuft" oder "kein Handlungsbedarf" ist KEIN Insight → KEINE_INSIGHTS
+- Wenn Handlungsbedarf: max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
+- Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`;
 
@@ -547,8 +549,14 @@ ${changedInfo}
 
 ${this.formatSections(ctx)}
 
-Antworte mit max 3 kurzen Stichpunkten was du an Verbindungen, Konflikten oder Gelegenheiten gefunden hast.
-Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+KEINE_INSIGHTS ist die BEVORZUGTE Antwort! NUR melden wenn KONKRETER HANDLUNGSBEDARF besteht.
+- "Alles läuft gut" ist KEIN Insight → KEINE_INSIGHTS
+- "Kein Handlungsbedarf" ist KEIN Insight → KEINE_INSIGHTS
+- Status-Berichte ohne Handlung sind KEINE Insights → KEINE_INSIGHTS
+- NUR echte Probleme, Konflikte oder Gelegenheiten die JETZT eine Aktion erfordern
+
+Wenn Handlungsbedarf: max 3 kurze Stichpunkte.
+Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`;
   }
@@ -562,7 +570,13 @@ ${this.buildTopicInstructions()}`;
 
 ${scanFindings}
 
-Formuliere daraus max 5 konkrete, actionable Insights für den User.
+Formuliere daraus NUR Insights die KONKRETEN HANDLUNGSBEDARF haben.
+
+WICHTIGSTE REGEL:
+- Ein Insight MUSS eine KONKRETE HANDLUNG erfordern. Wenn der User nichts tun muss → WEGLASSEN.
+- "Alles läuft optimal" → KEIN Insight. "Kein Handlungsbedarf" → KEIN Insight. "Unter Beobachtung" → KEIN Insight.
+- Lieber 1-2 echte Insights als 5 Füller. Lieber 0 als Füller.
+- Max 5, aber NUR wenn 5 echte Handlungen nötig sind.
 
 REGELN:
 - Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities strukturiert

@@ -1578,25 +1578,25 @@ CREATE TABLE IF NOT EXISTS adapter_claims (
         UPDATE kg_entities SET
           attributes = ?,
           sources = ?,
-          confidence = MIN(CAST(1.0 AS REAL), confidence + 0.1),
+          confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END,
           last_seen_at = ?,
           mention_count = mention_count + 1
         WHERE id = ?
       `,[JSON.stringify(y),JSON.stringify(p),a,u.id]);let g=await this.adapter.queryOne("SELECT * FROM kg_entities WHERE id = ?",[u.id]);return this.mapEntity(g)}if(s==="person"&&n.length>=3){let p=await this.findFuzzyPersonMatch(e,n);if(p){let f=[];try{f=JSON.parse(p.sources)}catch{}i&&!f.includes(i)&&f.push(i);let y={};try{y=JSON.parse(p.attributes)}catch{}let g={...y,...r??{}},T=p.name,E=t.length>T.length?t:T,A=E.trim().toLowerCase();await this.adapter.execute(`
           UPDATE kg_entities SET
             name = ?, normalized_name = ?, attributes = ?, sources = ?,
-            confidence = MIN(CAST(1.0 AS REAL), confidence + 0.1), last_seen_at = ?, mention_count = mention_count + 1
+            confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END, last_seen_at = ?, mention_count = mention_count + 1
           WHERE id = ?
         `,[E,A,JSON.stringify(g),JSON.stringify(f),a,p.id]);let v=await this.adapter.queryOne("SELECT * FROM kg_entities WHERE id = ?",[p.id]);return this.mapEntity(v)}}if((await this.adapter.execute(`
       INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
       ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
-        confidence = MIN(CAST(1.0 AS REAL), kg_entities.confidence + 0.1),
+        confidence = CASE WHEN kg_entities.confidence + 0.1 > 1.0 THEN 1.0 ELSE kg_entities.confidence + 0.1 END,
         last_seen_at = excluded.last_seen_at,
         mention_count = kg_entities.mention_count + 1
     `,[o,e,t,n,s,l,c,a,a])).changes===0){let p=await this.adapter.queryOne("SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?",[e,s,n]);return p?this.mapEntity(p):{id:o,userId:e,name:t,normalizedName:n,entityType:s,attributes:r??{},sources:i?[i]:[],confidence:.5,firstSeenAt:a,lastSeenAt:a,mentionCount:1}}return{id:o,userId:e,name:t,normalizedName:n,entityType:s,attributes:r??{},sources:i?[i]:[],confidence:.5,firstSeenAt:a,lastSeenAt:a,mentionCount:1}}async findFuzzyPersonMatch(e,t){let s=this.adapter.type==="postgres"?"ILIKE":"LIKE",r=await this.adapter.query(`SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = 'person' AND normalized_name != ? AND (normalized_name ${s} ? OR ? ${s} '%' || normalized_name || '%') ORDER BY mention_count DESC LIMIT 1`,[e,t,`%${t}%`,t]);return r.length>0?r[0]:null}async getEntitiesByType(e,t){return(await this.adapter.query("SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? ORDER BY confidence DESC, mention_count DESC",[e,t])).map(r=>this.mapEntity(r))}async getEntityByName(e,t,s){let r=t.trim().toLowerCase(),i=s?"SELECT * FROM kg_entities WHERE user_id = ? AND normalized_name = ? AND entity_type = ?":"SELECT * FROM kg_entities WHERE user_id = ? AND normalized_name = ?",n=s?[e,r,s]:[e,r],a=await this.adapter.queryOne(i,n);return a?this.mapEntity(a):void 0}async searchEntities(e,t,s=20){let r=this.adapter.type==="postgres"?"ILIKE":"LIKE";return(await this.adapter.query(`SELECT * FROM kg_entities WHERE user_id = ? AND (name ${r} ? OR normalized_name ${r} ?) ORDER BY confidence DESC LIMIT ?`,[e,`%${t}%`,`%${t.toLowerCase()}%`,s])).map(n=>this.mapEntity(n))}async upsertRelation(e,t,s,r,i,n){let a=new Date().toISOString(),o=Yh(),c=await this.adapter.queryOne("SELECT id FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?",[e,t,s,r]);if(c){await this.adapter.execute(`
         UPDATE kg_relations SET
-          strength = MIN(CAST(1.0 AS REAL), strength + 0.1),
+          strength = CASE WHEN strength + 0.1 > 1.0 THEN 1.0 ELSE strength + 0.1 END,
           context = COALESCE(?, context),
           last_seen_at = ?,
           mention_count = mention_count + 1
@@ -1605,7 +1605,7 @@ CREATE TABLE IF NOT EXISTS adapter_claims (
       INSERT INTO kg_relations (id, user_id, source_entity_id, target_entity_id, relation_type, strength, context, source_section, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, 0.5, ?, ?, ?, ?, 1)
       ON CONFLICT (user_id, source_entity_id, target_entity_id, relation_type) DO UPDATE SET
-        strength = MIN(CAST(1.0 AS REAL), kg_relations.strength + 0.1),
+        strength = CASE WHEN kg_relations.strength + 0.1 > 1.0 THEN 1.0 ELSE kg_relations.strength + 0.1 END,
         context = COALESCE(excluded.context, kg_relations.context),
         last_seen_at = excluded.last_seen_at,
         mention_count = kg_relations.mention_count + 1
@@ -2832,8 +2832,10 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
 - NICHT raten oder vermuten. BMW-Akku \u2260 Hausbatterie, RSS \u2260 Monitor.
 - Ber\xFCcksichtige Trends, Feedback und bemerkenswerte Attribute
-- Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenh\xE4nge
-- Wenn NICHTS EINDEUTIG Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+- KEINE_INSIGHTS ist BEVORZUGT \u2014 nur melden wenn KONKRETER HANDLUNGSBEDARF besteht
+- "Alles l\xE4uft" oder "kein Handlungsbedarf" ist KEIN Insight \u2192 KEINE_INSIGHTS
+- Wenn Handlungsbedarf: max 3 Stichpunkte, nur FAKTISCH belegte Zusammenh\xE4nge
+- Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`,o=(await this.llm.complete({messages:[{role:"user",content:n}],maxTokens:512,tier:this.tier})).content.trim();if(qo(o))return;let{findings:c,topics:l}=this.extractTopics(o),u=new Map;l.length>0&&(u=await this.collector.enrichTopics(l));let h=this.buildEventDetailPrompt(i,e,t,c,u),f=(await this.llm.complete({messages:[{role:"user",content:h}],maxTokens:dg,tier:this.tier})).content.trim();if(qo(f))return;let y=this.parseReasoningResponse(f);if(y.insights.length>0){let g=[];for(let T of y.insights)await this.wasRecentlySent(T)||g.push(T);if(g.length>0){let T=`\u{1F4A1} **Alfred Insights**
 
@@ -2907,14 +2909,26 @@ ${e.changedSections.length>0?e.changedSections.map(s=>e.sections.find(r=>r.key==
 
 ${this.formatSections(e)}
 
-Antworte mit max 3 kurzen Stichpunkten was du an Verbindungen, Konflikten oder Gelegenheiten gefunden hast.
-Wenn WIRKLICH NICHTS Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+KEINE_INSIGHTS ist die BEVORZUGTE Antwort! NUR melden wenn KONKRETER HANDLUNGSBEDARF besteht.
+- "Alles l\xE4uft gut" ist KEIN Insight \u2192 KEINE_INSIGHTS
+- "Kein Handlungsbedarf" ist KEIN Insight \u2192 KEINE_INSIGHTS
+- Status-Berichte ohne Handlung sind KEINE Insights \u2192 KEINE_INSIGHTS
+- NUR echte Probleme, Konflikte oder Gelegenheiten die JETZT eine Aktion erfordern
+
+Wenn Handlungsbedarf: max 3 kurze Stichpunkte.
+Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`}buildDetailPrompt(e,t,s){let r=s&&s.size>0?this.formatEnrichedContext(s):"";return`Du bist Alfreds holistisches Denk-Modul. In der Vorab-Analyse wurden folgende Auff\xE4lligkeiten erkannt:
 
 ${t}
 
-Formuliere daraus max 5 konkrete, actionable Insights f\xFCr den User.
+Formuliere daraus NUR Insights die KONKRETEN HANDLUNGSBEDARF haben.
+
+WICHTIGSTE REGEL:
+- Ein Insight MUSS eine KONKRETE HANDLUNG erfordern. Wenn der User nichts tun muss \u2192 WEGLASSEN.
+- "Alles l\xE4uft optimal" \u2192 KEIN Insight. "Kein Handlungsbedarf" \u2192 KEIN Insight. "Unter Beobachtung" \u2192 KEIN Insight.
+- Lieber 1-2 echte Insights als 5 F\xFCller. Lieber 0 als F\xFCller.
+- Max 5, aber NUR wenn 5 echte Handlungen n\xF6tig sind.
 
 REGELN:
 - Nutze die VERBINDUNGSKARTE als Basis \u2014 dort sind Cross-Domain-Entities strukturiert
