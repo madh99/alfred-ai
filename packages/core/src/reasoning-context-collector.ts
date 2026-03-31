@@ -405,38 +405,71 @@ export class ReasoningContextCollector {
   }
 
   private async fetchSmartHome(): Promise<string> {
-    // Resolve which HA domains to query: memories → default whitelist
-    // User can store "briefing_ha_domains" = "light, switch, sensor, climate" in memories
-    const DEFAULT_DOMAINS = ['light', 'switch', 'climate', 'binary_sensor', 'sensor'];
-    let domains = DEFAULT_DOMAINS;
+    // Strategy 1: If user configured specific entities via memory → fetch those individually
+    // User can store "briefing_ha_entities" = "sensor.victron_system_battery_soc, sensor.battery_charge_plan_text, ..."
+    try {
+      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_entit');
+      const entityMem = mems.find(m => /ha_entit|home.?assistant.*entit|briefing.*entit/i.test(m.key));
+      if (entityMem) {
+        const entityIds = entityMem.value.split(/[,;]\s*/).map(e => e.trim()).filter(Boolean);
+        if (entityIds.length > 0) {
+          return this.fetchSmartHomeByEntities(entityIds);
+        }
+      }
+    } catch { /* fall through to domain-based */ }
 
+    // Strategy 2: Fetch small domains directly (light, switch, climate — usually <50 entities each)
+    // Skip "sensor" (1000+) and "binary_sensor" (150+) — too many for unfiltered fetch
+    const SMALL_DOMAINS = ['light', 'switch', 'climate'];
+
+    // Also check user-configured domains from memory
     try {
       const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_domain');
       const domainMem = mems.find(m => /ha_domain|home.?assistant.*domain|briefing.*domain/i.test(m.key));
       if (domainMem) {
         const parsed = domainMem.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
-        if (parsed.length > 0) domains = parsed;
+        if (parsed.length > 0) return this.fetchSmartHomeByDomains(parsed);
       }
     } catch { /* use defaults */ }
 
-    // Fetch per domain and combine (more targeted than fetching all 1909 entities)
+    return this.fetchSmartHomeByDomains(SMALL_DOMAINS);
+  }
+
+  private async fetchSmartHomeByEntities(entityIds: string[]): Promise<string> {
     const parts: string[] = [];
-    for (const domain of domains.slice(0, 8)) {
+    for (const eid of entityIds.slice(0, 20)) {
+      try {
+        const result = await this.fetchSkillData('homeassistant', { action: 'state', entity_id: eid });
+        if (result && !result.startsWith('(')) {
+          // Extract key info from the detailed state response
+          const stateMatch = result.match(/\*\*State:\*\*\s*(.+)/);
+          const nameMatch = result.match(/^##\s*(.+)/m);
+          if (stateMatch) {
+            const name = nameMatch?.[1] ?? eid;
+            parts.push(`${name}: ${stateMatch[1].trim()}`);
+          }
+        }
+      } catch { /* skip entity */ }
+    }
+    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine Entities erreichbar)';
+  }
+
+  private async fetchSmartHomeByDomains(domains: string[]): Promise<string> {
+    const parts: string[] = [];
+    for (const domain of domains.slice(0, 6)) {
       try {
         const result = await this.fetchSkillData('homeassistant', { action: 'states', domain });
         if (result && !result.startsWith('(')) {
-          // Limit lines per domain to avoid flooding
           const lines = result.split('\n').filter(l => l.startsWith('|') && !l.startsWith('|---') && !l.includes('Entity ID'));
           if (lines.length > 0) {
             parts.push(`${domain} (${lines.length}):`);
-            for (const line of lines.slice(0, 10)) {
+            for (const line of lines.slice(0, 15)) {
               parts.push(line);
             }
           }
         }
       } catch { /* skip domain */ }
     }
-
     return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine relevanten Entities)';
   }
 

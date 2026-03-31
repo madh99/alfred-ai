@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.257] - 2026-03-31
+
+### Changed
+- **Smart Home: 2-Strategie-Ansatz** — Strategie 1: Wenn User spezifische Entities via Memory konfiguriert hat (`briefing_ha_entities = sensor.victron_system_battery_soc, ...`), werden diese einzeln per `getState()` abgerufen — präzise, keine Datenflut. Strategie 2 (Fallback): Nur kleine Domains (light, switch, climate) abfragen — `sensor` (1015 Entities!) und `binary_sensor` (158) werden übersprungen. User kann eigene Domains via Memory setzen (`briefing_ha_domains`).
+
 ## [0.19.0-multi-ha.256] - 2026-03-31
 
 ### Changed
