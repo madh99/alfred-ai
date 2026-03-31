@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.249] - 2026-03-31
+
+### Fixed
+- **KG Ingest: PostgreSQL MIN() Type-Mismatch** — `MIN(1.0, confidence + 0.1)` schlug fehl weil `1.0` als `double precision` interpretiert wurde, `confidence` aber `REAL` ist. Fix: `CAST(1.0 AS REAL)`. KG-Entities und Relations werden jetzt korrekt upsertet.
+- **Feed-Reader: Unbekannte Action `recent`** — Collector rief `{action: 'recent'}` auf, Skill kennt nur `check_all`. Fix: `check_all` verwenden.
+- **Wetter: Location-Resolution aus Memories** — Wenn `defaultLocation` nicht konfiguriert ist, wird die Heimadresse aus Memories gesucht (Schlüssel: heim/home/adress/wohn). Wenn keine Adresse gefunden: hilfreiche Fehlermeldung statt Skill-Error.
+
 ## [0.19.0-multi-ha.248] - 2026-03-31
 
 ### Fixed

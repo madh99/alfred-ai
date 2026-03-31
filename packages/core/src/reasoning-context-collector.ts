@@ -135,9 +135,16 @@ export class ReasoningContextCollector {
     );
 
     // ── Priority 2: Skill-based (only if registered) ──────────
+    // Weather with dynamic location resolution (from config → memories → skip)
+    if (this.skillRegistry.has('weather')) {
+      defs.push({
+        key: 'weather', label: 'Wetter', priority: 2, maxTokens: 150,
+        fetch: () => this.fetchWeather(),
+      });
+    }
+
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', limit: 5 }, maxTokens: 250 },
-      { key: 'weather', label: 'Wetter', skill: 'weather', input: { action: 'current', ...(this.defaultLocation ? { location: this.defaultLocation } : {}) }, maxTokens: 150 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
       { key: 'bmw', label: 'BMW Status', skill: 'bmw', input: { action: 'status' }, maxTokens: 200 },
       { key: 'smarthome', label: 'Smart Home', skill: 'homeassistant', input: { action: 'states' }, maxTokens: 300 },
@@ -176,7 +183,7 @@ export class ReasoningContextCollector {
     const p3Skills: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'mealPlan', label: 'Meal-Plan heute', skill: 'recipe', input: { action: 'meal_plan', sub_action: 'get', week: 'current', day: new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase() }, maxTokens: 100 },
       { key: 'travel', label: 'Anstehende Reisen', skill: 'travel', input: { action: 'plan_list', status: 'booked' }, maxTokens: 100 },
-      { key: 'feeds', label: 'RSS Feeds (letzte)', skill: 'feed_reader', input: { action: 'recent', limit: 5 }, maxTokens: 150 },
+      { key: 'feeds', label: 'RSS Feeds (letzte)', skill: 'feed_reader', input: { action: 'check_all' }, maxTokens: 150 },
       { key: 'infra', label: 'Infrastruktur', skill: 'monitor', input: { action: 'status' }, maxTokens: 100 },
     ];
     for (const src of p3Skills) {
@@ -366,6 +373,30 @@ export class ReasoningContextCollector {
       this.logger.warn({ err }, 'ReasoningCollector: feedback fetch failed');
       return '';
     }
+  }
+
+  private async fetchWeather(): Promise<string> {
+    // Resolve location: config → memories (home address) → skip
+    let location = this.defaultLocation;
+    if (!location) {
+      try {
+        for (const query of ['heim', 'home', 'adress', 'wohn']) {
+          const results = await this.memoryRepo.search(this.defaultChatId, query);
+          if (results.length > 0) {
+            // Extract city from address value
+            const value = results[0].value;
+            for (const city of ['Wien', 'Linz', 'Graz', 'Salzburg', 'Innsbruck', 'Klagenfurt', 'St. Pölten', 'Altlengbach']) {
+              if (value.includes(city)) { location = city; break; }
+            }
+            if (location) break;
+            // Fallback: use the whole value as location
+            if (value.length > 2 && value.length < 50) { location = value; break; }
+          }
+        }
+      } catch { /* skip location resolution */ }
+    }
+    if (!location) return '(Wetter: kein Standort konfiguriert — Heimadresse in Memories speichern oder ALFRED_BRIEFING_LOCATION setzen)';
+    return this.fetchSkillData('weather', { action: 'current', location });
   }
 
   private async fetchTemporalInsights(): Promise<string> {
