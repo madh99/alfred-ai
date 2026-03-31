@@ -34,7 +34,7 @@ const PERSON_PATTERNS = [
 ];
 
 /** Max tokens for the connection map section. */
-const MAX_MAP_TOKENS = 400;
+const MAX_MAP_TOKENS = 600;
 
 // ── Service ──────────────────────────────────────────────────
 
@@ -82,115 +82,61 @@ export class KnowledgeGraphService {
       const entityMap = new Map(entities.map(e => [e.id, e]));
       const parts: string[] = [];
 
-      // 1. Persons appearing in multiple sources
-      const multiSourcePersons = entities.filter(e => e.entityType === 'person' && e.sources.length >= 2);
-      if (multiSourcePersons.length > 0) {
-        parts.push('Personen (mehrere Quellen):');
-        for (const p of multiSourcePersons.slice(0, 5)) {
-          const rels = relations.filter(r => r.sourceEntityId === p.id || r.targetEntityId === p.id);
-          const contexts = rels.map(r => r.context).filter(Boolean).slice(0, 3);
-          parts.push(`  ${p.name} → ${p.sources.join(', ')}${contexts.length > 0 ? ': ' + contexts.join('; ') : ''}`);
-        }
-      }
+      // 1. Cross-Domain Entities: entities appearing in ≥2 different sources
+      const crossDomain = entities
+        .filter(e => e.sources.length >= 2)
+        .sort((a, b) => b.sources.length - a.sources.length || b.mentionCount - a.mentionCount);
 
-      // 2. Locations with connected events/items
-      const locations = entities.filter(e => e.entityType === 'location');
-      if (locations.length > 0) {
-        parts.push('Orte:');
-        for (const loc of locations.slice(0, 5)) {
-          const connectedRels = relations.filter(r => r.targetEntityId === loc.id);
-          const connectedNames = connectedRels.map(r => {
-            const source = entityMap.get(r.sourceEntityId);
-            return source ? `${source.name} (${r.relationType}${r.context ? ', ' + r.context : ''})` : null;
-          }).filter(Boolean);
-
-          // Check vehicle range constraint
-          const vehicle = entities.find(e => e.entityType === 'vehicle');
-          let rangeWarning = '';
-          if (vehicle?.attributes?.range_km) {
-            const dist = estimateDistance(userId, loc.normalizedName, entities);
-            if (dist && (vehicle.attributes.range_km as number) < dist) {
-              rangeWarning = ` ⚠ BMW ${vehicle.attributes.battery_pct ?? '?'}% (${vehicle.attributes.range_km}km) < ${dist}km`;
-            }
-          }
-
-          parts.push(`  ${loc.name} → ${connectedNames.slice(0, 4).join(', ')}${rangeWarning}`);
-        }
-      }
-
-      // 3. Conflicts: overdue todos mentioning a person who has upcoming events
-      const conflicts: string[] = [];
-      const events = entities.filter(e => e.entityType === 'event');
-      const persons = entities.filter(e => e.entityType === 'person');
-      for (const person of persons) {
-        const personRels = relations.filter(r =>
-          (r.sourceEntityId === person.id || r.targetEntityId === person.id),
-        );
-        const hasOverdueTodo = personRels.some(r => {
-          const entity = entityMap.get(r.sourceEntityId === person.id ? r.targetEntityId : r.sourceEntityId);
-          return entity?.entityType === 'event' && entity.sources.includes('todos') && entity.attributes?.overdue;
-        });
-        const hasUpcomingEvent = personRels.some(r => {
-          const entity = entityMap.get(r.sourceEntityId === person.id ? r.targetEntityId : r.sourceEntityId);
-          return entity?.entityType === 'event' && entity.sources.includes('calendar');
-        });
-        if (hasOverdueTodo && hasUpcomingEvent) {
-          conflicts.push(`⚠ Überfälliges Todo für ${person.name} — bevorstehender Termin mit ${person.name}`);
-        }
-      }
-
-      // Vehicle range conflicts
-      const vehicle = entities.find(e => e.entityType === 'vehicle');
-      if (vehicle?.attributes?.range_km) {
-        for (const loc of locations) {
-          const dist = estimateDistance(userId, loc.normalizedName, entities);
-          if (dist && (vehicle.attributes.range_km as number) < dist) {
-            conflicts.push(`⚠ BMW Reichweite ${vehicle.attributes.range_km}km reicht nicht für ${loc.name} (~${dist}km)`);
+      if (crossDomain.length > 0) {
+        parts.push('Cross-Domain Entities:');
+        for (const e of crossDomain.slice(0, 10)) {
+          const rels = relations.filter(r => r.sourceEntityId === e.id || r.targetEntityId === e.id);
+          const bySource = this.groupRelationsBySource(rels, e.id, entityMap);
+          const attrStr = this.formatAttributes(e.attributes);
+          parts.push(`  ${e.name} [${e.entityType}]${attrStr}`);
+          for (const [source, descriptions] of bySource) {
+            parts.push(`    ${source}: ${descriptions.join(', ')}`);
           }
         }
       }
 
-      if (conflicts.length > 0) {
-        parts.push('Konflikte:');
-        for (const c of conflicts.slice(0, 5)) parts.push(`  ${c}`);
-      }
+      // 2. Cross-Domain Relations: relations between entities from different sources
+      const crossRelations = relations.filter(r => {
+        const src = entityMap.get(r.sourceEntityId);
+        const tgt = entityMap.get(r.targetEntityId);
+        if (!src || !tgt) return false;
+        return !src.sources.every(s => tgt.sources.includes(s));
+      }).sort((a, b) => b.strength - a.strength);
 
-      // 4. Opportunities: same location for event + item
-      const opportunities: string[] = [];
-      for (const loc of locations) {
-        const atLocation = relations
-          .filter(r => r.targetEntityId === loc.id)
-          .map(r => entityMap.get(r.sourceEntityId))
-          .filter(Boolean) as KGEntity[];
-        const hasEvent = atLocation.some(e => e.entityType === 'event');
-        const hasItem = atLocation.some(e => e.entityType === 'item');
-        if (hasEvent && hasItem) {
-          const item = atLocation.find(e => e.entityType === 'item');
-          const event = atLocation.find(e => e.entityType === 'event');
-          if (item && event) {
-            opportunities.push(`💡 ${item.name} in ${loc.name} + ${event.name} → Abholung möglich`);
-          }
+      if (crossRelations.length > 0) {
+        parts.push('Cross-Domain Verbindungen:');
+        for (const r of crossRelations.slice(0, 15)) {
+          const src = entityMap.get(r.sourceEntityId);
+          const tgt = entityMap.get(r.targetEntityId);
+          if (!src || !tgt) continue;
+          parts.push(`  ${src.name} [${src.sources.join('+')}] →${r.relationType}→ ${tgt.name} [${tgt.sources.join('+')}]${r.context ? ` (${r.context})` : ''}`);
         }
       }
 
-      if (opportunities.length > 0) {
-        parts.push('Gelegenheiten:');
-        for (const o of opportunities.slice(0, 3)) parts.push(`  ${o}`);
-      }
+      // 3. Notable attributes: entities with actionable state (overdue, low battery, prices, urgent)
+      const notable = entities.filter(e => {
+        const a = e.attributes;
+        return a?.overdue || a?.battery_pct !== undefined || a?.price !== undefined ||
+          a?.priority === 'high' || a?.priority === 'urgent' || a?.range_km !== undefined;
+      });
 
-      // 5. Recommendations: actionable cross-domain suggestions
-      const recommendations = this.generateRecommendations(entities, relations, entityMap);
-      if (recommendations.length > 0) {
-        parts.push('Empfehlungen:');
-        for (const r of recommendations) parts.push(`  ${r}`);
+      if (notable.length > 0) {
+        parts.push('Bemerkenswerte Attribute:');
+        for (const e of notable.slice(0, 8)) {
+          const attrs = this.formatAttributes(e.attributes);
+          parts.push(`  ${e.name} [${e.entityType}, ${e.sources.join('+')}]${attrs}`);
+        }
       }
 
       if (parts.length === 0) return '';
 
-      // Token cap
       let result = parts.join('\n');
-      const tokenEst = Math.ceil(result.length / 4);
-      if (tokenEst > MAX_MAP_TOKENS) {
+      if (Math.ceil(result.length / 4) > MAX_MAP_TOKENS) {
         result = result.slice(0, MAX_MAP_TOKENS * 4) + '\n...(gekürzt)';
       }
 
@@ -199,6 +145,29 @@ export class KnowledgeGraphService {
       this.logger.warn({ err }, 'KG buildConnectionMap failed');
       return '';
     }
+  }
+
+  /** Group relations by their source section for structured display. */
+  private groupRelationsBySource(
+    relations: KGRelation[], entityId: string, entityMap: Map<string, KGEntity>,
+  ): Map<string, string[]> {
+    const grouped = new Map<string, string[]>();
+    for (const r of relations) {
+      const otherId = r.sourceEntityId === entityId ? r.targetEntityId : r.sourceEntityId;
+      const other = entityMap.get(otherId);
+      if (!other) continue;
+      const source = r.sourceSection ?? other.sources[0] ?? 'unknown';
+      if (!grouped.has(source)) grouped.set(source, []);
+      grouped.get(source)!.push(`${other.name} (${r.relationType})`);
+    }
+    return grouped;
+  }
+
+  /** Format entity attributes as compact string, skipping internal fields. */
+  private formatAttributes(attrs: Record<string, unknown>): string {
+    const entries = Object.entries(attrs).filter(([k]) => !['skillName', 'type', 'isHome'].includes(k));
+    if (entries.length === 0) return '';
+    return ' | ' + entries.map(([k, v]) => `${k}=${v}`).join(', ');
   }
 
   /**
@@ -328,103 +297,6 @@ export class KnowledgeGraphService {
             keyLower.includes('chef') || keyLower.includes('freund') || keyLower.includes('kollege')) {
           await this.kgRepo.upsertEntity(userId, value.trim().split(',')[0].trim(), 'person', { role: key }, 'memories');
         }
-      }
-    }
-  }
-
-  // ── Recommendation Engine ────────────────────────────────────
-
-  /**
-   * Generate actionable cross-domain recommendations from KG entities and relations.
-   * Pure rule-based logic — no LLM calls.
-   */
-  private generateRecommendations(
-    entities: KGEntity[],
-    relations: KGRelation[],
-    entityMap: Map<string, KGEntity>,
-  ): string[] {
-    const recs: string[] = [];
-    this.recommendCharging(entities, recs);
-    this.recommendTodoTiming(entities, recs);
-    this.recommendPickup(entities, relations, entityMap, recs);
-    this.recommendOverduePriority(entities, relations, entityMap, recs);
-    return recs.slice(0, 5);
-  }
-
-  /** Energie + Fahrzeug + Ziel-Distanz → Lade-Empfehlung */
-  private recommendCharging(entities: KGEntity[], recs: string[]): void {
-    const vehicle = entities.find(e => e.entityType === 'vehicle');
-    if (!vehicle?.attributes?.battery_pct) return;
-    const battery = vehicle.attributes.battery_pct as number;
-    if (battery > 50) return;
-
-    const rangeKm = (vehicle.attributes.range_km as number) ?? 0;
-    const homeCity = entities.find(e => e.entityType === 'location' && e.attributes?.isHome)?.normalizedName;
-
-    // Check if any calendar location exceeds range
-    const locations = entities.filter(e => e.entityType === 'location' && !e.attributes?.isHome);
-    for (const loc of locations) {
-      if (!homeCity) continue;
-      const dist = lookupDistance(homeCity, loc.normalizedName);
-      if (dist && rangeKm < dist * 1.2) {
-        recs.push(`🔋 BMW ${battery}% (${rangeKm}km) — Laden empfohlen für ${loc.name} (~${dist}km nötig).`);
-        return;
-      }
-    }
-
-    if (battery < 30) {
-      recs.push(`🔋 BMW nur ${battery}% — Laden empfohlen.`);
-    }
-  }
-
-  /** Kalender-Last + offene Todos → Zeitmanagement */
-  private recommendTodoTiming(entities: KGEntity[], recs: string[]): void {
-    const calendarEvents = entities.filter(e => e.entityType === 'event' && e.sources.includes('calendar'));
-    const overdueTodos = entities.filter(e => e.entityType === 'event' && e.sources.includes('todos') && e.attributes?.overdue);
-    const upcomingTodos = entities.filter(e => e.entityType === 'event' && e.sources.includes('todos') && !e.attributes?.overdue && e.attributes?.dueDate);
-    const totalTodos = overdueTodos.length + upcomingTodos.length;
-
-    if (calendarEvents.length >= 4 && totalTodos >= 2) {
-      const overdueHint = overdueTodos.length > 0 ? `${overdueTodos.length} überfällige + ` : '';
-      recs.push(`📋 Voller Kalender (${calendarEvents.length} Termine) + ${overdueHint}${upcomingTodos.length} fällige Todos — Todos heute Abend erledigen.`);
-    } else if (overdueTodos.length >= 3) {
-      recs.push(`📋 ${overdueTodos.length} überfällige Todos — dringend aufarbeiten.`);
-    }
-  }
-
-  /** Shopping-Item + Kalender-Event am selben Ort → Abholung kombinieren */
-  private recommendPickup(
-    entities: KGEntity[], relations: KGRelation[], entityMap: Map<string, KGEntity>, recs: string[],
-  ): void {
-    const locations = entities.filter(e => e.entityType === 'location');
-    for (const loc of locations) {
-      const atLocation = relations.filter(r => r.targetEntityId === loc.id)
-        .map(r => entityMap.get(r.sourceEntityId)).filter(Boolean) as KGEntity[];
-      const items = atLocation.filter(e => e.entityType === 'item');
-      const calEvents = atLocation.filter(e => e.entityType === 'event' && e.sources.includes('calendar'));
-      if (items.length > 0 && calEvents.length > 0) {
-        recs.push(`🛍️ ${items[0].name} in ${loc.name} — ${calEvents[0].name} dort geplant. Abholung kombinieren?`);
-      }
-    }
-  }
-
-  /** Überfälliges Todo für Person X + bevorstehendes Meeting mit X → Dringlichkeit */
-  private recommendOverduePriority(
-    entities: KGEntity[], relations: KGRelation[], entityMap: Map<string, KGEntity>, recs: string[],
-  ): void {
-    const persons = entities.filter(e => e.entityType === 'person');
-    for (const person of persons) {
-      const rels = relations.filter(r => r.sourceEntityId === person.id || r.targetEntityId === person.id);
-      const connected = rels.map(r => {
-        const otherId = r.sourceEntityId === person.id ? r.targetEntityId : r.sourceEntityId;
-        return entityMap.get(otherId);
-      }).filter(Boolean) as KGEntity[];
-
-      const overdueTodo = connected.find(e => e.sources.includes('todos') && e.attributes?.overdue);
-      const hasMeeting = connected.some(e => e.sources.includes('calendar'));
-
-      if (overdueTodo && hasMeeting) {
-        recs.push(`⚡ "${overdueTodo.name}" für ${person.name} überfällig — Meeting mit ${person.name} steht bevor!`);
       }
     }
   }

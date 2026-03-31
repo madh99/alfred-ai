@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.242] - 2026-03-31
+
+### Changed
+- **Generische Cross-Domain-Analyse** — Verbindungskarte komplett ersetzt: statt 4 hardcodierter Empfehlungsregeln (Laden, Timing, Abholung, Dringlichkeit) jetzt dynamische Analyse aller KG-Daten. Zeigt ALLE Cross-Domain Entities (≥2 Quellen), ALLE Cross-Domain Relations (zwischen verschiedenen Domains), und bemerkenswerte Attribute (overdue, battery, price, priority). Das LLM generiert beliebige Empfehlungen aus den strukturierten Daten — jede Domain-Kombination möglich, nicht auf 4 Typen beschränkt.
+
+### Removed
+- 4 hardcodierte Recommendation-Methoden (recommendCharging, recommendTodoTiming, recommendPickup, recommendOverduePriority) — das LLM übernimmt das Reasoning.
+
 ## [0.19.0-multi-ha.241] - 2026-03-31
 
 ### Added
