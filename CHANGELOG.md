@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.259] - 2026-03-31
+
+### Fixed
+- **Timeouts: feed_reader 15s→25s, monitor eigener Fetch 30s** — Beide Skills fetchen externe Dienste und brauchen mehr Zeit. Generische `fetchWithTimeout()` Methode für Skills mit Custom-Timeout. Code-Duplikation bei fetchFeeds reduziert.
+
 ## [0.19.0-multi-ha.258] - 2026-03-31
 
 ### Changed

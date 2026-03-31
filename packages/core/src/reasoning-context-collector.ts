@@ -210,10 +210,17 @@ export class ReasoningContextCollector {
       });
     }
 
+    // Monitor/Infra with extended timeout (checks multiple services, can be slow)
+    if (this.skillRegistry.has('monitor')) {
+      defs.push({
+        key: 'infra', label: 'Infrastruktur', priority: 3, maxTokens: 150,
+        fetch: () => this.fetchWithTimeout('monitor', { action: 'status' }, 30_000),
+      });
+    }
+
     const p3Skills: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'mealPlan', label: 'Meal-Plan heute', skill: 'recipe', input: { action: 'meal_plan', sub_action: 'get', week: 'current', day: new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase() }, maxTokens: 100 },
       { key: 'travel', label: 'Anstehende Reisen', skill: 'travel', input: { action: 'plan_list', status: 'booked' }, maxTokens: 100 },
-      { key: 'infra', label: 'Infrastruktur', skill: 'monitor', input: { action: 'status' }, maxTokens: 100 },
     ];
     for (const src of p3Skills) {
       if (this.skillRegistry.has(src.skill)) {
@@ -492,26 +499,28 @@ export class ReasoningContextCollector {
     }
   }
 
-  private async fetchFeeds(): Promise<string> {
-    const skill = this.skillRegistry.get('feed_reader');
-    if (!skill) return '(feed_reader nicht verfügbar)';
+  /** Fetch a skill with a custom timeout (for slow skills like monitor, feed_reader). */
+  private async fetchWithTimeout(skillName: string, input: Record<string, unknown>, timeoutMs: number): Promise<string> {
+    const skill = this.skillRegistry.get(skillName);
+    if (!skill) return `(${skillName} nicht verfügbar)`;
     try {
       const { context } = await buildSkillContext(this.userRepo, {
-        userId: this.defaultChatId,
-        platform: this.defaultPlatform,
-        chatId: this.defaultChatId,
-        chatType: 'dm',
+        userId: this.defaultChatId, platform: this.defaultPlatform, chatId: this.defaultChatId, chatType: 'dm',
       });
       const result = await Promise.race([
-        this.skillSandbox.execute(skill, { action: 'check_all' }, context),
-        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('feed_reader timeout')), 15_000)),
+        this.skillSandbox.execute(skill, input, context),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`${skillName} timeout`)), timeoutMs)),
       ]);
-      if (!result.success) return `(feed_reader: ${result.error})`;
+      if (!result.success) return `(${skillName}: ${result.error})`;
       return result.display ?? JSON.stringify(result.data);
     } catch (err) {
-      this.logger.warn({ err }, 'ReasoningCollector: feed fetch failed');
-      return '(RSS-Feed-Abfrage fehlgeschlagen)';
+      this.logger.warn({ err, skillName }, 'ReasoningCollector: skill fetch failed');
+      return `(${skillName}-Abfrage fehlgeschlagen)`;
     }
+  }
+
+  private async fetchFeeds(): Promise<string> {
+    return this.fetchWithTimeout('feed_reader', { action: 'check_all' }, 25_000);
   }
 
   private async fetchWeather(): Promise<string> {
