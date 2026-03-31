@@ -1119,6 +1119,8 @@ export class Alfred {
           new KnowledgeGraphService(
             new KnowledgeGraphRepository(adapter),
             this.logger.child({ component: 'knowledge-graph' }),
+            memoryRepo, skillRegistry, skillSandbox, userRepo,
+            ownerUserId, defaultProactivePlatform,
           ),
         );
       }
@@ -1565,7 +1567,7 @@ export class Alfred {
           try {
             const users = await userRepoRef.listAll();
             const kgService = this.reasoningEngine
-              ? new KnowledgeGraphService(new KnowledgeGraphRepository(this.database.getAdapter()), this.logger.child({ component: 'knowledge-graph' }))
+              ? new KnowledgeGraphService(new KnowledgeGraphRepository(this.database.getAdapter()), this.logger.child({ component: 'knowledge-graph' }), this.memoryRepo)
               : undefined;
             for (const user of users) {
               const report = await temporalAnalyzer.analyze(user.id);

@@ -1,6 +1,9 @@
 import type { Logger } from 'pino';
-import type { KnowledgeGraphRepository, KGEntity, KGRelation } from '@alfred/storage';
+import type { KnowledgeGraphRepository, KGEntity, KGRelation, MemoryRepository } from '@alfred/storage';
+import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
+import type { UserRepository } from '@alfred/storage';
 import type { ReasoningSection } from './reasoning-context-collector.js';
+import { buildSkillContext } from './context-factory.js';
 
 // ── Constants ────────────────────────────────────────────────
 
@@ -42,6 +45,12 @@ export class KnowledgeGraphService {
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
     private readonly logger: Logger,
+    private readonly memoryRepo?: MemoryRepository,
+    private readonly skillRegistry?: SkillRegistry,
+    private readonly skillSandbox?: SkillSandbox,
+    private readonly userRepo?: UserRepository,
+    private readonly defaultChatId?: string,
+    private readonly defaultPlatform?: string,
   ) {}
 
   /**
@@ -59,12 +68,20 @@ export class KnowledgeGraphService {
           case 'bmw': await this.extractFromVehicle(userId, section.content); break;
           case 'memories': await this.extractFromMemories(userId, section.content); break;
           case 'email': await this.extractFromEmail(userId, section.content); break;
+          case 'weather': await this.extractFromWeather(userId, section.content); break;
+          case 'energy': await this.extractFromEnergy(userId, section.content); break;
+          case 'smarthome': await this.extractFromSmartHome(userId, section.content); break;
+          case 'crypto': await this.extractFromCrypto(userId, section.content); break;
+          case 'feeds': await this.extractFromFeeds(userId, section.content); break;
+          case 'charger': await this.extractFromCharger(userId, section.content); break;
           default: break;
         }
         // Generic extraction for all sections
         await this.extractLocations(userId, section.key, section.content);
         await this.extractPersons(userId, section.key, section.content);
       }
+      // Sync Memory entities/relationships/connections into KG
+      await this.syncMemoryEntities(userId);
     } catch (err) {
       this.logger.warn({ err }, 'KG ingest failed');
     }
@@ -134,6 +151,20 @@ export class KnowledgeGraphService {
       }
 
       if (parts.length === 0) return '';
+
+      // KG → Memory Rückkanal: Entities mit ≥3 Sources als connection-Memories speichern
+      if (this.memoryRepo) {
+        const highCross = crossDomain.filter(e => e.sources.length >= 3);
+        for (const e of highCross.slice(0, 5)) {
+          try {
+            await this.memoryRepo.saveWithMetadata(
+              userId, `kg_connection_${e.normalizedName}`,
+              `${e.name} erscheint in ${e.sources.join(', ')} — Cross-Domain-Verbindung`,
+              'reasoning', 'connection', 0.7, 'auto',
+            );
+          } catch { /* skip duplicates */ }
+        }
+      }
 
       let result = parts.join('\n');
       if (Math.ceil(result.length / 4) > MAX_MAP_TOKENS) {
@@ -311,8 +342,8 @@ export class KnowledgeGraphService {
     while ((match = re.exec(content)) !== null) {
       const [, subject, fromEmail, dateStr] = match;
 
-      // Sender as person entity (skip generic addresses)
-      const senderName = this.emailToName(fromEmail);
+      // Sender as person entity — use smart resolution (KG → Memory → Contacts → Regex)
+      const senderName = await this.resolveEmailToPerson(userId, fromEmail);
       if (senderName) {
         await this.kgRepo.upsertEntity(userId, senderName, 'person', { email: fromEmail }, 'email');
       }
@@ -347,6 +378,187 @@ export class KnowledgeGraphService {
       .map(p => p.charAt(0).toUpperCase() + p.slice(1))
       .join(' ');
     return name || null;
+  }
+
+  // ── Additional Section Extractors ────────────────────────────
+
+  private async extractFromWeather(userId: string, content: string): Promise<void> {
+    // Extract temperature, condition, location
+    const tempMatch = content.match(/(-?\d+(?:\.\d+)?)\s*°C/);
+    const condMatch = content.match(/(sonnig|bewölkt|regn|schnee|wind|nebel|klar|wolkig|gewitter)/i);
+    if (tempMatch) {
+      const attrs: Record<string, unknown> = { temp_c: parseFloat(tempMatch[1]) };
+      if (condMatch) attrs.condition = condMatch[1].toLowerCase();
+      await this.kgRepo.upsertEntity(userId, 'Wetter aktuell', 'metric', attrs, 'weather');
+    }
+  }
+
+  private async extractFromEnergy(userId: string, content: string): Promise<void> {
+    const priceMatch = content.match(/(\d+(?:[.,]\d+)?)\s*(?:ct|Cent)\/kWh/i);
+    if (priceMatch) {
+      const price = parseFloat(priceMatch[1].replace(',', '.'));
+      await this.kgRepo.upsertEntity(userId, 'Strompreis', 'metric',
+        { price_ct: price, cheap: price < 10 }, 'energy');
+    }
+  }
+
+  private async extractFromSmartHome(userId: string, content: string): Promise<void> {
+    // Extract device states: "Licht Wohnzimmer: an", "Temperatur Schlafzimmer: 21°C"
+    const deviceRe = /(?:^|\n)\s*[-•]?\s*(.+?):\s*(an|aus|on|off|\d+(?:\.\d+)?(?:\s*°C)?)/gim;
+    let match;
+    while ((match = deviceRe.exec(content)) !== null) {
+      const [, name, state] = match;
+      if (name.length > 3 && name.length < 50) {
+        await this.kgRepo.upsertEntity(userId, name.trim(), 'item',
+          { state: state.trim().toLowerCase() }, 'smarthome');
+      }
+    }
+  }
+
+  private async extractFromCrypto(userId: string, content: string): Promise<void> {
+    // Extract portfolio positions: "BTC: 0.5 (€30,000)", "ETH: 2.0 (€6,000)"
+    const posRe = /\b(BTC|ETH|SOL|ADA|DOT|XRP|DOGE|LINK|AVAX|MATIC|Bitcoin|Ethereum)\b[:\s]*([0-9.,]+)(?:\s*[€$]?\s*([0-9.,]+))?/gi;
+    let match;
+    while ((match = posRe.exec(content)) !== null) {
+      const [, coin, amount, value] = match;
+      const attrs: Record<string, unknown> = { amount: amount.replace(',', '.') };
+      if (value) attrs.value_eur = value.replace(',', '.');
+      await this.kgRepo.upsertEntity(userId, coin.toUpperCase(), 'item', attrs, 'crypto');
+    }
+  }
+
+  private async extractFromFeeds(userId: string, content: string): Promise<void> {
+    // RSS items: "- [Source] Title" or "- Title (Source)"
+    const feedRe = /^-\s+(?:\[([^\]]+)\]\s+)?(.+?)(?:\s+\(([^)]+)\))?\s*$/gm;
+    let match;
+    let count = 0;
+    while ((match = feedRe.exec(content)) !== null && count < 5) {
+      const [, source, title, altSource] = match;
+      const feedSource = source ?? altSource ?? 'RSS';
+      if (title.length > 5) {
+        await this.kgRepo.upsertEntity(userId, title.trim(), 'event',
+          { type: 'feed_article', source: feedSource }, 'feeds');
+        count++;
+      }
+    }
+  }
+
+  private async extractFromCharger(userId: string, content: string): Promise<void> {
+    const statusMatch = content.match(/(charging|idle|lädt|bereit|standby|aktiv)/i);
+    const kwMatch = content.match(/(\d+(?:\.\d+)?)\s*kW/);
+    const attrs: Record<string, unknown> = {};
+    if (statusMatch) attrs.status = statusMatch[1].toLowerCase();
+    if (kwMatch) attrs.power_kw = parseFloat(kwMatch[1]);
+    if (Object.keys(attrs).length > 0) {
+      await this.kgRepo.upsertEntity(userId, 'Wallbox', 'item', attrs, 'charger');
+    }
+  }
+
+  // ── Memory → KG Sync ──────────────────────────────────────
+
+  /**
+   * Sync existing Memory entities (type=entity/relationship/connection/fact)
+   * into the KG as structured entities and relations.
+   */
+  private async syncMemoryEntities(userId: string): Promise<void> {
+    if (!this.memoryRepo) return;
+    try {
+      // 1. Memory entities (persons, contacts) → KG person entities
+      const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
+      for (const mem of entityMems) {
+        const personName = mem.value.split(',')[0].split('(')[0].trim();
+        if (personName.length >= 2) {
+          await this.kgRepo.upsertEntity(userId, personName, 'person',
+            { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
+        }
+      }
+
+      // 2. Memory relationships → KG person entities + relations
+      const relMems = await this.memoryRepo.getByType(userId, 'relationship', 30);
+      for (const mem of relMems) {
+        // Extract person name from value using existing PERSON_PATTERNS
+        for (const pattern of PERSON_PATTERNS) {
+          pattern.lastIndex = 0;
+          const m = pattern.exec(mem.value);
+          if (m) {
+            await this.kgRepo.upsertEntity(userId, m[1].trim(), 'person',
+              { relationship: mem.key }, 'memories');
+          }
+        }
+      }
+
+      // 3. Memory facts with addresses → KG location entities
+      for (const query of ['adress', 'address', 'heim', 'home', 'büro', 'office', 'wohn']) {
+        const facts = await this.memoryRepo.search(userId, query);
+        for (const fact of facts.slice(0, 5)) {
+          for (const city of KNOWN_LOCATIONS) {
+            if (fact.value.includes(city)) {
+              const isHome = /heim|home|wohn|zuhause|privat/i.test(fact.key);
+              const isWork = /büro|office|arbeit|firma|work/i.test(fact.key);
+              await this.kgRepo.upsertEntity(userId, city, 'location',
+                { isHome, isWork, address: fact.value }, 'memories');
+            }
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'KG: memory sync partially failed');
+    }
+  }
+
+  // ── Email Resolution ───────────────────────────────────────
+
+  /**
+   * Resolve an email address to a person name using:
+   * 1. Existing KG entities (email attribute)
+   * 2. Memory facts
+   * 3. ContactsSkill (if available)
+   * 4. Fallback: emailToName() regex
+   */
+  private async resolveEmailToPerson(userId: string, email: string): Promise<string | null> {
+    // 1. Check KG for existing entity with this email
+    try {
+      const existing = await this.kgRepo.searchEntities(userId, email, 5);
+      const withEmail = existing.find(e => (e.attributes?.email as string) === email);
+      if (withEmail) return withEmail.name;
+    } catch { /* continue */ }
+
+    // 2. Check memories for this email
+    if (this.memoryRepo) {
+      try {
+        const memResult = await this.memoryRepo.search(userId, email);
+        if (memResult.length > 0) {
+          const name = memResult[0].value.split(',')[0].split('(')[0].trim();
+          if (name.length >= 2) return name;
+        }
+      } catch { /* continue */ }
+    }
+
+    // 3. ContactsSkill (if available)
+    if (this.skillRegistry?.has('contacts') && this.skillSandbox && this.userRepo && this.defaultChatId && this.defaultPlatform) {
+      try {
+        const skill = this.skillRegistry.get('contacts');
+        if (skill) {
+          const { context } = await buildSkillContext(this.userRepo, {
+            userId: this.defaultChatId,
+            platform: this.defaultPlatform as any,
+            chatId: this.defaultChatId,
+            chatType: 'dm',
+          });
+          const result = await Promise.race([
+            this.skillSandbox.execute(skill, { action: 'search', query: email }, context),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+          ]);
+          if (result.success && result.display) {
+            const nameMatch = result.display.match(/(?:Name|Display):\s*(.+)/i);
+            if (nameMatch) return nameMatch[1].trim();
+          }
+        }
+      } catch { /* continue to fallback */ }
+    }
+
+    // 4. Fallback: regex
+    return this.emailToName(email);
   }
 
   // ── Generic Extractors ──────────────────────────────────────

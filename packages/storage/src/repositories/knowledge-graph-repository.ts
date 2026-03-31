@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 // ── Types ────────────────────────────────────────────────────
 
-export type KGEntityType = 'person' | 'location' | 'item' | 'vehicle' | 'event' | 'organization';
+export type KGEntityType = 'person' | 'location' | 'item' | 'vehicle' | 'event' | 'organization' | 'metric';
 
 export interface KGEntity {
   id: string;
@@ -81,6 +81,36 @@ export class KnowledgeGraphRepository {
       return this.mapEntity(row);
     }
 
+    // Fuzzy match for persons: "Müller" should match "Franz Müller"
+    if (entityType === 'person' && normalized.length >= 3) {
+      const fuzzyMatch = await this.findFuzzyPersonMatch(userId, normalized);
+      if (fuzzyMatch) {
+        let fuzzySources: string[] = [];
+        try { fuzzySources = JSON.parse(fuzzyMatch.sources as string); } catch { /* empty */ }
+        if (source && !fuzzySources.includes(source)) fuzzySources.push(source);
+
+        // Merge attributes (existing + new)
+        let existingAttrs: Record<string, unknown> = {};
+        try { existingAttrs = JSON.parse(fuzzyMatch.attributes as string); } catch { /* empty */ }
+        const mergedAttrs = { ...existingAttrs, ...(attributes ?? {}) };
+
+        // Keep the longer (more specific) name
+        const existingName = fuzzyMatch.name as string;
+        const betterName = name.length > existingName.length ? name : existingName;
+        const betterNormalized = betterName.trim().toLowerCase();
+
+        await this.adapter.execute(`
+          UPDATE kg_entities SET
+            name = ?, normalized_name = ?, attributes = ?, sources = ?,
+            confidence = MIN(1.0, confidence + 0.1), last_seen_at = ?, mention_count = mention_count + 1
+          WHERE id = ?
+        `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
+
+        const row = await this.adapter.queryOne('SELECT * FROM kg_entities WHERE id = ?', [fuzzyMatch.id]) as Record<string, unknown>;
+        return this.mapEntity(row);
+      }
+    }
+
     // New entity
     await this.adapter.execute(`
       INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
@@ -92,6 +122,19 @@ export class KnowledgeGraphRepository {
       attributes: attributes ?? {}, sources: source ? [source] : [],
       confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1,
     };
+  }
+
+  /**
+   * Find a fuzzy match for a person name: "müller" matches "franz müller" and vice versa.
+   * Returns the best match (highest mention_count) or null.
+   */
+  private async findFuzzyPersonMatch(userId: string, normalized: string): Promise<Record<string, unknown> | null> {
+    const like = this.adapter.type === 'postgres' ? 'ILIKE' : 'LIKE';
+    const rows = await this.adapter.query(
+      `SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = 'person' AND normalized_name != ? AND (normalized_name ${like} ? OR ? ${like} '%' || normalized_name || '%') ORDER BY mention_count DESC LIMIT 1`,
+      [userId, normalized, `%${normalized}%`, normalized],
+    ) as Record<string, unknown>[];
+    return rows.length > 0 ? rows[0] : null;
   }
 
   async getEntitiesByType(userId: string, type: KGEntityType): Promise<KGEntity[]> {

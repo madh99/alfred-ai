@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.244] - 2026-03-31
+
+### Added
+- **Memory → KG Sync** — Memory-Entities (type=entity/relationship/fact) werden beim KG-Ingest als strukturierte KG-Entities eingespeist. Adressen aus Memories werden als Location-Entities mit isHome/isWork Flag extrahiert. Beide Systeme kennen sich jetzt gegenseitig.
+- **ContactsSkill Email-Resolution** — E-Mail-Absender werden über 4-stufige Kaskade aufgelöst: 1. KG (email-Attribut), 2. Memories, 3. ContactsSkill (Microsoft/Google/CardDAV), 4. Regex-Fallback.
+- **Fuzzy Entity-Dedup** — "Müller" matcht "Franz Müller" per Teilstring-Suche. Bei Fuzzy-Match wird der längere (spezifischere) Name behalten und Attribute/Sources gemergt.
+- **6 neue KG-Extractors** — weather (Temperatur, Bedingung), energy (Strompreis), smarthome (Geräte-Status), crypto (Portfolio-Positionen), feeds (RSS-Artikel), charger (Wallbox-Status). Alle Datenquellen füttern jetzt den KG.
+- **KG → Memory Rückkanal** — Cross-Domain-Entities mit ≥3 Quellen werden als connection-Memories gespeichert → sichtbar im normalen Chat-Kontext der Message-Pipeline.
+- **Entity-Type `metric`** — Neuer KG-Entity-Typ für Messwerte (Temperatur, Strompreis, etc.).
+
 ## [0.19.0-multi-ha.243] - 2026-03-31
 
 ### Changed
