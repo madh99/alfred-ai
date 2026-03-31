@@ -76,15 +76,17 @@ export class CalendarWatcher {
     // Skip all-day events
     if (event.allDay) return;
 
-    // Check if already notified
-    if (await this.notifRepo.wasNotified(event.id, this.defaultChatId)) return;
-
     // Check if event starts within the vorlauf window
     const now = Date.now();
     const eventStartMs = event.start.getTime();
     const minutesUntil = (eventStartMs - now) / 60_000;
 
     if (minutesUntil > this.minutesBefore || minutesUntil < 0) return;
+
+    // HA-safe: Atomic claim-first — only the node that successfully inserts sends the notification.
+    // INSERT ON CONFLICT DO NOTHING returns changes=1 only for the winning node.
+    const claimed = await this.notifRepo.claimNotification(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
+    if (!claimed) return; // Already claimed by other node
 
     // Build notification
     const lines: string[] = [];
@@ -116,7 +118,7 @@ export class CalendarWatcher {
     if (adapter) {
       try {
         await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
-        await this.notifRepo.markNotified(event.id, this.defaultChatId, this.defaultPlatform, event.start.toISOString());
+        // markNotified already done by claimNotification above
         this.logger.info({ eventId: event.id, title: event.title }, 'Calendar vorlauf notification sent');
         this.onEventNotified?.(event);
         this.activityLogger?.logCalendarNotify({

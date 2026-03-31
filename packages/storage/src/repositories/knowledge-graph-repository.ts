@@ -116,11 +116,25 @@ export class KnowledgeGraphRepository {
       }
     }
 
-    // New entity
-    await this.adapter.execute(`
+    // New entity — atomic INSERT with ON CONFLICT fallback for HA safety.
+    // If another node inserts the same entity simultaneously, ON CONFLICT updates instead of throwing.
+    const result = await this.adapter.execute(`
       INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
+      ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
+        confidence = MIN(1.0, kg_entities.confidence + 0.1),
+        last_seen_at = excluded.last_seen_at,
+        mention_count = kg_entities.mention_count + 1
     `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
+
+    // If conflict occurred (another node inserted first), fetch the existing entity
+    if (result.changes === 0) {
+      const row = await this.adapter.queryOne(
+        'SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
+        [userId, entityType, normalized],
+      ) as Record<string, unknown>;
+      return row ? this.mapEntity(row) : { id, userId, name, normalizedName: normalized, entityType, attributes: attributes ?? {}, sources: source ? [source] : [], confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1 };
+    }
 
     return {
       id, userId, name, normalizedName: normalized, entityType,
@@ -200,9 +214,15 @@ export class KnowledgeGraphRepository {
       return this.mapRelation(row);
     }
 
+    // Atomic INSERT with ON CONFLICT for HA safety
     await this.adapter.execute(`
       INSERT INTO kg_relations (id, user_id, source_entity_id, target_entity_id, relation_type, strength, context, source_section, first_seen_at, last_seen_at, mention_count)
       VALUES (?, ?, ?, ?, ?, 0.5, ?, ?, ?, ?, 1)
+      ON CONFLICT (user_id, source_entity_id, target_entity_id, relation_type) DO UPDATE SET
+        strength = MIN(1.0, kg_relations.strength + 0.1),
+        context = COALESCE(excluded.context, kg_relations.context),
+        last_seen_at = excluded.last_seen_at,
+        mention_count = kg_relations.mention_count + 1
     `, [id, userId, sourceId, targetId, relationType, context ?? null, sourceSection ?? null, now, now]);
 
     return {

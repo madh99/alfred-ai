@@ -1564,6 +1564,22 @@ export class Alfred {
           // Only run on Sundays at 4:00 AM, once per week
           if (now.getDay() !== 0 || now.getHours() !== 4 || lastTemporalWeek === isoWeek) return;
           lastTemporalWeek = isoWeek;
+
+          // HA distributed dedup: only one node runs weekly maintenance
+          if (this.database.getAdapter().type === 'postgres') {
+            try {
+              const slotKey = `maintenance:${isoWeek}`;
+              const slotResult = await this.database.getAdapter().execute(
+                'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+                [slotKey, this.config.cluster?.nodeId ?? 'single', now.toISOString()],
+              );
+              if (slotResult.changes === 0) {
+                this.logger.debug('Weekly maintenance slot already claimed by another node');
+                return;
+              }
+            } catch { /* proceed on error (table might not exist yet) */ }
+          }
+
           try {
             const users = await userRepoRef.listAll();
             const kgService = this.reasoningEngine

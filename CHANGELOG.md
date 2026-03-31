@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.246] - 2026-03-31
+
+### Fixed
+- **HA: CalendarWatcher/TodoWatcher Claim-First** — Atomic `claimNotification()` (INSERT ON CONFLICT DO NOTHING, changes=1 check) statt wasNotified→send→markNotified Race. Verhindert doppelte Benachrichtigungen bei gleichzeitiger Verarbeitung auf beiden Nodes.
+- **HA: KG upsertEntity Atomic** — INSERT ON CONFLICT DO UPDATE statt SELECT→INSERT Race. Verhindert PostgreSQL UNIQUE-Violation die den gesamten KG-Ingest abbricht.
+- **HA: KG upsertRelation Atomic** — Gleicher Fix für Relations.
+- **HA: Weekly Maintenance Distributed Dedup** — Sonntag 4AM Timer nutzt jetzt `reasoning_slots` Tabelle. Nur ein Node führt TemporalAnalyzer + KG Maintenance + ActionFeedbackTracker aus. Verhindert doppelten Confidence-Decay.
+- **HA: triggerOnEvent Slot-Key Klarheit** — Kommentare verdeutlichen dass der Window-basierte Slot-Key deterministisch ist und beide Nodes den gleichen Key generieren.
+
 ## [0.19.0-multi-ha.245] - 2026-03-31
 
 ### Fixed

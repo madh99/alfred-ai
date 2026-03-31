@@ -152,17 +152,17 @@ export class ReasoningEngine {
   async triggerOnEvent(eventType: string, eventDescription: string, eventData: Record<string, unknown> = {}): Promise<void> {
     if (!this.enabled) return;
 
-    // Debounce: prevent trigger storms
+    // Local debounce (lightweight pre-check, protects SQLite single-node)
     const now = Date.now();
     if (now - this.lastEventTriggerAt < EVENT_COOLDOWN_MS) {
-      this.logger.debug({ eventType }, 'Event-triggered reasoning debounced');
+      this.logger.debug({ eventType }, 'Event-triggered reasoning debounced (local)');
       return;
     }
     this.lastEventTriggerAt = now;
 
-    // Distributed dedup: use event-specific slot (prevent both nodes from processing)
+    // HA distributed dedup: deterministic window key ensures both nodes generate the same slot
     if (this.adapter && this.adapter.type === 'postgres') {
-      const windowId = Math.floor(Date.now() / EVENT_COOLDOWN_MS);
+      const windowId = Math.floor(now / EVENT_COOLDOWN_MS);
       const slotKey = `reasoning-event:${windowId}:${eventType}`;
       const result = await this.adapter.execute(
         'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',

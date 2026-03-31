@@ -84,7 +84,10 @@ export class TodoWatcher {
     const notifKey = kind === 'overdue'
       ? `todo:${kind}:${todoId}:${new Date().toISOString().slice(0, 10)}`
       : `todo:${kind}:${todoId}`;
-    if (await this.notifRepo.wasNotified(notifKey, this.defaultChatId)) return;
+    // HA-safe: Atomic claim-first — only the winning node sends the notification.
+    const storedEventStart = kind === 'overdue' ? new Date().toISOString() : dueDate;
+    const claimed = await this.notifRepo.claimNotification(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
+    if (!claimed) return; // Already claimed by other node
 
     const due = new Date(dueDate);
     const timeStr = due.toLocaleString('de-DE', {
@@ -104,13 +107,9 @@ export class TodoWatcher {
     const adapter = this.adapters.get(this.defaultPlatform);
     if (!adapter) return;
 
-    // For overdue todos store current timestamp as event_start so that
-    // cleanup (>24h) won't delete the entry during the same day.
-    const storedEventStart = kind === 'overdue' ? new Date().toISOString() : dueDate;
-
     try {
       await adapter.sendMessage(this.defaultChatId, lines.join('\n'));
-      await this.notifRepo.markNotified(notifKey, this.defaultChatId, this.defaultPlatform, storedEventStart);
+      // markNotified already done by claimNotification above
       this.logger.info({ todoId, title, kind }, 'Todo reminder sent');
       this.onTodoNotified?.(todoId, title, kind);
       this.activityLogger?.logCalendarNotify({
