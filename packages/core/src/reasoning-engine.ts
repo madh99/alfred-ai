@@ -186,12 +186,12 @@ DATEN: ${JSON.stringify(eventData).slice(0, 500)}
 KONTEXT (alle verfügbaren Datenquellen + Knowledge Graph):
 ${this.formatSections(context)}
 
-Aufgabe: Analysiere ob dieses Event im Kontext ALLER Daten — insbesondere der VERBINDUNGSKARTE (Cross-Domain Entities/Relations) — eine Handlungsempfehlung ergibt.
-- Nutze die VERBINDUNGSKARTE als primären Ausgangspunkt für Querverbindungen
-- Verbinde BELIEBIGE Domains: nicht nur die offensichtlichen, sondern auch indirekte Zusammenhänge
+Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlungsempfehlung ergibt.
+- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
+- NICHT raten oder vermuten. BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor.
 - Berücksichtige Trends, Feedback und bemerkenswerte Attribute
-- Max 3 Stichpunkte
-- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+- Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
+- Wenn NICHTS EINDEUTIG Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`;
 
@@ -509,21 +509,37 @@ Wenn KEINE Topics nötig: lass den ${TOPICS_MARKER} Block weg.`;
       ? ctx.changedSections.map(k => ctx.sections.find(s => s.key === k)?.label).filter(Boolean).join(', ')
       : 'Keine Änderungen';
 
-    return `Du bist Alfreds holistisches Denk-Modul. Du hast Zugriff auf 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
+    return `Du bist Alfreds holistisches Denk-Modul. Du analysierst 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
 
-AUFGABE: Finde Cross-Domain-Verbindungen, Konflikte, Gelegenheiten und Handlungsbedarf.
+DATENQUELLEN-TYPEN (WICHTIG — nicht verwechseln!):
+- Kalender: TERMINE mit Ort, Zeit, Teilnehmern. Planungsdaten.
+- Todos: AUFGABEN mit Fälligkeitsdatum und Priorität.
+- Watches: SKILL-BASIERTE MONITORE — jeder Watch nutzt einen bestimmten Skill (z.B. shopping, energy_price). Watches sind NICHT RSS-Feeds.
+- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Read-only. Können NICHT als Monitoring-Tool umkonfiguriert werden.
+- E-Mail: NACHRICHTEN von Personen. Antworten auf Anfragen sind KEIN Spam.
+- BMW: FAHRZEUG-Daten (Akku, Reichweite). Ist ein AUTO, keine Hausbatterie.
+- Smart Home: HAUS-Geräte (Licht, Heizung, Hausbatterie/PV, Wallbox). Hausbatterie ≠ Auto-Batterie.
+- Energiepreise: STROMMARKT-Daten (ct/kWh). Für Lade-Optimierung.
+- Wetter: WETTERDATEN für Ort. Für Planung.
+- Crypto/Bitpanda: PORTFOLIO-Daten. Finanzen.
+- Infra/Monitor: SERVER-Status. IT-Infrastruktur.
 
-WICHTIG — VERBINDUNGSKARTE:
-Die Section "VERBINDUNGSKARTE" zeigt dir STRUKTURIERT welche Entities (Personen, Orte, Items, Events) in MEHREREN Datenquellen vorkommen und wie sie verbunden sind. Nutze sie als PRIMÄREN Ausgangspunkt — dort sind die Querverbindungen bereits vorstrukturiert. Du musst sie nur interpretieren und bewerten.
+STRIKTE REGELN:
+- Verbinde nur Entities die TATSÄCHLICH die gleiche Sache sind (gleiche Person, gleicher Ort, gleiches Thema)
+- NICHT verbinden nur weil ein ähnliches Wort vorkommt! BMW-Akku ≠ Hausbatterie. RSS-Feed ≠ Preis-Monitor. Willhaben-Antworten ≠ Spam.
+- Wenn du dir NICHT SICHER bist ob eine Verbindung real ist: WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+- KEINE Vermutungen, KEINE Spekulationen. Nur was aus den Daten EINDEUTIG hervorgeht.
+- KEIN Werten von Nutzerverhalten ("Risiko für unkurierte Informationsansammlung" ist bevormundend).
+
+VERBINDUNGSKARTE:
+Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als primären Ausgangspunkt.
 
 WONACH DU SUCHST:
-1. Cross-Domain-Verbindungen (Entity taucht in calendar+email+todos auf → warum? Zusammenhang?)
-2. Konflikte (Ressourcen-Engpass, Zeitüberschneidung, überfällige Pflichten bei bevorstehenden Terminen)
-3. Gelegenheiten (gleicher Ort für verschiedene Zwecke, günstiger Zeitpunkt für Aktion)
-4. Trends & Anomalien (wenn Trend-Daten vorhanden: was hat sich verändert? Ist das relevant?)
-5. Feedback-basiert (wenn User-Feedback vorhanden: welche Insight-Typen bevorzugt/ablehnt der User?)
-
-Du bist NICHT auf bestimmte Empfehlungstypen beschränkt. Jede sinnvolle Verbindung zwischen BELIEBIGEN Domains ist relevant — Crypto+Reise, RSS+Meeting, SmartHome+Wetter, E-Mail+Kalender, alles.
+1. Cross-Domain-Verbindungen (GLEICHE Person/Ort/Sache in verschiedenen Quellen)
+2. Konflikte (echte Ressourcen-Engpässe, Zeitüberschneidungen)
+3. Gelegenheiten (gleicher Ort für verschiedene Zwecke)
+4. Trends & Anomalien (wenn vorhanden: echte Veränderungen)
+5. Handlungsbedarf (überfällige Todos, Fehler die behoben werden müssen)
 
 GEÄNDERT SEIT LETZTEM LAUF:
 ${changedInfo}
@@ -548,21 +564,33 @@ ${scanFindings}
 Formuliere daraus max 5 konkrete, actionable Insights für den User.
 
 REGELN:
-- Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities und Relations strukturiert aufbereitet
-- Nutze VERTIEFTE DATEN (falls vorhanden) für konkrete Zahlen und quantitative Empfehlungen
-- Berücksichtige TRENDS & ANOMALIEN (falls vorhanden) — was hat sich verändert?
-- Berücksichtige USER-FEEDBACK (falls vorhanden) — welche Insight-Typen werden bevorzugt/abgelehnt?
-- Verbinde BELIEBIGE Domains: Kalender+E-Mail, Shopping+Reise, SmartHome+Wetter, Crypto+Budget, RSS+Meeting — alles ist erlaubt
-- KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
+- Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities strukturiert
+- Nutze VERTIEFTE DATEN (falls vorhanden) für konkrete Zahlen
+- Berücksichtige TRENDS & ANOMALIEN (falls vorhanden)
+- Berücksichtige USER-FEEDBACK (falls vorhanden)
+- KEINE generischen Tipps, KEINE Bewertung des Nutzerverhaltens
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
 
-BEISPIELE (illustrativ — du bist NICHT auf diese Typen beschränkt):
+QUALITÄTSREGELN (STRIKT):
+- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort) — NICHT ähnliche Wörter!
+- BMW-Akku (Fahrzeug) ≠ Hausbatterie (Smart Home/PV). NIEMALS vermischen.
+- RSS-Feed-Artikel (News) ≠ Watch-Monitor (Skill-basiert). NIEMALS einen RSS-Feed als Preis-Monitor vorschlagen.
+- E-Mail-Antworten auf Anfragen ≠ Spam. Mehrere Nachrichten kurz hintereinander können normale Konversation sein.
+- Watches nutzen SKILLS (energy_price, shopping, etc.) — RSS-Feeds sind KEINE Watches.
+- Wenn du dir NICHT SICHER bist → WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+
+BEISPIELE guter Insights:
 - Entity in 3 Quellen: "Müller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt — heute erledigen!"
 - Ort-Cluster: "RTX 5090 in Wien verfügbar + Zahnarzt-Termin Wien Mittwoch → Abholung nach Termin"
-- Ressourcen-Engpass: "BMW 15% Akku (45km), Termin in Linz (150km) → laden, Strom gerade günstig"
-- Trend + Kontext: "Spotify-Fehler diese Woche 5x häufiger als normal → Service prüfen"
-- Beliebige Kombination: Alles was aus den Daten sinnvoll hervorgeht
+- Echter Engpass: "BMW 15% Akku (45km Reichweite), Termin in Linz (150km) → laden nötig"
+- Skill-Fehler: "BMW-API seit 24h offline → Token erneuern"
+
+BEISPIELE SCHLECHTER Insights (NICHT generieren!):
+- "RSS-Feed für Strompreise einrichten" ← RSS ist kein Monitor, dafür gibt es Watches
+- "Hausbatterie und BMW gleichzeitig laden" ← Zwei verschiedene Systeme
+- "3 gleiche Willhaben-Nachrichten = Spam" ← Können normale Antworten sein
+- "Du liest zu viele News" ← Bevormundend, kein Insight
 
 AKTUELLE DATEN:
 ${this.formatSections(ctx)}
@@ -593,9 +621,10 @@ Scan-Ergebnis:
 ${scanFindings}
 
 Formuliere daraus max 2 konkrete, actionable Insights.
-- Nutze die VERBINDUNGSKARTE für Cross-Domain-Zusammenhänge
-- Nutze VERTIEFTE DATEN für spezifische Zahlen und quantitative Empfehlungen
-- Verbinde beliebige Domains — nicht auf bestimmte Typen beschränkt
+- Nutze die VERBINDUNGSKARTE für Cross-Domain-Zusammenhänge zwischen IDENTISCHEN Entities
+- Nutze VERTIEFTE DATEN für spezifische Zahlen
+- NUR Verbindungen die FAKTISCH belegt sind — nicht raten, nicht vermuten
+- BMW-Akku ≠ Hausbatterie, RSS ≠ Monitor, E-Mail-Antworten ≠ Spam
 - Max 1-2 Sätze pro Insight, auf Deutsch
 
 ${this.formatSections(ctx)}

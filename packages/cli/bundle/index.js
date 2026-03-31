@@ -2826,12 +2826,12 @@ DATEN: ${JSON.stringify(s).slice(0,500)}
 KONTEXT (alle verf\xFCgbaren Datenquellen + Knowledge Graph):
 ${this.formatSections(i)}
 
-Aufgabe: Analysiere ob dieses Event im Kontext ALLER Daten \u2014 insbesondere der VERBINDUNGSKARTE (Cross-Domain Entities/Relations) \u2014 eine Handlungsempfehlung ergibt.
-- Nutze die VERBINDUNGSKARTE als prim\xE4ren Ausgangspunkt f\xFCr Querverbindungen
-- Verbinde BELIEBIGE Domains: nicht nur die offensichtlichen, sondern auch indirekte Zusammenh\xE4nge
+Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlungsempfehlung ergibt.
+- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
+- NICHT raten oder vermuten. BMW-Akku \u2260 Hausbatterie, RSS \u2260 Monitor.
 - Ber\xFCcksichtige Trends, Feedback und bemerkenswerte Attribute
-- Max 3 Stichpunkte
-- Wenn WIRKLICH nichts Relevantes: antworte EXAKT "KEINE_INSIGHTS"
+- Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenh\xE4nge
+- Wenn NICHTS EINDEUTIG Relevantes: antworte EXAKT "KEINE_INSIGHTS"
 
 ${this.buildTopicInstructions()}`,o=(await this.llm.complete({messages:[{role:"user",content:n}],maxTokens:512,tier:this.tier})).content.trim();if(qo(o))return;let{findings:c,topics:l}=this.extractTopics(o),u=new Map;l.length>0&&(u=await this.collector.enrichTopics(l));let h=this.buildEventDetailPrompt(i,e,t,c,u),f=(await this.llm.complete({messages:[{role:"user",content:h}],maxTokens:dg,tier:this.tier})).content.trim();if(qo(f))return;let y=this.parseReasoningResponse(f);if(y.insights.length>0){let g=[];for(let T of y.insights)await this.wasRecentlySent(T)||g.push(T);if(g.length>0){let T=`\u{1F4A1} **Alfred Insight**
 
@@ -2867,21 +2867,37 @@ Verf\xFCgbare Topics f\xFCr Detaildaten:
 - energy_forecast \u2014 Energiepreis-Prognose
 - trend_analysis \u2014 Detaillierte Trend- und Anomalie-Daten (4-Wochen-Vergleich)
 
-Wenn KEINE Topics n\xF6tig: lass den ${zo} Block weg.`}buildScanPrompt(e){return`Du bist Alfreds holistisches Denk-Modul. Du hast Zugriff auf 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
+Wenn KEINE Topics n\xF6tig: lass den ${zo} Block weg.`}buildScanPrompt(e){return`Du bist Alfreds holistisches Denk-Modul. Du analysierst 20+ Datenquellen, einen persistenten Knowledge Graph (VERBINDUNGSKARTE), Trend-Daten und User-Feedback.
 
-AUFGABE: Finde Cross-Domain-Verbindungen, Konflikte, Gelegenheiten und Handlungsbedarf.
+DATENQUELLEN-TYPEN (WICHTIG \u2014 nicht verwechseln!):
+- Kalender: TERMINE mit Ort, Zeit, Teilnehmern. Planungsdaten.
+- Todos: AUFGABEN mit F\xE4lligkeitsdatum und Priorit\xE4t.
+- Watches: SKILL-BASIERTE MONITORE \u2014 jeder Watch nutzt einen bestimmten Skill (z.B. shopping, energy_price). Watches sind NICHT RSS-Feeds.
+- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Read-only. K\xF6nnen NICHT als Monitoring-Tool umkonfiguriert werden.
+- E-Mail: NACHRICHTEN von Personen. Antworten auf Anfragen sind KEIN Spam.
+- BMW: FAHRZEUG-Daten (Akku, Reichweite). Ist ein AUTO, keine Hausbatterie.
+- Smart Home: HAUS-Ger\xE4te (Licht, Heizung, Hausbatterie/PV, Wallbox). Hausbatterie \u2260 Auto-Batterie.
+- Energiepreise: STROMMARKT-Daten (ct/kWh). F\xFCr Lade-Optimierung.
+- Wetter: WETTERDATEN f\xFCr Ort. F\xFCr Planung.
+- Crypto/Bitpanda: PORTFOLIO-Daten. Finanzen.
+- Infra/Monitor: SERVER-Status. IT-Infrastruktur.
 
-WICHTIG \u2014 VERBINDUNGSKARTE:
-Die Section "VERBINDUNGSKARTE" zeigt dir STRUKTURIERT welche Entities (Personen, Orte, Items, Events) in MEHREREN Datenquellen vorkommen und wie sie verbunden sind. Nutze sie als PRIM\xC4REN Ausgangspunkt \u2014 dort sind die Querverbindungen bereits vorstrukturiert. Du musst sie nur interpretieren und bewerten.
+STRIKTE REGELN:
+- Verbinde nur Entities die TATS\xC4CHLICH die gleiche Sache sind (gleiche Person, gleicher Ort, gleiches Thema)
+- NICHT verbinden nur weil ein \xE4hnliches Wort vorkommt! BMW-Akku \u2260 Hausbatterie. RSS-Feed \u2260 Preis-Monitor. Willhaben-Antworten \u2260 Spam.
+- Wenn du dir NICHT SICHER bist ob eine Verbindung real ist: WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+- KEINE Vermutungen, KEINE Spekulationen. Nur was aus den Daten EINDEUTIG hervorgeht.
+- KEIN Werten von Nutzerverhalten ("Risiko f\xFCr unkurierte Informationsansammlung" ist bevormundend).
+
+VERBINDUNGSKARTE:
+Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als prim\xE4ren Ausgangspunkt.
 
 WONACH DU SUCHST:
-1. Cross-Domain-Verbindungen (Entity taucht in calendar+email+todos auf \u2192 warum? Zusammenhang?)
-2. Konflikte (Ressourcen-Engpass, Zeit\xFCberschneidung, \xFCberf\xE4llige Pflichten bei bevorstehenden Terminen)
-3. Gelegenheiten (gleicher Ort f\xFCr verschiedene Zwecke, g\xFCnstiger Zeitpunkt f\xFCr Aktion)
-4. Trends & Anomalien (wenn Trend-Daten vorhanden: was hat sich ver\xE4ndert? Ist das relevant?)
-5. Feedback-basiert (wenn User-Feedback vorhanden: welche Insight-Typen bevorzugt/ablehnt der User?)
-
-Du bist NICHT auf bestimmte Empfehlungstypen beschr\xE4nkt. Jede sinnvolle Verbindung zwischen BELIEBIGEN Domains ist relevant \u2014 Crypto+Reise, RSS+Meeting, SmartHome+Wetter, E-Mail+Kalender, alles.
+1. Cross-Domain-Verbindungen (GLEICHE Person/Ort/Sache in verschiedenen Quellen)
+2. Konflikte (echte Ressourcen-Engp\xE4sse, Zeit\xFCberschneidungen)
+3. Gelegenheiten (gleicher Ort f\xFCr verschiedene Zwecke)
+4. Trends & Anomalien (wenn vorhanden: echte Ver\xE4nderungen)
+5. Handlungsbedarf (\xFCberf\xE4llige Todos, Fehler die behoben werden m\xFCssen)
 
 GE\xC4NDERT SEIT LETZTEM LAUF:
 ${e.changedSections.length>0?e.changedSections.map(s=>e.sections.find(r=>r.key===s)?.label).filter(Boolean).join(", "):"Keine \xC4nderungen"}
@@ -2898,21 +2914,33 @@ ${t}
 Formuliere daraus max 5 konkrete, actionable Insights f\xFCr den User.
 
 REGELN:
-- Nutze die VERBINDUNGSKARTE als Basis \u2014 dort sind Cross-Domain-Entities und Relations strukturiert aufbereitet
-- Nutze VERTIEFTE DATEN (falls vorhanden) f\xFCr konkrete Zahlen und quantitative Empfehlungen
-- Ber\xFCcksichtige TRENDS & ANOMALIEN (falls vorhanden) \u2014 was hat sich ver\xE4ndert?
-- Ber\xFCcksichtige USER-FEEDBACK (falls vorhanden) \u2014 welche Insight-Typen werden bevorzugt/abgelehnt?
-- Verbinde BELIEBIGE Domains: Kalender+E-Mail, Shopping+Reise, SmartHome+Wetter, Crypto+Budget, RSS+Meeting \u2014 alles ist erlaubt
-- KEINE generischen Tipps ("Vergiss nicht zu trinken", "Plane genug Pausen ein")
+- Nutze die VERBINDUNGSKARTE als Basis \u2014 dort sind Cross-Domain-Entities strukturiert
+- Nutze VERTIEFTE DATEN (falls vorhanden) f\xFCr konkrete Zahlen
+- Ber\xFCcksichtige TRENDS & ANOMALIEN (falls vorhanden)
+- Ber\xFCcksichtige USER-FEEDBACK (falls vorhanden)
+- KEINE generischen Tipps, KEINE Bewertung des Nutzerverhaltens
 - Jeder Insight: 1-2 S\xE4tze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
 
-BEISPIELE (illustrativ \u2014 du bist NICHT auf diese Typen beschr\xE4nkt):
+QUALIT\xC4TSREGELN (STRIKT):
+- NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort) \u2014 NICHT \xE4hnliche W\xF6rter!
+- BMW-Akku (Fahrzeug) \u2260 Hausbatterie (Smart Home/PV). NIEMALS vermischen.
+- RSS-Feed-Artikel (News) \u2260 Watch-Monitor (Skill-basiert). NIEMALS einen RSS-Feed als Preis-Monitor vorschlagen.
+- E-Mail-Antworten auf Anfragen \u2260 Spam. Mehrere Nachrichten kurz hintereinander k\xF6nnen normale Konversation sein.
+- Watches nutzen SKILLS (energy_price, shopping, etc.) \u2014 RSS-Feeds sind KEINE Watches.
+- Wenn du dir NICHT SICHER bist \u2192 WEGLASSEN. Lieber 2 korrekte Insights als 5 mit Fehlern.
+
+BEISPIELE guter Insights:
 - Entity in 3 Quellen: "M\xFCller hat E-Mail geschickt, Meeting steht an, Geschenk noch nicht besorgt \u2014 heute erledigen!"
 - Ort-Cluster: "RTX 5090 in Wien verf\xFCgbar + Zahnarzt-Termin Wien Mittwoch \u2192 Abholung nach Termin"
-- Ressourcen-Engpass: "BMW 15% Akku (45km), Termin in Linz (150km) \u2192 laden, Strom gerade g\xFCnstig"
-- Trend + Kontext: "Spotify-Fehler diese Woche 5x h\xE4ufiger als normal \u2192 Service pr\xFCfen"
-- Beliebige Kombination: Alles was aus den Daten sinnvoll hervorgeht
+- Echter Engpass: "BMW 15% Akku (45km Reichweite), Termin in Linz (150km) \u2192 laden n\xF6tig"
+- Skill-Fehler: "BMW-API seit 24h offline \u2192 Token erneuern"
+
+BEISPIELE SCHLECHTER Insights (NICHT generieren!):
+- "RSS-Feed f\xFCr Strompreise einrichten" \u2190 RSS ist kein Monitor, daf\xFCr gibt es Watches
+- "Hausbatterie und BMW gleichzeitig laden" \u2190 Zwei verschiedene Systeme
+- "3 gleiche Willhaben-Nachrichten = Spam" \u2190 K\xF6nnen normale Antworten sein
+- "Du liest zu viele News" \u2190 Bevormundend, kein Insight
 
 AKTUELLE DATEN:
 ${this.formatSections(e)}
@@ -2932,9 +2960,10 @@ Scan-Ergebnis:
 ${r}
 
 Formuliere daraus max 2 konkrete, actionable Insights.
-- Nutze die VERBINDUNGSKARTE f\xFCr Cross-Domain-Zusammenh\xE4nge
-- Nutze VERTIEFTE DATEN f\xFCr spezifische Zahlen und quantitative Empfehlungen
-- Verbinde beliebige Domains \u2014 nicht auf bestimmte Typen beschr\xE4nkt
+- Nutze die VERBINDUNGSKARTE f\xFCr Cross-Domain-Zusammenh\xE4nge zwischen IDENTISCHEN Entities
+- Nutze VERTIEFTE DATEN f\xFCr spezifische Zahlen
+- NUR Verbindungen die FAKTISCH belegt sind \u2014 nicht raten, nicht vermuten
+- BMW-Akku \u2260 Hausbatterie, RSS \u2260 Monitor, E-Mail-Antworten \u2260 Spam
 - Max 1-2 S\xE4tze pro Insight, auf Deutsch
 
 ${this.formatSections(e)}

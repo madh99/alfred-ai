@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.247] - 2026-03-31
+
+### Fixed
+- **Reasoning: Datenquellen-Typen-Definitionen** — Alle Prompts definieren jetzt explizit was jede Datenquelle IST und KANN: RSS=News (read-only), Watches=Skill-Monitor, BMW=Fahrzeug (≠Hausbatterie), E-Mail-Antworten≠Spam. Verhindert Domain-Verwechslungen.
+- **Reasoning: Konservative Qualitätsregeln** — "Verbinde BELIEBIGE Domains" ersetzt durch "NUR IDENTISCHE Entities verbinden". Negative Beispiele: BMW-Akku≠Hausbatterie, RSS≠Preis-Monitor, Willhaben-Antworten≠Spam. Lieber 2 korrekte Insights als 5 mit Fehlern.
+- **Reasoning: Keine Verhaltensbewertungen** — LLM darf Nutzerverhalten nicht werten ("Risiko für unkurierte Informationsansammlung" ist bevormundend).
+
 ## [0.19.0-multi-ha.246] - 2026-03-31
 
 ### Fixed
