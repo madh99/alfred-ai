@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.250] - 2026-03-31
+
+### Added
+- **Transiente vs Persistente Fehler-Erkennung** — Collector trackt pro Datenquelle ob der vorherige Lauf erfolgreich war. Transiente Fehler (letzter Lauf ok, jetzt Fehler) werden mit "⚠️ TRANSIENTER FEHLER — wahrscheinlich vorübergehend, KEIN Handlungsbedarf" annotiert. Persistente Fehler (2+ Läufe fehlgeschlagen) mit "🔴 PERSISTENTER FEHLER — Handlungsbedarf möglich". Gilt für alle 20+ Datenquellen generisch.
+
 ## [0.19.0-multi-ha.249] - 2026-03-31
 
 ### Fixed

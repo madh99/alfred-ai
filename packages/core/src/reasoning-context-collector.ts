@@ -53,6 +53,8 @@ const SKILL_FETCH_TIMEOUT_MS = 5_000;
 export class ReasoningContextCollector {
   /** In-memory change detection: previous content per section key. */
   private previousContent = new Map<string, string>();
+  /** In-memory error tracking: was this section successful on the previous run? */
+  private previousSuccess = new Map<string, boolean>();
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -103,7 +105,7 @@ export class ReasoningContextCollector {
       }
     }
 
-    // Change detection
+    // Change detection + error status annotation
     const changedSections: string[] = [];
     for (const section of sections) {
       const prev = this.previousContent.get(section.key);
@@ -112,6 +114,19 @@ export class ReasoningContextCollector {
         changedSections.push(section.key);
       }
       this.previousContent.set(section.key, section.content);
+
+      // Annotate transient vs persistent errors so the LLM doesn't overreact
+      const isError = section.content.startsWith('(') && (
+        section.content.includes('fehlgeschlagen') || section.content.includes('error') ||
+        section.content.includes('timeout') || section.content.includes('nicht verfügbar')
+      );
+      const wasSuccessful = this.previousSuccess.get(section.key);
+      if (isError && wasSuccessful === true) {
+        section.content += '\n⚠️ TRANSIENTER FEHLER — beim letzten Lauf funktionierte diese Quelle. Wahrscheinlich vorübergehend, KEIN Handlungsbedarf empfehlen.';
+      } else if (isError && wasSuccessful === false) {
+        section.content += '\n🔴 PERSISTENTER FEHLER — bereits beim letzten Lauf fehlgeschlagen. Handlungsbedarf möglich.';
+      }
+      this.previousSuccess.set(section.key, !isError);
     }
 
     // Fit to token budget
