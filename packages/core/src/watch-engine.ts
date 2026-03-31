@@ -38,7 +38,7 @@ export class WatchEngine {
   private quietHoursQueue: QueuedAlert[] = [];
 
   /** Optional callback invoked when a watch fires — used by ReasoningEngine for event-triggered reasoning. */
-  public onWatchTriggered?: (watchName: string, value: string, watchData: Record<string, unknown>) => void;
+  public onWatchTriggered?: (watchName: string, value: string, watchData: Record<string, unknown>, skillName?: string) => void;
 
   constructor(
     private readonly watchRepo: WatchRepository,
@@ -322,7 +322,7 @@ export class WatchEngine {
           lastValue: newLastValue,
           lastTriggeredAt: now,
         });
-        this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {});
+        this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {}, watch.skillName);
         return; // Don't execute action directly
       }
 
@@ -454,7 +454,7 @@ export class WatchEngine {
         lastValue: newLastValue,
         lastTriggeredAt: now,
       });
-      this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {});
+      this.onWatchTriggered?.(watch.name, displayValue, result.data as Record<string, unknown> ?? {}, watch.skillName);
     } else {
       await this.watchRepo.updateAfterCheck(watch.id, {
         lastCheckedAt: now,

@@ -537,7 +537,7 @@ DATENQUELLEN-TYPEN (WICHTIG — nicht verwechseln!):
 - Kalender: TERMINE mit Ort, Zeit, Teilnehmern
 - Todos: AUFGABEN mit Fälligkeitsdatum und Priorität
 - Watches: SKILL-BASIERTE MONITORE — jeder Watch nutzt einen bestimmten Skill. Watches sind NICHT RSS-Feeds.
-- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Read-only. KEIN Monitoring-Tool.
+- RSS Feeds: NACHRICHTENARTIKEL aus externen Quellen. Prüfe ob Artikel-Titel/Inhalt für den User RELEVANT sind (Bezug zu Kalender-Themen, KG-Entities, Interessen, Projekten). NUR relevante Artikel als Insight melden. Irrelevante Artikel IGNORIEREN — NICHT "keine Relevanz gefunden" melden.
 - E-Mail: NACHRICHTEN von Personen. Antworten auf Anfragen sind KEIN Spam.
 - Smart Home: HAUS-Geräte (Licht, Heizung, Hausbatterie/PV, Wallbox)
 - Energiepreise: STROMMARKT-Daten (ct/kWh)

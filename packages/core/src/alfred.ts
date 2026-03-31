@@ -1135,7 +1135,10 @@ export class Alfred {
 
     // Wire watch events -> reasoning engine for event-triggered reasoning
     if (this.reasoningEngine) {
-      this.watchEngine.onWatchTriggered = (name, value, data) => {
+      this.watchEngine.onWatchTriggered = (name, value, data, skillName) => {
+        // Skip event-reasoning for feed_reader watches — RSS articles are evaluated
+        // in the scheduled hourly reasoning pass via the feeds section instead.
+        if (skillName === 'feed_reader') return;
         this.reasoningEngine!.triggerOnEvent('watch_alert', `Watch "${name}" ausgelöst: ${value}`, data)
           .catch(err => this.logger.warn({ err }, 'Event-triggered reasoning failed'));
       };

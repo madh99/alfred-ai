@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.253] - 2026-03-31
+
+### Changed
+- **Intelligentes RSS-Filtering statt Watch-Reasoning** — RSS-Watch-Alerts triggern kein Event-Reasoning mehr (spart 2 LLM-Calls pro 15-Min-Check). Stattdessen werden RSS-Feeds im stündlichen Reasoning als Kontext geladen und nach Relevanz für den User gefiltert (KG-Entities, Kalender, Interessen). Nur relevante Artikel werden als Insight gemeldet. Watch-Benachrichtigungen (Titel+URL) funktionieren weiterhin unverändert.
+- **Feeds-Section Token-Budget** — Von 150 auf 400 Tokens erhöht für Titel + Snippets (inhaltliche Relevanz-Bewertung).
+- **WatchEngine Callback** — `onWatchTriggered` Signatur um `skillName` erweitert für skill-basiertes Routing.
+
 ## [0.19.0-multi-ha.252] - 2026-03-31
 
 ### Added
