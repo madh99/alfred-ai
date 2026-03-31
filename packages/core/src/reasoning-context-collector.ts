@@ -158,11 +158,18 @@ export class ReasoningContextCollector {
       });
     }
 
+    // Smart Home with domain filtering (from memories → default whitelist)
+    if (this.skillRegistry.has('homeassistant')) {
+      defs.push({
+        key: 'smarthome', label: 'Smart Home', priority: 2, maxTokens: 400,
+        fetch: () => this.fetchSmartHome(),
+      });
+    }
+
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', limit: 5 }, maxTokens: 250 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
       { key: 'bmw', label: 'BMW Status', skill: 'bmw', input: { action: 'status' }, maxTokens: 200 },
-      { key: 'smarthome', label: 'Smart Home', skill: 'homeassistant', input: { action: 'states' }, maxTokens: 300 },
       { key: 'charger', label: 'Wallbox', skill: 'goe_charger', input: { action: 'status' }, maxTokens: 100 },
       { key: 'mstodo', label: 'Microsoft To Do', skill: 'microsoft_todo', input: { action: 'list_tasks' }, maxTokens: 200 },
       { key: 'crypto', label: 'Crypto/Bitpanda', skill: 'bitpanda', input: { action: 'portfolio' }, maxTokens: 150 },
@@ -395,6 +402,42 @@ export class ReasoningContextCollector {
       this.logger.warn({ err }, 'ReasoningCollector: feedback fetch failed');
       return '';
     }
+  }
+
+  private async fetchSmartHome(): Promise<string> {
+    // Resolve which HA domains to query: memories → default whitelist
+    // User can store "briefing_ha_domains" = "light, switch, sensor, climate" in memories
+    const DEFAULT_DOMAINS = ['light', 'switch', 'climate', 'binary_sensor', 'sensor'];
+    let domains = DEFAULT_DOMAINS;
+
+    try {
+      const mems = await this.memoryRepo.search(this.defaultChatId, 'ha_domain');
+      const domainMem = mems.find(m => /ha_domain|home.?assistant.*domain|briefing.*domain/i.test(m.key));
+      if (domainMem) {
+        const parsed = domainMem.value.split(/[,;]\s*/).map(d => d.trim()).filter(Boolean);
+        if (parsed.length > 0) domains = parsed;
+      }
+    } catch { /* use defaults */ }
+
+    // Fetch per domain and combine (more targeted than fetching all 1909 entities)
+    const parts: string[] = [];
+    for (const domain of domains.slice(0, 8)) {
+      try {
+        const result = await this.fetchSkillData('homeassistant', { action: 'states', domain });
+        if (result && !result.startsWith('(')) {
+          // Limit lines per domain to avoid flooding
+          const lines = result.split('\n').filter(l => l.startsWith('|') && !l.startsWith('|---') && !l.includes('Entity ID'));
+          if (lines.length > 0) {
+            parts.push(`${domain} (${lines.length}):`);
+            for (const line of lines.slice(0, 10)) {
+              parts.push(line);
+            }
+          }
+        }
+      } catch { /* skip domain */ }
+    }
+
+    return parts.length > 0 ? parts.join('\n') : '(Smart Home: keine relevanten Entities)';
   }
 
   private async fetchFeeds(): Promise<string> {

@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.256] - 2026-03-31
+
+### Changed
+- **Smart Home Domain-Filterung** — Collector fragt HA nicht mehr mit 1909 Entities ab, sondern pro Domain gefiltert. Default-Domains: light, switch, climate, binary_sensor, sensor. User kann eigene Domains via Memory setzen (`briefing_ha_domains` = "light, switch, sensor, climate"). Max 10 Entities pro Domain, max 8 Domains.
+- **KG SmartHome Extractor** — Entity-Limit von 20 auf 50 erhöht (weniger Müll durch Domain-Filterung). Verifiziert gegen echte HA API (1909 Entities, Pipe-Format bestätigt).
+
 ## [0.19.0-multi-ha.255] - 2026-03-31
 
 ### Fixed

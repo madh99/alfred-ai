@@ -484,7 +484,7 @@ export class KnowledgeGraphService {
 
     let match;
     let count = 0;
-    while ((match = tableRe.exec(content)) !== null && count < 20) {
+    while ((match = tableRe.exec(content)) !== null && count < 50) {
       const [, entityId, state, friendlyName, unit] = match;
       const eid = entityId.trim();
       const st = state.trim();
