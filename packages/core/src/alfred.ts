@@ -69,6 +69,7 @@ import { MemoryConsolidator } from './active-learning/memory-consolidator.js';
 import { PatternAnalyzer } from './active-learning/pattern-analyzer.js';
 import { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
+import { ActionFeedbackTracker } from './action-feedback-tracker.js';
 import { ConversationSummarizer } from './conversation-summarizer.js';
 import { CalendarWatcher } from './calendar-watcher.js';
 import { TodoWatcher } from './todo-watcher.js';
@@ -1573,6 +1574,11 @@ export class Alfred {
               }
               // KG maintenance: decay old entities, prune weak ones
               if (kgService) await kgService.maintenance(user.id);
+              // Action feedback: acceptance rates → memories
+              if (this.activityRepo && this.memoryRepo) {
+                const feedbackTracker = new ActionFeedbackTracker(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'action-feedback' }));
+                await feedbackTracker.analyze(user.id);
+              }
             }
           } catch (err) {
             this.logger.warn({ err }, 'Temporal analysis failed');

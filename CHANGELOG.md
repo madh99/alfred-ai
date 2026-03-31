@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.239] - 2026-03-31
+
+### Added
+- **Feedback Loop (ActionFeedbackTracker)** — Berechnet Akzeptanzraten pro Skill aus Confirmation-Outcomes der letzten 30 Tage. Speichert Rates als Memories für das Reasoning-System.
+- **Action-Gating** — `processActions()` überspringt Skills mit <20% historischer Akzeptanz. Verhindert Confirmation-Spam für ungewollte Aktionen.
+- **Feedback im Reasoning-Prompt** — Neue Priority-2-Section "User-Feedback (Aktionen & Insights)" zeigt dem LLM: Akzeptanzraten, Insight-Präferenzen (positiv/negativ), Autonomie-Vorschlag.
+- **Autonomie-Level-Vorschlag** — Bei >90% Akzeptanz: Upgrade auf autonomous empfohlen. Bei <50%: Downgrade auf confirm_all. Gespeichert als Memory.
+- **Insight-Präferenzen integriert** — InsightTracker-Kategorien (positiv/negativ/ignoriert) fließen in die Feedback-Section des Reasoning-Prompts ein.
+
 ## [0.19.0-multi-ha.238] - 2026-03-31
 
 ### Added

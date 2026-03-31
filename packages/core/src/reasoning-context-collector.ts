@@ -160,6 +160,12 @@ export class ReasoningContextCollector {
       fetch: () => this.fetchTemporalInsights(),
     });
 
+    // ── Priority 2: User feedback on actions + insights ───────
+    defs.push({
+      key: 'action_feedback', label: 'User-Feedback (Aktionen & Insights)', priority: 2, maxTokens: 200,
+      fetch: () => this.fetchActionFeedback(),
+    });
+
     // ── Priority 3: Nice-to-have ──────────────────────────────
     defs.push(
       { key: 'activity', label: 'Aktivität 24h', priority: 3, maxTokens: 150, fetch: () => this.fetchActivity() },
@@ -376,6 +382,35 @@ export class ReasoningContextCollector {
       return parts.length > 0 ? parts.join('\n\n') : 'Keine temporalen Auffälligkeiten.';
     } catch {
       return '(Trend-Daten nicht verfügbar)';
+    }
+  }
+
+  private async fetchActionFeedback(): Promise<string> {
+    try {
+      const parts: string[] = [];
+
+      // Action acceptance rates
+      const summary = await this.memoryRepo.recall(this.defaultChatId, 'action_feedback_summary');
+      if (summary?.value) {
+        parts.push(summary.value);
+      }
+
+      // Insight preferences
+      const prefs = await this.memoryRepo.search(this.defaultChatId, 'insight_pref_');
+      if (prefs.length > 0) {
+        const positive = prefs.filter(p => p.value.includes('positiv')).map(p => p.key.replace('insight_pref_', ''));
+        const negative = prefs.filter(p => p.value.includes('ablehnt') || p.value.includes('ignoriert')).map(p => p.key.replace('insight_pref_', ''));
+        if (positive.length > 0) parts.push(`Insight-Präferenz positiv: ${positive.join(', ')}`);
+        if (negative.length > 0) parts.push(`Insight-Präferenz negativ: ${negative.join(', ')}`);
+      }
+
+      // Autonomy suggestion
+      const suggestion = await this.memoryRepo.recall(this.defaultChatId, 'autonomy_suggestion');
+      if (suggestion?.value) parts.push(suggestion.value);
+
+      return parts.length > 0 ? parts.join('\n') : 'Noch kein Feedback zu Aktionen gesammelt.';
+    } catch {
+      return '(Feedback-Daten nicht verfügbar)';
     }
   }
 

@@ -20,6 +20,7 @@ import type { ConfirmationQueue } from './confirmation-queue.js';
 import { InsightTracker } from './insight-tracker.js';
 import { ReasoningContextCollector, type CollectedContext } from './reasoning-context-collector.js';
 import { KnowledgeGraphService } from './knowledge-graph.js';
+import { ActionFeedbackTracker } from './action-feedback-tracker.js';
 import { buildSkillContext } from './context-factory.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
@@ -684,6 +685,18 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, trenne mi
         this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
         continue;
       }
+
+      // Action-Gating: skip skills with very low historical acceptance rate
+      try {
+        const feedback = await this.memoryRepo.recall(this.defaultChatId, `action_feedback_${action.skillName}`);
+        if (feedback) {
+          const rate = ActionFeedbackTracker.extractRate(feedback.value);
+          if (rate !== undefined && rate < 0.2) {
+            this.logger.info({ skillName: action.skillName, rate }, 'Reasoning: action skipped (low acceptance rate)');
+            continue;
+          }
+        }
+      } catch { /* proceed without gating */ }
 
       try {
         const isAuto = ReasoningEngine.AUTO_SKILLS.has(action.skillName);
