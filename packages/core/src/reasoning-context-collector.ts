@@ -195,10 +195,17 @@ export class ReasoningContextCollector {
       { key: 'feedback', label: 'Nutzer-Feedback', priority: 3, maxTokens: 100, fetch: () => this.fetchFeedback() },
     );
 
+    // RSS Feeds with extended timeout (check_all fetches multiple external servers)
+    if (this.skillRegistry.has('feed_reader')) {
+      defs.push({
+        key: 'feeds', label: 'RSS Feeds (neue Artikel)', priority: 2, maxTokens: 400,
+        fetch: () => this.fetchFeeds(),
+      });
+    }
+
     const p3Skills: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'mealPlan', label: 'Meal-Plan heute', skill: 'recipe', input: { action: 'meal_plan', sub_action: 'get', week: 'current', day: new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase() }, maxTokens: 100 },
       { key: 'travel', label: 'Anstehende Reisen', skill: 'travel', input: { action: 'plan_list', status: 'booked' }, maxTokens: 100 },
-      { key: 'feeds', label: 'RSS Feeds (neue Artikel)', skill: 'feed_reader', input: { action: 'check_all' }, maxTokens: 400 },
       { key: 'infra', label: 'Infrastruktur', skill: 'monitor', input: { action: 'status' }, maxTokens: 100 },
     ];
     for (const src of p3Skills) {
@@ -387,6 +394,28 @@ export class ReasoningContextCollector {
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: feedback fetch failed');
       return '';
+    }
+  }
+
+  private async fetchFeeds(): Promise<string> {
+    const skill = this.skillRegistry.get('feed_reader');
+    if (!skill) return '(feed_reader nicht verfügbar)';
+    try {
+      const { context } = await buildSkillContext(this.userRepo, {
+        userId: this.defaultChatId,
+        platform: this.defaultPlatform,
+        chatId: this.defaultChatId,
+        chatType: 'dm',
+      });
+      const result = await Promise.race([
+        this.skillSandbox.execute(skill, { action: 'check_all' }, context),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error('feed_reader timeout')), 15_000)),
+      ]);
+      if (!result.success) return `(feed_reader: ${result.error})`;
+      return result.display ?? JSON.stringify(result.data);
+    } catch (err) {
+      this.logger.warn({ err }, 'ReasoningCollector: feed fetch failed');
+      return '(RSS-Feed-Abfrage fehlgeschlagen)';
     }
   }
 

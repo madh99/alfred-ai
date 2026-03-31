@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.254] - 2026-03-31
+
+### Fixed
+- **RSS-Feeds Timeout** — `check_all` fetcht mehrere externe Server und braucht mehr als 5s. Eigener Fetch mit 15s Timeout (wie Weather). Feeds auf Priority 2 hochgestuft (statt P3) für zuverlässige Relevanz-Filterung.
+
 ## [0.19.0-multi-ha.253] - 2026-03-31
 
 ### Changed
