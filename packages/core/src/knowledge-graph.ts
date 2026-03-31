@@ -58,6 +58,7 @@ export class KnowledgeGraphService {
           case 'watches': await this.extractFromWatches(userId, section.content); break;
           case 'bmw': await this.extractFromVehicle(userId, section.content); break;
           case 'memories': await this.extractFromMemories(userId, section.content); break;
+          case 'email': await this.extractFromEmail(userId, section.content); break;
           default: break;
         }
         // Generic extraction for all sections
@@ -322,6 +323,52 @@ export class KnowledgeGraphService {
         }
       }
     }
+  }
+
+  private async extractFromEmail(userId: string, content: string): Promise<void> {
+    // Format: "1. [acc::123][UNREAD] Subject\n   From: sender@example.com\n   Date: 2026-03-30T..."
+    const re = /^\d+\.\s+\[[^\]]+\](?:\s*\[(?:UNREAD|ATT)\])*\s+(.+?)\n\s+From:\s+(\S+)\n\s+Date:\s+(\S+)/gm;
+
+    let match;
+    while ((match = re.exec(content)) !== null) {
+      const [, subject, fromEmail, dateStr] = match;
+
+      // Sender as person entity (skip generic addresses)
+      const senderName = this.emailToName(fromEmail);
+      if (senderName) {
+        await this.kgRepo.upsertEntity(userId, senderName, 'person', { email: fromEmail }, 'email');
+      }
+
+      // Email subject as event entity
+      const emailEntity = await this.kgRepo.upsertEntity(userId, subject.trim(), 'event',
+        { type: 'email', date: dateStr, from: fromEmail }, 'email');
+
+      // Sender → Email relation
+      if (senderName) {
+        const sender = await this.kgRepo.getEntityByName(userId, senderName, 'person');
+        if (sender) {
+          await this.kgRepo.upsertRelation(userId, sender.id, emailEntity.id, 'sent', fromEmail, 'email');
+        }
+      }
+    }
+  }
+
+  /**
+   * Extract a human name from an email address.
+   * Returns null for generic addresses (info@, noreply@, support@, etc.).
+   */
+  private emailToName(email: string): string | null {
+    const local = email.split('@')[0];
+    if (/^(info|office|noreply|no-reply|support|admin|kontakt|contact|newsletter|buchhaltung|rechnung|service|hello|team|sales|marketing|billing)$/i.test(local)) {
+      return null;
+    }
+    const name = local
+      .replace(/[._-]/g, ' ')
+      .split(' ')
+      .filter(p => p.length > 1)
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+      .join(' ');
+    return name || null;
   }
 
   // ── Generic Extractors ──────────────────────────────────────

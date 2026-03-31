@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.240] - 2026-03-31
+
+### Added
+- **E-Mail → KG Integration** — E-Mail-Absender werden als Person-Entities im Knowledge Graph extrahiert und mit bestehenden Personen dedupliziert. E-Mail-Betreffe als Event-Entities mit `sent`-Relationen. Generische Adressen (info@, noreply@, support@, etc.) werden automatisch gefiltert. Ermöglicht Verbindungen wie "Franz Mueller hat E-Mail geschickt + Meeting mit Müller im Kalender".
+
 ## [0.19.0-multi-ha.239] - 2026-03-31
 
 ### Added
