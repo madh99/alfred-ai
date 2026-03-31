@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.241] - 2026-03-31
+
+### Added
+- **Recommendation Engine** — Regelbasierte Cross-Domain-Empfehlungen in der Verbindungskarte. 4 Empfehlungstypen: Lade-Empfehlung (BMW-Akku + Ziel-Distanz), Zeitmanagement (voller Kalender + offene Todos), Abholung (Shopping-Item + Kalender-Event am selben Ort), Überfälligkeits-Dringlichkeit (Todo + Person + bevorstehendes Meeting). Max 5 Empfehlungen pro Reasoning-Pass, kein LLM-Call.
+
 ## [0.19.0-multi-ha.240] - 2026-03-31
 
 ### Added

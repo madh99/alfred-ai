@@ -178,6 +178,13 @@ export class KnowledgeGraphService {
         for (const o of opportunities.slice(0, 3)) parts.push(`  ${o}`);
       }
 
+      // 5. Recommendations: actionable cross-domain suggestions
+      const recommendations = this.generateRecommendations(entities, relations, entityMap);
+      if (recommendations.length > 0) {
+        parts.push('Empfehlungen:');
+        for (const r of recommendations) parts.push(`  ${r}`);
+      }
+
       if (parts.length === 0) return '';
 
       // Token cap
@@ -324,6 +331,105 @@ export class KnowledgeGraphService {
       }
     }
   }
+
+  // ── Recommendation Engine ────────────────────────────────────
+
+  /**
+   * Generate actionable cross-domain recommendations from KG entities and relations.
+   * Pure rule-based logic — no LLM calls.
+   */
+  private generateRecommendations(
+    entities: KGEntity[],
+    relations: KGRelation[],
+    entityMap: Map<string, KGEntity>,
+  ): string[] {
+    const recs: string[] = [];
+    this.recommendCharging(entities, recs);
+    this.recommendTodoTiming(entities, recs);
+    this.recommendPickup(entities, relations, entityMap, recs);
+    this.recommendOverduePriority(entities, relations, entityMap, recs);
+    return recs.slice(0, 5);
+  }
+
+  /** Energie + Fahrzeug + Ziel-Distanz → Lade-Empfehlung */
+  private recommendCharging(entities: KGEntity[], recs: string[]): void {
+    const vehicle = entities.find(e => e.entityType === 'vehicle');
+    if (!vehicle?.attributes?.battery_pct) return;
+    const battery = vehicle.attributes.battery_pct as number;
+    if (battery > 50) return;
+
+    const rangeKm = (vehicle.attributes.range_km as number) ?? 0;
+    const homeCity = entities.find(e => e.entityType === 'location' && e.attributes?.isHome)?.normalizedName;
+
+    // Check if any calendar location exceeds range
+    const locations = entities.filter(e => e.entityType === 'location' && !e.attributes?.isHome);
+    for (const loc of locations) {
+      if (!homeCity) continue;
+      const dist = lookupDistance(homeCity, loc.normalizedName);
+      if (dist && rangeKm < dist * 1.2) {
+        recs.push(`🔋 BMW ${battery}% (${rangeKm}km) — Laden empfohlen für ${loc.name} (~${dist}km nötig).`);
+        return;
+      }
+    }
+
+    if (battery < 30) {
+      recs.push(`🔋 BMW nur ${battery}% — Laden empfohlen.`);
+    }
+  }
+
+  /** Kalender-Last + offene Todos → Zeitmanagement */
+  private recommendTodoTiming(entities: KGEntity[], recs: string[]): void {
+    const calendarEvents = entities.filter(e => e.entityType === 'event' && e.sources.includes('calendar'));
+    const overdueTodos = entities.filter(e => e.entityType === 'event' && e.sources.includes('todos') && e.attributes?.overdue);
+    const upcomingTodos = entities.filter(e => e.entityType === 'event' && e.sources.includes('todos') && !e.attributes?.overdue && e.attributes?.dueDate);
+    const totalTodos = overdueTodos.length + upcomingTodos.length;
+
+    if (calendarEvents.length >= 4 && totalTodos >= 2) {
+      const overdueHint = overdueTodos.length > 0 ? `${overdueTodos.length} überfällige + ` : '';
+      recs.push(`📋 Voller Kalender (${calendarEvents.length} Termine) + ${overdueHint}${upcomingTodos.length} fällige Todos — Todos heute Abend erledigen.`);
+    } else if (overdueTodos.length >= 3) {
+      recs.push(`📋 ${overdueTodos.length} überfällige Todos — dringend aufarbeiten.`);
+    }
+  }
+
+  /** Shopping-Item + Kalender-Event am selben Ort → Abholung kombinieren */
+  private recommendPickup(
+    entities: KGEntity[], relations: KGRelation[], entityMap: Map<string, KGEntity>, recs: string[],
+  ): void {
+    const locations = entities.filter(e => e.entityType === 'location');
+    for (const loc of locations) {
+      const atLocation = relations.filter(r => r.targetEntityId === loc.id)
+        .map(r => entityMap.get(r.sourceEntityId)).filter(Boolean) as KGEntity[];
+      const items = atLocation.filter(e => e.entityType === 'item');
+      const calEvents = atLocation.filter(e => e.entityType === 'event' && e.sources.includes('calendar'));
+      if (items.length > 0 && calEvents.length > 0) {
+        recs.push(`🛍️ ${items[0].name} in ${loc.name} — ${calEvents[0].name} dort geplant. Abholung kombinieren?`);
+      }
+    }
+  }
+
+  /** Überfälliges Todo für Person X + bevorstehendes Meeting mit X → Dringlichkeit */
+  private recommendOverduePriority(
+    entities: KGEntity[], relations: KGRelation[], entityMap: Map<string, KGEntity>, recs: string[],
+  ): void {
+    const persons = entities.filter(e => e.entityType === 'person');
+    for (const person of persons) {
+      const rels = relations.filter(r => r.sourceEntityId === person.id || r.targetEntityId === person.id);
+      const connected = rels.map(r => {
+        const otherId = r.sourceEntityId === person.id ? r.targetEntityId : r.sourceEntityId;
+        return entityMap.get(otherId);
+      }).filter(Boolean) as KGEntity[];
+
+      const overdueTodo = connected.find(e => e.sources.includes('todos') && e.attributes?.overdue);
+      const hasMeeting = connected.some(e => e.sources.includes('calendar'));
+
+      if (overdueTodo && hasMeeting) {
+        recs.push(`⚡ "${overdueTodo.name}" für ${person.name} überfällig — Meeting mit ${person.name} steht bevor!`);
+      }
+    }
+  }
+
+  // ── Section-specific Extractors ─────────────────────────────
 
   private async extractFromEmail(userId: string, content: string): Promise<void> {
     // Format: "1. [acc::123][UNREAD] Subject\n   From: sender@example.com\n   Date: 2026-03-30T..."
