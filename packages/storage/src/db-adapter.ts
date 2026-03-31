@@ -172,9 +172,21 @@ export class PostgresAsyncAdapter implements AsyncDbAdapter {
    * are handled at the repository level via adapter.type branching.
    */
   private adaptSql(sql: string): string {
-    // Replace ? with $N
+    // Replace ? with $N, skipping ? inside string literals ('...')
     let idx = 0;
-    let adapted = sql.replace(/\?/g, () => `$${++idx}`);
+    let adapted = '';
+    let inString = false;
+    for (let i = 0; i < sql.length; i++) {
+      const ch = sql[i];
+      if (ch === "'" && (i === 0 || sql[i - 1] !== "'")) {
+        inString = !inString;
+        adapted += ch;
+      } else if (ch === '?' && !inString) {
+        adapted += `$${++idx}`;
+      } else {
+        adapted += ch;
+      }
+    }
 
     return adapted
       // datetime('now') → NOW()

@@ -53,11 +53,11 @@ export class KnowledgeGraphRepository {
     const sourcesJson = source ? JSON.stringify([source]) : '[]';
     const attrsJson = attributes ? JSON.stringify(attributes) : '{}';
 
-    // First try: check if entity exists and merge sources
+    // First try: check if entity exists and merge sources + attributes
     const existing = await this.adapter.queryOne(
-      'SELECT id, sources FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
+      'SELECT id, sources, attributes FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
       [userId, entityType, normalized],
-    ) as { id: string; sources: string } | undefined;
+    ) as { id: string; sources: string; attributes: string } | undefined;
 
     if (existing) {
       // Merge sources
@@ -67,6 +67,11 @@ export class KnowledgeGraphRepository {
         existingSources.push(source);
       }
 
+      // Merge attributes (existing + new, new wins on conflict)
+      let existingAttrs: Record<string, unknown> = {};
+      try { existingAttrs = JSON.parse(existing.attributes); } catch { /* empty */ }
+      const mergedAttrs = { ...existingAttrs, ...(attributes ?? {}) };
+
       await this.adapter.execute(`
         UPDATE kg_entities SET
           attributes = ?,
@@ -75,7 +80,7 @@ export class KnowledgeGraphRepository {
           last_seen_at = ?,
           mention_count = mention_count + 1
         WHERE id = ?
-      `, [attrsJson, JSON.stringify(existingSources), now, existing.id]);
+      `, [JSON.stringify(mergedAttrs), JSON.stringify(existingSources), now, existing.id]);
 
       const row = await this.adapter.queryOne('SELECT * FROM kg_entities WHERE id = ?', [existing.id]) as Record<string, unknown>;
       return this.mapEntity(row);

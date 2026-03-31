@@ -2,6 +2,15 @@ import type { AsyncDbAdapter } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type { ActivityEntry, ActivityQuery, ActivityStats } from '@alfred/types';
 
+/** Compute ISO week key like "2026-W13" from a Date. */
+function isoWeekKey(date: Date): string {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`;
+}
+
 export interface WeeklySkillStats {
   week: string;          // e.g. '2026-W13'
   skillName: string;
@@ -115,8 +124,8 @@ export class ActivityRepository {
   /** Get skill usage grouped by user, with call counts per skill. */
   async skillUsageByUser(since?: string): Promise<Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }>> {
     const where = since
-      ? "WHERE event_type = 'skill_execution' AND timestamp >= ?"
-      : "WHERE event_type = 'skill_execution'";
+      ? "WHERE event_type = 'skill_exec' AND timestamp >= ?"
+      : "WHERE event_type = 'skill_exec'";
     const params = since ? [since] : [];
 
     const rows = await this.adapter.query(`
@@ -144,29 +153,32 @@ export class ActivityRepository {
     const params: unknown[] = [since];
     if (userId) params.push(userId);
 
-    // Use adapter-specific week bucketing
-    const weekExpr = this.adapter.type === 'postgres'
-      ? "to_char(timestamp::timestamp, 'IYYY-\"W\"IW')"
-      : "strftime('%Y-W%W', timestamp)";
-
+    // Fetch raw rows and bucket by ISO week in application code (avoids SQLite %W vs ISO week mismatch)
     const rows = await this.adapter.query(`
-      SELECT ${weekExpr} as week, action as skill_name,
-             COUNT(*) as calls,
-             SUM(CASE WHEN outcome = 'error' THEN 1 ELSE 0 END) as errors,
-             AVG(duration_ms) as avg_duration_ms
+      SELECT timestamp, action as skill_name, outcome, duration_ms
       FROM activity_log
       WHERE event_type = 'skill_exec' AND timestamp >= ?${userFilter}
-      GROUP BY week, action
-      ORDER BY week ASC, calls DESC
+      ORDER BY timestamp ASC
     `, params) as Record<string, unknown>[];
 
-    return rows.map(r => ({
-      week: r.week as string,
-      skillName: r.skill_name as string,
-      calls: Number(r.calls),
-      errors: Number(r.errors),
-      avgDurationMs: Math.round(Number(r.avg_duration_ms ?? 0)),
-    }));
+    // Bucket by ISO week + skill
+    const buckets = new Map<string, { calls: number; errors: number; durationSum: number }>();
+    for (const r of rows) {
+      const ts = new Date(r.timestamp as string);
+      const week = isoWeekKey(ts);
+      const skill = r.skill_name as string;
+      const key = `${week}::${skill}`;
+      if (!buckets.has(key)) buckets.set(key, { calls: 0, errors: 0, durationSum: 0 });
+      const b = buckets.get(key)!;
+      b.calls++;
+      if (r.outcome === 'error') b.errors++;
+      if (r.duration_ms) b.durationSum += Number(r.duration_ms);
+    }
+
+    return [...buckets.entries()].map(([key, b]) => {
+      const [week, skillName] = key.split('::');
+      return { week, skillName, calls: b.calls, errors: b.errors, avgDurationMs: b.calls > 0 ? Math.round(b.durationSum / b.calls) : 0 };
+    });
   }
 
   /** Get hourly activity distribution for anomaly detection. */

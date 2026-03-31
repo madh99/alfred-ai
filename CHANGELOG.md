@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.245] - 2026-03-31
+
+### Fixed
+- **Reasoning: Concurrent tick Guard** — setInterval-Callback prüft jetzt ob ein vorheriger Lauf noch aktiv ist. Verhindert doppelte LLM-Calls und Insights bei langsamen Reasoning-Passes. Unhandled Promise Rejections werden gefangen.
+- **Reasoning: Event-Dedup Slot Key** — `Date.now()` (unique pro Node) ersetzt durch deterministischen 5-Min-Window-Key. Beide HA-Nodes generieren jetzt den gleichen Slot-Key → nur einer prozessiert.
+- **Reasoning: Distributed Slot INSERT in try/catch** — DB-Fehler bei Slot-Claim (z.B. fehlende Tabelle) wird jetzt gefangen statt als unhandled rejection zu propagieren.
+- **KG: Entity Attribute Merge** — `upsertEntity` exact-match Pfad überschrieb alle Attribute statt zu mergen. Jetzt werden bestehende + neue Attribute zusammengeführt (neue gewinnen bei Konflikt).
+- **Activity: `skillUsageByUser` Event-Type** — Query suchte nach `'skill_execution'` (existiert nicht), Logger schreibt `'skill_exec'`. Dashboard zeigte immer 0 Ergebnisse.
+- **Activity: ISO Week Bucketing** — SQLite `strftime('%W')` stimmt am Jahresende nicht mit ISO-Wochen überein. Bucketing jetzt in Application-Code mit korrekter ISO-8601-Wochenberechnung.
+- **Watch-Engine: Quiet-Hours Digest stahl Watches** — `flushQuietHoursDigest()` rief `claimDue()` auf (destruktive Claim-Operation), statt read-only `getEnabled()`. Watches wurden vom normalen Poll-Zyklus gestohlen.
+- **Email: executeLock Mutex Race Condition** — `while(lock) await lock` hatte TOCTOU-Race bei mehreren gleichzeitigen Aufrufen. Durch proper async Mutex ersetzt.
+- **PostgreSQL: NOW() Timestamp-Format** — `DEFAULT NOW()` in PG-Migrations produzierte non-ISO-Timestamps. Ersetzt durch `to_char(now() AT TIME ZONE 'UTC', ...)` für konsistentes ISO-8601-Format.
+- **DB-Adapter: adaptSql String-Literal Safety** — `?`-Placeholder-Replacement ersetzte auch `?` innerhalb von SQL-String-Literals. Jetzt werden nur `?` außerhalb von Quotes ersetzt.
+- **Briefing: Doppelte resolveAddresses** — Memory-Queries für Adress-Auflösung liefen 2x pro Briefing (runBriefing + runCommuteCheck). Adressen werden jetzt einmal aufgelöst und durchgereicht.
+
 ## [0.19.0-multi-ha.244] - 2026-03-31
 
 ### Added

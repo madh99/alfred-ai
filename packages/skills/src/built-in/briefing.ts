@@ -145,7 +145,8 @@ export class BriefingSkill extends Skill {
   }
 
   private async runBriefing(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const { home } = await this.resolveAddresses(context);
+    const resolvedAddresses = await this.resolveAddresses(context);
+    const { home } = resolvedAddresses;
     // Prefer resolved home address over LLM-provided location — the LLM often
     // guesses a generic city (e.g. "Vienna") when no explicit location is given.
     const resolvedLocation = home ? extractCity(home) : undefined;
@@ -185,7 +186,7 @@ export class BriefingSkill extends Skill {
     );
 
     // Phase 2: Weekday commute check (Mon–Fri, needs home+office+routing)
-    const commuteResult = await this.runCommuteCheck(results, context);
+    const commuteResult = await this.runCommuteCheck(results, context, resolvedAddresses);
     if (commuteResult) {
       results.push(commuteResult);
     }
@@ -256,11 +257,12 @@ export class BriefingSkill extends Skill {
   private async runCommuteCheck(
     moduleResults: ModuleResult[],
     context: SkillContext,
+    addresses?: { home: string | undefined; office: string | undefined },
   ): Promise<ModuleResult | null> {
     if (!isWeekday()) return null;
     if (!this.skillRegistry.has('routing')) return null;
 
-    const { home: homeAddress, office: officeAddress } = await this.resolveAddresses(context);
+    const { home: homeAddress, office: officeAddress } = addresses ?? await this.resolveAddresses(context);
     if (!homeAddress || !officeAddress) return null;
 
     // Check calendar for external appointments (events with a location)

@@ -126,8 +126,15 @@ export class ReasoningEngine {
       this.logger.info('Reasoning engine disabled');
       return;
     }
-    // Tick every 60 seconds, decide inside whether to run
-    this.tickTimer = setInterval(() => this.tick(), 60_000);
+    // Tick every 60 seconds, decide inside whether to run. Guard against concurrent runs.
+    let tickRunning = false;
+    this.tickTimer = setInterval(() => {
+      if (tickRunning) return;
+      tickRunning = true;
+      this.tick()
+        .catch(err => this.logger.error({ err }, 'Reasoning tick unhandled error'))
+        .finally(() => { tickRunning = false; });
+    }, 60_000);
     this.logger.info({ schedule: this.schedule, tier: this.tier }, 'Reasoning engine started');
   }
 
@@ -155,7 +162,8 @@ export class ReasoningEngine {
 
     // Distributed dedup: use event-specific slot (prevent both nodes from processing)
     if (this.adapter && this.adapter.type === 'postgres') {
-      const slotKey = `reasoning-event:${Date.now().toString(36)}:${eventType}`;
+      const windowId = Math.floor(Date.now() / EVENT_COOLDOWN_MS);
+      const slotKey = `reasoning-event:${windowId}:${eventType}`;
       const result = await this.adapter.execute(
         'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
         [slotKey, this.nodeId, new Date().toISOString()],
@@ -290,20 +298,20 @@ ${this.buildTopicInstructions()}`;
     if (!this.shouldRun()) return;
     this.markRun();
 
-    // Distributed dedup: only one node runs reasoning per hour-slot
-    if (this.adapter && this.adapter.type === 'postgres') {
-      const slotKey = `reasoning:${new Date().toISOString().slice(0, 13)}`;
-      const result = await this.adapter.execute(
-        'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
-        [slotKey, this.nodeId, new Date().toISOString()],
-      );
-      if (result.changes === 0) {
-        this.logger.debug('Reasoning slot already claimed by another node, skipping');
-        return;
-      }
-    }
-
     try {
+      // Distributed dedup: only one node runs reasoning per hour-slot
+      if (this.adapter && this.adapter.type === 'postgres') {
+        const slotKey = `reasoning:${new Date().toISOString().slice(0, 13)}`;
+        const result = await this.adapter.execute(
+          'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
+          [slotKey, this.nodeId, new Date().toISOString()],
+        );
+        if (result.changes === 0) {
+          this.logger.debug('Reasoning slot already claimed by another node, skipping');
+          return;
+        }
+      }
+
       this.logger.info('Reasoning pass starting');
       const startMs = Date.now();
 

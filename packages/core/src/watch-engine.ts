@@ -119,10 +119,9 @@ export class WatchEngine {
     const oldestAge = Date.now() - new Date(firstAlert.timestamp).getTime();
     if (oldestAge < 30 * 60_000) return; // Wait at least 30 min before attempting flush
 
-    // Try to determine if we're still in quiet hours by checking a recent watch
+    // Check if we're still in quiet hours using a read-only query (NOT claimDue which steals watches)
     try {
-      const watches = await this.watchRepo.claimDue(this.nodeId);
-      // Find any watch with quiet hours to check if we're still in the window
+      const watches = await this.watchRepo.getEnabled();
       const qhWatch = watches.find(w => w.quietHoursStart && w.quietHoursEnd);
       if (qhWatch && this.isInQuietHours(qhWatch)) return; // Still in quiet hours
     } catch { /* proceed with flush */ }

@@ -103,7 +103,7 @@ export const PG_MIGRATIONS: PgMigration[] = [
         tags TEXT,
         nutrition_summary TEXT,
         ingredients_json TEXT,
-        created_at TEXT NOT NULL DEFAULT NOW()
+        created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       )`, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_recipe_fav_user ON recipe_favorites(user_id)`, []);
       await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recipe_fav_unique ON recipe_favorites(user_id, recipe_id)`, []);
@@ -118,8 +118,8 @@ export const PG_MIGRATIONS: PgMigration[] = [
         source TEXT,
         title TEXT NOT NULL,
         notes TEXT,
-        created_at TEXT NOT NULL DEFAULT NOW(),
-        updated_at TEXT NOT NULL DEFAULT NOW()
+        created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        updated_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       )`, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_meal_plan_user_week ON meal_plans(user_id, week)`, []);
       await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_plan_slot ON meal_plans(user_id, week, day, meal)`, []);
@@ -140,8 +140,8 @@ export const PG_MIGRATIONS: PgMigration[] = [
         travelers INTEGER DEFAULT 1,
         status TEXT NOT NULL DEFAULT 'draft',
         notes TEXT,
-        created_at TEXT NOT NULL DEFAULT NOW(),
-        updated_at TEXT NOT NULL DEFAULT NOW()
+        created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+        updated_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       )`, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_plan_user ON travel_plans(user_id)`, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_plan_status ON travel_plans(user_id, status)`, []);
@@ -159,7 +159,7 @@ export const PG_MIGRATIONS: PgMigration[] = [
         booking_ref TEXT,
         status TEXT DEFAULT 'planned',
         sort_order INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT NOW()
+        created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
       )`, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_travel_item_plan ON travel_plan_items(plan_id)`, []);
     },
@@ -185,7 +185,7 @@ export const PG_MIGRATIONS: PgMigration[] = [
           skill TEXT NOT NULL,
           key TEXT NOT NULL,
           value TEXT NOT NULL,
-          updated_at TEXT NOT NULL DEFAULT NOW(),
+          updated_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           expires_at TEXT DEFAULT NULL,
           UNIQUE(user_id, skill, key)
         )
@@ -239,8 +239,8 @@ export const PG_MIGRATIONS: PgMigration[] = [
           attributes TEXT DEFAULT '{}',
           sources TEXT DEFAULT '[]',
           confidence REAL NOT NULL DEFAULT 0.5,
-          first_seen_at TEXT NOT NULL DEFAULT NOW(),
-          last_seen_at TEXT NOT NULL DEFAULT NOW(),
+          first_seen_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          last_seen_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           mention_count INTEGER NOT NULL DEFAULT 1,
           UNIQUE(user_id, entity_type, normalized_name)
         )
@@ -259,8 +259,8 @@ export const PG_MIGRATIONS: PgMigration[] = [
           strength REAL NOT NULL DEFAULT 0.5,
           context TEXT,
           source_section TEXT,
-          first_seen_at TEXT NOT NULL DEFAULT NOW(),
-          last_seen_at TEXT NOT NULL DEFAULT NOW(),
+          first_seen_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          last_seen_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
           mention_count INTEGER NOT NULL DEFAULT 1,
           UNIQUE(user_id, source_entity_id, target_entity_id, relation_type)
         )
