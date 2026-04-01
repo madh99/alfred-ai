@@ -127,16 +127,12 @@ export class KnowledgeGraphRepository {
         mention_count = kg_entities.mention_count + 1
     `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
 
-    // If conflict occurred (another node inserted first), fetch the existing entity
-    if (result.changes === 0) {
-      const row = await this.adapter.queryOne(
-        'SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
-        [userId, entityType, normalized],
-      ) as Record<string, unknown>;
-      return row ? this.mapEntity(row) : { id, userId, name, normalizedName: normalized, entityType, attributes: attributes ?? {}, sources: source ? [source] : [], confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1 };
-    }
-
-    return {
+    // Always fetch from DB to get the REAL id (ON CONFLICT DO UPDATE returns changes=1 but the id in the INSERT is wrong)
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
+      [userId, entityType, normalized],
+    ) as Record<string, unknown>;
+    return row ? this.mapEntity(row) : {
       id, userId, name, normalizedName: normalized, entityType,
       attributes: attributes ?? {}, sources: source ? [source] : [],
       confidence: 0.5, firstSeenAt: now, lastSeenAt: now, mentionCount: 1,
