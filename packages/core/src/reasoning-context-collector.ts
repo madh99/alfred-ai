@@ -489,7 +489,7 @@ export class ReasoningContextCollector {
     parts.push('Konfigurierte Entities:');
     for (const eid of entityIds.slice(0, 20)) {
       try {
-        const result = await this.fetchSkillData('homeassistant', { action: 'state', entity_id: eid });
+        const result = await this.fetchSkillData('homeassistant', { action: 'state', entityId: eid });
         if (result && !result.startsWith('(')) {
           const stateMatch = result.match(/\*\*State:\*\*\s*(.+)/);
           const nameMatch = result.match(/^##\s*(.+)/m);
