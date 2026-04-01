@@ -183,10 +183,17 @@ export class ReasoningContextCollector {
       });
     }
 
+    // BMW with extended timeout (token refresh can take up to 15s + API call)
+    if (this.skillRegistry.has('bmw')) {
+      defs.push({
+        key: 'bmw', label: 'BMW Status', priority: 2, maxTokens: 200,
+        fetch: () => this.fetchWithTimeout('bmw', { action: 'status' }, 20_000),
+      });
+    }
+
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', limit: 5 }, maxTokens: 250 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
-      { key: 'bmw', label: 'BMW Status', skill: 'bmw', input: { action: 'status' }, maxTokens: 200 },
       { key: 'charger', label: 'Wallbox', skill: 'goe_charger', input: { action: 'status' }, maxTokens: 100 },
       { key: 'mstodo', label: 'Microsoft To Do', skill: 'microsoft_todo', input: { action: 'list_tasks' }, maxTokens: 200 },
       { key: 'crypto', label: 'Crypto/Bitpanda', skill: 'bitpanda', input: { action: 'portfolio' }, maxTokens: 150 },

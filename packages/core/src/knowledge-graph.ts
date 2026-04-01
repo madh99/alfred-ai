@@ -525,9 +525,12 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromEnergy(userId: string, content: string): Promise<void> {
-    const priceMatch = content.match(/(\d+(?:[.,]\d+)?)\s*(?:ct|Cent)\/kWh/i);
-    if (priceMatch) {
-      const price = parseFloat(priceMatch[1].replace(',', '.'));
+    // Try multiple formats: "Gesamt brutto | **XX.XX**", "XX.XX ct/kWh", "brutto: XX.XX"
+    const bruttoMatch = content.match(/Gesamt\s*brutto\*?\*?\s*\|\s*\*?\*?(\d+[.,]\d+)/i)
+      ?? content.match(/brutto[:\s]*(\d+[.,]\d+)\s*(?:ct|Cent)/i)
+      ?? content.match(/(\d+[.,]\d+)\s*(?:ct|Cent)\/kWh/i);
+    if (bruttoMatch) {
+      const price = parseFloat(bruttoMatch[1].replace(',', '.'));
       const strompreis = await this.kgRepo.upsertEntity(userId, 'Strompreis', 'metric',
         { price_ct: price, cheap: price < 10 }, 'energy');
       // Relation: User → monitors → Strompreis
