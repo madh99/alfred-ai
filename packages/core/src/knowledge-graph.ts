@@ -580,7 +580,7 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromCrypto(userId: string, content: string): Promise<void> {
-    const posRe = /\b(BTC|ETH|SOL|ADA|DOT|XRP|DOGE|LINK|AVAX|MATIC|Bitcoin|Ethereum)\b[:\s]*([0-9.,]+)(?:\s*[€$]?\s*([0-9.,]+))?/gi;
+    const posRe = /\b(BTC|ETH|SOL|ADA|DOT|XRP|DOGE|LINK|AVAX|MATIC|Bitcoin|Ethereum)\b[*:\s]*([0-9.,]+)(?:\s*[×x€$]?\s*[€$]?\s*([0-9.,]+))?/gi;
     const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
     let match;
     while ((match = posRe.exec(content)) !== null) {
