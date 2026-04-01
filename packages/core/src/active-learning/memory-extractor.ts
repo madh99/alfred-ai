@@ -183,9 +183,16 @@ export class MemoryExtractor {
             .embedAndStore(userId, `${mem.key}: ${mem.value}`, 'memory', entry.id)
             .catch(err => this.logger.debug({ err }, 'Auto-embed failed'));
         }
+        // Set expiresAt for time-bound connections
+        const eventDate = this.extractFutureEventDate(mem);
+        if (eventDate) {
+          const expiresAt = new Date(eventDate.getTime() + 24 * 60 * 60_000).toISOString();
+          try { await this.memoryRepo.setExpiry(userId, mem.key, expiresAt); } catch { /* non-critical */ }
+        }
+
         savedCount++;
         this.logger.info(
-          { key: mem.key, type: 'connection', confidence: mem.confidence },
+          { key: mem.key, type: 'connection', confidence: mem.confidence, expires: eventDate ? 'set' : 'none' },
           'Cross-context connection extracted',
         );
       } catch (err) {
