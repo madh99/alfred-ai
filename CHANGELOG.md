@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.267] - 2026-04-01
+
+### Added
+- **KG Relations: Cross-Extractor Relation Builder** — Neuer `buildCrossExtractorRelations()` Pass nach allen Extractors. Erstellt automatisch Relationen zwischen Entities aus verschiedenen Quellen: Vehicle↔Charger (charges_at), Strompreis→Wallbox/Batterie (affects_cost), Vehicle/Charger→Home (located_at/home_location), SmartHome→Home, RSS-Artikel→bestehende Entities (relevant_to).
+- **KG Relations: Per-Extractor Relations** — Vehicle (User→owns→BMW), Charger (User→owns→Wallbox, car_connected Attribut), Energy (User→monitors→Strompreis), Crypto (User→owns→BTC/ETH).
+- **KG Relations: Feed→Entity Matching** — RSS-Artikel-Titel werden gegen alle bestehenden KG-Entities gematcht. "Bitcoin steigt" + KG hat BTC Entity → `relevant_to` Relation.
+- **KG Memory Integration: Patterns, Feedback, Connections** — syncMemoryEntities erweitert: Behavioral Patterns → User→has_pattern, Action Feedback → User→prefers/dislikes Skill, Memory Connections → Event-Entities im KG.
+- **Verbindungskarte: Graph-Pfade** — Neue Section zeigt 2-Hop Verbindungsketten (z.B. BMW→charges_at→Wallbox→affects_cost→Strompreis). Token-Budget 600→1200.
+- **KG Repository: updateRelationStrength()** — Methode für Feedback-basierte Relation-Stärke-Anpassung.
+
 ## [0.19.0-multi-ha.261] - 2026-04-01
 
 ### Fixed

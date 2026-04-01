@@ -286,6 +286,14 @@ export class KnowledgeGraphRepository {
     return result.changes;
   }
 
+  /** Update a specific relation's strength. */
+  async updateRelationStrength(relationId: string, newStrength: number): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE kg_relations SET strength = ?, last_seen_at = ? WHERE id = ?',
+      [newStrength, new Date().toISOString(), relationId],
+    );
+  }
+
   /** Delete entities with confidence below threshold (CASCADE deletes relations). */
   async pruneWeakEntities(userId: string, minConfidence: number): Promise<number> {
     const result = await this.adapter.execute(

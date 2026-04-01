@@ -37,7 +37,7 @@ const PERSON_PATTERNS = [
 ];
 
 /** Max tokens for the connection map section. */
-const MAX_MAP_TOKENS = 600;
+const MAX_MAP_TOKENS = 1200;
 
 // ── Service ──────────────────────────────────────────────────
 
@@ -80,8 +80,10 @@ export class KnowledgeGraphService {
         await this.extractLocations(userId, section.key, section.content);
         await this.extractPersons(userId, section.key, section.content);
       }
-      // Sync Memory entities/relationships/connections into KG
+      // Sync Memory entities/relationships/connections/patterns/feedback into KG
       await this.syncMemoryEntities(userId);
+      // Build cross-extractor relations (BMW↔Wallbox, Strompreis↔Batterie, etc.)
+      await this.buildCrossExtractorRelations(userId);
     } catch (err) {
       this.logger.warn({ err }, 'KG ingest failed');
     }
@@ -150,6 +152,13 @@ export class KnowledgeGraphService {
         }
       }
 
+      // 4. Graph Paths: multi-hop connection chains
+      const paths = this.findGraphPaths(entities, relations, entityMap);
+      if (paths.length > 0) {
+        parts.push('Graph-Pfade (Verbindungsketten):');
+        for (const path of paths.slice(0, 8)) parts.push(`  ${path}`);
+      }
+
       if (parts.length === 0) return '';
 
       // KG → Memory Rückkanal: Entities mit ≥3 Sources als connection-Memories speichern
@@ -196,9 +205,54 @@ export class KnowledgeGraphService {
 
   /** Format entity attributes as compact string, skipping internal fields. */
   private formatAttributes(attrs: Record<string, unknown>): string {
-    const entries = Object.entries(attrs).filter(([k]) => !['skillName', 'type', 'isHome'].includes(k));
+    const entries = Object.entries(attrs).filter(([k]) => !['skillName', 'type', 'isHome', 'isWork', 'memoryKey', 'memoryConfidence', 'relationship'].includes(k));
     if (entries.length === 0) return '';
     return ' | ' + entries.map(([k, v]) => `${k}=${v}`).join(', ');
+  }
+
+  /** Find 2-hop graph paths through high-confidence entities. */
+  private findGraphPaths(
+    entities: KGEntity[], relations: KGRelation[], entityMap: Map<string, KGEntity>,
+  ): string[] {
+    if (relations.length === 0) return [];
+    const paths: string[] = [];
+
+    // Build adjacency list
+    const adj = new Map<string, Array<{ targetId: string; relationType: string; strength: number }>>();
+    for (const r of relations) {
+      if (!adj.has(r.sourceEntityId)) adj.set(r.sourceEntityId, []);
+      adj.get(r.sourceEntityId)!.push({ targetId: r.targetEntityId, relationType: r.relationType, strength: r.strength });
+    }
+
+    // Find 2-hop paths through entities with confidence > 0.4
+    for (const [sourceId, edges] of adj) {
+      const source = entityMap.get(sourceId);
+      if (!source || source.confidence < 0.4) continue;
+
+      for (const edge1 of edges) {
+        const mid = entityMap.get(edge1.targetId);
+        if (!mid) continue;
+        const edge2s = adj.get(edge1.targetId) ?? [];
+
+        for (const edge2 of edge2s) {
+          if (edge2.targetId === sourceId) continue;
+          const target = entityMap.get(edge2.targetId);
+          if (!target) continue;
+
+          const srcAttr = this.formatAttributes(source.attributes);
+          const tgtAttr = this.formatAttributes(target.attributes);
+          paths.push(
+            `${source.name} [${source.entityType}]${srcAttr} →${edge1.relationType}→ ` +
+            `${mid.name} [${mid.entityType}] →${edge2.relationType}→ ` +
+            `${target.name} [${target.entityType}]${tgtAttr}`,
+          );
+        }
+      }
+    }
+
+    // Deduplicate and sort by combined entity confidence
+    const unique = [...new Set(paths)];
+    return unique.slice(0, 10);
   }
 
   /**
@@ -365,12 +419,18 @@ export class KnowledgeGraphService {
   private async extractFromVehicle(userId: string, content: string): Promise<void> {
     const batteryMatch = content.match(/(?:Battery|Akku|SoC)[:\s]*(\d+)\s*%/i);
     const rangeMatch = content.match(/(?:Range|Reichweite)[:\s]*(\d+)\s*km/i);
+    const chargingMatch = content.match(/(?:charging|lädt|connected|verbunden)/i);
 
     if (batteryMatch || rangeMatch) {
       const attrs: Record<string, unknown> = {};
       if (batteryMatch) attrs.battery_pct = parseInt(batteryMatch[1], 10);
       if (rangeMatch) attrs.range_km = parseInt(rangeMatch[1], 10);
-      await this.kgRepo.upsertEntity(userId, 'BMW', 'vehicle', attrs, 'bmw');
+      if (chargingMatch) attrs.charging = true;
+      const vehicle = await this.kgRepo.upsertEntity(userId, 'BMW', 'vehicle', attrs, 'bmw');
+
+      // Relation: User → owns → Vehicle
+      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      await this.kgRepo.upsertRelation(userId, user.id, vehicle.id, 'owns', undefined, 'bmw');
     }
   }
 
@@ -468,8 +528,11 @@ export class KnowledgeGraphService {
     const priceMatch = content.match(/(\d+(?:[.,]\d+)?)\s*(?:ct|Cent)\/kWh/i);
     if (priceMatch) {
       const price = parseFloat(priceMatch[1].replace(',', '.'));
-      await this.kgRepo.upsertEntity(userId, 'Strompreis', 'metric',
+      const strompreis = await this.kgRepo.upsertEntity(userId, 'Strompreis', 'metric',
         { price_ct: price, cheap: price < 10 }, 'energy');
+      // Relation: User → monitors → Strompreis
+      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      await this.kgRepo.upsertRelation(userId, user.id, strompreis.id, 'monitors', `${price}ct/kWh`, 'energy');
     }
   }
 
@@ -517,29 +580,54 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromCrypto(userId: string, content: string): Promise<void> {
-    // Extract portfolio positions: "BTC: 0.5 (€30,000)", "ETH: 2.0 (€6,000)"
     const posRe = /\b(BTC|ETH|SOL|ADA|DOT|XRP|DOGE|LINK|AVAX|MATIC|Bitcoin|Ethereum)\b[:\s]*([0-9.,]+)(?:\s*[€$]?\s*([0-9.,]+))?/gi;
+    const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
     let match;
     while ((match = posRe.exec(content)) !== null) {
       const [, coin, amount, value] = match;
       const attrs: Record<string, unknown> = { amount: amount.replace(',', '.') };
       if (value) attrs.value_eur = value.replace(',', '.');
-      await this.kgRepo.upsertEntity(userId, coin.toUpperCase(), 'item', attrs, 'crypto');
+      const coinEntity = await this.kgRepo.upsertEntity(userId, coin.toUpperCase(), 'item', attrs, 'crypto');
+      // Relation: User → owns → Coin
+      await this.kgRepo.upsertRelation(userId, user.id, coinEntity.id, 'owns', `${amount}`, 'crypto');
     }
   }
 
   private async extractFromFeeds(userId: string, content: string): Promise<void> {
-    // RSS items: "- [Source] Title" or "- Title (Source)"
-    const feedRe = /^-\s+(?:\[([^\]]+)\]\s+)?(.+?)(?:\s+\(([^)]+)\))?\s*$/gm;
+    // RSS items: various formats (• Title\n  URL, - Title, ** Source ** Title)
+    const feedRe = /(?:^[•\-]\s+|^\*\*.+?\*\*.*?\n[•\-]\s+)(.+?)(?:\n\s+https?:\/\/|\s*$)/gm;
+    // Fallback: simpler line-based extraction
+    const simpleFeedRe = /^[•\-]\s+(.{10,100})\s*$/gm;
+    const titles: string[] = [];
     let match;
-    let count = 0;
-    while ((match = feedRe.exec(content)) !== null && count < 5) {
-      const [, source, title, altSource] = match;
-      const feedSource = source ?? altSource ?? 'RSS';
-      if (title.length > 5) {
-        await this.kgRepo.upsertEntity(userId, title.trim(), 'event',
-          { type: 'feed_article', source: feedSource }, 'feeds');
-        count++;
+    while ((match = feedRe.exec(content)) !== null && titles.length < 8) {
+      if (match[1].length > 10 && !match[1].startsWith('http')) titles.push(match[1].trim());
+    }
+    if (titles.length === 0) {
+      while ((match = simpleFeedRe.exec(content)) !== null && titles.length < 8) {
+        if (match[1].length > 10 && !match[1].startsWith('http')) titles.push(match[1].trim());
+      }
+    }
+
+    // Load existing KG entities to find relevant_news matches
+    let existingEntities: KGEntity[] = [];
+    try {
+      const graph = await this.kgRepo.getFullGraph(userId);
+      existingEntities = graph.entities.filter(e => e.entityType !== 'event'); // Skip other feed articles
+    } catch { /* skip matching */ }
+
+    for (const title of titles) {
+      const articleEntity = await this.kgRepo.upsertEntity(userId, title, 'event',
+        { type: 'feed_article' }, 'feeds');
+
+      // Match article title against existing KG entities (crypto coins, persons, locations, items)
+      const titleLower = title.toLowerCase();
+      for (const existing of existingEntities) {
+        const nameLower = existing.normalizedName;
+        if (nameLower.length >= 3 && titleLower.includes(nameLower)) {
+          await this.kgRepo.upsertRelation(userId, articleEntity.id, existing.id,
+            'relevant_to', title.slice(0, 80), 'feeds');
+        }
       }
     }
   }
@@ -547,11 +635,97 @@ export class KnowledgeGraphService {
   private async extractFromCharger(userId: string, content: string): Promise<void> {
     const statusMatch = content.match(/(charging|idle|lädt|bereit|standby|aktiv)/i);
     const kwMatch = content.match(/(\d+(?:\.\d+)?)\s*kW/);
+    const carMatch = content.match(/(?:car|auto|fahrzeug)[:\s]*(connected|verbunden|nicht|no|off|on)/i);
     const attrs: Record<string, unknown> = {};
     if (statusMatch) attrs.status = statusMatch[1].toLowerCase();
     if (kwMatch) attrs.power_kw = parseFloat(kwMatch[1]);
+    if (carMatch) attrs.car_connected = /connected|verbunden|on/i.test(carMatch[1]);
     if (Object.keys(attrs).length > 0) {
-      await this.kgRepo.upsertEntity(userId, 'Wallbox', 'item', attrs, 'charger');
+      const wallbox = await this.kgRepo.upsertEntity(userId, 'Wallbox', 'item', attrs, 'charger');
+      // Relation: User → owns → Wallbox
+      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      await this.kgRepo.upsertRelation(userId, user.id, wallbox.id, 'owns', undefined, 'charger');
+    }
+  }
+
+  // ── Cross-Extractor Relation Builder ─────────────────────
+
+  /**
+   * After all extractors run, build semantic relations between entities from different sources.
+   * This is the core of the KG — connecting BMW to Wallbox, Strompreis to Batterie, etc.
+   */
+  private async buildCrossExtractorRelations(userId: string): Promise<void> {
+    try {
+      const { entities } = await this.kgRepo.getFullGraph(userId);
+      if (entities.length < 2) return;
+
+      // Index by type
+      const vehicles = entities.filter(e => e.entityType === 'vehicle');
+      const items = entities.filter(e => e.entityType === 'item');
+      const locations = entities.filter(e => e.entityType === 'location');
+      const metrics = entities.filter(e => e.entityType === 'metric');
+      const events = entities.filter(e => e.entityType === 'event');
+
+      const chargers = items.filter(i => i.sources.includes('charger') || /wallbox|charger|go-e/i.test(i.normalizedName));
+      const batteries = items.filter(i => /batter|victron|speicher|akku/i.test(i.normalizedName) && i.sources.includes('smarthome'));
+      const cryptoItems = items.filter(i => i.sources.includes('crypto'));
+      const feedArticles = events.filter(e => e.attributes?.type === 'feed_article');
+      const homeLocation = locations.find(l => l.attributes?.isHome === true);
+      const energyMetric = metrics.find(m => m.normalizedName === 'strompreis');
+
+      // Rule 1: Vehicle ↔ Charger
+      for (const v of vehicles) {
+        for (const c of chargers) {
+          await this.kgRepo.upsertRelation(userId, v.id, c.id, 'charges_at', undefined, 'cross');
+        }
+      }
+
+      // Rule 2: Vehicle + Charger → Home Location
+      if (homeLocation) {
+        for (const v of vehicles) {
+          await this.kgRepo.upsertRelation(userId, v.id, homeLocation.id, 'home_location', undefined, 'cross');
+        }
+        for (const c of chargers) {
+          await this.kgRepo.upsertRelation(userId, c.id, homeLocation.id, 'located_at', undefined, 'cross');
+        }
+      }
+
+      // Rule 3: Strompreis → affects Charger + Batteries
+      if (energyMetric) {
+        for (const c of chargers) {
+          await this.kgRepo.upsertRelation(userId, energyMetric.id, c.id, 'affects_cost',
+            `${energyMetric.attributes?.price_ct ?? '?'}ct`, 'cross');
+        }
+        for (const b of batteries) {
+          await this.kgRepo.upsertRelation(userId, energyMetric.id, b.id, 'affects_cost',
+            `${energyMetric.attributes?.price_ct ?? '?'}ct`, 'cross');
+        }
+      }
+
+      // Rule 4: Feed articles → relevant_to existing entities (crypto coins, persons, locations)
+      // This catches "Bitcoin" article → BTC entity, "Wien" article → Wien location, etc.
+      const matchableEntities = entities.filter(e =>
+        e.entityType !== 'event' && e.normalizedName.length >= 3 && e.entityType !== 'metric',
+      );
+      for (const article of feedArticles.slice(0, 10)) {
+        const titleLower = article.normalizedName;
+        for (const existing of matchableEntities) {
+          if (titleLower.includes(existing.normalizedName)) {
+            await this.kgRepo.upsertRelation(userId, article.id, existing.id,
+              'relevant_to', article.name.slice(0, 80), 'cross');
+          }
+        }
+      }
+
+      // Rule 5: SmartHome items → Home Location
+      if (homeLocation) {
+        const smItems = items.filter(i => i.sources.includes('smarthome')).slice(0, 5);
+        for (const item of smItems) {
+          await this.kgRepo.upsertRelation(userId, item.id, homeLocation.id, 'located_at', undefined, 'cross');
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'KG: cross-extractor relations partially failed');
     }
   }
 
@@ -601,6 +775,37 @@ export class KnowledgeGraphService {
             }
           }
         }
+      }
+      // 4. Memory patterns → KG (behavioral patterns like "abends aktiv")
+      const patternMems = await this.memoryRepo.getByType(userId, 'pattern', 10);
+      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      for (const mem of patternMems) {
+        if (mem.key.startsWith('temporal_') || mem.key.startsWith('action_feedback_')) continue; // handled below
+        const pattern = await this.kgRepo.upsertEntity(userId, mem.key, 'metric',
+          { type: 'pattern', value: mem.value.slice(0, 100) }, 'patterns');
+        await this.kgRepo.upsertRelation(userId, user.id, pattern.id, 'has_pattern', mem.value.slice(0, 80), 'patterns');
+      }
+
+      // 5. Action feedback → KG (user prefers/dislikes skills)
+      const feedbackMems = await this.memoryRepo.search(userId, 'action_feedback_');
+      for (const mem of feedbackMems.slice(0, 10)) {
+        const skillName = mem.key.replace('action_feedback_', '');
+        if (skillName === 'summary') continue;
+        const rateMatch = mem.value.match(/(\d+)%/);
+        const rate = rateMatch ? parseInt(rateMatch[1], 10) / 100 : undefined;
+        if (rate !== undefined) {
+          const skillEntity = await this.kgRepo.upsertEntity(userId, skillName, 'item',
+            { type: 'skill', acceptanceRate: rate }, 'feedback');
+          const relType = rate >= 0.7 ? 'prefers' : rate < 0.3 ? 'dislikes' : 'neutral_on';
+          await this.kgRepo.upsertRelation(userId, user.id, skillEntity.id, relType, `${Math.round(rate * 100)}%`, 'feedback');
+        }
+      }
+
+      // 6. Memory connections → KG relations (cross-context insights from Active Learning)
+      const connMems = await this.memoryRepo.getByType(userId, 'connection', 20);
+      for (const mem of connMems) {
+        await this.kgRepo.upsertEntity(userId, mem.key, 'event',
+          { type: 'connection', value: mem.value.slice(0, 150) }, 'connections');
       }
     } catch (err) {
       this.logger.debug({ err }, 'KG: memory sync partially failed');
