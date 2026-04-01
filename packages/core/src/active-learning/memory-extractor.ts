@@ -120,6 +120,9 @@ export class MemoryExtractor {
             } catch { /* non-critical */ }
           }
 
+          // Resolve contradictions: if this memory explicitly negates something, delete contradicted memories
+          await this.resolveContradictions(userId, mem);
+
           savedCount++;
           this.logger.info(
             { key: mem.key, type: mem.type, confidence: mem.confidence, expiresAt: eventDate ? 'set' : 'none' },
@@ -190,6 +193,9 @@ export class MemoryExtractor {
           try { await this.memoryRepo.setExpiry(userId, mem.key, expiresAt); } catch { /* non-critical */ }
         }
 
+        // Resolve contradictions in connection path too
+        await this.resolveContradictions(userId, mem);
+
         savedCount++;
         this.logger.info(
           { key: mem.key, type: 'connection', confidence: mem.confidence, expires: eventDate ? 'set' : 'none' },
@@ -200,6 +206,49 @@ export class MemoryExtractor {
       }
     }
     return savedCount;
+  }
+
+  /**
+   * When a high-confidence memory explicitly negates something ("Linus spielt NICHT beim KSV"),
+   * find and delete older memories that contain the contradicted statement.
+   * This prevents stale wrong information from persisting alongside corrections.
+   */
+  private async resolveContradictions(userId: string, mem: ExtractedMemory): Promise<void> {
+    try {
+      // Only for high-confidence memories with explicit negation
+      if (mem.confidence < 0.9) return;
+      const NEGATION_RE = /\b(nicht|not|kein|keine|keinem|keiner|falsch|wrong|korrektur|correction|stimmt nicht|war falsch)\b/i;
+      if (!NEGATION_RE.test(mem.value)) return;
+
+      // Extract entity name from key (e.g., "linus" from "linus_football_club")
+      const keyParts = mem.key.toLowerCase().split('_');
+      const entityName = keyParts.find(p => p.length >= 3 && !/^(connection|fact|pref|pattern|rule|feedback|general|correction)$/.test(p));
+      if (!entityName) return;
+
+      // Extract what is being negated (text after "nicht/not/kein")
+      const negMatch = mem.value.match(/(?:nicht|not|kein|keine)\s+(?:beim?|bei|im|in|am|vom?|zum?)?\s*(.{3,40}?)(?:[.,;!)\]]|\s+[-–]|\s+und\b|\s+oder\b|$)/i);
+      if (!negMatch) return;
+      const negatedTerm = negMatch[1].trim();
+      if (negatedTerm.length < 3) return;
+
+      // Search for memories about the same entity that contain the negated term
+      const candidates = await this.memoryRepo.search(userId, entityName);
+      for (const candidate of candidates) {
+        if (candidate.key === mem.key) continue;
+        if (candidate.confidence >= mem.confidence) continue;
+        // Check if the candidate's value contains the negated term
+        const termToSearch = negatedTerm.toLowerCase().slice(0, 20);
+        if (!candidate.value.toLowerCase().includes(termToSearch)) continue;
+
+        await this.memoryRepo.delete(userId, candidate.key);
+        this.logger.info(
+          { deletedKey: candidate.key, reason: `contradicted by ${mem.key}`, negatedTerm },
+          'Contradictory memory deleted',
+        );
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'resolveContradictions failed (non-critical)');
+    }
   }
 
   /**
