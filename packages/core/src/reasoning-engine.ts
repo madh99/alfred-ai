@@ -310,9 +310,12 @@ ${this.buildTopicInstructions()}`;
     this.markRun();
 
     try {
-      // Distributed dedup: only one node runs reasoning per hour-slot
+      // Distributed dedup: only one node runs reasoning per slot
+      // For half_hourly: include minute bucket (e.g. reasoning:2026-04-01T10:00 vs :30)
       if (this.adapter && this.adapter.type === 'postgres') {
-        const slotKey = `reasoning:${new Date().toISOString().slice(0, 13)}`;
+        const now = new Date();
+        const minuteBucket = now.getMinutes() < 15 ? '00' : '30';
+        const slotKey = `reasoning:${now.toISOString().slice(0, 13)}:${minuteBucket}`;
         const result = await this.adapter.execute(
           'INSERT INTO reasoning_slots (slot_key, node_id, claimed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING',
           [slotKey, this.nodeId, new Date().toISOString()],
