@@ -2841,6 +2841,7 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
 - NICHT raten oder vermuten. Fahrzeug-Akku \u2260 Hausbatterie, RSS \u2260 Monitor.
 - Ber\xFCcksichtige Trends, Feedback und bemerkenswerte Attribute
+- Pr\xFCfe Daten in Memories gegen das aktuelle Datum \u2014 vergangene Events sind KEIN Handlungsbedarf
 - KEINE_INSIGHTS wenn nur Routine-Status ohne Auff\xE4lligkeiten
 - Melden wenn: Handlungsbedarf ODER relevante Info die zum User-Kontext passt
 - Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenh\xE4nge
@@ -2905,6 +2906,13 @@ QUALIT\xC4TSREGELN:
 - KEINE Vermutungen oder Spekulationen \u2014 nur was aus den Daten hervorgeht
 - KEIN Werten von Nutzerverhalten
 
+ZEITLICHE EINORDNUNG (WICHTIG):
+Das aktuelle Datum steht oben im Kontext. Pr\xFCfe bei JEDER Information mit Datum:
+- Liegt das Datum in der VERGANGENHEIT? \u2192 Das ist WISSEN (der User kann danach fragen), aber KEIN aktueller Handlungsbedarf. NICHT als Insight melden.
+- Geburtstage mit vergangenem Datum \u2192 n\xE4chstes Jahr relevant, NICHT "morgen Geburtstag" melden wenn der Tag schon vorbei ist.
+- Vergangene Termine, Events, Deadlines \u2192 IGNORIEREN f\xFCr Insights. Sie sind Erinnerungen, keine offenen Aufgaben.
+- Nur ZUK\xDCNFTIGE Events oder aktuell offene Aufgaben sind Insight-relevant.
+
 VERBINDUNGSKARTE:
 Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als prim\xE4ren Ausgangspunkt.
 
@@ -2943,6 +2951,7 @@ Formuliere daraus Insights. Es gibt ZWEI Insight-Typen:
 KEIN Insight:
 - Routine-Status ohne Auff\xE4lligkeiten ("alles l\xE4uft", "Backup ok", "Batterie stabil")
 - Generische Tipps, Bewertungen des Nutzerverhaltens
+- VERGANGENE Events/Termine aus Memories \u2014 Geburtstage die schon vorbei sind, Termine die vergangen sind, erledigte Aufgaben. Memories sind WISSEN \xFCber die Vergangenheit, kein aktueller Handlungsbedarf.
 
 Bei RSS-Artikeln: Titel + URL + warum relevant (1 Satz).
 Max 5, aber Qualit\xE4t vor Quantit\xE4t. Lieber 2 gute als 5 mittelm\xE4\xDFige.

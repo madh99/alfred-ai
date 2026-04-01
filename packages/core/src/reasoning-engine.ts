@@ -190,6 +190,7 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
 - NICHT raten oder vermuten. Fahrzeug-Akku ≠ Hausbatterie, RSS ≠ Monitor.
 - Berücksichtige Trends, Feedback und bemerkenswerte Attribute
+- Prüfe Daten in Memories gegen das aktuelle Datum — vergangene Events sind KEIN Handlungsbedarf
 - KEINE_INSIGHTS wenn nur Routine-Status ohne Auffälligkeiten
 - Melden wenn: Handlungsbedarf ODER relevante Info die zum User-Kontext passt
 - Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
@@ -584,6 +585,13 @@ QUALITÄTSREGELN:
 - KEINE Vermutungen oder Spekulationen — nur was aus den Daten hervorgeht
 - KEIN Werten von Nutzerverhalten
 
+ZEITLICHE EINORDNUNG (WICHTIG):
+Das aktuelle Datum steht oben im Kontext. Prüfe bei JEDER Information mit Datum:
+- Liegt das Datum in der VERGANGENHEIT? → Das ist WISSEN (der User kann danach fragen), aber KEIN aktueller Handlungsbedarf. NICHT als Insight melden.
+- Geburtstage mit vergangenem Datum → nächstes Jahr relevant, NICHT "morgen Geburtstag" melden wenn der Tag schon vorbei ist.
+- Vergangene Termine, Events, Deadlines → IGNORIEREN für Insights. Sie sind Erinnerungen, keine offenen Aufgaben.
+- Nur ZUKÜNFTIGE Events oder aktuell offene Aufgaben sind Insight-relevant.
+
 VERBINDUNGSKARTE:
 Die Section "VERBINDUNGSKARTE" zeigt STRUKTURIERT welche Entities in MEHREREN Datenquellen vorkommen. Nutze sie als primären Ausgangspunkt.
 
@@ -630,6 +638,7 @@ Formuliere daraus Insights. Es gibt ZWEI Insight-Typen:
 KEIN Insight:
 - Routine-Status ohne Auffälligkeiten ("alles läuft", "Backup ok", "Batterie stabil")
 - Generische Tipps, Bewertungen des Nutzerverhaltens
+- VERGANGENE Events/Termine aus Memories — Geburtstage die schon vorbei sind, Termine die vergangen sind, erledigte Aufgaben. Memories sind WISSEN über die Vergangenheit, kein aktueller Handlungsbedarf.
 
 Bei RSS-Artikeln: Titel + URL + warum relevant (1 Satz).
 Max 5, aber Qualität vor Quantität. Lieber 2 gute als 5 mittelmäßige.
