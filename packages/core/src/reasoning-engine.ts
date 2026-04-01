@@ -474,9 +474,13 @@ ${this.buildTopicInstructions()}`;
   }
 
   private async enrichWithKnowledgeGraph(ctx: CollectedContext): Promise<void> {
-    if (!this.kgService) return;
+    if (!this.kgService) {
+      this.logger.debug('KG: kgService is undefined, skipping');
+      return;
+    }
     try {
       const userId = await this.resolveUserId();
+      this.logger.info({ userId, sections: ctx.sections.length }, 'KG: starting ingest');
       await this.kgService.ingest(userId, ctx.sections);
       const connectionMap = await this.kgService.buildConnectionMap(userId);
       if (connectionMap) {
@@ -489,8 +493,9 @@ ${this.buildTopicInstructions()}`;
           changed: true,
         });
       }
+      this.logger.info({ connectionMap: connectionMap?.slice(0, 200) ?? 'empty' }, 'KG: ingest + connectionMap done');
     } catch (err) {
-      this.logger.warn({ err }, 'Knowledge graph enrichment failed, using raw sections');
+      this.logger.error({ err }, 'KG: enrichment FAILED');
     }
   }
 
