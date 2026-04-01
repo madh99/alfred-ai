@@ -79,7 +79,7 @@ export function KnowledgeGraphPage() {
 
   useEffect(() => {
     fetchData();
-    const timer = setInterval(fetchData, 60_000); // refresh every 60s
+    const timer = setInterval(fetchData, 60_000);
     return () => clearInterval(timer);
   }, [fetchData]);
 
@@ -126,6 +126,15 @@ export function KnowledgeGraphPage() {
 
     return { nodes, links };
   }, [entities, relations, filterType, searchQuery]);
+
+  // Configure force engine for better spread after data loads
+  useEffect(() => {
+    if (graphRef.current) {
+      graphRef.current.d3Force('charge')?.strength(-200);
+      graphRef.current.d3Force('link')?.distance(80);
+      graphRef.current.d3Force('center')?.strength(0.05);
+    }
+  }, [graphData]);
 
   // Stats
   const stats = useMemo(() => {
@@ -223,45 +232,62 @@ export function KnowledgeGraphPage() {
             <ForceGraph2D
               ref={graphRef}
               graphData={graphData}
-              nodeLabel={(node: any) => `${node.name} [${node.entityType}]`}
+              // Force parameters: spread nodes out, don't cluster
+              d3AlphaDecay={0.02}
+              d3VelocityDecay={0.3}
+              dagMode={undefined}
+              warmupTicks={50}
+              cooldownTicks={100}
+              // Node interaction
+              enableNodeDrag={true}
+              onNodeDragEnd={(node: any) => { node.fx = node.x; node.fy = node.y; }}
+              nodeLabel={(node: any) => `${node.name} [${node.entityType}]\nConfidence: ${(node.confidence * 100).toFixed(0)}% | Mentions: ${node.mentionCount}`}
               nodeColor={(node: any) => node.color}
               nodeRelSize={4}
               nodeVal={(node: any) => node.val}
-              linkLabel={(link: any) => link.relationType}
-              linkColor={() => '#333333'}
-              linkWidth={(link: any) => Math.max(0.5, link.strength * 2)}
-              linkDirectionalArrowLength={4}
-              linkDirectionalArrowRelPos={0.9}
+              // Link styling
+              linkLabel={(link: any) => `${link.relationType} (${(link.strength * 100).toFixed(0)}%)`}
+              linkColor={(link: any) => selectedLink?.id === link.id ? '#60a5fa' : '#444444'}
+              linkWidth={(link: any) => selectedLink?.id === link.id ? 3 : Math.max(0.5, link.strength * 2)}
+              linkDirectionalArrowLength={5}
+              linkDirectionalArrowRelPos={0.85}
+              linkDirectionalParticles={(link: any) => link.strength > 0.7 ? 2 : 0}
+              linkDirectionalParticleWidth={2}
+              linkDirectionalParticleColor={() => '#60a5fa'}
+              // Events
               onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); }}
               onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); }}
+              onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); }}
               backgroundColor="#0a0a0a"
+              // Custom node rendering
+              nodeCanvasObjectMode={() => 'replace'}
               nodeCanvasObject={(node: any, ctx: any, globalScale: number) => {
-                const label = node.name.length > 20 ? node.name.slice(0, 18) + '...' : node.name;
-                const fontSize = Math.max(10, 12 / globalScale);
-                ctx.font = `${fontSize}px sans-serif`;
+                const label = node.name.length > 25 ? node.name.slice(0, 23) + '...' : node.name;
+                const size = node.val * 1.5;
 
                 // Node circle
-                const size = node.val * 1.5;
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, size, 0, 2 * Math.PI);
                 ctx.fillStyle = node.color;
-                ctx.globalAlpha = 0.8;
+                ctx.globalAlpha = selectedNode?.id === node.id ? 1 : 0.75;
                 ctx.fill();
                 ctx.globalAlpha = 1;
 
-                // Selected highlight
+                // Selected highlight ring
                 if (selectedNode?.id === node.id) {
                   ctx.strokeStyle = '#ffffff';
-                  ctx.lineWidth = 2;
+                  ctx.lineWidth = 2.5;
                   ctx.stroke();
                 }
 
-                // Label
-                if (globalScale > 0.7) {
+                // Label — only show when zoomed in enough or for selected/hovered
+                if (globalScale > 1.5 || selectedNode?.id === node.id || node.mentionCount > 5) {
+                  const fontSize = Math.max(9, 11 / globalScale);
+                  ctx.font = `${fontSize}px sans-serif`;
                   ctx.textAlign = 'center';
                   ctx.textBaseline = 'top';
-                  ctx.fillStyle = '#e5e7eb';
-                  ctx.fillText(label, node.x, node.y + size + 2);
+                  ctx.fillStyle = selectedNode?.id === node.id ? '#ffffff' : '#c0c0c0';
+                  ctx.fillText(label, node.x, node.y + size + 3);
                 }
               }}
             />
