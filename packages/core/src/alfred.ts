@@ -1497,6 +1497,36 @@ export class Alfred {
       }
     }
 
+    // Wire Knowledge Graph API on HTTP adapter
+    {
+      const apiAdapter = this.adapters.get('api');
+      const dbAdapter = this.database.getAdapter();
+      if (apiAdapter && 'setKnowledgeGraphCallbacks' in apiAdapter) {
+        const kgRepoForApi = new KnowledgeGraphRepository(dbAdapter);
+        (apiAdapter as any).setKnowledgeGraphCallbacks({
+          getGraph: async (userId?: string) => {
+            const uid = userId ?? this.config.security?.ownerUserId ?? '';
+            try {
+              const user = await this.userRepo!.findOrCreate('telegram' as any, uid);
+              const resolvedId = user.masterUserId ?? user.id;
+              return kgRepoForApi.getFullGraph(resolvedId);
+            } catch {
+              return kgRepoForApi.getFullGraph(uid);
+            }
+          },
+          deleteEntity: async (entityId: string) => {
+            const result = await dbAdapter.execute('DELETE FROM kg_entities WHERE id = ?', [entityId]);
+            return result.changes > 0;
+          },
+          deleteRelation: async (relationId: string) => {
+            const result = await dbAdapter.execute('DELETE FROM kg_relations WHERE id = ?', [relationId]);
+            return result.changes > 0;
+          },
+        });
+        this.logger.info('Knowledge Graph API registered');
+      }
+    }
+
     // Startup cleanup — retain audit/summary/activity/usage data
     try {
       const cleaned = {

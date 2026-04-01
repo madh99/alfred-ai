@@ -102,4 +102,61 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Health: HTTP ${res.status}`);
     return res.json();
   }
+
+  async fetchKnowledgeGraph(userId?: string): Promise<{ entities: KGEntity[]; relations: KGRelation[] }> {
+    const params = userId ? `?userId=${userId}` : '';
+    const res = await fetch(`${this.baseUrl}/api/knowledge-graph${params}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`KG: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async deleteKgEntity(entityId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/knowledge-graph/entity/${entityId}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
+  async deleteKgRelation(relationId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+}
+
+export interface KGEntity {
+  id: string;
+  userId: string;
+  name: string;
+  normalizedName: string;
+  entityType: string;
+  attributes: Record<string, unknown>;
+  sources: string[];
+  confidence: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  mentionCount: number;
+}
+
+export interface KGRelation {
+  id: string;
+  userId: string;
+  sourceEntityId: string;
+  targetEntityId: string;
+  relationType: string;
+  strength: number;
+  context: string | null;
+  sourceSection: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  mentionCount: number;
 }

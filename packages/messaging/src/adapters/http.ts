@@ -71,6 +71,9 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly healthCheckFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   private readonly metricsFn?: () => string | Promise<string>;
   private readonly dashboardFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  private knowledgeGraphFn?: (userId?: string) => Promise<{ entities: any[]; relations: any[] }>;
+  private knowledgeGraphDeleteEntityFn?: (entityId: string) => Promise<boolean>;
+  private knowledgeGraphDeleteRelationFn?: (relationId: string) => Promise<boolean>;
   private readonly webUiPath?: string;
   private readonly tls?: TlsOptions;
   private readonly authCb?: HttpAdapterOptions['authCallback'];
@@ -109,6 +112,16 @@ export class HttpAdapter extends MessagingAdapter {
 
   registerOAuthCallback(service: string, handler: (code: string, state: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>): void {
     this.oauthCallbacks.set(service, handler);
+  }
+
+  setKnowledgeGraphCallbacks(opts: {
+    getGraph: (userId?: string) => Promise<{ entities: any[]; relations: any[] }>;
+    deleteEntity: (entityId: string) => Promise<boolean>;
+    deleteRelation: (relationId: string) => Promise<boolean>;
+  }): void {
+    this.knowledgeGraphFn = opts.getGraph;
+    this.knowledgeGraphDeleteEntityFn = opts.deleteEntity;
+    this.knowledgeGraphDeleteRelationFn = opts.deleteRelation;
   }
 
   async connect(): Promise<void> {
@@ -345,6 +358,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMessage(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/dashboard' && req.method === 'GET') {
       this.handleDashboard(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/knowledge-graph' && req.method === 'GET') {
+      this.handleKnowledgeGraph(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/knowledge-graph/entity/') && req.method === 'DELETE') {
+      this.handleKgDeleteEntity(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'DELETE') {
+      this.handleKgDeleteRelation(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
@@ -573,6 +592,48 @@ export class HttpAdapter extends MessagingAdapter {
       'Cache-Control': 'no-cache',
     });
     fs.createReadStream(filePath).pipe(res);
+  }
+
+  // ── Knowledge Graph API ─────────────────────────────────
+
+  private async handleKnowledgeGraph(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.knowledgeGraphFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Knowledge graph not configured' })); return;
+    }
+    try {
+      // Admin can pass ?userId= to view other users' KGs
+      const url = new URL(req.url!, `http://${req.headers.host}`);
+      const requestedUserId = url.searchParams.get('userId') ?? undefined;
+      const data = await this.knowledgeGraphFn(requestedUserId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(data));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Knowledge graph fetch failed' }));
+    }
+  }
+
+  private async handleKgDeleteEntity(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.knowledgeGraphDeleteEntityFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const entityId = url.pathname.split('/').pop()!;
+    const ok = await this.knowledgeGraphDeleteEntityFn(entityId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleKgDeleteRelation(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.knowledgeGraphDeleteRelationFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const relationId = url.pathname.split('/').pop()!;
+    const ok = await this.knowledgeGraphDeleteRelationFn(relationId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
   }
 
   private safeError(res: http.ServerResponse, err: unknown): void {
