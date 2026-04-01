@@ -501,10 +501,12 @@ export class KnowledgeGraphService {
       // Skip unavailable/unknown states
       if (st === 'unavailable' || st === 'unknown') continue;
 
-      // Use friendly_name as entity name (human-readable), fallback to entity_id
-      const name = friendlyName.trim() !== '-' && friendlyName.trim().length > 1
-        ? friendlyName.trim()
-        : eid;
+      // Use friendly_name as entity name (human-readable)
+      const fn = friendlyName.trim();
+      // Skip entities with no useful name (just "-", hex IDs, or very short)
+      if (fn === '-' || fn.length < 2) continue;
+      if (/^0x[0-9a-f]+$/i.test(fn)) continue; // Zigbee hex ID
+      const name = fn;
 
       const attrs: Record<string, unknown> = { entity_id: eid, state: st };
       if (unit.trim() !== '-' && unit.trim().length > 0) attrs.unit = unit.trim();
@@ -671,13 +673,19 @@ export class KnowledgeGraphService {
   }
 
   private async extractPersons(userId: string, sectionKey: string, content: string): Promise<void> {
+    // Skip person extraction from feeds/RSS (article titles contain no reliable person-preposition patterns)
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
+
     for (const pattern of PERSON_PATTERNS) {
       pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         const name = match[1].trim();
-        // Filter out common German words that might be capitalized after prepositions
-        if (name.length < 2 || /^(Dem|Der|Das|Den|Die|Ein|Eine|Einer|Seinem|Seiner|Ihrem|Ihrer)$/i.test(name)) continue;
+        // Filter out common German words, articles, and non-person nouns
+        if (name.length < 3) continue;
+        if (/^(Dem|Der|Das|Den|Die|Ein|Eine|Einer|Seinem|Seiner|Ihrem|Ihrer|Allem|Allen|Anderen|Beiden|Dieser|Diesem|Diesen|Jeder|Jedem|Jeden|Keinem|Keinen|Seiner)$/i.test(name)) continue;
+        // Filter plural nouns and abstract concepts (end in -en, -ung, -keit, -heit, -tion, -mus)
+        if (/(?:en|ung|keit|heit|tion|mus|nen|ngen|ffen|sten|ssen)$/i.test(name) && name.length > 5) continue;
         await this.kgRepo.upsertEntity(userId, name, 'person', {}, sectionKey);
       }
     }

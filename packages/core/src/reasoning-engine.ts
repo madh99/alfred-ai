@@ -276,9 +276,13 @@ ${this.buildTopicInstructions()}`;
         if (minute === 0 && this.lastRunHour !== hour) return true;
         return false;
 
-      case 'half_hourly':
-        if ((minute <= 1 || (minute >= 30 && minute <= 31)) && this.lastRunHour !== hour * 100 + (minute < 2 ? 0 : 30)) return true;
+      case 'half_hourly': {
+        const inWindow = minute <= 1 || (minute >= 30 && minute <= 31);
+        const slotId = hour * 100 + (minute < 2 ? 0 : 30);
+        const notRun = this.lastRunHour !== slotId;
+        if (inWindow && notRun) return true;
         return false;
+      }
 
       default:
         return false;
@@ -288,7 +292,9 @@ ${this.buildTopicInstructions()}`;
   private markRun(): void {
     const now = new Date();
     if (this.schedule === 'half_hourly') {
-      this.lastRunHour = now.getHours() * 100 + now.getMinutes();
+      // Store the SLOT id (rounded to :00 or :30), not the exact minute
+      const minute = now.getMinutes();
+      this.lastRunHour = now.getHours() * 100 + (minute < 15 ? 0 : 30);
     } else {
       this.lastRunHour = now.getHours();
     }
@@ -448,11 +454,25 @@ ${this.buildTopicInstructions()}`;
    * Ingest entities/relations from sections into the persistent KG,
    * then add the connection map as a Priority-1 section.
    */
+  private resolvedUserId?: string;
+
+  private async resolveUserId(): Promise<string> {
+    if (this.resolvedUserId) return this.resolvedUserId;
+    try {
+      const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId);
+      this.resolvedUserId = user.masterUserId ?? user.id;
+    } catch {
+      this.resolvedUserId = this.defaultChatId;
+    }
+    return this.resolvedUserId;
+  }
+
   private async enrichWithKnowledgeGraph(ctx: CollectedContext): Promise<void> {
     if (!this.kgService) return;
     try {
-      await this.kgService.ingest(this.defaultChatId, ctx.sections);
-      const connectionMap = await this.kgService.buildConnectionMap(this.defaultChatId);
+      const userId = await this.resolveUserId();
+      await this.kgService.ingest(userId, ctx.sections);
+      const connectionMap = await this.kgService.buildConnectionMap(userId);
       if (connectionMap) {
         ctx.sections.push({
           key: 'knowledge_graph',

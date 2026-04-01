@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.261] - 2026-04-01
+
+### Fixed
+- **KG: masterUserId in enrichWithKnowledgeGraph** — `ingest()` und `buildConnectionMap()` nutzten `defaultChatId` statt masterUserId. KG-Entities wurden unter falscher User-ID gespeichert → Relations konnten nicht erstellt werden (0 Relations bei 152 Entities). Fix: `resolveUserId()` cached in ReasoningEngine.
+- **half_hourly: markRun() Slot-Rounding** — `markRun()` speicherte die exakte Minute statt den gerundeten Slot (:00 oder :30). Bei bestimmten Timer-Offsets konnte der :30 Slot übersprungen werden. Fix: Minute wird auf 0 oder 30 gerundet.
+- **KG: Person-Extraktor filtert RSS-Feeds** — Generischer Person-Extraktor lief auf feeds/infra/activity Sections und extrahierte RSS-Artikeltitel als Personen ("Cyberangriffen", "Investoren"). Fix: Diese Sections werden übersprungen. Zusätzlich: Plural-Nomen (-en, -ung, -keit, -heit, -tion, -mus) werden gefiltert.
+- **KG: SmartHome Zigbee-ID Filter** — Entities mit hex-IDs (`0xa4c13800ac483d44`) oder Name "-" werden jetzt gefiltert statt als Items gespeichert.
+- **Müll-Entities bereinigt** — 91 falsche Entities (Personen aus RSS, Zigbee-IDs, "-") aus DB gelöscht.
+
 ## [0.19.0-multi-ha.260] - 2026-03-31
 
 ### Fixed
