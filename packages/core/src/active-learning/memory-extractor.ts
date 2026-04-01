@@ -111,9 +111,18 @@ export class MemoryExtractor {
               .catch(err => this.logger.debug({ err }, 'Auto-embed failed'));
           }
 
+          // If the memory value contains a specific date, set expiresAt so it auto-cleans after the event
+          const eventDate = this.extractEventDate(mem.value);
+          if (eventDate) {
+            const expiresAt = new Date(eventDate.getTime() + 24 * 60 * 60_000).toISOString(); // expires 24h after event
+            try {
+              await this.memoryRepo.setExpiry(userId, mem.key, expiresAt);
+            } catch { /* non-critical */ }
+          }
+
           savedCount++;
           this.logger.info(
-            { key: mem.key, type: mem.type, confidence: mem.confidence },
+            { key: mem.key, type: mem.type, confidence: mem.confidence, expiresAt: eventDate ? 'set' : 'none' },
             'Auto-extracted memory saved',
           );
         } catch (err) {
@@ -184,6 +193,27 @@ export class MemoryExtractor {
       }
     }
     return savedCount;
+  }
+
+  /**
+   * Extract a specific event date from memory value text.
+   * Recognizes: "29.03.2026", "2026-03-29", "March 29, 2026", "29. März 2026"
+   * Returns the date if found and it's within the next year, null otherwise.
+   */
+  private extractEventDate(value: string): Date | null {
+    // DD.MM.YYYY
+    const deMatch = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    if (deMatch) {
+      const d = new Date(parseInt(deMatch[3]), parseInt(deMatch[2]) - 1, parseInt(deMatch[1]));
+      if (!isNaN(d.getTime())) return d;
+    }
+    // YYYY-MM-DD
+    const isoMatch = value.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+      if (!isNaN(d.getTime())) return d;
+    }
+    return null;
   }
 
   private parseResponse(content: string): ExtractedMemory[] {

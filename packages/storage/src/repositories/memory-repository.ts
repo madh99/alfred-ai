@@ -94,6 +94,14 @@ export class MemoryRepository {
     return entry;
   }
 
+  /** Set expiry date on a memory (for time-bound events). */
+  async setExpiry(userId: string, key: string, expiresAt: string): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE memories SET expires_at = ? WHERE user_id = ? AND key = ?',
+      [expiresAt, userId, key],
+    );
+  }
+
   async cleanupExpired(): Promise<number> {
     const now = new Date().toISOString();
     const result = await this.adapter.execute(
