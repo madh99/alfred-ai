@@ -280,6 +280,9 @@ ${this.buildTopicInstructions()}`;
         const inWindow = minute <= 1 || (minute >= 30 && minute <= 31);
         const slotId = hour * 100 + (minute < 2 ? 0 : 30);
         const notRun = this.lastRunHour !== slotId;
+        if (inWindow) {
+          this.logger.debug({ hour, minute, slotId, lastRunHour: this.lastRunHour, notRun }, 'half_hourly shouldRun check');
+        }
         if (inWindow && notRun) return true;
         return false;
       }
