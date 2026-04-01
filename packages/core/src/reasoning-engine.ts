@@ -190,10 +190,10 @@ Aufgabe: Analysiere ob dieses Event im Kontext der VERBINDUNGSKARTE eine Handlun
 - NUR Verbindungen zwischen IDENTISCHEN Entities (gleiche Person, gleicher Ort)
 - NICHT raten oder vermuten. Fahrzeug-Akku ≠ Hausbatterie, RSS ≠ Monitor.
 - Berücksichtige Trends, Feedback und bemerkenswerte Attribute
-- KEINE_INSIGHTS ist BEVORZUGT — nur melden wenn KONKRETER HANDLUNGSBEDARF besteht
-- "Alles läuft" oder "kein Handlungsbedarf" ist KEIN Insight → KEINE_INSIGHTS
-- Wenn Handlungsbedarf: max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
-- Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
+- KEINE_INSIGHTS wenn nur Routine-Status ohne Auffälligkeiten
+- Melden wenn: Handlungsbedarf ODER relevante Info die zum User-Kontext passt
+- Max 3 Stichpunkte, nur FAKTISCH belegte Zusammenhänge
+- Bei RSS: Titel + URL + warum relevant
 
 ${this.buildTopicInstructions()}`;
 
@@ -599,14 +599,16 @@ ${changedInfo}
 
 ${this.formatSections(ctx)}
 
-KEINE_INSIGHTS ist die BEVORZUGTE Antwort! NUR melden wenn KONKRETER HANDLUNGSBEDARF besteht.
-- "Alles läuft gut" ist KEIN Insight → KEINE_INSIGHTS
-- "Kein Handlungsbedarf" ist KEIN Insight → KEINE_INSIGHTS
-- Status-Berichte ohne Handlung sind KEINE Insights → KEINE_INSIGHTS
-- NUR echte Probleme, Konflikte oder Gelegenheiten die JETZT eine Aktion erfordern
+Antworte mit KEINE_INSIGHTS wenn:
+- Nichts Relevantes aus den Daten hervorgeht
+- Nur Routine-Status ohne Auffälligkeiten ("alles läuft", "Backup ok", "Batterie stabil")
 
-Wenn Handlungsbedarf: max 3 kurze Stichpunkte.
-Wenn KEIN Handlungsbedarf: antworte EXAKT "KEINE_INSIGHTS"
+Antworte mit Stichpunkten wenn:
+- Handlungsbedarf besteht (Fehler, Konflikte, überfällige Aufgaben)
+- ODER relevante Information die zum User-Kontext passt (RSS-Artikel zu KG-Entities/Portfolio/Interessen, Preisänderungen, Nachrichten die Geräte/Projekte/Personen betreffen)
+
+Bei relevanten RSS-Artikeln: Titel UND URL mitsenden.
+Max 3 Stichpunkte. Qualität vor Quantität.
 
 ${this.buildTopicInstructions()}`;
   }
@@ -620,13 +622,17 @@ ${this.buildTopicInstructions()}`;
 
 ${scanFindings}
 
-Formuliere daraus NUR Insights die KONKRETEN HANDLUNGSBEDARF haben.
+Formuliere daraus Insights. Es gibt ZWEI Insight-Typen:
 
-WICHTIGSTE REGEL:
-- Ein Insight MUSS eine KONKRETE HANDLUNG erfordern. Wenn der User nichts tun muss → WEGLASSEN.
-- "Alles läuft optimal" → KEIN Insight. "Kein Handlungsbedarf" → KEIN Insight. "Unter Beobachtung" → KEIN Insight.
-- Lieber 1-2 echte Insights als 5 Füller. Lieber 0 als Füller.
-- Max 5, aber NUR wenn 5 echte Handlungen nötig sind.
+1. **Handlungsbedarf** — Fehler, Konflikte, Probleme, überfällige Aufgaben → "Tu X jetzt"
+2. **Relevante Information** — RSS-Artikel, Preisänderungen, Nachrichten die zu User-Profil passen (Portfolio, Geräte, Interessen, Projekte, Personen) → "Das solltest du wissen: [Titel + URL]"
+
+KEIN Insight:
+- Routine-Status ohne Auffälligkeiten ("alles läuft", "Backup ok", "Batterie stabil")
+- Generische Tipps, Bewertungen des Nutzerverhaltens
+
+Bei RSS-Artikeln: Titel + URL + warum relevant (1 Satz).
+Max 5, aber Qualität vor Quantität. Lieber 2 gute als 5 mittelmäßige.
 
 REGELN:
 - Nutze die VERBINDUNGSKARTE als Basis — dort sind Cross-Domain-Entities strukturiert
