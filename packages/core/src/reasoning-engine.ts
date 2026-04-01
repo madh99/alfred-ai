@@ -13,6 +13,7 @@ import type {
   UserRepository,
   FeedbackRepository,
   AsyncDbAdapter,
+  WorkflowRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import type { ActivityLogger } from './activity-logger.js';
@@ -106,6 +107,7 @@ export class ReasoningEngine {
     private readonly insightTracker?: InsightTracker,
     collector?: ReasoningContextCollector,
     private readonly kgService?: KnowledgeGraphService,
+    private readonly workflowRepo?: WorkflowRepository,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -117,7 +119,7 @@ export class ReasoningEngine {
       this.calendarProvider, this.todoRepo, this.watchRepo,
       this.memoryRepo, this.activityRepo, this.skillHealthRepo,
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
-      this.defaultLocation, this.logger,
+      this.defaultLocation, this.logger, this.workflowRepo,
     );
   }
 
@@ -675,13 +677,20 @@ ${this.formatSections(ctx)}
 ${enrichedSection}
 ${this.confirmationQueue ? `
 === AKTIONEN ===
-Wenn du eine sinnvolle, sofort ausführbare Aktion erkennst, kannst du sie vorschlagen.
-Regeln: Max 2 Aktionen, nur wenn JETZT sinnvoll (nicht hypothetisch).
-Aktionstypen: "execute_skill" (Skill ausführen) oder "create_reminder" (Erinnerung anlegen).
-Format: nach deinen Text-Insights, trenne mit "${ACTION_MARKER}", dann ein JSON-Array:
-${ACTION_MARKER}
-[{"type":"execute_skill","description":"Wallbox ein (Strom <5ct, BMW 45%)","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}]
-Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg.` : ''}`;
+Du kannst Aktionen vorschlagen. Max 5. Nur wenn JETZT sinnvoll.
+Alle nutzen type: "execute_skill". Format: nach Text-Insights, trenne mit "${ACTION_MARKER}", dann JSON-Array.
+
+AKTIONSTYPEN:
+1. Skill direkt ausführen: {"type":"execute_skill","description":"...","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}
+2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[{"skillName":"...","inputMapping":{...},"onError":"skip"}]}}
+3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
+4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
+5. Erinnerung: {"type":"create_reminder","description":"...","skillName":"reminder","skillParams":{"action":"create","title":"...","due":"2026-04-02T09:00:00"}}
+
+SICHERHEIT:
+- Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
+- Workflows + Delegate erfordern User-Bestätigung
+- Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}`;
   }
 
   private buildEventDetailPrompt(
@@ -707,7 +716,7 @@ Formuliere daraus max 2 konkrete, actionable Insights.
 
 ${this.formatSections(ctx)}
 ${enrichedSection}
-${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, trenne mit "${ACTION_MARKER}" und hänge JSON an.` : ''}`;
+${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Watch, Workflow, Delegate), trenne mit "${ACTION_MARKER}" und hänge JSON-Array an. Max 5 Aktionen.` : ''}`;
   }
 
   // ── Dedup & Parsing ─────────────────────────────────────────
@@ -813,7 +822,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist, trenne mi
 
     const autonomyLevel = await this.getAutonomyLevel();
 
-    const limit = actions.slice(0, 2);
+    const limit = actions.slice(0, 5);
     for (const action of limit) {
       if (await this.actionWasRecentlyProposed(action)) {
         this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');

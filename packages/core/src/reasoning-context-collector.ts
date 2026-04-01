@@ -8,6 +8,7 @@ import type {
   SkillHealthRepository,
   FeedbackRepository,
   UserRepository,
+  WorkflowRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -73,6 +74,7 @@ export class ReasoningContextCollector {
     private readonly defaultPlatform: Platform,
     private readonly defaultLocation: string | undefined,
     private readonly logger: Logger,
+    private readonly workflowRepo?: WorkflowRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -165,6 +167,14 @@ export class ReasoningContextCollector {
       { key: 'watches', label: 'Aktive Watches', priority: 1, maxTokens: 300, fetch: () => this.fetchWatches() },
       { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 500, fetch: () => this.fetchMemories() },
     );
+
+    // Aktive Workflows (für Dedup — LLM sieht welche Workflows existieren)
+    if (this.workflowRepo) {
+      defs.push({
+        key: 'workflows', label: 'Aktive Workflows', priority: 2, maxTokens: 200,
+        fetch: () => this.fetchWorkflows(),
+      });
+    }
 
     // ── Priority 2: Skill-based (only if registered) ──────────
     // Weather with dynamic location resolution (from config → memories → skip)
@@ -545,6 +555,22 @@ export class ReasoningContextCollector {
 
   private async fetchFeeds(): Promise<string> {
     return this.fetchWithTimeout('feed_reader', { action: 'check_all' }, 25_000);
+  }
+
+  private async fetchWorkflows(): Promise<string> {
+    if (!this.workflowRepo) return 'Keine Workflow-Daten.';
+    try {
+      const workflows = await this.workflowRepo.findByUser(this.resolvedUserId!);
+      if (workflows.length === 0) return 'Keine aktiven Workflows.';
+      return workflows.map((w: any) => {
+        const stepNames = (w.steps ?? []).map((s: any) => s.skillName || s.type || '?').join(' → ');
+        const enabled = w.enabled !== false ? '✅' : '❌';
+        return `- ${enabled} "${w.name}" (${stepNames})`;
+      }).join('\n');
+    } catch (err) {
+      this.logger.warn({ err }, 'ReasoningCollector: workflow fetch failed');
+      return '(Workflow-Abfrage fehlgeschlagen)';
+    }
   }
 
   private async fetchWeather(): Promise<string> {

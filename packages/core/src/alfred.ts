@@ -1124,6 +1124,7 @@ export class Alfred {
           insightTracker,
           undefined, // collector (auto-created internally)
           kgServiceInstance,
+          workflowRepo,
         );
       }
     }
