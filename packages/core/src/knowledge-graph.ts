@@ -417,8 +417,9 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromVehicle(userId: string, content: string): Promise<void> {
-    const batteryMatch = content.match(/(?:Battery|Akku|SoC)[:\s]*(\d+)\s*%/i);
-    const rangeMatch = content.match(/(?:Range|Reichweite)[:\s]*(\d+)\s*km/i);
+    // BMW display format: "**Ladestand (SoC):** 60 %" / "**Elektrische Reichweite:** 212 km"
+    const batteryMatch = content.match(/(?:Battery|Akku|SoC)\)?[*:\s]*(\d+)\s*%/i);
+    const rangeMatch = content.match(/(?:Range|Reichweite)\)?[*:\s]*(\d+)\s*km/i);
     const chargingMatch = content.match(/(?:charging|lädt|connected|verbunden)/i);
 
     if (batteryMatch || rangeMatch) {
