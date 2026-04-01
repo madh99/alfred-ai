@@ -111,10 +111,10 @@ export class MemoryExtractor {
               .catch(err => this.logger.debug({ err }, 'Auto-embed failed'));
           }
 
-          // If the memory value contains a specific date, set expiresAt so it auto-cleans after the event
-          const eventDate = this.extractEventDate(mem.value);
+          // If the memory describes a TIME-BOUND EVENT with a future date, set expiresAt
+          const eventDate = this.extractFutureEventDate(mem);
           if (eventDate) {
-            const expiresAt = new Date(eventDate.getTime() + 24 * 60 * 60_000).toISOString(); // expires 24h after event
+            const expiresAt = new Date(eventDate.getTime() + 24 * 60 * 60_000).toISOString();
             try {
               await this.memoryRepo.setExpiry(userId, mem.key, expiresAt);
             } catch { /* non-critical */ }
@@ -196,24 +196,55 @@ export class MemoryExtractor {
   }
 
   /**
-   * Extract a specific event date from memory value text.
-   * Recognizes: "29.03.2026", "2026-03-29", "March 29, 2026", "29. März 2026"
-   * Returns the date if found and it's within the next year, null otherwise.
+   * Detect if a memory describes a TIME-BOUND EVENT with a FUTURE date.
+   * Returns the event date only if ALL conditions are met:
+   * 1. Memory type is 'connection', 'moment', or 'general' (NOT fact, entity, preference, relationship)
+   * 2. Key or value contains event-like words (match, training, termin, meeting, conflict, etc.)
+   * 3. The date is in the future (or max 7 days in the past — recently expired events)
+   *
+   * NEVER sets expiresAt on: birthdays, employment dates, historical facts, addresses.
    */
-  private extractEventDate(value: string): Date | null {
+  private extractFutureEventDate(mem: ExtractedMemory): Date | null {
+    // Only time-bound types — NEVER expire facts, entities, preferences, relationships
+    const EXPIRABLE_TYPES: string[] = ['connection', 'moment', 'general'];
+    if (!EXPIRABLE_TYPES.includes(mem.type)) return null;
+
+    // Key or value must contain event-like words
+    const combined = `${mem.key} ${mem.value}`.toLowerCase();
+    const EVENT_WORDS = /match|training|termin|meeting|event|conflict|spiel|turnier|fahrt|reise|abfahrt|ankunft|fällig|deadline|appointment|kickoff|session/;
+    if (!EVENT_WORDS.test(combined)) return null;
+
+    // Must NOT contain birthday/permanent-fact words
+    const PERMANENT_WORDS = /geboren|birthday|geburtstag|geb\.|seit|employment|hired|angestellt|adresse|address|wohnt|lebt/;
+    if (PERMANENT_WORDS.test(combined)) return null;
+
+    // Extract date
+    let date: Date | null = null;
+
     // DD.MM.YYYY
-    const deMatch = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+    const deMatch = mem.value.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
     if (deMatch) {
       const d = new Date(parseInt(deMatch[3]), parseInt(deMatch[2]) - 1, parseInt(deMatch[1]));
-      if (!isNaN(d.getTime())) return d;
+      if (!isNaN(d.getTime())) date = d;
     }
+
     // YYYY-MM-DD
-    const isoMatch = value.match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (isoMatch) {
-      const d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
-      if (!isNaN(d.getTime())) return d;
+    if (!date) {
+      const isoMatch = mem.value.match(/(\d{4})-(\d{2})-(\d{2})/);
+      if (isoMatch) {
+        const d = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+        if (!isNaN(d.getTime())) date = d;
+      }
     }
-    return null;
+
+    if (!date) return null;
+
+    // Date must be in the future or max 7 days in the past
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60_000);
+    if (date < sevenDaysAgo) return null; // Too old — probably a permanent fact
+
+    return date;
   }
 
   private parseResponse(content: string): ExtractedMemory[] {
