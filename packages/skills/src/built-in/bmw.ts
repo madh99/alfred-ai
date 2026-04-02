@@ -219,7 +219,9 @@ export class BMWSkill extends Skill {
 
     try {
       const mqtt = (await Function('return import("mqtt")')()) as typeof import('mqtt');
-      const brokerUrl = `mqtts://customer.streaming-cardata.bmwgroup.com:9000`;
+      const host = this.config.streaming.host ?? 'customer.streaming-cardata.bmwgroup.com';
+      const port = this.config.streaming.port ?? 9000;
+      const brokerUrl = `mqtts://${host}:${port}`;
 
       this.mqttClient = mqtt.connect(brokerUrl, {
         username,

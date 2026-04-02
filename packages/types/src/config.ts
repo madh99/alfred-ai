@@ -371,6 +371,10 @@ export interface BMWCarDataConfig {
     topic: string;
     /** Enable MQTT streaming (default: false) */
     enabled?: boolean;
+    /** MQTT broker host (default: customer.streaming-cardata.bmwgroup.com) */
+    host?: string;
+    /** MQTT broker port (default: 9000) */
+    port?: number;
   };
 }
 
