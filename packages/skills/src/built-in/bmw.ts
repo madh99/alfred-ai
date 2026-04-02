@@ -71,6 +71,16 @@ const DESCRIPTORS = [
   'vehicle.trip.segment.accumulated.drivetrain.electricEngine.recuperationTotal',
   // Vehicle identification
   'vehicle.vehicleIdentification.basicVehicleData',
+  // Odometer
+  'vehicle.vehicle.travelledDistance',
+  // Security — lock, doors, trunk, windows
+  'vehicle.access.centralLocking.isLocked',
+  'vehicle.body.door.driver.isOpen',
+  'vehicle.body.trunk.isOpen',
+  'vehicle.body.window.driver.isOpen',
+  // GPS location
+  'vehicle.location.gps.latitude',
+  'vehicle.location.gps.longitude',
 ];
 
 // ── Types ─────────────────────────────────────────────────
@@ -701,6 +711,25 @@ export class BMWSkill extends Skill {
       `**Batteriekapazität:** ${maxEnergy} kWh`,
       `**Batterie-Gesundheit (SoH):** ${soh} %`,
     ];
+
+    // Odometer
+    const km = tv(t, 'vehicle.vehicle.travelledDistance');
+    if (km) lines.push(`**Kilometerstand:** ${km} km`);
+
+    // Security
+    const locked = tv(t, 'vehicle.access.centralLocking.isLocked');
+    const doorOpen = tv(t, 'vehicle.body.door.driver.isOpen');
+    const trunkOpen = tv(t, 'vehicle.body.trunk.isOpen');
+    const windowOpen = tv(t, 'vehicle.body.window.driver.isOpen');
+    if (locked !== undefined) lines.push(`**Verriegelt:** ${locked === 'true' ? 'Ja' : 'Nein'}`);
+    if (doorOpen !== undefined) lines.push(`**Fahrertür:** ${doorOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+    if (trunkOpen !== undefined) lines.push(`**Kofferraum:** ${trunkOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+    if (windowOpen !== undefined) lines.push(`**Fahrerfenster:** ${windowOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+
+    // GPS
+    const lat = tv(t, 'vehicle.location.gps.latitude');
+    const lon = tv(t, 'vehicle.location.gps.longitude');
+    if (lat && lon) lines.push(`**Standort:** ${lat}, ${lon}`);
 
     return { success: true, data: { telematic: t, basic: basicData }, display: lines.join('\n') };
   }
