@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.311] - 2026-04-03
+## [0.19.0-multi-ha.312] - 2026-04-03
 
 ### Added
 - **Mistral Pricing-Tabelle aktualisiert** — mistral-small ($0.15/$0.60), magistral-medium ($2/$5), magistral-small ($0.50/$1.50), ministral-8b ($0.15/$0.15). Neue Modelle: pixtral-large/12b, ministral-3b/14b, devstral, mistral-moderation, open-mixtral, open-mistral-nemo/7b.
@@ -14,6 +14,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **Smart Delivery Timing** — DeliveryScheduler lernt User-Aktivitätsmuster (30-Tage Messages + Confirmations → Stunden-Profil ACTIVE/WAKING/QUIET). Nicht-dringende Insights werden in QUIET-Stunden aufgeschoben und bei nächster ACTIVE-Stunde gebatcht zugestellt (max 5). Stale-TTL: urgent=sofort, high=6h, normal=12h, low=24h. Neue `deferred_insights` Tabelle (Migration v47).
 - **Urgency-Klassifikation** — LLM klassifiziert Insights als urgent/high/normal/low. DeliveryScheduler entscheidet basierend darauf ob sofort oder aufgeschoben.
 - **Confirmation Queue: Callback-ID Routing** — Inline-Button-Clicks nutzten immer die älteste pending Confirmation statt der angeklickten. Fix: `getById(callbackId)`.
+- **Reminder: ISO-Zeitformat `T` nicht erkannt** — `parseTriggerAt` akzeptierte nur `YYYY-MM-DD HH:MM` (Leerzeichen), aber LLM sendet `2026-04-03T09:00` (ISO mit T). Reminder wurde nie erstellt, Confirmation Queue meldete trotzdem "✅ Ausgeführt". Fix: Regex akzeptiert `T` und Leerzeichen. Confirmation Queue prüft jetzt `result.success` und zeigt "❌ Fehlgeschlagen" bei `success: false`.
 - **Reasoning: Intelligentere Action-Vorschläge** — Prompt-Regeln verhindern delegate für User-Aufgaben (Browser/Login). BMW Token-Fehler → authorize statt delegate. Zahlungsprobleme → reminder statt delegate. triggerAt muss in der Zukunft liegen.
 - **KG: Entity-Typ-Routing** — Neues `organization` Routing: Firmennamen (GmbH/AG/ICT/Inc + bekannte Marken) werden als Organization statt Person erkannt. Employment-Sync aus Memories (current_employment → Organization + works_at Relation). Cross-Extractor verknüpft Organizations mit Work-Location.
 - **KG: Person-Blacklist + Name-Extraktion** — Erweiterte Blacklist (generische Wörter, Marken, technische Begriffe). Memory-Entities extrahieren nur den Eigennamen, nicht den ganzen Satz. KNOWN_LOCATIONS Check verhindert Orte als Personen. Digits/Sonderzeichen/lowercase Filter.

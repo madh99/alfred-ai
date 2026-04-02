@@ -170,8 +170,8 @@ export class ReminderSkill extends Skill {
       return this.buildDateInTimezone(hours, minutes, undefined, timezone);
     }
 
-    // "YYYY-MM-DD HH:MM"
-    const dateTime = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})$/.exec(trimmed);
+    // "YYYY-MM-DD HH:MM" or "YYYY-MM-DDTHH:MM" (ISO 8601)
+    const dateTime = /^(\d{4})-(\d{2})-(\d{2})[T\s](\d{1,2}):(\d{2})$/.exec(trimmed);
     if (dateTime) {
       const year = parseInt(dateTime[1], 10);
       const month = parseInt(dateTime[2], 10) - 1;

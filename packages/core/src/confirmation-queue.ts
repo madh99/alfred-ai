@@ -111,7 +111,10 @@ export class ConfirmationQueue {
       const skill = this.skillRegistry.get(pending.skillName);
       if (skill) {
         try {
-          await this.skillSandbox.execute(skill, pending.skillParams, context);
+          const result = await this.skillSandbox.execute(skill, pending.skillParams, context);
+          if (result && !result.success) {
+            throw new Error(result.error ?? 'Skill returned success=false');
+          }
           if (adapter) {
             await adapter.sendMessage(chatId, `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`);
           }
