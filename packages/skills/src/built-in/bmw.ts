@@ -1008,7 +1008,10 @@ export class BMWSkill extends Skill {
     // GPS — MQTT uses currentLocation, REST uses gps
     const lat = tvm(t, 'vehicle.location.gps.latitude');
     const lon = tvm(t, 'vehicle.location.gps.longitude');
-    if (lat !== '?' && lon !== '?') lines.push(`**Standort:** ${lat}, ${lon}`);
+    if (lat !== '?' && lon !== '?') {
+      const address = await this.reverseGeocode(parseFloat(lat), parseFloat(lon));
+      lines.push(address ? `**Standort:** ${address} (${lat}, ${lon})` : `**Standort:** ${lat}, ${lon}`);
+    }
 
     // Extra MQTT fields
     const avgConsumption = tv(t, 'vehicle.drivetrain.avgElectricRangeConsumption');
@@ -1276,6 +1279,27 @@ export class BMWSkill extends Skill {
       data: { avgConsumption, totalDistance, totalKwh, segments },
       display: lines.join('\n'),
     };
+  }
+
+  /** Reverse geocode coordinates to a human-readable address via Nominatim (OSM). */
+  private async reverseGeocode(lat: number, lon: number): Promise<string | undefined> {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=16&addressdetails=1`,
+        { headers: { 'User-Agent': 'Alfred-AI/1.0' }, signal: AbortSignal.timeout(5_000) },
+      );
+      if (!res.ok) return undefined;
+      const data = await res.json() as Record<string, unknown>;
+      const addr = data.address as Record<string, string> | undefined;
+      if (!addr) return data.display_name as string | undefined;
+      // Build compact address: street + house number, city
+      const parts: string[] = [];
+      const street = addr.road ?? addr.pedestrian ?? addr.footway ?? '';
+      if (street) parts.push(addr.house_number ? `${street} ${addr.house_number}` : street);
+      const city = addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? '';
+      if (city) parts.push(city);
+      return parts.length > 0 ? parts.join(', ') : (data.display_name as string | undefined);
+    } catch { return undefined; }
   }
 
   private async getHistory(inputVin?: string, from?: string, to?: string): Promise<SkillResult> {
