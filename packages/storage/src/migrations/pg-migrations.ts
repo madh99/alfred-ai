@@ -307,4 +307,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_service_usage_date ON service_usage(date)`, []);
     },
   },
+  {
+    version: 47,
+    description: 'Deferred insights — smart delivery timing for reasoning insights',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS deferred_insights (
+          id TEXT PRIMARY KEY,
+          chat_id TEXT NOT NULL,
+          platform TEXT NOT NULL,
+          urgency TEXT NOT NULL DEFAULT 'normal',
+          message TEXT NOT NULL,
+          actions TEXT DEFAULT '[]',
+          created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          stale_at TEXT NOT NULL,
+          delivered INTEGER NOT NULL DEFAULT 0
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_deferred_insights_pending ON deferred_insights(chat_id, delivered, stale_at)`, []);
+    },
+  },
 ];

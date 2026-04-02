@@ -16,6 +16,14 @@ export class ConfirmationRepository {
     return { id, ...input, status: 'pending', createdAt: now };
   }
 
+  async getById(id: string): Promise<PendingConfirmation | undefined> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM pending_confirmations WHERE id = ? AND status = 'pending'`,
+      [id],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async findPending(chatId: string, platform: string): Promise<PendingConfirmation | undefined> {
     const row = await this.adapter.queryOne(
       `SELECT * FROM pending_confirmations WHERE chat_id = ? AND platform = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1`,

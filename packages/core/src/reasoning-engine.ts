@@ -23,6 +23,7 @@ import { ReasoningContextCollector, type CollectedContext } from './reasoning-co
 import { KnowledgeGraphService } from './knowledge-graph.js';
 import { ActionFeedbackTracker } from './action-feedback-tracker.js';
 import { buildSkillContext } from './context-factory.js';
+import { DeliveryScheduler, type ActivityProfile } from './delivery-scheduler.js';
 
 /** Schedule run-hours for the 'morning_noon_evening' preset. */
 const MNE_HOURS = [7, 12, 18];
@@ -58,6 +59,7 @@ interface ProposedAction {
   description: string;
   skillName: string;
   skillParams: Record<string, unknown>;
+  urgency?: 'urgent' | 'high' | 'normal' | 'low';
 }
 
 interface ParsedReasoningResponse {
@@ -80,6 +82,9 @@ export class ReasoningEngine {
   private readonly tier: 'fast' | 'default';
   private readonly deduplicationHours: number;
   private readonly collector: ReasoningContextCollector;
+  private deliveryScheduler?: DeliveryScheduler;
+  private activityProfile?: ActivityProfile;
+  private tickRunning = false;
 
   constructor(
     private readonly calendarProvider: CalendarProvider | undefined,
@@ -121,6 +126,11 @@ export class ReasoningEngine {
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
       this.defaultLocation, this.logger, this.workflowRepo,
     );
+
+    // Smart delivery timing
+    if (this.adapter) {
+      this.deliveryScheduler = new DeliveryScheduler(this.adapter, this.logger.child({ component: 'delivery-scheduler' }));
+    }
   }
 
   start(): void {
@@ -230,35 +240,16 @@ ${this.buildTopicInstructions()}`;
 
       const parsed = this.parseReasoningResponse(text);
 
-      // Send insights
-      if (parsed.insights.length > 0) {
-        const newInsights: string[] = [];
-        for (const insight of parsed.insights) {
-          if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
-        }
-        if (newInsights.length > 0) {
-          let message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
-          if (parsed.actions.length > 0) {
-            const actionLines = parsed.actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
-            message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
-          }
-          const adapter = this.adapters.get(this.defaultPlatform);
-          if (adapter) {
-            await adapter.sendMessage(this.defaultChatId, message);
-            for (const insight of newInsights) await this.markSent(insight);
-          }
-          if (this.insightTracker) {
-            for (const insight of newInsights) {
-              const category = InsightTracker.categorizeInsight(insight);
-              this.insightTracker.trackInsightSent(category);
-            }
-          }
-        }
+      // Send insights (event-triggered are always at least HIGH urgency)
+      const newInsights: string[] = [];
+      for (const insight of parsed.insights) {
+        if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
       }
-
-      // Process actions with autonomy level
-      if (parsed.actions.length > 0) {
-        await this.processActions(parsed.actions);
+      if (newInsights.length > 0 || parsed.actions.length > 0) {
+        const urgency = this.resolveUrgency(parsed.actions);
+        // Event-triggered insights are at least 'high' urgency
+        const effectiveUrgency = urgency === 'low' || urgency === 'normal' ? 'high' : urgency;
+        await this.deliverOrDefer(newInsights, parsed.actions, effectiveUrgency);
       }
     } catch (err) {
       this.logger.warn({ err, eventType }, 'Event-triggered reasoning failed');
@@ -401,36 +392,11 @@ ${this.buildTopicInstructions()}`;
         return;
       }
 
-      // Send text insights to user (with action summary if any)
-      if (newInsights.length > 0) {
-        let message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
-        // Append action summary so user knows what was proposed/executed
-        if (parsed.actions.length > 0) {
-          const actionLines = parsed.actions.slice(0, 5).map(a =>
-            `\u26A1 ${a.description}`,
-          );
-          message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
-        }
-        const adapter = this.adapters.get(this.defaultPlatform);
-        if (adapter) {
-          await adapter.sendMessage(this.defaultChatId, message);
-          for (const insight of newInsights) {
-            await this.markSent(insight);
-          }
-          this.logger.info({ durationMs, insights: newInsights.length, actions: parsed.actions.length }, 'Reasoning pass: insights sent');
-        }
-        if (this.insightTracker) {
-          for (const insight of newInsights) {
-            const category = InsightTracker.categorizeInsight(insight);
-            this.insightTracker.trackInsightSent(category);
-          }
-        }
-      }
+      // Determine urgency from actions (highest wins)
+      const urgency = this.resolveUrgency(parsed.actions);
 
-      // Process proposed actions (confirmation queue)
-      if (parsed.actions.length > 0) {
-        await this.processActions(parsed.actions);
-      }
+      // Smart delivery: check if user is active, defer if not
+      await this.deliverOrDefer(newInsights, parsed.actions, urgency, durationMs);
 
       this.activityLogger?.logScheduledExec({
         actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
@@ -693,10 +659,23 @@ Alle nutzen type: "execute_skill". Format: nach Text-Insights, trenne mit "${ACT
 
 AKTIONSTYPEN:
 1. Skill direkt ausführen: {"type":"execute_skill","description":"...","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}
-2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[{"skillName":"...","inputMapping":{...},"onError":"skip"}]}}
+2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[...]}}
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
-5. Erinnerung: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-02T09:00"}}
+5. Erinnerung: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
+
+WICHTIGE REGELN FÜR AKTIONSWAHL:
+- Alfred kann NUR Skills ausführen die er hat. Wenn der User SELBST handeln muss (Browser öffnen, Zahlungsmethode ändern, Login auf Website) → IMMER Erinnerung (reminder) mit klarer Handlungsanweisung + URL
+- NIEMALS "delegate" für Aufgaben die Browser, Login oder externe Accounts erfordern
+- delegate NUR für echte Multi-Step Alfred-interne Aufgaben (z.B. mehrere Skills kombinieren)
+- BMW "Rate Limit" oder "Token abgelaufen" → skillName:"bmw", skillParams:{"action":"authorize"} (startet OAuth-Flow)
+- triggerAt MUSS in der Zukunft liegen! Aktuelle Zeit beachten.
+
+DRINGLICHKEIT (als "urgency" Feld in jeder Aktion):
+- "urgent": Sicherheit, Service-Down, Zahlung fehlgeschlagen, <24h Deadline
+- "high": <48h Deadline, Rate Limit, wichtige Erneuerungen
+- "normal": Informativ, Optimierung, >48h Deadline
+- "low": Statusberichte, stabile Werte, keine Eile
 
 SICHERHEIT:
 - Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
@@ -854,6 +833,95 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       }
     } catch { /* use default */ }
     return 'confirm_all';
+  }
+
+  private resolveUrgency(actions: ProposedAction[]): 'urgent' | 'high' | 'normal' | 'low' {
+    const levels: Array<'urgent' | 'high' | 'normal' | 'low'> = actions.map(a => a.urgency ?? 'normal');
+    if (levels.includes('urgent')) return 'urgent';
+    if (levels.includes('high')) return 'high';
+    if (levels.includes('normal')) return 'normal';
+    return levels.length > 0 ? 'low' : 'normal';
+  }
+
+  private async deliverOrDefer(
+    insights: string[], actions: ProposedAction[],
+    urgency: 'urgent' | 'high' | 'normal' | 'low', durationMs?: number,
+  ): Promise<void> {
+    // Build message
+    let message = '';
+    if (insights.length > 0) {
+      message = `\u{1F4A1} **Alfred Insights**\n\n${insights.join('\n\n')}`;
+      if (actions.length > 0) {
+        const actionLines = actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
+        message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
+      }
+    }
+
+    // Check delivery timing
+    let deliver = true;
+    if (this.deliveryScheduler && urgency !== 'urgent') {
+      try {
+        if (!this.activityProfile) {
+          this.activityProfile = await this.deliveryScheduler.loadOrComputeProfile(this.defaultChatId);
+        }
+        deliver = this.deliveryScheduler.shouldDeliverNow(urgency, this.activityProfile);
+      } catch { deliver = true; /* fallback: deliver */ }
+    }
+
+    if (!deliver && this.deliveryScheduler && message) {
+      // Defer for later
+      await this.deliveryScheduler.defer(
+        this.defaultChatId, this.defaultPlatform, urgency,
+        message, JSON.stringify(actions),
+      );
+      this.logger.info({ urgency, insightCount: insights.length }, 'Insights deferred (user likely inactive)');
+      // Mark as sent to avoid dedup re-triggering
+      for (const insight of insights) await this.markSent(insight);
+      return;
+    }
+
+    // Deliver now
+    if (message) {
+      const adapter = this.adapters.get(this.defaultPlatform);
+      if (adapter) {
+        await adapter.sendMessage(this.defaultChatId, message);
+        for (const insight of insights) await this.markSent(insight);
+        this.logger.info({ durationMs, insights: insights.length, actions: actions.length, urgency }, 'Reasoning pass: insights sent');
+      }
+      if (this.insightTracker) {
+        for (const insight of insights) {
+          const category = InsightTracker.categorizeInsight(insight);
+          this.insightTracker.trackInsightSent(category);
+        }
+      }
+    }
+
+    // Process actions
+    if (actions.length > 0) {
+      await this.processActions(actions);
+    }
+
+    // Also flush any previously deferred insights now that user is active
+    if (this.deliveryScheduler) {
+      try {
+        const deferred = await this.deliveryScheduler.getPendingDeferred(this.defaultChatId);
+        if (deferred.length > 0) {
+          const adapter = this.adapters.get(this.defaultPlatform);
+          if (adapter) {
+            for (const d of deferred) {
+              await adapter.sendMessage(this.defaultChatId, d.message);
+              // Process deferred actions
+              try {
+                const deferredActions = JSON.parse(d.actions) as ProposedAction[];
+                if (deferredActions.length > 0) await this.processActions(deferredActions);
+              } catch { /* no actions */ }
+            }
+            await this.deliveryScheduler.markDelivered(deferred.map(d => d.id));
+            this.logger.info({ count: deferred.length }, 'Deferred insights flushed');
+          }
+        }
+      } catch { /* non-critical */ }
+    }
   }
 
   private async processActions(actions: ProposedAction[]): Promise<void> {

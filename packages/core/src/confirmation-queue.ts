@@ -96,7 +96,10 @@ export class ConfirmationQueue {
 
     if (!isYes && !isNo) return false;
 
-    const pending = await this.confirmRepo.findPending(chatId, platform);
+    // Use specific confirmation ID from callback button, or fall back to most recent pending
+    const pending = callbackMatch
+      ? await this.confirmRepo.getById(callbackMatch[1])
+      : await this.confirmRepo.findPending(chatId, platform);
     if (!pending) return false;
 
     const adapter = this.adapters.get(platform as Platform);
