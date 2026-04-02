@@ -243,15 +243,15 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('connect', () => {
         this.streamingActive = true;
         const fullTopic = `${username}/${topic}`;
+        console.log(`[BMW MQTT] Connected, subscribing to ${fullTopic}`);
         this.mqttClient.subscribe(fullTopic, { qos: 0 });
-        // Also subscribe with wildcard for all VINs
         this.mqttClient.subscribe(`${username}/+`, { qos: 0 });
       });
 
       this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
         try {
           const data = JSON.parse(payload.toString());
-          // Update cache with streaming data
+          console.log(`[BMW MQTT] Data received on ${_topic}: ${Object.keys(data).join(',')}`);
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
             if (Array.isArray(data.data)) {
@@ -263,7 +263,6 @@ export class BMWSkill extends Skill {
             } else if (data.telematicData) {
               Object.assign(telematicData, data.telematicData);
             }
-            // Merge into cache (extend existing telematic data)
             const cacheKey = `telematic:${data.vin ?? tokens.vin ?? 'unknown'}`;
             const existing = this.cache.get(cacheKey);
             if (existing && typeof existing.data === 'object' && existing.data !== null) {
@@ -276,13 +275,14 @@ export class BMWSkill extends Skill {
         } catch { /* ignore parse errors */ }
       });
 
-      this.mqttClient.on('error', () => {
+      this.mqttClient.on('error', (err: unknown) => {
         this.streamingActive = false;
+        console.warn('[BMW MQTT] Error:', err);
       });
 
       this.mqttClient.on('close', () => {
         this.streamingActive = false;
-        // Reconnect with fresh token after 60s
+        console.log('[BMW MQTT] Connection closed, scheduling reconnect...');
         this.scheduleReconnect();
       });
 
@@ -291,7 +291,7 @@ export class BMWSkill extends Skill {
         const refreshIn = Math.max(10_000, (tokens.expiresAt - Date.now()) - 120_000); // 2 min before expiry
         this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), refreshIn);
       }
-    } catch { /* MQTT not available or connection failed */ }
+    } catch (err) { console.warn('[BMW MQTT] Streaming setup failed:', err); }
   }
 
   private scheduleReconnect(): void {

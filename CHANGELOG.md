@@ -5,10 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.286] - 2026-04-02
+## [0.19.0-multi-ha.287] - 2026-04-02
 
 ### Fixed
 - **BMW MQTT Streaming: Zod-Schema fehlte `streaming`** — ENV-Variablen `ALFRED_BMW_STREAMING_*` wurden korrekt ins Config-Objekt geschrieben, aber `AlfredConfigSchema.parse()` strippte das `streaming`-Objekt da es im `BMWCarDataConfigSchema` nicht definiert war. Streaming konnte nie starten. Fix: Schema um `streaming` Sub-Objekt erweitert (username, topic, enabled, host, port). Port als `z.coerce.number()` + `NUMERIC_ENV_KEYS`.
+- **BMW MQTT Streaming: Debug-Logging** — Connect, Message, Error und Close Events waren ohne Logging. Fehler wurden verschluckt. Fix: console.log/warn für alle MQTT-Events.
 
 ## [0.19.0-multi-ha.267] - 2026-04-01
 
