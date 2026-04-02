@@ -974,11 +974,12 @@ export class BMWSkill extends Skill {
     const km = tvm(t, 'vehicle.vehicle.travelledDistance');
     if (km && km !== '?') lines.push(`**Kilometerstand:** ${km} km`);
 
-    // Security — MQTT uses door.status (LOCKED/UNLOCKED), REST uses isLocked (true/false)
+    // Security — MQTT uses door.status (SECURED/LOCKED/UNLOCKED/SELECTIVELOCKED), REST uses isLocked (true/false)
     const lockedRaw = tvm(t, 'vehicle.access.centralLocking.isLocked');
-    const isLocked = lockedRaw === 'true' || lockedRaw === 'LOCKED';
+    const isLocked = lockedRaw === 'true' || lockedRaw === 'LOCKED' || lockedRaw === 'SECURED';
     const isUnlocked = lockedRaw === 'false' || lockedRaw === 'UNLOCKED';
-    if (isLocked || isUnlocked) lines.push(`**Verriegelt:** ${isLocked ? 'Ja' : 'Nein'}`);
+    const isPartial = lockedRaw === 'SELECTIVELOCKED';
+    if (isLocked || isUnlocked || isPartial) lines.push(`**Verriegelt:** ${isLocked ? 'Ja' : isPartial ? 'Teilweise' : 'Nein'}`);
 
     const doorOpen = tvm(t, 'vehicle.body.door.driver.isOpen');
     const trunkOpen = tvm(t, 'vehicle.body.trunk.isOpen');
@@ -1296,7 +1297,7 @@ export class BMWSkill extends Skill {
       const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
       const range = tvm(t, 'vehicle.drivetrain.electricEngine.remainingElectricRange');
       const lockedRaw = tvm(t, 'vehicle.access.centralLocking.isLocked');
-      const lockedStr = lockedRaw === 'true' || lockedRaw === 'LOCKED' ? 'Ja' : lockedRaw === 'false' || lockedRaw === 'UNLOCKED' ? 'Nein' : '-';
+      const lockedStr = lockedRaw === 'true' || lockedRaw === 'LOCKED' || lockedRaw === 'SECURED' ? 'Ja' : lockedRaw === 'false' || lockedRaw === 'UNLOCKED' ? 'Nein' : lockedRaw === 'SELECTIVELOCKED' ? 'Teilw.' : '-';
       const lat = tvm(t, 'vehicle.location.gps.latitude');
       const lon = tvm(t, 'vehicle.location.gps.longitude');
       const loc = lat !== '?' && lon !== '?' ? `${lat}, ${lon}` : '-';
