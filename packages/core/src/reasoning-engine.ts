@@ -802,6 +802,19 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     return await this.notifRepo.wasNotified(`reasoning-action:${hash}`, this.defaultChatId);
   }
 
+  /** Check if the most recent confirmation for this action description expired or was rejected. */
+  private async hasExpiredOrRejectedConfirmation(action: ProposedAction): Promise<boolean> {
+    try {
+      if (!this.confirmationQueue) return false;
+      // Search in recent confirmations by description match
+      const row = await this.adapter?.queryOne(
+        `SELECT status FROM pending_confirmations WHERE chat_id = ? AND description = ? ORDER BY created_at DESC LIMIT 1`,
+        [this.defaultChatId, action.description],
+      ) as { status: string } | undefined;
+      return row?.status === 'expired' || row?.status === 'rejected';
+    } catch { return false; }
+  }
+
   private async markActionProposed(action: ProposedAction): Promise<void> {
     const hash = this.actionHash(action);
     const key = `reasoning-action:${hash}`;
@@ -939,8 +952,15 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         if (p.due && !p.triggerAt) { p.triggerAt = p.due; delete p.due; }
       }
       if (await this.actionWasRecentlyProposed(action)) {
-        this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
-        continue;
+        // Allow re-proposal if the previous confirmation expired or was rejected
+        const hash = this.actionHash(action);
+        const shouldRetry = this.confirmationQueue
+          ? await this.hasExpiredOrRejectedConfirmation(action)
+          : false;
+        if (!shouldRetry) {
+          this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
+          continue;
+        }
       }
 
       // Action-Gating: skip skills with very low historical acceptance rate

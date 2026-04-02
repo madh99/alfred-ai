@@ -116,7 +116,12 @@ export class ConfirmationQueue {
             throw new Error(result.error ?? 'Skill returned success=false');
           }
           if (adapter) {
-            await adapter.sendMessage(chatId, `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`);
+            // Show full skill result (like a normal chat interaction), not just "Ausgeführt"
+            const display = result?.display ?? result?.data ? String(result.display ?? JSON.stringify(result.data)) : '';
+            const msg = display
+              ? `\u2705 **${pending.description}**\n\n${display}`
+              : `\u2705 Aktion ausgef\u00FChrt: ${pending.description}`;
+            await adapter.sendMessage(chatId, msg);
           }
           this.activityLogger?.logConfirmation({
             confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
