@@ -213,9 +213,17 @@ export class BMWSkill extends Skill {
     const { username, topic } = this.config.streaming;
     if (!username || !topic) return;
 
-    // Need id_token for MQTT password
+    // Load tokens if not yet available (they're lazily loaded on first skill call)
+    // Try 'default' userId first, then injected alfredUserId
+    for (const uid of [this.activeUserId, this.injectedAlfredUserId ?? ''].filter(Boolean)) {
+      this.activeUserId = uid;
+      if (!this.tokens?.idToken) {
+        const loaded = await this.loadTokens();
+        if (loaded) { this.tokens = loaded; break; }
+      } else { break; }
+    }
     const tokens = this.tokens;
-    if (!tokens?.idToken) return;
+    if (!tokens?.idToken) return; // Still no tokens — user hasn't authorized yet
 
     try {
       const mqtt = (await Function('return import("mqtt")')()) as typeof import('mqtt');

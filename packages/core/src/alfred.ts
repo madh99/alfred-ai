@@ -1244,8 +1244,10 @@ export class Alfred {
       }
       // Start BMW MQTT streaming if configured
       if (this.bmwSkill && this.config.bmw?.streaming?.enabled) {
-        (this.bmwSkill as any).startStreaming().catch((err: unknown) =>
-          this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
+        this.logger.info({ username: this.config.bmw.streaming.username, topic: this.config.bmw.streaming.topic }, 'Starting BMW MQTT streaming...');
+        (this.bmwSkill as any).startStreaming()
+          .then(() => this.logger.info('BMW MQTT streaming started'))
+          .catch((err: unknown) => this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
       }
     }
 
