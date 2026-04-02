@@ -6,7 +6,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -107,6 +107,7 @@ export class Alfred {
   private todoWatcher?: TodoWatcher;
   private reasoningEngine?: ReasoningEngine;
   private usageRepo?: UsageRepository;
+  private serviceUsageRepo?: ServiceUsageRepository;
   private auditRepo?: AuditRepository;
   private summaryRepo?: SummaryRepository;
   private activityRepo?: ActivityRepository;
@@ -202,6 +203,10 @@ export class Alfred {
     llmProvider.setPersist((model, inp, out, cacheR, cacheW, cost) => {
       usageRepo.record(model, inp, out, cacheR, cacheW, cost).catch(() => {});
     });
+
+    // Service usage tracking (STT, TTS, OCR, Moderation)
+    const serviceUsageRepo = new ServiceUsageRepository(adapter);
+    this.serviceUsageRepo = serviceUsageRepo;
 
     // Create embedding service
     const embeddingService = new EmbeddingService(
@@ -356,7 +361,11 @@ export class Alfred {
     const mistralApiKey = this.detectMistralApiKey();
     if (mistralApiKey) {
       const { OcrService } = await import('@alfred/skills');
-      documentProcessor.setOcrService(new OcrService(mistralApiKey));
+      const ocrService = new OcrService(mistralApiKey);
+      ocrService.setUsageCallback((model, units) => {
+        serviceUsageRepo.record('ocr', model, units).catch(() => {});
+      });
+      documentProcessor.setOcrService(ocrService);
       this.logger.info('Mistral OCR enabled for document processing');
     }
 
@@ -823,6 +832,9 @@ export class Alfred {
         this.config.speech,
         this.logger.child({ component: 'speech' }),
       );
+      speechTranscriber.setUsageCallback((model, units) => {
+        serviceUsageRepo.record('stt', model, units).catch(() => {});
+      });
       const effectiveSttProvider = this.config.speech.sttProvider ?? this.config.speech.provider;
       this.logger.info({ provider: effectiveSttProvider }, 'Speech-to-text initialized');
     }
@@ -834,6 +846,9 @@ export class Alfred {
         this.logger.child({ component: 'tts' }),
       );
       synthesizer.setSkillState(skillStateRepo);
+      synthesizer.setUsageCallback((model, units) => {
+        serviceUsageRepo.record('tts', model, units).catch(() => {});
+      });
       skillRegistry.register(new TTSSkill(synthesizer));
       const effectiveTtsProvider = this.config.speech.ttsProvider ?? 'openai';
       this.logger.info({ provider: effectiveTtsProvider }, 'Text-to-speech skill registered');
@@ -1216,6 +1231,9 @@ export class Alfred {
           model,
           this.logger.child({ component: 'moderation' }),
         );
+        moderationService.setUsageCallback((m, units) => {
+          this.serviceUsageRepo?.record('moderation', m, units).catch(() => {});
+        });
         this.pipeline.setModerationService(moderationService);
         this.logger.info({ provider, model }, 'Moderation service enabled');
       } else {
@@ -1378,6 +1396,11 @@ export class Alfred {
             ),
             llmProviders: this.llmProvider.getProviderStatuses(),
             services: this.getConfiguredServices(),
+            serviceUsage: {
+              today: await this.serviceUsageRepo?.getDaily(today) ?? [],
+              week: await this.serviceUsageRepo?.getRange(weekAgo, today) ?? [],
+              total: await this.serviceUsageRepo?.getTotal() ?? [],
+            },
             userUsage: await this.usageRepo?.getByUser(weekAgo, today) ?? [],
             userSkillUsage: await this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
           };

@@ -9,6 +9,10 @@ export class SpeechTranscriber {
   private readonly baseUrl: string;
   private readonly sttProvider: SttProvider;
   private readonly model: string;
+  private usageCallback?: (model: string, units: number) => void;
+
+  /** Set callback for tracking service usage (called with model + estimated audio seconds). */
+  setUsageCallback(cb: (model: string, units: number) => void): void { this.usageCallback = cb; }
 
   constructor(
     config: SpeechConfig,
@@ -58,7 +62,11 @@ export class SpeechTranscriber {
       }
 
       const data = await response.json() as { text: string };
-      this.logger.info({ textLength: data.text.length, provider: this.sttProvider }, 'Voice transcribed');
+      // Estimate audio duration from buffer size (~16kbps for OGG voice)
+      const estimatedSeconds = Math.max(1, audioBuffer.length / 2000);
+      const estimatedMinutes = estimatedSeconds / 60;
+      this.logger.info({ textLength: data.text.length, provider: this.sttProvider, estimatedSeconds: Math.round(estimatedSeconds) }, 'Voice transcribed');
+      if (this.usageCallback) this.usageCallback(this.model, estimatedMinutes);
       return data.text;
     } catch (err) {
       this.logger.error({ err, provider: this.sttProvider }, 'Voice transcription failed');

@@ -21,6 +21,11 @@ export type OcrDocumentInput =
   | { type: 'base64'; data: string; mimeType: string };
 
 export class OcrService {
+  private usageCallback?: (model: string, units: number) => void;
+
+  /** Set callback for tracking service usage (called with model + page count). */
+  setUsageCallback(cb: (model: string, units: number) => void): void { this.usageCallback = cb; }
+
   constructor(
     private readonly apiKey: string,
     private readonly baseUrl: string = 'https://api.mistral.ai/v1',
@@ -80,6 +85,7 @@ export class OcrService {
         images: p.images?.map(img => img.image_base64),
       }));
 
+      if (this.usageCallback) this.usageCallback(this.model, pages.length);
       return {
         pages,
         totalPages: pages.length,

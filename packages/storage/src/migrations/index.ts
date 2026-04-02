@@ -995,4 +995,24 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 46,
+    description: 'Service usage — tracks non-token costs (STT, TTS, OCR, Moderation)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS service_usage (
+          date TEXT NOT NULL,
+          service TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          units REAL NOT NULL DEFAULT 0,
+          unit_type TEXT NOT NULL,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          user_id TEXT NOT NULL DEFAULT '',
+          UNIQUE(date, service, model, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_service_usage_date ON service_usage(date);
+      `);
+    },
+  },
 ];

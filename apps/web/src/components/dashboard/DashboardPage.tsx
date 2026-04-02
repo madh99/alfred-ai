@@ -177,6 +177,34 @@ export function DashboardPage() {
             </div>
           )}
 
+          {/* Service Costs (STT, TTS, OCR, Moderation) */}
+          {data.serviceUsage?.total && data.serviceUsage.total.length > 0 && (
+            <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[#0d0d0d] text-gray-400">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-medium">Service</th>
+                    <th className="text-left px-4 py-2 font-medium">Model</th>
+                    <th className="text-right px-4 py-2 font-medium">Calls</th>
+                    <th className="text-right px-4 py-2 font-medium">Einheiten</th>
+                    <th className="text-right px-4 py-2 font-medium">Kosten</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.serviceUsage.total.map((s: { service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }) => (
+                    <tr key={`${s.service}-${s.model}`} className="border-t border-[#1f1f1f]">
+                      <td className="px-4 py-2 text-gray-200 text-xs uppercase">{s.service}</td>
+                      <td className="px-4 py-2 text-gray-200 font-mono text-xs">{s.model}</td>
+                      <td className="px-4 py-2 text-gray-400 text-right">{s.calls}</td>
+                      <td className="px-4 py-2 text-gray-400 text-right">{s.units.toLocaleString('de-AT', { maximumFractionDigits: 1 })} {s.unitType}</td>
+                      <td className="px-4 py-2 text-purple-400 text-right font-medium">{formatCost(s.costUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Cost by Model */}
           {totalByModel.length > 0 && (
             <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">

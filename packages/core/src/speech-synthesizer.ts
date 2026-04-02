@@ -15,7 +15,10 @@ export class SpeechSynthesizer {
   private memoryRepo?: MemoryRepository;
   private skillState?: SkillStateRepository;
   private cachedVoiceId?: string;
+  private usageCallback?: (model: string, units: number) => void;
 
+  /** Set callback for tracking service usage (called with model + character count). */
+  setUsageCallback(cb: (model: string, units: number) => void): void { this.usageCallback = cb; }
   /** Inject skill state repo for reading user's default voice from DB. */
   setSkillState(repo: SkillStateRepository): void { this.skillState = repo; }
   /** @deprecated Use setSkillState instead. Kept for backward compatibility. */
@@ -98,6 +101,7 @@ export class SpeechSynthesizer {
       buffer = Buffer.from(await response.arrayBuffer());
     }
     this.logger.info({ audioBytes: buffer.length, provider: this.ttsProvider }, 'Speech synthesized');
+    if (this.usageCallback) this.usageCallback(this.model, text.length);
     return buffer;
   }
 }

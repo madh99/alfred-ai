@@ -14,6 +14,11 @@ export interface ModerationResult {
  * NEVER throws — all errors are caught and result in `null`.
  */
 export class ModerationService {
+  private usageCallback?: (model: string, units: number) => void;
+
+  /** Set callback for tracking service usage (called with model + estimated token count). */
+  setUsageCallback(cb: (model: string, units: number) => void): void { this.usageCallback = cb; }
+
   constructor(
     private readonly apiKey: string,
     private readonly baseUrl: string,
@@ -53,6 +58,8 @@ export class ModerationService {
       const result = data.results?.[0];
       if (!result) return null;
 
+      // Estimate tokens (~4 chars per token)
+      if (this.usageCallback) this.usageCallback(this.model, Math.ceil(text.length / 4));
       return {
         flagged: result.flagged ?? false,
         categories: result.categories ?? {},

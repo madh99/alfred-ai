@@ -5,11 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.305] - 2026-04-02
+## [0.19.0-multi-ha.306] - 2026-04-02
 
 ### Added
 - **Mistral Pricing-Tabelle aktualisiert** — mistral-small ($0.15/$0.60), magistral-medium ($2/$5), magistral-small ($0.50/$1.50), ministral-8b ($0.15/$0.15). Neue Modelle: pixtral-large/12b, ministral-3b/14b, devstral, mistral-moderation, open-mixtral, open-mistral-nemo/7b.
 - **Dashboard: AI Services Sektion** — Zeigt konfigurierte Services (STT, TTS, OCR, Moderation, Embeddings) mit Provider und Modellname im Dashboard an.
+- **Service Usage Tracking** — Neue `service_usage` Tabelle (Migration v46) trackt STT (Minuten), TTS (Zeichen), OCR (Seiten), Moderation (Tokens) mit Kosten. Callback-basierte Instrumentierung in speech-transcriber, speech-synthesizer, ocr-service, moderation-service. Dashboard zeigt Service-Kosten-Tabelle (lila, getrennt von LLM-Token-Kosten).
 - **BMW CarData MQTT Streaming** — Echtzeit-Fahrzeugdaten über BMW Customer Streaming API (MQTT). Kein REST-Quota-Verbrauch für Türen, GPS, Geschwindigkeit, km-Stand, Reifendruck. Cluster-aware (nur ein Node streamt via AdapterClaimManager). Token-Refresh vor Connect, disconnect/offline Logging.
 - **BMW Telematik DB-Persistenz** — Neue `bmw_telematic_log` Tabelle (Migration v45). MQTT-Events werden als Merged Snapshots gespeichert (5s Debounce), REST-Responses ebenfalls. 3-Tier-Lookup: RAM → DB → REST. Beide HA-Nodes lesen aus derselben DB. REST-Quota nur bei Cache-Miss (REST 25 Min, MQTT 60 Min TTL).
 - **BMW MQTT + REST Merge** — MQTT liefert Echtzeitdaten (GPS, Türen, Geschwindigkeit, km-Stand), REST liefert Batterie (SoC, SoH, Kapazität). Status merged beide Quellen. Getrenntes `getLatestBySource()` pro Datenquelle.

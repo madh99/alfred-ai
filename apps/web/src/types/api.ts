@@ -99,6 +99,11 @@ export interface DashboardData {
   userUsage?: Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }>;
   userSkillUsage?: Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }>;
   services?: Array<{ name: string; provider: string; model: string; status: string }>;
+  serviceUsage?: {
+    today: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
+    week: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
+    total: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
+  };
 }
 
 export interface HealthData {
