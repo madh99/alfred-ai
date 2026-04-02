@@ -1114,6 +1114,29 @@ export class Alfred {
           memoryRepo, skillRegistry, skillSandbox, userRepo,
           ownerUserId, defaultProactivePlatform,
         );
+        // Optional LLM-based entity linker
+        const llmLinkingCfg = this.config.reasoning?.llmLinking;
+        if (llmLinkingCfg?.enabled) {
+          const llmLinkProvider = llmLinkingCfg.provider ?? 'mistral';
+          let llmLinkApiKey = this.config.mistralApiKey;
+          if (!llmLinkApiKey) {
+            for (const tier of ['fast', 'default', 'strong'] as const) {
+              const t = this.config.llm[tier];
+              if (t?.provider === llmLinkProvider && t.apiKey) { llmLinkApiKey = t.apiKey; break; }
+            }
+          }
+          if (llmLinkApiKey) {
+            const { LLMEntityLinker } = await import('./llm-entity-linker.js');
+            const baseUrl = llmLinkProvider === 'openai' ? 'https://api.openai.com/v1'
+              : llmLinkProvider === 'anthropic' ? 'https://api.anthropic.com/v1'
+              : 'https://api.mistral.ai/v1';
+            kgServiceInstance.setLLMLinker(new LLMEntityLinker(
+              new KnowledgeGraphRepository(adapter), llmLinkingCfg,
+              this.logger.child({ component: 'llm-entity-linker' }), llmLinkApiKey, baseUrl,
+            ));
+            this.logger.info({ provider: llmLinkProvider, model: llmLinkingCfg.model ?? 'mistral-small-latest' }, 'LLM entity linker enabled');
+          }
+        }
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
           todoRepo,

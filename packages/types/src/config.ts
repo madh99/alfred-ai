@@ -402,6 +402,15 @@ export interface EnergyPriceConfig {
   gridMeterFee?: number;      // Messentgelt €/Monat netto
 }
 
+export interface LLMLinkingConfig {
+  enabled?: boolean;
+  provider?: string;
+  model?: string;
+  /** 'daily' | 'weekly' | 'manual' (default: daily) */
+  schedule?: 'daily' | 'weekly' | 'manual';
+  maxEntitiesPerPass?: number;
+}
+
 export interface ReasoningConfig {
   enabled?: boolean;
   /** 'morning_noon_evening' = 3×/Tag (7h,12h,18h), 'hourly', 'half_hourly' */
@@ -410,6 +419,8 @@ export interface ReasoningConfig {
   tier?: 'fast' | 'default';
   /** Hours to suppress duplicate insights (default: 12) */
   deduplicationHours?: number;
+  /** Optional LLM-based entity linking for semantic relationships. */
+  llmLinking?: LLMLinkingConfig;
 }
 
 export interface BriefingConfig {

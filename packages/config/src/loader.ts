@@ -202,6 +202,10 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_REASONING_ENABLED: ['reasoning', 'enabled'],
   ALFRED_REASONING_SCHEDULE: ['reasoning', 'schedule'],
   ALFRED_REASONING_TIER: ['reasoning', 'tier'],
+  ALFRED_REASONING_LLM_LINKING_ENABLED: ['reasoning', 'llmLinking', 'enabled'],
+  ALFRED_REASONING_LLM_LINKING_PROVIDER: ['reasoning', 'llmLinking', 'provider'],
+  ALFRED_REASONING_LLM_LINKING_MODEL: ['reasoning', 'llmLinking', 'model'],
+  ALFRED_REASONING_LLM_LINKING_SCHEDULE: ['reasoning', 'llmLinking', 'schedule'],
   // Recipe
   ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
   ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],

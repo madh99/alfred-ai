@@ -83,6 +83,8 @@ const MAX_MAP_TOKENS = 1200;
 // ── Service ──────────────────────────────────────────────────
 
 export class KnowledgeGraphService {
+  private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
+
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
     private readonly logger: Logger,
@@ -93,6 +95,11 @@ export class KnowledgeGraphService {
     private readonly defaultChatId?: string,
     private readonly defaultPlatform?: string,
   ) {}
+
+  /** Set optional LLM-based entity linker. */
+  setLLMLinker(linker: import('./llm-entity-linker.js').LLMEntityLinker): void {
+    this.llmLinker = linker;
+  }
 
   /**
    * Ingest: Extract entities and relations from collected reasoning sections.
@@ -127,6 +134,14 @@ export class KnowledgeGraphService {
       await this.buildCrossExtractorRelations(userId);
       // Generic entity linking: match every entity against all others by name
       await this.buildGenericEntityLinks(userId);
+      // Optional LLM-based semantic linking (runs on schedule, not every pass)
+      if (this.llmLinker?.shouldRun()) {
+        try {
+          await this.llmLinker.run(userId);
+        } catch (err) {
+          this.logger.debug({ err }, 'KG: LLM entity linking failed (non-critical)');
+        }
+      }
     } catch (err) {
       this.logger.warn({ err }, 'KG ingest failed');
     }

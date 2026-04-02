@@ -283,6 +283,14 @@ export class KnowledgeGraphRepository {
     return rows.map(r => this.mapEntity(r));
   }
 
+  /** Update entity type and merge attributes. */
+  async updateEntityType(id: string, newType: string, attributes: Record<string, unknown>): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE kg_entities SET entity_type = ?, attributes = ?, last_seen_at = ? WHERE id = ?',
+      [newType, JSON.stringify(attributes), new Date().toISOString(), id],
+    );
+  }
+
   /** Delete a single entity by ID (CASCADE deletes relations). */
   async deleteEntity(id: string): Promise<void> {
     await this.adapter.execute('DELETE FROM kg_entities WHERE id = ?', [id]);

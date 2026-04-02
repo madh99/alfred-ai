@@ -442,11 +442,20 @@ export const BriefingConfigSchema = z.object({
   }).optional(),
 });
 
+export const LLMLinkingConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  schedule: z.enum(['daily', 'weekly', 'manual']).optional(),
+  maxEntitiesPerPass: z.number().optional(),
+});
+
 export const ReasoningConfigSchema = z.object({
   enabled: z.boolean().optional(),
   schedule: z.enum(['morning_noon_evening', 'hourly', 'half_hourly']).optional(),
   tier: z.enum(['fast', 'default']).optional(),
   deduplicationHours: z.number().optional(),
+  llmLinking: LLMLinkingConfigSchema.optional(),
 });
 
 export const ProxmoxBackupConfigSchema = z.object({
