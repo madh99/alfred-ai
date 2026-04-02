@@ -458,7 +458,34 @@ export class BMWSkill extends Skill {
         : Array.isArray(listRaw.containers) ? listRaw.containers as Array<{ containerId: string; name: string }>
         : [];
       const existing = containers.find(c => c.name === CONTAINER_NAME);
-      if (existing) return existing.containerId;
+      if (existing) {
+        // Check if container has the right number of descriptors — if not, delete and recreate
+        // This handles cases where new descriptors are added in code updates
+        try {
+          const detailRes = await fetch(`${API_BASE}/customers/containers/${existing.containerId}`, {
+            headers: this.apiHeaders(accessToken),
+            signal: AbortSignal.timeout(15_000),
+          });
+          if (detailRes.ok) {
+            const detail = await detailRes.json() as Record<string, unknown>;
+            const currentDescriptors = Array.isArray(detail.technicalDescriptors) ? detail.technicalDescriptors : [];
+            if (currentDescriptors.length !== DESCRIPTORS.length) {
+              // Descriptor mismatch — delete old container and fall through to create new one
+              await fetch(`${API_BASE}/customers/containers/${existing.containerId}`, {
+                method: 'DELETE',
+                headers: this.apiHeaders(accessToken),
+                signal: AbortSignal.timeout(15_000),
+              });
+            } else {
+              return existing.containerId;
+            }
+          } else {
+            return existing.containerId;
+          }
+        } catch {
+          return existing.containerId; // On error, use existing
+        }
+      }
     }
 
     // Create new container
