@@ -674,7 +674,10 @@ export class KnowledgeGraphService {
       const batteries = items.filter(i => /batter|victron|speicher|akku/i.test(i.normalizedName) && i.sources.includes('smarthome'));
       const cryptoItems = items.filter(i => i.sources.includes('crypto'));
       const feedArticles = events.filter(e => e.attributes?.type === 'feed_article');
-      const homeLocation = locations.find(l => l.attributes?.isHome === true);
+      // Pick home location: prefer highest confidence among isHome=true, exclude isWork=true
+      const homeLocation = locations
+        .filter(l => l.attributes?.isHome === true && l.attributes?.isWork !== true)
+        .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
       const energyMetric = metrics.find(m => m.normalizedName === 'strompreis');
 
       // Rule 1: Vehicle ↔ Charger
@@ -770,13 +773,22 @@ export class KnowledgeGraphService {
       for (const query of ['adress', 'address', 'heim', 'home', 'büro', 'office', 'wohn']) {
         const facts = await this.memoryRepo.search(userId, query);
         for (const fact of facts.slice(0, 5)) {
-          for (const city of KNOWN_LOCATIONS) {
-            if (fact.value.includes(city)) {
-              const isHome = /heim|home|wohn|zuhause|privat/i.test(fact.key);
-              const isWork = /büro|office|arbeit|firma|work/i.test(fact.key);
-              await this.kgRepo.upsertEntity(userId, city, 'location',
-                { isHome, isWork, address: fact.value }, 'memories');
+          const matchedCities = KNOWN_LOCATIONS.filter(c => fact.value.includes(c));
+          const isHomeKey = /heim|home|wohn|zuhause|privat/i.test(fact.key);
+          const isWorkKey = /büro|office|arbeit|firma|work/i.test(fact.key);
+          for (const city of matchedCities) {
+            // When multiple cities in one fact, check surrounding context per city
+            let isHome = isHomeKey;
+            let isWork = isWorkKey;
+            if (matchedCities.length > 1) {
+              // Find 60-char window around city mention to determine context
+              const idx = fact.value.indexOf(city);
+              const window = fact.value.slice(Math.max(0, idx - 60), idx + city.length + 60).toLowerCase();
+              isHome = /heim|home|wohn|zuhause|privat/i.test(window);
+              isWork = /büro|office|arbeit|firma|work/i.test(window);
             }
+            await this.kgRepo.upsertEntity(userId, city, 'location',
+              { isHome, isWork, address: fact.value }, 'memories');
           }
         }
       }
