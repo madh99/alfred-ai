@@ -5,26 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.292] - 2026-04-02
+## [0.19.0-multi-ha.303] - 2026-04-02
 
 ### Added
-- **BMW Telematik-Persistenz** — Neue DB-Tabelle `bmw_telematic_log` (Migration v45) speichert alle Telematik-Daten (MQTT + REST) persistent. 3-Tier-Lookup: RAM-Cache → DB → REST API. Beide HA-Nodes lesen aus derselben DB — .93 braucht keinen eigenen MQTT-Stream mehr für Status-Abfragen. REST-Quota wird nur verbraucht wenn kein frischer DB-Eintrag existiert (60 Min TTL).
-- **BMW History Action** — Neue Action `history` zeigt gespeicherte Telematik-Werte (SoC, Reichweite, Verriegelung, Standort) über einen Zeitraum als Tabelle. Default: letzte 7 Tage.
-- **BMW Telematic Pruning** — Weekly Maintenance löscht Einträge älter als 90 Tage.
+- **BMW CarData MQTT Streaming** — Echtzeit-Fahrzeugdaten über BMW Customer Streaming API (MQTT). Kein REST-Quota-Verbrauch für Türen, GPS, Geschwindigkeit, km-Stand, Reifendruck. Cluster-aware (nur ein Node streamt via AdapterClaimManager). Token-Refresh vor Connect, disconnect/offline Logging.
+- **BMW Telematik DB-Persistenz** — Neue `bmw_telematic_log` Tabelle (Migration v45). MQTT-Events werden als Merged Snapshots gespeichert (5s Debounce), REST-Responses ebenfalls. 3-Tier-Lookup: RAM → DB → REST. Beide HA-Nodes lesen aus derselben DB. REST-Quota nur bei Cache-Miss (REST 25 Min, MQTT 60 Min TTL).
+- **BMW MQTT + REST Merge** — MQTT liefert Echtzeitdaten (GPS, Türen, Geschwindigkeit, km-Stand), REST liefert Batterie (SoC, SoH, Kapazität). Status merged beide Quellen. Getrenntes `getLatestBySource()` pro Datenquelle.
+- **BMW History Action** — Neue Action `history` zeigt Telematik-Zeitreihe (SoC, Reichweite, Verriegelung, km-Stand, Standort) als Tabelle. Default: 7 Tage. Pruning nach 90 Tagen.
+- **BMW Reverse Geocoding** — GPS-Koordinaten werden per Nominatim (OSM) in lesbare Adressen aufgelöst (Straße, Ort). 5s Timeout, Fallback auf Koordinaten.
+- **BMW Deskriptor-Mapping REST↔MQTT** — `tvm()` Funktion mit Fallback-Mapping für unterschiedliche Pfade (z.B. `door.status` vs `centralLocking.isLocked`). Normalisiert LOCKED/SECURED/UNLOCKED/SELECTIVELOCKED.
+- **Reasoning: Vorgeschlagene Aktionen im Insight sichtbar** — Am Ende der Insight-Nachricht: "⚡ Beschreibung" für jede vorgeschlagene Aktion.
 
 ### Fixed
-- **BMW MQTT Parser: Streaming-Nachrichtenformat** — BMW sendet `data` als Object `{ "descriptor.path": { value, unit, timestamp } }`, nicht als Array. Parser erkannte das Format nicht → leere telematicData → keine DB-Persistenz, kein Cache. Fix: Object-Format als primären Parser, Array als Fallback.
-- **BMW MQTT DB-Persistenz: Merged Snapshots statt Einzelnachrichten** — Jede MQTT-Nachricht hat nur 1 Feld. 314 Einzelzeilen pro Burst → getLatest() gab nur ein Feld zurück, History zeigte leere Werte. Fix: 5s Debounce nach Message-Burst, dann ein vollständiger Snapshot (alle Felder gemerged) als eine DB-Zeile. ~10-50 Zeilen/Tag statt tausende.
-- **BMW Deskriptor-Mapping REST↔MQTT** — MQTT-Streaming nutzt andere Pfade als REST API (z.B. `vehicle.cabin.door.status` statt `vehicle.access.centralLocking.isLocked`, `vehicle.drivetrain.lastRemainingRange` statt `remainingElectricRange`). Status/History/Charging zeigten MQTT-Daten als leer. Fix: `tvm()` Funktion mit Fallback-Mapping, normalisierte Wert-Interpretation (LOCKED/SECURED/true, CLOSED/false).
-- **BMW Status: MQTT + REST Merge** — MQTT liefert nicht alle Felder (SoC, SoH, Batteriekapazität fehlen). Status zeigte diese als "nicht verfügbar". Fix: MQTT-Echtzeitdaten (GPS, Türen, Geschwindigkeit) + REST-API-Daten (SoC, SoH, Kapazität) werden gemerged. REST-Daten 25 Min aus DB gecached, nur bei Ablauf neuer API-Call (spart Quota). MQTT gewinnt bei gemeinsamen Feldern. Getrenntes `getLatestBySource()` verhindert dass REST-Eintrag den MQTT-Snapshot verdeckt.
-- **Reasoning Actions-JSON dem User angezeigt** — LLM schrieb `**ACTIONS**` als Markdown-Header mit JSON-Codeblock statt den `---ACTIONS---` Marker zu verwenden. Parser erkannte nur den exakten Marker → gesamter Text (inkl. JSON) wurde als Insight gesendet. Fix: Robuster Parser erkennt `**ACTIONS**`, `## ACTIONS`, JSON-Codeblöcke mit Action-Objekten. JSON wird aus der User-Nachricht entfernt und intern verarbeitet.
-- **Reasoning: Vorgeschlagene Aktionen im Insight sichtbar** — Actions wurden intern verarbeitet aber der User wusste nicht dass etwas vorgeschlagen wurde. Fix: Am Ende der Insight-Nachricht werden vorgeschlagene Aktionen als "⚡ Beschreibung" angezeigt.
-- **KG: Memory-Sync setzte Wien erneut als isHome** — Satz-basierte Analyse statt Fenster-Ansatz. "Wien ist die Büroadresse, nicht der Wohnort" → erkennt Negation "nicht" → `isHome=false`. Vorher: 60-Zeichen-Fenster fand "Wohnort" im Kontext und setzte `isHome=true`.
-- **KG: Home-Location falsch Wien statt Altlengbach** — `homeLocation` Suche nahm die erste Location mit `isHome=true` ohne `isWork` zu prüfen. Wien hatte `isHome=true` aus Memory-Sync. Fix: `isWork=true` Locations werden ausgeschlossen, höchste Confidence gewinnt. Memory-Sync prüft jetzt pro-Stadt-Kontext wenn mehrere Städte in einem Fakt vorkommen (60-Zeichen-Fenster um Stadt-Mention).
-- **BMW MQTT Streaming: Zod-Schema fehlte `streaming`** — ENV-Variablen `ALFRED_BMW_STREAMING_*` wurden korrekt ins Config-Objekt geschrieben, aber `AlfredConfigSchema.parse()` strippte das `streaming`-Objekt da es im `BMWCarDataConfigSchema` nicht definiert war. Streaming konnte nie starten. Fix: Schema um `streaming` Sub-Objekt erweitert (username, topic, enabled, host, port). Port als `z.coerce.number()` + `NUMERIC_ENV_KEYS`.
-- **BMW MQTT Streaming: Debug-Logging** — Connect, Message, Error und Close Events waren ohne Logging. Fehler wurden verschluckt. Fix: console.log/warn für alle MQTT-Events.
-- **BMW MQTT Streaming: Token-Refresh vor Connect** — idToken wurde ungeprüft verwendet, abgelaufene Tokens führten zu sofortigem Connection-Close durch den Broker. Fix: Token wird vor MQTT-Connect refreshed wenn <5 Min bis Ablauf. Zusätzlich: disconnect/offline Events geloggt, Broker-URL + Token-Expiry im Log.
-- **BMW MQTT Streaming: Cluster-Aware** — Beide HA-Nodes verbanden sich gleichzeitig mit denselben BMW-Credentials → `Connection refused: Not authorized` auf einem Node (BMW erlaubt nur eine Session pro GCID). Fix: Streaming nutzt jetzt AdapterClaimManager — nur der Node mit dem `bmw-streaming` Claim verbindet sich. Claim-Check in `start()` verschoben (war in `initialize()` wo ClaimManager noch nicht existiert).
+- **BMW MQTT Streaming: Zod-Schema fehlte `streaming`** — `AlfredConfigSchema.parse()` strippte das `streaming`-Objekt. Fix: Schema erweitert + `NUMERIC_ENV_KEYS` für Port.
+- **BMW MQTT Streaming: Cluster-Aware** — Beide Nodes verbanden sich gleichzeitig → `Connection refused`. Fix: AdapterClaimManager, Claim in `start()` statt `initialize()`.
+- **BMW MQTT Parser** — BMW sendet Object-Format, nicht Array. Fix: Object-Parser als primär.
+- **BMW MQTT DB: Merged Snapshots** — 314 Einzelzeilen pro Burst → ein Snapshot nach 5s Debounce.
+- **Reasoning Actions-JSON dem User angezeigt** — LLM nutzte `**ACTIONS**` statt `---ACTIONS---` Marker. Fix: Robuster Parser erkennt alle Varianten + JSON-Codeblöcke.
+- **KG: Wien fälschlich als Home-Location** — Memory-Sync setzte Wien `isHome=true` wegen "Wohnort" im Kontext. Fix: Satz-basierte Negationserkennung ("nicht der Wohnort" → `isHome=false`). `homeLocation`-Suche schließt `isWork=true` aus, höchste Confidence gewinnt.
 
 ## [0.19.0-multi-ha.267] - 2026-04-01
 
