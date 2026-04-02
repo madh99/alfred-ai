@@ -222,14 +222,26 @@ export class BMWSkill extends Skill {
         if (loaded) { this.tokens = loaded; break; }
       } else { break; }
     }
-    const tokens = this.tokens;
+    let tokens = this.tokens;
     if (!tokens?.idToken) return; // Still no tokens — user hasn't authorized yet
+
+    // Refresh token before connecting — stale idTokens get rejected instantly
+    if (tokens.expiresAt && tokens.expiresAt < Date.now() + 300_000) {
+      try {
+        await this.refreshAccessToken(tokens);
+        tokens = this.tokens!;
+        console.log('[BMW MQTT] Token refreshed before connect');
+      } catch (err) {
+        console.warn('[BMW MQTT] Token refresh failed, trying with existing token:', err);
+      }
+    }
 
     try {
       const mqtt = (await Function('return import("mqtt")')()) as typeof import('mqtt');
       const host = this.config.streaming.host ?? 'customer.streaming-cardata.bmwgroup.com';
       const port = this.config.streaming.port ?? 9000;
       const brokerUrl = `mqtts://${host}:${port}`;
+      console.log(`[BMW MQTT] Connecting to ${brokerUrl}, token expires ${new Date(tokens.expiresAt ?? 0).toISOString()}`);
 
       this.mqttClient = mqtt.connect(brokerUrl, {
         username,
@@ -278,6 +290,14 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('error', (err: unknown) => {
         this.streamingActive = false;
         console.warn('[BMW MQTT] Error:', err);
+      });
+
+      this.mqttClient.on('disconnect', (packet: any) => {
+        console.warn('[BMW MQTT] Disconnect packet:', JSON.stringify(packet));
+      });
+
+      this.mqttClient.on('offline', () => {
+        console.log('[BMW MQTT] Client offline');
       });
 
       this.mqttClient.on('close', () => {
