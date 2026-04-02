@@ -915,43 +915,58 @@ export class BMWSkill extends Skill {
     const vin = await this.resolveVin(inputVin);
     const uid = this.injectedAlfredUserId ?? this.activeUserId;
 
-    // 3-tier lookup: RAM cache → DB → REST API
-    let telematicRaw: { telematicData: TelematicResponse } | undefined;
-    let dataSource = '';
+    // Merged data from all sources: MQTT has realtime (GPS, doors, speed),
+    // REST has battery data (SoC, SoH, capacity). Both are needed for full status.
+    let merged: TelematicResponse = {};
 
-    // Tier 1: RAM cache (only on streaming node, sub-ms)
+    // 1. Start with MQTT data (freshest for realtime fields)
     const streamingCacheKey = `telematic:${vin}`;
     const streamingCached = this.cache.get(streamingCacheKey);
-    if (streamingCached && (Date.now() - streamingCached.ts) < CACHE_TTL) {
-      telematicRaw = streamingCached.data as { telematicData: TelematicResponse };
-      dataSource = 'ram';
-    }
-
-    // Tier 2: DB (both nodes, persisted MQTT + REST data)
-    if (!telematicRaw && this.telematicRepo) {
+    if (streamingCached && (Date.now() - streamingCached.ts) < DB_TELEMATIC_TTL) {
+      const mqttData = (streamingCached.data as any).telematicData ?? {};
+      Object.assign(merged, mqttData);
+    } else if (this.telematicRepo) {
+      // Fallback: MQTT snapshot from DB (cross-node)
       const dbEntry = await this.telematicRepo.getLatest(uid, vin);
       if (dbEntry && (Date.now() - new Date(dbEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
-        telematicRaw = { telematicData: dbEntry.telematicData as TelematicResponse };
-        dataSource = 'db';
+        Object.assign(merged, dbEntry.telematicData);
       }
     }
 
-    // Tier 3: REST API (costs quota)
-    if (!telematicRaw) {
+    // 2. Fill gaps with REST API data (SoC, SoH, battery capacity not in MQTT stream)
+    //    Use cached REST data from DB if fresh enough (25 min), otherwise call API
+    const REST_TTL = 25 * 60_000;
+    let restData: TelematicResponse | undefined;
+
+    if (this.telematicRepo) {
+      const restEntries = await this.telematicRepo.getHistory(uid, vin, new Date(Date.now() - REST_TTL).toISOString(), new Date().toISOString(), 10);
+      const restEntry = restEntries.find(e => e.source === 'rest');
+      if (restEntry) restData = restEntry.telematicData as TelematicResponse;
+    }
+
+    if (!restData) {
+      // No fresh REST data — call API (costs 1 quota)
       const containerId = await this.resolveContainerId();
-      telematicRaw = await this.apiGet<{ telematicData: TelematicResponse }>(
+      const apiResult = await this.apiGet<{ telematicData: TelematicResponse }>(
         `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
       );
-      dataSource = 'rest';
-      // Persist REST result to DB for cross-node access
-      if (this.telematicRepo && telematicRaw.telematicData) {
-        this.telematicRepo.insert(uid, vin, 'rest', telematicRaw.telematicData).catch(() => {});
+      restData = apiResult.telematicData ?? {};
+      // Persist for cross-node + future TTL
+      if (this.telematicRepo && Object.keys(restData).length > 0) {
+        this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
+      }
+    }
+
+    // Merge: MQTT wins for fields it has, REST fills the gaps
+    if (restData) {
+      for (const [key, val] of Object.entries(restData)) {
+        if (!merged[key]) merged[key] = val;
       }
     }
 
     const basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
 
-    const t = telematicRaw.telematicData ?? {};
+    const t = merged;
     const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
     const range = tvm(t, 'vehicle.drivetrain.electricEngine.remainingElectricRange');
     const maxEnergy = tvm(t, 'vehicle.drivetrain.batteryManagement.maxEnergy');
@@ -1008,31 +1023,29 @@ export class BMWSkill extends Skill {
     const vin = await this.resolveVin(inputVin);
     const uid = this.injectedAlfredUserId ?? this.activeUserId;
 
-    // 3-tier: RAM → DB → REST (same telematic endpoint as status)
-    let telematicRaw: { telematicData: TelematicResponse } | undefined;
+    // Charging needs REST data (power, time, HV status) + MQTT for realtime SoC/plug
+    // Always call REST for charging — these fields are REST-only
+    const containerId = await this.resolveContainerId();
+    const apiResult = await this.apiGet<{ telematicData: TelematicResponse }>(
+      `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+    );
+    const restData = apiResult.telematicData ?? {};
+    if (this.telematicRepo && Object.keys(restData).length > 0) {
+      this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
+    }
 
+    // Merge MQTT on top for realtime fields (plug status, charger port)
+    const merged: TelematicResponse = { ...restData };
     const streamingCacheKey = `telematic:${vin}`;
     const streamingCached = this.cache.get(streamingCacheKey);
-    if (streamingCached && (Date.now() - streamingCached.ts) < CACHE_TTL) {
-      telematicRaw = streamingCached.data as { telematicData: TelematicResponse };
-    }
-    if (!telematicRaw && this.telematicRepo) {
-      const dbEntry = await this.telematicRepo.getLatest(uid, vin);
-      if (dbEntry && (Date.now() - new Date(dbEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
-        telematicRaw = { telematicData: dbEntry.telematicData as TelematicResponse };
-      }
-    }
-    if (!telematicRaw) {
-      const containerId = await this.resolveContainerId();
-      telematicRaw = await this.apiGet<{ telematicData: TelematicResponse }>(
-        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
-      );
-      if (this.telematicRepo && telematicRaw.telematicData) {
-        this.telematicRepo.insert(uid, vin, 'rest', telematicRaw.telematicData).catch(() => {});
+    if (streamingCached && (Date.now() - streamingCached.ts) < DB_TELEMATIC_TTL) {
+      const mqttData = (streamingCached.data as any).telematicData ?? {};
+      for (const [key, val] of Object.entries(mqttData as TelematicResponse)) {
+        merged[key] = val; // MQTT wins for shared fields
       }
     }
 
-    const t = telematicRaw.telematicData ?? {};
+    const t = merged;
     const chargingStatus = tv(t, 'vehicle.drivetrain.electricEngine.charging.status');
     const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
     const level = tv(t, 'vehicle.drivetrain.electricEngine.charging.level');
