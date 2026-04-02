@@ -192,7 +192,7 @@ export class BMWSkill extends Skill {
   private injectedServiceResolver?: SkillContext['userServiceResolver'];
   private injectedAlfredUserId?: string;
   /** Injected from alfred.ts — DB persistence for telematic data (cross-node + history). */
-  private telematicRepo?: { insert(userId: string, vin: string, source: 'mqtt' | 'rest', data: Record<string, unknown>): Promise<void>; getLatest(userId: string, vin: string): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getHistory(userId: string, vin: string, from: string, to: string, limit?: number): Promise<Array<{ telematicData: Record<string, unknown>; source: string; createdAt: string }>> };
+  private telematicRepo?: { insert(userId: string, vin: string, source: 'mqtt' | 'rest', data: Record<string, unknown>): Promise<void>; getLatest(userId: string, vin: string): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getLatestBySource(userId: string, vin: string, source: 'mqtt' | 'rest'): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getHistory(userId: string, vin: string, from: string, to: string, limit?: number): Promise<Array<{ telematicData: Record<string, unknown>; source: string; createdAt: string }>> };
 
   private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.activeUserId) ?? null; }
   private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.activeUserId, t); }
@@ -919,45 +919,41 @@ export class BMWSkill extends Skill {
     // REST has battery data (SoC, SoH, capacity). Both are needed for full status.
     let merged: TelematicResponse = {};
 
-    // 1. Start with MQTT data (freshest for realtime fields)
+    // 1. MQTT data (realtime fields: GPS, doors, speed, km)
     const streamingCacheKey = `telematic:${vin}`;
     const streamingCached = this.cache.get(streamingCacheKey);
     if (streamingCached && (Date.now() - streamingCached.ts) < DB_TELEMATIC_TTL) {
-      const mqttData = (streamingCached.data as any).telematicData ?? {};
-      Object.assign(merged, mqttData);
+      Object.assign(merged, (streamingCached.data as any).telematicData ?? {});
     } else if (this.telematicRepo) {
-      // Fallback: MQTT snapshot from DB (cross-node)
-      const dbEntry = await this.telematicRepo.getLatest(uid, vin);
-      if (dbEntry && (Date.now() - new Date(dbEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
-        Object.assign(merged, dbEntry.telematicData);
+      const mqttEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'mqtt');
+      if (mqttEntry && (Date.now() - new Date(mqttEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
+        Object.assign(merged, mqttEntry.telematicData);
       }
     }
 
-    // 2. Fill gaps with REST API data (SoC, SoH, battery capacity not in MQTT stream)
-    //    Use cached REST data from DB if fresh enough (25 min), otherwise call API
+    // 2. REST data (SoC, SoH, battery capacity — not in MQTT stream)
     const REST_TTL = 25 * 60_000;
     let restData: TelematicResponse | undefined;
 
     if (this.telematicRepo) {
-      const restEntries = await this.telematicRepo.getHistory(uid, vin, new Date(Date.now() - REST_TTL).toISOString(), new Date().toISOString(), 10);
-      const restEntry = restEntries.find(e => e.source === 'rest');
-      if (restEntry) restData = restEntry.telematicData as TelematicResponse;
+      const restEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'rest');
+      if (restEntry && (Date.now() - new Date(restEntry.createdAt).getTime()) < REST_TTL) {
+        restData = restEntry.telematicData as TelematicResponse;
+      }
     }
 
     if (!restData) {
-      // No fresh REST data — call API (costs 1 quota)
       const containerId = await this.resolveContainerId();
       const apiResult = await this.apiGet<{ telematicData: TelematicResponse }>(
         `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
       );
       restData = apiResult.telematicData ?? {};
-      // Persist for cross-node + future TTL
       if (this.telematicRepo && Object.keys(restData).length > 0) {
         this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
       }
     }
 
-    // Merge: MQTT wins for fields it has, REST fills the gaps
+    // Merge: REST as base, MQTT overwrites (fresher for shared fields)
     if (restData) {
       for (const [key, val] of Object.entries(restData)) {
         if (!merged[key]) merged[key] = val;

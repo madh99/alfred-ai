@@ -30,6 +30,15 @@ export class BmwTelematicRepository {
     return row ? this.map(row) : undefined;
   }
 
+  /** Get the latest telematic snapshot for a VIN filtered by source. */
+  async getLatestBySource(userId: string, vin: string, source: 'mqtt' | 'rest'): Promise<BmwTelematicEntry | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM bmw_telematic_log WHERE user_id = ? AND vin = ? AND source = ? ORDER BY created_at DESC LIMIT 1',
+      [userId, vin, source],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.map(row) : undefined;
+  }
+
   /** Get telematic history for a VIN within a time range. */
   async getHistory(userId: string, vin: string, from: string, to: string, limit = 500): Promise<BmwTelematicEntry[]> {
     const rows = await this.adapter.query(
