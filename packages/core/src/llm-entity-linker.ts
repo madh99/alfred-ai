@@ -171,7 +171,7 @@ REGELN:
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.1,
-        max_tokens: 2000,
+        max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
       signal: AbortSignal.timeout(30_000),
@@ -195,6 +195,30 @@ REGELN:
     try {
       return JSON.parse(content) as LLMLinkingResult;
     } catch {
+      // Truncated JSON: try to salvage partial arrays
+      try {
+        // Find last complete object in each array
+        const salvaged: LLMLinkingResult = {};
+        const relMatch = content.match(/"relations"\s*:\s*\[([\s\S]*)/);
+        if (relMatch) {
+          const items = [...relMatch[1].matchAll(/\{[^}]+\}/g)].map(m => { try { return JSON.parse(m[0]); } catch { return null; } }).filter(Boolean);
+          if (items.length > 0) salvaged.relations = items;
+        }
+        const neMatch = content.match(/"newEntities"\s*:\s*\[([\s\S]*)/);
+        if (neMatch) {
+          const items = [...neMatch[1].matchAll(/\{[^}]+\}/g)].map(m => { try { return JSON.parse(m[0]); } catch { return null; } }).filter(Boolean);
+          if (items.length > 0) salvaged.newEntities = items;
+        }
+        const corrMatch = content.match(/"corrections"\s*:\s*\[([\s\S]*)/);
+        if (corrMatch) {
+          const items = [...corrMatch[1].matchAll(/\{[^}]+\}/g)].map(m => { try { return JSON.parse(m[0]); } catch { return null; } }).filter(Boolean);
+          if (items.length > 0) salvaged.corrections = items;
+        }
+        if (salvaged.relations?.length || salvaged.newEntities?.length || salvaged.corrections?.length) {
+          this.logger.info({ salvaged: (salvaged.relations?.length ?? 0) + (salvaged.newEntities?.length ?? 0) + (salvaged.corrections?.length ?? 0) }, 'LLM linking: salvaged partial JSON');
+          return salvaged;
+        }
+      } catch { /* give up */ }
       this.logger.warn({ content: content.slice(0, 200) }, 'LLM linking: failed to parse JSON response');
       return {};
     }
