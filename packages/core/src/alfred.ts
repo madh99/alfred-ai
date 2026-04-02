@@ -1130,10 +1130,14 @@ export class Alfred {
             const baseUrl = llmLinkProvider === 'openai' ? 'https://api.openai.com/v1'
               : llmLinkProvider === 'anthropic' ? 'https://api.anthropic.com/v1'
               : 'https://api.mistral.ai/v1';
-            kgServiceInstance.setLLMLinker(new LLMEntityLinker(
+            const llmLinker = new LLMEntityLinker(
               new KnowledgeGraphRepository(adapter), llmLinkingCfg,
               this.logger.child({ component: 'llm-entity-linker' }), llmLinkApiKey, baseUrl,
-            ));
+            );
+            llmLinker.setUsageCallback((_service, model, inp, out) => {
+              usageRepo.record(model, inp, out, 0, 0, 0).catch(() => {});
+            });
+            kgServiceInstance.setLLMLinker(llmLinker);
             this.logger.info({ provider: llmLinkProvider, model: llmLinkingCfg.model ?? 'mistral-small-latest' }, 'LLM entity linker enabled');
           }
         }
@@ -1945,6 +1949,10 @@ export class Alfred {
     const embTier = (this.config.llm as Record<string, unknown>).embeddings as Record<string, unknown> | undefined;
     if (embTier?.provider) {
       services.push({ name: 'Embeddings', provider: embTier.provider as string, model: embTier.model as string ?? 'unknown', status: 'active' });
+    }
+    if (this.config.reasoning?.llmLinking?.enabled) {
+      const llmLinkCfg = this.config.reasoning.llmLinking;
+      services.push({ name: 'KG Entity-Linking', provider: llmLinkCfg.provider ?? 'mistral', model: llmLinkCfg.model ?? 'mistral-small-latest', status: 'active' });
     }
     return services;
   }

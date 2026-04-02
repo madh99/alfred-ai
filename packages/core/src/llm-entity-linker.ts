@@ -2,6 +2,8 @@ import type { Logger } from 'pino';
 import type { KnowledgeGraphRepository, KGEntity } from '@alfred/storage';
 import type { LLMLinkingConfig } from '@alfred/types';
 
+type UsageCallback = (service: string, model: string, inputTokens: number, outputTokens: number) => void;
+
 interface LLMRelation {
   source: string;
   target: string;
@@ -47,6 +49,10 @@ const VALID_ENTITY_TYPES = new Set([
  */
 export class LLMEntityLinker {
   private lastRunAt?: string;
+  private usageCallback?: UsageCallback;
+
+  /** Set callback for tracking LLM usage (called with service, model, input/output tokens). */
+  setUsageCallback(cb: UsageCallback): void { this.usageCallback = cb; }
 
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
@@ -175,8 +181,16 @@ REGELN:
       throw new Error(`LLM API ${res.status}: ${await res.text().catch(() => '')}`);
     }
 
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+    };
     const content = data.choices?.[0]?.message?.content ?? '{}';
+
+    // Track usage
+    if (this.usageCallback && data.usage) {
+      this.usageCallback('llm_linking', model, data.usage.prompt_tokens ?? 0, data.usage.completion_tokens ?? 0);
+    }
 
     try {
       return JSON.parse(content) as LLMLinkingResult;

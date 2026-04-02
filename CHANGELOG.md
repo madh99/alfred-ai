@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.313] - 2026-04-03
+## [0.19.0-multi-ha.314] - 2026-04-03
 
 ### Added
 - **Mistral Pricing-Tabelle aktualisiert** — mistral-small ($0.15/$0.60), magistral-medium ($2/$5), magistral-small ($0.50/$1.50), ministral-8b ($0.15/$0.15). Neue Modelle: pixtral-large/12b, ministral-3b/14b, devstral, mistral-moderation, open-mixtral, open-mistral-nemo/7b.
