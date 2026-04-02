@@ -237,7 +237,11 @@ ${this.buildTopicInstructions()}`;
           if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
         }
         if (newInsights.length > 0) {
-          const message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
+          let message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
+          if (parsed.actions.length > 0) {
+            const actionLines = parsed.actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
+            message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
+          }
           const adapter = this.adapters.get(this.defaultPlatform);
           if (adapter) {
             await adapter.sendMessage(this.defaultChatId, message);
@@ -397,16 +401,23 @@ ${this.buildTopicInstructions()}`;
         return;
       }
 
-      // Send text insights to user
+      // Send text insights to user (with action summary if any)
       if (newInsights.length > 0) {
-        const message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
+        let message = `\u{1F4A1} **Alfred Insights**\n\n${newInsights.join('\n\n')}`;
+        // Append action summary so user knows what was proposed/executed
+        if (parsed.actions.length > 0) {
+          const actionLines = parsed.actions.slice(0, 5).map(a =>
+            `\u26A1 ${a.description}`,
+          );
+          message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
+        }
         const adapter = this.adapters.get(this.defaultPlatform);
         if (adapter) {
           await adapter.sendMessage(this.defaultChatId, message);
           for (const insight of newInsights) {
             await this.markSent(insight);
           }
-          this.logger.info({ durationMs, insights: newInsights.length }, 'Reasoning pass: insights sent');
+          this.logger.info({ durationMs, insights: newInsights.length, actions: parsed.actions.length }, 'Reasoning pass: insights sent');
         }
         if (this.insightTracker) {
           for (const insight of newInsights) {

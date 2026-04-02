@@ -774,19 +774,18 @@ export class KnowledgeGraphService {
         const facts = await this.memoryRepo.search(userId, query);
         for (const fact of facts.slice(0, 5)) {
           const matchedCities = KNOWN_LOCATIONS.filter(c => fact.value.includes(c));
-          const isHomeKey = /heim|home|wohn|zuhause|privat/i.test(fact.key);
-          const isWorkKey = /büro|office|arbeit|firma|work/i.test(fact.key);
           for (const city of matchedCities) {
-            // When multiple cities in one fact, check surrounding context per city
-            let isHome = isHomeKey;
-            let isWork = isWorkKey;
-            if (matchedCities.length > 1) {
-              // Find 60-char window around city mention to determine context
-              const idx = fact.value.indexOf(city);
-              const window = fact.value.slice(Math.max(0, idx - 60), idx + city.length + 60).toLowerCase();
-              isHome = /heim|home|wohn|zuhause|privat/i.test(window);
-              isWork = /büro|office|arbeit|firma|work/i.test(window);
-            }
+            // Find the sentence containing this city and check for home/work + negation
+            const sentences = fact.value.split(/[.!]\s+/);
+            const citySentence = sentences.find(s => s.includes(city)) ?? '';
+            const lower = citySentence.toLowerCase();
+            const hasHomeWord = /heim|home|wohn|zuhause|privat/i.test(lower);
+            const hasWorkWord = /büro|office|arbeit|firma|work/i.test(lower);
+            const hasNegation = /nicht|kein|never|no\s|!=|niemals/i.test(lower);
+            // "Wien ist die Büroadresse, nicht der Wohnort" → hasHomeWord + hasNegation → isHome=false
+            // "Altlengbach ist der Wohnort" → hasHomeWord, no negation → isHome=true
+            const isHome = hasHomeWord && !hasNegation;
+            const isWork = hasWorkWord && !hasNegation;
             await this.kgRepo.upsertEntity(userId, city, 'location',
               { isHome, isWork, address: fact.value }, 'memories');
           }
