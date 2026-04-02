@@ -98,6 +98,27 @@ export function DashboardPage() {
             </div>
           </div>
         )}
+
+        {/* AI Services (STT, TTS, OCR, Moderation, Embeddings) */}
+        {data.services && data.services.length > 0 && (
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+            <h3 className="text-sm font-medium text-gray-400 mb-3">AI Services</h3>
+            <div className="space-y-2">
+              {data.services.map((svc: { name: string; provider: string; model: string; status: string }) => (
+                <div key={svc.name} className="flex items-center justify-between">
+                  <div>
+                    <span className="text-xs text-gray-500">{svc.name}</span>
+                    <p className="text-sm text-gray-200 font-mono">{svc.model}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400">{svc.provider}</span>
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Cost Overview */}

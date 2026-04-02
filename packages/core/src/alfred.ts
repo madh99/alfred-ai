@@ -1377,6 +1377,7 @@ export class Alfred {
               [...this.adapters.entries()].map(([p, a]) => [p, a.getStatus()]),
             ),
             llmProviders: this.llmProvider.getProviderStatuses(),
+            services: this.getConfiguredServices(),
             userUsage: await this.usageRepo?.getByUser(weekAgo, today) ?? [],
             userSkillUsage: await this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
           };
@@ -1870,6 +1871,36 @@ export class Alfred {
       this.logger.error({ err, service }, 'Failed to hot-reload service');
       return { success: false, error: message };
     }
+  }
+
+  private getConfiguredServices(): Array<{ name: string; provider: string; model: string; status: string }> {
+    const services: Array<{ name: string; provider: string; model: string; status: string }> = [];
+    const speech = this.config.speech;
+    if (speech) {
+      const sttProvider = speech.sttProvider ?? speech.provider;
+      const ttsProvider = speech.ttsProvider ?? speech.provider;
+      if (sttProvider) {
+        const model = sttProvider === 'mistral' ? 'voxtral-mini-latest' : sttProvider === 'groq' ? 'whisper-large-v3-turbo' : 'whisper-1';
+        services.push({ name: 'Speech-to-Text', provider: sttProvider, model, status: 'active' });
+      }
+      if (speech.ttsEnabled !== false && ttsProvider) {
+        const model = ttsProvider === 'mistral' ? 'voxtral-mini-tts-2603' : 'tts-1';
+        services.push({ name: 'Text-to-Speech', provider: ttsProvider, model, status: 'active' });
+      }
+    }
+    if (this.config.mistralApiKey) {
+      services.push({ name: 'OCR', provider: 'mistral', model: 'mistral-ocr-latest', status: 'active' });
+    }
+    if (this.config.security?.moderation?.enabled) {
+      const provider = this.config.security.moderation.provider ?? 'mistral';
+      const model = this.config.security.moderation.model ?? (provider === 'mistral' ? 'mistral-moderation-latest' : 'omni-moderation-latest');
+      services.push({ name: 'Moderation', provider, model, status: 'active' });
+    }
+    const embTier = (this.config.llm as Record<string, unknown>).embeddings as Record<string, unknown> | undefined;
+    if (embTier?.provider) {
+      services.push({ name: 'Embeddings', provider: embTier.provider as string, model: embTier.model as string ?? 'unknown', status: 'active' });
+    }
+    return services;
   }
 
   private resolveWebUiPath(): string | undefined {

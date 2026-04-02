@@ -2,7 +2,7 @@ import type { LLMUsage } from '@alfred/types';
 
 /**
  * Pricing per 1 million tokens (USD).
- * Updated: 2026-03-21.
+ * Updated: 2026-04-02.
  */
 export interface ModelPricing {
   input: number;
@@ -55,18 +55,26 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['text-embedding-3-small', { input: 0.02, output: 0 }],
   ['text-embedding-3-large', { input: 0.13, output: 0 }],
 
-  // ── Mistral ─────────────────────────────────────────────────
+  // ── Mistral (updated 2026-04-02 from mistral.ai/pricing) ──
   ['codestral',               { input: 0.30, output: 0.90, cacheRead: 0.03 }],
-  ['magistral-medium-latest', { input: 0.40, output: 2.00, cacheRead: 0.04 }],
-  ['magistral-small-latest',  { input: 0.10, output: 0.30, cacheRead: 0.01 }],
-  ['ministral-8b-latest',     { input: 0.10, output: 0.10, cacheRead: 0.01 }],
-  ['mistral-large-latest',    { input: 0.50, output: 1.50, cacheRead: 0.05 }],
-  ['mistral-medium-latest',   { input: 0.40, output: 2.00, cacheRead: 0.04 }],
-  ['mistral-small-latest',    { input: 0.10, output: 0.30, cacheRead: 0.01 }],
-  ['mistral-embed',           { input: 0.10, output: 0.10, cacheRead: 0.01 }],
+  ['devstral-medium',         { input: 0.40, output: 2.00 }],
+  ['devstral-small',          { input: 0.10, output: 0.30 }],
+  ['magistral-medium',        { input: 2.00, output: 5.00 }],
+  ['magistral-small',         { input: 0.50, output: 1.50 }],
+  ['ministral-3b',            { input: 0.10, output: 0.10 }],
+  ['ministral-8b',            { input: 0.15, output: 0.15 }],
+  ['ministral-14b',           { input: 0.20, output: 0.20 }],
   ['mistral-large',           { input: 0.50, output: 1.50, cacheRead: 0.05 }],
   ['mistral-medium',          { input: 0.40, output: 2.00, cacheRead: 0.04 }],
-  ['mistral-small',           { input: 0.10, output: 0.30, cacheRead: 0.01 }],
+  ['mistral-small',           { input: 0.15, output: 0.60, cacheRead: 0.015 }],
+  ['mistral-moderation',      { input: 0.10, output: 0 }],
+  ['mistral-embed',           { input: 0.10, output: 0 }],
+  ['pixtral-large',           { input: 2.00, output: 6.00 }],
+  ['pixtral-12b',             { input: 0.15, output: 0.15 }],
+  ['open-mixtral-8x22b',      { input: 2.00, output: 6.00 }],
+  ['open-mixtral-8x7b',       { input: 0.70, output: 0.70 }],
+  ['open-mistral-nemo',       { input: 0.15, output: 0.15 }],
+  ['open-mistral-7b',         { input: 0.25, output: 0.25 }],
 ];
 
 /**

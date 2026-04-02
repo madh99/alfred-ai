@@ -98,6 +98,7 @@ export interface DashboardData {
   llmProviders?: Record<string, LlmProviderInfo>;
   userUsage?: Array<{ userId: string; calls: number; inputTokens: number; outputTokens: number; costUsd: number }>;
   userSkillUsage?: Array<{ userId: string; skillName: string; calls: number; successes: number; errors: number }>;
+  services?: Array<{ name: string; provider: string; model: string; status: string }>;
 }
 
 export interface HealthData {
