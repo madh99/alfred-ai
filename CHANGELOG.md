@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.309] - 2026-04-03
+## [0.19.0-multi-ha.310] - 2026-04-03
 
 ### Added
 - **Mistral Pricing-Tabelle aktualisiert** — mistral-small ($0.15/$0.60), magistral-medium ($2/$5), magistral-small ($0.50/$1.50), ministral-8b ($0.15/$0.15). Neue Modelle: pixtral-large/12b, ministral-3b/14b, devstral, mistral-moderation, open-mixtral, open-mistral-nemo/7b.
@@ -18,6 +18,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **KG: Entity-Typ-Routing** — Neues `organization` Routing: Firmennamen (GmbH/AG/ICT/Inc + bekannte Marken) werden als Organization statt Person erkannt. Employment-Sync aus Memories (current_employment → Organization + works_at Relation). Cross-Extractor verknüpft Organizations mit Work-Location.
 - **KG: Person-Blacklist + Name-Extraktion** — Erweiterte Blacklist (generische Wörter, Marken, technische Begriffe). Memory-Entities extrahieren nur den Eigennamen, nicht den ganzen Satz. KNOWN_LOCATIONS Check verhindert Orte als Personen. Digits/Sonderzeichen/lowercase Filter.
 - **KG: SmartHome Internal-Filter** — Victron-Internals (vebus_*, settings_ess_*), system_relay_*, Shelly-Hex-IDs werden aus dem KG gefiltert. HA person.* Entities als KG-Person statt Item.
+- **KG: Generisches Entity-Linking** — Neuer `buildGenericEntityLinks()` Pass nach allen Extraktoren. Matcht jede Entity (Name, Attributes, Value) gegen alle anderen Entity-Namen. Erstellt `relates_to` Relationen automatisch — keine domain-spezifischen Rules nötig. Events, Notizen, Dokumente, Todos werden mit allen referenzierten Entities verknüpft (BMW, Gamescom, Personen, Locations etc.).
+- **KG: Person-Memory-Relationen** — Familien/Freunde aus Memory-Keys: child→parent_of, spouse→spouse, mother/sister→family, friend→knows. Alle 10 Personen jetzt mit User verknüpft.
+- **KG: SmartHome alle Items verknüpft** — Rule 5 slice(0,5) Limit entfernt. Alle SmartHome-Items bekommen located_at→Home.
+- **KG: Feed-Locations nicht mehr erstellt** — RSS-Feeds erstellen keine Location-Entities mehr (Braunau, Graz etc. waren nutzlos unverknüpft).
 - **KG: Duplikat-Bereinigung + Event-Expiry** — maintenance() merged Entities mit gleichem normalized_name+type (höherer mention_count gewinnt). Stale Connection-Events (>30 Tage, <0.8 Confidence) werden gepruned. DB-Cleanup: 77 Müll-/Duplikat-Entities entfernt (209→132).
 - **Reasoning: Resolved-Memory-Enrichment** — Wenn der User ein Thema als erledigt markiert hat (Memory mit "erledigt/resolved/überholt"), werden alle Kontext-Sections die dasselbe Thema enthalten automatisch annotiert: "✅ ERLEDIGT laut User-Memory — NICHT als offenes Problem darstellen." Verhindert dass Emails/Daten zu erledigten Themen immer wieder als Insights gemeldet werden.
 - **BMW CarData MQTT Streaming** — Echtzeit-Fahrzeugdaten über BMW Customer Streaming API (MQTT). Kein REST-Quota-Verbrauch für Türen, GPS, Geschwindigkeit, km-Stand, Reifendruck. Cluster-aware (nur ein Node streamt via AdapterClaimManager). Token-Refresh vor Connect, disconnect/offline Logging.

@@ -125,6 +125,8 @@ export class KnowledgeGraphService {
       await this.syncMemoryEntities(userId);
       // Build cross-extractor relations (BMW↔Wallbox, Strompreis↔Batterie, etc.)
       await this.buildCrossExtractorRelations(userId);
+      // Generic entity linking: match every entity against all others by name
+      await this.buildGenericEntityLinks(userId);
     } catch (err) {
       this.logger.warn({ err }, 'KG ingest failed');
     }
@@ -371,6 +373,65 @@ export class KnowledgeGraphService {
    * Maintenance: decay old entities and prune weak ones.
    * Called weekly (alongside TemporalAnalyzer).
    */
+  /**
+   * Generic entity linking: match every entity's text content (name, attributes.value)
+   * against all other entity names. Creates `relates_to` relations for matches.
+   * This catches ALL cross-references automatically — no domain-specific rules needed.
+   */
+  private async buildGenericEntityLinks(userId: string): Promise<void> {
+    try {
+      const allEntities = await this.kgRepo.getAllEntities(userId);
+      if (allEntities.length < 2) return;
+
+      // Build a lookup: normalized name → entity (skip very short names and "User")
+      const nameIndex = new Map<string, KGEntity>();
+      for (const e of allEntities) {
+        if (e.normalizedName.length >= 3 && e.name !== 'User') {
+          nameIndex.set(e.normalizedName, e);
+        }
+      }
+
+      let linked = 0;
+      for (const entity of allEntities) {
+        // Collect all text content from this entity
+        const texts: string[] = [];
+        // Event/connection entities: the value attribute holds the main content
+        if (entity.attributes?.value) texts.push(String(entity.attributes.value));
+        // Memory key often contains entity references (connection_gamescom_bmw_*)
+        if (entity.name.includes('_')) texts.push(entity.name.replace(/_/g, ' '));
+        // Other attributes that might contain references
+        if (entity.attributes?.memoryKey) texts.push(String(entity.attributes.memoryKey).replace(/_/g, ' '));
+        if (entity.attributes?.address) texts.push(String(entity.attributes.address));
+        if (entity.attributes?.relationship) texts.push(String(entity.attributes.relationship).replace(/_/g, ' '));
+
+        if (texts.length === 0) continue;
+        const combined = texts.join(' ').toLowerCase();
+
+        // Match against all other entity names
+        for (const [targetName, targetEntity] of nameIndex) {
+          if (targetEntity.id === entity.id) continue;
+          // Skip same-type self-references (event↔event noise)
+          if (entity.entityType === targetEntity.entityType && entity.entityType === 'event') continue;
+
+          // Check if target entity name appears in this entity's content
+          if (combined.includes(targetName)) {
+            await this.kgRepo.upsertRelation(
+              userId, entity.id, targetEntity.id,
+              'relates_to', undefined, 'generic',
+            );
+            linked++;
+          }
+        }
+      }
+
+      if (linked > 0) {
+        this.logger.debug({ linked }, 'KG: generic entity links created');
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'KG: generic entity linking partially failed');
+    }
+  }
+
   async maintenance(userId: string): Promise<void> {
     try {
       const decayed = await this.kgRepo.decayOldEntities(userId, 30, 0.1);
@@ -808,7 +869,7 @@ export class KnowledgeGraphService {
 
       // Rule 5: SmartHome items → Home Location
       if (homeLocation) {
-        const smItems = items.filter(i => i.sources.includes('smarthome')).slice(0, 5);
+        const smItems = items.filter(i => i.sources.includes('smarthome'));
         for (const item of smItems) {
           await this.kgRepo.upsertRelation(userId, item.id, homeLocation.id, 'located_at', undefined, 'cross');
         }
@@ -836,18 +897,24 @@ export class KnowledgeGraphService {
   private async syncMemoryEntities(userId: string): Promise<void> {
     if (!this.memoryRepo) return;
     try {
-      // 1. Memory entities (persons, contacts) → KG person entities
+      // 1. Memory entities (persons, contacts) → KG person entities + User relations
+      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
-        // Extract just the person name, not the whole sentence
-        // "Sohn Linus (geb. 2014)" → "Sohn Linus", "Frau Alex" → "Frau Alex"
         const raw = mem.value.split(',')[0].split('(')[0].trim();
-        // Take max 3 capitalized words from the start (the actual name)
         const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
         const personName = words.slice(0, 3).join(' ');
         if (personName.length >= 2 && !isInvalidPersonName(personName)) {
-          await this.kgRepo.upsertEntity(userId, personName, 'person',
+          const person = await this.kgRepo.upsertEntity(userId, personName, 'person',
             { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
+          // Derive relation type from memory key
+          const k = mem.key.toLowerCase();
+          const relType = k.includes('child') || k.includes('sohn') || k.includes('tochter') ? 'parent_of'
+            : k.includes('spouse') || k.includes('frau') || k.includes('mann') || k.includes('partner') ? 'spouse'
+            : k.includes('mother') || k.includes('father') || k.includes('sister') || k.includes('brother') || k.includes('mutter') || k.includes('schwester') || k.includes('bruder') || k.includes('vater') ? 'family'
+            : k.includes('friend') || k.includes('freund') ? 'knows'
+            : 'knows';
+          await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
         }
       }
 
@@ -860,8 +927,9 @@ export class KnowledgeGraphService {
           if (m) {
             const name = m[1].trim();
             if (!isInvalidPersonName(name)) {
-              await this.kgRepo.upsertEntity(userId, name, 'person',
+              const person = await this.kgRepo.upsertEntity(userId, name, 'person',
                 { relationship: mem.key }, 'memories');
+              await this.kgRepo.upsertRelation(userId, user.id, person.id, 'knows', mem.key, 'memories');
             }
           }
         }
@@ -911,7 +979,6 @@ export class KnowledgeGraphService {
       }
       // 4. Memory patterns → KG (behavioral patterns like "abends aktiv")
       const patternMems = await this.memoryRepo.getByType(userId, 'pattern', 10);
-      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
       for (const mem of patternMems) {
         if (mem.key.startsWith('temporal_') || mem.key.startsWith('action_feedback_')) continue; // handled below
         const pattern = await this.kgRepo.upsertEntity(userId, mem.key, 'metric',
@@ -1003,6 +1070,8 @@ export class KnowledgeGraphService {
   // ── Generic Extractors ──────────────────────────────────────
 
   private async extractLocations(userId: string, sectionKey: string, content: string): Promise<void> {
+    // Only extract locations from user-relevant sections, not RSS feeds
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
     for (const city of KNOWN_LOCATIONS) {
       if (content.includes(city)) {
         await this.kgRepo.upsertEntity(userId, city, 'location', {}, sectionKey);
