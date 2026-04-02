@@ -198,6 +198,7 @@ export class BMWSkill extends Skill {
   // ── MQTT Streaming ────────────────────────────────────────
   private mqttClient?: any;
   private mqttReconnectTimer?: ReturnType<typeof setTimeout>;
+  private mqttDbWriteTimer?: ReturnType<typeof setTimeout>;
   private streamingActive = false;
 
   constructor(config: BMWCarDataConfig) {
@@ -301,10 +302,16 @@ export class BMWSkill extends Skill {
             } else {
               this.cache.set(cacheKey, { data: { telematicData }, ts: Date.now() });
             }
-            // DB persistence (cross-node access + history)
+            // DB persistence — debounced: write full merged snapshot after burst settles
             if (this.telematicRepo && Object.keys(telematicData).length > 0) {
-              const uid = this.injectedAlfredUserId ?? this.activeUserId;
-              this.telematicRepo.insert(uid, vin, 'mqtt', telematicData).catch(() => {});
+              if (this.mqttDbWriteTimer) clearTimeout(this.mqttDbWriteTimer);
+              const cachedSnapshot = this.cache.get(cacheKey);
+              this.mqttDbWriteTimer = setTimeout(() => {
+                if (!cachedSnapshot || !this.telematicRepo) return;
+                const uid = this.injectedAlfredUserId ?? this.activeUserId;
+                const fullData = (cachedSnapshot.data as any).telematicData ?? {};
+                this.telematicRepo.insert(uid, vin, 'mqtt', fullData).catch(() => {});
+              }, 5_000); // 5s debounce — write once after message burst
             }
           }
         } catch { /* ignore parse errors */ }
