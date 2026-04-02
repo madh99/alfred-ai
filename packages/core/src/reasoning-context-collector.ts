@@ -148,6 +148,9 @@ export class ReasoningContextCollector {
       this.previousSuccess.set(section.key, !isError);
     }
 
+    // Memory-enrichment: annotate sections whose topics the user marked as resolved
+    this.annotateResolvedTopics(sections);
+
     // Fit to token budget
     const fitted = this.fitToBudget(sections, TOTAL_TOKEN_BUDGET);
     const totalTokens = fitted.reduce((sum, s) => sum + s.tokenEstimate, 0);
@@ -375,6 +378,46 @@ export class ReasoningContextCollector {
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: watch fetch failed');
       return '(Watch-Abfrage fehlgeschlagen)';
+    }
+  }
+
+  /**
+   * Cross-reference "resolved" memories against section content.
+   * If a section mentions a topic the user has explicitly marked as resolved/erledigt,
+   * annotate that section so the LLM doesn't re-surface it as an open issue.
+   */
+  private annotateResolvedTopics(sections: ReasoningSection[]): void {
+    const memorySection = sections.find(s => s.key === 'memories');
+    if (!memorySection) return;
+
+    // Extract resolved memories: lines containing resolution keywords
+    const resolvedPattern = /erledigt|resolved|überholt|kein.{0,20}handlungsbedarf|nicht mehr.{0,20}problem|abgeschlossen/i;
+    const resolvedMemories: Array<{ key: string; line: string }> = [];
+    for (const line of memorySection.content.split('\n')) {
+      if (resolvedPattern.test(line)) {
+        // Extract the memory key: "- [type] key_name: value..."
+        const keyMatch = line.match(/\]\s*([^:]+):/);
+        if (keyMatch) resolvedMemories.push({ key: keyMatch[1].trim(), line });
+      }
+    }
+    if (resolvedMemories.length === 0) return;
+
+    // For each resolved memory, extract topic words from the key (split on _ and filter short words)
+    for (const resolved of resolvedMemories) {
+      const topicWords = resolved.key.split('_')
+        .filter(w => w.length >= 4)
+        .map(w => w.toLowerCase());
+      if (topicWords.length === 0) continue;
+
+      // Annotate matching sections (not memories itself)
+      for (const section of sections) {
+        if (section.key === 'memories') continue;
+        const contentLower = section.content.toLowerCase();
+        const matches = topicWords.filter(w => contentLower.includes(w));
+        if (matches.length >= 2 || (matches.length === 1 && topicWords.length === 1)) {
+          section.content += `\n\n✅ ERLEDIGT laut User-Memory: "${resolved.line.replace(/^-\s*\[.*?\]\s*/, '').slice(0, 150)}" — NICHT als offenes Problem oder Handlungsbedarf darstellen.`;
+        }
+      }
     }
   }
 
