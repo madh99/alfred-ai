@@ -234,6 +234,7 @@ const ENV_MAP: Record<string, string[]> = {
 /** ENV keys that should be coerced to numbers. */
 const NUMERIC_ENV_KEYS = new Set([
   'ALFRED_API_PORT',
+  'ALFRED_BMW_STREAMING_PORT',
 ]);
 
 let _currentEnvKey = '';

@@ -370,6 +370,13 @@ export const GoeChargerConfigSchema = z.object({
 
 export const BMWCarDataConfigSchema = z.object({
   clientId: z.string(),
+  streaming: z.object({
+    username: z.string(),
+    topic: z.string(),
+    enabled: z.boolean().optional(),
+    host: z.string().optional(),
+    port: z.coerce.number().optional(),
+  }).optional(),
 });
 
 export const RoutingConfigSchema = z.object({
