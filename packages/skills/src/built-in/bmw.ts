@@ -272,7 +272,8 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
         try {
           const data = JSON.parse(payload.toString());
-          console.log(`[BMW MQTT] Data received on ${_topic}: ${Object.keys(data).join(',')}`);
+          const dataType = Array.isArray(data.data) ? 'array' : typeof data.data;
+          console.log(`[BMW MQTT] Data received on ${_topic}: keys=${Object.keys(data).join(',')}, data.type=${dataType}, sample=${JSON.stringify(data.data).slice(0, 300)}`);
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
             if (Array.isArray(data.data)) {
