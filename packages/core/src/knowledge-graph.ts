@@ -36,6 +36,47 @@ const PERSON_PATTERNS = [
   /\bvon\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/g,
 ];
 
+/** Words that are NOT person names — generic terms, brands, products, events. */
+const PERSON_BLACKLIST = new Set([
+  // Generic German words
+  'plan', 'haupt', 'nacht', 'radio', 'doorbell', 'user', 'apple', 'code',
+  'supreme', 'amazon', 'google', 'microsoft', 'tesla', 'meta', 'nvidia',
+  // Events/Products
+  'gamescom', 'comic', 'messe', 'festival', 'konferenz', 'conference',
+  // Technical terms
+  'webhook', 'backup', 'server', 'cluster', 'docker', 'proxy', 'gateway',
+  'switch', 'router', 'sensor', 'adapter', 'plugin', 'module', 'service',
+  'update', 'upgrade', 'release', 'version', 'config', 'setup', 'status',
+]);
+
+/** Company suffixes — if name contains these, it's an organization not a person. */
+const ORG_SUFFIXES = /\b(gmbh|ag|kg|inc|corp|ltd|llc|se|sarl|ict|ohg|og|co)\b/i;
+
+/** Check if a name is likely an organization. */
+function isLikelyOrganization(name: string): boolean {
+  if (ORG_SUFFIXES.test(name)) return true;
+  // Single capitalized word that's a known brand/company
+  const lower = name.toLowerCase();
+  return ['axians', 'apple', 'google', 'microsoft', 'tesla', 'nvidia', 'meta', 'amazon', 'anthropic', 'openai', 'mistral'].includes(lower);
+}
+
+/** Check if a name should be rejected as a person. */
+function isInvalidPersonName(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (PERSON_BLACKLIST.has(lower)) return true;
+  if (KNOWN_LOCATIONS_LOWER.has(lower)) return true;
+  if (name.length < 3) return true;
+  // Plural nouns / abstract concepts
+  if (/(?:en|ung|keit|heit|tion|mus|nen|ngen|ffen|sten|ssen)$/i.test(name) && name.length > 5) return true;
+  // German articles / pronouns
+  if (/^(Dem|Der|Das|Den|Die|Ein|Eine|Einer|Seinem|Seiner|Ihrem|Ihrer|Allem|Allen|Anderen|Beiden|Dieser|Diesem|Diesen|Jeder|Jedem|Jeden|Keinem|Keinen|Seiner)$/i.test(name)) return true;
+  // Contains digits or special chars (Shelly IDs, hex)
+  if (/[0-9_]/.test(name)) return true;
+  // All lowercase (not a proper name)
+  if (name === lower) return true;
+  return false;
+}
+
 /** Max tokens for the connection map section. */
 const MAX_MAP_TOKENS = 1200;
 
@@ -335,8 +376,43 @@ export class KnowledgeGraphService {
       const decayed = await this.kgRepo.decayOldEntities(userId, 30, 0.1);
       const prunedEntities = await this.kgRepo.pruneWeakEntities(userId, 0.2);
       const prunedRelations = await this.kgRepo.pruneWeakRelations(userId, 0.2);
-      if (decayed > 0 || prunedEntities > 0 || prunedRelations > 0) {
-        this.logger.info({ decayed, prunedEntities, prunedRelations }, 'KG maintenance completed');
+
+      // Prune stale connection events (past dates > 30 days, low value)
+      const staleEvents = await this.kgRepo.getEntitiesByType(userId, 'event');
+      let prunedEvents = 0;
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString();
+      for (const event of staleEvents) {
+        // Events with past dates in their value and not seen recently
+        if (event.lastSeenAt < thirtyDaysAgo && event.confidence < 0.8) {
+          await this.kgRepo.deleteEntity(event.id);
+          prunedEvents++;
+        }
+      }
+
+      // Deduplicate: merge entities with same normalized_name + entity_type but different IDs
+      const allEntities = await this.kgRepo.getAllEntities(userId);
+      const seen = new Map<string, string>(); // "type:normalizedName" → id
+      let mergedDupes = 0;
+      for (const e of allEntities) {
+        const key = `${e.entityType}:${e.normalizedName}`;
+        const existingId = seen.get(key);
+        if (existingId && existingId !== e.id) {
+          // Keep the one with higher mention count, delete the other
+          const existing = allEntities.find(x => x.id === existingId);
+          if (existing && existing.mentionCount >= e.mentionCount) {
+            await this.kgRepo.deleteEntity(e.id);
+          } else if (existing) {
+            await this.kgRepo.deleteEntity(existingId);
+            seen.set(key, e.id);
+          }
+          mergedDupes++;
+        } else {
+          seen.set(key, e.id);
+        }
+      }
+
+      if (decayed > 0 || prunedEntities > 0 || prunedRelations > 0 || prunedEvents > 0 || mergedDupes > 0) {
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -546,6 +622,8 @@ export class KnowledgeGraphService {
 
     // Domains to skip (system entities, not real devices)
     const SKIP_DOMAINS = /^(sun\.|conversation\.|geo_location\.|weather\.|persistent_notification\.|zone\.)/;
+    // Internal/technical entities to skip (Victron internals, Shelly hex IDs, system relays)
+    const SKIP_INTERNALS = /^(vebus[\s_]|settings[\s_]ess|system[\s_]relay|shelly\w+[-_][0-9a-f]{6,})/i;
     // States that are timestamps (not real device states)
     const IS_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]/;
 
@@ -573,12 +651,16 @@ export class KnowledgeGraphService {
       // Skip entities with no useful name (just "-", hex IDs, or very short)
       if (fn === '-' || fn.length < 2) continue;
       if (/^0x[0-9a-f]+$/i.test(fn)) continue; // Zigbee hex ID
+      // Skip internal/technical entities
+      if (SKIP_INTERNALS.test(fn) || SKIP_INTERNALS.test(eid)) continue;
       const name = fn;
 
       const attrs: Record<string, unknown> = { entity_id: eid, state: st };
       if (unit.trim() !== '-' && unit.trim().length > 0) attrs.unit = unit.trim();
 
-      await this.kgRepo.upsertEntity(userId, name, 'item', attrs, 'smarthome');
+      // HA person.* entities are people, not items
+      const entityType = eid.startsWith('person.') ? 'person' : 'item';
+      await this.kgRepo.upsertEntity(userId, name, entityType as any, attrs, 'smarthome');
       count++;
     }
   }
@@ -731,6 +813,15 @@ export class KnowledgeGraphService {
           await this.kgRepo.upsertRelation(userId, item.id, homeLocation.id, 'located_at', undefined, 'cross');
         }
       }
+
+      // Rule 6: Organizations → Work Location
+      const workLocation = locations.find(l => l.attributes?.isWork === true && l.attributes?.isHome !== true);
+      if (workLocation) {
+        const orgs = entities.filter(e => e.entityType === 'organization');
+        for (const org of orgs) {
+          await this.kgRepo.upsertRelation(userId, org.id, workLocation.id, 'located_at', undefined, 'cross');
+        }
+      }
     } catch (err) {
       this.logger.debug({ err }, 'KG: cross-extractor relations partially failed');
     }
@@ -748,8 +839,13 @@ export class KnowledgeGraphService {
       // 1. Memory entities (persons, contacts) → KG person entities
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
-        const personName = mem.value.split(',')[0].split('(')[0].trim();
-        if (personName.length >= 2) {
+        // Extract just the person name, not the whole sentence
+        // "Sohn Linus (geb. 2014)" → "Sohn Linus", "Frau Alex" → "Frau Alex"
+        const raw = mem.value.split(',')[0].split('(')[0].trim();
+        // Take max 3 capitalized words from the start (the actual name)
+        const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
+        const personName = words.slice(0, 3).join(' ');
+        if (personName.length >= 2 && !isInvalidPersonName(personName)) {
           await this.kgRepo.upsertEntity(userId, personName, 'person',
             { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
         }
@@ -758,13 +854,35 @@ export class KnowledgeGraphService {
       // 2. Memory relationships → KG person entities + relations
       const relMems = await this.memoryRepo.getByType(userId, 'relationship', 30);
       for (const mem of relMems) {
-        // Extract person name from value using existing PERSON_PATTERNS
         for (const pattern of PERSON_PATTERNS) {
           pattern.lastIndex = 0;
           const m = pattern.exec(mem.value);
           if (m) {
-            await this.kgRepo.upsertEntity(userId, m[1].trim(), 'person',
-              { relationship: mem.key }, 'memories');
+            const name = m[1].trim();
+            if (!isInvalidPersonName(name)) {
+              await this.kgRepo.upsertEntity(userId, name, 'person',
+                { relationship: mem.key }, 'memories');
+            }
+          }
+        }
+      }
+
+      // 2b. Employment memories → KG organization entities + relations
+      for (const query of ['employment', 'employer', 'arbeitgeber', 'firma', 'company', 'teamlead', 'position']) {
+        const jobs = await this.memoryRepo.search(userId, query);
+        for (const job of jobs.slice(0, 3)) {
+          // Extract company name: look for "bei X", "at X", or "X GmbH/AG/ICT"
+          const orgMatch = job.value.match(/(?:bei|at)\s+([A-ZÄÖÜ][\w\s&.-]+?)(?:\s+(?:als|as|since|seit)|[.,]|$)/i)
+            ?? job.value.match(/([A-ZÄÖÜ][\w\s&.-]*(?:GmbH|AG|ICT|Inc|Corp|Ltd|SE)[^\s.,]*)/i);
+          if (orgMatch) {
+            const orgName = orgMatch[1].trim();
+            const roleMatch = job.value.match(/(?:als|as)\s+(.+?)(?:\s+(?:bei|at|seit|since|angestellt)|[.,]|$)/i);
+            const attrs: Record<string, unknown> = {};
+            if (roleMatch) attrs.role = roleMatch[1].trim();
+            attrs.memoryKey = job.key;
+            const org = await this.kgRepo.upsertEntity(userId, orgName, 'organization' as any, attrs, 'memories');
+            const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+            await this.kgRepo.upsertRelation(userId, user.id, org.id, 'works_at', roleMatch?.[1]?.slice(0, 80), 'memories');
           }
         }
       }
@@ -893,20 +1011,21 @@ export class KnowledgeGraphService {
   }
 
   private async extractPersons(userId: string, sectionKey: string, content: string): Promise<void> {
-    // Skip person extraction from feeds/RSS (article titles contain no reliable person-preposition patterns)
-    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
+    // Skip person extraction from feeds/RSS, infra, activity
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth' || sectionKey === 'email') return;
 
     for (const pattern of PERSON_PATTERNS) {
       pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
         const name = match[1].trim();
-        // Filter out common German words, articles, and non-person nouns
-        if (name.length < 3) continue;
-        if (/^(Dem|Der|Das|Den|Die|Ein|Eine|Einer|Seinem|Seiner|Ihrem|Ihrer|Allem|Allen|Anderen|Beiden|Dieser|Diesem|Diesen|Jeder|Jedem|Jeden|Keinem|Keinen|Seiner)$/i.test(name)) continue;
-        // Filter plural nouns and abstract concepts (end in -en, -ung, -keit, -heit, -tion, -mus)
-        if (/(?:en|ung|keit|heit|tion|mus|nen|ngen|ffen|sten|ssen)$/i.test(name) && name.length > 5) continue;
-        await this.kgRepo.upsertEntity(userId, name, 'person', {}, sectionKey);
+        if (isInvalidPersonName(name)) continue;
+        // Route to correct entity type
+        if (isLikelyOrganization(name)) {
+          await this.kgRepo.upsertEntity(userId, name, 'organization' as any, {}, sectionKey);
+        } else {
+          await this.kgRepo.upsertEntity(userId, name, 'person', {}, sectionKey);
+        }
       }
     }
   }

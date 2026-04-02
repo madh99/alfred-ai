@@ -274,6 +274,20 @@ export class KnowledgeGraphRepository {
     };
   }
 
+  /** Get all entities for a user (for maintenance dedup). */
+  async getAllEntities(userId: string): Promise<KGEntity[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY entity_type, normalized_name',
+      [userId],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapEntity(r));
+  }
+
+  /** Delete a single entity by ID (CASCADE deletes relations). */
+  async deleteEntity(id: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM kg_entities WHERE id = ?', [id]);
+  }
+
   // ── Maintenance ─────────────────────────────────────────────
 
   /** Decay confidence of entities not seen for a while. */
