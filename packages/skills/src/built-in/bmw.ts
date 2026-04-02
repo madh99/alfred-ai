@@ -272,11 +272,17 @@ export class BMWSkill extends Skill {
       this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
         try {
           const data = JSON.parse(payload.toString());
-          const dataType = Array.isArray(data.data) ? 'array' : typeof data.data;
-          console.log(`[BMW MQTT] Data received on ${_topic}: keys=${Object.keys(data).join(',')}, data.type=${dataType}, sample=${JSON.stringify(data.data).slice(0, 300)}`);
+          console.log(`[BMW MQTT] Data received: ${Object.keys(data.data ?? {}).join(',')}`);
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
-            if (Array.isArray(data.data)) {
+            if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
+              // BMW streaming format: data is { "descriptor.path": { value, unit, timestamp } }
+              for (const [key, entry] of Object.entries(data.data as Record<string, any>)) {
+                if (entry && entry.value !== undefined) {
+                  telematicData[key] = { value: String(entry.value), unit: entry.unit ?? '', timestamp: entry.timestamp ?? '' };
+                }
+              }
+            } else if (Array.isArray(data.data)) {
               for (const entry of data.data) {
                 if (entry.name && entry.value !== undefined) {
                   telematicData[entry.name] = { value: String(entry.value), unit: entry.unit ?? '', timestamp: entry.timestamp ?? '' };
