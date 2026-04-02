@@ -103,8 +103,29 @@ interface CacheEntry {
   ts: number;
 }
 
-function tv(data: TelematicResponse, key: string): string {
-  return data[key]?.value ?? '?';
+/** Read telematic value — tries multiple descriptor paths (REST vs MQTT use different keys). */
+function tv(data: TelematicResponse, ...keys: string[]): string {
+  for (const key of keys) {
+    if (data[key]?.value !== undefined) return data[key].value;
+  }
+  return '?';
+}
+
+/** MQTT→REST descriptor mapping for common fields. */
+const MQTT_ALT_KEYS: Record<string, string[]> = {
+  'vehicle.drivetrain.batteryManagement.header': ['vehicle.powertrain.electric.battery.stateOfCharge.displayed'],
+  'vehicle.drivetrain.electricEngine.remainingElectricRange': ['vehicle.drivetrain.lastRemainingRange', 'vehicle.drivetrain.electricEngine.kombiRemainingElectricRange'],
+  'vehicle.access.centralLocking.isLocked': ['vehicle.cabin.door.status'],
+  'vehicle.location.gps.latitude': ['vehicle.cabin.infotainment.navigation.currentLocation.latitude'],
+  'vehicle.location.gps.longitude': ['vehicle.cabin.infotainment.navigation.currentLocation.longitude'],
+  'vehicle.body.door.driver.isOpen': ['vehicle.cabin.door.row1.driver.isOpen'],
+  'vehicle.body.trunk.isOpen': ['vehicle.body.trunk.door.isOpen'],
+  'vehicle.body.window.driver.isOpen': ['vehicle.cabin.window.row1.driver.status'],
+};
+
+/** Read with fallback to MQTT alternative keys. */
+function tvm(data: TelematicResponse, key: string): string {
+  return tv(data, key, ...(MQTT_ALT_KEYS[key] ?? []));
 }
 
 // ── Skill ─────────────────────────────────────────────────
@@ -931,10 +952,10 @@ export class BMWSkill extends Skill {
     const basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
 
     const t = telematicRaw.telematicData ?? {};
-    const soc = tv(t, 'vehicle.drivetrain.batteryManagement.header');
-    const range = tv(t, 'vehicle.drivetrain.electricEngine.remainingElectricRange');
-    const maxEnergy = tv(t, 'vehicle.drivetrain.batteryManagement.maxEnergy');
-    const soh = tv(t, 'vehicle.powertrain.electric.battery.stateOfHealth.displayed');
+    const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
+    const range = tvm(t, 'vehicle.drivetrain.electricEngine.remainingElectricRange');
+    const maxEnergy = tvm(t, 'vehicle.drivetrain.batteryManagement.maxEnergy');
+    const soh = tvm(t, 'vehicle.powertrain.electric.battery.stateOfHealth.displayed');
 
     const model = basicData.modelName ?? basicData.model ?? '?';
 
@@ -950,23 +971,34 @@ export class BMWSkill extends Skill {
     ];
 
     // Odometer
-    const km = tv(t, 'vehicle.vehicle.travelledDistance');
-    if (km) lines.push(`**Kilometerstand:** ${km} km`);
+    const km = tvm(t, 'vehicle.vehicle.travelledDistance');
+    if (km && km !== '?') lines.push(`**Kilometerstand:** ${km} km`);
 
-    // Security
-    const locked = tv(t, 'vehicle.access.centralLocking.isLocked');
-    const doorOpen = tv(t, 'vehicle.body.door.driver.isOpen');
-    const trunkOpen = tv(t, 'vehicle.body.trunk.isOpen');
-    const windowOpen = tv(t, 'vehicle.body.window.driver.isOpen');
-    if (locked !== undefined) lines.push(`**Verriegelt:** ${locked === 'true' ? 'Ja' : 'Nein'}`);
-    if (doorOpen !== undefined) lines.push(`**Fahrertür:** ${doorOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
-    if (trunkOpen !== undefined) lines.push(`**Kofferraum:** ${trunkOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
-    if (windowOpen !== undefined) lines.push(`**Fahrerfenster:** ${windowOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+    // Security — MQTT uses door.status (LOCKED/UNLOCKED), REST uses isLocked (true/false)
+    const lockedRaw = tvm(t, 'vehicle.access.centralLocking.isLocked');
+    const isLocked = lockedRaw === 'true' || lockedRaw === 'LOCKED';
+    const isUnlocked = lockedRaw === 'false' || lockedRaw === 'UNLOCKED';
+    if (isLocked || isUnlocked) lines.push(`**Verriegelt:** ${isLocked ? 'Ja' : 'Nein'}`);
 
-    // GPS
-    const lat = tv(t, 'vehicle.location.gps.latitude');
-    const lon = tv(t, 'vehicle.location.gps.longitude');
-    if (lat && lon) lines.push(`**Standort:** ${lat}, ${lon}`);
+    const doorOpen = tvm(t, 'vehicle.body.door.driver.isOpen');
+    const trunkOpen = tvm(t, 'vehicle.body.trunk.isOpen');
+    const windowRaw = tvm(t, 'vehicle.body.window.driver.isOpen');
+    // MQTT uses CLOSED/OPEN for windows, REST uses true/false
+    const windowOpen = windowRaw === 'true' || windowRaw === 'OPEN';
+    if (doorOpen !== '?') lines.push(`**Fahrertür:** ${doorOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+    if (trunkOpen !== '?') lines.push(`**Kofferraum:** ${trunkOpen === 'true' ? 'Offen' : 'Geschlossen'}`);
+    if (windowRaw !== '?') lines.push(`**Fahrerfenster:** ${windowOpen ? 'Offen' : 'Geschlossen'}`);
+
+    // GPS — MQTT uses currentLocation, REST uses gps
+    const lat = tvm(t, 'vehicle.location.gps.latitude');
+    const lon = tvm(t, 'vehicle.location.gps.longitude');
+    if (lat !== '?' && lon !== '?') lines.push(`**Standort:** ${lat}, ${lon}`);
+
+    // Extra MQTT fields
+    const avgConsumption = tv(t, 'vehicle.drivetrain.avgElectricRangeConsumption');
+    if (avgConsumption !== '?') lines.push(`**Durchschnittsverbrauch:** ${avgConsumption} kWh/100km`);
+    const avgSpeed = tv(t, 'vehicle.vehicle.avgSpeed');
+    if (avgSpeed !== '?') lines.push(`**Durchschnittsgeschwindigkeit:** ${avgSpeed} km/h`);
 
     return { success: true, data: { telematic: t, basic: basicData }, display: lines.join('\n') };
   }
@@ -1001,7 +1033,7 @@ export class BMWSkill extends Skill {
 
     const t = telematicRaw.telematicData ?? {};
     const chargingStatus = tv(t, 'vehicle.drivetrain.electricEngine.charging.status');
-    const soc = tv(t, 'vehicle.drivetrain.batteryManagement.header');
+    const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
     const level = tv(t, 'vehicle.drivetrain.electricEngine.charging.level');
     const timeRemaining = tv(t, 'vehicle.drivetrain.electricEngine.charging.timeRemaining');
     const power = tv(t, 'vehicle.powertrain.electric.battery.charging.power');
@@ -1255,22 +1287,23 @@ export class BMWSkill extends Skill {
       '',
       `**Einträge:** ${entries.length} (${entries.filter(e => e.source === 'mqtt').length} MQTT, ${entries.filter(e => e.source !== 'mqtt').length} REST)`,
       '',
-      '| Zeitpunkt | Quelle | SoC | Reichweite | Verriegelt | Standort |',
-      '|-----------|--------|-----|------------|------------|----------|',
+      '| Zeitpunkt | Quelle | SoC | Reichweite | Verriegelt | km-Stand | Standort |',
+      '|-----------|--------|-----|------------|------------|----------|----------|',
     ];
 
     for (const e of entries.slice(0, 50)) {
-      const t = e.telematicData as Record<string, { value: string }>;
-      const soc = t['vehicle.drivetrain.batteryManagement.header']?.value ?? '-';
-      const range = t['vehicle.drivetrain.electricEngine.remainingElectricRange']?.value ?? '-';
-      const locked = t['vehicle.access.centralLocking.isLocked']?.value;
-      const lockedStr = locked === 'true' ? 'Ja' : locked === 'false' ? 'Nein' : '-';
-      const lat = t['vehicle.location.gps.latitude']?.value;
-      const lon = t['vehicle.location.gps.longitude']?.value;
-      const loc = lat && lon ? `${lat}, ${lon}` : '-';
+      const t = e.telematicData as TelematicResponse;
+      const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
+      const range = tvm(t, 'vehicle.drivetrain.electricEngine.remainingElectricRange');
+      const lockedRaw = tvm(t, 'vehicle.access.centralLocking.isLocked');
+      const lockedStr = lockedRaw === 'true' || lockedRaw === 'LOCKED' ? 'Ja' : lockedRaw === 'false' || lockedRaw === 'UNLOCKED' ? 'Nein' : '-';
+      const lat = tvm(t, 'vehicle.location.gps.latitude');
+      const lon = tvm(t, 'vehicle.location.gps.longitude');
+      const loc = lat !== '?' && lon !== '?' ? `${lat}, ${lon}` : '-';
+      const km = tvm(t, 'vehicle.vehicle.travelledDistance');
       const time = new Date(e.createdAt).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
-      lines.push(`| ${time} | ${e.source} | ${soc}% | ${range} km | ${lockedStr} | ${loc} |`);
+      lines.push(`| ${time} | ${e.source} | ${soc === '?' ? '-' : soc + '%'} | ${range === '?' ? '-' : range + ' km'} | ${lockedStr} | ${km === '?' ? '-' : km + ' km'} | ${loc} |`);
     }
 
     if (entries.length > 50) {
