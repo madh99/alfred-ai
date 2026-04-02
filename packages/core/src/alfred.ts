@@ -1242,6 +1242,11 @@ export class Alfred {
       if (this.bmwSkill && 'setServiceResolver' in this.bmwSkill) {
         (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId);
       }
+      // Start BMW MQTT streaming if configured
+      if (this.bmwSkill && this.config.bmw?.streaming?.enabled) {
+        (this.bmwSkill as any).startStreaming().catch((err: unknown) =>
+          this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
+      }
     }
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
@@ -1692,6 +1697,11 @@ export class Alfred {
 
   async stop(): Promise<void> {
     this.logger.info('Stopping Alfred...');
+
+    // Stop BMW streaming
+    if (this.bmwSkill && 'stopStreaming' in this.bmwSkill) {
+      (this.bmwSkill as any).stopStreaming();
+    }
 
     // Stop schedulers
     this.reminderScheduler?.stop();

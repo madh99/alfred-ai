@@ -164,6 +164,9 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_GOE_HOST: ['goeCharger', 'host'],
   // BMW CarData
   ALFRED_BMW_CLIENT_ID: ['bmw', 'clientId'],
+  ALFRED_BMW_STREAMING_ENABLED: ['bmw', 'streaming', 'enabled'],
+  ALFRED_BMW_STREAMING_USERNAME: ['bmw', 'streaming', 'username'],
+  ALFRED_BMW_STREAMING_TOPIC: ['bmw', 'streaming', 'topic'],
   // YouTube
   ALFRED_YOUTUBE_API_KEY: ['youtube', 'apiKey'],
   ALFRED_SUPADATA_API_KEY: ['youtube', 'supadata', 'apiKey'],

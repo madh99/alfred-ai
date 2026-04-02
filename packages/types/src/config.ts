@@ -363,6 +363,15 @@ export interface GoeChargerConfig {
 
 export interface BMWCarDataConfig {
   clientId: string;
+  /** MQTT Streaming — credentials from BMW Customer Portal */
+  streaming?: {
+    /** GCID username from portal */
+    username: string;
+    /** VIN topic from portal */
+    topic: string;
+    /** Enable MQTT streaming (default: false) */
+    enabled?: boolean;
+  };
 }
 
 export interface RoutingConfig {

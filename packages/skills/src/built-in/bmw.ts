@@ -191,6 +191,11 @@ export class BMWSkill extends Skill {
     return !!this.config;
   }
 
+  // ── MQTT Streaming ────────────────────────────────────────
+  private mqttClient?: any;
+  private mqttReconnectTimer?: ReturnType<typeof setTimeout>;
+  private streamingActive = false;
+
   constructor(config: BMWCarDataConfig) {
     super();
     this.config = config;
@@ -200,6 +205,119 @@ export class BMWSkill extends Skill {
   setServiceResolver(resolver: SkillContext['userServiceResolver'], alfredUserId?: string): void {
     this.injectedServiceResolver = resolver;
     this.injectedAlfredUserId = alfredUserId;
+  }
+
+  /** Start MQTT streaming if configured. Call after authorization. */
+  async startStreaming(): Promise<void> {
+    if (this.streamingActive || !this.config?.streaming?.enabled) return;
+    const { username, topic } = this.config.streaming;
+    if (!username || !topic) return;
+
+    // Need id_token for MQTT password
+    const tokens = this.tokens;
+    if (!tokens?.idToken) return;
+
+    try {
+      const mqtt = (await Function('return import("mqtt")')()) as typeof import('mqtt');
+      const brokerUrl = `mqtts://customer.streaming-cardata.bmwgroup.com:8002`;
+
+      this.mqttClient = mqtt.connect(brokerUrl, {
+        username,
+        password: tokens.idToken,
+        clientId: `alfred_bmw_${Date.now().toString(36)}`,
+        rejectUnauthorized: true,
+        reconnectPeriod: 0, // Manual reconnect (we need to refresh token)
+        connectTimeout: 30_000,
+      });
+
+      this.mqttClient.on('connect', () => {
+        this.streamingActive = true;
+        const fullTopic = `${username}/${topic}`;
+        this.mqttClient.subscribe(fullTopic, { qos: 0 });
+        // Also subscribe with wildcard for all VINs
+        this.mqttClient.subscribe(`${username}/+`, { qos: 0 });
+      });
+
+      this.mqttClient.on('message', (_topic: string, payload: Buffer) => {
+        try {
+          const data = JSON.parse(payload.toString());
+          // Update cache with streaming data
+          if (data && typeof data === 'object') {
+            const telematicData: TelematicResponse = {};
+            if (Array.isArray(data.data)) {
+              for (const entry of data.data) {
+                if (entry.name && entry.value !== undefined) {
+                  telematicData[entry.name] = { value: String(entry.value), unit: entry.unit ?? '', timestamp: entry.timestamp ?? '' };
+                }
+              }
+            } else if (data.telematicData) {
+              Object.assign(telematicData, data.telematicData);
+            }
+            // Merge into cache (extend existing telematic data)
+            const cacheKey = `telematic:${data.vin ?? tokens.vin ?? 'unknown'}`;
+            const existing = this.cache.get(cacheKey);
+            if (existing && typeof existing.data === 'object' && existing.data !== null) {
+              const merged = { ...existing.data as Record<string, unknown>, telematicData: { ...(existing.data as any).telematicData, ...telematicData } };
+              this.cache.set(cacheKey, { data: merged, ts: Date.now() });
+            } else {
+              this.cache.set(cacheKey, { data: { telematicData }, ts: Date.now() });
+            }
+          }
+        } catch { /* ignore parse errors */ }
+      });
+
+      this.mqttClient.on('error', () => {
+        this.streamingActive = false;
+      });
+
+      this.mqttClient.on('close', () => {
+        this.streamingActive = false;
+        // Reconnect with fresh token after 60s
+        this.scheduleReconnect();
+      });
+
+      // Schedule token refresh before expiry
+      if (tokens.expiresAt) {
+        const refreshIn = Math.max(10_000, (tokens.expiresAt - Date.now()) - 120_000); // 2 min before expiry
+        this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), refreshIn);
+      }
+    } catch { /* MQTT not available or connection failed */ }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.mqttReconnectTimer) clearTimeout(this.mqttReconnectTimer);
+    this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), 60_000);
+  }
+
+  private async reconnectWithFreshToken(): Promise<void> {
+    try {
+      // Refresh the token
+      const tokens = this.tokens;
+      if (tokens) {
+        await this.refreshAccessToken(tokens);
+      }
+      // Disconnect old connection
+      if (this.mqttClient) {
+        this.mqttClient.end(true);
+        this.mqttClient = undefined;
+      }
+      this.streamingActive = false;
+      // Reconnect with new token
+      await this.startStreaming();
+    } catch {
+      // Retry in 5 minutes
+      this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), 300_000);
+    }
+  }
+
+  /** Stop MQTT streaming. */
+  stopStreaming(): void {
+    if (this.mqttReconnectTimer) clearTimeout(this.mqttReconnectTimer);
+    if (this.mqttClient) {
+      this.mqttClient.end(true);
+      this.mqttClient = undefined;
+    }
+    this.streamingActive = false;
   }
 
   private activeContext?: SkillContext;
@@ -708,17 +826,29 @@ export class BMWSkill extends Skill {
 
   private async getStatus(inputVin?: string): Promise<SkillResult> {
     const vin = await this.resolveVin(inputVin);
-    const containerId = await this.resolveContainerId();
 
-    // Fetch telematic + basic data in parallel
-    const [telematicRaw, basicData] = await Promise.all([
-      this.apiGet<{ telematicData: TelematicResponse }>(
-        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
-      ),
-      this.apiGet<Record<string, unknown>>(
-        `/customers/vehicles/${vin}/basicData`,
-      ),
-    ]);
+    // Check MQTT streaming cache first (avoids REST API rate limit)
+    const streamingCacheKey = `telematic:${vin}`;
+    const streamingCached = this.cache.get(streamingCacheKey);
+    let telematicRaw: { telematicData: TelematicResponse };
+    let basicData: Record<string, unknown>;
+
+    if (streamingCached && (Date.now() - streamingCached.ts) < CACHE_TTL) {
+      // Use streaming data — much fresher, no REST quota used
+      telematicRaw = streamingCached.data as { telematicData: TelematicResponse };
+      basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
+    } else {
+      // Fallback: REST API
+      const containerId = await this.resolveContainerId();
+      [telematicRaw, basicData] = await Promise.all([
+        this.apiGet<{ telematicData: TelematicResponse }>(
+          `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+        ),
+        this.apiGet<Record<string, unknown>>(
+          `/customers/vehicles/${vin}/basicData`,
+        ),
+      ]);
+    }
 
     const t = telematicRaw.telematicData ?? {};
     const soc = tv(t, 'vehicle.drivetrain.batteryManagement.header');
