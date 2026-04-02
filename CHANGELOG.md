@@ -5,7 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.287] - 2026-04-02
+## [0.19.0-multi-ha.292] - 2026-04-02
+
+### Added
+- **BMW Telematik-Persistenz** — Neue DB-Tabelle `bmw_telematic_log` (Migration v45) speichert alle Telematik-Daten (MQTT + REST) persistent. 3-Tier-Lookup: RAM-Cache → DB → REST API. Beide HA-Nodes lesen aus derselben DB — .93 braucht keinen eigenen MQTT-Stream mehr für Status-Abfragen. REST-Quota wird nur verbraucht wenn kein frischer DB-Eintrag existiert (60 Min TTL).
+- **BMW History Action** — Neue Action `history` zeigt gespeicherte Telematik-Werte (SoC, Reichweite, Verriegelung, Standort) über einen Zeitraum als Tabelle. Default: letzte 7 Tage.
+- **BMW Telematic Pruning** — Weekly Maintenance löscht Einträge älter als 90 Tage.
 
 ### Fixed
 - **BMW MQTT Streaming: Zod-Schema fehlte `streaming`** — ENV-Variablen `ALFRED_BMW_STREAMING_*` wurden korrekt ins Config-Objekt geschrieben, aber `AlfredConfigSchema.parse()` strippte das `streaming`-Objekt da es im `BMWCarDataConfigSchema` nicht definiert war. Streaming konnte nie starten. Fix: Schema um `streaming` Sub-Objekt erweitert (username, topic, enabled, host, port). Port als `z.coerce.number()` + `NUMERIC_ENV_KEYS`.

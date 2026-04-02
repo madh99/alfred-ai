@@ -6,7 +6,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -123,6 +123,7 @@ export class Alfred {
   private reminderRepo?: ReminderRepository;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
+  private bmwTelematicRepo?: BmwTelematicRepository;
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -1238,9 +1239,12 @@ export class Alfred {
       if (this.spotifySkill && 'setServiceResolver' in this.spotifySkill) {
         (this.spotifySkill as any).setServiceResolver(serviceResolver);
       }
-      // Inject service resolver into BMW skill for HA-safe token persistence
+      // Inject service resolver + telematic repo into BMW skill
       if (this.bmwSkill && 'setServiceResolver' in this.bmwSkill) {
         (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId);
+        const bmwTelematicRepo = new BmwTelematicRepository(adapter);
+        (this.bmwSkill as any).setTelematicRepo(bmwTelematicRepo);
+        this.bmwTelematicRepo = bmwTelematicRepo;
       }
       // BMW MQTT streaming is started in start() after AdapterClaimManager is available
     }
@@ -1652,6 +1656,11 @@ export class Alfred {
                 const feedbackTracker = new ActionFeedbackTracker(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'action-feedback' }));
                 await feedbackTracker.analyze(user.id);
               }
+              // Prune old BMW telematic history (keep 90 days)
+              if (this.bmwTelematicRepo) {
+                const pruned = await this.bmwTelematicRepo.prune(90);
+                if (pruned > 0) this.logger.info({ pruned }, 'BMW telematic history pruned');
+              }
             }
           } catch (err) {
             this.logger.warn({ err }, 'Temporal analysis failed');
@@ -1826,9 +1835,12 @@ export class Alfred {
         const { BMWSkill } = await import('@alfred/skills');
         this.bmwSkill = new BMWSkill(freshConfig.bmw);
         this.skillRegistry.register(this.bmwSkill);
-        // Re-inject service resolver for HA-safe token persistence
+        // Re-inject service resolver + telematic repo for HA-safe persistence
         if (this.userServiceResolverRef && 'setServiceResolver' in this.bmwSkill) {
           (this.bmwSkill as any).setServiceResolver(this.userServiceResolverRef, this.ownerMasterUserId);
+        }
+        if (this.bmwTelematicRepo && 'setTelematicRepo' in this.bmwSkill) {
+          (this.bmwSkill as any).setTelematicRepo(this.bmwTelematicRepo);
         }
         this.config.bmw = freshConfig.bmw;
         this.logger.info('BMW CarData skill hot-reloaded');

@@ -978,4 +978,21 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 45,
+    description: 'BMW telematic log — persists MQTT + REST data for cross-node access and history',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS bmw_telematic_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id TEXT NOT NULL,
+          vin TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'rest',
+          telematic_data TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_bmw_telematic_user_vin ON bmw_telematic_log(user_id, vin, created_at);
+      `);
+    },
+  },
 ];

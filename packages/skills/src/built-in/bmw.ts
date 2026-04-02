@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 
-type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions' | 'consumption';
+type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions' | 'consumption' | 'history';
 
 // ── BMW CarData Customer API ──────────────────────────────
 const DEVICE_CODE_URL = 'https://customer.bmwgroup.com/gcdm/oauth/device/code';
@@ -13,7 +13,8 @@ const TOKEN_URL = 'https://customer.bmwgroup.com/gcdm/oauth/token';
 const API_BASE = 'https://api-cardata.bmwgroup.com';
 const API_VERSION = 'v1';
 const SCOPE = 'authenticate_user openid cardata:api:read cardata:streaming:read';
-const CACHE_TTL = 5 * 60_000; // 5 min — BMW allows max 50 calls/day
+const CACHE_TTL = 5 * 60_000; // 5 min — in-memory apiGet cache for non-telematic calls
+const DB_TELEMATIC_TTL = 60 * 60_000; // 60 min — DB-persisted telematic data considered fresh
 const CONTAINER_NAME = 'Alfred';
 function getTokenPath(userId: string): string {
   const safe = userId.replace(/[<>:"/\\|?*]/g, '_').slice(0, 50);
@@ -122,7 +123,8 @@ export class BMWSkill extends Skill {
       '"charging" zeigt Ladestatus, Leistung, Restzeit, Ziel-SoC, Stecker. ' +
       '"charging_sessions" listet Lade-Sessions (from/to Zeitraum). ' +
       '"consumption" berechnet Durchschnittsverbrauch (kWh/100km) aus Lade-Sessions — ' +
-      'optional mit period: "last" (letzte Fahrt), "week", "month", "year", "all" (default: month).',
+      'optional mit period: "last" (letzte Fahrt), "week", "month", "year", "all" (default: month). ' +
+      '"history" zeigt gespeicherte Telematik-Werte (SoC, Reichweite, Standort) über einen Zeitraum (from/to, default: 7 Tage).',
     riskLevel: 'read',
     version: '2.2.0',
     inputSchema: {
@@ -130,7 +132,7 @@ export class BMWSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['authorize', 'status', 'charging', 'charging_sessions', 'consumption'],
+          enum: ['authorize', 'status', 'charging', 'charging_sessions', 'consumption', 'history'],
           description: 'BMW CarData action',
         },
         vin: {
@@ -168,6 +170,8 @@ export class BMWSkill extends Skill {
   /** Injected from alfred.ts — available on ALL nodes, not just the one running execute(). */
   private injectedServiceResolver?: SkillContext['userServiceResolver'];
   private injectedAlfredUserId?: string;
+  /** Injected from alfred.ts — DB persistence for telematic data (cross-node + history). */
+  private telematicRepo?: { insert(userId: string, vin: string, source: 'mqtt' | 'rest', data: Record<string, unknown>): Promise<void>; getLatest(userId: string, vin: string): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getHistory(userId: string, vin: string, from: string, to: string, limit?: number): Promise<Array<{ telematicData: Record<string, unknown>; source: string; createdAt: string }>> };
 
   private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.activeUserId) ?? null; }
   private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.activeUserId, t); }
@@ -205,6 +209,11 @@ export class BMWSkill extends Skill {
   setServiceResolver(resolver: SkillContext['userServiceResolver'], alfredUserId?: string): void {
     this.injectedServiceResolver = resolver;
     this.injectedAlfredUserId = alfredUserId;
+  }
+
+  /** Inject telematic repository for DB-persisted BMW data (cross-node access + history). */
+  setTelematicRepo(repo: BMWSkill['telematicRepo']): void {
+    this.telematicRepo = repo;
   }
 
   /** Start MQTT streaming if configured. Call after authorization. */
@@ -275,13 +284,20 @@ export class BMWSkill extends Skill {
             } else if (data.telematicData) {
               Object.assign(telematicData, data.telematicData);
             }
-            const cacheKey = `telematic:${data.vin ?? tokens.vin ?? 'unknown'}`;
+            // RAM cache (fast access on this node)
+            const vin = data.vin ?? tokens.vin ?? 'unknown';
+            const cacheKey = `telematic:${vin}`;
             const existing = this.cache.get(cacheKey);
             if (existing && typeof existing.data === 'object' && existing.data !== null) {
               const merged = { ...existing.data as Record<string, unknown>, telematicData: { ...(existing.data as any).telematicData, ...telematicData } };
               this.cache.set(cacheKey, { data: merged, ts: Date.now() });
             } else {
               this.cache.set(cacheKey, { data: { telematicData }, ts: Date.now() });
+            }
+            // DB persistence (cross-node access + history)
+            if (this.telematicRepo && Object.keys(telematicData).length > 0) {
+              const uid = this.injectedAlfredUserId ?? this.activeUserId;
+              this.telematicRepo.insert(uid, vin, 'mqtt', telematicData).catch(() => {});
             }
           }
         } catch { /* ignore parse errors */ }
@@ -383,6 +399,12 @@ export class BMWSkill extends Skill {
           return await this.getConsumption(
             input.vin as string | undefined,
             input.period as string | undefined,
+          );
+        case 'history':
+          return await this.getHistory(
+            input.vin as string | undefined,
+            input.from as string | undefined,
+            input.to as string | undefined,
           );
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
@@ -856,29 +878,43 @@ export class BMWSkill extends Skill {
 
   private async getStatus(inputVin?: string): Promise<SkillResult> {
     const vin = await this.resolveVin(inputVin);
+    const uid = this.injectedAlfredUserId ?? this.activeUserId;
 
-    // Check MQTT streaming cache first (avoids REST API rate limit)
+    // 3-tier lookup: RAM cache → DB → REST API
+    let telematicRaw: { telematicData: TelematicResponse } | undefined;
+    let dataSource = '';
+
+    // Tier 1: RAM cache (only on streaming node, sub-ms)
     const streamingCacheKey = `telematic:${vin}`;
     const streamingCached = this.cache.get(streamingCacheKey);
-    let telematicRaw: { telematicData: TelematicResponse };
-    let basicData: Record<string, unknown>;
-
     if (streamingCached && (Date.now() - streamingCached.ts) < CACHE_TTL) {
-      // Use streaming data — much fresher, no REST quota used
       telematicRaw = streamingCached.data as { telematicData: TelematicResponse };
-      basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
-    } else {
-      // Fallback: REST API
-      const containerId = await this.resolveContainerId();
-      [telematicRaw, basicData] = await Promise.all([
-        this.apiGet<{ telematicData: TelematicResponse }>(
-          `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
-        ),
-        this.apiGet<Record<string, unknown>>(
-          `/customers/vehicles/${vin}/basicData`,
-        ),
-      ]);
+      dataSource = 'ram';
     }
+
+    // Tier 2: DB (both nodes, persisted MQTT + REST data)
+    if (!telematicRaw && this.telematicRepo) {
+      const dbEntry = await this.telematicRepo.getLatest(uid, vin);
+      if (dbEntry && (Date.now() - new Date(dbEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
+        telematicRaw = { telematicData: dbEntry.telematicData as TelematicResponse };
+        dataSource = 'db';
+      }
+    }
+
+    // Tier 3: REST API (costs quota)
+    if (!telematicRaw) {
+      const containerId = await this.resolveContainerId();
+      telematicRaw = await this.apiGet<{ telematicData: TelematicResponse }>(
+        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+      );
+      dataSource = 'rest';
+      // Persist REST result to DB for cross-node access
+      if (this.telematicRepo && telematicRaw.telematicData) {
+        this.telematicRepo.insert(uid, vin, 'rest', telematicRaw.telematicData).catch(() => {});
+      }
+    }
+
+    const basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
 
     const t = telematicRaw.telematicData ?? {};
     const soc = tv(t, 'vehicle.drivetrain.batteryManagement.header');
@@ -923,11 +959,31 @@ export class BMWSkill extends Skill {
 
   private async getCharging(inputVin?: string): Promise<SkillResult> {
     const vin = await this.resolveVin(inputVin);
-    const containerId = await this.resolveContainerId();
+    const uid = this.injectedAlfredUserId ?? this.activeUserId;
 
-    const telematicRaw = await this.apiGet<{ telematicData: TelematicResponse }>(
-      `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
-    );
+    // 3-tier: RAM → DB → REST (same telematic endpoint as status)
+    let telematicRaw: { telematicData: TelematicResponse } | undefined;
+
+    const streamingCacheKey = `telematic:${vin}`;
+    const streamingCached = this.cache.get(streamingCacheKey);
+    if (streamingCached && (Date.now() - streamingCached.ts) < CACHE_TTL) {
+      telematicRaw = streamingCached.data as { telematicData: TelematicResponse };
+    }
+    if (!telematicRaw && this.telematicRepo) {
+      const dbEntry = await this.telematicRepo.getLatest(uid, vin);
+      if (dbEntry && (Date.now() - new Date(dbEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
+        telematicRaw = { telematicData: dbEntry.telematicData as TelematicResponse };
+      }
+    }
+    if (!telematicRaw) {
+      const containerId = await this.resolveContainerId();
+      telematicRaw = await this.apiGet<{ telematicData: TelematicResponse }>(
+        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+      );
+      if (this.telematicRepo && telematicRaw.telematicData) {
+        this.telematicRepo.insert(uid, vin, 'rest', telematicRaw.telematicData).catch(() => {});
+      }
+    }
 
     const t = telematicRaw.telematicData ?? {};
     const chargingStatus = tv(t, 'vehicle.drivetrain.electricEngine.charging.status');
@@ -1160,5 +1216,53 @@ export class BMWSkill extends Skill {
       data: { avgConsumption, totalDistance, totalKwh, segments },
       display: lines.join('\n'),
     };
+  }
+
+  private async getHistory(inputVin?: string, from?: string, to?: string): Promise<SkillResult> {
+    if (!this.telematicRepo) {
+      return { success: false, error: 'Telematik-Historie nicht verfügbar (DB-Repository nicht konfiguriert).' };
+    }
+
+    const vin = await this.resolveVin(inputVin);
+    const uid = this.injectedAlfredUserId ?? this.activeUserId;
+
+    const now = new Date();
+    const toDate = to ?? now.toISOString();
+    const fromDate = from ?? new Date(now.getTime() - 7 * 24 * 60 * 60_000).toISOString();
+
+    const entries = await this.telematicRepo.getHistory(uid, vin, fromDate, toDate, 200);
+
+    if (entries.length === 0) {
+      return { success: true, data: { entries: 0 }, display: `Keine Telematik-Daten für ${vin} im Zeitraum ${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)}.` };
+    }
+
+    const lines = [
+      `## BMW Telematik-Historie (${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)})`,
+      '',
+      `**Einträge:** ${entries.length} (${entries.filter(e => e.source === 'mqtt').length} MQTT, ${entries.filter(e => e.source !== 'mqtt').length} REST)`,
+      '',
+      '| Zeitpunkt | Quelle | SoC | Reichweite | Verriegelt | Standort |',
+      '|-----------|--------|-----|------------|------------|----------|',
+    ];
+
+    for (const e of entries.slice(0, 50)) {
+      const t = e.telematicData as Record<string, { value: string }>;
+      const soc = t['vehicle.drivetrain.batteryManagement.header']?.value ?? '-';
+      const range = t['vehicle.drivetrain.electricEngine.remainingElectricRange']?.value ?? '-';
+      const locked = t['vehicle.access.centralLocking.isLocked']?.value;
+      const lockedStr = locked === 'true' ? 'Ja' : locked === 'false' ? 'Nein' : '-';
+      const lat = t['vehicle.location.gps.latitude']?.value;
+      const lon = t['vehicle.location.gps.longitude']?.value;
+      const loc = lat && lon ? `${lat}, ${lon}` : '-';
+      const time = new Date(e.createdAt).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+      lines.push(`| ${time} | ${e.source} | ${soc}% | ${range} km | ${lockedStr} | ${loc} |`);
+    }
+
+    if (entries.length > 50) {
+      lines.push(`| ... | ${entries.length - 50} weitere Einträge | | | | |`);
+    }
+
+    return { success: true, data: { entries: entries.length, from: fromDate, to: toDate }, display: lines.join('\n') };
   }
 }

@@ -270,4 +270,21 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_kg_relations_user ON kg_relations(user_id)`, []);
     },
   },
+  {
+    version: 45,
+    description: 'BMW telematic log — persists MQTT + REST data for cross-node access and history',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS bmw_telematic_log (
+          id SERIAL PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          vin TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'rest',
+          telematic_data TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_bmw_telematic_user_vin ON bmw_telematic_log(user_id, vin, created_at)`, []);
+    },
+  },
 ];
