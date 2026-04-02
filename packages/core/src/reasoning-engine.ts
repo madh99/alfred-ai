@@ -748,18 +748,46 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   // ── Action Support ──────────────────────────────────────────
 
   private parseReasoningResponse(text: string): ParsedReasoningResponse {
-    const markerIdx = text.indexOf(ACTION_MARKER);
+    // Find actions separator — LLM might use exact marker, markdown header, or variations
+    let markerIdx = text.indexOf(ACTION_MARKER);
+    let markerLen = ACTION_MARKER.length;
+
     if (markerIdx === -1) {
+      // Fallback: match **ACTIONS**, ## ACTIONS, ACTIONS, etc.
+      const altMatch = text.match(/\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}\s*ACTIONS?)\s*\n/i);
+      if (altMatch && altMatch.index !== undefined) {
+        markerIdx = altMatch.index;
+        markerLen = altMatch[0].length;
+      }
+    }
+
+    if (markerIdx === -1) {
+      // Last resort: look for JSON array with action objects anywhere in text
+      const jsonMatch = text.match(/```(?:json)?\s*\n\s*(\[\s*\{[\s\S]*?"type"\s*:\s*"[\s\S]*?\}\s*\])\s*\n\s*```/);
+      if (jsonMatch) {
+        const insightText = text.slice(0, jsonMatch.index).trim();
+        const actions = this.tryParseActions(jsonMatch[1]);
+        // Strip the JSON block from insights
+        const cleanedInsightText = insightText.replace(/\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}\s*ACTIONS?)\s*$/i, '').trim();
+        return { insights: this.parseInsights(cleanedInsightText), actions };
+      }
       return { insights: this.parseInsights(text), actions: [] };
     }
+
     const insightText = text.slice(0, markerIdx).trim();
-    const actionText = text.slice(markerIdx + ACTION_MARKER.length).trim();
+    const actionText = text.slice(markerIdx + markerLen).trim();
     const insights = insightText ? this.parseInsights(insightText) : [];
-    let actions: ProposedAction[] = [];
+    // Extract JSON from possible code block
+    const jsonContent = actionText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?\s*```\s*$/, '').trim();
+    const actions = this.tryParseActions(jsonContent);
+    return { insights, actions };
+  }
+
+  private tryParseActions(jsonText: string): ProposedAction[] {
     try {
-      const parsed = JSON.parse(actionText);
+      const parsed = JSON.parse(jsonText);
       if (Array.isArray(parsed)) {
-        actions = parsed.filter(a =>
+        return parsed.filter(a =>
           a && typeof a === 'object' &&
           typeof a.type === 'string' &&
           typeof a.description === 'string' &&
@@ -770,7 +798,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     } catch {
       this.logger.warn('Reasoning: failed to parse actions JSON, ignoring');
     }
-    return { insights, actions };
+    return [];
   }
 
   private actionHash(action: ProposedAction): string {
