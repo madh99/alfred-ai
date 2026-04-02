@@ -696,7 +696,7 @@ AKTIONSTYPEN:
 2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[{"skillName":"...","inputMapping":{...},"onError":"skip"}]}}
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
-5. Erinnerung: {"type":"create_reminder","description":"...","skillName":"reminder","skillParams":{"action":"create","title":"...","due":"2026-04-02T09:00:00"}}
+5. Erinnerung: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-02T09:00"}}
 
 SICHERHEIT:
 - Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
@@ -863,6 +863,13 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
     const limit = actions.slice(0, 5);
     for (const action of limit) {
+      // Normalize reminder params: LLM sometimes uses wrong field names
+      if (action.skillName === 'reminder' && action.skillParams) {
+        const p = action.skillParams;
+        if (p.action === 'create') p.action = 'set';
+        if (p.title && !p.message) { p.message = p.title; delete p.title; }
+        if (p.due && !p.triggerAt) { p.triggerAt = p.due; delete p.due; }
+      }
       if (await this.actionWasRecentlyProposed(action)) {
         this.logger.info({ action: action.description }, 'Reasoning: action deduplicated, skipping');
         continue;

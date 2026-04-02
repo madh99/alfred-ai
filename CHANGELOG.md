@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.303] - 2026-04-02
+## [0.19.0-multi-ha.304] - 2026-04-02
 
 ### Added
 - **BMW CarData MQTT Streaming** — Echtzeit-Fahrzeugdaten über BMW Customer Streaming API (MQTT). Kein REST-Quota-Verbrauch für Türen, GPS, Geschwindigkeit, km-Stand, Reifendruck. Cluster-aware (nur ein Node streamt via AdapterClaimManager). Token-Refresh vor Connect, disconnect/offline Logging.
@@ -22,6 +22,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **BMW MQTT Parser** — BMW sendet Object-Format, nicht Array. Fix: Object-Parser als primär.
 - **BMW MQTT DB: Merged Snapshots** — 314 Einzelzeilen pro Burst → ein Snapshot nach 5s Debounce.
 - **Reasoning Actions-JSON dem User angezeigt** — LLM nutzte `**ACTIONS**` statt `---ACTIONS---` Marker. Fix: Robuster Parser erkennt alle Varianten + JSON-Codeblöcke.
+- **Reasoning: Reminder-Actions funktionierten nicht** — Prompt nutzte falsche Parameter (`action:"create"`, `title`, `due`), Skill erwartet (`action:"set"`, `message`, `triggerAt`). User bestätigte → "✅ Ausgeführt" → keine Erinnerung erstellt. Fix: Prompt korrigiert + Fallback-Normalisierung in `processActions()`.
 - **KG: Wien fälschlich als Home-Location** — Memory-Sync setzte Wien `isHome=true` wegen "Wohnort" im Kontext. Fix: Satz-basierte Negationserkennung ("nicht der Wohnort" → `isHome=false`). `homeLocation`-Suche schließt `isWork=true` aus, höchste Confidence gewinnt.
 
 ## [0.19.0-multi-ha.267] - 2026-04-01
