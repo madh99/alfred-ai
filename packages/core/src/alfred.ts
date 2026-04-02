@@ -1242,18 +1242,7 @@ export class Alfred {
       if (this.bmwSkill && 'setServiceResolver' in this.bmwSkill) {
         (this.bmwSkill as any).setServiceResolver(serviceResolver, this.ownerMasterUserId);
       }
-      // Start BMW MQTT streaming if configured — cluster-aware (only one node)
-      if (this.bmwSkill && this.config.bmw?.streaming?.enabled) {
-        const canStream = !this.adapterClaimManager || await this.adapterClaimManager.tryClaim('bmw-streaming');
-        if (canStream) {
-          this.logger.info({ username: this.config.bmw.streaming.username, topic: this.config.bmw.streaming.topic }, 'Starting BMW MQTT streaming...');
-          (this.bmwSkill as any).startStreaming()
-            .then(() => this.logger.info('BMW MQTT streaming started'))
-            .catch((err: unknown) => this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
-        } else {
-          this.logger.info('BMW MQTT streaming claimed by another node, skipping');
-        }
-      }
+      // BMW MQTT streaming is started in start() after AdapterClaimManager is available
     }
 
     // 7c2. Wire cluster cross-node messaging (needs adapters to be populated later)
@@ -1449,6 +1438,19 @@ export class Alfred {
         } catch (err) {
           this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
         }
+      }
+    }
+
+    // Start BMW MQTT streaming — cluster-aware (only one node connects)
+    if (this.bmwSkill && this.config.bmw?.streaming?.enabled) {
+      const canStream = !this.adapterClaimManager || await this.adapterClaimManager.tryClaim('bmw-streaming');
+      if (canStream) {
+        this.logger.info({ username: this.config.bmw.streaming.username, topic: this.config.bmw.streaming.topic }, 'Starting BMW MQTT streaming...');
+        (this.bmwSkill as any).startStreaming()
+          .then(() => this.logger.info('BMW MQTT streaming started'))
+          .catch((err: unknown) => this.logger.warn({ err }, 'BMW MQTT streaming failed to start'));
+      } else {
+        this.logger.info('BMW MQTT streaming claimed by another node, skipping');
       }
     }
 

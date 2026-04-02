@@ -11,7 +11,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **BMW MQTT Streaming: Zod-Schema fehlte `streaming`** — ENV-Variablen `ALFRED_BMW_STREAMING_*` wurden korrekt ins Config-Objekt geschrieben, aber `AlfredConfigSchema.parse()` strippte das `streaming`-Objekt da es im `BMWCarDataConfigSchema` nicht definiert war. Streaming konnte nie starten. Fix: Schema um `streaming` Sub-Objekt erweitert (username, topic, enabled, host, port). Port als `z.coerce.number()` + `NUMERIC_ENV_KEYS`.
 - **BMW MQTT Streaming: Debug-Logging** — Connect, Message, Error und Close Events waren ohne Logging. Fehler wurden verschluckt. Fix: console.log/warn für alle MQTT-Events.
 - **BMW MQTT Streaming: Token-Refresh vor Connect** — idToken wurde ungeprüft verwendet, abgelaufene Tokens führten zu sofortigem Connection-Close durch den Broker. Fix: Token wird vor MQTT-Connect refreshed wenn <5 Min bis Ablauf. Zusätzlich: disconnect/offline Events geloggt, Broker-URL + Token-Expiry im Log.
-- **BMW MQTT Streaming: Cluster-Aware** — Beide HA-Nodes verbanden sich gleichzeitig mit denselben BMW-Credentials → `Connection refused: Not authorized` auf einem Node (BMW erlaubt nur eine Session pro GCID). Fix: Streaming nutzt jetzt AdapterClaimManager — nur der Node mit dem `bmw-streaming` Claim verbindet sich.
+- **BMW MQTT Streaming: Cluster-Aware** — Beide HA-Nodes verbanden sich gleichzeitig mit denselben BMW-Credentials → `Connection refused: Not authorized` auf einem Node (BMW erlaubt nur eine Session pro GCID). Fix: Streaming nutzt jetzt AdapterClaimManager — nur der Node mit dem `bmw-streaming` Claim verbindet sich. Claim-Check in `start()` verschoben (war in `initialize()` wo ClaimManager noch nicht existiert).
 
 ## [0.19.0-multi-ha.267] - 2026-04-01
 
