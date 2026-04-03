@@ -1189,21 +1189,29 @@ export class Alfred {
       // Wire KG analyze callback into Memory skill
       if (this.memorySkillRef) {
         this.memorySkillRef.setKgAnalyzeCallback(async (userId: string) => {
-          // Run full KG ingest cycle
-          const collector = this.reasoningEngine ? undefined : null; // use existing collector
-          if (this.reasoningEngine) {
-            // Collect context + ingest
-            const ctx = await (this.reasoningEngine as any).collector.collect();
-            await kgServiceInstance.ingest(userId, ctx.sections);
-          }
-          // Run LLM linker immediately (bypass schedule)
+          // Lightweight KG analysis: Memory-Sync + Family Inference + Generic Links + LLM Linker
+          // Does NOT run the full Collector (which takes 30-60s for skill calls)
+          // Instead relies on already-ingested data from the last Reasoning pass
+          const kgRepo = new KnowledgeGraphRepository(this.database.getAdapter());
+
+          // 1. Memory-Sync + Cross-Extractor + Family Inference + Generic Links
+          await (kgServiceInstance as any).syncMemoryEntities(userId);
+          await (kgServiceInstance as any).buildCrossExtractorRelations(userId);
+          await (kgServiceInstance as any).buildFamilyInference(userId);
+          await (kgServiceInstance as any).buildGenericEntityLinks(userId);
+
+          // 2. LLM linker (bypass daily schedule)
           const llmLinker = kgServiceInstance.getLLMLinker();
           let llmStats = { relations: 0, newEntities: 0, corrections: 0 };
           if (llmLinker) {
             llmStats = await llmLinker.run(userId);
           }
-          // Get totals
-          const graph = await new KnowledgeGraphRepository(this.database.getAdapter()).getFullGraph(userId);
+
+          // 3. Maintenance (dedup, prune)
+          await kgServiceInstance.maintenance(userId);
+
+          // 4. Get totals
+          const graph = await kgRepo.getFullGraph(userId);
           return {
             entities: graph.entities.length,
             relations: graph.relations.length,
