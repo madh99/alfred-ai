@@ -19,6 +19,7 @@ export class MemorySkill extends Skill {
       'and important information across conversations.',
     riskLevel: 'write',
     version: '1.0.0',
+    timeoutMs: 120_000, // 2 min — kg_analyze needs time for LLM linking
     inputSchema: {
       type: 'object',
       properties: {
