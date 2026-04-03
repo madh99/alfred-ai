@@ -398,11 +398,14 @@ export class KnowledgeGraphService {
       const allEntities = await this.kgRepo.getAllEntities(userId);
       if (allEntities.length < 2) return;
 
-      // Build a lookup: normalized name → entity (skip very short names and "User")
-      const nameIndex = new Map<string, KGEntity>();
+      // Build a lookup: normalized name → entity + word-boundary regex
+      // Skip short names (<4 chars) to avoid false positives (SOL in "also", ETH in "Elisabeth")
+      const nameIndex = new Map<string, { entity: KGEntity; regex: RegExp }>();
       for (const e of allEntities) {
-        if (e.normalizedName.length >= 3 && e.name !== 'User') {
-          nameIndex.set(e.normalizedName, e);
+        if (e.normalizedName.length >= 4 && e.name !== 'User') {
+          // Word-boundary match: "bmw" matches "BMW i4" but not "abmw"
+          const escaped = e.normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          nameIndex.set(e.normalizedName, { entity: e, regex: new RegExp(`\\b${escaped}\\b`, 'i') });
         }
       }
 
@@ -410,26 +413,21 @@ export class KnowledgeGraphService {
       for (const entity of allEntities) {
         // Collect all text content from this entity
         const texts: string[] = [];
-        // Event/connection entities: the value attribute holds the main content
         if (entity.attributes?.value) texts.push(String(entity.attributes.value));
-        // Memory key often contains entity references (connection_gamescom_bmw_*)
         if (entity.name.includes('_')) texts.push(entity.name.replace(/_/g, ' '));
-        // Other attributes that might contain references
         if (entity.attributes?.memoryKey) texts.push(String(entity.attributes.memoryKey).replace(/_/g, ' '));
         if (entity.attributes?.address) texts.push(String(entity.attributes.address));
         if (entity.attributes?.relationship) texts.push(String(entity.attributes.relationship).replace(/_/g, ' '));
 
         if (texts.length === 0) continue;
-        const combined = texts.join(' ').toLowerCase();
+        const combined = texts.join(' ');
 
-        // Match against all other entity names
-        for (const [targetName, targetEntity] of nameIndex) {
+        // Match against all other entity names using word-boundary regex
+        for (const [, { entity: targetEntity, regex }] of nameIndex) {
           if (targetEntity.id === entity.id) continue;
-          // Skip same-type self-references (event↔event noise)
           if (entity.entityType === targetEntity.entityType && entity.entityType === 'event') continue;
 
-          // Check if target entity name appears in this entity's content
-          if (combined.includes(targetName)) {
+          if (regex.test(combined)) {
             await this.kgRepo.upsertRelation(
               userId, entity.id, targetEntity.id,
               'relates_to', undefined, 'generic',
@@ -484,6 +482,38 @@ export class KnowledgeGraphService {
           mergedDupes++;
         } else {
           seen.set(key, e.id);
+        }
+      }
+
+      // Fuzzy person merge: HA person entities (Alexandra) → Memory persons (Frau Alex)
+      const persons = (await this.kgRepo.getAllEntities(userId)).filter(e => e.entityType === 'person');
+      const haPersons = persons.filter(e => e.sources.includes('smarthome'));
+      const memPersons = persons.filter(e => e.sources.includes('memories') && !e.sources.includes('smarthome'));
+      for (const ha of haPersons) {
+        for (const mem of memPersons) {
+          // Check if one name contains the other (Alexandra ↔ Frau Alex, Noah ↔ Sohn Noah)
+          const haLower = ha.normalizedName;
+          const memWords = mem.normalizedName.split(/\s+/);
+          if (memWords.some(w => w.length >= 4 && haLower.includes(w)) ||
+              memWords.some(w => w.length >= 4 && w.includes(haLower))) {
+            // Link HA person to memory person (same real person)
+            await this.kgRepo.upsertRelation(userId, ha.id, mem.id, 'same_as', undefined, 'maintenance');
+          }
+        }
+      }
+
+      // Aggressive event dedup: events with very similar keys (Levenshtein ≤ 2 edits apart)
+      const events = (await this.kgRepo.getAllEntities(userId)).filter(e => e.entityType === 'event');
+      for (let i = 0; i < events.length; i++) {
+        for (let j = i + 1; j < events.length; j++) {
+          const a = events[i].normalizedName.replace(/connection_/, '').replace(/_/g, '');
+          const b = events[j].normalizedName.replace(/connection_/, '').replace(/_/g, '');
+          if (a === b || (a.length > 10 && b.length > 10 && (a.includes(b) || b.includes(a)))) {
+            const keep = events[i].mentionCount >= events[j].mentionCount ? events[i] : events[j];
+            const drop = keep === events[i] ? events[j] : events[i];
+            await this.kgRepo.deleteEntity(drop.id);
+            mergedDupes++;
+          }
         }
       }
 

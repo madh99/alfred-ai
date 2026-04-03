@@ -79,20 +79,30 @@ export class LLMEntityLinker {
     const allEntities = await this.kgRepo.getAllEntities(userId);
     if (allEntities.length < 3) return { relations: 0, newEntities: 0, corrections: 0 };
 
-    // Filter to entities changed since last run (or all for first run)
+    // Mix of entities to analyze: changed entities + core entities (persons, locations, vehicles, orgs)
+    // This ensures the LLM links events to real-world entities, not just event↔event
     const cutoff = this.lastRunAt ?? '2000-01-01T00:00:00Z';
     const maxPerPass = this.config.maxEntitiesPerPass ?? 30;
-    const changed = allEntities
-      .filter(e => e.lastSeenAt > cutoff || !this.lastRunAt)
-      .slice(0, maxPerPass);
+    const coreTypes = new Set(['person', 'location', 'vehicle', 'organization']);
+    const changed = allEntities.filter(e => e.lastSeenAt > cutoff || !this.lastRunAt);
+    const coreEntities = allEntities.filter(e => coreTypes.has(e.entityType) && e.name !== 'User');
+    // Deduplicate and prioritize: core entities first, then changed events/items
+    const seen = new Set<string>();
+    const toAnalyze: typeof allEntities = [];
+    for (const e of [...coreEntities, ...changed]) {
+      if (!seen.has(e.id) && toAnalyze.length < maxPerPass) {
+        seen.add(e.id);
+        toAnalyze.push(e);
+      }
+    }
 
-    if (changed.length === 0) {
+    if (toAnalyze.length === 0) {
       this.lastRunAt = new Date().toISOString();
       return { relations: 0, newEntities: 0, corrections: 0 };
     }
 
     // Build prompt
-    const prompt = this.buildPrompt(changed, allEntities);
+    const prompt = this.buildPrompt(toAnalyze, allEntities);
 
     // Call LLM
     const model = this.config.model ?? 'mistral-small-latest';
@@ -108,7 +118,7 @@ export class LLMEntityLinker {
     const stats = await this.applyResults(userId, result, allEntities);
     this.lastRunAt = new Date().toISOString();
 
-    this.logger.info({ ...stats, entitiesProcessed: changed.length }, 'LLM entity linking completed');
+    this.logger.info({ ...stats, entitiesProcessed: toAnalyze.length }, 'LLM entity linking completed');
     return stats;
   }
 
