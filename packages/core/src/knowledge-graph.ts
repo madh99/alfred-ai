@@ -1009,6 +1009,75 @@ export class KnowledgeGraphService {
         await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
       }
 
+      // 1b. Extract persons from ALL memory keys (any type) with person-name patterns
+      //     "friend_bernhard_birthday" → Person "Bernhard" + User→knows→Bernhard
+      //     "friend_bernhard_spouse_name" (value "Sabine") → Bernhard→spouse→Sabine
+      const PERSON_KEY_PREFIXES = ['friend_', 'freund_', 'colleague_', 'kollege_', 'neighbor_', 'nachbar_', 'contact_', 'kontakt_'];
+      const allMems = await this.memoryRepo.getRecentForPrompt(userId, 50);
+      const keyPersons = new Map<string, { entity: KGEntity; prefix: string }>(); // "bernhard" → entity
+      for (const mem of allMems) {
+        const k = mem.key.toLowerCase();
+        for (const prefix of PERSON_KEY_PREFIXES) {
+          if (!k.startsWith(prefix)) continue;
+          // Extract person name: between prefix and next underscore
+          const rest = k.slice(prefix.length);
+          const namePart = rest.split('_')[0];
+          if (namePart.length < 3) continue;
+          const personName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
+          if (isInvalidPersonName(personName)) continue;
+
+          // Check canonical map — reuse existing entity if same firstName
+          const canonical = canonicalPersons.get(namePart);
+          const effectiveName = canonical ?? personName;
+          if (!canonical) canonicalPersons.set(namePart, personName);
+
+          if (!keyPersons.has(namePart)) {
+            const person = await this.kgRepo.upsertEntity(userId, effectiveName, 'person', {}, 'memories');
+            // Derive relation from prefix
+            const relType = prefix.startsWith('friend') || prefix.startsWith('freund') ? 'knows'
+              : prefix.startsWith('colleague') || prefix.startsWith('kollege') ? 'works_with'
+              : prefix.startsWith('neighbor') || prefix.startsWith('nachbar') ? 'neighbor_of'
+              : 'knows';
+            await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
+            keyPersons.set(namePart, { entity: person, prefix });
+          }
+
+          // Cross-reference: if this memory links the key-person to the value-person
+          // e.g., "friend_bernhard_spouse_name" value "Sabine" → Bernhard→spouse→Sabine
+          const keyPerson = keyPersons.get(namePart);
+          if (keyPerson && k.includes('spouse') && mem.type === 'entity') {
+            // The value is the spouse's name — find or create
+            const spouseName = mem.value.split(',')[0].split('(')[0].replace(/[:\d]/g, '').trim();
+            if (spouseName.length >= 2) {
+              const spouse = await this.kgRepo.upsertEntity(userId, spouseName, 'person', { memoryKey: mem.key }, 'memories');
+              await this.kgRepo.upsertRelation(userId, keyPerson.entity.id, spouse.id, 'spouse', mem.key, 'memories');
+            }
+          }
+          // Birthday fact → add as attribute (check if it's the key-person's birthday or someone else's)
+          if (keyPerson && k.includes('birthday') && mem.type === 'fact') {
+            // "friend_bernhard_spouse_sabine_birthday" → Sabine's birthday, not Bernhard's
+            // "friend_bernhard_birthday" → Bernhard's birthday
+            const afterName = rest.slice(namePart.length + 1); // e.g., "spouse_sabine_birthday" or "birthday"
+            if (afterName === 'birthday' || afterName === '') {
+              // Direct birthday of the key-person
+              await this.kgRepo.upsertEntity(userId, keyPerson.entity.name, 'person',
+                { birthday: mem.value }, 'memories');
+            } else if (afterName.includes('birthday')) {
+              // Sub-person birthday: "spouse_sabine_birthday" → find "sabine" and set birthday
+              const subParts = afterName.split('_').filter(p => p.length >= 3 && p !== 'birthday' && p !== 'spouse');
+              for (const sub of subParts) {
+                const subName = sub.charAt(0).toUpperCase() + sub.slice(1);
+                const existing = await this.kgRepo.getEntityByName(userId, subName, 'person');
+                if (existing) {
+                  await this.kgRepo.upsertEntity(userId, subName, 'person', { birthday: mem.value }, 'memories');
+                }
+              }
+            }
+          }
+          break; // only first matching prefix
+        }
+      }
+
       // 2. Memory relationships → KG person entities + relations
       const relMems = await this.memoryRepo.getByType(userId, 'relationship', 30);
       for (const mem of relMems) {
