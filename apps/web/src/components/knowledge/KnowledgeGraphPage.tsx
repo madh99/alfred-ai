@@ -5,21 +5,18 @@ import dynamic from 'next/dynamic';
 import { useConfig } from '@/context/ConfigContext';
 import type { KGEntity, KGRelation } from '@/lib/alfred-client';
 
-// Dynamic import to avoid SSR issues with canvas-based library
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
-// Entity type → color mapping
 const TYPE_COLORS: Record<string, string> = {
-  person: '#60a5fa',    // blue
-  location: '#34d399',  // green
-  item: '#fb923c',      // orange
-  vehicle: '#f87171',   // red
-  event: '#a78bfa',     // purple
-  metric: '#9ca3af',    // gray
-  organization: '#fbbf24', // yellow
+  person: '#60a5fa',
+  location: '#34d399',
+  item: '#fb923c',
+  vehicle: '#f87171',
+  event: '#a78bfa',
+  metric: '#9ca3af',
+  organization: '#fbbf24',
 };
 
-// Entity type → label
 const TYPE_LABELS: Record<string, string> = {
   person: 'Personen',
   location: 'Orte',
@@ -30,6 +27,8 @@ const TYPE_LABELS: Record<string, string> = {
   organization: 'Organisationen',
 };
 
+const ENTITY_TYPES = ['person', 'location', 'item', 'vehicle', 'event', 'metric', 'organization'];
+
 interface GraphNode {
   id: string;
   name: string;
@@ -39,7 +38,9 @@ interface GraphNode {
   mentionCount: number;
   sources: string[];
   attributes: Record<string, unknown>;
-  val: number; // node size
+  val: number;
+  fx?: number;
+  fy?: number;
 }
 
 interface GraphLink {
@@ -52,6 +53,12 @@ interface GraphLink {
   mentionCount: number;
 }
 
+function shortLabel(name: string): string {
+  if (name.startsWith('connection_')) return name.slice(11).replace(/_/g, ' ').slice(0, 20);
+  if (name.length > 22) return name.slice(0, 20) + '...';
+  return name;
+}
+
 export function KnowledgeGraphPage() {
   const { client } = useConfig();
   const [entities, setEntities] = useState<KGEntity[]>([]);
@@ -62,7 +69,12 @@ export function KnowledgeGraphPage() {
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showEvents, setShowEvents] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editType, setEditType] = useState('');
   const graphRef = useRef<any>(null);
+  const nodePositions = useRef<Map<string, { fx: number; fy: number }>>(new Map());
 
   const fetchData = useCallback(async () => {
     try {
@@ -77,18 +89,17 @@ export function KnowledgeGraphPage() {
     }
   }, [client]);
 
-  useEffect(() => {
-    fetchData();
-    const timer = setInterval(fetchData, 60_000);
-    return () => clearInterval(timer);
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  // NO auto-refresh interval — manual only to prevent graph reset
 
-  // Build graph data
   const graphData = useMemo(() => {
     let filteredEntities = entities;
 
+    // Hide events by default (they dominate the graph)
+    if (!showEvents) filteredEntities = filteredEntities.filter(e => e.entityType !== 'event');
+
     if (filterType !== 'all') {
-      filteredEntities = entities.filter(e => e.entityType === filterType);
+      filteredEntities = filteredEntities.filter(e => e.entityType === filterType);
     }
 
     if (searchQuery) {
@@ -100,17 +111,21 @@ export function KnowledgeGraphPage() {
 
     const entityIds = new Set(filteredEntities.map(e => e.id));
 
-    const nodes: GraphNode[] = filteredEntities.map(e => ({
-      id: e.id,
-      name: e.name,
-      entityType: e.entityType,
-      color: TYPE_COLORS[e.entityType] ?? '#6b7280',
-      confidence: e.confidence,
-      mentionCount: e.mentionCount,
-      sources: e.sources,
-      attributes: e.attributes,
-      val: Math.max(2, Math.min(10, e.mentionCount / 2 + e.confidence * 3)),
-    }));
+    const nodes: GraphNode[] = filteredEntities.map(e => {
+      const saved = nodePositions.current.get(e.id);
+      return {
+        id: e.id,
+        name: e.name,
+        entityType: e.entityType,
+        color: TYPE_COLORS[e.entityType] ?? '#6b7280',
+        confidence: e.confidence,
+        mentionCount: e.mentionCount,
+        sources: e.sources,
+        attributes: e.attributes,
+        val: Math.max(2, Math.min(10, e.mentionCount / 3 + e.confidence * 3)),
+        ...(saved ? { fx: saved.fx, fy: saved.fy } : {}),
+      };
+    });
 
     const links: GraphLink[] = relations
       .filter(r => entityIds.has(r.sourceEntityId) && entityIds.has(r.targetEntityId))
@@ -125,56 +140,74 @@ export function KnowledgeGraphPage() {
       }));
 
     return { nodes, links };
-  }, [entities, relations, filterType, searchQuery]);
+  }, [entities, relations, filterType, searchQuery, showEvents]);
 
-  // Configure force engine for better spread after data loads
   useEffect(() => {
     if (graphRef.current) {
-      graphRef.current.d3Force('charge')?.strength(-200);
-      graphRef.current.d3Force('link')?.distance(80);
-      graphRef.current.d3Force('center')?.strength(0.05);
+      graphRef.current.d3Force('charge')?.strength(-500);
+      graphRef.current.d3Force('link')?.distance(120);
+      graphRef.current.d3Force('center')?.strength(0.03);
     }
   }, [graphData]);
 
-  // Stats
   const stats = useMemo(() => {
     const types: Record<string, number> = {};
     for (const e of entities) types[e.entityType] = (types[e.entityType] ?? 0) + 1;
     return { totalEntities: entities.length, totalRelations: relations.length, types };
   }, [entities, relations]);
 
+  // Find connected entities for highlighting
+  const connectedIds = useMemo(() => {
+    if (!selectedNode) return new Set<string>();
+    const ids = new Set<string>([selectedNode.id]);
+    for (const r of relations) {
+      if (r.sourceEntityId === selectedNode.id) ids.add(r.targetEntityId);
+      if (r.targetEntityId === selectedNode.id) ids.add(r.sourceEntityId);
+    }
+    return ids;
+  }, [selectedNode, relations]);
+
   const handleDeleteEntity = async (entityId: string) => {
     if (!confirm('Entity und alle verbundenen Relations löschen?')) return;
     const ok = await client.deleteKgEntity(entityId);
-    if (ok) {
-      setSelectedNode(null);
-      fetchData();
-    }
+    if (ok) { setSelectedNode(null); fetchData(); }
   };
 
   const handleDeleteRelation = async (relationId: string) => {
     if (!confirm('Relation löschen?')) return;
     const ok = await client.deleteKgRelation(relationId);
-    if (ok) {
-      setSelectedLink(null);
-      fetchData();
-    }
+    if (ok) { setSelectedLink(null); fetchData(); }
+  };
+
+  const handleUpdateEntity = async () => {
+    if (!selectedNode) return;
+    const updates: Record<string, unknown> = {};
+    if (editName && editName !== selectedNode.name) updates.name = editName;
+    if (editType && editType !== selectedNode.entityType) updates.entityType = editType;
+    if (Object.keys(updates).length === 0) { setEditMode(false); return; }
+    const ok = await client.updateKgEntity(selectedNode.id, updates);
+    if (ok) { setEditMode(false); fetchData(); }
+  };
+
+  const handleUpdateRelation = async (field: string, value: unknown) => {
+    if (!selectedLink) return;
+    const ok = await client.updateKgRelation(selectedLink.id, { [field]: value });
+    if (ok) fetchData();
+  };
+
+  const startEdit = () => {
+    if (!selectedNode) return;
+    setEditName(selectedNode.name);
+    setEditType(selectedNode.entityType);
+    setEditMode(true);
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-gray-400 animate-pulse">Knowledge Graph laden...</div>
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full"><div className="text-gray-400 animate-pulse">Knowledge Graph laden...</div></div>;
   }
 
   if (error) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-400">Fehler: {error}</div>
-      </div>
-    );
+    return <div className="flex items-center justify-center h-full"><div className="text-red-400">Fehler: {error}</div></div>;
   }
 
   return (
@@ -186,17 +219,14 @@ export function KnowledgeGraphPage() {
           <span className="text-xs text-gray-500">
             {stats.totalEntities} Entities | {stats.totalRelations} Relations
           </span>
-          <button
-            onClick={fetchData}
-            className="px-3 py-1 text-xs bg-[#1f1f1f] text-gray-300 rounded hover:bg-[#2a2a2a] transition-colors"
-          >
+          <button onClick={fetchData} className="px-3 py-1 text-xs bg-[#1f1f1f] text-gray-300 rounded hover:bg-[#2a2a2a]">
             Refresh
           </button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-[#1f1f1f]">
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-[#1f1f1f] flex-wrap">
         <input
           type="text"
           placeholder="Suche..."
@@ -204,17 +234,23 @@ export function KnowledgeGraphPage() {
           onChange={e => setSearchQuery(e.target.value)}
           className="px-3 py-1.5 text-sm bg-[#111111] border border-[#2a2a2a] rounded text-gray-200 placeholder-gray-500 w-48"
         />
-        <div className="flex gap-1">
+        <div className="flex gap-1 flex-wrap">
           <button
-            onClick={() => setFilterType('all')}
-            className={`px-2 py-1 text-xs rounded ${filterType === 'all' ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
+            onClick={() => { setFilterType('all'); setShowEvents(false); }}
+            className={`px-2 py-1 text-xs rounded ${filterType === 'all' && !showEvents ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
           >
-            Alle
+            Alle (ohne Events)
+          </button>
+          <button
+            onClick={() => { setFilterType('all'); setShowEvents(true); }}
+            className={`px-2 py-1 text-xs rounded ${filterType === 'all' && showEvents ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
+          >
+            Alle + Events
           </button>
           {Object.entries(stats.types).map(([type, count]) => (
             <button
               key={type}
-              onClick={() => setFilterType(type)}
+              onClick={() => { setFilterType(type); setShowEvents(type === 'event'); }}
               className={`px-2 py-1 text-xs rounded flex items-center gap-1 ${filterType === type ? 'bg-blue-600 text-white' : 'bg-[#1f1f1f] text-gray-400 hover:bg-[#2a2a2a]'}`}
             >
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: TYPE_COLORS[type] ?? '#6b7280' }} />
@@ -232,61 +268,63 @@ export function KnowledgeGraphPage() {
             <ForceGraph2D
               ref={graphRef}
               graphData={graphData}
-              // Force parameters: spread nodes out, don't cluster
               d3AlphaDecay={0.02}
               d3VelocityDecay={0.3}
-              dagMode={undefined}
-              warmupTicks={50}
-              cooldownTicks={100}
-              // Node interaction
+              warmupTicks={80}
+              cooldownTicks={150}
               enableNodeDrag={true}
-              onNodeDragEnd={(node: any) => { node.fx = node.x; node.fy = node.y; }}
+              onNodeDragEnd={(node: any) => {
+                node.fx = node.x; node.fy = node.y;
+                nodePositions.current.set(node.id, { fx: node.x, fy: node.y });
+              }}
               nodeLabel={(node: any) => `${node.name} [${node.entityType}]\nConfidence: ${(node.confidence * 100).toFixed(0)}% | Mentions: ${node.mentionCount}`}
               nodeColor={(node: any) => node.color}
               nodeRelSize={4}
               nodeVal={(node: any) => node.val}
-              // Link styling
               linkLabel={(link: any) => `${link.relationType} (${(link.strength * 100).toFixed(0)}%)`}
-              linkColor={(link: any) => selectedLink?.id === link.id ? '#60a5fa' : '#444444'}
+              linkColor={(link: any) => {
+                if (selectedLink?.id === link.id) return '#60a5fa';
+                if (selectedNode && connectedIds.has((link.source as any)?.id || link.source) && connectedIds.has((link.target as any)?.id || link.target)) return '#666';
+                if (selectedNode) return '#222';
+                return '#444';
+              }}
               linkWidth={(link: any) => selectedLink?.id === link.id ? 3 : Math.max(0.5, link.strength * 2)}
               linkDirectionalArrowLength={5}
               linkDirectionalArrowRelPos={0.85}
-              linkDirectionalParticles={(link: any) => link.strength > 0.7 ? 2 : 0}
-              linkDirectionalParticleWidth={2}
-              linkDirectionalParticleColor={() => '#60a5fa'}
-              // Events
-              onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); }}
-              onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); }}
-              onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); }}
+              onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
+              onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); setEditMode(false); }}
+              onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); setEditMode(false); }}
               backgroundColor="#0a0a0a"
-              // Custom node rendering
               nodeCanvasObjectMode={() => 'replace'}
               nodeCanvasObject={(node: any, ctx: any, globalScale: number) => {
-                const label = node.name.length > 25 ? node.name.slice(0, 23) + '...' : node.name;
+                const label = shortLabel(node.name);
                 const size = node.val * 1.5;
+                const isConnected = selectedNode ? connectedIds.has(node.id) : true;
+                const isSelected = selectedNode?.id === node.id;
 
-                // Node circle
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, size, 0, 2 * Math.PI);
                 ctx.fillStyle = node.color;
-                ctx.globalAlpha = selectedNode?.id === node.id ? 1 : 0.75;
+                ctx.globalAlpha = isSelected ? 1 : isConnected ? 0.85 : 0.2;
                 ctx.fill();
                 ctx.globalAlpha = 1;
 
-                // Selected highlight ring
-                if (selectedNode?.id === node.id) {
+                if (isSelected) {
                   ctx.strokeStyle = '#ffffff';
                   ctx.lineWidth = 2.5;
                   ctx.stroke();
                 }
 
-                // Label — only show when zoomed in enough or for selected/hovered
-                if (globalScale > 1.5 || selectedNode?.id === node.id || node.mentionCount > 5) {
+                // Labels: zoom <1 = none, 1-2 = only selected+connected, >2 = all
+                const showLabel = isSelected
+                  || (globalScale > 1 && isConnected && node.entityType !== 'event')
+                  || globalScale > 2;
+                if (showLabel) {
                   const fontSize = Math.max(9, 11 / globalScale);
                   ctx.font = `${fontSize}px sans-serif`;
                   ctx.textAlign = 'center';
                   ctx.textBaseline = 'top';
-                  ctx.fillStyle = selectedNode?.id === node.id ? '#ffffff' : '#c0c0c0';
+                  ctx.fillStyle = isSelected ? '#ffffff' : isConnected ? '#c0c0c0' : '#666';
                   ctx.fillText(label, node.x, node.y + size + 3);
                 }
               }}
@@ -301,11 +339,14 @@ export function KnowledgeGraphPage() {
         {/* Detail Panel */}
         {(selectedNode || selectedLink) && (
           <div className="w-80 border-l border-[#1f1f1f] bg-[#111111] overflow-y-auto p-4">
-            {selectedNode && (
+            {selectedNode && !editMode && (
               <div>
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-sm font-semibold text-gray-200">{selectedNode.name}</h2>
-                  <button onClick={() => setSelectedNode(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+                  <h2 className="text-sm font-semibold text-gray-200 truncate">{selectedNode.name}</h2>
+                  <div className="flex gap-1">
+                    <button onClick={startEdit} className="text-blue-400 hover:text-blue-300 text-xs">Bearbeiten</button>
+                    <button onClick={() => setSelectedNode(null)} className="text-gray-500 hover:text-gray-300 text-xs ml-2">✕</button>
+                  </div>
                 </div>
 
                 <div className="space-y-2 text-xs">
@@ -339,25 +380,25 @@ export function KnowledgeGraphPage() {
                       <div className="text-gray-500 mb-1">Attribute</div>
                       {Object.entries(selectedNode.attributes).map(([k, v]) => (
                         <div key={k} className="flex justify-between py-0.5">
-                          <span className="text-gray-400">{k}</span>
-                          <span className="text-gray-200">{String(v)}</span>
+                          <span className="text-gray-400 truncate mr-2">{k}</span>
+                          <span className="text-gray-200 truncate">{String(v).slice(0, 50)}</span>
                         </div>
                       ))}
                     </div>
                   )}
 
-                  {/* Connected relations */}
                   <div className="bg-[#1a1a1a] rounded p-2">
-                    <div className="text-gray-500 mb-1">Verbindungen</div>
+                    <div className="text-gray-500 mb-1">Verbindungen ({relations.filter(r => r.sourceEntityId === selectedNode.id || r.targetEntityId === selectedNode.id).length})</div>
                     {relations
                       .filter(r => r.sourceEntityId === selectedNode.id || r.targetEntityId === selectedNode.id)
+                      .slice(0, 20)
                       .map(r => {
                         const otherId = r.sourceEntityId === selectedNode.id ? r.targetEntityId : r.sourceEntityId;
                         const other = entities.find(e => e.id === otherId);
                         const direction = r.sourceEntityId === selectedNode.id ? '→' : '←';
                         return (
-                          <div key={r.id} className="flex items-center justify-between py-0.5">
-                            <span className="text-gray-300 truncate">{direction} {r.relationType} → {other?.name ?? '?'}</span>
+                          <div key={r.id} className="flex items-center justify-between py-0.5 group">
+                            <span className="text-gray-300 truncate text-[10px]">{direction} {r.relationType} → {other?.name ?? '?'}</span>
                             <span className="text-gray-500 text-[10px]">{(r.strength * 100).toFixed(0)}%</span>
                           </div>
                         );
@@ -366,7 +407,7 @@ export function KnowledgeGraphPage() {
 
                   <button
                     onClick={() => handleDeleteEntity(selectedNode.id)}
-                    className="w-full mt-2 px-3 py-1.5 bg-red-900/30 text-red-400 rounded text-xs hover:bg-red-900/50 transition-colors"
+                    className="w-full mt-2 px-3 py-1.5 bg-red-900/30 text-red-400 rounded text-xs hover:bg-red-900/50"
                   >
                     Entity löschen
                   </button>
@@ -374,6 +415,48 @@ export function KnowledgeGraphPage() {
               </div>
             )}
 
+            {/* Edit Mode */}
+            {selectedNode && editMode && (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-semibold text-gray-200">Bearbeiten</h2>
+                  <button onClick={() => setEditMode(false)} className="text-gray-500 hover:text-gray-300 text-xs">✕</button>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-gray-500 block mb-1">Name</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      className="w-full px-2 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-gray-500 block mb-1">Typ</label>
+                    <select
+                      value={editType}
+                      onChange={e => setEditType(e.target.value)}
+                      className="w-full px-2 py-1.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200 text-sm"
+                    >
+                      {ENTITY_TYPES.map(t => (
+                        <option key={t} value={t}>{TYPE_LABELS[t] ?? t}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={handleUpdateEntity} className="flex-1 px-3 py-1.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
+                      Speichern
+                    </button>
+                    <button onClick={() => setEditMode(false)} className="flex-1 px-3 py-1.5 bg-[#2a2a2a] text-gray-300 rounded text-xs hover:bg-[#333]">
+                      Abbrechen
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Relation Detail */}
             {selectedLink && (
               <div>
                 <div className="flex items-center justify-between mb-3">
@@ -383,8 +466,13 @@ export function KnowledgeGraphPage() {
 
                 <div className="space-y-2 text-xs">
                   <div className="bg-[#1a1a1a] rounded p-2">
-                    <div className="text-gray-500">Typ</div>
-                    <div className="text-gray-200 font-medium">{selectedLink.relationType}</div>
+                    <div className="text-gray-500 mb-1">Typ</div>
+                    <input
+                      type="text"
+                      defaultValue={selectedLink.relationType}
+                      onBlur={e => { if (e.target.value !== selectedLink.relationType) handleUpdateRelation('relationType', e.target.value); }}
+                      className="w-full px-2 py-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-gray-200 text-sm"
+                    />
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
@@ -414,7 +502,7 @@ export function KnowledgeGraphPage() {
 
                   <button
                     onClick={() => handleDeleteRelation(selectedLink.id)}
-                    className="w-full mt-2 px-3 py-1.5 bg-red-900/30 text-red-400 rounded text-xs hover:bg-red-900/50 transition-colors"
+                    className="w-full mt-2 px-3 py-1.5 bg-red-900/30 text-red-400 rounded text-xs hover:bg-red-900/50"
                   >
                     Relation löschen
                   </button>

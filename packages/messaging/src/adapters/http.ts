@@ -74,6 +74,8 @@ export class HttpAdapter extends MessagingAdapter {
   private knowledgeGraphFn?: (userId?: string) => Promise<{ entities: any[]; relations: any[] }>;
   private knowledgeGraphDeleteEntityFn?: (entityId: string) => Promise<boolean>;
   private knowledgeGraphDeleteRelationFn?: (relationId: string) => Promise<boolean>;
+  private knowledgeGraphUpdateEntityFn?: (entityId: string, data: Record<string, unknown>) => Promise<boolean>;
+  private knowledgeGraphUpdateRelationFn?: (relationId: string, data: Record<string, unknown>) => Promise<boolean>;
   private readonly webUiPath?: string;
   private readonly tls?: TlsOptions;
   private readonly authCb?: HttpAdapterOptions['authCallback'];
@@ -118,10 +120,14 @@ export class HttpAdapter extends MessagingAdapter {
     getGraph: (userId?: string) => Promise<{ entities: any[]; relations: any[] }>;
     deleteEntity: (entityId: string) => Promise<boolean>;
     deleteRelation: (relationId: string) => Promise<boolean>;
+    updateEntity?: (entityId: string, data: Record<string, unknown>) => Promise<boolean>;
+    updateRelation?: (relationId: string, data: Record<string, unknown>) => Promise<boolean>;
   }): void {
     this.knowledgeGraphFn = opts.getGraph;
     this.knowledgeGraphDeleteEntityFn = opts.deleteEntity;
     this.knowledgeGraphDeleteRelationFn = opts.deleteRelation;
+    this.knowledgeGraphUpdateEntityFn = opts.updateEntity;
+    this.knowledgeGraphUpdateRelationFn = opts.updateRelation;
   }
 
   async connect(): Promise<void> {
@@ -364,6 +370,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleKgDeleteEntity(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'DELETE') {
       this.handleKgDeleteRelation(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/knowledge-graph/entity/') && req.method === 'PATCH') {
+      this.handleKgUpdateEntity(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'PATCH') {
+      this.handleKgUpdateRelation(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
@@ -634,6 +644,41 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.knowledgeGraphDeleteRelationFn(relationId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleKgUpdateEntity(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.knowledgeGraphUpdateEntityFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const entityId = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    const data = JSON.parse(body);
+    const ok = await this.knowledgeGraphUpdateEntityFn(entityId, data);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleKgUpdateRelation(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.knowledgeGraphUpdateRelationFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const relationId = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    const data = JSON.parse(body);
+    const ok = await this.knowledgeGraphUpdateRelationFn(relationId, data);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private readBody(req: http.IncomingMessage): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => resolve(body));
+      req.on('error', reject);
+    });
   }
 
   private safeError(res: http.ServerResponse, err: unknown): void {

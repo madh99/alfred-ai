@@ -131,6 +131,28 @@ export class AlfredClient {
     const data = await res.json();
     return data.success;
   }
+
+  async updateKgEntity(entityId: string, updates: Record<string, unknown>): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/knowledge-graph/entity/${entityId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
+  async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
 }
 
 export interface KGEntity {

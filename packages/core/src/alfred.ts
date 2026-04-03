@@ -1636,6 +1636,34 @@ export class Alfred {
             const result = await dbAdapter.execute('DELETE FROM kg_relations WHERE id = ?', [relationId]);
             return result.changes > 0;
           },
+          updateEntity: async (entityId: string, data: Record<string, unknown>) => {
+            const sets: string[] = [];
+            const params: unknown[] = [];
+            if (data.name !== undefined) { sets.push('name = ?'); params.push(data.name); sets.push('normalized_name = ?'); params.push(String(data.name).trim().toLowerCase()); }
+            if (data.entityType !== undefined) { sets.push('entity_type = ?'); params.push(data.entityType); }
+            if (data.attributes !== undefined) { sets.push('attributes = ?'); params.push(JSON.stringify(data.attributes)); }
+            if (sets.length === 0) return false;
+            sets.push('last_seen_at = ?'); params.push(new Date().toISOString());
+            params.push(entityId);
+            try {
+              const result = await dbAdapter.execute(`UPDATE kg_entities SET ${sets.join(', ')} WHERE id = ?`, params);
+              return result.changes > 0;
+            } catch { return false; }
+          },
+          updateRelation: async (relationId: string, data: Record<string, unknown>) => {
+            const sets: string[] = [];
+            const params: unknown[] = [];
+            if (data.relationType !== undefined) { sets.push('relation_type = ?'); params.push(data.relationType); }
+            if (data.strength !== undefined) { sets.push('strength = ?'); params.push(data.strength); }
+            if (data.context !== undefined) { sets.push('context = ?'); params.push(data.context); }
+            if (sets.length === 0) return false;
+            sets.push('last_seen_at = ?'); params.push(new Date().toISOString());
+            params.push(relationId);
+            try {
+              const result = await dbAdapter.execute(`UPDATE kg_relations SET ${sets.join(', ')} WHERE id = ?`, params);
+              return result.changes > 0;
+            } catch { return false; }
+          },
         });
         this.logger.info('Knowledge Graph API registered');
       }
