@@ -35,7 +35,8 @@ interface LLMLinkingResult {
 const VALID_RELATION_TYPES = new Set([
   'relates_to', 'used_for', 'caused_by', 'depends_on', 'part_of',
   'prepares_for', 'relevant_to', 'located_at', 'works_at', 'parent_of',
-  'spouse', 'family', 'knows', 'owns', 'monitors', 'affects',
+  'spouse', 'sibling', 'family', 'grandparent_of', 'aunt_uncle_of',
+  'knows', 'owns', 'monitors', 'affects', 'plays_at', 'same_as',
 ]);
 
 const VALID_ENTITY_TYPES = new Set([
@@ -155,11 +156,20 @@ Antworte NUR als JSON-Objekt mit diesen 3 optionalen Arrays:
 
 REGELN:
 - Nur ECHTE semantische Zusammenhänge, KEINE Spekulation
-- Relation-Typen: relates_to, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, family, knows, owns, monitors, affects
+- Relation-Typen: relates_to, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at
 - Entity-Typen: person, location, item, vehicle, event, organization, metric
 - Nicht wiederholen was offensichtlich ist (gleicher Name = gleiche Entity)
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
-- corrections: nur wenn der aktuelle Typ eindeutig falsch ist
+- corrections: nur wenn der aktuelle Typ eindeutig falsch ist — insbesondere wenn etwas als "person" markiert ist aber eigentlich organization/item/location sein sollte
+
+TRANSITIVE INFERENZ (wichtig!):
+- Wenn A parent_of B und A spouse C → C ist auch parent_of B
+- Wenn A family(mother) B und B parent_of C → A ist grandparent_of C
+- Wenn A parent_of B und A parent_of C → B und C sind siblings
+- Wenn ein "Freund" eine Ehefrau hat → Freund spouse Ehefrau
+- Wenn jemand bei einer Firma arbeitet → Person works_at Organization
+- Prüfe ob bestehende Entities falsch typisiert sind (z.B. "Hausbatterie" als person statt item, "Zürich Versicherungs" als person statt organization)
+
 - Wenn nichts zu tun: {"relations":[],"newEntities":[],"corrections":[]}`;
   }
 

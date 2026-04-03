@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.325] - 2026-04-03
+## [0.19.0-multi-ha.326] - 2026-04-03
 
 ### Fixed
 - **BMW: Reasoning verbrauchte 88% REST-Quota** — Collector liest jetzt direkt aus DB statt Skill-Call. basicData im RAM gecacht. 0 REST-Calls für Reasoning.
@@ -19,6 +19,8 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **KG: LLM-Linker nur Event↔Event** — LLM verknüpfte nur Events untereinander, nicht mit Personen/Locations/Vehicles. Fix: Entity-Mix sendet Core-Entities (Personen, Orte, Fahrzeuge, Orgs) als erste zu analysierende Entities.
 - **KG: HA-Person ↔ Memory-Person Fuzzy** — "Alexandra" (SmartHome) wurde nicht mit "Frau Alex" (Memory) verknüpft. Fix: Fuzzy-Match in maintenance() erstellt `same_as` Relations.
 - **KG: Event-Dedup aggressiver** — Events mit fast identischen Keys (`rtx_5090` vs `rtx5090`) werden zusammengeführt.
+- **KG: Familien-Inferenz** — Universelle Regeln: Spouse→parent_of Kinder, Kinder→siblings, Mutter/Vater→grandparent_of Kinder, Schwester/Bruder→aunt_uncle_of Kinder, Spouse→knows Familie. Funktioniert automatisch für jedes neue Familienmitglied.
+- **LLM-Linker: Transitive Inferenz** — Prompt erweitert um Inferenz-Regeln + Entity-Typ-Korrektur-Hinweis. Neue Relationstypen: sibling, grandparent_of, aunt_uncle_of, plays_at.
 - **Confirmation: Auto-Cleanup bei Approve** — Wenn User eine Confirmation bestätigt, werden alle anderen pending Confirmations für denselben Skill automatisch aufgeräumt. Verhindert "⏰ abgelaufen" Meldungen für bereits erledigte Themen.
 - **DeliveryScheduler: WAKING reicht für normal** — `normal` urgency brauchte `ACTIVE` (prob ≥ 0.5), das existierte bei jungem Profil nie → Insights wurden nie zugestellt. Fix: `WAKING` reicht. Fallback: bei <3 Tagen Profil-Daten immer zustellen.
 - **KG: Entity-Typ-Routing statt blind Person** — `extractPersons()` → `extractEntitiesFromText()` mit `classifyEntityName()`: Locations (KNOWN_LOCATIONS), Organizations (AG/GmbH/ICT), Items (deutsche Komposita >7 Zeichen, Geräte-Prefixe, Nomen-Suffixe) werden korrekt typisiert. "Zürich Versicherungs AG" → organization, "Hausbatterie" → item, "Linus" → person. Block 1 Name-Extraktion stoppt nach Vorname wenn nächstes Wort ein Konzept ist ("Noah Fußball" → nur "Noah"). Employment-Sync: Duplikat-Schutz + User≠Organization.

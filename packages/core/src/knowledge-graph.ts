@@ -135,6 +135,8 @@ export class KnowledgeGraphService {
       await this.syncMemoryEntities(userId);
       // Build cross-extractor relations (BMW↔Wallbox, Strompreis↔Batterie, etc.)
       await this.buildCrossExtractorRelations(userId);
+      // Family inference: derive transitive relations (grandparent, sibling, aunt/uncle)
+      await this.buildFamilyInference(userId);
       // Generic entity linking: match every entity against all others by name
       await this.buildGenericEntityLinks(userId);
       // Optional LLM-based semantic linking (runs on schedule, not every pass)
@@ -396,6 +398,89 @@ export class KnowledgeGraphService {
    * against all other entity names. Creates `relates_to` relations for matches.
    * This catches ALL cross-references automatically — no domain-specific rules needed.
    */
+  /**
+   * Universal family inference: derive transitive relations from existing family facts.
+   * Runs every pass — upsertRelation handles dedup.
+   */
+  private async buildFamilyInference(userId: string): Promise<void> {
+    try {
+      const graph = await this.kgRepo.getFullGraph(userId);
+      const { entities, relations } = graph;
+
+      const entityById = new Map(entities.map(e => [e.id, e]));
+      const user = entities.find(e => e.name === 'User' && e.entityType === 'person');
+      if (!user) return;
+
+      // Collect User's direct relations
+      const children: string[] = []; // entity IDs
+      let spouseId: string | undefined;
+      let motherId: string | undefined;
+      let fatherId: string | undefined;
+      const siblings: string[] = [];
+
+      for (const r of relations) {
+        if (r.sourceEntityId !== user.id) continue;
+        if (r.relationType === 'parent_of') children.push(r.targetEntityId);
+        if (r.relationType === 'spouse') spouseId = r.targetEntityId;
+        if (r.relationType === 'family') {
+          const target = entityById.get(r.targetEntityId);
+          if (target) {
+            const key = (target.attributes?.memoryKey as string ?? '').toLowerCase();
+            if (key.includes('mother') || key.includes('mutter')) motherId = r.targetEntityId;
+            if (key.includes('father') || key.includes('vater')) fatherId = r.targetEntityId;
+            if (key.includes('sister') || key.includes('schwester') || key.includes('brother') || key.includes('bruder')) {
+              siblings.push(r.targetEntityId);
+            }
+          }
+        }
+      }
+
+      // Rule 1: Spouse is also parent of children
+      if (spouseId && children.length > 0) {
+        for (const childId of children) {
+          await this.kgRepo.upsertRelation(userId, spouseId, childId, 'parent_of', undefined, 'inference');
+        }
+      }
+
+      // Rule 2: Children are siblings of each other
+      for (let i = 0; i < children.length; i++) {
+        for (let j = i + 1; j < children.length; j++) {
+          await this.kgRepo.upsertRelation(userId, children[i], children[j], 'sibling', undefined, 'inference');
+        }
+      }
+
+      // Rule 3: User's mother/father → grandparent of children
+      for (const gpId of [motherId, fatherId].filter(Boolean) as string[]) {
+        for (const childId of children) {
+          await this.kgRepo.upsertRelation(userId, gpId, childId, 'grandparent_of', undefined, 'inference');
+        }
+        // Also: mother/father is parent_of User (reverse direction)
+        await this.kgRepo.upsertRelation(userId, gpId, user.id, 'parent_of', undefined, 'inference');
+      }
+
+      // Rule 4: User's siblings → aunt/uncle of children
+      for (const sibId of siblings) {
+        for (const childId of children) {
+          await this.kgRepo.upsertRelation(userId, sibId, childId, 'aunt_uncle_of', undefined, 'inference');
+        }
+        // Sibling is also child of User's parents
+        if (motherId) await this.kgRepo.upsertRelation(userId, motherId, sibId, 'parent_of', undefined, 'inference');
+        if (fatherId) await this.kgRepo.upsertRelation(userId, fatherId, sibId, 'parent_of', undefined, 'inference');
+      }
+
+      // Rule 5: Spouse knows all family members
+      if (spouseId) {
+        if (motherId) await this.kgRepo.upsertRelation(userId, spouseId, motherId, 'knows', undefined, 'inference');
+        if (fatherId) await this.kgRepo.upsertRelation(userId, spouseId, fatherId, 'knows', undefined, 'inference');
+        for (const sibId of siblings) {
+          await this.kgRepo.upsertRelation(userId, spouseId, sibId, 'knows', undefined, 'inference');
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'KG: family inference failed');
+    }
+  }
+
   private async buildGenericEntityLinks(userId: string): Promise<void> {
     try {
       const allEntities = await this.kgRepo.getAllEntities(userId);
