@@ -480,7 +480,16 @@ export class ReasoningContextCollector {
       const lockedRaw = tv('vehicle.access.centralLocking.isLocked', 'vehicle.cabin.door.status');
       const locked = lockedRaw === 'true' || lockedRaw === 'LOCKED' || lockedRaw === 'SECURED' ? 'Ja' : lockedRaw === 'UNLOCKED' || lockedRaw === 'false' ? 'Nein' : '?';
 
-      const dataAge = mqtt ? Math.round((Date.now() - new Date(mqtt.createdAt).getTime()) / 60_000) : rest ? Math.round((Date.now() - new Date(rest.createdAt).getTime()) / 60_000) : 0;
+      const newestAt = mqtt?.createdAt ?? rest?.createdAt;
+      const dataAge = newestAt ? Math.round((Date.now() - new Date(newestAt).getTime()) / 60_000) : 999;
+
+      // If data is very old (>6h) and no MQTT/REST update, do ONE REST refresh via skill
+      if (dataAge > 360 && Object.keys(merged).length > 0) {
+        try {
+          const fresh = await this.fetchWithTimeout('bmw', { action: 'status' }, 20_000);
+          if (fresh && !fresh.startsWith('(') && !fresh.includes('rate limit')) return fresh;
+        } catch { /* rate limited or error — use stale data */ }
+      }
 
       const lines = [
         `**Ladestand (SoC):** ${soc} %`,
