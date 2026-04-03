@@ -240,15 +240,20 @@ REGELN:
     const stats = { relations: 0, newEntities: 0, corrections: 0 };
     const entityByName = new Map(allEntities.map(e => [e.name.toLowerCase(), e]));
 
-    // 1. Apply new relations
+    // 1. Apply new relations (with type validation)
     for (const rel of (result.relations ?? []).slice(0, 20)) {
       if (!VALID_RELATION_TYPES.has(rel.type)) continue;
       const source = entityByName.get(rel.source.toLowerCase());
       const target = entityByName.get(rel.target.toLowerCase());
-      if (source && target && source.id !== target.id) {
-        await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
-        stats.relations++;
-      }
+      if (!source || !target || source.id === target.id) continue;
+      // Validate relation type constraints
+      if (rel.type === 'works_at' && target.entityType !== 'organization') continue;
+      if (rel.type === 'parent_of' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
+      if (rel.type === 'spouse' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
+      if (rel.type === 'family' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
+      if (rel.type === 'located_at' && target.entityType !== 'location') continue;
+      await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
+      stats.relations++;
     }
 
     // 2. Create new entities

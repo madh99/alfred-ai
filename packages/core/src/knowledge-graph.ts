@@ -403,9 +403,19 @@ export class KnowledgeGraphService {
       const nameIndex = new Map<string, { entity: KGEntity; regex: RegExp }>();
       for (const e of allEntities) {
         if (e.normalizedName.length >= 4 && e.name !== 'User') {
-          // Word-boundary match: "bmw" matches "BMW i4" but not "abmw"
           const escaped = e.normalizedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           nameIndex.set(e.normalizedName, { entity: e, regex: new RegExp(`\\b${escaped}\\b`, 'i') });
+          // For persons: also register first name as additional match key
+          // "Sohn Linus" → also match "linus" alone
+          if (e.entityType === 'person') {
+            const firstName = e.normalizedName.split(/\s+/).find(w =>
+              w.length >= 4 && !['sohn', 'tochter', 'frau', 'herr', 'schwester'].includes(w),
+            );
+            if (firstName && !nameIndex.has(firstName)) {
+              const fnEscaped = firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              nameIndex.set(firstName, { entity: e, regex: new RegExp(`\\b${fnEscaped}\\b`, 'i') });
+            }
+          }
         }
       }
 
@@ -944,23 +954,36 @@ export class KnowledgeGraphService {
     try {
       // 1. Memory entities (persons, contacts) → KG person entities + User relations
       const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder', 'kinder', 'kind']);
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
-        const raw = mem.value.split(',')[0].split('(')[0].trim();
-        const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
-        const personName = words.slice(0, 3).join(' ');
-        if (personName.length >= 2 && !isInvalidPersonName(personName)) {
-          const person = await this.kgRepo.upsertEntity(userId, personName, 'person',
-            { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
-          // Derive relation type from memory key
-          const k = mem.key.toLowerCase();
-          const relType = k.includes('child') || k.includes('sohn') || k.includes('tochter') ? 'parent_of'
-            : k.includes('spouse') || k.includes('frau') || k.includes('mann') || k.includes('partner') ? 'spouse'
-            : k.includes('mother') || k.includes('father') || k.includes('sister') || k.includes('brother') || k.includes('mutter') || k.includes('schwester') || k.includes('bruder') || k.includes('vater') ? 'family'
-            : k.includes('friend') || k.includes('freund') ? 'knows'
-            : 'knows';
-          await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
+        // Extract just the person's first name (or "Title Firstname")
+        const raw = mem.value.split(',')[0].split('(')[0].split('.')[0].trim();
+        const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w) && !/^\d/.test(w));
+        // Keep title word (Sohn, Tochter, Frau) + first actual name, max 2 words
+        const nameWords: string[] = [];
+        for (const w of words) {
+          if (TITLE_WORDS.has(w.toLowerCase())) { nameWords.push(w); continue; }
+          if (isInvalidPersonName(w)) continue;
+          nameWords.push(w);
+          if (nameWords.length >= 2) break; // "Sohn Linus", "Frau Alex", "Maria Dohnal"
         }
+        const personName = nameWords.join(' ');
+        if (personName.length < 2 || isInvalidPersonName(personName)) continue;
+
+        const person = await this.kgRepo.upsertEntity(userId, personName, 'person',
+          { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
+
+        // Derive relation type from memory key
+        const k = mem.key.toLowerCase();
+        // "friend_bernhard_spouse_name" → friend takes priority (it's Bernhard's spouse, not User's)
+        const isFriend = k.includes('friend') || k.includes('freund');
+        const relType = isFriend ? 'knows'
+          : k.includes('child') || k.includes('sohn') || k.includes('tochter') || k.includes('kinder') ? 'parent_of'
+          : k.includes('spouse') || k.includes('frau') || k.includes('mann') || k.includes('partner') ? 'spouse'
+          : k.includes('mother') || k.includes('father') || k.includes('sister') || k.includes('brother') || k.includes('mutter') || k.includes('schwester') || k.includes('bruder') || k.includes('vater') ? 'family'
+          : 'knows';
+        await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
       }
 
       // 2. Memory relationships → KG person entities + relations

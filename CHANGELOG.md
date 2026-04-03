@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.319] - 2026-04-03
+## [0.19.0-multi-ha.320] - 2026-04-03
 
 ### Fixed
 - **BMW: Reasoning verbrauchte 88% REST-Quota** — Collector liest jetzt direkt aus DB statt Skill-Call. basicData im RAM gecacht. 0 REST-Calls für Reasoning.
@@ -19,6 +19,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **KG: LLM-Linker nur Event↔Event** — LLM verknüpfte nur Events untereinander, nicht mit Personen/Locations/Vehicles. Fix: Entity-Mix sendet Core-Entities (Personen, Orte, Fahrzeuge, Orgs) als erste zu analysierende Entities.
 - **KG: HA-Person ↔ Memory-Person Fuzzy** — "Alexandra" (SmartHome) wurde nicht mit "Frau Alex" (Memory) verknüpft. Fix: Fuzzy-Match in maintenance() erstellt `same_as` Relations.
 - **KG: Event-Dedup aggressiver** — Events mit fast identischen Keys (`rtx_5090` vs `rtx5090`) werden zusammengeführt.
+- **KG: Person-Name-Extraktion** — Memory-Sync extrahierte ganze Sätze als Person-Namen ("Linus SV Altlengbach", "Kinder: Linus"). Fix: nur Titel + Vorname ("Sohn Linus"). Friend-Memories korrekt als `knows` statt `spouse` (Sabine = Bernhards Frau, nicht Users).
+- **KG: Falsche Relationen bereinigt** — User→spouse→Sabine → knows, User→works_at→User gelöscht, Alexandra→works_at→Event gelöscht, User als Organization gelöscht, Axians-Duplikat gemergt.
+- **KG: Generic-Linker Vorname-Match** — Personen werden auch per Vorname gematcht ("linus" in Event-Keys findet "Sohn Linus"). Verknüpft 8+ bisher isolierte Events.
+- **KG: LLM-Linker Validierung** — works_at nur→organization, parent_of/spouse/family nur person→person, located_at nur→location. Verhindert semantisch falsche Relationen.
 - **Reasoning: Reminder-Spam** — Selbe Aktion wurde bei jedem Pass erneut vorgeschlagen (26× Domain-Reminder) weil Dedup auf exaktem Wortlaut hashte und das LLM die Message jedes Mal anders formulierte. Fix: Themen-basierter Hash aus sortierten Keywords (≥4 Zeichen) statt exaktem JSON-Wortlaut. Duplikat-Reminders bereinigt.
 
 ## [0.19.0-multi-ha.314] - 2026-04-03
