@@ -129,7 +129,7 @@ export class KnowledgeGraphService {
         }
         // Generic extraction for all sections
         await this.extractLocations(userId, section.key, section.content);
-        await this.extractPersons(userId, section.key, section.content);
+        await this.extractEntitiesFromText(userId, section.key, section.content);
       }
       // Sync Memory entities/relationships/connections/patterns/feedback into KG
       await this.syncMemoryEntities(userId);
@@ -968,6 +968,7 @@ export class KnowledgeGraphService {
         const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
 
         // Extract title + first actual name (max 2 words)
+        // Stop at the firstName — don't append concept words like "Fußball"
         const nameWords: string[] = [];
         let firstName = '';
         for (const w of words) {
@@ -975,6 +976,11 @@ export class KnowledgeGraphService {
           if (!wClean || wClean.length < 2) continue;
           if (TITLE_WORDS.has(wClean.toLowerCase())) { nameWords.push(wClean); continue; }
           if (isInvalidPersonName(wClean)) continue;
+          // After firstName is found, only accept surname-like words (short, no compound noun)
+          if (firstName) {
+            // Second word must look like a surname: <8 chars, not a concept
+            if (wClean.length > 7 || this.classifyEntityName(wClean) !== 'person') break;
+          }
           firstName = wClean.toLowerCase();
           nameWords.push(wClean);
           if (nameWords.length >= 2) break;
@@ -1102,11 +1108,17 @@ export class KnowledgeGraphService {
       for (const query of ['employment', 'employer', 'arbeitgeber', 'firma', 'company', 'teamlead', 'position']) {
         const jobs = await this.memoryRepo.search(userId, query);
         for (const job of jobs.slice(0, 3)) {
-          // Extract company name: look for "bei X", "at X", or "X GmbH/AG/ICT"
           const orgMatch = job.value.match(/(?:bei|at)\s+([A-ZÄÖÜ][\w\s&.-]+?)(?:\s+(?:als|as|since|seit)|[.,]|$)/i)
             ?? job.value.match(/([A-ZÄÖÜ][\w\s&.-]*(?:GmbH|AG|ICT|Inc|Corp|Ltd|SE)[^\s.,]*)/i);
           if (orgMatch) {
             const orgName = orgMatch[1].trim();
+            // Skip if it's "User" or an existing person entity
+            if (orgName === 'User' || orgName.length < 3) continue;
+            // Normalize: if full name (Axians ICT Austria GmbH) but short version exists, use short
+            const shortName = orgName.split(/\s+/)[0]; // "Axians" from "Axians ICT Austria GmbH"
+            const existingShort = await this.kgRepo.getEntityByName(userId, shortName, 'organization' as any);
+            const effectiveOrgName = existingShort ? shortName : orgName;
+
             const roleMatch = job.value.match(/(?:als|as)\s+(.+?)(?:\s+(?:bei|at|seit|since|angestellt)|[.,]|$)/i);
             const attrs: Record<string, unknown> = {};
             if (roleMatch) attrs.role = roleMatch[1].trim();
@@ -1280,24 +1292,63 @@ export class KnowledgeGraphService {
     }
   }
 
-  private async extractPersons(userId: string, sectionKey: string, content: string): Promise<void> {
-    // Skip person extraction from feeds/RSS, infra, activity
-    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth' || sectionKey === 'email') return;
+  /**
+   * Extract entities from text using preposition patterns (bei/für/mit/von + Name).
+   * Routes each extraction to the correct entity type instead of blindly creating persons.
+   */
+  private async extractEntitiesFromText(userId: string, sectionKey: string, content: string): Promise<void> {
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
 
     for (const pattern of PERSON_PATTERNS) {
       pattern.lastIndex = 0;
       let match;
       while ((match = pattern.exec(content)) !== null) {
-        const name = match[1].trim();
-        if (isInvalidPersonName(name)) continue;
-        // Route to correct entity type
-        if (isLikelyOrganization(name)) {
-          await this.kgRepo.upsertEntity(userId, name, 'organization' as any, {}, sectionKey);
-        } else {
-          await this.kgRepo.upsertEntity(userId, name, 'person', {}, sectionKey);
-        }
+        const rawName = match[1].trim();
+        if (rawName.length < 3) continue;
+
+        // Determine entity type by checking multiple signals
+        const entityType = this.classifyEntityName(rawName);
+        if (!entityType) continue; // filtered out (invalid name)
+
+        await this.kgRepo.upsertEntity(userId, rawName, entityType as any, {}, sectionKey);
       }
     }
+  }
+
+  /** Classify an extracted name into the correct entity type. */
+  private classifyEntityName(name: string): string | null {
+    const lower = name.toLowerCase();
+
+    // 1. Known location?
+    if (KNOWN_LOCATIONS_LOWER.has(lower)) return 'location';
+
+    // 2. Organization? (AG, GmbH, ICT, Inc, etc.)
+    if (isLikelyOrganization(name)) return 'organization';
+
+    // 3. German compound noun = likely item/concept, not person
+    //    "Hausbatterie", "Ladefenster", "Strompreis", "Wallbox", "Fußball"
+    //    Single word, >7 chars, no space, starts uppercase = German compound
+    if (!name.includes(' ') && name.length > 7 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(name)) return 'item';
+
+    // 4. Ends with typical German noun suffixes → concept, not person
+    if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|eur|gie|rie|mus|tik|thek|tur|trie)$/i.test(name)) return 'item';
+
+    // 5. Known technical/device terms
+    if (/^(?:Victron|Shelly|Sonos|Wallbox|Batterie|Akku|Inverter|Switch|Router|Gateway|Sensor|Zigbee)/i.test(name)) return 'item';
+
+    // 6. Check person blacklist (generic words, brands)
+    if (PERSON_BLACKLIST.has(lower)) return null;
+
+    // 7. Contains digits or underscores → not a person name
+    if (/[0-9_]/.test(name)) return null;
+
+    // 8. All lowercase → not a proper name
+    if (name === lower) return null;
+
+    // 9. Must be a person — but skip common German articles that slipped through
+    if (/^(Dem|Der|Das|Den|Die|Ein|Eine)$/i.test(name)) return null;
+
+    return 'person';
   }
 }
 
