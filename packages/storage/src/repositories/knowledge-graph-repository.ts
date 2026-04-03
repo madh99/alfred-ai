@@ -117,17 +117,20 @@ export class KnowledgeGraphRepository {
     }
 
     // New entity — atomic INSERT with ON CONFLICT fallback for HA safety.
-    // If another node inserts the same entity simultaneously, ON CONFLICT updates instead of throwing.
-    const result = await this.adapter.execute(`
-      INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
-      ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
-        confidence = CASE WHEN kg_entities.confidence + 0.1 > 1.0 THEN 1.0 ELSE kg_entities.confidence + 0.1 END,
-        last_seen_at = excluded.last_seen_at,
-        mention_count = kg_entities.mention_count + 1
-    `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
+    try {
+      await this.adapter.execute(`
+        INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
+        ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
+          confidence = CASE WHEN kg_entities.confidence + 0.1 > 1.0 THEN 1.0 ELSE kg_entities.confidence + 0.1 END,
+          last_seen_at = excluded.last_seen_at,
+          mention_count = kg_entities.mention_count + 1
+      `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
+    } catch {
+      // Race condition or constraint violation — entity was created by parallel call, fetch it
+    }
 
-    // Always fetch from DB to get the REAL id (ON CONFLICT DO UPDATE returns changes=1 but the id in the INSERT is wrong)
+    // Always fetch from DB to get the REAL id
     const row = await this.adapter.queryOne(
       'SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = ? AND normalized_name = ?',
       [userId, entityType, normalized],
@@ -211,15 +214,19 @@ export class KnowledgeGraphRepository {
     }
 
     // Atomic INSERT with ON CONFLICT for HA safety
-    await this.adapter.execute(`
-      INSERT INTO kg_relations (id, user_id, source_entity_id, target_entity_id, relation_type, strength, context, source_section, first_seen_at, last_seen_at, mention_count)
-      VALUES (?, ?, ?, ?, ?, 0.5, ?, ?, ?, ?, 1)
-      ON CONFLICT (user_id, source_entity_id, target_entity_id, relation_type) DO UPDATE SET
-        strength = CASE WHEN kg_relations.strength + 0.1 > 1.0 THEN 1.0 ELSE kg_relations.strength + 0.1 END,
-        context = COALESCE(excluded.context, kg_relations.context),
-        last_seen_at = excluded.last_seen_at,
-        mention_count = kg_relations.mention_count + 1
-    `, [id, userId, sourceId, targetId, relationType, context ?? null, sourceSection ?? null, now, now]);
+    try {
+      await this.adapter.execute(`
+        INSERT INTO kg_relations (id, user_id, source_entity_id, target_entity_id, relation_type, strength, context, source_section, first_seen_at, last_seen_at, mention_count)
+        VALUES (?, ?, ?, ?, ?, 0.5, ?, ?, ?, ?, 1)
+        ON CONFLICT (user_id, source_entity_id, target_entity_id, relation_type) DO UPDATE SET
+          strength = CASE WHEN kg_relations.strength + 0.1 > 1.0 THEN 1.0 ELSE kg_relations.strength + 0.1 END,
+          context = COALESCE(excluded.context, kg_relations.context),
+          last_seen_at = excluded.last_seen_at,
+          mention_count = kg_relations.mention_count + 1
+      `, [id, userId, sourceId, targetId, relationType, context ?? null, sourceSection ?? null, now, now]);
+    } catch {
+      // Race condition — relation was created by parallel call
+    }
 
     return {
       id, userId, sourceEntityId: sourceId, targetEntityId: targetId,
