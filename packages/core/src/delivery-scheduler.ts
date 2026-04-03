@@ -17,8 +17,8 @@ const STALE_TTL_MS: Record<Urgency, number> = {
 const MIN_HOUR_CLASS: Record<Urgency, HourClass> = {
   urgent: 'QUIET',       // always deliver
   high: 'WAKING',
-  normal: 'ACTIVE',
-  low: 'ACTIVE',
+  normal: 'WAKING',      // WAKING reicht — ACTIVE ist zu restriktiv bei wenig Daten
+  low: 'WINDING_DOWN',
 };
 
 const CLASS_ORDER: Record<HourClass, number> = { QUIET: 0, WAKING: 1, WINDING_DOWN: 2, ACTIVE: 3 };
@@ -142,6 +142,10 @@ export class DeliveryScheduler {
   /** Should this insight be delivered now, or deferred? */
   shouldDeliverNow(urgency: Urgency, profile: ActivityProfile): boolean {
     if (urgency === 'urgent') return true;
+    // If profile is too young (<7 days of data), always deliver (not enough data to defer)
+    const profileAge = Date.now() - new Date(profile.computedAt).getTime();
+    const hasActiveHours = profile.classifications.some(c => c === 'ACTIVE' || c === 'WAKING');
+    if (profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours) return true; // <3 days, no active hours → deliver
     const hour = new Date().getHours();
     const currentClass = profile.classifications[hour];
     const minClass = MIN_HOUR_CLASS[urgency];

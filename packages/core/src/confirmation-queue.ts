@@ -107,6 +107,17 @@ export class ConfirmationQueue {
     if (isYes) {
       await this.confirmRepo.resolve(pending.id, 'approved');
 
+      // Auto-resolve other pending confirmations for the same skill+topic (prevent "expired" noise)
+      try {
+        const allPending = await this.confirmRepo.findAllPending(chatId, platform);
+        for (const other of allPending) {
+          if (other.id === pending.id) continue;
+          if (other.skillName === pending.skillName) {
+            await this.confirmRepo.resolve(other.id, 'expired');
+          }
+        }
+      } catch { /* best effort */ }
+
       // Execute the action
       const skill = this.skillRegistry.get(pending.skillName);
       if (skill) {
