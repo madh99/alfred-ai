@@ -114,6 +114,9 @@ export class ReasoningEngine {
     private readonly kgService?: KnowledgeGraphService,
     private readonly workflowRepo?: WorkflowRepository,
     bmwTelematicRepo?: import('@alfred/storage').BmwTelematicRepository,
+    private readonly noteRepo?: import('@alfred/storage').NoteRepository,
+    private readonly reminderRepoRef?: import('@alfred/storage').ReminderRepository,
+    private readonly documentRepo?: import('@alfred/storage').DocumentRepository,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -126,7 +129,7 @@ export class ReasoningEngine {
       this.memoryRepo, this.activityRepo, this.skillHealthRepo,
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
       this.defaultLocation, this.logger, this.workflowRepo,
-      bmwTelematicRepo,
+      bmwTelematicRepo, noteRepo, reminderRepoRef, documentRepo,
     );
 
     // Smart delivery timing

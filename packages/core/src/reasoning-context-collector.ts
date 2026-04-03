@@ -10,6 +10,9 @@ import type {
   UserRepository,
   WorkflowRepository,
   BmwTelematicRepository,
+  NoteRepository,
+  ReminderRepository,
+  DocumentRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -77,6 +80,9 @@ export class ReasoningContextCollector {
     private readonly logger: Logger,
     private readonly workflowRepo?: WorkflowRepository,
     private readonly bmwTelematicRepo?: BmwTelematicRepository,
+    private readonly noteRepo?: NoteRepository,
+    private readonly reminderRepo?: ReminderRepository,
+    private readonly documentRepo?: DocumentRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -178,6 +184,26 @@ export class ReasoningContextCollector {
       defs.push({
         key: 'workflows', label: 'Aktive Workflows', priority: 2, maxTokens: 200,
         fetch: () => this.fetchWorkflows(),
+      });
+    }
+
+    // ── Priority 2: Notes, Reminders, Documents ──────────────
+    if (this.reminderRepo) {
+      defs.push({
+        key: 'reminders', label: 'Aktive Erinnerungen', priority: 2, maxTokens: 100,
+        fetch: () => this.fetchReminders(),
+      });
+    }
+    if (this.noteRepo) {
+      defs.push({
+        key: 'notes', label: 'Notizen', priority: 2, maxTokens: 200,
+        fetch: () => this.fetchNotes(),
+      });
+    }
+    if (this.documentRepo) {
+      defs.push({
+        key: 'documents', label: 'Dokumente', priority: 3, maxTokens: 150,
+        fetch: () => this.fetchDocuments(),
       });
     }
 
@@ -504,6 +530,49 @@ export class ReasoningContextCollector {
       this.logger.debug({ err }, 'BMW DB fetch failed');
       return '(BMW DB-Abfrage fehlgeschlagen)';
     }
+  }
+
+  private async fetchReminders(): Promise<string> {
+    try {
+      const uid = await this.getEffectiveUserId();
+      const pending = await this.reminderRepo!.getAllPending();
+      // Filter: this user's reminders, due within 24h or overdue
+      const cutoff = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
+      const relevant = pending
+        .filter(r => r.userId === uid || r.chatId === this.defaultChatId)
+        .filter(r => r.triggerAt <= cutoff)
+        .slice(0, 10);
+      if (relevant.length === 0) return 'Keine aktiven Erinnerungen.';
+      return relevant.map(r => {
+        const due = new Date(r.triggerAt);
+        const overdue = due.getTime() < Date.now();
+        return `- ${overdue ? '⚠️ ÜBERFÄLLIG' : due.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${r.message}`;
+      }).join('\n');
+    } catch { return '(Erinnerungen nicht verfügbar)'; }
+  }
+
+  private async fetchNotes(): Promise<string> {
+    try {
+      const uid = await this.getEffectiveUserId();
+      const notes = await this.noteRepo!.list(uid, 10);
+      if (notes.length === 0) return 'Keine Notizen.';
+      return notes.map(n => {
+        const preview = n.content.slice(0, 100).replace(/\n/g, ' ');
+        return `- [${n.updatedAt.slice(0, 10)}] **${n.title}**: ${preview}${n.content.length > 100 ? '...' : ''}`;
+      }).join('\n');
+    } catch { return '(Notizen nicht verfügbar)'; }
+  }
+
+  private async fetchDocuments(): Promise<string> {
+    try {
+      const uid = await this.getEffectiveUserId();
+      const docs = await this.documentRepo!.listAccessible(uid);
+      if (docs.length === 0) return 'Keine Dokumente.';
+      return docs.slice(0, 15).map(d => {
+        const sizeKb = Math.round(d.sizeBytes / 1024);
+        return `- ${d.filename} (${sizeKb} KB, ${d.chunkCount} Seiten, ${d.createdAt.slice(0, 10)})`;
+      }).join('\n');
+    } catch { return '(Dokumente nicht verfügbar)'; }
   }
 
   private async fetchActivity(): Promise<string> {

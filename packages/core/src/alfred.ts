@@ -1169,6 +1169,9 @@ export class Alfred {
           kgServiceInstance,
           workflowRepo,
           this.bmwTelematicRepo,
+          noteRepo,
+          this.reminderRepo,
+          documentRepo,
         );
       }
     }

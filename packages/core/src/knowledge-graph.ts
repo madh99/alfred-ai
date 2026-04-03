@@ -122,6 +122,9 @@ export class KnowledgeGraphService {
           case 'crypto': await this.extractFromCrypto(userId, section.content); break;
           case 'feeds': await this.extractFromFeeds(userId, section.content); break;
           case 'charger': await this.extractFromCharger(userId, section.content); break;
+          case 'notes': await this.extractFromNotes(userId, section.content); break;
+          case 'documents': await this.extractFromDocuments(userId, section.content); break;
+          case 'reminders': await this.extractFromReminders(userId, section.content); break;
           default: break;
         }
         // Generic extraction for all sections
@@ -1228,6 +1231,44 @@ export class KnowledgeGraphService {
   }
 
   // ── Generic Extractors ──────────────────────────────────────
+
+  private async extractFromNotes(userId: string, content: string): Promise<void> {
+    // Format: "- [2026-04-02] **Title**: preview..."
+    const re = /^\s*-\s+\[\d{4}-\d{2}-\d{2}\]\s+\*\*(.+?)\*\*:\s*(.+)$/gm;
+    let match;
+    while ((match = re.exec(content)) !== null) {
+      const title = match[1].trim();
+      const preview = match[2].trim();
+      if (title.length < 3) continue;
+      await this.kgRepo.upsertEntity(userId, title, 'item',
+        { type: 'note', preview: preview.slice(0, 100) }, 'notes');
+    }
+  }
+
+  private async extractFromDocuments(userId: string, content: string): Promise<void> {
+    // Format: "- filename.ext (123 KB, 5 Seiten, 2026-04-02)"
+    const re = /^\s*-\s+(.+?)\s+\(\d+\s*KB,\s*(\d+)\s*Seiten/gm;
+    let match;
+    while ((match = re.exec(content)) !== null) {
+      const filename = match[1].trim();
+      const pages = parseInt(match[2], 10);
+      if (filename.length < 3) continue;
+      await this.kgRepo.upsertEntity(userId, filename, 'item',
+        { type: 'document', pages }, 'documents');
+    }
+  }
+
+  private async extractFromReminders(userId: string, content: string): Promise<void> {
+    // Format: "- DD.MM. HH:MM: message" or "- ⚠️ ÜBERFÄLLIG: message"
+    const re = /^\s*-\s+(?:⚠️ ÜBERFÄLLIG|[\d.]+,?\s*[\d:]+):\s*(.+)$/gm;
+    let match;
+    while ((match = re.exec(content)) !== null) {
+      const message = match[1].trim();
+      if (message.length < 5) continue;
+      await this.kgRepo.upsertEntity(userId, message.slice(0, 80), 'event',
+        { type: 'reminder' }, 'reminders');
+    }
+  }
 
   private async extractLocations(userId: string, sectionKey: string, content: string): Promise<void> {
     // Only extract locations from user-relevant sections, not RSS feeds

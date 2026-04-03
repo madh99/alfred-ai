@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.322] - 2026-04-03
+## [0.19.0-multi-ha.323] - 2026-04-03
 
 ### Fixed
 - **BMW: Reasoning verbrauchte 88% REST-Quota** — Collector liest jetzt direkt aus DB statt Skill-Call. basicData im RAM gecacht. 0 REST-Calls für Reasoning.
@@ -19,6 +19,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **KG: LLM-Linker nur Event↔Event** — LLM verknüpfte nur Events untereinander, nicht mit Personen/Locations/Vehicles. Fix: Entity-Mix sendet Core-Entities (Personen, Orte, Fahrzeuge, Orgs) als erste zu analysierende Entities.
 - **KG: HA-Person ↔ Memory-Person Fuzzy** — "Alexandra" (SmartHome) wurde nicht mit "Frau Alex" (Memory) verknüpft. Fix: Fuzzy-Match in maintenance() erstellt `same_as` Relations.
 - **KG: Event-Dedup aggressiver** — Events mit fast identischen Keys (`rtx_5090` vs `rtx5090`) werden zusammengeführt.
+- **Reasoning: Notes, Reminders, Documents im Kontext** — 3 neue Sources im Collector: Reminders (P2, 100 Tokens, pending/24h), Notes (P2, 200 Tokens, letzte 10 mit Preview), Documents (P3, 150 Tokens, nur Index). KG-Extractors für alle drei. Reminders im Kontext → Reasoning sieht bestehende Reminders und schlägt keine Duplikate vor.
 - **KG: Personen aus Memory-Keys** — `friend_bernhard_birthday`, `friend_bernhard_spouse_name` → Person "Bernhard" + `User→knows→Bernhard` + `Bernhard→spouse→Sabine`. Geburtstage als Attribute. Funktioniert generisch für alle Prefixe (friend, colleague, neighbor, contact). Sub-Person-Birthdays korrekt zugeordnet.
 - **KG: Canonical Person Names** — Verschiedene Memories für dieselbe Person ("Sohn Linus" aus child_linus + "Linus" aus linus_football_club) erzeugen jetzt EINE Entity. canonicalPersons-Map resolved über Vornamen. Sonderzeichen (: . ,) werden gestrippt. Kontextinfos (Fußballverein) als separate Organization-Entities + `plays_at` Relationen statt im Person-Namen.
 - **KG: Person-Name-Extraktion (REPLACED)** — Memory-Sync extrahierte ganze Sätze als Person-Namen ("Linus SV Altlengbach", "Kinder: Linus"). Fix: nur Titel + Vorname ("Sohn Linus"). Friend-Memories korrekt als `knows` statt `spouse` (Sabine = Bernhards Frau, nicht Users).
