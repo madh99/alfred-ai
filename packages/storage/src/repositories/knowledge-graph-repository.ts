@@ -104,12 +104,14 @@ export class KnowledgeGraphRepository {
         const betterName = name.length > existingName.length ? name : existingName;
         const betterNormalized = betterName.trim().toLowerCase();
 
-        await this.adapter.execute(`
-          UPDATE kg_entities SET
-            name = ?, normalized_name = ?, attributes = ?, sources = ?,
-            confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END, last_seen_at = ?, mention_count = mention_count + 1
-          WHERE id = ?
-        `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
+        try {
+          await this.adapter.execute(`
+            UPDATE kg_entities SET
+              name = ?, normalized_name = ?, attributes = ?, sources = ?,
+              confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END, last_seen_at = ?, mention_count = mention_count + 1
+            WHERE id = ?
+          `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
+        } catch { /* constraint violation if betterNormalized already exists — keep existing */ }
 
         const row = await this.adapter.queryOne('SELECT * FROM kg_entities WHERE id = ?', [fuzzyMatch.id]) as Record<string, unknown>;
         return this.mapEntity(row);
