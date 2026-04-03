@@ -1168,6 +1168,7 @@ export class Alfred {
           undefined, // collector (auto-created internally)
           kgServiceInstance,
           workflowRepo,
+          this.bmwTelematicRepo,
         );
       }
     }

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.316] - 2026-04-03
+
+### Fixed
+- **BMW: Reasoning verbrauchte 88% REST-Quota** — Collector liest jetzt direkt aus DB statt Skill-Call. basicData im RAM gecacht. 0 REST-Calls für Reasoning.
+- **BMW: Rate-Limit-Flag** — nach CU-429 keine REST-Calls bis 00:00 UTC. Reset bei Re-Authorize.
+- **BMW: Graceful Degradation** — letzte DB-Daten ohne TTL-Cutoff als Fallback mit Altershinweis.
+- **BMW: ensureContainer nicht-destruktiv** — neuer Container erst erstellen, dann alten löschen.
+- **BMW: MQTT Token-Refresh nach Re-Authorize** — Streaming wird mit neuem Token neu gestartet.
+- **BMW: MQTT Exponential Backoff** — 60s→120s→240s→max 15 Min, Reset bei Data-Receive.
+- **BMW: ContainerId Self-Healing** — leere containerId wird beim nächsten Status-Call automatisch erstellt.
+
 ## [0.19.0-multi-ha.314] - 2026-04-03
 
 ### Added

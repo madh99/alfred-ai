@@ -9,6 +9,7 @@ import type {
   FeedbackRepository,
   UserRepository,
   WorkflowRepository,
+  BmwTelematicRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -75,6 +76,7 @@ export class ReasoningContextCollector {
     private readonly defaultLocation: string | undefined,
     private readonly logger: Logger,
     private readonly workflowRepo?: WorkflowRepository,
+    private readonly bmwTelematicRepo?: BmwTelematicRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -200,7 +202,7 @@ export class ReasoningContextCollector {
     if (this.skillRegistry.has('bmw')) {
       defs.push({
         key: 'bmw', label: 'BMW Status', priority: 2, maxTokens: 200,
-        fetch: () => this.fetchWithTimeout('bmw', { action: 'status' }, 20_000),
+        fetch: () => this.fetchBmwFromDb(),
       });
     }
 
@@ -446,6 +448,52 @@ export class ReasoningContextCollector {
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: memory fetch failed');
       return '(Memory-Abfrage fehlgeschlagen)';
+    }
+  }
+
+  /** Read BMW telematic data directly from DB — zero REST API calls. */
+  private async fetchBmwFromDb(): Promise<string> {
+    if (!this.bmwTelematicRepo) {
+      return this.fetchWithTimeout('bmw', { action: 'status' }, 20_000); // fallback to skill call
+    }
+    try {
+      const uid = await this.getEffectiveUserId();
+      // Get latest MQTT and REST snapshots
+      const mqtt = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'mqtt');
+      const rest = await this.bmwTelematicRepo.getLatestAnyVinBySource(uid, 'rest');
+
+      if (!mqtt && !rest) return '(Keine BMW-Daten in DB)';
+
+      // Merge: MQTT wins for shared fields
+      const merged: Record<string, { value: string; unit?: string }> = {};
+      if (rest) for (const [k, v] of Object.entries(rest.telematicData)) merged[k] = v as any;
+      if (mqtt) for (const [k, v] of Object.entries(mqtt.telematicData)) merged[k] = v as any;
+
+      const tv = (key: string, ...alts: string[]): string => {
+        for (const k of [key, ...alts]) if (merged[k]?.value) return merged[k].value;
+        return '?';
+      };
+
+      const soc = tv('vehicle.drivetrain.batteryManagement.header', 'vehicle.powertrain.electric.battery.stateOfCharge.displayed');
+      const range = tv('vehicle.drivetrain.electricEngine.remainingElectricRange', 'vehicle.drivetrain.lastRemainingRange');
+      const km = tv('vehicle.vehicle.travelledDistance');
+      const lockedRaw = tv('vehicle.access.centralLocking.isLocked', 'vehicle.cabin.door.status');
+      const locked = lockedRaw === 'true' || lockedRaw === 'LOCKED' || lockedRaw === 'SECURED' ? 'Ja' : lockedRaw === 'UNLOCKED' || lockedRaw === 'false' ? 'Nein' : '?';
+
+      const dataAge = mqtt ? Math.round((Date.now() - new Date(mqtt.createdAt).getTime()) / 60_000) : rest ? Math.round((Date.now() - new Date(rest.createdAt).getTime()) / 60_000) : 0;
+
+      const lines = [
+        `**Ladestand (SoC):** ${soc} %`,
+        `**Reichweite:** ${range} km`,
+        `**Kilometerstand:** ${km} km`,
+        `**Verriegelt:** ${locked}`,
+      ];
+      if (dataAge > 60) lines.push(`⚠️ Daten ${dataAge} Min alt`);
+
+      return lines.filter(l => !l.includes('?')).join('\n') || '(Keine verwertbaren BMW-Daten)';
+    } catch (err) {
+      this.logger.debug({ err }, 'BMW DB fetch failed');
+      return '(BMW DB-Abfrage fehlgeschlagen)';
     }
   }
 

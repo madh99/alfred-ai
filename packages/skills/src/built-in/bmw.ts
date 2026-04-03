@@ -216,10 +216,14 @@ export class BMWSkill extends Skill {
     return !!this.config;
   }
 
+  // ── Rate Limit ────────────────────────────────────────────
+  private rateLimitedUntil = 0; // Timestamp when rate limit resets (00:00 UTC next day)
+
   // ── MQTT Streaming ────────────────────────────────────────
   private mqttClient?: any;
   private mqttReconnectTimer?: ReturnType<typeof setTimeout>;
   private mqttDbWriteTimer?: ReturnType<typeof setTimeout>;
+  private mqttReconnectAttempts = 0;
   private streamingActive = false;
 
   constructor(config: BMWCarDataConfig) {
@@ -295,6 +299,7 @@ export class BMWSkill extends Skill {
         try {
           const data = JSON.parse(payload.toString());
           console.log(`[BMW MQTT] Data received: ${Object.keys(data.data ?? {}).join(',')}`);
+          this.mqttReconnectAttempts = 0; // Reset backoff on successful data
           if (data && typeof data === 'object') {
             const telematicData: TelematicResponse = {};
             if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
@@ -367,7 +372,11 @@ export class BMWSkill extends Skill {
 
   private scheduleReconnect(): void {
     if (this.mqttReconnectTimer) clearTimeout(this.mqttReconnectTimer);
-    this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), 60_000);
+    // Exponential backoff: 60s → 120s → 240s → ... → max 15 min
+    this.mqttReconnectAttempts++;
+    const delay = Math.min(60_000 * Math.pow(2, Math.min(this.mqttReconnectAttempts - 1, 4)), 15 * 60_000);
+    console.log(`[BMW MQTT] Reconnect in ${Math.round(delay / 1000)}s (attempt ${this.mqttReconnectAttempts})`);
+    this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), delay);
   }
 
   private async reconnectWithFreshToken(): Promise<void> {
@@ -606,6 +615,15 @@ export class BMWSkill extends Skill {
 
     this.tokens = baseTokens;
 
+    // Restart MQTT streaming with new token (if streaming was active)
+    if (this.streamingActive || this.mqttClient) {
+      this.stopStreaming();
+      this.startStreaming().catch(() => {});
+    }
+
+    // Reset rate limit flag (new token = fresh session)
+    this.rateLimitedUntil = 0;
+
     const lines = [
       '## BMW Autorisierung erfolgreich',
       '',
@@ -675,12 +693,20 @@ export class BMWSkill extends Skill {
             const detail = await detailRes.json() as Record<string, unknown>;
             const currentDescriptors = Array.isArray(detail.technicalDescriptors) ? detail.technicalDescriptors : [];
             if (currentDescriptors.length !== DESCRIPTORS.length) {
-              // Descriptor mismatch — delete old container and fall through to create new one
-              await fetch(`${API_BASE}/customers/containers/${existing.containerId}`, {
-                method: 'DELETE',
-                headers: this.apiHeaders(accessToken),
-                signal: AbortSignal.timeout(15_000),
-              });
+              // Descriptor mismatch — try to create new container FIRST, only delete old if successful
+              try {
+                const newId = await this.createContainer(accessToken);
+                // New container succeeded — now safe to delete old one
+                await fetch(`${API_BASE}/customers/containers/${existing.containerId}`, {
+                  method: 'DELETE',
+                  headers: this.apiHeaders(accessToken),
+                  signal: AbortSignal.timeout(15_000),
+                }).catch(() => {}); // best-effort delete
+                return newId;
+              } catch {
+                // New container failed — keep old one (non-destructive)
+                return existing.containerId;
+              }
             } else {
               return existing.containerId;
             }
@@ -688,12 +714,16 @@ export class BMWSkill extends Skill {
             return existing.containerId;
           }
         } catch {
-          return existing.containerId; // On error, use existing
+          return existing.containerId;
         }
       }
     }
 
     // Create new container
+    return this.createContainer(accessToken);
+  }
+
+  private async createContainer(accessToken: string): Promise<string> {
     const createRes = await fetch(`${API_BASE}/customers/containers`, {
       method: 'POST',
       headers: {
@@ -734,6 +764,11 @@ export class BMWSkill extends Skill {
       return cached.data as T;
     }
 
+    // Rate limit check: skip API call if rate limited
+    if (Date.now() < this.rateLimitedUntil) {
+      throw new Error('API rate limit active — reset at 00:00 UTC');
+    }
+
     let accessToken = await this.ensureToken();
     const url = `${API_BASE}${path}`;
 
@@ -756,6 +791,12 @@ export class BMWSkill extends Skill {
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
+      // Set rate limit flag on CU-429
+      if (res.status === 403 && detail.includes('CU-429')) {
+        const now = new Date();
+        const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+        this.rateLimitedUntil = tomorrow.getTime();
+      }
       throw new Error(`HTTP ${res.status} — ${detail.slice(0, 300)}`);
     }
 
@@ -906,6 +947,15 @@ export class BMWSkill extends Skill {
   private async resolveContainerId(): Promise<string> {
     const tokens = await this.loadTokens();
     if (tokens?.containerId) return tokens.containerId;
+    // Self-healing: try to create container if token exists but containerId is empty
+    if (tokens?.accessToken) {
+      try {
+        const containerId = await this.ensureContainer(tokens.accessToken);
+        tokens.containerId = containerId;
+        await this.saveTokens(tokens);
+        return containerId;
+      } catch { /* fall through to error */ }
+    }
     throw new Error('Kein Container gefunden. Bitte zuerst "authorize" aufrufen.');
   }
 
@@ -920,14 +970,18 @@ export class BMWSkill extends Skill {
     let merged: TelematicResponse = {};
 
     // 1. MQTT data (realtime fields: GPS, doors, speed, km)
+    let mqttAge = 0;
     const streamingCacheKey = `telematic:${vin}`;
     const streamingCached = this.cache.get(streamingCacheKey);
-    if (streamingCached && (Date.now() - streamingCached.ts) < DB_TELEMATIC_TTL) {
+    if (streamingCached) {
       Object.assign(merged, (streamingCached.data as any).telematicData ?? {});
+      mqttAge = Date.now() - streamingCached.ts;
     } else if (this.telematicRepo) {
+      // Always use latest MQTT from DB — no hard TTL cutoff
       const mqttEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'mqtt');
-      if (mqttEntry && (Date.now() - new Date(mqttEntry.createdAt).getTime()) < DB_TELEMATIC_TTL) {
+      if (mqttEntry) {
         Object.assign(merged, mqttEntry.telematicData);
+        mqttAge = Date.now() - new Date(mqttEntry.createdAt).getTime();
       }
     }
 
@@ -943,13 +997,21 @@ export class BMWSkill extends Skill {
     }
 
     if (!restData) {
-      const containerId = await this.resolveContainerId();
-      const apiResult = await this.apiGet<{ telematicData: TelematicResponse }>(
-        `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
-      );
-      restData = apiResult.telematicData ?? {};
-      if (this.telematicRepo && Object.keys(restData).length > 0) {
-        this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
+      try {
+        const containerId = await this.resolveContainerId();
+        const apiResult = await this.apiGet<{ telematicData: TelematicResponse }>(
+          `/customers/vehicles/${vin}/telematicData?containerId=${containerId}`,
+        );
+        restData = apiResult.telematicData ?? {};
+        if (this.telematicRepo && Object.keys(restData).length > 0) {
+          this.telematicRepo.insert(uid, vin, 'rest', restData).catch(() => {});
+        }
+      } catch {
+        // Rate limit or API error — use stale REST data from DB as fallback (no TTL)
+        if (this.telematicRepo) {
+          const staleEntry = await this.telematicRepo.getLatestBySource(uid, vin, 'rest');
+          if (staleEntry) restData = staleEntry.telematicData as TelematicResponse;
+        }
       }
     }
 
@@ -960,7 +1022,20 @@ export class BMWSkill extends Skill {
       }
     }
 
-    const basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
+    // basicData (model name etc.) — cache aggressively, never changes
+    let basicData: Record<string, unknown>;
+    const basicCacheKey = `basic:${vin}`;
+    const basicCached = this.cache.get(basicCacheKey);
+    if (basicCached) {
+      basicData = basicCached.data as Record<string, unknown>;
+    } else {
+      try {
+        basicData = await this.apiGet<Record<string, unknown>>(`/customers/vehicles/${vin}/basicData`);
+        this.cache.set(basicCacheKey, { data: basicData, ts: Date.now() });
+      } catch {
+        basicData = { modelName: 'BMW' }; // fallback
+      }
+    }
 
     const t = merged;
     const soc = tvm(t, 'vehicle.drivetrain.batteryManagement.header');
@@ -1014,6 +1089,16 @@ export class BMWSkill extends Skill {
     if (avgConsumption !== '?') lines.push(`**Durchschnittsverbrauch:** ${avgConsumption} kWh/100km`);
     const avgSpeed = tv(t, 'vehicle.vehicle.avgSpeed');
     if (avgSpeed !== '?') lines.push(`**Durchschnittsgeschwindigkeit:** ${avgSpeed} km/h`);
+
+    // Data age warning
+    const maxAge = Math.max(mqttAge, 0);
+    if (maxAge > 60 * 60_000) {
+      const hours = Math.round(maxAge / (60 * 60_000));
+      lines.push(`\n⚠️ *Daten ${hours}h alt (MQTT-Stream/API nicht erreichbar)*`);
+    } else if (maxAge > 30 * 60_000) {
+      const mins = Math.round(maxAge / 60_000);
+      lines.push(`\n⚠️ *Daten ${mins} Min alt*`);
+    }
 
     return { success: true, data: { telematic: t, basic: basicData }, display: lines.join('\n') };
   }
