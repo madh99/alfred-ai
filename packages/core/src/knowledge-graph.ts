@@ -953,30 +953,53 @@ export class KnowledgeGraphService {
     if (!this.memoryRepo) return;
     try {
       // 1. Memory entities (persons, contacts) → KG person entities + User relations
+      //    Canonical name resolution: same real person → same entity, context as attributes/relations
       const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
-      const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder', 'kinder', 'kind']);
+      const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder']);
+      const canonicalPersons = new Map<string, string>(); // firstName → canonical "Title Firstname"
+
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
-        // Extract just the person's first name (or "Title Firstname")
-        const raw = mem.value.split(',')[0].split('(')[0].split('.')[0].trim();
-        const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w) && !/^\d/.test(w));
-        // Keep title word (Sohn, Tochter, Frau) + first actual name, max 2 words
-        const nameWords: string[] = [];
-        for (const w of words) {
-          if (TITLE_WORDS.has(w.toLowerCase())) { nameWords.push(w); continue; }
-          if (isInvalidPersonName(w)) continue;
-          nameWords.push(w);
-          if (nameWords.length >= 2) break; // "Sohn Linus", "Frau Alex", "Maria Dohnal"
-        }
-        const personName = nameWords.join(' ');
-        if (personName.length < 2 || isInvalidPersonName(personName)) continue;
+        // Strip punctuation, split on comma/parens/period, take first segment
+        const raw = mem.value.split(/[,(.!?]/)[0].replace(/[:\d]/g, '').trim();
+        const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
 
-        const person = await this.kgRepo.upsertEntity(userId, personName, 'person',
+        // Extract title + first actual name (max 2 words)
+        const nameWords: string[] = [];
+        let firstName = '';
+        for (const w of words) {
+          const wClean = w.replace(/[^A-Za-zÄÖÜäöüß]/g, '');
+          if (!wClean || wClean.length < 2) continue;
+          if (TITLE_WORDS.has(wClean.toLowerCase())) { nameWords.push(wClean); continue; }
+          if (isInvalidPersonName(wClean)) continue;
+          firstName = wClean.toLowerCase();
+          nameWords.push(wClean);
+          if (nameWords.length >= 2) break;
+        }
+        if (!firstName || nameWords.length === 0) continue;
+        const personName = nameWords.join(' ');
+        if (personName.length < 2) continue;
+
+        // Canonical resolution: if we already have this firstName, reuse the canonical name
+        // This ensures "Sohn Linus" (from child_linus) and "Linus" (from linus_football_club)
+        // map to the same entity
+        const canonical = canonicalPersons.get(firstName);
+        const effectiveName = canonical ?? personName;
+        if (!canonical) canonicalPersons.set(firstName, personName);
+
+        const person = await this.kgRepo.upsertEntity(userId, effectiveName, 'person',
           { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');
+
+        // Extract context from value → attributes + relations (clubs, schools, etc.)
+        const clubMatch = mem.value.match(/(?:beim?|im|at)\s+([A-ZÄÖÜ][\w\s]*(?:1980|Altlengbach|Kapfenberg|Wien|FC|SV|SK|SC|ASK|KSV|TSV|SVL)[^\s.,)]*)/i);
+        if (clubMatch) {
+          const clubName = clubMatch[1].trim();
+          const club = await this.kgRepo.upsertEntity(userId, clubName, 'organization' as any, { sport: 'Fußball' }, 'memories');
+          await this.kgRepo.upsertRelation(userId, person.id, club.id, 'plays_at', mem.value.slice(0, 80), 'memories');
+        }
 
         // Derive relation type from memory key
         const k = mem.key.toLowerCase();
-        // "friend_bernhard_spouse_name" → friend takes priority (it's Bernhard's spouse, not User's)
         const isFriend = k.includes('friend') || k.includes('freund');
         const relType = isFriend ? 'knows'
           : k.includes('child') || k.includes('sohn') || k.includes('tochter') || k.includes('kinder') ? 'parent_of'
