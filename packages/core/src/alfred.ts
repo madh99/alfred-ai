@@ -1137,6 +1137,7 @@ export class Alfred {
             llmLinker.setUsageCallback((_service, model, inp, out) => {
               usageRepo.record(model, inp, out, 0, 0, 0).catch(() => {});
             });
+            llmLinker.setDocumentRepo(documentRepo);
             kgServiceInstance.setLLMLinker(llmLinker);
             this.logger.info({ provider: llmLinkProvider, model: llmLinkingCfg.model ?? 'mistral-small-latest' }, 'LLM entity linker enabled');
           }
@@ -1715,6 +1716,26 @@ export class Alfred {
               if (this.bmwTelematicRepo) {
                 const pruned = await this.bmwTelematicRepo.prune(90);
                 if (pruned > 0) this.logger.info({ pruned }, 'BMW telematic history pruned');
+              }
+              // Weekly chat LLM analysis: extract implicit knowledge from recent conversations
+              if (kgService?.getLLMLinker()) {
+                try {
+                  const dbAdapter = this.database.getAdapter();
+                  const recentMsgs = await dbAdapter.query(
+                    `SELECT role, content FROM messages WHERE conversation_id IN (
+                      SELECT id FROM conversations WHERE user_id = ?
+                    ) ORDER BY created_at DESC LIMIT 100`,
+                    [user.id],
+                  ) as Array<{ role: string; content: string }>;
+                  if (recentMsgs.length > 10) {
+                    const chatStats = await kgService.getLLMLinker()!.analyzeRecentChats(user.id, recentMsgs.reverse());
+                    if (chatStats.relations > 0 || chatStats.newEntities > 0) {
+                      this.logger.info({ ...chatStats }, 'Weekly chat analysis completed');
+                    }
+                  }
+                } catch (err) {
+                  this.logger.debug({ err }, 'Weekly chat analysis failed');
+                }
               }
             }
           } catch (err) {

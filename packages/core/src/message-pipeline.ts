@@ -982,6 +982,12 @@ export class MessagePipeline {
         this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
       }
 
+      // 9b. KG entity extraction from chat (fire-and-forget)
+      if (this.kgService && masterUserId) {
+        const chatText = `${message.text}\n${responseText}`;
+        this.kgService.extractFromChat(masterUserId, chatText).catch(() => {});
+      }
+
       // 10. Update conversation summary (fire-and-forget)
       if (this.conversationSummarizer && !message.metadata?.skipHistory) {
         const summaryHistory = history.slice(-8).map(m => ({

@@ -55,6 +55,11 @@ export class LLMEntityLinker {
   /** Set callback for tracking LLM usage (called with service, model, input/output tokens). */
   setUsageCallback(cb: UsageCallback): void { this.usageCallback = cb; }
 
+  private documentRepo?: import('@alfred/storage').DocumentRepository;
+
+  /** Set optional document repo for chunk-based linking. */
+  setDocumentRepo(repo: import('@alfred/storage').DocumentRepository): void { this.documentRepo = repo; }
+
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
     private readonly config: LLMLinkingConfig,
@@ -102,8 +107,22 @@ export class LLMEntityLinker {
       return { relations: 0, newEntities: 0, corrections: 0 };
     }
 
+    // Fetch document chunks for context (first chunk per doc, max 5 docs)
+    let docContext = '';
+    if (this.documentRepo) {
+      try {
+        const docs = await this.documentRepo.listAccessible(userId);
+        for (const doc of docs.slice(0, 5)) {
+          const chunks = await this.documentRepo.getChunks(doc.id);
+          if (chunks.length > 0) {
+            docContext += `\n- Dokument "${doc.filename}": ${chunks[0].content.slice(0, 200)}`;
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
     // Build prompt
-    const prompt = this.buildPrompt(toAnalyze, allEntities);
+    const prompt = this.buildPrompt(toAnalyze, allEntities, docContext);
 
     // Call LLM
     const model = this.config.model ?? 'mistral-small-latest';
@@ -123,7 +142,7 @@ export class LLMEntityLinker {
     return stats;
   }
 
-  private buildPrompt(changed: KGEntity[], all: KGEntity[]): string {
+  private buildPrompt(changed: KGEntity[], all: KGEntity[], docContext = ''): string {
     const changedList = changed.map(e =>
       `- [${e.entityType}] "${e.name}"${e.attributes?.value ? ` — ${String(e.attributes.value).slice(0, 120)}` : ''}${e.attributes?.role ? ` (${e.attributes.role})` : ''}`,
     ).join('\n');
@@ -132,7 +151,7 @@ export class LLMEntityLinker {
       `- [${e.entityType}] "${e.name}"`,
     ).join('\n');
 
-    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge zu ALLEN bestehenden Entities.
+    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge zu ALLEN bestehenden Entities.${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
 
 NEUE/GEÄNDERTE ENTITIES:
 ${changedList}
@@ -289,5 +308,51 @@ TRANSITIVE INFERENZ (wichtig!):
     }
 
     return stats;
+  }
+
+  /**
+   * Weekly chat analysis: extract implicit knowledge from recent user messages.
+   * Called from Sunday maintenance. Uses LLM to find patterns, interests, implicit facts.
+   */
+  async analyzeRecentChats(userId: string, messages: Array<{ role: string; content: string }>): Promise<{ relations: number; newEntities: number; corrections: number }> {
+    if (messages.length < 5) return { relations: 0, newEntities: 0, corrections: 0 };
+
+    const allEntities = await this.kgRepo.getAllEntities(userId);
+    const entityList = allEntities.map(e => `- [${e.entityType}] "${e.name}"`).join('\n');
+
+    const chatSample = messages.slice(0, 100).map(m =>
+      `[${m.role}]: ${m.content.slice(0, 150)}`,
+    ).join('\n');
+
+    const prompt = `Du bist ein Knowledge-Graph-Analyst. Analysiere diese Chat-Konversationen und extrahiere IMPLIZITES Wissen das nicht explizit als Fakt gespeichert wurde.
+
+BESTEHENDE ENTITIES:
+${entityList}
+
+LETZTE CHAT-NACHRICHTEN:
+${chatSample}
+
+Finde:
+1. NEUE Entities die in den Chats erwähnt aber noch nicht im KG sind (Personen, Orte, Produkte, Services)
+2. RELATIONEN zwischen bestehenden Entities die aus dem Chat-Kontext hervorgehen
+3. TYP-KORREKTUREN für falsch klassifizierte Entities
+
+Antworte als JSON:
+{
+  "relations": [{"source": "...", "target": "...", "type": "...", "reason": "..."}],
+  "newEntities": [{"name": "...", "type": "...", "attributes": {}, "reason": "..."}],
+  "corrections": [{"name": "...", "currentType": "...", "newType": "...", "reason": "..."}]
+}
+
+Nur ECHTE Zusammenhänge, keine Spekulation. Wenn nichts gefunden: leere Arrays.`;
+
+    const model = this.config.model ?? 'mistral-small-latest';
+    try {
+      const result = await this.callLLM(prompt, model);
+      return this.applyResults(userId, result, allEntities);
+    } catch (err) {
+      this.logger.warn({ err }, 'Weekly chat analysis failed');
+      return { relations: 0, newEntities: 0, corrections: 0 };
+    }
   }
 }

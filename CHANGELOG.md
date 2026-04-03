@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.326] - 2026-04-03
+## [0.19.0-multi-ha.328] - 2026-04-03
 
 ### Fixed
 - **BMW: Reasoning verbrauchte 88% REST-Quota** — Collector liest jetzt direkt aus DB statt Skill-Call. basicData im RAM gecacht. 0 REST-Calls für Reasoning.
@@ -19,6 +19,9 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - **KG: LLM-Linker nur Event↔Event** — LLM verknüpfte nur Events untereinander, nicht mit Personen/Locations/Vehicles. Fix: Entity-Mix sendet Core-Entities (Personen, Orte, Fahrzeuge, Orgs) als erste zu analysierende Entities.
 - **KG: HA-Person ↔ Memory-Person Fuzzy** — "Alexandra" (SmartHome) wurde nicht mit "Frau Alex" (Memory) verknüpft. Fix: Fuzzy-Match in maintenance() erstellt `same_as` Relations.
 - **KG: Event-Dedup aggressiver** — Events mit fast identischen Keys (`rtx_5090` vs `rtx5090`) werden zusammengeführt.
+- **KG: Chat-Messages als Quelle** — Entity-Extraktion aus jeder User-Message + Alfred-Antwort per Regex. Kein LLM-Call, fire-and-forget. Erwähnte Personen, Orte, Organisationen, Items werden automatisch im KG erfasst.
+- **KG: Document-Chunks im LLM-Linker** — LLM bekommt ersten Chunk (200 Zeichen) jedes Dokuments als Kontext. CV-Inhalt, Zahlungslisten-Details werden für semantische Verknüpfung genutzt.
+- **KG: Wöchentliche Chat-LLM-Analyse** — Sunday Maintenance: letzte 100 User-Messages per LLM analysieren. Extrahiert implizites Wissen (Interessen, Gewohnheiten, Zusammenhänge) das kein Regex erkennt.
 - **KG: Familien-Inferenz** — Universelle Regeln: Spouse→parent_of Kinder, Kinder→siblings, Mutter/Vater→grandparent_of Kinder, Schwester/Bruder→aunt_uncle_of Kinder, Spouse→knows Familie. Funktioniert automatisch für jedes neue Familienmitglied.
 - **LLM-Linker: Transitive Inferenz** — Prompt erweitert um Inferenz-Regeln + Entity-Typ-Korrektur-Hinweis. Neue Relationstypen: sibling, grandparent_of, aunt_uncle_of, plays_at.
 - **Confirmation: Auto-Cleanup bei Approve** — Wenn User eine Confirmation bestätigt, werden alle anderen pending Confirmations für denselben Skill automatisch aufgeräumt. Verhindert "⏰ abgelaufen" Meldungen für bereits erledigte Themen.

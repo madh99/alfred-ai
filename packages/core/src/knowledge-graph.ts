@@ -101,10 +101,26 @@ export class KnowledgeGraphService {
     this.llmLinker = linker;
   }
 
+  /** Get the LLM linker (for weekly chat analysis). */
+  getLLMLinker(): import('./llm-entity-linker.js').LLMEntityLinker | undefined {
+    return this.llmLinker;
+  }
+
   /**
    * Ingest: Extract entities and relations from collected reasoning sections.
    * Called on every reasoning pass. Entities are UPSERTed (confidence grows).
    */
+  /**
+   * Lightweight entity extraction from chat messages.
+   * Called on every user message (fire-and-forget). No LLM, no relations — just entity detection.
+   */
+  async extractFromChat(userId: string, chatText: string): Promise<void> {
+    try {
+      await this.extractEntitiesFromText(userId, 'chat', chatText);
+      await this.extractLocations(userId, 'chat', chatText);
+    } catch { /* non-critical */ }
+  }
+
   async ingest(userId: string, sections: ReasoningSection[]): Promise<void> {
     try {
       for (const section of sections) {
