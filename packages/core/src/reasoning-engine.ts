@@ -794,9 +794,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   }
 
   private actionHash(action: ProposedAction): string {
-    const normalized = `${action.type}:${action.skillName}:${JSON.stringify(action.skillParams)}`
-      .slice(0, 150).toLowerCase().replace(/\s+/g, ' ');
-    return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+    // Topic-based hash: extract key words from description + skillName
+    // This prevents the same action from being proposed repeatedly with different wording
+    const words = `${action.description} ${action.skillName}`
+      .toLowerCase()
+      .replace(/[^a-zäöüß0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 4)
+      .sort()
+      .join(' ');
+    return crypto.createHash('sha256').update(words).digest('hex').slice(0, 16);
   }
 
   private async actionWasRecentlyProposed(action: ProposedAction): Promise<boolean> {
