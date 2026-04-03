@@ -291,6 +291,9 @@ export function KnowledgeGraphPage() {
               linkWidth={(link: any) => selectedLink?.id === link.id ? 3 : Math.max(0.5, link.strength * 2)}
               linkDirectionalArrowLength={5}
               linkDirectionalArrowRelPos={0.85}
+              linkDirectionalParticles={(link: any) => link.strength > 0.7 ? 2 : 0}
+              linkDirectionalParticleWidth={2}
+              linkDirectionalParticleColor={() => '#60a5fa'}
               onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
               onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); setEditMode(false); }}
               onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); setEditMode(false); }}
