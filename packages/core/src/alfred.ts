@@ -1195,20 +1195,20 @@ export class Alfred {
           const kgRepo = new KnowledgeGraphRepository(this.database.getAdapter());
 
           // 1. Memory-Sync + Cross-Extractor + Family Inference + Generic Links
-          await (kgServiceInstance as any).syncMemoryEntities(userId);
-          await (kgServiceInstance as any).buildCrossExtractorRelations(userId);
-          await (kgServiceInstance as any).buildFamilyInference(userId);
-          await (kgServiceInstance as any).buildGenericEntityLinks(userId);
+          try { await (kgServiceInstance as any).syncMemoryEntities(userId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildCrossExtractorRelations(userId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildFamilyInference(userId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildGenericEntityLinks(userId); } catch { /* continue */ }
 
           // 2. LLM linker (bypass daily schedule)
           const llmLinker = kgServiceInstance.getLLMLinker();
           let llmStats = { relations: 0, newEntities: 0, corrections: 0 };
           if (llmLinker) {
-            llmStats = await llmLinker.run(userId);
+            try { llmStats = await llmLinker.run(userId); } catch { /* continue */ }
           }
 
           // 3. Maintenance (dedup, prune)
-          await kgServiceInstance.maintenance(userId);
+          try { await kgServiceInstance.maintenance(userId); } catch { /* continue */ }
 
           // 4. Get totals
           const graph = await kgRepo.getFullGraph(userId);

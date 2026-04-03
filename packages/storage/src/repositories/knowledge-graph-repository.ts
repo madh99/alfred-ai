@@ -294,10 +294,14 @@ export class KnowledgeGraphRepository {
 
   /** Update entity type and merge attributes. */
   async updateEntityType(id: string, newType: string, attributes: Record<string, unknown>): Promise<void> {
-    await this.adapter.execute(
-      'UPDATE kg_entities SET entity_type = ?, attributes = ?, last_seen_at = ? WHERE id = ?',
-      [newType, JSON.stringify(attributes), new Date().toISOString(), id],
-    );
+    try {
+      await this.adapter.execute(
+        'UPDATE kg_entities SET entity_type = ?, attributes = ?, last_seen_at = ? WHERE id = ?',
+        [newType, JSON.stringify(attributes), new Date().toISOString(), id],
+      );
+    } catch {
+      // Constraint violation: an entity with the same (user_id, newType, normalized_name) already exists
+    }
   }
 
   /** Delete a single entity by ID (CASCADE deletes relations). */
