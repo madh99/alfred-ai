@@ -275,12 +275,27 @@ TRANSITIVE INFERENZ (wichtig!):
       const source = entityByName.get(rel.source.toLowerCase());
       const target = entityByName.get(rel.target.toLowerCase());
       if (!source || !target || source.id === target.id) continue;
-      // Validate relation type constraints
-      if (rel.type === 'works_at' && target.entityType !== 'organization') continue;
+      // Strict validation: prevent common LLM hallucinations
+      if (rel.type === 'works_at') {
+        if (target.entityType !== 'organization') continue;
+        // Only User or explicit employment entities work somewhere — not children, HA items, spouses
+        if (source.name !== 'User' && source.entityType !== 'organization' && !source.sources.includes('memories')) continue;
+        if (source.sources.includes('smarthome')) continue; // HA person.* entities don't "work" anywhere
+      }
+      if (rel.type === 'plays_at') {
+        if (source.entityType !== 'person' || target.entityType !== 'organization') continue;
+      }
       if (rel.type === 'parent_of' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
       if (rel.type === 'spouse' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
       if (rel.type === 'family' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
+      if (rel.type === 'sibling') {
+        if (source.entityType !== 'person' || target.entityType !== 'person') continue;
+        // Only allow siblings if both have memory source (not HA items, not events)
+        if (!source.sources.includes('memories') || !target.sources.includes('memories')) continue;
+      }
       if (rel.type === 'located_at' && target.entityType !== 'location') continue;
+      // Skip relations between items that are clearly HA entities (LED, Switch, AP, etc.)
+      if (source.entityType === 'item' && target.entityType === 'item' && source.sources.includes('smarthome') && target.sources.includes('smarthome')) continue;
       await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
       stats.relations++;
     }
