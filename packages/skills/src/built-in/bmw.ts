@@ -140,6 +140,8 @@ export class BMWSkill extends Skill {
       'Wenn authorize nötig ist: Schritt 1 (ohne device_code) liefert User-Code + URL. ' +
       'Schritt 2: Nach Browser-Bestätigung, authorize ERNEUT ohne Parameter (auto-resume). ' +
       'NIEMALS Schritt 1 wiederholen wenn bereits ein Code ausgegeben wurde! ' +
+      'KRITISCH: Nach authorize KEINE anderen BMW-Aktionen (status, consumption etc.) aufrufen bis der User die Autorisierung bestätigt hat! ' +
+      'Wenn "Kein Container" Fehler kommt: EINMAL authorize aufrufen, dann WARTEN. ' +
       '"status" zeigt SoC, Reichweite, Modell, Batterie-Gesundheit. ' +
       '"charging" zeigt Ladestatus, Leistung, Restzeit, Ziel-SoC, Stecker. ' +
       '"charging_sessions" listet Lade-Sessions (from/to Zeitraum). ' +
@@ -480,7 +482,6 @@ export class BMWSkill extends Skill {
     }
 
     // Auto-resume: if a pending device code exists, poll it instead of generating a new one
-    // Try DB first (HA-safe), then disk fallback
     let pending: BMWTokens | null = null;
     const db = this.resolveDbAccess();
     if (db) {
@@ -491,10 +492,30 @@ export class BMWSkill extends Skill {
     }
     if (!pending) pending = await this.loadTokensFromDisk();
     if (pending?.deviceCode && pending?.codeVerifier) {
+      // Check if the pending code is still fresh (<10 min) — don't overwrite with a new one
+      const pendingAge = pending.expiresAt ? Date.now() - (pending.expiresAt - 600_000) : Infinity;
+      const isFresh = pendingAge < 10 * 60_000;
+
       try {
-        return await this.pollToken(pending.deviceCode);
+        const pollResult = await this.pollToken(pending.deviceCode);
+        // If authorization_pending, return it and tell LLM to WAIT
+        if ((pollResult.data as Record<string, unknown>)?.status === 'pending') {
+          return {
+            ...pollResult,
+            display: 'Autorisierung noch ausstehend — bitte zuerst im Browser bestätigen, dann erneut "authorize" aufrufen. WICHTIG: Keine anderen BMW-Aktionen aufrufen bis die Autorisierung abgeschlossen ist!',
+          };
+        }
+        return pollResult;
       } catch {
-        // Pending code expired or invalid — fall through to generate a new one
+        // If pending code is still fresh, don't generate a new one — tell user to confirm the existing one
+        if (isFresh) {
+          return {
+            success: true,
+            data: { status: 'pending' },
+            display: 'Ein Autorisierungscode wurde bereits generiert. Bitte bestätige ihn im Browser und rufe dann erneut "authorize" auf. WICHTIG: Keine anderen BMW-Aktionen aufrufen bis die Autorisierung abgeschlossen ist!',
+          };
+        }
+        // Code expired — fall through to generate a new one
       }
     }
 
@@ -522,10 +543,11 @@ export class BMWSkill extends Skill {
 
     const data = (await res.json()) as Record<string, unknown>;
 
-    // Persist PKCE verifier + device code for step 2
+    // Persist PKCE verifier + device code for step 2 (with timestamp for freshness check)
     const partial: Partial<BMWTokens> = {
       codeVerifier,
       deviceCode: data.device_code as string,
+      expiresAt: Date.now() + 10 * 60_000, // 10 min validity for the device code
     };
     await this.savePartialTokens(partial);
     this.tokens = null; // Invalidate cache so pollToken reads fresh file with codeVerifier
@@ -956,7 +978,7 @@ export class BMWSkill extends Skill {
         return containerId;
       } catch { /* fall through to error */ }
     }
-    throw new Error('Kein Container gefunden. Bitte zuerst "authorize" aufrufen.');
+    throw new Error('Kein Container gefunden. Bitte EINMAL "authorize" aufrufen und auf Browser-Bestätigung warten. Danach wird der Container automatisch erstellt. NICHT mehrfach authorize aufrufen!');
   }
 
   // ── Actions ─────────────────────────────────────────────
