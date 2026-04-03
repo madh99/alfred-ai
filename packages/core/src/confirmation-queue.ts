@@ -108,11 +108,17 @@ export class ConfirmationQueue {
       await this.confirmRepo.resolve(pending.id, 'approved');
 
       // Auto-resolve other pending confirmations for the same skill+topic (prevent "expired" noise)
+      // Only resolve if descriptions share keywords (not ALL same-skill confirmations)
       try {
         const allPending = await this.confirmRepo.findAllPending(chatId, platform);
+        const approvedWords = new Set(pending.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4));
         for (const other of allPending) {
           if (other.id === pending.id) continue;
-          if (other.skillName === pending.skillName) {
+          if (other.skillName !== pending.skillName) continue;
+          // Check if descriptions share ≥2 significant words (same topic)
+          const otherWords = other.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+          const shared = otherWords.filter(w => approvedWords.has(w)).length;
+          if (shared >= 2) {
             await this.confirmRepo.resolve(other.id, 'expired');
           }
         }

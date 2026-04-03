@@ -684,6 +684,7 @@ DRINGLICHKEIT (als "urgency" Feld in jeder Aktion):
 
 SICHERHEIT:
 - Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
+- Prüfe "Aktive Erinnerungen" Section — wenn dort bereits ein Reminder zum selben Thema existiert, KEINEN neuen vorschlagen!
 - Workflows + Delegate erfordern User-Bestätigung
 - Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}`;
   }
