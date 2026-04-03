@@ -125,6 +125,8 @@ export class Alfred {
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
   private bmwTelematicRepo?: BmwTelematicRepository;
+  private memorySkillRef?: MemorySkill;
+  private kgServiceRef?: import('./knowledge-graph.js').KnowledgeGraphService;
   private sonosSkill?: import('@alfred/skills').SonosSkill;
   private skillHealthTracker?: SkillHealthTracker;
   private healthCheckTimer?: ReturnType<typeof setInterval>;
@@ -309,7 +311,9 @@ export class Alfred {
     skillRegistry.register(todoSkill);
     skillRegistry.register(new WeatherSkill());
     skillRegistry.register(new ShellSkill());
-    skillRegistry.register(new MemorySkill(memoryRepo, embeddingService));
+    const memorySkill = new MemorySkill(memoryRepo, embeddingService);
+    skillRegistry.register(memorySkill);
+    this.memorySkillRef = memorySkill;
     skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
     // 4a-email. Initialize email (optional, multi-account)
     if (this.config.email?.accounts?.length) {
@@ -1180,6 +1184,34 @@ export class Alfred {
     // Wire KG service into pipeline for dynamic device context in chat prompts
     if (kgServiceInstance) {
       this.pipeline.setKnowledgeGraphService(kgServiceInstance);
+      this.kgServiceRef = kgServiceInstance;
+
+      // Wire KG analyze callback into Memory skill
+      if (this.memorySkillRef) {
+        this.memorySkillRef.setKgAnalyzeCallback(async (userId: string) => {
+          // Run full KG ingest cycle
+          const collector = this.reasoningEngine ? undefined : null; // use existing collector
+          if (this.reasoningEngine) {
+            // Collect context + ingest
+            const ctx = await (this.reasoningEngine as any).collector.collect();
+            await kgServiceInstance.ingest(userId, ctx.sections);
+          }
+          // Run LLM linker immediately (bypass schedule)
+          const llmLinker = kgServiceInstance.getLLMLinker();
+          let llmStats = { relations: 0, newEntities: 0, corrections: 0 };
+          if (llmLinker) {
+            llmStats = await llmLinker.run(userId);
+          }
+          // Get totals
+          const graph = await new KnowledgeGraphRepository(this.database.getAdapter()).getFullGraph(userId);
+          return {
+            entities: graph.entities.length,
+            relations: graph.relations.length,
+            newEntities: llmStats.newEntities,
+            corrections: llmStats.corrections,
+          };
+        });
+      }
     }
 
     // Wire watch events -> reasoning engine for event-triggered reasoning

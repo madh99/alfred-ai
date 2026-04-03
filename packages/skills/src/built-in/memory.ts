@@ -8,7 +8,7 @@ interface EmbeddingServiceLike {
   semanticSearch(userId: string, query: string, limit?: number): Promise<{ key: string; value: string; category: string; score: number }[]>;
 }
 
-type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic_search';
+type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic_search' | 'kg_analyze';
 
 export class MemorySkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -24,8 +24,8 @@ export class MemorySkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['save', 'recall', 'search', 'list', 'delete', 'semantic_search'],
-          description: 'The memory action to perform',
+          enum: ['save', 'recall', 'search', 'list', 'delete', 'semantic_search', 'kg_analyze'],
+          description: 'The memory action to perform. kg_analyze: triggers Knowledge Graph analysis (entity linking, family inference, chat analysis)',
         },
         key: {
           type: 'string',
@@ -57,6 +57,11 @@ export class MemorySkill extends Skill {
     },
   };
 
+  private kgAnalyzeCallback?: (userId: string) => Promise<{ entities: number; relations: number; newEntities: number; corrections: number }>;
+
+  /** Set callback for KG analysis (injected from alfred.ts). */
+  setKgAnalyzeCallback(cb: typeof this.kgAnalyzeCallback): void { this.kgAnalyzeCallback = cb; }
+
   constructor(
     private readonly memoryRepo: MemoryRepository,
     private readonly embeddingService?: EmbeddingServiceLike,
@@ -83,10 +88,12 @@ export class MemorySkill extends Skill {
         return this.deleteMemory(input, context);
       case 'semantic_search':
         return this.semanticSearchMemories(input, context);
+      case 'kg_analyze':
+        return this.triggerKgAnalysis(context);
       default:
         return {
           success: false,
-          error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete, semantic_search`,
+          error: `Unknown action: "${String(action)}". Valid actions: save, recall, search, list, delete, semantic_search, kg_analyze`,
         };
     }
   }
@@ -333,5 +340,22 @@ export class MemorySkill extends Skill {
       data: results,
       display: `Found ${results.length} semantically related memory(ies):\n${results.map(r => `- ${r.key}: "${r.value}" (score: ${r.score.toFixed(2)})`).join('\n')}`,
     };
+  }
+
+  private async triggerKgAnalysis(context: SkillContext): Promise<SkillResult> {
+    if (!this.kgAnalyzeCallback) {
+      return { success: false, error: 'Knowledge Graph Analyse nicht verfügbar.' };
+    }
+    const userId = context.alfredUserId ?? context.userId;
+    const stats = await this.kgAnalyzeCallback(userId);
+    const lines = [
+      '## Knowledge Graph Analyse abgeschlossen',
+      '',
+      `**Entities:** ${stats.entities}`,
+      `**Relations:** ${stats.relations}`,
+      `**Neue Entities:** ${stats.newEntities}`,
+      `**Korrekturen:** ${stats.corrections}`,
+    ];
+    return { success: true, data: stats, display: lines.join('\n') };
   }
 }
