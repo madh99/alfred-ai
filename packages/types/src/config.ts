@@ -629,6 +629,7 @@ export interface CmdbIncident {
   rootCause?: string;
   resolution?: string;
   workaround?: string;
+  postmortem?: string;
   detectedBy?: string;
   relatedIncidentId?: string;
   openedAt: string;
@@ -682,6 +683,24 @@ export interface CmdbChangeRequest {
   linkedIncidentId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type CmdbDocType = 'runbook' | 'postmortem' | 'inventory' | 'topology' | 'service_map' | 'change_log' | 'custom';
+export type CmdbDocFormat = 'markdown' | 'mermaid';
+export type CmdbLinkedEntityType = 'asset' | 'service' | 'incident' | 'change_request';
+
+export interface CmdbDocument {
+  id: string;
+  userId: string;
+  docType: CmdbDocType;
+  title: string;
+  content: string;
+  format: CmdbDocFormat;
+  linkedEntityType?: CmdbLinkedEntityType;
+  linkedEntityId?: string;
+  version: number;
+  generatedBy?: string;
+  createdAt: string;
 }
 
 export interface CmdbConfig {

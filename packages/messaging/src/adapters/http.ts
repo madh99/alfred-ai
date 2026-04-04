@@ -45,6 +45,8 @@ export interface CmdbCallbacks {
   discover: (userId: string) => Promise<any>;
   getStats: (userId: string) => Promise<any>;
   getChanges: (userId: string, assetId: string) => Promise<any[]>;
+  listDocuments: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  getDocument: (userId: string, id: string) => Promise<any>;
 }
 
 export interface ItsmCallbacks {
@@ -486,6 +488,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDocsBodyRoute(req, res, (cbs, userId, body) => cbs.generate(userId, body.type as string, body));
     } else if (url.pathname === '/api/docs/export' && req.method === 'GET') {
       this.handleDocsRoute(req, res, (cbs, userId) => cbs.exportData(userId, url.searchParams.get('format') ?? undefined));
+    // ── Documents Archive API ──
+    } else if (url.pathname === '/api/cmdb/documents' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listDocuments(userId, filters);
+      });
+    } else if (url.pathname.startsWith('/api/cmdb/documents/') && req.method === 'GET') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getDocument(userId, id));
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {

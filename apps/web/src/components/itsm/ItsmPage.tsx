@@ -21,6 +21,7 @@ interface Incident {
   rootCause: string;
   resolution: string;
   workaround: string;
+  postmortem: string;
   detectedBy: string;
   openedAt: string;
   acknowledgedAt: string | null;
@@ -248,6 +249,11 @@ export function ItsmPage() {
   const [showCreateChange, setShowCreateChange] = useState(false);
   const [showCreateService, setShowCreateService] = useState(false);
 
+  // Docs generation
+  const [generatingRunbook, setGeneratingRunbook] = useState(false);
+  const [generatingPostmortem, setGeneratingPostmortem] = useState(false);
+  const [serviceDocs, setServiceDocs] = useState<{ id: string; docType: string; title: string; version: number; createdAt: string; linkedEntityType: string; linkedEntityId: string }[]>([]);
+
   /* ---- Data fetching ---- */
 
   const loadIncidents = useCallback(async () => {
@@ -285,6 +291,15 @@ export function ItsmPage() {
   }, [loadIncidents, loadChanges, loadServices]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Load document history when a service is selected
+  useEffect(() => {
+    if (selectedService) {
+      loadServiceDocs(selectedService.id);
+    } else {
+      setServiceDocs([]);
+    }
+  }, [selectedService?.id]);
 
   /* ---- Actions ---- */
 
@@ -333,6 +348,42 @@ export function ItsmPage() {
       await client.itsmHealthCheck();
       await loadServices();
     } catch (e) { setError((e as Error).message); }
+  }
+
+  async function generateRunbook(serviceId: string) {
+    setGeneratingRunbook(true);
+    try {
+      await client.docsGenerate('runbook', { service_id: serviceId });
+      await loadServices();
+      // Refresh selected service from updated list
+      const updated = (await client.itsmListServices()) as Service[];
+      const svc = updated.find(s => s.id === serviceId);
+      if (svc) setSelectedService(svc);
+      // Load document history
+      const docs = await client.cmdbListDocuments({ linked_entity_type: 'service', linked_entity_id: serviceId });
+      setServiceDocs(Array.isArray(docs) ? docs : []);
+    } catch (e) { setError((e as Error).message); }
+    setGeneratingRunbook(false);
+  }
+
+  async function loadServiceDocs(serviceId: string) {
+    try {
+      const docs = await client.cmdbListDocuments({ linked_entity_type: 'service', linked_entity_id: serviceId });
+      setServiceDocs(Array.isArray(docs) ? docs : []);
+    } catch { setServiceDocs([]); }
+  }
+
+  async function generatePostmortem(incidentId: string) {
+    setGeneratingPostmortem(true);
+    try {
+      await client.docsGenerate('incident_report', { incident_id: incidentId });
+      // Refresh incident data
+      const allInc = (await client.itsmListIncidents()) as Incident[];
+      setIncidents(allInc);
+      const updated = allInc.find(i => i.id === incidentId);
+      if (updated) setSelectedIncident(updated);
+    } catch (e) { setError((e as Error).message); }
+    setGeneratingPostmortem(false);
   }
 
   /* ---- Filter helpers ---- */
@@ -500,6 +551,23 @@ export function ItsmPage() {
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedIncident.workaround}</p>
                 </div>
               )}
+
+              {/* Postmortem */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Postmortem</p>
+                {selectedIncident.postmortem ? (
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedIncident.postmortem}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 italic">Kein Postmortem vorhanden.</p>
+                )}
+                <button
+                  onClick={() => generatePostmortem(selectedIncident.id)}
+                  disabled={generatingPostmortem}
+                  className="mt-2 px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded"
+                >
+                  {generatingPostmortem ? 'Generiere...' : 'Postmortem generieren'}
+                </button>
+              </div>
 
               {/* Affected Assets */}
               {selectedIncident.affectedAssetIds?.length > 0 && (
@@ -838,6 +906,33 @@ export function ItsmPage() {
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedService.documentation}</p>
                 </div>
               )}
+
+              {/* Runbook Generation */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs text-gray-500">Runbook</p>
+                  <button
+                    onClick={() => generateRunbook(selectedService.id)}
+                    disabled={generatingRunbook}
+                    className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:bg-blue-600/50 disabled:cursor-not-allowed text-white rounded"
+                  >
+                    {generatingRunbook ? 'Generiere...' : 'Runbook generieren'}
+                  </button>
+                </div>
+                {serviceDocs.length > 0 && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-500">Dokument-Historie</p>
+                    {serviceDocs.map(doc => (
+                      <div key={doc.id} className="flex items-center gap-2 text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5">
+                        <span className="text-gray-400 font-mono">{doc.docType}</span>
+                        <span className="text-gray-300 flex-1 truncate">{doc.title}</span>
+                        <span className="text-gray-500">v{doc.version}</span>
+                        <span className="text-gray-500">{fmtDate(doc.createdAt)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {selectedService.slaNotes && (
                 <div>

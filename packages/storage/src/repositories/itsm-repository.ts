@@ -30,6 +30,7 @@ function rowToIncident(r: DbRow): CmdbIncident {
     rootCause: r.root_cause as string | undefined,
     resolution: r.resolution as string | undefined,
     workaround: r.workaround as string | undefined,
+    postmortem: r.postmortem as string | undefined,
     detectedBy: r.detected_by as string | undefined,
     relatedIncidentId: r.related_incident_id as string | undefined,
     openedAt: r.opened_at as string,
@@ -158,7 +159,7 @@ export class ItsmRepository {
     const simple: Record<string, string> = {
       title: 'title', description: 'description', severity: 'severity',
       priority: 'priority', symptoms: 'symptoms', rootCause: 'root_cause',
-      resolution: 'resolution', workaround: 'workaround',
+      resolution: 'resolution', workaround: 'workaround', postmortem: 'postmortem',
     };
 
     for (const [key, col] of Object.entries(simple)) {

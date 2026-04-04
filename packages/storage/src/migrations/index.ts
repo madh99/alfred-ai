@@ -1214,4 +1214,31 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 50,
+    description: 'CMDB documents archive + incidents postmortem column',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmdb_documents (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          doc_type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          format TEXT NOT NULL DEFAULT 'markdown',
+          linked_entity_type TEXT,
+          linked_entity_id TEXT,
+          version INTEGER NOT NULL DEFAULT 1,
+          generated_by TEXT DEFAULT 'infra_docs',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_docs_user ON cmdb_documents(user_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_docs_entity ON cmdb_documents(linked_entity_type, linked_entity_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_docs_type ON cmdb_documents(doc_type);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_docs_created ON cmdb_documents(created_at);
+
+        ALTER TABLE cmdb_incidents ADD COLUMN postmortem TEXT;
+      `);
+    },
+  },
 ];

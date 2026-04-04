@@ -65,6 +65,14 @@ interface CmdbChange {
   changedBy: string | null;
 }
 
+interface CmdbDocument {
+  id: string;
+  docType: string;
+  title: string;
+  version: string;
+  createdAt: string;
+}
+
 interface CmdbStats {
   byType: Record<string, number>;
   byStatus: Record<string, number>;
@@ -111,6 +119,7 @@ export function CmdbPage() {
   const [selectedAsset, setSelectedAsset] = useState<CmdbAsset | null>(null);
   const [assetRelations, setAssetRelations] = useState<CmdbRelation[]>([]);
   const [assetChanges, setAssetChanges] = useState<CmdbChange[]>([]);
+  const [assetDocuments, setAssetDocuments] = useState<CmdbDocument[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // Edit mode
@@ -150,12 +159,17 @@ export function CmdbPage() {
     setEditMode(false);
     setDetailLoading(true);
     try {
-      const detail = await client.cmdbGetAsset(asset.id);
+      const [detail, docs] = await Promise.all([
+        client.cmdbGetAsset(asset.id),
+        client.cmdbListDocuments({ linked_entity_type: 'asset', linked_entity_id: asset.id }).catch(() => []),
+      ]);
       setAssetRelations(detail.relations ?? []);
       setAssetChanges(detail.changes ?? []);
+      setAssetDocuments(docs ?? []);
     } catch {
       setAssetRelations([]);
       setAssetChanges([]);
+      setAssetDocuments([]);
     } finally {
       setDetailLoading(false);
     }
@@ -697,6 +711,24 @@ export function CmdbPage() {
                             {' \u2192 '}
                             <span className="text-green-400/80">{c.newValue ?? '-'}</span>
                           </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Linked Documents */}
+                  <div className="bg-[#1a1a1a] rounded p-2">
+                    <div className="text-gray-500 mb-1">Verknuepfte Dokumente ({assetDocuments.length})</div>
+                    {assetDocuments.length === 0 ? (
+                      <div className="text-gray-600 text-[10px]">Keine Dokumente</div>
+                    ) : (
+                      assetDocuments.map(doc => (
+                        <div key={doc.id} className="flex items-center justify-between py-0.5">
+                          <span className="text-gray-300 truncate text-[10px]">
+                            {{ runbook: '\uD83D\uDCD8', postmortem: '\uD83D\uDCCB', inventory: '\uD83D\uDCC4', topology: '\uD83D\uDD78\uFE0F', service_map: '\uD83D\uDCE6', change_log: '\uD83D\uDCDC' }[doc.docType] ?? '\uD83D\uDCC4'}{' '}
+                            {doc.title}{doc.version ? ` v${doc.version}` : ''}
+                          </span>
+                          <span className="text-gray-600 text-[10px] shrink-0 ml-2">{formatDate(doc.createdAt)}</span>
                         </div>
                       ))
                     )}

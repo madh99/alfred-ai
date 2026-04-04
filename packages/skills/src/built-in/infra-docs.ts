@@ -51,6 +51,20 @@ export class InfraDocsSkill extends Skill {
     this.llmCallback = cb;
   }
 
+  /** Persist a generated document to the archive (non-blocking, fire-and-forget). */
+  private async persistDoc(userId: string, docType: string, title: string, content: string, opts?: {
+    format?: string; linkedEntityType?: string; linkedEntityId?: string;
+  }): Promise<void> {
+    try {
+      await this.cmdb.saveDocument(userId, {
+        docType: docType as any, title, content,
+        format: (opts?.format as any) ?? 'markdown',
+        linkedEntityType: opts?.linkedEntityType as any,
+        linkedEntityId: opts?.linkedEntityId,
+      });
+    } catch { /* non-critical — don't break generation if persist fails */ }
+  }
+
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
     const userId = context.masterUserId || context.userId;
@@ -103,6 +117,7 @@ export class InfraDocsSkill extends Skill {
     }
 
     const display = sections.join('\n');
+    await this.persistDoc(userId, 'inventory', `Inventar — ${now}`, display);
     return { success: true, data: { assets, stats }, display };
   }
 
@@ -175,6 +190,7 @@ export class InfraDocsSkill extends Skill {
 
     const mermaid = lines.join('\n');
     const display = `## Netzwerk-Topologie\n\n\`\`\`mermaid\n${mermaid}\n\`\`\``;
+    await this.persistDoc(userId, 'topology', `Topologie — ${new Date().toISOString().slice(0, 10)}`, mermaid, { format: 'mermaid' });
     return { success: true, data: { mermaid, assetCount: assets.length, relationCount: relations.length }, display };
   }
 
@@ -217,6 +233,7 @@ export class InfraDocsSkill extends Skill {
 
     const mermaid = lines.join('\n');
     const display = `## Service-Dependency-Map\n\n\`\`\`mermaid\n${mermaid}\n\`\`\``;
+    await this.persistDoc(userId, 'service_map', `Service-Map — ${new Date().toISOString().slice(0, 10)}`, mermaid, { format: 'mermaid' });
     return { success: true, data: { mermaid, serviceCount: services.length }, display };
   }
 
@@ -270,6 +287,11 @@ export class InfraDocsSkill extends Skill {
 
     const runbookText = await this.llmCallback(prompt, 'strong');
     const display = `## Runbook: ${svc.name}\n\n${runbookText}`;
+
+    // Persist: write-back to service + archive
+    try { await this.itsm.updateService(userId, serviceId, { documentation: runbookText } as any); } catch { /* non-critical */ }
+    await this.persistDoc(userId, 'runbook', `Runbook: ${svc.name}`, runbookText, { linkedEntityType: 'service', linkedEntityId: serviceId });
+
     return { success: true, data: { service: svc, runbook: runbookText }, display };
   }
 
@@ -286,6 +308,7 @@ export class InfraDocsSkill extends Skill {
     });
 
     const display = `## Change Log (${changes.length} Einträge)\n\n| Datum | Typ | Feld | Wert | Kategorie |\n|-------|-----|------|------|-----------|\n${lines.join('\n')}`;
+    await this.persistDoc(userId, 'change_log', `Change-Log — ${new Date().toISOString().slice(0, 10)}`, display);
     return { success: true, data: changes, display };
   }
 
@@ -359,6 +382,10 @@ export class InfraDocsSkill extends Skill {
       '- [ ] Monitoring verbessern',
       '- [ ] Runbook aktualisieren',
     ].filter(Boolean).join('\n');
+
+    // Persist: write-back to incident + archive
+    try { await this.itsm.updateIncident(userId, incidentId, { postmortem: display } as any); } catch { /* non-critical */ }
+    await this.persistDoc(userId, 'postmortem', `Postmortem: ${inc.title}`, display, { linkedEntityType: 'incident', linkedEntityId: incidentId });
 
     return { success: true, data: inc, display };
   }

@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.354] - 2026-04-05
+
+### Added
+- **InfraDocs Persistenz** — Alle generierten Dokumente werden in `cmdb_documents` archiviert (Versionierung, Entity-Verknüpfung).
+- **Runbook Write-Back** — Generierte Runbooks werden automatisch in `cmdb_services.documentation` gespeichert.
+- **Postmortem Write-Back** — Generierte Incident-Reports werden in `cmdb_incidents.postmortem` gespeichert (neues Feld).
+- **Migration v50** — `cmdb_documents` Tabelle + `cmdb_incidents.postmortem` Spalte.
+- **WebUI: Service Runbook-Button** — "Runbook generieren" direkt im ITSM Service-Detail-Panel + Dokumenten-Historie.
+- **WebUI: Incident Postmortem-Button** — "Postmortem generieren" direkt im ITSM Incident-Detail-Panel.
+- **WebUI: Asset Linked Documents** — CMDB Asset-Detail zeigt verknüpfte Dokumente.
+- **WebUI: Docs Archiv** — Neuer Archiv-Tab in InfraDocsPage mit Versionshistorie aller generierten Dokumente.
+- **2 neue API-Endpoints** — `/api/cmdb/documents` (Liste) + `/api/cmdb/documents/:id` (Detail).
+
 ## [0.19.0-multi-ha.353] - 2026-04-05
 
 ### Fixed

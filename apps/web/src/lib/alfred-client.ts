@@ -313,6 +313,21 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
     return res.json();
   }
+
+  // ── Documents Archive API ──
+
+  async cmdbListDocuments(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/cmdb/documents${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbGetDocument(id: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/documents/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
+    return res.json();
+  }
 }
 
 export interface KGEntity {

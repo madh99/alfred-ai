@@ -11,13 +11,32 @@ interface DocType {
   icon: string;
 }
 
+interface ArchivedDoc {
+  id: string;
+  docType: string;
+  title: string;
+  version: number;
+  createdAt: string;
+  content: string;
+  linkedEntityType?: string;
+  linkedEntityId?: string;
+}
+
 const DOC_TYPES: DocType[] = [
   { key: 'inventory_report', label: 'Inventar', icon: '\uD83D\uDCE6' },
   { key: 'topology_diagram', label: 'Topologie', icon: '\uD83D\uDD17' },
   { key: 'service_map', label: 'Services', icon: '\u2699\uFE0F' },
   { key: 'change_log', label: 'Changes', icon: '\uD83D\uDCDD' },
   { key: 'export', label: 'Export', icon: '\uD83D\uDCE5' },
+  { key: 'archive', label: 'Archiv', icon: '\uD83D\uDCDA' },
 ];
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  inventory_report: 'Inventar',
+  topology_diagram: 'Topologie',
+  service_map: 'Services',
+  change_log: 'Changes',
+};
 
 // ── Helpers ──
 
@@ -124,13 +143,62 @@ export function InfraDocsPage() {
   const [error, setError] = useState<string | null>(null);
   const [exportData, setExportData] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [savedConfirm, setSavedConfirm] = useState(false);
+
+  // Archive state
+  const [archiveDocs, setArchiveDocs] = useState<ArchivedDoc[]>([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [selectedArchiveDoc, setSelectedArchiveDoc] = useState<ArchivedDoc | null>(null);
+
+  const loadArchive = useCallback(async () => {
+    setArchiveLoading(true);
+    setError(null);
+    try {
+      const docs = await client.cmdbListDocuments();
+      setArchiveDocs(docs ?? []);
+    } catch (err: any) {
+      setError(err.message ?? 'Archiv konnte nicht geladen werden');
+    } finally {
+      setArchiveLoading(false);
+    }
+  }, [client]);
+
+  const loadArchiveDoc = useCallback(async (id: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const doc = await client.cmdbGetDocument(id);
+      setSelectedArchiveDoc(doc);
+      setContent(doc.content ?? '');
+    } catch (err: any) {
+      setError(err.message ?? 'Dokument konnte nicht geladen werden');
+    } finally {
+      setLoading(false);
+    }
+  }, [client]);
+
+  const showSavedConfirm = useCallback(() => {
+    setSavedConfirm(true);
+    setTimeout(() => setSavedConfirm(false), 2000);
+  }, []);
 
   const generate = useCallback(
     async (type: string) => {
+      if (type === 'archive') {
+        setActiveType('archive');
+        setContent('');
+        setError(null);
+        setExportData(null);
+        setSelectedArchiveDoc(null);
+        loadArchive();
+        return;
+      }
+
       setActiveType(type);
       setContent('');
       setError(null);
       setExportData(null);
+      setSelectedArchiveDoc(null);
       setLoading(true);
 
       try {
@@ -143,6 +211,7 @@ export function InfraDocsPage() {
           const res = await client.docsGenerate(type);
           if (!res.success) throw new Error(res.display ?? 'Generierung fehlgeschlagen');
           setContent(res.display ?? '');
+          showSavedConfirm();
         }
       } catch (err: any) {
         setError(err.message ?? 'Unbekannter Fehler');
@@ -150,7 +219,7 @@ export function InfraDocsPage() {
         setLoading(false);
       }
     },
-    [client],
+    [client, loadArchive, showSavedConfirm],
   );
 
   const handleCopy = useCallback(async () => {
@@ -200,22 +269,50 @@ export function InfraDocsPage() {
         {activeType && (
           <div className="flex items-center gap-3 px-6 py-3 border-b border-[#1f1f1f]">
             <h1 className="text-gray-200 font-semibold text-sm flex-1">
-              {DOC_TYPES.find((d) => d.key === activeType)?.label ?? activeType}
+              {selectedArchiveDoc
+                ? selectedArchiveDoc.title
+                : (DOC_TYPES.find((d) => d.key === activeType)?.label ?? activeType)}
             </h1>
-            <button
-              onClick={() => generate(activeType)}
-              disabled={loading}
-              className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
-            >
-              Neu generieren
-            </button>
-            <button
-              onClick={handleCopy}
-              disabled={!content || loading}
-              className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
-            >
-              {copied ? 'Kopiert!' : 'Copy Markdown'}
-            </button>
+            {savedConfirm && (
+              <span className="text-xs text-green-400 animate-pulse transition-opacity">
+                Gespeichert
+              </span>
+            )}
+            {activeType === 'archive' && selectedArchiveDoc && (
+              <button
+                onClick={() => { setSelectedArchiveDoc(null); setContent(''); }}
+                className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] transition-colors"
+              >
+                Zurueck zur Liste
+              </button>
+            )}
+            {activeType === 'archive' && !selectedArchiveDoc && (
+              <button
+                onClick={() => loadArchive()}
+                disabled={archiveLoading}
+                className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+              >
+                Aktualisieren
+              </button>
+            )}
+            {activeType !== 'archive' && (
+              <>
+                <button
+                  onClick={() => generate(activeType)}
+                  disabled={loading}
+                  className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+                >
+                  Neu generieren
+                </button>
+                <button
+                  onClick={handleCopy}
+                  disabled={!content || loading}
+                  className="px-3 py-1.5 rounded text-xs font-medium bg-[#1f1f1f] text-gray-300 hover:bg-[#2a2a2a] disabled:opacity-40 transition-colors"
+                >
+                  {copied ? 'Kopiert!' : 'Copy Markdown'}
+                </button>
+              </>
+            )}
             {activeType === 'export' && exportData && (
               <button
                 onClick={handleDownload}
@@ -242,7 +339,9 @@ export function InfraDocsPage() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
-                <span className="text-gray-500 text-sm">Generiere Dokumentation...</span>
+                <span className="text-gray-500 text-sm">
+                  {activeType === 'archive' ? 'Lade Dokument...' : 'Generiere Dokumentation...'}
+                </span>
               </div>
             </div>
           )}
@@ -253,7 +352,75 @@ export function InfraDocsPage() {
             </div>
           )}
 
-          {content && !loading && !error && (
+          {/* Archive table view */}
+          {activeType === 'archive' && !selectedArchiveDoc && !loading && !error && (
+            <div className="max-w-5xl">
+              {archiveLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <svg className="animate-spin h-8 w-8 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                </div>
+              ) : archiveDocs.length === 0 ? (
+                <div className="text-gray-600 text-sm text-center py-12">
+                  Keine archivierten Dokumente vorhanden.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="text-left px-4 py-2.5 text-gray-400 border-b border-[#2a2a2a] font-medium">Typ</th>
+                        <th className="text-left px-4 py-2.5 text-gray-400 border-b border-[#2a2a2a] font-medium">Titel</th>
+                        <th className="text-left px-4 py-2.5 text-gray-400 border-b border-[#2a2a2a] font-medium">Entity</th>
+                        <th className="text-left px-4 py-2.5 text-gray-400 border-b border-[#2a2a2a] font-medium">Version</th>
+                        <th className="text-left px-4 py-2.5 text-gray-400 border-b border-[#2a2a2a] font-medium">Datum</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {archiveDocs.map((doc) => (
+                        <tr
+                          key={doc.id}
+                          onClick={() => loadArchiveDoc(doc.id)}
+                          className="hover:bg-[#1a1a1a] cursor-pointer transition-colors"
+                        >
+                          <td className="px-4 py-2.5 text-gray-300 border-b border-[#161616]">
+                            <span className="inline-block px-2 py-0.5 rounded text-xs bg-[#1f1f1f] text-gray-400">
+                              {DOC_TYPE_LABELS[doc.docType] ?? doc.docType}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-200 border-b border-[#161616] font-medium">
+                            {doc.title}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-400 border-b border-[#161616]">
+                            {doc.linkedEntityType
+                              ? `${doc.linkedEntityType}${doc.linkedEntityId ? ` #${doc.linkedEntityId}` : ''}`
+                              : '\u2014'}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-400 border-b border-[#161616]">
+                            v{doc.version}
+                          </td>
+                          <td className="px-4 py-2.5 text-gray-500 border-b border-[#161616]">
+                            {new Date(doc.createdAt).toLocaleDateString('de-AT', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Document content (both generated and archive detail) */}
+          {content && !loading && !error && (activeType !== 'archive' || selectedArchiveDoc) && (
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-lg p-6 max-w-4xl">
               {formatMarkdown(content)}
             </div>

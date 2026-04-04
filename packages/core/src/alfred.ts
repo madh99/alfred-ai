@@ -2043,6 +2043,8 @@ export class Alfred {
           },
           getStats: async (uid: string) => cmdbRepo.getStats(await resolveUser(uid)),
           getChanges: async (uid: string, assetId: string) => cmdbRepo.getChangesForAsset(await resolveUser(uid), assetId),
+          listDocuments: async (uid: string, filters?: Record<string, unknown>) => cmdbRepo.listDocuments(await resolveUser(uid), filters as any),
+          getDocument: async (uid: string, id: string) => cmdbRepo.getDocumentById(await resolveUser(uid), id),
         });
 
         (apiAdapter as any).setItsmCallbacks({

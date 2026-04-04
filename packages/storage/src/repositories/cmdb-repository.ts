@@ -1,9 +1,10 @@
 import type { AsyncDbAdapter, DbRow } from '../db-adapter.js';
 import { randomUUID } from 'node:crypto';
 import type {
-  CmdbAsset, CmdbAssetRelation, CmdbChange,
+  CmdbAsset, CmdbAssetRelation, CmdbChange, CmdbDocument,
   CmdbAssetType, CmdbAssetStatus, CmdbRelationType,
   CmdbChangeType, CmdbChangeCategory, CmdbEnvironment,
+  CmdbDocType, CmdbDocFormat, CmdbLinkedEntityType,
 } from '@alfred/types';
 
 // ── Row → Domain Mappers ─────────────────────────────────────
@@ -62,6 +63,22 @@ function rowToChange(r: DbRow): CmdbChange {
     newValue: r.new_value as string | undefined,
     description: r.description as string | undefined,
     source: r.source as string | undefined,
+    createdAt: r.created_at as string,
+  };
+}
+
+function rowToDocument(r: DbRow): CmdbDocument {
+  return {
+    id: r.id as string,
+    userId: r.user_id as string,
+    docType: r.doc_type as CmdbDocType,
+    title: r.title as string,
+    content: r.content as string,
+    format: (r.format as CmdbDocFormat) ?? 'markdown',
+    linkedEntityType: r.linked_entity_type as CmdbLinkedEntityType | undefined,
+    linkedEntityId: r.linked_entity_id as string | undefined,
+    version: r.version as number,
+    generatedBy: r.generated_by as string | undefined,
     createdAt: r.created_at as string,
   };
 }
@@ -420,5 +437,97 @@ export class CmdbRepository {
       [userId, q, q, q, q, q, q, q],
     );
     return rows.map(rowToAsset);
+  }
+
+  // ── Documents ──────────────────────────────────────────────
+
+  async saveDocument(userId: string, doc: {
+    docType: CmdbDocType; title: string; content: string;
+    format?: CmdbDocFormat; linkedEntityType?: CmdbLinkedEntityType;
+    linkedEntityId?: string; generatedBy?: string;
+  }): Promise<CmdbDocument> {
+    // Determine next version
+    let version = 1;
+    if (doc.linkedEntityId) {
+      const prev = await this.db.queryOne(
+        `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id = ?`,
+        [userId, doc.docType, doc.linkedEntityId],
+      );
+      if (prev?.max_v) version = (prev.max_v as number) + 1;
+    } else {
+      const prev = await this.db.queryOne(
+        `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id IS NULL`,
+        [userId, doc.docType],
+      );
+      if (prev?.max_v) version = (prev.max_v as number) + 1;
+    }
+
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `INSERT INTO cmdb_documents (id, user_id, doc_type, title, content, format, linked_entity_type, linked_entity_id, version, generated_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, doc.docType, doc.title, doc.content.slice(0, 50_000), doc.format ?? 'markdown',
+       doc.linkedEntityType ?? null, doc.linkedEntityId ?? null, version, doc.generatedBy ?? 'infra_docs', now],
+    );
+
+    return { id, userId, docType: doc.docType, title: doc.title, content: doc.content.slice(0, 50_000),
+      format: (doc.format ?? 'markdown') as CmdbDocFormat, linkedEntityType: doc.linkedEntityType,
+      linkedEntityId: doc.linkedEntityId, version, generatedBy: doc.generatedBy ?? 'infra_docs', createdAt: now };
+  }
+
+  async getDocumentsForEntity(userId: string, entityType: CmdbLinkedEntityType, entityId: string): Promise<CmdbDocument[]> {
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_documents WHERE user_id = ? AND linked_entity_type = ? AND linked_entity_id = ? ORDER BY version DESC`,
+      [userId, entityType, entityId],
+    );
+    return rows.map(rowToDocument);
+  }
+
+  async getLatestDocument(userId: string, docType: CmdbDocType, entityId?: string): Promise<CmdbDocument | null> {
+    let sql = `SELECT * FROM cmdb_documents WHERE user_id = ? AND doc_type = ?`;
+    const params: unknown[] = [userId, docType];
+    if (entityId) { sql += ` AND linked_entity_id = ?`; params.push(entityId); }
+    else { sql += ` AND linked_entity_id IS NULL`; }
+    sql += ` ORDER BY version DESC LIMIT 1`;
+    const row = await this.db.queryOne(sql, params);
+    return row ? rowToDocument(row) : null;
+  }
+
+  async listDocuments(userId: string, filters?: { docType?: CmdbDocType; entityType?: CmdbLinkedEntityType; limit?: number }): Promise<CmdbDocument[]> {
+    let sql = `SELECT * FROM cmdb_documents WHERE user_id = ?`;
+    const params: unknown[] = [userId];
+    if (filters?.docType) { sql += ` AND doc_type = ?`; params.push(filters.docType); }
+    if (filters?.entityType) { sql += ` AND linked_entity_type = ?`; params.push(filters.entityType); }
+    sql += ` ORDER BY created_at DESC LIMIT ?`;
+    params.push(filters?.limit ?? 100);
+    const rows = await this.db.query(sql, params);
+    return rows.map(rowToDocument);
+  }
+
+  async getDocumentById(userId: string, id: string): Promise<CmdbDocument | null> {
+    const row = await this.db.queryOne(`SELECT * FROM cmdb_documents WHERE id = ? AND user_id = ?`, [id, userId]);
+    return row ? rowToDocument(row) : null;
+  }
+
+  async pruneDocumentVersions(userId: string, maxVersions = 10): Promise<number> {
+    // For each (doc_type, linked_entity_id), keep only the newest N versions
+    const groups = await this.db.query(
+      `SELECT doc_type, linked_entity_id, COUNT(*) as cnt FROM cmdb_documents WHERE user_id = ? GROUP BY doc_type, linked_entity_id HAVING cnt > ?`,
+      [userId, maxVersions],
+    );
+    let pruned = 0;
+    for (const g of groups) {
+      const oldest = await this.db.query(
+        `SELECT id FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND (linked_entity_id = ? OR (linked_entity_id IS NULL AND ? IS NULL))
+         ORDER BY version DESC LIMIT -1 OFFSET ?`,
+        [userId, g.doc_type, g.linked_entity_id, g.linked_entity_id, maxVersions],
+      );
+      for (const r of oldest) {
+        await this.db.execute(`DELETE FROM cmdb_documents WHERE id = ?`, [r.id]);
+        pruned++;
+      }
+    }
+    return pruned;
   }
 }
