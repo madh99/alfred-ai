@@ -135,6 +135,8 @@ export class Alfred {
   private temporalAnalyzerTimer?: ReturnType<typeof setInterval>;
   private insightExpiryTimer?: ReturnType<typeof setInterval>;
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
+  private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
+  private cmdbHealthCheckTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   private ownerMasterUserId?: string;
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
@@ -964,11 +966,9 @@ export class Alfred {
         if (discoveryIntervalH > 0) {
           const discoveryMs = discoveryIntervalH * 3_600_000;
           setTimeout(() => {
-            // Initial discovery 2 min after startup
             const uid = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
             if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
-            // Recurring
-            setInterval(() => {
+            this.cmdbDiscoveryTimer = setInterval(() => {
               if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
             }, discoveryMs);
           }, 120_000);
@@ -985,7 +985,7 @@ export class Alfred {
               if (uid) itsmSkill.execute({ action: 'health_check' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
             };
             runHealthCheck();
-            setInterval(runHealthCheck, healthMs);
+            this.cmdbHealthCheckTimer = setInterval(runHealthCheck, healthMs);
           }, 180_000); // 3 min after startup
         }
 
@@ -2311,6 +2311,14 @@ export class Alfred {
     if (this.clusterMonitorTimer) {
       clearInterval(this.clusterMonitorTimer);
       this.clusterMonitorTimer = undefined;
+    }
+    if (this.cmdbDiscoveryTimer) {
+      clearInterval(this.cmdbDiscoveryTimer);
+      this.cmdbDiscoveryTimer = undefined;
+    }
+    if (this.cmdbHealthCheckTimer) {
+      clearInterval(this.cmdbHealthCheckTimer);
+      this.cmdbHealthCheckTimer = undefined;
     }
 
     // Shutdown MCP servers

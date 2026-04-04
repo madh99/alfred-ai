@@ -102,7 +102,7 @@ export class MonitorSkill extends Skill {
       lines.push(`- [${a.source}] ${a.message}`);
     }
 
-    return { success: true, display: lines.join('\n') };
+    return { success: true, data: alerts, display: lines.join('\n') };
   }
 
   // -----------------------------------------------------------------------
