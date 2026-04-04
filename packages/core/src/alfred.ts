@@ -734,6 +734,13 @@ export class Alfred {
       this.logger.info({ baseUrl: this.config.nginxProxyManager.baseUrl }, 'Nginx Proxy Manager skill registered');
     }
 
+    // 4o4. Deploy Skill (always available — uses SSH)
+    {
+      const { DeploySkill } = await import('@alfred/skills');
+      skillRegistry.register(new DeploySkill(this.config.infra));
+      this.logger.info('Deploy skill registered');
+    }
+
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
     {
       const { MarketplaceSkill } = await import('@alfred/skills');

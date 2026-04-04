@@ -49,6 +49,7 @@ export { BMWSkill } from './built-in/bmw.js';
 export { BrainstormingSkill } from './built-in/brainstorming.js';
 export { CloudflareDnsSkill } from './built-in/cloudflare-dns.js';
 export { NginxProxyManagerSkill } from './built-in/nginx-proxy-manager.js';
+export { DeploySkill } from './built-in/deploy.js';
 export { GoeChargerSkill } from './built-in/goe-charger.js';
 export { RoutingSkill } from './built-in/routing.js';
 export { EnergyPriceSkill } from './built-in/energy-price.js';
