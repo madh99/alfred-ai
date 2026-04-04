@@ -532,6 +532,11 @@ export class KnowledgeGraphService {
         if (entity.attributes?.memoryKey) texts.push(String(entity.attributes.memoryKey).replace(/_/g, ' '));
         if (entity.attributes?.address) texts.push(String(entity.attributes.address));
         if (entity.attributes?.relationship) texts.push(String(entity.attributes.relationship).replace(/_/g, ' '));
+        // For documents/notes: split filename into words for matching
+        if (entity.sources.includes('documents') || entity.sources.includes('notes')) {
+          texts.push(entity.name.replace(/[._\-/]/g, ' ').replace(/\.(pdf|docx?|xlsx?|txt|csv)$/i, ''));
+        }
+        if (entity.attributes?.preview) texts.push(String(entity.attributes.preview));
 
         if (texts.length === 0) continue;
         const combined = texts.join(' ');

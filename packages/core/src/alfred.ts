@@ -1188,30 +1188,31 @@ export class Alfred {
 
       // Wire KG analyze callback into Memory skill
       if (this.memorySkillRef) {
-        this.memorySkillRef.setKgAnalyzeCallback(async (userId: string) => {
-          // Lightweight KG analysis: Memory-Sync + Family Inference + Generic Links + LLM Linker
-          // Does NOT run the full Collector (which takes 30-60s for skill calls)
-          // Instead relies on already-ingested data from the last Reasoning pass
+        this.memorySkillRef.setKgAnalyzeCallback(async (_userId: string) => {
+          // Always use the owner's masterUserId — not the alfredUserId from context
+          // This prevents duplicate entities under different user IDs
+          const resolvedUserId = this.ownerMasterUserId ?? _userId;
+
           const kgRepo = new KnowledgeGraphRepository(this.database.getAdapter());
 
           // 1. Memory-Sync + Cross-Extractor + Family Inference + Generic Links
-          try { await (kgServiceInstance as any).syncMemoryEntities(userId); } catch { /* continue */ }
-          try { await (kgServiceInstance as any).buildCrossExtractorRelations(userId); } catch { /* continue */ }
-          try { await (kgServiceInstance as any).buildFamilyInference(userId); } catch { /* continue */ }
-          try { await (kgServiceInstance as any).buildGenericEntityLinks(userId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).syncMemoryEntities(resolvedUserId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildCrossExtractorRelations(resolvedUserId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildFamilyInference(resolvedUserId); } catch { /* continue */ }
+          try { await (kgServiceInstance as any).buildGenericEntityLinks(resolvedUserId); } catch { /* continue */ }
 
           // 2. LLM linker (bypass daily schedule)
           const llmLinker = kgServiceInstance.getLLMLinker();
           let llmStats = { relations: 0, newEntities: 0, corrections: 0 };
           if (llmLinker) {
-            try { llmStats = await llmLinker.run(userId); } catch { /* continue */ }
+            try { llmStats = await llmLinker.run(resolvedUserId); } catch { /* continue */ }
           }
 
           // 3. Maintenance (dedup, prune)
-          try { await kgServiceInstance.maintenance(userId); } catch { /* continue */ }
+          try { await kgServiceInstance.maintenance(resolvedUserId); } catch { /* continue */ }
 
           // 4. Get totals
-          const graph = await kgRepo.getFullGraph(userId);
+          const graph = await kgRepo.getFullGraph(resolvedUserId);
           return {
             entities: graph.entities.length,
             relations: graph.relations.length,
