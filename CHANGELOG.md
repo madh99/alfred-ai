@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.353] - 2026-04-05
+
+### Fixed
+- **CMDB/ITSM Review** — 18 Issues gefixt (4 Critical, 6 High, 5 Medium, 3 Low): API-Wiring Guard, Manual-Asset-Dedup, Monitor→Incident Keyword-Dedup, resolveUser Fallback, Auto-Discovery/Health-Check Timer, Error-Handling, Mermaid Node-ID Uniqueness, JSON-Parse 400, Tags-Typ, markStaleAssets, getTopology Cap, Reasoning-Prompt conditional.
+- **Monitor: data-Feld fehlte** — `result.data = alerts` setzen damit ITSM Auto-Incident-Hook feuert.
+- **CMDB Timer-Cleanup** — Discovery + Health-Check Intervals werden bei Shutdown sauber aufgeräumt.
+
 ## [0.19.0-multi-ha.352] - 2026-04-04
 
 ### Added
