@@ -74,18 +74,24 @@ export class CloudflareDnsSkill extends Skill {
     return data.result;
   }
 
-  /** Resolve domain to zone ID (cached). */
+  /** Resolve domain to zone ID (cached). Handles multi-level TLDs (.co.uk, .co.at). */
   private async resolveZoneId(domain: string): Promise<string> {
-    // Extract root domain (uboot.cc from sub.uboot.cc)
+    if (this.zoneCache.has(domain)) return this.zoneCache.get(domain)!;
+
+    // Try progressively: last 2 parts, then 3, then 4 (handles .co.uk, .com.au etc.)
     const parts = domain.split('.');
-    const rootDomain = parts.length > 2 ? parts.slice(-2).join('.') : domain;
+    for (let i = 2; i <= Math.min(parts.length, 4); i++) {
+      const candidate = parts.slice(-i).join('.');
+      if (this.zoneCache.has(candidate)) return this.zoneCache.get(candidate)!;
+      const zones = await this.cfFetch(`/zones?name=${encodeURIComponent(candidate)}`) as Array<{ id: string; name: string }>;
+      if (zones.length > 0) {
+        this.zoneCache.set(candidate, zones[0].id);
+        this.zoneCache.set(domain, zones[0].id);
+        return zones[0].id;
+      }
+    }
 
-    if (this.zoneCache.has(rootDomain)) return this.zoneCache.get(rootDomain)!;
-
-    const zones = await this.cfFetch(`/zones?name=${encodeURIComponent(rootDomain)}`) as Array<{ id: string; name: string }>;
-    if (zones.length === 0) throw new Error(`Zone für "${rootDomain}" nicht gefunden`);
-    this.zoneCache.set(rootDomain, zones[0].id);
-    return zones[0].id;
+    throw new Error(`Zone für "${domain}" nicht gefunden`);
   }
 
   private async listZones(): Promise<SkillResult> {

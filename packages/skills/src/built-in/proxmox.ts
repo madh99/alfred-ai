@@ -977,20 +977,38 @@ export class ProxmoxSkill extends Skill {
     const memory = input.memory as number | undefined;
     const cores = input.cores as number | undefined;
 
+    // Get next free VMID from Proxmox (reliable, not templateVmid+1)
+    let assignedVmid = newVmid;
+    if (!assignedVmid) {
+      try {
+        const cluster = await this.get<Record<string, unknown>>('/cluster/nextid');
+        assignedVmid = typeof cluster === 'number' ? cluster : parseInt(String(cluster), 10);
+      } catch {
+        assignedVmid = templateVmid + 100; // fallback
+      }
+    }
+
     // Clone
     const cloneBody: Record<string, unknown> = {
+      newid: assignedVmid,
       name: hostname,
       full: 1,
       target: node,
     };
-    if (newVmid) cloneBody.newid = newVmid;
 
     const upid = await this.post<string>(`/nodes/${node}/qemu/${templateVmid}/clone`, cloneBody);
 
-    // Wait for clone task (simple poll)
-    const clonedVmid = newVmid ?? templateVmid + 1; // approximate — better to parse UPID
+    // Wait for clone task to complete before applying Cloud-Init config
+    const pollStart = Date.now();
+    while (Date.now() - pollStart < 120_000) {
+      try {
+        const taskData = await this.get<Record<string, unknown>>(`/nodes/${node}/tasks/${encodeURIComponent(upid)}/status`);
+        if (taskData.status === 'stopped') break;
+      } catch { /* task may not exist yet */ }
+      await new Promise(r => setTimeout(r, 3_000));
+    }
 
-    // Configure Cloud-Init after clone completes
+    // Apply Cloud-Init config to the cloned VM
     const configBody: Record<string, unknown> = {};
     if (ip) configBody.ipconfig0 = `ip=${ip}${gateway ? `,gw=${gateway}` : ''}`;
     if (sshKey) configBody.sshkeys = encodeURIComponent(sshKey);
@@ -1001,11 +1019,16 @@ export class ProxmoxSkill extends Skill {
       if (vlanTag) net += `,tag=${vlanTag}`;
       configBody.net0 = net;
     }
+    if (Object.keys(configBody).length > 0) {
+      try {
+        await this.post(`/nodes/${node}/qemu/${assignedVmid}/config`, configBody);
+      } catch { /* config apply failed — VM still usable but may need manual config */ }
+    }
 
     return {
       success: true,
-      data: { node, templateVmid, hostname, upid, clonedVmid, ip },
-      display: `✅ VM "${hostname}" wird aus Template ${templateVmid} geklont auf ${node}\n- UPID: \`${upid}\`\n${ip ? `- Cloud-Init IP: ${ip}` : ''}\n\nNach dem Klonen: "proxmox start_vm vmid=${clonedVmid}" und "proxmox wait_ready vmid=${clonedVmid}"`,
+      data: { node, templateVmid, hostname, upid, clonedVmid: assignedVmid, ip },
+      display: `✅ VM "${hostname}" (VMID ${assignedVmid}) geklont aus Template ${templateVmid}\n${ip ? `- Cloud-Init IP: ${ip}` : ''}${sshKey ? '\n- SSH Key injiziert' : ''}\n\nNächster Schritt: "proxmox start_vm vmid=${assignedVmid}"`,
     };
   }
 

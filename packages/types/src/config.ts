@@ -506,6 +506,7 @@ export interface PfSenseConfig {
   apiKey?: string;
   username?: string;
   password?: string;
+  verifyTls?: boolean;
 }
 
 export interface InfraDefaultsConfig {

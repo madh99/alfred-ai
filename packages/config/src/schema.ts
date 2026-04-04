@@ -509,6 +509,7 @@ export const PfSenseConfigSchema = z.object({
   apiKey: z.string().optional(),
   username: z.string().optional(),
   password: z.string().optional(),
+  verifyTls: z.boolean().optional(),
 });
 
 export const InfraDefaultsConfigSchema = z.object({

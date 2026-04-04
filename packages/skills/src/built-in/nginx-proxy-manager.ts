@@ -74,9 +74,10 @@ export class NginxProxyManagerSkill extends Skill {
       throw new Error(`NPM Auth fehlgeschlagen: ${res.status} ${text.slice(0, 200)}`);
     }
 
-    const data = await res.json() as { token: string; expires: string };
+    const data = await res.json() as { token: string; expires?: string };
     this.token = data.token;
-    this.tokenExpiresAt = new Date(data.expires).getTime() - 60_000; // 1 min buffer
+    const expiresMs = data.expires ? new Date(data.expires).getTime() : Date.now() + 3_600_000;
+    this.tokenExpiresAt = (isNaN(expiresMs) ? Date.now() + 3_600_000 : expiresMs) - 60_000;
     return this.token;
   }
 

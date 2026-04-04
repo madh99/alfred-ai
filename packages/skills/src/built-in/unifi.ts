@@ -828,26 +828,40 @@ export class UniFiSkill extends Skill {
     const subnet = (target as any).ip_subnet as string; // e.g. "192.168.1.1/24"
     if (!subnet) return { success: false, error: `Netzwerk "${(target as any).name}" hat kein Subnetz konfiguriert` };
 
-    // 3. Parse subnet
-    const [gateway, cidr] = subnet.split('/');
-    const parts = gateway.split('.').map(Number);
-    const prefix = parts.slice(0, 3).join('.');
+    // 3. Parse subnet (CIDR-aware — supports /16 to /30)
+    const [gateway, cidrStr] = subnet.split('/');
+    const cidr = parseInt(cidrStr, 10) || 24;
+    const gwParts = gateway.split('.').map(Number);
+    const gwInt = (gwParts[0] << 24) | (gwParts[1] << 16) | (gwParts[2] << 8) | gwParts[3];
+    const mask = cidr === 0 ? 0 : (~0 << (32 - cidr)) >>> 0;
+    const networkInt = (gwInt & mask) >>> 0;
+    const broadcastInt = (networkInt | (~mask >>> 0)) >>> 0;
+    const intToIp = (n: number) => `${(n >>> 24) & 255}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}`;
 
-    // 4. Get active clients in this network
-    const clients = await this.request('GET', 'stat/sta') as Array<Record<string, unknown>>;
+    // 4. Get ALL known clients (active + wired + offline + DHCP reservations)
     const usedIps = new Set<string>();
-    for (const c of clients) {
-      const ip = c.ip as string | undefined;
-      if (ip?.startsWith(prefix + '.')) usedIps.add(ip);
-    }
-    // Also add the gateway itself
+    try {
+      const allClients = await this.request('GET', 'rest/user') as Array<Record<string, unknown>>;
+      for (const c of allClients) {
+        const ip = (c.last_ip ?? c.ip ?? c.fixed_ip) as string | undefined;
+        if (ip) usedIps.add(ip);
+      }
+    } catch { /* fallback to active only */ }
+    try {
+      const activeClients = await this.request('GET', 'stat/sta') as Array<Record<string, unknown>>;
+      for (const c of activeClients) {
+        const ip = c.ip as string | undefined;
+        if (ip) usedIps.add(ip);
+      }
+    } catch { /* skip */ }
     usedIps.add(gateway);
 
-    // 5. Find first free IP
+    // 5. Find first free IP in subnet
     const start = startIp ?? 10;
-    const max = cidr === '24' ? 254 : 254; // simplified
-    for (let i = start; i <= max; i++) {
-      const candidate = `${prefix}.${i}`;
+    const firstHost = networkInt + start;
+    const lastHost = broadcastInt - 1; // exclude broadcast
+    for (let ipInt = firstHost; ipInt <= lastHost; ipInt++) {
+      const candidate = intToIp(ipInt);
       if (!usedIps.has(candidate)) {
         return {
           success: true,
@@ -863,7 +877,7 @@ export class UniFiSkill extends Skill {
       }
     }
 
-    return { success: false, error: `Keine freie IP gefunden in ${prefix}.${start}-${max}` };
+    return { success: false, error: `Keine freie IP gefunden in ${intToIp(firstHost)}-${intToIp(lastHost)}` };
   }
 
   private async listFirewallRules(): Promise<SkillResult> {

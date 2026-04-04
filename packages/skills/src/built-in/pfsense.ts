@@ -81,9 +81,9 @@ export class PfSenseSkill extends Skill {
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) throw new Error(`pfSense JWT Auth fehlgeschlagen: ${res.status}`);
-      const data = await res.json() as { token: string; exp: number };
+      const data = await res.json() as { token: string; exp?: number };
       this.jwtToken = data.token;
-      this.jwtExpiresAt = (data.exp ?? Date.now() / 1000 + 3600) * 1000 - 60_000;
+      this.jwtExpiresAt = (data.exp !== undefined && data.exp > 0 ? data.exp : Date.now() / 1000 + 3600) * 1000 - 60_000;
       return { 'Authorization': `Bearer ${this.jwtToken}` };
     }
 
@@ -99,6 +99,23 @@ export class PfSenseSkill extends Skill {
     const authHeaders = await this.getAuthHeaders();
     const url = `${this.config.baseUrl.replace(/\/+$/, '')}/api/v2${path}`;
 
+    // Handle self-signed certificates (common for pfSense)
+    if (this.config.verifyTls === false && url.startsWith('https')) {
+      // Temporarily allow self-signed certs for this request
+      const prev = process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
+      process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0';
+      try {
+        return await this._doFetch(url, authHeaders, options);
+      } finally {
+        if (prev !== undefined) process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = prev;
+        else delete process.env['NODE_TLS_REJECT_UNAUTHORIZED'];
+      }
+    }
+
+    return this._doFetch(url, authHeaders, options);
+  }
+
+  private async _doFetch(url: string, authHeaders: Record<string, string>, options?: RequestInit): Promise<any> {
     const res = await fetch(url, {
       ...options,
       headers: {

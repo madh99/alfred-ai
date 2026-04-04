@@ -9,6 +9,15 @@ const execFileAsync = promisify(execFile);
 type Action = 'deploy' | 'full_deploy' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
+/** Sanitize user input for safe SSH command interpolation. */
+function sanitize(val: string): string {
+  return val.replace(/[;&|`$(){}!#\n\r]/g, '');
+}
+function validateHost(h: string): boolean { return /^[\w.\-:]+$/.test(h); }
+function validateName(n: string): boolean { return /^[\w.\-]+$/.test(n); }
+function validateBranch(b: string): boolean { return /^[\w.\-/]+$/.test(b); }
+function validateUrl(u: string): boolean { return /^https?:\/\/[\w.\-/:@]+$/.test(u); }
+
 /**
  * Deploy Skill — SSH-basiertes Deployment auf beliebigen Hosts.
  * Kein Host ist hardcoded — alles wird pro Aufruf angegeben oder aus Infra-Defaults genommen.
@@ -94,11 +103,11 @@ export class DeploySkill extends Skill {
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
 
-    // full_deploy doesn't require host (creates one if needed)
     if (action === 'full_deploy') return this.fullDeploy(input);
 
     const host = input.host as string;
     if (!host) return { success: false, error: 'host ist erforderlich' };
+    if (!validateHost(host)) return { success: false, error: 'Ungültiger Host (nur Buchstaben, Zahlen, Punkte, Bindestriche)' };
 
     const user = (input.user as string) ?? this.defaults.sshUser ?? 'root';
     const project = input.project as string | undefined;
@@ -142,11 +151,14 @@ export class DeploySkill extends Skill {
   }
 
   private async doDeploy(host: string, user: string, input: Record<string, unknown>, pm: string, runtime: string): Promise<SkillResult> {
-    const project = input.project as string;
-    const repoUrl = input.repo_url as string | undefined;
-    const branch = (input.branch as string) ?? 'main';
+    const project = sanitize(input.project as string ?? '');
+    const repoUrl = input.repo_url ? sanitize(input.repo_url as string) : undefined;
+    const branch = sanitize((input.branch as string) ?? 'main');
     const appPort = input.app_port as number | undefined;
-    if (!project) return { success: false, error: 'project erforderlich' };
+    if (!project || !validateName(project)) return { success: false, error: 'project erforderlich (nur Buchstaben, Zahlen, Bindestriche, Punkte)' };
+    if (repoUrl && !validateUrl(repoUrl)) return { success: false, error: 'Ungültige repo_url' };
+    if (!validateBranch(branch)) return { success: false, error: 'Ungültiger Branch-Name' };
+    if (appPort !== undefined && (appPort < 1 || appPort > 65535)) return { success: false, error: 'app_port muss zwischen 1-65535 sein' };
 
     // 1. Test SSH
     const sshOk = await this.testSsh(host, user);
@@ -374,28 +386,37 @@ export class DeploySkill extends Skill {
               ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
               ssh_public_key: sshKey,
             });
-            steps.push(r.success ? `📦 LXC "${hostname}" erstellt` : `⚠️ LXC-Erstellung: ${r.error}`);
+            if (!r.success) {
+              steps.push(`❌ LXC-Erstellung fehlgeschlagen: ${r.error}`);
+              return { success: false, error: 'LXC-Erstellung fehlgeschlagen', data: { steps } };
+            }
+            steps.push(`📦 LXC "${hostname}" erstellt`);
           } else {
             const r = await this.proxmoxFn({
               action: 'clone_vm', template, hostname, memory, cores,
               ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
               ssh_public_key: sshKey,
             });
-            steps.push(r.success ? `📦 VM "${hostname}" geklont aus Template ${template}` : `⚠️ VM-Erstellung: ${r.error}`);
+            if (!r.success) {
+              steps.push(`❌ VM-Erstellung fehlgeschlagen: ${r.error}`);
+              return { success: false, error: 'VM-Erstellung fehlgeschlagen', data: { steps } };
+            }
+            steps.push(`📦 VM "${hostname}" geklont aus Template ${template}`);
           }
 
-          // Wait for VM to be ready
+          // Wait for VM to be ready via SSH
           steps.push('⏳ Warte auf VM...');
-          await new Promise(r => setTimeout(r, 15_000)); // initial wait
-          const sshOk = await this.testSsh(host, user);
-          if (!sshOk) {
-            await new Promise(r => setTimeout(r, 30_000)); // longer wait
-            const retryOk = await this.testSsh(host, user);
-            if (!retryOk) {
-              steps.push('⚠️ SSH nicht erreichbar nach 45s — VM läuft möglicherweise noch hoch');
-            }
+          await new Promise(r => setTimeout(r, 15_000));
+          let sshReady = await this.testSsh(host, user);
+          if (!sshReady) {
+            await new Promise(r => setTimeout(r, 30_000));
+            sshReady = await this.testSsh(host, user);
           }
-          steps.push(`✅ Host ${host} erreichbar`);
+          if (!sshReady) {
+            steps.push('❌ SSH nicht erreichbar nach 45s');
+            return { success: false, error: `SSH zu ${host} nicht erreichbar`, data: { steps } };
+          }
+          steps.push(`✅ Host ${host} erreichbar via SSH`);
 
           // Setup runtime if needed
           if (runtime === 'node') {
@@ -458,7 +479,7 @@ export class DeploySkill extends Skill {
             action: 'create_record',
             domain,
             type: 'A',
-            name: domain.split('.').length > 2 ? domain.split('.')[0] : '@',
+            name: domain, // Cloudflare accepts full domain name — zone auto-resolved
             content: publicIp,
             proxied: true,
           });
