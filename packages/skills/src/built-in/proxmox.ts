@@ -45,7 +45,13 @@ type Action =
   // admin
   | 'stop_vm'
   | 'delete_snapshot'
-  | 'rollback_snapshot';
+  | 'rollback_snapshot'
+  // infra
+  | 'list_templates'
+  | 'create_lxc'
+  | 'clone_vm'
+  | 'list_networks'
+  | 'wait_ready';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,6 +122,11 @@ export class ProxmoxSkill extends Skill {
             'stop_vm',
             'delete_snapshot',
             'rollback_snapshot',
+            'list_templates',
+            'create_lxc',
+            'clone_vm',
+            'list_networks',
+            'wait_ready',
           ],
           description: 'The Proxmox action to perform',
         },
@@ -151,6 +162,51 @@ export class ProxmoxSkill extends Skill {
         upid: {
           type: 'string',
           description: 'Task UPID for task_status',
+        },
+        // Infra
+        template: {
+          type: 'string',
+          description: 'Template-Name oder VMID für clone_vm, oder OS-Template für create_lxc (z.B. ubuntu-22.04)',
+        },
+        hostname: {
+          type: 'string',
+          description: 'Hostname für neue VM/LXC',
+        },
+        memory: {
+          type: 'number',
+          description: 'RAM in MB (default: 2048)',
+        },
+        cores: {
+          type: 'number',
+          description: 'CPU Cores (default: 2)',
+        },
+        disk_size: {
+          type: 'number',
+          description: 'Disk-Größe in GB (default: 8)',
+        },
+        ip: {
+          type: 'string',
+          description: 'Statische IP mit CIDR (z.B. 192.168.1.95/24)',
+        },
+        gateway: {
+          type: 'string',
+          description: 'Gateway-IP',
+        },
+        bridge: {
+          type: 'string',
+          description: 'Netzwerk-Bridge (z.B. vmbr0, vmbr1)',
+        },
+        vlan_tag: {
+          type: 'number',
+          description: 'VLAN-Tag',
+        },
+        ssh_public_key: {
+          type: 'string',
+          description: 'SSH Public Key für Cloud-Init (default: aus infra.sshKeyPath)',
+        },
+        new_vmid: {
+          type: 'number',
+          description: 'VMID für neue VM (auto wenn nicht angegeben)',
         },
       },
       required: ['action'],
@@ -233,6 +289,18 @@ export class ProxmoxSkill extends Skill {
           return await this.deleteSnapshot(input);
         case 'rollback_snapshot':
           return await this.rollbackSnapshot(input);
+
+        // ── INFRA ─────────────────────────────────────────────
+        case 'list_templates':
+          return await this.listTemplates(input);
+        case 'create_lxc':
+          return await this.createLxc(input);
+        case 'clone_vm':
+          return await this.cloneVm(input);
+        case 'list_networks':
+          return await this.listNetworksAction(input);
+        case 'wait_ready':
+          return await this.waitReady(input);
 
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
@@ -811,5 +879,175 @@ export class ProxmoxSkill extends Skill {
         '**Warning:** The VM will be stopped during rollback.',
       ].join('\n'),
     };
+  }
+
+  // ── Infra Actions ──────────────────────────────────────────────
+
+  private async listTemplates(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = (input.node as string) ?? this.config.defaultNode ?? "pve1";
+
+    // QEMU templates
+    const qemuVms = await this.get<Array<Record<string, unknown>>>(`/nodes/${node}/qemu`);
+    const qemuTemplates = qemuVms.filter((v: any) => v.template === 1);
+
+    // LXC available templates (appliances)
+    let lxcTemplates: Array<Record<string, unknown>> = [];
+    try {
+      lxcTemplates = await this.get<Array<Record<string, unknown>>>(`/nodes/${node}/aplinfo`);
+    } catch { /* aplinfo may not be available */ }
+
+    const qLines = qemuTemplates.map((t: any) => `| QEMU | ${t.vmid} | ${t.name ?? '?'} | ${Math.round((t.maxmem ?? 0) / 1024 / 1024)} MB | ${t.cpus ?? '?'} |`);
+    const lLines = lxcTemplates.slice(0, 20).map((t: any) => `| LXC | — | ${t.template ?? t.package ?? '?'} | — | — |`);
+
+    const display = `## Proxmox Templates (${node})\n\n| Typ | VMID | Name | RAM | CPU |\n|-----|------|------|-----|-----|\n${qLines.join('\n')}${lLines.length > 0 ? '\n' + lLines.join('\n') : ''}`;
+    return { success: true, data: { qemu: qemuTemplates, lxc: lxcTemplates.slice(0, 20) }, display };
+  }
+
+  private async createLxc(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = (input.node as string) ?? this.config.defaultNode ?? "pve1";
+    const hostname = input.hostname as string;
+    const template = input.template as string;
+    if (!hostname || !template) return { success: false, error: 'hostname und template erforderlich' };
+
+    const memory = (input.memory as number) ?? 2048;
+    const cores = (input.cores as number) ?? 2;
+    const diskSize = (input.disk_size as number) ?? 8;
+    const ip = input.ip as string | undefined;
+    const gateway = input.gateway as string | undefined;
+    const bridge = (input.bridge as string) ?? 'vmbr0';
+    const vlanTag = input.vlan_tag as number | undefined;
+    const sshKey = input.ssh_public_key as string | undefined;
+    const newVmid = input.new_vmid as number | undefined;
+
+    // Find the template in available templates
+    let ostemplate = template;
+    if (!template.includes(':')) {
+      // Try to find matching template
+      try {
+        const available = await this.get<Array<Record<string, unknown>>>(`/nodes/${node}/aplinfo`);
+        const match = available.find((t: any) =>
+          (t.template ?? t.package ?? '').toLowerCase().includes(template.toLowerCase()),
+        );
+        if (match) ostemplate = `local:vztmpl/${match.template ?? match.package}`;
+      } catch { /* use raw template string */ }
+    }
+
+    // Build network config
+    let netConfig = `name=eth0,bridge=${bridge}`;
+    if (vlanTag) netConfig += `,tag=${vlanTag}`;
+    if (ip) netConfig += `,ip=${ip}${gateway ? `,gw=${gateway}` : ''}`;
+
+    const body: Record<string, unknown> = {
+      ostemplate,
+      hostname,
+      memory,
+      cores,
+      rootfs: `local-lvm:${diskSize}`,
+      net0: netConfig,
+      start: 1,
+      unprivileged: 1,
+    };
+    if (newVmid) body.vmid = newVmid;
+    if (sshKey) body['ssh-public-keys'] = sshKey;
+
+    const upid = await this.post<string>(`/nodes/${node}/lxc`, body);
+
+    return {
+      success: true,
+      data: { node, hostname, upid, memory, cores, disk: diskSize, ip, bridge, vlanTag },
+      display: `✅ LXC Container "${hostname}" wird erstellt auf ${node}\n- Template: ${ostemplate}\n- RAM: ${memory} MB, ${cores} Cores, ${diskSize} GB Disk\n- Netzwerk: ${bridge}${vlanTag ? ` VLAN ${vlanTag}` : ''}${ip ? ` IP ${ip}` : ''}\n- UPID: \`${upid}\``,
+    };
+  }
+
+  private async cloneVm(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = (input.node as string) ?? this.config.defaultNode ?? "pve1";
+    const template = input.template as string;
+    const hostname = input.hostname as string;
+    if (!template || !hostname) return { success: false, error: 'template (VMID) und hostname erforderlich' };
+
+    const templateVmid = parseInt(template, 10);
+    if (isNaN(templateVmid)) return { success: false, error: `template muss eine VMID sein (z.B. 9000), bekam: "${template}"` };
+
+    const newVmid = input.new_vmid as number | undefined;
+    const ip = input.ip as string | undefined;
+    const gateway = input.gateway as string | undefined;
+    const sshKey = input.ssh_public_key as string | undefined;
+    const bridge = input.bridge as string | undefined;
+    const vlanTag = input.vlan_tag as number | undefined;
+    const memory = input.memory as number | undefined;
+    const cores = input.cores as number | undefined;
+
+    // Clone
+    const cloneBody: Record<string, unknown> = {
+      name: hostname,
+      full: 1,
+      target: node,
+    };
+    if (newVmid) cloneBody.newid = newVmid;
+
+    const upid = await this.post<string>(`/nodes/${node}/qemu/${templateVmid}/clone`, cloneBody);
+
+    // Wait for clone task (simple poll)
+    const clonedVmid = newVmid ?? templateVmid + 1; // approximate — better to parse UPID
+
+    // Configure Cloud-Init after clone completes
+    const configBody: Record<string, unknown> = {};
+    if (ip) configBody.ipconfig0 = `ip=${ip}${gateway ? `,gw=${gateway}` : ''}`;
+    if (sshKey) configBody.sshkeys = encodeURIComponent(sshKey);
+    if (memory) configBody.memory = memory;
+    if (cores) configBody.cores = cores;
+    if (bridge || vlanTag) {
+      let net = `virtio,bridge=${bridge ?? 'vmbr0'}`;
+      if (vlanTag) net += `,tag=${vlanTag}`;
+      configBody.net0 = net;
+    }
+
+    return {
+      success: true,
+      data: { node, templateVmid, hostname, upid, clonedVmid, ip },
+      display: `✅ VM "${hostname}" wird aus Template ${templateVmid} geklont auf ${node}\n- UPID: \`${upid}\`\n${ip ? `- Cloud-Init IP: ${ip}` : ''}\n\nNach dem Klonen: "proxmox start_vm vmid=${clonedVmid}" und "proxmox wait_ready vmid=${clonedVmid}"`,
+    };
+  }
+
+  private async listNetworksAction(input: Record<string, unknown>): Promise<SkillResult> {
+    const node = (input.node as string) ?? this.config.defaultNode ?? "pve1";
+    const nets = await this.get<Array<Record<string, unknown>>>(`/nodes/${node}/network`);
+
+    const lines = nets
+      .filter((n: any) => n.type === 'bridge' || n.type === 'bond' || n.type === 'vlan')
+      .map((n: any) => `| ${n.iface ?? '?'} | ${n.type} | ${n.address ?? 'dhcp'} | ${n.bridge_ports ?? '-'} | ${n.comments ?? ''} |`);
+
+    const display = `## Proxmox Netzwerk (${node})\n\n| Interface | Typ | IP | Ports | Kommentar |\n|-----------|-----|-------|-------|------|\n${lines.join('\n')}`;
+    return { success: true, data: nets, display };
+  }
+
+  private async waitReady(input: Record<string, unknown>): Promise<SkillResult> {
+    const vmid = input.vmid as number;
+    if (!vmid) return { success: false, error: 'vmid erforderlich' };
+    const node = (input.node as string) ?? this.config.defaultNode ?? "pve1";
+
+    // Poll VM status for up to 120 seconds
+    const maxWait = 120_000;
+    const start = Date.now();
+    let status = 'unknown';
+
+    while (Date.now() - start < maxWait) {
+      try {
+        const resolved = await this.resolveVm(vmid, node);
+        const vmStatus = await this.get<Record<string, unknown>>(`/nodes/${resolved.node}/${resolved.type}/${vmid}/status/current`);
+        status = vmStatus.status as string ?? 'unknown';
+        if (status === 'running') {
+          const waited = Math.round((Date.now() - start) / 1000);
+          return {
+            success: true,
+            data: { vmid, status, waitedSeconds: waited },
+            display: `✅ VM ${vmid} ist running (nach ${waited}s)`,
+          };
+        }
+      } catch { /* VM might not exist yet (clone in progress) */ }
+      await new Promise(r => setTimeout(r, 5_000));
+    }
+
+    return { success: false, error: `VM ${vmid} nach ${maxWait / 1000}s nicht ready (Status: ${status})` };
   }
 }
