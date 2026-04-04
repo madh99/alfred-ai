@@ -963,7 +963,40 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         if (p.action === 'create') p.action = 'set';
         if (p.title && !p.message) { p.message = p.title; delete p.title; }
         if (p.due && !p.triggerAt) { p.triggerAt = p.due; delete p.due; }
+        // Fix triggerAt in past → set to tomorrow same time
+        if (p.triggerAt && typeof p.triggerAt === 'string') {
+          const parsed = new Date(p.triggerAt.replace('T', ' ').replace(/:\d{2}$/, '')); // strip seconds
+          if (!isNaN(parsed.getTime()) && parsed.getTime() < Date.now()) {
+            const tomorrow = new Date(parsed.getTime() + 24 * 60 * 60_000);
+            p.triggerAt = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}T${String(tomorrow.getHours()).padStart(2, '0')}:${String(tomorrow.getMinutes()).padStart(2, '0')}`;
+          }
+          // Strip seconds if present (HH:MM:SS → HH:MM)
+          p.triggerAt = String(p.triggerAt).replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}):\d{2}$/, '$1');
+        }
       }
+
+      // Skip reminder if an active unfired reminder with similar topic already exists
+      if (action.skillName === 'reminder' && action.skillParams?.message) {
+        try {
+          const existingReminders = await this.adapter?.query(
+            "SELECT message FROM reminders WHERE fired = 0 AND user_id = ?",
+            [this.defaultChatId],
+          ) as Array<{ message: string }> | undefined;
+          if (existingReminders) {
+            const actionWords = new Set(String(action.skillParams.message).toLowerCase().split(/\s+/).filter(w => w.length >= 4));
+            const alreadyExists = existingReminders.some(r => {
+              const rWords = r.message.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+              const shared = rWords.filter(w => actionWords.has(w)).length;
+              return shared >= 3; // ≥3 shared keywords = same topic
+            });
+            if (alreadyExists) {
+              this.logger.info({ action: action.description }, 'Reasoning: reminder already exists, skipping');
+              continue;
+            }
+          }
+        } catch { /* proceed */ }
+      }
+
       if (await this.actionWasRecentlyProposed(action)) {
         // Allow re-proposal if the previous confirmation expired or was rejected
         const hash = this.actionHash(action);
@@ -1037,7 +1070,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           description: action.description,
           skillName: action.skillName,
           skillParams: action.skillParams,
-          timeoutMinutes: 60,
+          timeoutMinutes: 180,
         });
         await this.markActionProposed(action);
         this.logger.info({ action: action.description, autonomyLevel }, 'Reasoning: action enqueued for confirmation');
