@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto';
 
 // ── Types ────────────────────────────────────────────────────
 
-export type KGEntityType = 'person' | 'location' | 'item' | 'vehicle' | 'event' | 'organization' | 'metric';
+export type KGEntityType = 'person' | 'location' | 'item' | 'vehicle' | 'event' | 'organization' | 'metric'
+  | 'server' | 'service' | 'container' | 'network_device' | 'certificate';
 
 export interface KGEntity {
   id: string;

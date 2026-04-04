@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.352] - 2026-04-04
+
+### Added
+- **CMDB Skill** — Zentrales Configuration Management Database mit Auto-Discovery aus allen Infra-Skills (Proxmox, Docker, UniFi, Cloudflare DNS, NPM, pfSense, HomeAssistant). 13 Actions: discover, list/get/add/update/decommission/delete assets, add/remove relations, search, topology, stats.
+- **ITSM Skill** — IT Service Management mit Incident-Tracking, Change-Management und Service-Katalog. 16 Actions inkl. Impact-Analysis (transitive Graph-Traversierung), Health-Checks und Dashboard.
+- **InfraDocs Skill** — Infrastruktur-Dokumentation: Inventar-Reports, Mermaid-Topologie-Diagramme, Service-Dependency-Maps, LLM-generierte Runbooks, Change-Logs, Incident-Postmortem-Templates, CMDB-Export.
+- **CMDB Auto-Discovery** — Entdeckt automatisch Assets aus Proxmox (Nodes+VMs/LXCs), Docker (Container), UniFi (Devices+Networks), Cloudflare (DNS Records), NPM (Proxy Hosts+Certs), pfSense (Firewall Rules), HomeAssistant (Devices+Automations). Cross-Source-Relation-Discovery via IP-Matching.
+- **CMDB→KG Sync** — Assets werden automatisch als Knowledge-Graph-Entities gespiegelt (server, service, container, network_device, certificate). KG-Text-Extractor ignoriert CMDB-Entity-Namen (Blacklist).
+- **ITSM Auto-Incidents** — Monitor-Alerts erzeugen automatisch Incidents mit Dedup (offene Incidents gleichen Assets werden nicht dupliziert).
+- **Deploy→CMDB Integration** — Nach full_deploy werden alle erstellten Assets + Relationen automatisch im CMDB registriert.
+- **Reasoning CMDB-Awareness** — CMDB-Summary im Reasoning-Kontext (P2, 150 Token). Reasoning kann Incidents/Changes/Discovery vorschlagen.
+- **WebUI: CMDB-Seite** — Asset-Inventar mit Tabellen- und Topologie-Ansicht (Force-Graph), Filter, Detail-Panel mit Relationen + Change-History, inline Edit, Decommission, Discovery-Trigger.
+- **WebUI: ITSM-Seite** — 3-Tab-Layout: Incidents (Severity-basiert, Status-Transitions), Change Requests (Approve/Start/Complete/Rollback), Service-Katalog (Health-Checks, Impact-Analysis).
+- **WebUI: InfraDocs-Seite** — Dokumentations-Viewer mit Inventar, Topologie-Diagramme, Service-Maps, Change-Logs, Export.
+- **24 neue API-Endpoints** — CMDB CRUD (assets, relations, discover, stats), ITSM CRUD (incidents, changes, services, health-check, dashboard), Docs (generate, export).
+- **Migration v49** — 6 neue Tabellen: cmdb_assets, cmdb_asset_relations, cmdb_changes, cmdb_incidents, cmdb_services, cmdb_change_requests (SQLite + PostgreSQL).
+- **Stale-Asset-Detection** — Assets die bei Discovery nicht mehr gefunden werden → nach konfigurierbarem Threshold als 'unknown' markiert. Nie auto-delete.
+- **KG Entity-Typen erweitert** — server, service, container, network_device, certificate als neue Entity-Typen.
+
 ## [0.19.0-multi-ha.329] - 2026-04-03
 
 ### Fixed

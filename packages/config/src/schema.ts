@@ -521,6 +521,15 @@ export const InfraDefaultsConfigSchema = z.object({
   runtime: z.enum(['node', 'python', 'static']).optional(),
 });
 
+export const CmdbConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  autoDiscoveryIntervalHours: z.number().optional(),
+  staleThresholdDays: z.number().optional(),
+  autoIncidentFromMonitor: z.boolean().optional(),
+  kgSync: z.boolean().optional(),
+  healthCheckIntervalMinutes: z.number().optional(),
+});
+
 export const MqttConfigSchema = z.object({
   brokerUrl: z.string(),
   username: z.string().optional(),
@@ -581,5 +590,6 @@ export const AlfredConfigSchema = z.object({
   nginxProxyManager: NginxProxyManagerConfigSchema.optional(),
   pfsense: PfSenseConfigSchema.optional(),
   infra: InfraDefaultsConfigSchema.optional(),
+  cmdb: CmdbConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

@@ -225,6 +225,13 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_INFRA_DEFAULT_SSH_KEY_PATH: ['infra', 'sshKeyPath'],
   ALFRED_INFRA_DEFAULT_PROCESS_MANAGER: ['infra', 'processManager'],
   ALFRED_INFRA_DEFAULT_RUNTIME: ['infra', 'runtime'],
+  // CMDB
+  ALFRED_CMDB_ENABLED: ['cmdb', 'enabled'],
+  ALFRED_CMDB_DISCOVERY_INTERVAL: ['cmdb', 'autoDiscoveryIntervalHours'],
+  ALFRED_CMDB_STALE_THRESHOLD: ['cmdb', 'staleThresholdDays'],
+  ALFRED_CMDB_AUTO_INCIDENT: ['cmdb', 'autoIncidentFromMonitor'],
+  ALFRED_CMDB_KG_SYNC: ['cmdb', 'kgSync'],
+  ALFRED_CMDB_HEALTH_CHECK_INTERVAL: ['cmdb', 'healthCheckIntervalMinutes'],
   // Recipe
   ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
   ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],

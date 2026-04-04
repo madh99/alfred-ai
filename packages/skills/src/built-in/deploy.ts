@@ -80,6 +80,7 @@ export class DeploySkill extends Skill {
   private npmFn?: SkillCallback;
   private firewallFn?: SkillCallback;
   private unifiFn?: SkillCallback;
+  private cmdbCallback?: (result: Record<string, unknown>) => Promise<void>;
 
   setOrchestrationCallbacks(cbs: {
     proxmox?: SkillCallback;
@@ -93,6 +94,10 @@ export class DeploySkill extends Skill {
     this.npmFn = cbs.npm;
     this.firewallFn = cbs.firewall;
     this.unifiFn = cbs.unifi;
+  }
+
+  setCmdbCallback(cb: (result: Record<string, unknown>) => Promise<void>): void {
+    this.cmdbCallback = cb;
   }
 
   constructor(defaults?: InfraDefaultsConfig) {
@@ -501,6 +506,12 @@ export class DeploySkill extends Skill {
       }
 
       const display = `## Full Deploy: ${project}${domain ? ` → ${domain}` : ''}\n\n${steps.join('\n')}`;
+
+      // Notify CMDB about the deployment
+      if (this.cmdbCallback) {
+        try { await this.cmdbCallback({ host, project, domain, steps }); } catch { /* non-critical */ }
+      }
+
       return { success: true, data: { host, project, domain, steps }, display };
 
     } catch (err) {

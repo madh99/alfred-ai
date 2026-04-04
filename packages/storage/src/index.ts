@@ -62,3 +62,5 @@ export { SkillStateRepository, type SkillStateEntry } from './repositories/skill
 export { BmwTelematicRepository, type BmwTelematicEntry } from './repositories/bmw-telematic-repository.js';
 export { BrainstormingRepository, type BrainstormingSession, type BrainstormingItem } from './repositories/brainstorming-repository.js';
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
+export { CmdbRepository } from './repositories/cmdb-repository.js';
+export { ItsmRepository } from './repositories/itsm-repository.js';

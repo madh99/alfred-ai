@@ -1066,4 +1066,152 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 49,
+    description: 'CMDB assets, relations, changes, incidents, services, change requests',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmdb_assets (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_type TEXT NOT NULL,
+          name TEXT NOT NULL,
+          identifier TEXT,
+          source_skill TEXT,
+          source_id TEXT,
+          environment TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          ip_address TEXT,
+          hostname TEXT,
+          fqdn TEXT,
+          location TEXT,
+          owner TEXT,
+          purpose TEXT,
+          attributes TEXT NOT NULL DEFAULT '{}',
+          tags TEXT,
+          notes TEXT,
+          discovered_at TEXT,
+          last_seen_at TEXT,
+          last_verified_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_assets_user ON cmdb_assets(user_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_assets_type ON cmdb_assets(asset_type);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_assets_status ON cmdb_assets(status);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_assets_ip ON cmdb_assets(ip_address);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cmdb_assets_source ON cmdb_assets(user_id, source_skill, source_id);
+
+        CREATE TABLE IF NOT EXISTS cmdb_asset_relations (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_asset_id TEXT NOT NULL REFERENCES cmdb_assets(id) ON DELETE CASCADE,
+          target_asset_id TEXT NOT NULL REFERENCES cmdb_assets(id) ON DELETE CASCADE,
+          relation_type TEXT NOT NULL,
+          auto_discovered INTEGER NOT NULL DEFAULT 0,
+          attributes TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_rel_source ON cmdb_asset_relations(source_asset_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_rel_target ON cmdb_asset_relations(target_asset_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cmdb_rel_unique ON cmdb_asset_relations(user_id, source_asset_id, target_asset_id, relation_type);
+
+        CREATE TABLE IF NOT EXISTS cmdb_changes (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_id TEXT REFERENCES cmdb_assets(id) ON DELETE SET NULL,
+          change_type TEXT NOT NULL,
+          category TEXT NOT NULL DEFAULT 'manual',
+          field_name TEXT,
+          old_value TEXT,
+          new_value TEXT,
+          description TEXT,
+          source TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_changes_asset ON cmdb_changes(asset_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_changes_created ON cmdb_changes(created_at);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_changes_type ON cmdb_changes(change_type);
+
+        CREATE TABLE IF NOT EXISTS cmdb_incidents (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          severity TEXT NOT NULL DEFAULT 'medium',
+          status TEXT NOT NULL DEFAULT 'open',
+          priority INTEGER NOT NULL DEFAULT 3,
+          affected_asset_ids TEXT NOT NULL DEFAULT '[]',
+          affected_service_ids TEXT NOT NULL DEFAULT '[]',
+          symptoms TEXT,
+          root_cause TEXT,
+          resolution TEXT,
+          workaround TEXT,
+          detected_by TEXT,
+          related_incident_id TEXT,
+          opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+          acknowledged_at TEXT,
+          resolved_at TEXT,
+          closed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_incidents_user_status ON cmdb_incidents(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_incidents_severity ON cmdb_incidents(severity);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_incidents_created ON cmdb_incidents(created_at);
+
+        CREATE TABLE IF NOT EXISTS cmdb_services (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          category TEXT,
+          environment TEXT,
+          url TEXT,
+          health_check_url TEXT,
+          health_status TEXT NOT NULL DEFAULT 'unknown',
+          last_health_check TEXT,
+          criticality TEXT DEFAULT 'medium',
+          dependencies TEXT NOT NULL DEFAULT '[]',
+          asset_ids TEXT NOT NULL DEFAULT '[]',
+          owner TEXT,
+          documentation TEXT,
+          sla_notes TEXT,
+          maintenance_window TEXT,
+          tags TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_services_user ON cmdb_services(user_id);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_services_health ON cmdb_services(health_status);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_services_category ON cmdb_services(category);
+
+        CREATE TABLE IF NOT EXISTS cmdb_change_requests (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          type TEXT NOT NULL DEFAULT 'normal',
+          status TEXT NOT NULL DEFAULT 'draft',
+          risk_level TEXT NOT NULL DEFAULT 'medium',
+          affected_asset_ids TEXT NOT NULL DEFAULT '[]',
+          affected_service_ids TEXT NOT NULL DEFAULT '[]',
+          implementation_plan TEXT,
+          rollback_plan TEXT,
+          test_plan TEXT,
+          scheduled_at TEXT,
+          started_at TEXT,
+          completed_at TEXT,
+          result TEXT,
+          linked_incident_id TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_cr_user_status ON cmdb_change_requests(user_id, status);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_cr_type ON cmdb_change_requests(type);
+        CREATE INDEX IF NOT EXISTS idx_cmdb_cr_scheduled ON cmdb_change_requests(scheduled_at);
+      `);
+    },
+  },
 ];

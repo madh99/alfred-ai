@@ -6,7 +6,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -755,6 +755,211 @@ export class Alfred {
       deploySkill.setOrchestrationCallbacks(orchCallbacks);
       skillRegistry.register(deploySkill);
       this.logger.info('Deploy skill registered (with orchestration)');
+
+      // 4o6. CMDB + ITSM + InfraDocs (auto-enabled when any infra skill is configured)
+      if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant)) {
+        const cmdbRepo = new CmdbRepository(adapter);
+        const itsmRepo = new ItsmRepository(adapter);
+
+        const { CmdbSkill, ItsmSkill, InfraDocsSkill } = await import('@alfred/skills');
+        const cmdbSkill = new CmdbSkill(cmdbRepo, this.config.cmdb?.staleThresholdDays ?? 7);
+        const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo);
+        const infraDocsSkill = new InfraDocsSkill(cmdbRepo, itsmRepo);
+
+        // Wire LLM callback for runbook generation
+        infraDocsSkill.setLlmCallback(async (prompt: string, tier?: string) => {
+          if (!this.llmProvider) throw new Error('LLM nicht verfügbar');
+          const res = await this.llmProvider.complete({ messages: [{ role: 'user', content: prompt }], tier: (tier as any) ?? 'default', maxTokens: 3000 });
+          return res.content;
+        });
+
+        // Wire discovery sources from registered infra skills
+        const wrapSkillAsSource = (skillName: string, discoverFn: () => Promise<{ assets: any[]; relations: any[] }>) => {
+          if (skillRegistry.has(skillName)) cmdbSkill.registerDiscoverySource(skillName, discoverFn);
+        };
+
+        wrapSkillAsSource('proxmox', async () => {
+          const assets: any[] = [];
+          const relations: any[] = [];
+          try {
+            const nodesResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'list_nodes' }, {} as any);
+            if (nodesResult.success && Array.isArray(nodesResult.data)) {
+              for (const n of nodesResult.data) {
+                assets.push({ name: n.node, assetType: 'server', sourceSkill: 'proxmox', sourceId: `node:${n.node}`, ipAddress: n.ip, status: n.status === 'online' ? 'active' : 'inactive', attributes: { cpu: n.cpu, maxcpu: n.maxcpu, mem: n.mem, maxmem: n.maxmem, uptime: n.uptime } });
+              }
+            }
+            const vmsResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'list_vms' }, {} as any);
+            if (vmsResult.success && Array.isArray(vmsResult.data)) {
+              for (const v of vmsResult.data) {
+                const type = v.type === 'lxc' ? 'lxc' : 'vm';
+                assets.push({ name: v.name || `${type}-${v.vmid}`, assetType: type, sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, status: v.status === 'running' ? 'active' : 'inactive', attributes: { vmid: v.vmid, node: v.node, cpus: v.cpus, maxmem: v.maxmem, maxdisk: v.maxdisk } });
+                relations.push({ sourceKey: `proxmox:${v.node}:${v.vmid}`, targetKey: `proxmox:node:${v.node}`, relationType: 'hosted_on' as const });
+              }
+            }
+          } catch { /* skip source on error */ }
+          return { assets, relations };
+        });
+
+        wrapSkillAsSource('docker', async () => {
+          const assets: any[] = [];
+          try {
+            const result = await skillSandbox.execute(skillRegistry.get('docker')!, { action: 'containers' }, {} as any);
+            if (result.success && Array.isArray(result.data)) {
+              for (const c of result.data) {
+                const name = (c.Names?.[0] ?? c.Id ?? '').replace(/^\//, '');
+                assets.push({ name, assetType: 'container', sourceSkill: 'docker', sourceId: (c.Id ?? '').slice(0, 12), status: c.State === 'running' ? 'active' : 'inactive', attributes: { image: c.Image, status: c.Status, ports: c.Ports, host_ip: this.config.docker?.host?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') } });
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        wrapSkillAsSource('unifi', async () => {
+          const assets: any[] = [];
+          try {
+            const devResult = await skillSandbox.execute(skillRegistry.get('unifi')!, { action: 'list_devices' }, {} as any);
+            if (devResult.success && Array.isArray(devResult.data)) {
+              for (const d of devResult.data) {
+                assets.push({ name: d.name || d.mac, assetType: 'network_device', sourceSkill: 'unifi', sourceId: `device:${d.mac ?? d._id}`, ipAddress: d.ip, status: d.state === 1 ? 'active' : 'inactive', attributes: { mac: d.mac, model: d.model, type: d.type, version: d.version } });
+              }
+            }
+            const netResult = await skillSandbox.execute(skillRegistry.get('unifi')!, { action: 'list_networks' }, {} as any);
+            if (netResult.success && Array.isArray(netResult.data)) {
+              for (const n of netResult.data) {
+                assets.push({ name: n.name || n._id, assetType: 'network', sourceSkill: 'unifi', sourceId: `net:${n._id}`, attributes: { vlan: n.vlan_enabled ? n.vlan : undefined, subnet: n.ip_subnet } });
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        wrapSkillAsSource('cloudflare_dns', async () => {
+          const assets: any[] = [];
+          try {
+            const zonesResult = await skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, { action: 'list_zones' }, {} as any);
+            if (zonesResult.success && Array.isArray(zonesResult.data)) {
+              for (const z of zonesResult.data) {
+                const recsResult = await skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, { action: 'list_records', zone: z.name }, {} as any);
+                if (recsResult.success && Array.isArray(recsResult.data)) {
+                  for (const r of recsResult.data) {
+                    assets.push({ name: `${r.name} (${r.type})`, assetType: 'dns_record', sourceSkill: 'cloudflare_dns', sourceId: `${z.id}:${r.id}`, fqdn: r.name, attributes: { type: r.type, content: r.content, proxied: r.proxied, ttl: r.ttl, zone: z.name } });
+                  }
+                }
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        wrapSkillAsSource('nginx_proxy_manager', async () => {
+          const assets: any[] = [];
+          try {
+            const hostsResult = await skillSandbox.execute(skillRegistry.get('nginx_proxy_manager')!, { action: 'list_hosts' }, {} as any);
+            if (hostsResult.success && Array.isArray(hostsResult.data)) {
+              for (const h of hostsResult.data) {
+                assets.push({ name: h.domain_names?.[0] ?? `host-${h.id}`, assetType: 'proxy_host', sourceSkill: 'nginx_proxy_manager', sourceId: `host:${h.id}`, attributes: { domain_names: h.domain_names, forward_host: h.forward_host, forward_port: h.forward_port, forward_scheme: h.forward_scheme, ssl_forced: h.ssl_forced } });
+              }
+            }
+            const certsResult = await skillSandbox.execute(skillRegistry.get('nginx_proxy_manager')!, { action: 'list_certificates' }, {} as any);
+            if (certsResult.success && Array.isArray(certsResult.data)) {
+              for (const c of certsResult.data) {
+                assets.push({ name: c.nice_name || c.domain_names?.[0] || `cert-${c.id}`, assetType: 'certificate', sourceSkill: 'nginx_proxy_manager', sourceId: `cert:${c.id}`, attributes: { domain_names: c.domain_names, expires_on: c.expires_on, provider: c.provider } });
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        wrapSkillAsSource('pfsense', async () => {
+          const assets: any[] = [];
+          try {
+            const rulesResult = await skillSandbox.execute(skillRegistry.get('pfsense')!, { action: 'list_rules' }, {} as any);
+            if (rulesResult.success && Array.isArray(rulesResult.data)) {
+              for (const r of rulesResult.data) {
+                assets.push({ name: r.descr || `rule-${r.id}`, assetType: 'firewall_rule', sourceSkill: 'pfsense', sourceId: `rule:${r.id}`, attributes: { type: r.type, interface: r.interface, protocol: r.protocol, source: r.source, destination: r.destination, destination_address: r.destination?.address } });
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        wrapSkillAsSource('homeassistant', async () => {
+          const assets: any[] = [];
+          try {
+            const statesResult = await skillSandbox.execute(skillRegistry.get('homeassistant')!, { action: 'states' }, {} as any);
+            if (statesResult.success && Array.isArray(statesResult.data)) {
+              for (const s of statesResult.data) {
+                const entityId = s.entity_id as string;
+                if (!entityId) continue;
+                const domain = entityId.split('.')[0];
+                // Only discover physical devices and automations, skip transient states
+                if (!['automation', 'switch', 'light', 'sensor', 'binary_sensor', 'climate', 'cover', 'fan', 'media_player', 'camera'].includes(domain)) continue;
+                const type = domain === 'automation' ? 'automation' as const : 'iot_device' as const;
+                assets.push({ name: s.attributes?.friendly_name || entityId, assetType: type, sourceSkill: 'homeassistant', sourceId: entityId, status: s.state === 'unavailable' ? 'inactive' : 'active', attributes: { entity_id: entityId, domain, state: s.state } });
+              }
+            }
+          } catch { /* skip */ }
+          return { assets, relations: [] };
+        });
+
+        // Wire CMDB registration callback for full_deploy
+        deploySkill.setCmdbCallback?.(async (result: Record<string, unknown>) => {
+          try {
+            const userId = this.config.security?.ownerUserId ?? '';
+            const user = await this.userRepo?.findOrCreate('telegram' as any, userId);
+            const uid = user?.masterUserId ?? user?.id ?? userId;
+            // Register deployed assets
+            if (result.host) {
+              await cmdbRepo.upsertAsset(uid, { name: result.project as string ?? 'deployed-app', assetType: 'application', sourceSkill: 'deploy', sourceId: `deploy:${result.host}:${result.project}`, ipAddress: result.host as string, status: 'active', attributes: result });
+            }
+            await cmdbRepo.logChange(uid, null, 'created', 'deploy', undefined, undefined, undefined, `Full deploy: ${result.project ?? 'app'} auf ${result.host ?? '?'}`, 'deploy_skill');
+          } catch { /* non-critical */ }
+        });
+
+        // Wire monitor alert → auto-incident creation
+        if (this.config.cmdb?.autoIncidentFromMonitor !== false && skillRegistry.has('monitor')) {
+          const origMonitor = skillRegistry.get('monitor')!;
+          const origExecute = origMonitor.execute.bind(origMonitor);
+          origMonitor.execute = async (input: Record<string, unknown>, ctx: any) => {
+            const result = await origExecute(input, ctx);
+            if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+              const userId = ctx.masterUserId || ctx.userId;
+              for (const alert of result.data as Array<{ source: string; message: string }>) {
+                try {
+                  const keywords = alert.message.split(/\s+/).filter(w => w.length >= 4).map(w => w.toLowerCase());
+                  // Find CMDB asset by source
+                  const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
+                  if (!existingInc) {
+                    const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
+                    await itsmRepo.createIncident(userId, { title: `${alert.source}: ${alert.message.slice(0, 100)}`, severity, symptoms: alert.message, detectedBy: 'monitor' });
+                  }
+                } catch { /* dedup or creation failure — non-critical */ }
+              }
+            }
+            return result;
+          };
+        }
+
+        // Wire KG sync callback (CMDB → KG)
+        if (this.config.cmdb?.kgSync !== false) {
+          cmdbSkill.setKgSyncCallback(async (uid: string) => {
+            if (!this.kgServiceRef) return;
+            const allAssets = await cmdbRepo.listAssets(uid);
+            const allRels = await cmdbRepo.getAllRelations(uid);
+            const relMapped = allRels.map(r => {
+              const src = allAssets.find(a => a.id === r.sourceAssetId);
+              const tgt = allAssets.find(a => a.id === r.targetAssetId);
+              return { sourceEntityName: src?.name ?? '', targetEntityName: tgt?.name ?? '', relationType: r.relationType };
+            }).filter(r => r.sourceEntityName && r.targetEntityName);
+            await this.kgServiceRef.syncFromCmdb(uid, allAssets, relMapped);
+          });
+        }
+
+        skillRegistry.register(cmdbSkill);
+        skillRegistry.register(itsmSkill);
+        skillRegistry.register(infraDocsSkill);
+        this.logger.info('CMDB + ITSM + InfraDocs skills registered');
+      }
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
@@ -1761,6 +1966,85 @@ export class Alfred {
           },
         });
         this.logger.info('Knowledge Graph API registered');
+      }
+    }
+
+    // Wire CMDB/ITSM/Docs API on HTTP adapter
+    {
+      const apiAdapter = this.adapters.get('api');
+      const dbAdapter = this.database.getAdapter();
+      if (apiAdapter && 'setCmdbCallbacks' in apiAdapter) {
+        const cmdbRepo = new CmdbRepository(dbAdapter);
+        const itsmRepo = new ItsmRepository(dbAdapter);
+
+        const resolveUser = async (userId: string) => {
+          if (!userId && this.config.security?.ownerUserId) {
+            const user = await this.userRepo!.findOrCreate('telegram' as any, this.config.security.ownerUserId);
+            return user.masterUserId ?? user.id;
+          }
+          return userId;
+        };
+
+        (apiAdapter as any).setCmdbCallbacks({
+          listAssets: async (uid: string, filters?: Record<string, unknown>) => cmdbRepo.listAssets(await resolveUser(uid), filters as any),
+          getAsset: async (uid: string, id: string) => {
+            const ruid = await resolveUser(uid);
+            const asset = await cmdbRepo.getAssetById(ruid, id);
+            const relations = asset ? await cmdbRepo.getRelationsForAsset(ruid, id) : [];
+            const changes = asset ? await cmdbRepo.getChangesForAsset(ruid, id, 20) : [];
+            return { asset, relations, changes };
+          },
+          createAsset: async (uid: string, data: Record<string, unknown>) => cmdbRepo.upsertAsset(await resolveUser(uid), data as any),
+          updateAsset: async (uid: string, id: string, data: Record<string, unknown>) => cmdbRepo.updateAsset(await resolveUser(uid), id, data as any),
+          deleteAsset: async (uid: string, id: string) => cmdbRepo.decommissionAsset(await resolveUser(uid), id),
+          listRelations: async (uid: string) => cmdbRepo.getAllRelations(await resolveUser(uid)),
+          createRelation: async (uid: string, data: Record<string, unknown>) => cmdbRepo.upsertRelation(await resolveUser(uid), data.source_asset_id as string, data.target_asset_id as string, data.relation_type as any),
+          deleteRelation: async (uid: string, id: string) => cmdbRepo.removeRelation(await resolveUser(uid), id),
+          discover: async (uid: string) => {
+            // Trigger discovery via skill execution
+            const cmdbSkill = this.skillRegistry?.get('cmdb');
+            if (cmdbSkill) {
+              return cmdbSkill.execute({ action: 'discover' }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);
+            }
+            return { success: false, error: 'CMDB skill not registered' };
+          },
+          getStats: async (uid: string) => cmdbRepo.getStats(await resolveUser(uid)),
+          getChanges: async (uid: string, assetId: string) => cmdbRepo.getChangesForAsset(await resolveUser(uid), assetId),
+        });
+
+        (apiAdapter as any).setItsmCallbacks({
+          listIncidents: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listIncidents(await resolveUser(uid), filters as any),
+          getIncident: async (uid: string, id: string) => itsmRepo.getIncidentById(await resolveUser(uid), id),
+          createIncident: async (uid: string, data: Record<string, unknown>) => itsmRepo.createIncident(await resolveUser(uid), data as any),
+          updateIncident: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateIncident(await resolveUser(uid), id, data as any),
+          listChanges: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listChangeRequests(await resolveUser(uid), filters as any),
+          createChange: async (uid: string, data: Record<string, unknown>) => itsmRepo.createChangeRequest(await resolveUser(uid), data as any),
+          updateChange: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateChangeRequest(await resolveUser(uid), id, data as any),
+          listServices: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listServices(await resolveUser(uid), filters as any),
+          createService: async (uid: string, data: Record<string, unknown>) => itsmRepo.createService(await resolveUser(uid), data as any),
+          updateService: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateService(await resolveUser(uid), id, data as any),
+          healthCheck: async (uid: string) => {
+            const itsmSkill = this.skillRegistry?.get('itsm');
+            if (itsmSkill) return itsmSkill.execute({ action: 'health_check' }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);
+            return { success: false, error: 'ITSM skill not registered' };
+          },
+          getDashboard: async (uid: string) => itsmRepo.getDashboard(await resolveUser(uid)),
+        });
+
+        (apiAdapter as any).setDocsCallbacks({
+          generate: async (uid: string, type: string, params?: Record<string, unknown>) => {
+            const docsSkill = this.skillRegistry?.get('infra_docs');
+            if (docsSkill) return docsSkill.execute({ action: type, ...params }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);
+            return { success: false, error: 'InfraDocs skill not registered' };
+          },
+          exportData: async (uid: string, format?: string) => {
+            const docsSkill = this.skillRegistry?.get('infra_docs');
+            if (docsSkill) return docsSkill.execute({ action: 'export', format }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);
+            return { success: false, error: 'InfraDocs skill not registered' };
+          },
+        });
+
+        this.logger.info('CMDB/ITSM/Docs API registered');
       }
     }
 

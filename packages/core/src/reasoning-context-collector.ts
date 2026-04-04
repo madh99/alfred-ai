@@ -283,6 +283,29 @@ export class ReasoningContextCollector {
       });
     }
 
+    // CMDB summary (asset counts + open incidents)
+    if (this.skillRegistry.has('cmdb') || this.skillRegistry.has('itsm')) {
+      defs.push({
+        key: 'cmdb', label: 'CMDB / ITSM', priority: 2, maxTokens: 150,
+        fetch: async () => {
+          const parts: string[] = [];
+          try {
+            if (this.skillRegistry.has('cmdb')) {
+              const statsResult = await this.fetchWithTimeout('cmdb', { action: 'stats' }, 10_000);
+              if (statsResult) parts.push(statsResult);
+            }
+          } catch { /* skip */ }
+          try {
+            if (this.skillRegistry.has('itsm')) {
+              const dashResult = await this.fetchWithTimeout('itsm', { action: 'dashboard' }, 10_000);
+              if (dashResult) parts.push(dashResult);
+            }
+          } catch { /* skip */ }
+          return parts.join('\n') || '';
+        },
+      });
+    }
+
     const p3Skills: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'mealPlan', label: 'Meal-Plan heute', skill: 'recipe', input: { action: 'meal_plan', sub_action: 'get', week: 'current', day: new Date().toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase() }, maxTokens: 100 },
       { key: 'travel', label: 'Anstehende Reisen', skill: 'travel', input: { action: 'plan_list', status: 'booked' }, maxTokens: 100 },

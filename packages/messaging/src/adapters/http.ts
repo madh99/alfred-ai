@@ -33,6 +33,40 @@ export interface TlsOptions {
   key?: string;   // path to key.pem
 }
 
+export interface CmdbCallbacks {
+  listAssets: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  getAsset: (userId: string, id: string) => Promise<any>;
+  createAsset: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateAsset: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  deleteAsset: (userId: string, id: string) => Promise<boolean>;
+  listRelations: (userId: string) => Promise<any[]>;
+  createRelation: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  deleteRelation: (userId: string, id: string) => Promise<boolean>;
+  discover: (userId: string) => Promise<any>;
+  getStats: (userId: string) => Promise<any>;
+  getChanges: (userId: string, assetId: string) => Promise<any[]>;
+}
+
+export interface ItsmCallbacks {
+  listIncidents: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  getIncident: (userId: string, id: string) => Promise<any>;
+  createIncident: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateIncident: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  listChanges: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  createChange: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateChange: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  listServices: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  createService: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateService: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  healthCheck: (userId: string) => Promise<any>;
+  getDashboard: (userId: string) => Promise<any>;
+}
+
+export interface DocsCallbacks {
+  generate: (userId: string, type: string, params?: Record<string, unknown>) => Promise<any>;
+  exportData: (userId: string, format?: string) => Promise<any>;
+}
+
 export interface HttpAdapterOptions {
   port: number;
   host: string;
@@ -76,6 +110,9 @@ export class HttpAdapter extends MessagingAdapter {
   private knowledgeGraphDeleteRelationFn?: (relationId: string) => Promise<boolean>;
   private knowledgeGraphUpdateEntityFn?: (entityId: string, data: Record<string, unknown>) => Promise<boolean>;
   private knowledgeGraphUpdateRelationFn?: (relationId: string, data: Record<string, unknown>) => Promise<boolean>;
+  private cmdbCallbacks?: CmdbCallbacks;
+  private itsmCallbacks?: ItsmCallbacks;
+  private docsCallbacks?: DocsCallbacks;
   private readonly webUiPath?: string;
   private readonly tls?: TlsOptions;
   private readonly authCb?: HttpAdapterOptions['authCallback'];
@@ -129,6 +166,10 @@ export class HttpAdapter extends MessagingAdapter {
     this.knowledgeGraphUpdateEntityFn = opts.updateEntity;
     this.knowledgeGraphUpdateRelationFn = opts.updateRelation;
   }
+
+  setCmdbCallbacks(cbs: CmdbCallbacks): void { this.cmdbCallbacks = cbs; }
+  setItsmCallbacks(cbs: ItsmCallbacks): void { this.itsmCallbacks = cbs; }
+  setDocsCallbacks(cbs: DocsCallbacks): void { this.docsCallbacks = cbs; }
 
   async connect(): Promise<void> {
     this.status = 'connecting';
@@ -341,7 +382,7 @@ export class HttpAdapter extends MessagingAdapter {
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', this.corsOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') {
@@ -374,6 +415,77 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleKgUpdateEntity(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'PATCH') {
       this.handleKgUpdateRelation(req, res, url).catch(err => this.safeError(res, err));
+    // ── CMDB API ──
+    } else if (url.pathname === '/api/cmdb/assets' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, async (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listAssets(userId, filters);
+      });
+    } else if (url.pathname === '/api/cmdb/assets' && req.method === 'POST') {
+      this.handleCmdbBodyRoute(req, res, (cbs, userId, body) => cbs.createAsset(userId, body));
+    } else if (url.pathname.startsWith('/api/cmdb/assets/') && req.method === 'GET') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getAsset(userId, id));
+    } else if (url.pathname.startsWith('/api/cmdb/assets/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/api/cmdb/assets/')[1];
+      this.handleCmdbBodyRoute(req, res, (cbs, userId, body) => cbs.updateAsset(userId, id, body));
+    } else if (url.pathname.startsWith('/api/cmdb/assets/') && req.method === 'DELETE') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.deleteAsset(userId, id));
+    } else if (url.pathname === '/api/cmdb/relations' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.listRelations(userId));
+    } else if (url.pathname === '/api/cmdb/relations' && req.method === 'POST') {
+      this.handleCmdbBodyRoute(req, res, (cbs, userId, body) => cbs.createRelation(userId, body));
+    } else if (url.pathname.startsWith('/api/cmdb/relations/') && req.method === 'DELETE') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.deleteRelation(userId, id));
+    } else if (url.pathname === '/api/cmdb/discover' && req.method === 'POST') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.discover(userId));
+    } else if (url.pathname === '/api/cmdb/stats' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getStats(userId));
+    // ── ITSM API ──
+    } else if (url.pathname === '/api/itsm/incidents' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listIncidents(userId, filters);
+      });
+    } else if (url.pathname === '/api/itsm/incidents' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createIncident(userId, body));
+    } else if (url.pathname.startsWith('/api/itsm/incidents/') && req.method === 'GET') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getIncident(userId, id));
+    } else if (url.pathname.startsWith('/api/itsm/incidents/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/api/itsm/incidents/')[1];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateIncident(userId, id, body));
+    } else if (url.pathname === '/api/itsm/changes' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listChanges(userId, filters);
+      });
+    } else if (url.pathname === '/api/itsm/changes' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createChange(userId, body));
+    } else if (url.pathname.startsWith('/api/itsm/changes/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/api/itsm/changes/')[1];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateChange(userId, id, body));
+    } else if (url.pathname === '/api/itsm/services' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listServices(userId, filters);
+      });
+    } else if (url.pathname === '/api/itsm/services' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createService(userId, body));
+    } else if (url.pathname.startsWith('/api/itsm/services/health-check') && req.method === 'POST') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.healthCheck(userId));
+    } else if (url.pathname.startsWith('/api/itsm/services/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/api/itsm/services/')[1];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateService(userId, id, body));
+    } else if (url.pathname === '/api/itsm/dashboard' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getDashboard(userId));
+    // ── Docs API ──
+    } else if (url.pathname === '/api/docs/generate' && req.method === 'POST') {
+      this.handleDocsBodyRoute(req, res, (cbs, userId, body) => cbs.generate(userId, body.type as string, body));
+    } else if (url.pathname === '/api/docs/export' && req.method === 'GET') {
+      this.handleDocsRoute(req, res, (cbs, userId) => cbs.exportData(userId, url.searchParams.get('format') ?? undefined));
     } else if (url.pathname === '/api/auth/login' && req.method === 'POST') {
       this.handleAuthLogin(req, res);
     } else if (url.pathname === '/api/auth/me' && req.method === 'GET') {
@@ -670,6 +782,86 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.knowledgeGraphUpdateRelationFn(relationId, data);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── CMDB/ITSM/Docs generic handlers ──
+
+  private async resolveUserId(req: http.IncomingMessage): Promise<string> {
+    const token = req.headers['authorization']?.startsWith('Bearer ') ? req.headers['authorization'].slice(7) : null;
+    if (this.authCb && token) {
+      const user = await this.authCb.getUserByToken(token);
+      if (user) return (user as any).masterUserId ?? (user as any).id ?? '';
+    }
+    return '';
+  }
+
+  private handleCmdbRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: CmdbCallbacks, userId: string) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.cmdbCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'CMDB not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const result = await fn(this.cmdbCallbacks, userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
+  }
+
+  private handleCmdbBodyRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: CmdbCallbacks, userId: string, body: Record<string, unknown>) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.cmdbCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'CMDB not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const body = JSON.parse(await this.readBody(req));
+      const result = await fn(this.cmdbCallbacks, userId, body);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
+  }
+
+  private handleItsmRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: ItsmCallbacks, userId: string) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.itsmCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'ITSM not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const result = await fn(this.itsmCallbacks, userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
+  }
+
+  private handleItsmBodyRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: ItsmCallbacks, userId: string, body: Record<string, unknown>) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.itsmCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'ITSM not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const body = JSON.parse(await this.readBody(req));
+      const result = await fn(this.itsmCallbacks, userId, body);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
+  }
+
+  private handleDocsRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: DocsCallbacks, userId: string) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.docsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Docs not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const result = await fn(this.docsCallbacks, userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
+  }
+
+  private handleDocsBodyRoute(req: http.IncomingMessage, res: http.ServerResponse, fn: (cbs: DocsCallbacks, userId: string, body: Record<string, unknown>) => Promise<any>): void {
+    (async () => {
+      if (!(await this.checkAuth(req, res))) return;
+      if (!this.docsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Docs not configured' })); return; }
+      const userId = await this.resolveUserId(req);
+      const body = JSON.parse(await this.readBody(req));
+      const result = await fn(this.docsCallbacks, userId, body);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    })().catch(err => this.safeError(res, err));
   }
 
   private readBody(req: http.IncomingMessage): Promise<string> {

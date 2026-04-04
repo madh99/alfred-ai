@@ -518,6 +518,181 @@ export interface InfraDefaultsConfig {
   runtime?: 'node' | 'python' | 'static';
 }
 
+// ── CMDB / ITSM ─────────────────────────────────────────────
+
+export type CmdbAssetType =
+  | 'server' | 'vm' | 'lxc' | 'container'
+  | 'service' | 'application'
+  | 'dns_record' | 'proxy_host' | 'firewall_rule' | 'certificate'
+  | 'network' | 'network_device'
+  | 'automation' | 'iot_device';
+
+export type CmdbAssetStatus =
+  | 'active' | 'inactive' | 'degraded' | 'decommissioned' | 'planned' | 'unknown';
+
+export type CmdbRelationType =
+  | 'hosted_on' | 'runs_on' | 'depends_on' | 'routes_to'
+  | 'protects' | 'resolves_to' | 'proxied_by' | 'part_of'
+  | 'manages' | 'monitors' | 'backs_up' | 'replicates_to' | 'connects_to';
+
+export type CmdbEnvironment = 'production' | 'staging' | 'development' | 'test' | 'lab';
+
+export type CmdbChangeType =
+  | 'discovered' | 'created' | 'updated' | 'deleted' | 'decommissioned'
+  | 'status_changed' | 'attribute_changed' | 'relation_added' | 'relation_removed';
+
+export type CmdbChangeCategory =
+  | 'auto_discovery' | 'manual' | 'deploy' | 'incident_resolution' | 'maintenance';
+
+export type IncidentSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export type IncidentStatus =
+  | 'open' | 'acknowledged' | 'investigating' | 'mitigating' | 'resolved' | 'closed' | 'cancelled';
+
+export type ChangeRequestType = 'standard' | 'normal' | 'emergency';
+
+export type ChangeRequestStatus =
+  | 'draft' | 'submitted' | 'approved' | 'in_progress'
+  | 'completed' | 'failed' | 'rolled_back' | 'cancelled';
+
+export type ServiceCategory =
+  | 'web' | 'api' | 'database' | 'messaging' | 'monitoring'
+  | 'automation' | 'media' | 'network' | 'security' | 'storage';
+
+export type ServiceHealthStatus = 'healthy' | 'degraded' | 'down' | 'unknown';
+
+export type ServiceCriticality = 'critical' | 'high' | 'medium' | 'low';
+
+export interface CmdbAsset {
+  id: string;
+  userId: string;
+  assetType: CmdbAssetType;
+  name: string;
+  identifier?: string;
+  sourceSkill?: string;
+  sourceId?: string;
+  environment?: CmdbEnvironment;
+  status: CmdbAssetStatus;
+  ipAddress?: string;
+  hostname?: string;
+  fqdn?: string;
+  location?: string;
+  owner?: string;
+  purpose?: string;
+  attributes: Record<string, unknown>;
+  tags?: string;
+  notes?: string;
+  discoveredAt?: string;
+  lastSeenAt?: string;
+  lastVerifiedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CmdbAssetRelation {
+  id: string;
+  userId: string;
+  sourceAssetId: string;
+  targetAssetId: string;
+  relationType: CmdbRelationType;
+  autoDiscovered: boolean;
+  attributes: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CmdbChange {
+  id: string;
+  userId: string;
+  assetId?: string;
+  changeType: CmdbChangeType;
+  category: CmdbChangeCategory;
+  fieldName?: string;
+  oldValue?: string;
+  newValue?: string;
+  description?: string;
+  source?: string;
+  createdAt: string;
+}
+
+export interface CmdbIncident {
+  id: string;
+  userId: string;
+  title: string;
+  description?: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  priority: number;
+  affectedAssetIds: string[];
+  affectedServiceIds: string[];
+  symptoms?: string;
+  rootCause?: string;
+  resolution?: string;
+  workaround?: string;
+  detectedBy?: string;
+  relatedIncidentId?: string;
+  openedAt: string;
+  acknowledgedAt?: string;
+  resolvedAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CmdbService {
+  id: string;
+  userId: string;
+  name: string;
+  description?: string;
+  category?: ServiceCategory;
+  environment?: CmdbEnvironment;
+  url?: string;
+  healthCheckUrl?: string;
+  healthStatus: ServiceHealthStatus;
+  lastHealthCheck?: string;
+  criticality?: ServiceCriticality;
+  dependencies: string[];
+  assetIds: string[];
+  owner?: string;
+  documentation?: string;
+  slaNotes?: string;
+  maintenanceWindow?: string;
+  tags?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CmdbChangeRequest {
+  id: string;
+  userId: string;
+  title: string;
+  description?: string;
+  type: ChangeRequestType;
+  status: ChangeRequestStatus;
+  riskLevel: IncidentSeverity;
+  affectedAssetIds: string[];
+  affectedServiceIds: string[];
+  implementationPlan?: string;
+  rollbackPlan?: string;
+  testPlan?: string;
+  scheduledAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+  result?: string;
+  linkedIncidentId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CmdbConfig {
+  enabled?: boolean;
+  autoDiscoveryIntervalHours?: number;
+  staleThresholdDays?: number;
+  autoIncidentFromMonitor?: boolean;
+  kgSync?: boolean;
+  healthCheckIntervalMinutes?: number;
+}
+
 export interface MqttConfig {
   brokerUrl: string;
   username?: string;
@@ -579,6 +754,7 @@ export interface AlfredConfig {
   nginxProxyManager?: NginxProxyManagerConfig;
   pfsense?: PfSenseConfig;
   infra?: InfraDefaultsConfig;
+  cmdb?: CmdbConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };

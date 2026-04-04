@@ -153,6 +153,166 @@ export class AlfredClient {
     const data = await res.json();
     return data.success;
   }
+
+  // ── CMDB API ──
+
+  private get authHeaders(): Record<string, string> {
+    return this.token ? { Authorization: `Bearer ${this.token}` } : {};
+  }
+  private get jsonHeaders(): Record<string, string> {
+    return { 'Content-Type': 'application/json', ...this.authHeaders };
+  }
+
+  async cmdbListAssets(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/cmdb/assets${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbGetAsset(id: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/assets/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbCreateAsset(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/assets`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbUpdateAsset(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/assets/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbDeleteAsset(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/assets/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
+  async cmdbListRelations(): Promise<any[]> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/relations`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbCreateRelation(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/relations`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbDeleteRelation(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/relations/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
+  async cmdbDiscover(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/discover`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async cmdbGetStats(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/cmdb/stats`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`CMDB: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ── ITSM API ──
+
+  async itsmListIncidents(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmGetIncident(id: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmCreateIncident(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmUpdateIncident(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmListChanges(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/itsm/changes${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmCreateChange(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/changes`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmUpdateChange(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/changes/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmListServices(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/itsm/services${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmCreateService(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmUpdateService(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmHealthCheck(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/health-check`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmDashboard(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/dashboard`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // ── Docs API ──
+
+  async docsGenerate(type: string, params?: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/docs/generate`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ type, ...params }) });
+    if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async docsExport(format?: string): Promise<any> {
+    const params = format ? `?format=${format}` : '';
+    const res = await fetch(`${this.baseUrl}/api/docs/export${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
+    return res.json();
+  }
 }
 
 export interface KGEntity {

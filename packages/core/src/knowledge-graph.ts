@@ -84,6 +84,8 @@ const MAX_MAP_TOKENS = 1200;
 
 export class KnowledgeGraphService {
   private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
+  /** Names of CMDB-managed assets — excluded from text extraction to avoid double-creation. */
+  private cmdbEntityNames = new Set<string>();
 
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
@@ -104,6 +106,55 @@ export class KnowledgeGraphService {
   /** Get the LLM linker (for weekly chat analysis). */
   getLLMLinker(): import('./llm-entity-linker.js').LLMEntityLinker | undefined {
     return this.llmLinker;
+  }
+
+  /**
+   * Sync CMDB assets into the Knowledge Graph as entities.
+   * One-way: CMDB → KG. Creates/updates KG entities with source='cmdb'.
+   */
+  async syncFromCmdb(userId: string, assets: Array<{ id: string; name: string; assetType: string; ipAddress?: string; sourceSkill?: string; status?: string; attributes?: Record<string, unknown> }>, relations: Array<{ sourceEntityName: string; targetEntityName: string; relationType: string }>): Promise<void> {
+    const kgTypeMap: Record<string, string> = {
+      server: 'server', vm: 'server', lxc: 'server',
+      container: 'container', service: 'service', application: 'service',
+      dns_record: 'service', proxy_host: 'service', certificate: 'certificate',
+      network: 'network_device', network_device: 'network_device',
+      firewall_rule: 'service', automation: 'service', iot_device: 'network_device',
+    };
+
+    this.cmdbEntityNames.clear();
+
+    for (const asset of assets) {
+      const kgType = kgTypeMap[asset.assetType] ?? 'service';
+      const attrs: Record<string, unknown> = {
+        cmdb_id: asset.id,
+        ip_address: asset.ipAddress,
+        source_skill: asset.sourceSkill,
+        cmdb_status: asset.status,
+        ...(asset.attributes ?? {}),
+      };
+
+      try {
+        await this.kgRepo.upsertEntity(userId, asset.name, kgType as any, attrs, 'cmdb');
+        this.cmdbEntityNames.add(asset.name.toLowerCase());
+      } catch {
+        // Constraint violation — skip
+      }
+    }
+
+    for (const rel of relations) {
+      try {
+        const allEntities = await this.kgRepo.getAllEntities(userId);
+        const src = allEntities.find(e => e.name.toLowerCase() === rel.sourceEntityName.toLowerCase());
+        const tgt = allEntities.find(e => e.name.toLowerCase() === rel.targetEntityName.toLowerCase());
+        if (src && tgt) {
+          await this.kgRepo.upsertRelation(userId, src.id, tgt.id, rel.relationType, 'cmdb');
+        }
+      } catch {
+        // Skip
+      }
+    }
+
+    this.logger.debug({ count: assets.length }, 'CMDB → KG sync complete');
   }
 
   /**
@@ -1424,6 +1475,9 @@ export class KnowledgeGraphService {
   /** Classify an extracted name into the correct entity type. */
   private classifyEntityName(name: string): string | null {
     const lower = name.toLowerCase();
+
+    // 0. CMDB-managed entity? Skip — CMDB is the source of truth for infra entities.
+    if (this.cmdbEntityNames.has(lower)) return null;
 
     // 1. Known location?
     if (KNOWN_LOCATIONS_LOWER.has(lower)) return 'location';
