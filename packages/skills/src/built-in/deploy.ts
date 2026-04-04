@@ -6,7 +6,8 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-type Action = 'deploy' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
+type Action = 'deploy' | 'full_deploy' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
+type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
 /**
  * Deploy Skill — SSH-basiertes Deployment auf beliebigen Hosts.
@@ -32,8 +33,20 @@ export class DeploySkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['deploy', 'status', 'logs', 'stop', 'start', 'restart', 'rollback', 'setup_node', 'setup_python'] },
-        host: { type: 'string', description: 'Ziel-IP oder Hostname (erforderlich)' },
+        action: { type: 'string', enum: ['deploy', 'full_deploy', 'status', 'logs', 'stop', 'start', 'restart', 'rollback', 'setup_node', 'setup_python'] },
+        host: { type: 'string', description: 'Ziel-IP oder Hostname (für deploy/status/logs etc. erforderlich, für full_deploy optional wenn target=new_lxc/new_vm)' },
+        target: { type: 'string', description: 'Deployment-Ziel für full_deploy: existing (bestehendem Host), new_lxc (neue LXC erstellen), new_vm (VM aus Template klonen). Default: existing' },
+        domain: { type: 'string', description: 'Domain für DNS + Reverse Proxy (für full_deploy, z.B. uboot.cc)' },
+        public_ip: { type: 'string', description: 'Öffentliche IP für DNS A-Record (für full_deploy)' },
+        network_name: { type: 'string', description: 'VLAN/Netzwerk-Name für IP-Vergabe bei new_lxc/new_vm (z.B. Default, Keller)' },
+        template: { type: 'string', description: 'Proxmox Template für new_lxc/new_vm (z.B. ubuntu-22.04, oder VMID 9000)' },
+        hostname: { type: 'string', description: 'Hostname für neue VM/LXC' },
+        memory: { type: 'number', description: 'RAM in MB für neue VM/LXC (default: 2048)' },
+        cores: { type: 'number', description: 'CPU Cores für neue VM/LXC (default: 2)' },
+        skip_dns: { type: 'boolean', description: 'DNS-Schritt überspringen (default: false)' },
+        skip_proxy: { type: 'boolean', description: 'Reverse-Proxy-Schritt überspringen (default: false)' },
+        skip_firewall: { type: 'boolean', description: 'Firewall-Schritt überspringen (default: false)' },
+        npm_target: { type: 'string', description: 'IP des Nginx Proxy Manager Hosts (für Firewall-Regel NPM→App)' },
         user: { type: 'string', description: 'SSH User (default: aus infra config)' },
         project: { type: 'string', description: 'Projektname (= Verzeichnisname + pm2/systemd Service-Name)' },
         repo_url: { type: 'string', description: 'Git-Repo URL zum Klonen (bei erstem Deploy)' },
@@ -46,11 +59,32 @@ export class DeploySkill extends Skill {
         start_command: { type: 'string', description: 'Custom Start-Befehl (default: npm start)' },
         lines: { type: 'number', description: 'Anzahl Log-Zeilen für "logs" Action (default: 50)' },
       },
-      required: ['action', 'host'],
+      required: ['action'],
     },
   };
 
   private readonly defaults: InfraDefaultsConfig;
+
+  // Orchestrator callbacks — injected from alfred.ts
+  private proxmoxFn?: SkillCallback;
+  private cloudflareFn?: SkillCallback;
+  private npmFn?: SkillCallback;
+  private firewallFn?: SkillCallback;
+  private unifiFn?: SkillCallback;
+
+  setOrchestrationCallbacks(cbs: {
+    proxmox?: SkillCallback;
+    cloudflare?: SkillCallback;
+    npm?: SkillCallback;
+    firewall?: SkillCallback;
+    unifi?: SkillCallback;
+  }): void {
+    this.proxmoxFn = cbs.proxmox;
+    this.cloudflareFn = cbs.cloudflare;
+    this.npmFn = cbs.npm;
+    this.firewallFn = cbs.firewall;
+    this.unifiFn = cbs.unifi;
+  }
 
   constructor(defaults?: InfraDefaultsConfig) {
     super();
@@ -59,6 +93,10 @@ export class DeploySkill extends Skill {
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
+
+    // full_deploy doesn't require host (creates one if needed)
+    if (action === 'full_deploy') return this.fullDeploy(input);
+
     const host = input.host as string;
     if (!host) return { success: false, error: 'host ist erforderlich' };
 
@@ -284,5 +322,169 @@ export class DeploySkill extends Skill {
     `.trim();
     const output = await this.ssh(host, user, script);
     return { success: true, display: `## Python Setup auf ${host}\n\n\`\`\`\n${output}\n\`\`\`` };
+  }
+
+  // ── Full Deploy Orchestrator ──────────────────────────────────
+
+  private async fullDeploy(input: Record<string, unknown>): Promise<SkillResult> {
+    const project = input.project as string;
+    const domain = input.domain as string | undefined;
+    const target = (input.target as string) ?? 'existing';
+    const runtime = (input.runtime as string) ?? this.defaults.runtime ?? 'node';
+    const pm = (input.process_manager as string) ?? (runtime === 'docker' ? 'docker-compose' : this.defaults.processManager ?? 'pm2');
+    const user = (input.user as string) ?? this.defaults.sshUser ?? 'madh';
+    const appPort = input.app_port as number | undefined;
+    const steps: string[] = [];
+
+    if (!project) return { success: false, error: 'project erforderlich' };
+
+    let host = input.host as string | undefined;
+
+    try {
+      // ── STEP 1: Determine/Create Host ──
+      if (target === 'new_lxc' || target === 'new_vm') {
+        // 1a. Get free IP (via UniFi if available)
+        const networkName = (input.network_name as string) ?? this.defaults.network ?? 'Default';
+        if (this.unifiFn && !host) {
+          const ipResult = await this.unifiFn({ action: 'next_free_ip', network_name: networkName });
+          if (ipResult.success && ipResult.data) {
+            host = (ipResult.data as Record<string, unknown>).ip as string;
+            steps.push(`🌐 IP zugewiesen: ${host} (${networkName})`);
+          }
+        }
+        if (!host) return { success: false, error: 'Keine freie IP gefunden und kein host angegeben', data: { steps } };
+
+        // 1b. Create VM/LXC on Proxmox
+        if (this.proxmoxFn) {
+          const template = input.template as string ?? (target === 'new_lxc' ? 'ubuntu-22.04' : '9000');
+          const hostname = (input.hostname as string) ?? project;
+          const memory = (input.memory as number) ?? 2048;
+          const cores = (input.cores as number) ?? 2;
+
+          // Read SSH public key
+          let sshKey: string | undefined;
+          try {
+            const keyPath = this.defaults.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
+            sshKey = readFileSync(`${keyPath}.pub`, 'utf-8').trim();
+          } catch { /* no key */ }
+
+          if (target === 'new_lxc') {
+            const r = await this.proxmoxFn({
+              action: 'create_lxc', template, hostname, memory, cores,
+              ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
+              ssh_public_key: sshKey,
+            });
+            steps.push(r.success ? `📦 LXC "${hostname}" erstellt` : `⚠️ LXC-Erstellung: ${r.error}`);
+          } else {
+            const r = await this.proxmoxFn({
+              action: 'clone_vm', template, hostname, memory, cores,
+              ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
+              ssh_public_key: sshKey,
+            });
+            steps.push(r.success ? `📦 VM "${hostname}" geklont aus Template ${template}` : `⚠️ VM-Erstellung: ${r.error}`);
+          }
+
+          // Wait for VM to be ready
+          steps.push('⏳ Warte auf VM...');
+          await new Promise(r => setTimeout(r, 15_000)); // initial wait
+          const sshOk = await this.testSsh(host, user);
+          if (!sshOk) {
+            await new Promise(r => setTimeout(r, 30_000)); // longer wait
+            const retryOk = await this.testSsh(host, user);
+            if (!retryOk) {
+              steps.push('⚠️ SSH nicht erreichbar nach 45s — VM läuft möglicherweise noch hoch');
+            }
+          }
+          steps.push(`✅ Host ${host} erreichbar`);
+
+          // Setup runtime if needed
+          if (runtime === 'node') {
+            const setup = await this.doSetupNode(host, user);
+            steps.push(setup.success ? '📦 Node.js + pm2 installiert' : `⚠️ Node-Setup: ${setup.display}`);
+          } else if (runtime === 'python') {
+            const setup = await this.doSetupPython(host, user);
+            steps.push(setup.success ? '🐍 Python installiert' : `⚠️ Python-Setup: ${setup.display}`);
+          } else if (runtime === 'docker' || pm === 'docker-compose') {
+            await this.ssh(host, user, 'curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER').catch(() => {});
+            await this.ssh(host, user, 'sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose').catch(() => {});
+            steps.push('🐳 Docker installiert');
+          }
+        }
+      } else {
+        // Existing host
+        if (!host) return { success: false, error: 'host erforderlich für target=existing' };
+        steps.push(`🖥️ Bestehender Host: ${host}`);
+      }
+
+      // ── STEP 2: Deploy Code ──
+      const deployResult = await this.doDeploy(host!, user, input, pm, runtime);
+      if (!deployResult.success) return { ...deployResult, data: { steps, ...(deployResult.data as Record<string, unknown> ?? {}) } };
+      const deploySteps = (deployResult.data as Record<string, unknown>)?.steps as string[] ?? [];
+      steps.push(...deploySteps);
+
+      // ── STEP 3: Firewall ──
+      if (!input.skip_firewall && appPort && this.firewallFn) {
+        const npmTarget = input.npm_target as string | undefined;
+        if (npmTarget) {
+          const r = await this.firewallFn({
+            action: 'create_rule',
+            source: npmTarget,
+            destination: host!,
+            destination_port: String(appPort),
+            protocol: 'tcp',
+            description: `NPM → ${project} (${host}:${appPort})`,
+          });
+          steps.push(r.success ? `🔥 Firewall: ${npmTarget} → ${host}:${appPort}` : `⚠️ Firewall: ${r.error}`);
+        }
+      }
+
+      // ── STEP 4: Reverse Proxy ──
+      if (!input.skip_proxy && domain && appPort && this.npmFn) {
+        const r = await this.npmFn({
+          action: 'create_host',
+          domain,
+          target_host: host!,
+          target_port: appPort,
+          ssl: true,
+        });
+        steps.push(r.success ? `🔒 Proxy: ${domain} → ${host}:${appPort} (SSL)` : `⚠️ Proxy: ${r.error}`);
+      }
+
+      // ── STEP 5: DNS ──
+      if (!input.skip_dns && domain && this.cloudflareFn) {
+        const publicIp = input.public_ip as string | undefined;
+        if (publicIp) {
+          const r = await this.cloudflareFn({
+            action: 'create_record',
+            domain,
+            type: 'A',
+            name: domain.split('.').length > 2 ? domain.split('.')[0] : '@',
+            content: publicIp,
+            proxied: true,
+          });
+          steps.push(r.success ? `🌍 DNS: ${domain} → ${publicIp}` : `⚠️ DNS: ${r.error}`);
+        } else {
+          steps.push('⚠️ DNS übersprungen (keine public_ip angegeben)');
+        }
+      }
+
+      // ── STEP 6: Verify ──
+      if (domain) {
+        await new Promise(r => setTimeout(r, 5_000));
+        try {
+          const res = await fetch(`https://${domain}/`, { signal: AbortSignal.timeout(10_000) });
+          steps.push(res.ok ? `✅ Verify: https://${domain}/ → ${res.status}` : `⚠️ Verify: HTTP ${res.status}`);
+        } catch {
+          steps.push(`⚠️ Verify: https://${domain}/ nicht erreichbar (DNS/SSL braucht ggf. etwas Zeit)`);
+        }
+      }
+
+      const display = `## Full Deploy: ${project}${domain ? ` → ${domain}` : ''}\n\n${steps.join('\n')}`;
+      return { success: true, data: { host, project, domain, steps }, display };
+
+    } catch (err) {
+      steps.push(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`);
+      return { success: false, error: steps.join('\n'), data: { steps } };
+    }
   }
 }

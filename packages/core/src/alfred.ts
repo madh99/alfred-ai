@@ -741,11 +741,20 @@ export class Alfred {
       this.logger.info({ baseUrl: this.config.pfsense.baseUrl, auth: this.config.pfsense.authMethod ?? 'apikey' }, 'pfSense Firewall skill registered');
     }
 
-    // 4o5. Deploy Skill (always available — uses SSH)
+    // 4o5. Deploy Skill (always available — uses SSH + orchestration)
     {
       const { DeploySkill } = await import('@alfred/skills');
-      skillRegistry.register(new DeploySkill(this.config.infra));
-      this.logger.info('Deploy skill registered');
+      const deploySkill = new DeploySkill(this.config.infra);
+      // Wire orchestration callbacks for full_deploy
+      const orchCallbacks: Record<string, ((input: Record<string, unknown>) => Promise<any>) | undefined> = {};
+      if (skillRegistry.has('proxmox')) orchCallbacks.proxmox = (i) => skillSandbox.execute(skillRegistry.get('proxmox')!, i, {} as any);
+      if (skillRegistry.has('cloudflare_dns')) orchCallbacks.cloudflare = (i) => skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, i, {} as any);
+      if (skillRegistry.has('nginx_proxy_manager')) orchCallbacks.npm = (i) => skillSandbox.execute(skillRegistry.get('nginx_proxy_manager')!, i, {} as any);
+      if (skillRegistry.has('pfsense')) orchCallbacks.firewall = (i) => skillSandbox.execute(skillRegistry.get('pfsense')!, i, {} as any);
+      if (skillRegistry.has('unifi')) orchCallbacks.unifi = (i) => skillSandbox.execute(skillRegistry.get('unifi')!, i, {} as any);
+      deploySkill.setOrchestrationCallbacks(orchCallbacks);
+      skillRegistry.register(deploySkill);
+      this.logger.info('Deploy skill registered (with orchestration)');
     }
 
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
