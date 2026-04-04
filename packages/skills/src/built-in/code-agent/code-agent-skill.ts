@@ -368,14 +368,20 @@ export class CodeAgentSkill extends Skill {
     const commitMessage = input.commitMessage as string | undefined;
     const warnings: string[] = [];
 
+    // Helper: git with identity fallback
+    const gitWithIdentity = (args: string[]) => {
+      const needsId = args[0] === 'commit' || args[0] === 'init';
+      const fullArgs = needsId ? ['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', ...args] : args;
+      return execFileAsync('git', fullArgs, { cwd });
+    };
+
     try {
       // 1. Ensure git repo exists
       const hasGitDir = existsSync(path.join(cwd, '.git'));
       if (!hasGitDir) {
-        // Init new repo
-        await execFileAsync('git', ['init'], { cwd });
+        await gitWithIdentity(['init']);
         await execFileAsync('git', ['add', '-A'], { cwd });
-        await execFileAsync('git', ['commit', '-m', commitMessage ?? 'Initial commit'], { cwd });
+        await gitWithIdentity(['commit', '-m', commitMessage ?? 'Initial commit']);
         warnings.push('Git repository initialized');
       }
 
@@ -399,7 +405,7 @@ export class CodeAgentSkill extends Skill {
       if (statusOut.trim()) {
         await execFileAsync('git', ['add', '-A'], { cwd });
         const msg = commitMessage ?? `feat: update ${path.basename(cwd)}`;
-        const { stdout: commitOut } = await execFileAsync('git', ['commit', '-m', msg], { cwd });
+        const { stdout: commitOut } = await gitWithIdentity(['commit', '-m', msg]);
         const shaMatch = commitOut.match(/\[[\w/-]+ ([a-f0-9]+)\]/);
         commitSha = shaMatch?.[1] ?? null;
       }
