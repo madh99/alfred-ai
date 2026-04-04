@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.355] - 2026-04-05
+
+### Fixed
+- **InfraDocs Review** — 6 Issues gefixt: PG-kompatible Prune-Query, SQLite ALTER TABLE idempotent, Version-Race via Transaction, persistDoc fire-and-forget, Write-Back nur bei leerem Feld, UI-State Reset bei Tab-Wechsel.
+
 ## [0.19.0-multi-ha.354] - 2026-04-05
 
 ### Added
