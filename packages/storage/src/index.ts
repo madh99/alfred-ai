@@ -60,4 +60,5 @@ export { ProcessedMessageRepository } from './repositories/processed-message-rep
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';
 export { SkillStateRepository, type SkillStateEntry } from './repositories/skill-state-repository.js';
 export { BmwTelematicRepository, type BmwTelematicEntry } from './repositories/bmw-telematic-repository.js';
+export { BrainstormingRepository, type BrainstormingSession, type BrainstormingItem } from './repositories/brainstorming-repository.js';
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';

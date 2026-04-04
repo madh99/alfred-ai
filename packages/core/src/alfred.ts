@@ -315,6 +315,61 @@ export class Alfred {
     skillRegistry.register(memorySkill);
     this.memorySkillRef = memorySkill;
     skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
+
+    // 3b. Brainstorming skill
+    {
+      const { BrainstormingSkill } = await import('@alfred/skills');
+      const { BrainstormingRepository } = await import('@alfred/storage');
+      const brainstormRepo = new BrainstormingRepository(adapter);
+      const brainstormSkill = new BrainstormingSkill(brainstormRepo);
+      // Wire KG context fetcher
+      brainstormSkill.setKgContextFn(async (userId: string, topic: string) => {
+        if (!this.kgServiceRef) return '';
+        const graph = await new KnowledgeGraphRepository(adapter).getFullGraph(userId);
+        const topicLower = topic.toLowerCase();
+        const relevant = graph.entities.filter(e =>
+          e.name.toLowerCase().includes(topicLower) ||
+          e.normalizedName.includes(topicLower) ||
+          (e.attributes?.value && String(e.attributes.value).toLowerCase().includes(topicLower)),
+        );
+        // Also get entities connected to relevant ones
+        const relevantIds = new Set(relevant.map(e => e.id));
+        const connectedRelations = graph.relations.filter(r => relevantIds.has(r.sourceEntityId) || relevantIds.has(r.targetEntityId));
+        const connectedIds = new Set<string>();
+        for (const r of connectedRelations) { connectedIds.add(r.sourceEntityId); connectedIds.add(r.targetEntityId); }
+        const allRelevant = graph.entities.filter(e => relevantIds.has(e.id) || connectedIds.has(e.id));
+
+        const lines = allRelevant.slice(0, 20).map(e => {
+          const attrs = Object.entries(e.attributes ?? {}).filter(([k]) => !['skillName', 'type', 'memoryKey', 'memoryConfidence'].includes(k)).map(([k, v]) => `${k}=${String(v).slice(0, 60)}`).join(', ');
+          return `- [${e.entityType}] ${e.name}${attrs ? ` (${attrs})` : ''}`;
+        });
+        const relLines = connectedRelations.slice(0, 15).map(r => {
+          const src = allRelevant.find(e => e.id === r.sourceEntityId)?.name ?? '?';
+          const tgt = allRelevant.find(e => e.id === r.targetEntityId)?.name ?? '?';
+          return `- ${src} → ${r.relationType} → ${tgt}`;
+        });
+        // Also fetch relevant memories
+        let memContext = '';
+        try {
+          const mems = await memoryRepo.search(userId, topic);
+          memContext = mems.slice(0, 5).map(m => `- [memory] ${m.key}: ${m.value.slice(0, 100)}`).join('\n');
+        } catch { /* skip */ }
+
+        return `Entities:\n${lines.join('\n')}\n\nRelationen:\n${relLines.join('\n')}${memContext ? `\n\nMemories:\n${memContext}` : ''}`;
+      });
+      // Wire LLM call
+      brainstormSkill.setLlmCallFn(async (prompt: string, tier: 'default' | 'strong') => {
+        const response = await llmProvider.complete({
+          messages: [{ role: 'user', content: prompt }],
+          tier,
+          maxTokens: 2000,
+        });
+        return response.content;
+      });
+      skillRegistry.register(brainstormSkill);
+      this.logger.info('Brainstorming skill registered');
+    }
+
     // 4a-email. Initialize email (optional, multi-account)
     if (this.config.email?.accounts?.length) {
       const providers = new Map<string, import('@alfred/skills').EmailProvider>();

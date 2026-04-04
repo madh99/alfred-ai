@@ -327,4 +327,36 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_deferred_insights_pending ON deferred_insights(chat_id, delivered, stale_at)`, []);
     },
   },
+  {
+    version: 48,
+    description: 'Brainstorming sessions and items',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS brainstorming_sessions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          topic TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          context TEXT DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+          updated_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_brainstorm_user ON brainstorming_sessions(user_id, status)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS brainstorming_items (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES brainstorming_sessions(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL DEFAULT 'ideas',
+          category TEXT,
+          content TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'open',
+          linked_entity_id TEXT,
+          linked_action_id TEXT,
+          created_at TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_brainstorm_items_session ON brainstorming_items(session_id)`, []);
+    },
+  },
 ];
