@@ -41,6 +41,9 @@ export class UniFiSkill extends Skill {
             'unblock_client',
             'forget_client',
             'adopt_device',
+            'next_free_ip',
+            'list_firewall_rules',
+            'create_firewall_rule',
           ],
           description: 'The UniFi action to perform',
         },
@@ -83,6 +86,38 @@ export class UniFiSkill extends Skill {
         quota: {
           type: 'number',
           description: 'Number of uses per voucher (for create_voucher, 0 = unlimited, default: 1)',
+        },
+        network_name: {
+          type: 'string',
+          description: 'Netzwerk/VLAN Name für next_free_ip (z.B. "Default", "Keller", "VLAN 10")',
+        },
+        start_ip: {
+          type: 'number',
+          description: 'Ab welcher Host-Nummer suchen (für next_free_ip, default: 10)',
+        },
+        rule_name: {
+          type: 'string',
+          description: 'Name/Beschreibung der Firewall-Regel (für create_firewall_rule)',
+        },
+        source: {
+          type: 'string',
+          description: 'Quell-IP/Netzwerk für Firewall-Regel',
+        },
+        destination: {
+          type: 'string',
+          description: 'Ziel-IP/Netzwerk für Firewall-Regel',
+        },
+        port: {
+          type: 'string',
+          description: 'Port für Firewall-Regel',
+        },
+        protocol: {
+          type: 'string',
+          description: 'Protokoll: tcp, udp, any (default: tcp)',
+        },
+        rule_action: {
+          type: 'string',
+          description: 'accept oder drop (default: accept)',
         },
       },
       required: ['action'],
@@ -182,6 +217,14 @@ export class UniFiSkill extends Skill {
           return await this.forgetClient(input.mac as string);
         case 'adopt_device':
           return await this.adoptDevice(input.mac as string);
+
+        // ── INFRA ─────────────────────────────────────────────
+        case 'next_free_ip':
+          return await this.nextFreeIp(input.network_name as string | undefined, input.start_ip as number | undefined);
+        case 'list_firewall_rules':
+          return await this.listFirewallRules();
+        case 'create_firewall_rule':
+          return await this.createFirewallRule(input);
 
         default:
           return { success: false, error: `Unknown action: ${action}` };
@@ -762,6 +805,103 @@ export class UniFiSkill extends Skill {
 
     await this.request('POST', 'cmd/devmgr', { cmd: 'adopt', mac });
     return { success: true, data: { mac }, display: `Adopt command sent to device ${mac}.` };
+  }
+
+  // ── Infra helpers ──────────────────────────────────────────────
+
+  private async nextFreeIp(networkName?: string, startIp?: number): Promise<SkillResult> {
+    // 1. Get all networks
+    const networks = await this.request('GET', 'rest/networkconf') as Array<Record<string, unknown>>;
+
+    // 2. Find the target network
+    const target = networkName
+      ? networks.find((n: any) =>
+          n.name?.toLowerCase().includes(networkName.toLowerCase()) ||
+          n.vlan?.toString() === networkName)
+      : networks.find((n: any) => n.purpose === 'corporate' || n.name === 'Default');
+
+    if (!target) {
+      const available = networks.map((n: any) => `${n.name} (VLAN ${n.vlan ?? '-'})`).join(', ');
+      return { success: false, error: `Netzwerk "${networkName ?? 'Default'}" nicht gefunden. Verfügbar: ${available}` };
+    }
+
+    const subnet = (target as any).ip_subnet as string; // e.g. "192.168.1.1/24"
+    if (!subnet) return { success: false, error: `Netzwerk "${(target as any).name}" hat kein Subnetz konfiguriert` };
+
+    // 3. Parse subnet
+    const [gateway, cidr] = subnet.split('/');
+    const parts = gateway.split('.').map(Number);
+    const prefix = parts.slice(0, 3).join('.');
+
+    // 4. Get active clients in this network
+    const clients = await this.request('GET', 'stat/sta') as Array<Record<string, unknown>>;
+    const usedIps = new Set<string>();
+    for (const c of clients) {
+      const ip = c.ip as string | undefined;
+      if (ip?.startsWith(prefix + '.')) usedIps.add(ip);
+    }
+    // Also add the gateway itself
+    usedIps.add(gateway);
+
+    // 5. Find first free IP
+    const start = startIp ?? 10;
+    const max = cidr === '24' ? 254 : 254; // simplified
+    for (let i = start; i <= max; i++) {
+      const candidate = `${prefix}.${i}`;
+      if (!usedIps.has(candidate)) {
+        return {
+          success: true,
+          data: {
+            ip: candidate,
+            network: (target as any).name,
+            vlan: (target as any).vlan,
+            subnet,
+            gateway,
+          },
+          display: `✅ Nächste freie IP: **${candidate}** (${(target as any).name}, VLAN ${(target as any).vlan ?? '-'}, Subnetz ${subnet})`,
+        };
+      }
+    }
+
+    return { success: false, error: `Keine freie IP gefunden in ${prefix}.${start}-${max}` };
+  }
+
+  private async listFirewallRules(): Promise<SkillResult> {
+    try {
+      const rules = await this.request('GET', 'rest/firewallrule') as Array<Record<string, unknown>>;
+      const lines = rules.map((r: any) => {
+        const action = r.action ?? 'accept';
+        const src = r.src_firewallgroup_ids?.length ? r.src_firewallgroup_ids.join(',') : r.src_address ?? 'any';
+        const dst = r.dst_firewallgroup_ids?.length ? r.dst_firewallgroup_ids.join(',') : r.dst_address ?? 'any';
+        return `| ${r.name ?? '?'} | ${action} | ${r.protocol ?? 'all'} | ${src} | ${dst} | ${r.enabled ? '🟢' : '🔴'} | ${r._id?.slice(0, 8) ?? ''} |`;
+      });
+      const display = `## UniFi Firewall Regeln\n\n| Name | Action | Proto | Source | Dest | Status | ID |\n|------|--------|-------|--------|------|--------|----|\n${lines.join('\n')}`;
+      return { success: true, data: rules, display };
+    } catch (err) {
+      return { success: false, error: `UniFi Firewall: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  private async createFirewallRule(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = (input.rule_name as string) ?? `Alfred: ${input.source ?? 'any'} → ${input.destination ?? 'any'}`;
+    const body: Record<string, unknown> = {
+      name,
+      enabled: true,
+      action: (input.rule_action as string) ?? 'accept',
+      protocol: (input.protocol as string) ?? 'tcp',
+      ruleset: 'LAN_IN',
+      rule_index: 4000,
+      src_address: input.source ?? '',
+      dst_address: input.destination ?? '',
+      dst_port: input.port ?? '',
+    };
+
+    const result = await this.request('POST', 'rest/firewallrule', body);
+    return {
+      success: true,
+      data: result,
+      display: `✅ UniFi Firewall-Regel erstellt: ${name}`,
+    };
   }
 
   // ── Formatting helpers ─────────────────────────────────────────
