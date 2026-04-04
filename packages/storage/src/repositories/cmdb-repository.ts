@@ -446,34 +446,39 @@ export class CmdbRepository {
     format?: CmdbDocFormat; linkedEntityType?: CmdbLinkedEntityType;
     linkedEntityId?: string; generatedBy?: string;
   }): Promise<CmdbDocument> {
-    // Determine next version
-    let version = 1;
-    if (doc.linkedEntityId) {
-      const prev = await this.db.queryOne(
-        `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id = ?`,
-        [userId, doc.docType, doc.linkedEntityId],
-      );
-      if (prev?.max_v) version = (prev.max_v as number) + 1;
-    } else {
-      const prev = await this.db.queryOne(
-        `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id IS NULL`,
-        [userId, doc.docType],
-      );
-      if (prev?.max_v) version = (prev.max_v as number) + 1;
-    }
-
     const id = randomUUID();
     const now = new Date().toISOString();
-    await this.db.execute(
-      `INSERT INTO cmdb_documents (id, user_id, doc_type, title, content, format, linked_entity_type, linked_entity_id, version, generated_by, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, userId, doc.docType, doc.title, doc.content.slice(0, 50_000), doc.format ?? 'markdown',
-       doc.linkedEntityType ?? null, doc.linkedEntityId ?? null, version, doc.generatedBy ?? 'infra_docs', now],
-    );
+    const contentTrimmed = doc.content.slice(0, 50_000);
 
-    return { id, userId, docType: doc.docType, title: doc.title, content: doc.content.slice(0, 50_000),
-      format: (doc.format ?? 'markdown') as CmdbDocFormat, linkedEntityType: doc.linkedEntityType,
-      linkedEntityId: doc.linkedEntityId, version, generatedBy: doc.generatedBy ?? 'infra_docs', createdAt: now };
+    // Use transaction to prevent version race condition
+    return this.db.transaction(async (tx) => {
+      // Determine next version inside transaction
+      let version = 1;
+      if (doc.linkedEntityId) {
+        const prev = await tx.queryOne(
+          `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id = ?`,
+          [userId, doc.docType, doc.linkedEntityId],
+        );
+        if (prev?.max_v) version = (prev.max_v as number) + 1;
+      } else {
+        const prev = await tx.queryOne(
+          `SELECT MAX(version) as max_v FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND linked_entity_id IS NULL`,
+          [userId, doc.docType],
+        );
+        if (prev?.max_v) version = (prev.max_v as number) + 1;
+      }
+
+      await tx.execute(
+        `INSERT INTO cmdb_documents (id, user_id, doc_type, title, content, format, linked_entity_type, linked_entity_id, version, generated_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, userId, doc.docType, doc.title, contentTrimmed, doc.format ?? 'markdown',
+       doc.linkedEntityType ?? null, doc.linkedEntityId ?? null, version, doc.generatedBy ?? 'infra_docs', now],
+      );
+
+      return { id, userId, docType: doc.docType, title: doc.title, content: contentTrimmed,
+        format: (doc.format ?? 'markdown') as CmdbDocFormat, linkedEntityType: doc.linkedEntityType,
+        linkedEntityId: doc.linkedEntityId, version, generatedBy: doc.generatedBy ?? 'infra_docs', createdAt: now };
+    });
   }
 
   async getDocumentsForEntity(userId: string, entityType: CmdbLinkedEntityType, entityId: string): Promise<CmdbDocument[]> {
@@ -520,8 +525,8 @@ export class CmdbRepository {
     for (const g of groups) {
       const oldest = await this.db.query(
         `SELECT id FROM cmdb_documents WHERE user_id = ? AND doc_type = ? AND (linked_entity_id = ? OR (linked_entity_id IS NULL AND ? IS NULL))
-         ORDER BY version DESC LIMIT -1 OFFSET ?`,
-        [userId, g.doc_type, g.linked_entity_id, g.linked_entity_id, maxVersions],
+         ORDER BY version ASC LIMIT ?`,
+        [userId, g.doc_type, g.linked_entity_id, g.linked_entity_id, (g.cnt as number) - maxVersions],
       );
       for (const r of oldest) {
         await this.db.execute(`DELETE FROM cmdb_documents WHERE id = ?`, [r.id]);

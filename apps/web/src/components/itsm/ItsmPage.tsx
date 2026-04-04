@@ -419,7 +419,7 @@ export function ItsmPage() {
         {tabs.map(t => (
           <button
             key={t.key}
-            onClick={() => { setTab(t.key); setSelectedIncident(null); setSelectedChange(null); setSelectedService(null); }}
+            onClick={() => { setTab(t.key); setSelectedIncident(null); setSelectedChange(null); setSelectedService(null); setGeneratingRunbook(false); setGeneratingPostmortem(false); setServiceDocs([]); }}
             className={clsx(
               'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
               tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-200',

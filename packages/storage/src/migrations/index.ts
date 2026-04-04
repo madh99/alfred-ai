@@ -1236,9 +1236,9 @@ export const MIGRATIONS: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_cmdb_docs_entity ON cmdb_documents(linked_entity_type, linked_entity_id);
         CREATE INDEX IF NOT EXISTS idx_cmdb_docs_type ON cmdb_documents(doc_type);
         CREATE INDEX IF NOT EXISTS idx_cmdb_docs_created ON cmdb_documents(created_at);
-
-        ALTER TABLE cmdb_incidents ADD COLUMN postmortem TEXT;
       `);
+      // ALTER TABLE ADD COLUMN is not idempotent in SQLite — wrap in try-catch
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN postmortem TEXT`); } catch { /* column already exists */ }
     },
   },
 ];
