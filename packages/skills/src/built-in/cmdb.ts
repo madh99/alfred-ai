@@ -174,8 +174,12 @@ export class CmdbSkill extends Skill {
     }
 
     // Cross-source relation discovery
-    const crossRels = await this.discoverCrossSourceRelations(userId);
-    totalRelations += crossRels;
+    try {
+      const crossRels = await this.discoverCrossSourceRelations(userId);
+      totalRelations += crossRels;
+    } catch (err: any) {
+      results.push(`cross-source: Fehler — ${err.message?.slice(0, 100)}`);
+    }
 
     // KG sync
     if (this.kgSyncCallback) {
@@ -204,15 +208,18 @@ export class CmdbSkill extends Skill {
 
     let relCount = 0;
     for (const rel of relations) {
-      const srcAsset = await this.repo.getAssetBySource(userId, rel.sourceKey.split(':')[0], rel.sourceKey.split(':').slice(1).join(':'));
-      const tgtAsset = await this.repo.getAssetBySource(userId, rel.targetKey.split(':')[0], rel.targetKey.split(':').slice(1).join(':'));
-      if (srcAsset && tgtAsset) {
-        await this.repo.upsertRelation(userId, srcAsset.id, tgtAsset.id, rel.relationType, true);
-        relCount++;
-      }
+      try {
+        const srcAsset = await this.repo.getAssetBySource(userId, rel.sourceKey.split(':')[0], rel.sourceKey.split(':').slice(1).join(':'));
+        const tgtAsset = await this.repo.getAssetBySource(userId, rel.targetKey.split(':')[0], rel.targetKey.split(':').slice(1).join(':'));
+        if (srcAsset && tgtAsset) {
+          await this.repo.upsertRelation(userId, srcAsset.id, tgtAsset.id, rel.relationType, true);
+          relCount++;
+        }
+      } catch { /* skip failed relation */ }
     }
 
-    const stale = await this.repo.markStaleAssets(userId, source, runStart, this.staleThresholdDays);
+    let stale = 0;
+    try { stale = await this.repo.markStaleAssets(userId, source, runStart, this.staleThresholdDays); } catch { /* non-critical */ }
     const display = `## CMDB Discovery: ${source}\n\n${assets.length} Assets, ${relCount} Relationen${stale > 0 ? `, ${stale} stale markiert` : ''}`;
     return { success: true, data: { assets: assets.length, relations: relCount, stale }, display };
   }

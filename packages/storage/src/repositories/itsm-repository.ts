@@ -188,15 +188,19 @@ export class ItsmRepository {
     return this.updateIncident(userId, id, { status: 'closed', resolution });
   }
 
-  async findOpenIncidentForAsset(userId: string, assetId: string, titleKeywords: string[]): Promise<CmdbIncident | null> {
+  async findOpenIncidentForAsset(userId: string, sourceLabel: string, titleKeywords: string[]): Promise<CmdbIncident | null> {
     const open = await this.listIncidents(userId, { status: 'open' });
     const investigating = await this.listIncidents(userId, { status: 'investigating' });
-    const all = [...open, ...investigating];
+    const acknowledged = await this.listIncidents(userId, { status: 'acknowledged' });
+    const mitigating = await this.listIncidents(userId, { status: 'mitigating' });
+    const all = [...open, ...investigating, ...acknowledged, ...mitigating];
 
     for (const inc of all) {
-      if (!inc.affectedAssetIds.includes(assetId)) continue;
       const titleLower = inc.title.toLowerCase();
+      // Match by source label in title OR by keyword overlap
+      const sourceMatch = titleLower.includes(sourceLabel.toLowerCase());
       const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
+      if (sourceMatch && matchCount >= 1) return inc;
       if (matchCount >= Math.min(2, titleKeywords.length)) return inc;
     }
     return null;

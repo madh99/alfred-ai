@@ -79,6 +79,30 @@ export class CmdbRepository {
     const attrs = JSON.stringify(asset.attributes || {});
 
     // Try update by source_skill + source_id first (discovery merge)
+    // For manual assets (no source), dedup by name + asset_type
+    if (!asset.sourceSkill) {
+      const existing = await this.db.queryOne(
+        `SELECT id FROM cmdb_assets WHERE user_id = ? AND name = ? AND asset_type = ? AND source_skill IS NULL`,
+        [userId, asset.name, asset.assetType],
+      );
+      if (existing) {
+        await this.db.execute(
+          `UPDATE cmdb_assets SET
+            identifier = ?, environment = ?, status = ?,
+            ip_address = ?, hostname = ?, fqdn = ?, location = ?, owner = ?, purpose = ?,
+            attributes = ?, tags = ?, notes = ?, updated_at = ?
+          WHERE id = ?`,
+          [
+            asset.identifier ?? null, asset.environment ?? null, asset.status ?? 'active',
+            asset.ipAddress ?? null, asset.hostname ?? null, asset.fqdn ?? null,
+            asset.location ?? null, asset.owner ?? null, asset.purpose ?? null,
+            attrs, asset.tags ?? null, asset.notes ?? null, now,
+            existing.id as string,
+          ],
+        );
+        return this.getAssetById(userId, existing.id as string) as Promise<CmdbAsset>;
+      }
+    }
     if (asset.sourceSkill && asset.sourceId) {
       const existing = await this.db.queryOne(
         `SELECT id FROM cmdb_assets WHERE user_id = ? AND source_skill = ? AND source_id = ?`,
@@ -196,12 +220,14 @@ export class CmdbRepository {
   }
 
   async decommissionAsset(userId: string, id: string): Promise<boolean> {
+    const existing = await this.getAssetById(userId, id);
+    const oldStatus = existing?.status ?? 'unknown';
     const result = await this.db.execute(
       `UPDATE cmdb_assets SET status = 'decommissioned', updated_at = ? WHERE id = ? AND user_id = ?`,
       [new Date().toISOString(), id, userId],
     );
     if (result.changes > 0) {
-      await this.logChange(userId, id, 'decommissioned', 'manual', 'status', 'active', 'decommissioned');
+      await this.logChange(userId, id, 'decommissioned', 'manual', 'status', oldStatus, 'decommissioned');
     }
     return result.changes > 0;
   }
@@ -222,12 +248,12 @@ export class CmdbRepository {
     return row ? rowToAsset(row) : null;
   }
 
-  async markStaleAssets(userId: string, sourceSkill: string, runStart: string, thresholdDays: number): Promise<number> {
+  async markStaleAssets(userId: string, sourceSkill: string, _runStart: string, thresholdDays: number): Promise<number> {
     const cutoff = new Date(Date.now() - thresholdDays * 86_400_000).toISOString();
     const result = await this.db.execute(
       `UPDATE cmdb_assets SET status = 'unknown', updated_at = ?
-       WHERE user_id = ? AND source_skill = ? AND last_verified_at < ? AND last_verified_at < ? AND status NOT IN ('decommissioned', 'unknown')`,
-      [new Date().toISOString(), userId, sourceSkill, runStart, cutoff],
+       WHERE user_id = ? AND source_skill = ? AND last_verified_at < ? AND status NOT IN ('decommissioned', 'unknown')`,
+      [new Date().toISOString(), userId, sourceSkill, cutoff],
     );
     return result.changes;
   }
@@ -314,11 +340,12 @@ export class CmdbRepository {
     const queue = [assetId];
     const allRelations: CmdbAssetRelation[] = [];
 
+    const MAX_ASSETS = 200;
     for (let d = 0; d < depth && queue.length > 0; d++) {
       const batch = [...queue];
       queue.length = 0;
       for (const id of batch) {
-        if (visited.has(id)) continue;
+        if (visited.has(id) || visited.size >= MAX_ASSETS) continue;
         visited.add(id);
         const rels = await this.getRelationsForAsset(userId, id);
         for (const rel of rels) {

@@ -40,7 +40,7 @@ interface CmdbAsset {
   sourceId: string | null;
   owner: string | null;
   purpose: string | null;
-  tags: string[];
+  tags: string | null;
   notes: string | null;
   attributes: Record<string, unknown>;
   createdAt: string;
@@ -243,7 +243,7 @@ export function CmdbPage() {
       name: selectedAsset.name,
       status: selectedAsset.status,
       environment: selectedAsset.environment ?? '',
-      tags: (selectedAsset.tags ?? []).join(', '),
+      tags: selectedAsset.tags ?? '',
       notes: selectedAsset.notes ?? '',
       purpose: selectedAsset.purpose ?? '',
     });
@@ -266,7 +266,7 @@ export function CmdbPage() {
         await fetchData();
         // Re-select to refresh detail
         const updated = { ...selectedAsset, ...updates } as CmdbAsset;
-        if (updates.tags) updated.tags = updates.tags as string[];
+        if (updates.tags) updated.tags = updates.tags as string;
         setSelectedAsset(updated);
       }
       setEditMode(false);
@@ -626,11 +626,11 @@ export function CmdbPage() {
                   </div>
 
                   {/* Tags */}
-                  {selectedAsset.tags && selectedAsset.tags.length > 0 && (
+                  {selectedAsset.tags && (
                     <div className="bg-[#1a1a1a] rounded p-2">
                       <div className="text-gray-500 mb-1">Tags</div>
                       <div className="flex flex-wrap gap-1">
-                        {selectedAsset.tags.map(tag => (
+                        {selectedAsset.tags.split(',').map(tag => tag.trim()).filter(Boolean).map(tag => (
                           <span key={tag} className="px-1.5 py-0.5 bg-[#2a2a2a] text-gray-300 rounded text-[10px]">{tag}</span>
                         ))}
                       </div>

@@ -116,7 +116,7 @@ export class InfraDocsSkill extends Skill {
     const idLabel = new Map<string, string>();
     const idShape = new Map<string, string>();
     for (const a of assets) {
-      const label = a.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const label = `${a.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_${a.id.slice(0, 6)}`;
       idLabel.set(a.id, label);
       // Mermaid node shapes by type
       const shapes: Record<string, string> = {
@@ -189,7 +189,7 @@ export class InfraDocsSkill extends Skill {
     const idLabel = new Map<string, string>();
 
     for (const s of services) {
-      const label = s.name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const label = `${s.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_${s.id.slice(0, 6)}`;
       idLabel.set(s.id, label);
       const healthIcon = { healthy: '🟢', degraded: '🟡', down: '🔴', unknown: '⚫' }[s.healthStatus] ?? '⚫';
       lines.push(`    ${label}{{"${healthIcon} ${s.name}"}}`);
@@ -381,11 +381,7 @@ export class InfraDocsSkill extends Skill {
       changeRequests,
     };
 
-    if (format === 'yaml') {
-      // Simple YAML-ish output (no dependency needed for basic structure)
-      const yaml = JSON.stringify(data, null, 2);
-      return { success: true, data, display: `## CMDB Export (JSON)\n\n${assets.length} Assets, ${relations.length} Relationen, ${services.length} Services\n\n\`\`\`json\n${yaml.slice(0, 3000)}${yaml.length > 3000 ? '\n...(gekürzt)' : ''}\n\`\`\`` };
-    }
+    // YAML format not supported (no dependency) — fall through to JSON
 
     const json = JSON.stringify(data, null, 2);
     return { success: true, data, display: `## CMDB Export (JSON)\n\n${assets.length} Assets, ${relations.length} Relationen, ${services.length} Services\n\nDaten im data-Feld verfügbar.` };

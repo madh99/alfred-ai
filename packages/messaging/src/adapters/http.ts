@@ -811,7 +811,8 @@ export class HttpAdapter extends MessagingAdapter {
       if (!(await this.checkAuth(req, res))) return;
       if (!this.cmdbCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'CMDB not configured' })); return; }
       const userId = await this.resolveUserId(req);
-      const body = JSON.parse(await this.readBody(req));
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await this.readBody(req)); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
       const result = await fn(this.cmdbCallbacks, userId, body);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -834,7 +835,8 @@ export class HttpAdapter extends MessagingAdapter {
       if (!(await this.checkAuth(req, res))) return;
       if (!this.itsmCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'ITSM not configured' })); return; }
       const userId = await this.resolveUserId(req);
-      const body = JSON.parse(await this.readBody(req));
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await this.readBody(req)); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
       const result = await fn(this.itsmCallbacks, userId, body);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -857,7 +859,8 @@ export class HttpAdapter extends MessagingAdapter {
       if (!(await this.checkAuth(req, res))) return;
       if (!this.docsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Docs not configured' })); return; }
       const userId = await this.resolveUserId(req);
-      const body = JSON.parse(await this.readBody(req));
+      let body: Record<string, unknown>;
+      try { body = JSON.parse(await this.readBody(req)); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
       const result = await fn(this.docsCallbacks, userId, body);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));

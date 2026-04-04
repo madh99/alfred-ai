@@ -121,7 +121,8 @@ export class KnowledgeGraphService {
       firewall_rule: 'service', automation: 'service', iot_device: 'network_device',
     };
 
-    this.cmdbEntityNames.clear();
+    // Rebuild blacklist atomically (collect then swap)
+    const newNames = new Set<string>();
 
     for (const asset of assets) {
       const kgType = kgTypeMap[asset.assetType] ?? 'service';
@@ -135,7 +136,7 @@ export class KnowledgeGraphService {
 
       try {
         await this.kgRepo.upsertEntity(userId, asset.name, kgType as any, attrs, 'cmdb');
-        this.cmdbEntityNames.add(asset.name.toLowerCase());
+        newNames.add(asset.name.toLowerCase());
       } catch {
         // Constraint violation — skip
       }
@@ -154,6 +155,8 @@ export class KnowledgeGraphService {
       }
     }
 
+    // Atomic swap of blacklist
+    this.cmdbEntityNames = newNames;
     this.logger.debug({ count: assets.length }, 'CMDB → KG sync complete');
   }
 

@@ -958,6 +958,37 @@ export class Alfred {
         skillRegistry.register(cmdbSkill);
         skillRegistry.register(itsmSkill);
         skillRegistry.register(infraDocsSkill);
+
+        // Schedule periodic auto-discovery
+        const discoveryIntervalH = this.config.cmdb?.autoDiscoveryIntervalHours ?? 24;
+        if (discoveryIntervalH > 0) {
+          const discoveryMs = discoveryIntervalH * 3_600_000;
+          setTimeout(() => {
+            // Initial discovery 2 min after startup
+            const uid = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+            if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
+            // Recurring
+            setInterval(() => {
+              if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
+            }, discoveryMs);
+          }, 120_000);
+          this.logger.info({ intervalHours: discoveryIntervalH }, 'CMDB auto-discovery scheduled');
+        }
+
+        // Schedule periodic health checks
+        const healthCheckMin = this.config.cmdb?.healthCheckIntervalMinutes ?? 60;
+        if (healthCheckMin > 0) {
+          const healthMs = healthCheckMin * 60_000;
+          setTimeout(() => {
+            const uid = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+            const runHealthCheck = () => {
+              if (uid) itsmSkill.execute({ action: 'health_check' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
+            };
+            runHealthCheck();
+            setInterval(runHealthCheck, healthMs);
+          }, 180_000); // 3 min after startup
+        }
+
         this.logger.info('CMDB + ITSM + InfraDocs skills registered');
       }
     }
@@ -1969,8 +2000,8 @@ export class Alfred {
       }
     }
 
-    // Wire CMDB/ITSM/Docs API on HTTP adapter
-    {
+    // Wire CMDB/ITSM/Docs API on HTTP adapter (only when CMDB skills are registered)
+    if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant)) {
       const apiAdapter = this.adapters.get('api');
       const dbAdapter = this.database.getAdapter();
       if (apiAdapter && 'setCmdbCallbacks' in apiAdapter) {
@@ -1978,11 +2009,13 @@ export class Alfred {
         const itsmRepo = new ItsmRepository(dbAdapter);
 
         const resolveUser = async (userId: string) => {
-          if (!userId && this.config.security?.ownerUserId) {
-            const user = await this.userRepo!.findOrCreate('telegram' as any, this.config.security.ownerUserId);
-            return user.masterUserId ?? user.id;
+          if (!userId && this.config.security?.ownerUserId && this.userRepo) {
+            try {
+              const user = await this.userRepo.findOrCreate('telegram' as any, this.config.security.ownerUserId);
+              return user.masterUserId ?? user.id ?? this.config.security.ownerUserId;
+            } catch { return this.config.security.ownerUserId; }
           }
-          return userId;
+          return userId || this.ownerMasterUserId || this.config.security?.ownerUserId || '';
         };
 
         (apiAdapter as any).setCmdbCallbacks({

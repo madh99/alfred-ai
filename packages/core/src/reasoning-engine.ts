@@ -669,18 +669,18 @@ AKTIONSTYPEN:
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
 5. Erinnerung: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
 
-6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}
-7. ITSM Incident: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
-8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}
+${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
+${this.skillRegistry.has('itsm') ? `7. ITSM Incident: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
+8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}` : ''}
 
 WICHTIGE REGELN FÜR AKTIONSWAHL:
 - Alfred kann NUR Skills ausführen die er hat. Wenn der User SELBST handeln muss (Browser öffnen, Zahlungsmethode ändern, Login auf Website) → IMMER Erinnerung (reminder) mit klarer Handlungsanweisung + URL
 - NIEMALS "delegate" für Aufgaben die Browser, Login oder externe Accounts erfordern
 - delegate NUR für echte Multi-Step Alfred-interne Aufgaben (z.B. mehrere Skills kombinieren)
-- BMW "Rate Limit" oder "Token abgelaufen" → skillName:"bmw", skillParams:{"action":"authorize"} (startet OAuth-Flow)
+- BMW "Rate Limit" oder "Token abgelaufen" → skillName:"bmw", skillParams:{"action":"authorize"} (startet OAuth-Flow)${this.skillRegistry.has('itsm') ? `
 - Infra-Probleme (Node offline, CPU/RAM hoch, Service down) → Incident erstellen (itsm)
 - Geplante Infra-Änderungen → Change Request erstellen (itsm)
-- Prüfe "CMDB / ITSM" Section → keine doppelten Incidents/Changes vorschlagen
+- Prüfe "CMDB / ITSM" Section → keine doppelten Incidents/Changes vorschlagen` : ''}
 - triggerAt MUSS in der Zukunft liegen! Aktuelle Zeit beachten.
 
 DRINGLICHKEIT (als "urgency" Feld in jeder Aktion):
