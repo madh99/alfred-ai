@@ -323,9 +323,11 @@ export class Alfred {
       const brainstormRepo = new BrainstormingRepository(adapter);
       const brainstormSkill = new BrainstormingSkill(brainstormRepo);
       // Wire KG context fetcher
-      brainstormSkill.setKgContextFn(async (userId: string, topic: string) => {
+      brainstormSkill.setKgContextFn(async (_userId: string, topic: string) => {
         if (!this.kgServiceRef) return '';
-        const graph = await new KnowledgeGraphRepository(adapter).getFullGraph(userId);
+        // Always use ownerMasterUserId — alfredUserId is different from KG user_id
+        const resolvedUid = this.ownerMasterUserId ?? _userId;
+        const graph = await new KnowledgeGraphRepository(adapter).getFullGraph(resolvedUid);
         const topicLower = topic.toLowerCase();
         const relevant = graph.entities.filter(e =>
           e.name.toLowerCase().includes(topicLower) ||
@@ -351,7 +353,7 @@ export class Alfred {
         // Also fetch relevant memories
         let memContext = '';
         try {
-          const mems = await memoryRepo.search(userId, topic);
+          const mems = await memoryRepo.search(resolvedUid, topic);
           memContext = mems.slice(0, 5).map(m => `- [memory] ${m.key}: ${m.value.slice(0, 100)}`).join('\n');
         } catch { /* skip */ }
 

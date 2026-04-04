@@ -52,7 +52,8 @@ export class BrainstormingSkill extends Skill {
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
-    const userId = context.alfredUserId ?? context.userId;
+    // Use masterUserId for DB consistency — alfredUserId and userId are platform-specific
+    const userId = context.masterUserId ?? context.alfredUserId ?? context.userId;
 
     switch (action) {
       case 'start': return this.startSession(userId, input, context);
