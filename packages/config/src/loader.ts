@@ -206,6 +206,25 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_REASONING_LLM_LINKING_PROVIDER: ['reasoning', 'llmLinking', 'provider'],
   ALFRED_REASONING_LLM_LINKING_MODEL: ['reasoning', 'llmLinking', 'model'],
   ALFRED_REASONING_LLM_LINKING_SCHEDULE: ['reasoning', 'llmLinking', 'schedule'],
+  // Cloudflare
+  ALFRED_CLOUDFLARE_API_TOKEN: ['cloudflare', 'apiToken'],
+  // Nginx Proxy Manager
+  ALFRED_NPM_BASE_URL: ['nginxProxyManager', 'baseUrl'],
+  ALFRED_NPM_EMAIL: ['nginxProxyManager', 'email'],
+  ALFRED_NPM_PASSWORD: ['nginxProxyManager', 'password'],
+  // pfSense
+  ALFRED_PFSENSE_BASE_URL: ['pfsense', 'baseUrl'],
+  ALFRED_PFSENSE_AUTH_METHOD: ['pfsense', 'authMethod'],
+  ALFRED_PFSENSE_API_KEY: ['pfsense', 'apiKey'],
+  ALFRED_PFSENSE_USERNAME: ['pfsense', 'username'],
+  ALFRED_PFSENSE_PASSWORD: ['pfsense', 'password'],
+  // Infra Defaults
+  ALFRED_INFRA_DEFAULT_NETWORK: ['infra', 'network'],
+  ALFRED_INFRA_DEFAULT_PROXMOX_NODE: ['infra', 'proxmoxNode'],
+  ALFRED_INFRA_DEFAULT_SSH_USER: ['infra', 'sshUser'],
+  ALFRED_INFRA_DEFAULT_SSH_KEY_PATH: ['infra', 'sshKeyPath'],
+  ALFRED_INFRA_DEFAULT_PROCESS_MANAGER: ['infra', 'processManager'],
+  ALFRED_INFRA_DEFAULT_RUNTIME: ['infra', 'runtime'],
   // Recipe
   ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
   ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],

@@ -493,6 +493,33 @@ export const TravelConfigSchema = z.object({
   defaultOrigin: z.string().optional(),
 }).optional();
 
+export const CloudflareConfigSchema = z.object({
+  apiToken: z.string(),
+});
+
+export const NginxProxyManagerConfigSchema = z.object({
+  baseUrl: z.string(),
+  email: z.string(),
+  password: z.string(),
+});
+
+export const PfSenseConfigSchema = z.object({
+  baseUrl: z.string(),
+  authMethod: z.enum(['apikey', 'jwt', 'basic']).optional(),
+  apiKey: z.string().optional(),
+  username: z.string().optional(),
+  password: z.string().optional(),
+});
+
+export const InfraDefaultsConfigSchema = z.object({
+  network: z.string().optional(),
+  proxmoxNode: z.string().optional(),
+  sshUser: z.string().optional(),
+  sshKeyPath: z.string().optional(),
+  processManager: z.enum(['pm2', 'systemd', 'docker-compose']).optional(),
+  runtime: z.enum(['node', 'python', 'static']).optional(),
+});
+
 export const MqttConfigSchema = z.object({
   brokerUrl: z.string(),
   username: z.string().optional(),
@@ -549,5 +576,9 @@ export const AlfredConfigSchema = z.object({
   webhooks: z.array(WebhookConfigSchema).optional(),
   proxmoxBackup: ProxmoxBackupConfigSchema.optional(),
   mqtt: MqttConfigSchema.optional(),
+  cloudflare: CloudflareConfigSchema.optional(),
+  nginxProxyManager: NginxProxyManagerConfigSchema.optional(),
+  pfsense: PfSenseConfigSchema.optional(),
+  infra: InfraDefaultsConfigSchema.optional(),
   conversation: ConversationConfigSchema,
 });

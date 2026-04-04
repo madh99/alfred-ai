@@ -720,6 +720,20 @@ export class Alfred {
       this.logger.info({ broker: this.config.mqtt.brokerUrl }, 'MQTT skill registered');
     }
 
+    // 4o2. Cloudflare DNS (optional)
+    if (this.config.cloudflare?.apiToken) {
+      const { CloudflareDnsSkill } = await import('@alfred/skills');
+      skillRegistry.register(new CloudflareDnsSkill(this.config.cloudflare));
+      this.logger.info('Cloudflare DNS skill registered');
+    }
+
+    // 4o3. Nginx Proxy Manager (optional)
+    if (this.config.nginxProxyManager?.baseUrl) {
+      const { NginxProxyManagerSkill } = await import('@alfred/skills');
+      skillRegistry.register(new NginxProxyManagerSkill(this.config.nginxProxyManager));
+      this.logger.info({ baseUrl: this.config.nginxProxyManager.baseUrl }, 'Nginx Proxy Manager skill registered');
+    }
+
     // 4p. Marketplace (willhaben + eBay — willhaben always available, eBay needs credentials)
     {
       const { MarketplaceSkill } = await import('@alfred/skills');

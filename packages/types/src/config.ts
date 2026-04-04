@@ -490,6 +490,33 @@ export interface TravelConfig {
   defaultOrigin?: string;
 }
 
+export interface CloudflareConfig {
+  apiToken: string;
+}
+
+export interface NginxProxyManagerConfig {
+  baseUrl: string;
+  email: string;
+  password: string;
+}
+
+export interface PfSenseConfig {
+  baseUrl: string;
+  authMethod?: 'apikey' | 'jwt' | 'basic';
+  apiKey?: string;
+  username?: string;
+  password?: string;
+}
+
+export interface InfraDefaultsConfig {
+  network?: string;
+  proxmoxNode?: string;
+  sshUser?: string;
+  sshKeyPath?: string;
+  processManager?: 'pm2' | 'systemd' | 'docker-compose';
+  runtime?: 'node' | 'python' | 'static';
+}
+
 export interface MqttConfig {
   brokerUrl: string;
   username?: string;
@@ -547,6 +574,10 @@ export interface AlfredConfig {
   webhooks?: WebhookConfig[];
   proxmoxBackup?: ProxmoxBackupConfig;
   mqtt?: MqttConfig;
+  cloudflare?: CloudflareConfig;
+  nginxProxyManager?: NginxProxyManagerConfig;
+  pfsense?: PfSenseConfig;
+  infra?: InfraDefaultsConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };
