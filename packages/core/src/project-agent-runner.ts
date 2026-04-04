@@ -13,8 +13,13 @@ const execFileAsync = promisify(execFile);
 
 /** Run a git command, optionally as a different user via sudo -u. */
 async function gitExec(args: string[], cwd: string, runAsUser?: string): Promise<string> {
+  // Inject git identity for commit/init commands when running as another user
+  const needsIdentity = runAsUser && (args[0] === 'commit' || args[0] === 'init');
+  const gitArgs = needsIdentity
+    ? ['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', ...args]
+    : args;
   const cmd = runAsUser ? 'sudo' : 'git';
-  const cmdArgs = runAsUser ? ['-u', runAsUser, 'git', ...args] : args;
+  const cmdArgs = runAsUser ? ['-u', runAsUser, 'git', ...gitArgs] : gitArgs;
   const { stdout } = await execFileAsync(cmd, cmdArgs, { cwd, maxBuffer: 10 * 1024 * 1024 });
   return stdout.trim();
 }
@@ -104,6 +109,16 @@ export class ProjectAgentRunner {
 
       const startTime = Date.now();
       const maxDurationMs = config.maxDurationHours * 60 * 60 * 1000;
+
+      // ── ENSURE GIT REPO EXISTS (before any phase commits) ──
+      if (!existsSync(path.join(config.cwd, '.git'))) {
+        try {
+          await gitExec(['init'], config.cwd, runAsUser);
+          this.logger.info({ cwd: config.cwd }, 'Project agent: git repo initialized');
+        } catch (err) {
+          this.logger.warn({ err, cwd: config.cwd }, 'Project agent: git init failed (commits will be skipped)');
+        }
+      }
 
       // ── MAIN LOOP ──
       for (let phaseIdx = 0; phaseIdx < plan.phases.length; phaseIdx++) {
@@ -261,11 +276,7 @@ export class ProjectAgentRunner {
     // Check if this is a git repository — if not, initialize one
     const hasGitDir = existsSync(path.join(cwd, '.git'));
     if (!hasGitDir) {
-      if (!this.forgeConfig) {
-        this.logger.debug({ cwd }, 'Project agent: no .git/ and no forge config — skipping push');
-        return;
-      }
-      // Init git repo
+      // Always init git — even without forge (local repo is valuable)
       try {
         await gitExec(['init'], cwd, runAsUser);
         await gitExec(['add', '-A'], cwd, runAsUser);
@@ -273,8 +284,13 @@ export class ProjectAgentRunner {
         this.logger.info({ cwd }, 'Project agent: git init + initial commit');
       } catch (err) {
         this.logger.warn({ err, cwd }, 'Project agent: git init failed');
-        return;
+        if (!this.forgeConfig) return;
       }
+    }
+
+    if (!this.forgeConfig) {
+      this.logger.debug({ cwd }, 'Project agent: no forge config — local git repo only');
+      return;
     }
 
     // Get remote URL
