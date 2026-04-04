@@ -734,7 +734,14 @@ export class Alfred {
       this.logger.info({ baseUrl: this.config.nginxProxyManager.baseUrl }, 'Nginx Proxy Manager skill registered');
     }
 
-    // 4o4. Deploy Skill (always available — uses SSH)
+    // 4o4. pfSense Firewall (optional)
+    if (this.config.pfsense?.baseUrl) {
+      const { PfSenseSkill } = await import('@alfred/skills');
+      skillRegistry.register(new PfSenseSkill(this.config.pfsense));
+      this.logger.info({ baseUrl: this.config.pfsense.baseUrl, auth: this.config.pfsense.authMethod ?? 'apikey' }, 'pfSense Firewall skill registered');
+    }
+
+    // 4o5. Deploy Skill (always available — uses SSH)
     {
       const { DeploySkill } = await import('@alfred/skills');
       skillRegistry.register(new DeploySkill(this.config.infra));
