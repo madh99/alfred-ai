@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.357] - 2026-04-05
+
+### Fixed
+- **NPM Schema: `additional_domains` fehlte `items`** — OpenAI lehnte Tool-Schema ab → Alfred konnte nicht antworten. Gefixt mit `items: { type: 'string' }`.
+- **pfSense v2.7.6: `list_rules` → `/firewall/rules` (Plural)** — v2.7.6 API braucht Plural-Endpoints für Listen. Fallback auf Singular für ältere Versionen.
+- **pfSense: `list_interfaces` → `/interfaces` (Plural)** — Gleicher Fix für Interface-Liste.
+
 ## [0.19.0-multi-ha.356] - 2026-04-05
 
 ### Fixed

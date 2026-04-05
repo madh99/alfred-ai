@@ -136,8 +136,18 @@ export class PfSenseSkill extends Skill {
 
   private async listRules(iface?: string): Promise<SkillResult> {
     const query = iface ? `?interface=${encodeURIComponent(iface)}` : '';
-    const data = await this.pfFetch(`/firewall/rule${query}`) as { data: Array<Record<string, unknown>> };
-    const rules = data.data ?? [];
+    // v2.7.6+ uses /firewall/rules (plural) for listing, /firewall/rule/{id} for single
+    let rules: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch(`/firewall/rules${query}`) as { data: Array<Record<string, unknown>> };
+      rules = data.data ?? [];
+    } catch {
+      // Fallback for older API versions using singular endpoint
+      try {
+        const data = await this.pfFetch(`/firewall/rule${query}`) as { data: Array<Record<string, unknown>> };
+        rules = data.data ?? [];
+      } catch { /* both failed */ }
+    }
 
     const lines = rules.map((r: any, i: number) => {
       const src = r.source?.address ?? r.source?.network ?? 'any';
@@ -199,8 +209,14 @@ export class PfSenseSkill extends Skill {
   }
 
   private async listInterfaces(): Promise<SkillResult> {
-    const data = await this.pfFetch('/interface') as { data: Array<Record<string, unknown>> };
-    const interfaces = data.data ?? [];
+    // v2.7.6+ uses /interfaces (plural)
+    let interfaces: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch('/interfaces') as { data: Array<Record<string, unknown>> };
+      interfaces = data.data ?? [];
+    } catch {
+      try { const data = await this.pfFetch('/interface') as { data: Array<Record<string, unknown>> }; interfaces = data.data ?? []; } catch { /* both failed */ }
+    }
 
     const lines = interfaces.map((i: any) =>
       `| ${i.if ?? '?'} | ${i.descr ?? i.name ?? '?'} | ${i.ipaddr ?? 'dhcp'} | ${i.enable ? '🟢' : '🔴'} |`

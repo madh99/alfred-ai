@@ -27,7 +27,7 @@ export class NginxProxyManagerSkill extends Skill {
         force_ssl: { type: 'boolean', description: 'HTTP → HTTPS Redirect erzwingen (default: true)' },
         host_id: { type: 'number', description: 'Host-ID für update/delete' },
         forward_scheme: { type: 'string', description: 'http oder https (default: http)' },
-        additional_domains: { type: 'array', description: 'Weitere Domains für denselben Host' },
+        additional_domains: { type: 'array', items: { type: 'string' }, description: 'Weitere Domains für denselben Host' },
       },
       required: ['action'],
     },
