@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.356] - 2026-04-05
+
+### Fixed
+- **Cloudflare Discovery: `zone` → `domain`** — Discovery übergab falschen Parameter an Cloudflare-Skill. Alle DNS Records wurden übersprungen.
+
 ## [0.19.0-multi-ha.355] - 2026-04-05
 
 ### Fixed

@@ -841,7 +841,7 @@ export class Alfred {
             const zonesResult = await skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, { action: 'list_zones' }, {} as any);
             if (zonesResult.success && Array.isArray(zonesResult.data)) {
               for (const z of zonesResult.data) {
-                const recsResult = await skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, { action: 'list_records', zone: z.name }, {} as any);
+                const recsResult = await skillSandbox.execute(skillRegistry.get('cloudflare_dns')!, { action: 'list_records', domain: z.name }, {} as any);
                 if (recsResult.success && Array.isArray(recsResult.data)) {
                   for (const r of recsResult.data) {
                     assets.push({ name: `${r.name} (${r.type})`, assetType: 'dns_record', sourceSkill: 'cloudflare_dns', sourceId: `${z.id}:${r.id}`, fqdn: r.name, attributes: { type: r.type, content: r.content, proxied: r.proxied, ttl: r.ttl, zone: z.name } });
