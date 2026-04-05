@@ -51,7 +51,8 @@ type Action =
   | 'create_lxc'
   | 'clone_vm'
   | 'list_networks'
-  | 'wait_ready';
+  | 'wait_ready'
+  | 'api_raw';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -301,6 +302,13 @@ export class ProxmoxSkill extends Skill {
           return await this.listNetworksAction(input);
         case 'wait_ready':
           return await this.waitReady(input);
+
+        case 'api_raw': {
+          const rawPath = input.path as string;
+          if (!rawPath) return { success: false, error: 'path erforderlich' };
+          const data = await this.get(rawPath);
+          return { success: true, data };
+        }
 
         default:
           return { success: false, error: `Unknown action "${action as string}"` };

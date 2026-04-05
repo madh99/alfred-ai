@@ -1,7 +1,7 @@
 import type { SkillMetadata, SkillContext, SkillResult, PfSenseConfig } from '@alfred/types';
 import { Skill } from '../skill.js';
 
-type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'status';
+type Action = 'list_rules' | 'create_rule' | 'delete_rule' | 'list_interfaces' | 'list_vlans' | 'list_gateways' | 'list_dhcp_leases' | 'list_arp' | 'status';
 
 /**
  * pfSense Firewall Skill — verwaltet Firewall-Regeln über die pfSense REST API.
@@ -17,7 +17,11 @@ export class PfSenseSkill extends Skill {
       '"list_rules" zeigt alle Firewall-Regeln (optional: interface Filter). ' +
       '"create_rule" erstellt eine neue Regel (interface, protocol, source, destination, destination_port, description). ' +
       '"delete_rule" löscht eine Regel (rule_id). ' +
-      '"list_interfaces" zeigt verfügbare Netzwerk-Interfaces. ' +
+      '"list_interfaces" zeigt verfügbare Netzwerk-Interfaces mit IP/Subnet. ' +
+      '"list_vlans" zeigt konfigurierte VLANs mit Tag und Parent-Interface. ' +
+      '"list_gateways" zeigt Gateways mit Interface und IP. ' +
+      '"list_dhcp_leases" zeigt aktive DHCP-Leases (IP, MAC, Hostname). ' +
+      '"list_arp" zeigt die ARP-Tabelle (IP↔MAC Zuordnung aller aktiven Geräte). ' +
       '"status" zeigt den Firewall-Status. ' +
       'WICHTIG: create_rule und delete_rule ändern die Firewall — nur nach expliziter User-Bestätigung ausführen!',
     riskLevel: 'admin',
@@ -25,7 +29,7 @@ export class PfSenseSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'status'] },
+        action: { type: 'string', enum: ['list_rules', 'create_rule', 'delete_rule', 'list_interfaces', 'list_vlans', 'list_gateways', 'list_dhcp_leases', 'list_arp', 'status'] },
         interface: { type: 'string', description: 'Interface-Name (z.B. lan, wan, opt1) für list_rules Filter oder create_rule' },
         protocol: { type: 'string', description: 'Protokoll: tcp, udp, icmp, any (default: tcp)' },
         source: { type: 'string', description: 'Quell-IP/Netzwerk (z.B. 172.17.0.10, 192.168.1.0/24, any)' },
@@ -56,6 +60,10 @@ export class PfSenseSkill extends Skill {
       case 'create_rule': return this.createRule(input);
       case 'delete_rule': return this.deleteRule(input);
       case 'list_interfaces': return this.listInterfaces();
+      case 'list_vlans': return this.listVlans();
+      case 'list_gateways': return this.listGateways();
+      case 'list_dhcp_leases': return this.listDhcpLeases();
+      case 'list_arp': return this.listArp();
       case 'status': return this.getStatus();
       default: return { success: false, error: `Unknown action: ${String(action)}` };
     }
@@ -224,6 +232,70 @@ export class PfSenseSkill extends Skill {
 
     const display = `## pfSense Interfaces\n\n| Interface | Name | IP | Status |\n|-----------|------|----|--------|\n${lines.join('\n')}`;
     return { success: true, data: interfaces, display };
+  }
+
+  private async listVlans(): Promise<SkillResult> {
+    let vlans: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch('/interface/vlans') as { data: Array<Record<string, unknown>> };
+      vlans = data.data ?? [];
+    } catch {
+      try { const data = await this.pfFetch('/interface/vlan') as { data: Array<Record<string, unknown>> }; vlans = data.data ?? []; } catch { /* skip */ }
+    }
+
+    const lines = vlans.map((v: any) =>
+      `| ${v.tag ?? '?'} | ${v.if ?? v.vlanif ?? '?'} | ${v.parentif ?? v.if?.split('.')[0] ?? '?'} | ${v.descr ?? ''} |`,
+    );
+    const display = `## pfSense VLANs (${vlans.length})\n\n| Tag | Interface | Parent | Beschreibung |\n|-----|-----------|--------|--------------|\n${lines.join('\n')}`;
+    return { success: true, data: vlans, display };
+  }
+
+  private async listGateways(): Promise<SkillResult> {
+    let gateways: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch('/routing/gateways') as { data: Array<Record<string, unknown>> };
+      gateways = data.data ?? [];
+    } catch {
+      try { const data = await this.pfFetch('/routing/gateway') as { data: Array<Record<string, unknown>> }; gateways = data.data ?? []; } catch { /* skip */ }
+    }
+
+    const lines = gateways.map((g: any) =>
+      `| ${g.name ?? '?'} | ${g.interface ?? '?'} | ${g.gateway ?? '?'} | ${g.monitor ?? '—'} | ${g.status ?? '?'} |`,
+    );
+    const display = `## pfSense Gateways (${gateways.length})\n\n| Name | Interface | Gateway | Monitor | Status |\n|------|-----------|---------|---------|--------|\n${lines.join('\n')}`;
+    return { success: true, data: gateways, display };
+  }
+
+  private async listDhcpLeases(): Promise<SkillResult> {
+    let leases: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch('/services/dhcpd/leases') as { data: Array<Record<string, unknown>> };
+      leases = data.data ?? [];
+    } catch {
+      try { const data = await this.pfFetch('/services/dhcpd/lease') as { data: Array<Record<string, unknown>> }; leases = data.data ?? []; } catch { /* skip */ }
+    }
+
+    const lines = leases.map((l: any) =>
+      `| ${l.ip ?? '?'} | ${l.mac ?? '?'} | ${l.hostname ?? '—'} | ${l.type ?? l.state ?? '?'} | ${l.end ?? '—'} |`,
+    );
+    const display = `## pfSense DHCP Leases (${leases.length})\n\n| IP | MAC | Hostname | Typ | Ablauf |\n|----|-----|----------|-----|--------|\n${lines.join('\n')}`;
+    return { success: true, data: leases, display };
+  }
+
+  private async listArp(): Promise<SkillResult> {
+    let entries: Array<Record<string, unknown>> = [];
+    try {
+      const data = await this.pfFetch('/diagnostics/arp') as { data: Array<Record<string, unknown>> };
+      entries = data.data ?? [];
+    } catch {
+      try { const data = await this.pfFetch('/diagnostics/arp_table') as { data: Array<Record<string, unknown>> }; entries = data.data ?? []; } catch { /* skip */ }
+    }
+
+    const lines = entries.map((e: any) =>
+      `| ${e.ip ?? '?'} | ${e.mac ?? '?'} | ${e.interface ?? '?'} | ${e.hostname ?? '—'} |`,
+    );
+    const display = `## pfSense ARP-Tabelle (${entries.length})\n\n| IP | MAC | Interface | Hostname |\n|----|-----|-----------|----------|\n${lines.join('\n')}`;
+    return { success: true, data: entries, display };
   }
 
   private async getStatus(): Promise<SkillResult> {

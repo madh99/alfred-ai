@@ -87,6 +87,7 @@ export class CmdbSkill extends Skill {
   private readonly staleThresholdDays: number;
   private discoverySources: Map<string, DiscoverySource> = new Map();
   private kgSyncCallback?: (userId: string) => Promise<void>;
+  private ipResolverCallback?: () => Promise<Array<{ mac: string; ip: string; hostname?: string; source: string }>>;
 
   constructor(repo: CmdbRepository, staleThresholdDays = 7) {
     super();
@@ -100,6 +101,10 @@ export class CmdbSkill extends Skill {
 
   setKgSyncCallback(cb: (userId: string) => Promise<void>): void {
     this.kgSyncCallback = cb;
+  }
+
+  setIpResolverCallback(cb: () => Promise<Array<{ mac: string; ip: string; hostname?: string; source: string }>>): void {
+    this.ipResolverCallback = cb;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -171,6 +176,31 @@ export class CmdbSkill extends Skill {
       } catch (err: any) {
         results.push(`${name}: Fehler — ${err.message?.slice(0, 100)}`);
       }
+    }
+
+    // Cross-source IP resolution: fill missing IPs via ARP/DHCP MAC matching
+    if (this.ipResolverCallback) {
+      try {
+        const macIpMap = await this.ipResolverCallback();
+        const macToIp = new Map<string, string>();
+        for (const entry of macIpMap) {
+          if (entry.mac && entry.ip) macToIp.set(entry.mac.toLowerCase(), entry.ip);
+        }
+        // Find assets without IP that have a MAC in attributes
+        const allAssets = await this.repo.listAssets(userId);
+        let resolved = 0;
+        for (const asset of allAssets) {
+          if (asset.ipAddress) continue; // already has IP
+          const mac = String(asset.attributes?.mac ?? '').toLowerCase();
+          if (!mac) continue;
+          const ip = macToIp.get(mac);
+          if (ip) {
+            await this.repo.updateAsset(userId, asset.id, { ipAddress: ip });
+            resolved++;
+          }
+        }
+        if (resolved > 0) results.push(`ip-resolution: ${resolved} IPs via MAC zugeordnet`);
+      } catch { /* non-critical */ }
     }
 
     // Cross-source relation discovery

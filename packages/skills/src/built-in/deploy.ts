@@ -67,6 +67,8 @@ export class DeploySkill extends Skill {
         install_command: { type: 'string', description: 'Custom Install-Befehl (default: npm install --production)' },
         start_command: { type: 'string', description: 'Custom Start-Befehl (default: npm start)' },
         lines: { type: 'number', description: 'Anzahl Log-Zeilen für "logs" Action (default: 50)' },
+        gateway: { type: 'string', description: 'Gateway-IP für neue VMs/LXCs (default: x.x.x.1)' },
+        subnet_prefix: { type: 'string', description: 'Subnet-Präfix für neue VMs/LXCs (default: 24)' },
       },
       required: ['action'],
     },
@@ -142,7 +144,7 @@ export class DeploySkill extends Skill {
       '-o', 'ConnectTimeout=10',
       `${user}@${host}`,
       command,
-    ], { maxBuffer: 5 * 1024 * 1024, timeout: 120_000 });
+    ], { maxBuffer: 5 * 1024 * 1024, timeout: 300_000 });
     if (stderr && !stdout) return stderr.trim();
     return stdout.trim();
   }
@@ -304,8 +306,8 @@ export class DeploySkill extends Skill {
     const projectDir = `/home/${user}/${project}`;
     const steps: string[] = [];
 
-    await this.ssh(host, user, `cd ${projectDir} && git checkout HEAD~1`);
-    steps.push('⏪ Git: HEAD~1');
+    await this.ssh(host, user, `cd ${projectDir} && git revert --no-edit HEAD`);
+    steps.push('⏪ Git: revert HEAD');
 
     if (runtime === 'node') {
       await this.ssh(host, user, `cd ${projectDir} && npm install --production && npm run build --if-present`);
@@ -354,8 +356,11 @@ export class DeploySkill extends Skill {
     const steps: string[] = [];
 
     if (!project) return { success: false, error: 'project erforderlich' };
+    if (!validateName(project)) return { success: false, error: 'Ungültiger Projektname' };
+    if (domain && !/^[\w.\-]+$/.test(domain)) return { success: false, error: 'Ungültige Domain' };
 
     let host = input.host as string | undefined;
+    if (host && !validateHost(host)) return { success: false, error: 'Ungültiger Hostname' };
 
     try {
       // ── STEP 1: Determine/Create Host ──
@@ -388,7 +393,7 @@ export class DeploySkill extends Skill {
           if (target === 'new_lxc') {
             const r = await this.proxmoxFn({
               action: 'create_lxc', template, hostname, memory, cores,
-              ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
+              ip: `${host}/${input.subnet_prefix ?? '24'}`, gateway: (input.gateway as string) ?? host.replace(/\.\d+$/, '.1'),
               ssh_public_key: sshKey,
             });
             if (!r.success) {
@@ -399,7 +404,7 @@ export class DeploySkill extends Skill {
           } else {
             const r = await this.proxmoxFn({
               action: 'clone_vm', template, hostname, memory, cores,
-              ip: `${host}/24`, gateway: host.replace(/\.\d+$/, '.1'),
+              ip: `${host}/${input.subnet_prefix ?? '24'}`, gateway: (input.gateway as string) ?? host.replace(/\.\d+$/, '.1'),
               ssh_public_key: sshKey,
             });
             if (!r.success) {
@@ -449,6 +454,9 @@ export class DeploySkill extends Skill {
       steps.push(...deploySteps);
 
       // ── STEP 3: Firewall ──
+      if (!input.skip_firewall && appPort && !this.firewallFn) {
+        steps.push('⚠️ Firewall: übersprungen (pfSense nicht konfiguriert)');
+      }
       if (!input.skip_firewall && appPort && this.firewallFn) {
         const npmTarget = input.npm_target as string | undefined;
         if (npmTarget) {
@@ -465,6 +473,9 @@ export class DeploySkill extends Skill {
       }
 
       // ── STEP 4: Reverse Proxy ──
+      if (!input.skip_proxy && domain && appPort && !this.npmFn) {
+        steps.push('⚠️ Proxy: übersprungen (NPM nicht konfiguriert)');
+      }
       if (!input.skip_proxy && domain && appPort && this.npmFn) {
         const r = await this.npmFn({
           action: 'create_host',
@@ -477,6 +488,9 @@ export class DeploySkill extends Skill {
       }
 
       // ── STEP 5: DNS ──
+      if (!input.skip_dns && domain && !this.cloudflareFn) {
+        steps.push('⚠️ DNS: übersprungen (Cloudflare nicht konfiguriert)');
+      }
       if (!input.skip_dns && domain && this.cloudflareFn) {
         const publicIp = input.public_ip as string | undefined;
         if (publicIp) {

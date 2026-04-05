@@ -794,7 +794,47 @@ export class Alfred {
             if (vmsResult.success && Array.isArray(vmsResult.data)) {
               for (const v of vmsResult.data) {
                 const type = v.type === 'lxc' ? 'lxc' : 'vm';
-                assets.push({ name: v.name || `${type}-${v.vmid}`, assetType: type, sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, status: v.status === 'running' ? 'active' : 'inactive', attributes: { vmid: v.vmid, node: v.node, cpus: v.cpus, maxmem: v.maxmem, maxdisk: v.maxdisk } });
+                let vmIp: string | undefined;
+                let vmMac: string | undefined;
+                // Try to get IP from VM config (LXC: net0 has ip=..., QEMU: net0 has MAC)
+                try {
+                  const configPath = type === 'lxc'
+                    ? `/nodes/${v.node}/lxc/${v.vmid}/config`
+                    : `/nodes/${v.node}/qemu/${v.vmid}/config`;
+                  const cfgResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'api_raw', path: configPath }, {} as any);
+                  const cfg = cfgResult.success ? cfgResult.data as Record<string, unknown> : null;
+                  if (cfg) {
+                    const net0 = String(cfg.net0 ?? '');
+                    // LXC: ip=192.168.1.92/24
+                    const ipMatch = net0.match(/ip=([0-9.]+)/);
+                    if (ipMatch) vmIp = ipMatch[1];
+                    // MAC: virtio=BC:24:11:...,bridge=... or hwaddr=BC:24:11:...
+                    const macMatch = net0.match(/(?:virtio|hwaddr)=([0-9A-Fa-f:]+)/);
+                    if (macMatch) vmMac = macMatch[1].toLowerCase();
+                  }
+                } catch { /* skip — config not accessible */ }
+                // Try QEMU guest agent for running VMs without static IP
+                if (!vmIp && type === 'vm' && v.status === 'running') {
+                  try {
+                    const agentResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'api_raw', path: `/nodes/${v.node}/qemu/${v.vmid}/agent/network-get-interfaces` }, {} as any);
+                    if (agentResult.success && agentResult.data) {
+                      const ifaces = (agentResult.data as any).result ?? agentResult.data;
+                      if (Array.isArray(ifaces)) {
+                        for (const iface of ifaces) {
+                          const addrs = iface['ip-addresses'] ?? [];
+                          for (const addr of addrs) {
+                            if (addr['ip-address-type'] === 'ipv4' && !String(addr['ip-address']).startsWith('127.')) {
+                              vmIp = addr['ip-address'];
+                              break;
+                            }
+                          }
+                          if (vmIp) break;
+                        }
+                      }
+                    }
+                  } catch { /* guest agent not available */ }
+                }
+                assets.push({ name: v.name || `${type}-${v.vmid}`, assetType: type, sourceSkill: 'proxmox', sourceId: `${v.node}:${v.vmid}`, identifier: `vmid:${v.vmid}`, ipAddress: vmIp, status: v.status === 'running' ? 'active' : 'inactive', attributes: { vmid: v.vmid, node: v.node, cpus: v.cpus, maxmem: v.maxmem, maxdisk: v.maxdisk, mac: vmMac } });
                 relations.push({ sourceKey: `proxmox:${v.node}:${v.vmid}`, targetKey: `proxmox:node:${v.node}`, relationType: 'hosted_on' as const });
               }
             }
@@ -874,11 +914,43 @@ export class Alfred {
 
         wrapSkillAsSource('pfsense', async () => {
           const assets: any[] = [];
+          const pfSkill = skillRegistry.get('pfsense')!;
+          // Firewall Rules
           try {
-            const rulesResult = await skillSandbox.execute(skillRegistry.get('pfsense')!, { action: 'list_rules' }, {} as any);
+            const rulesResult = await skillSandbox.execute(pfSkill, { action: 'list_rules' }, {} as any);
             if (rulesResult.success && Array.isArray(rulesResult.data)) {
               for (const r of rulesResult.data) {
                 assets.push({ name: r.descr || `rule-${r.id}`, assetType: 'firewall_rule', sourceSkill: 'pfsense', sourceId: `rule:${r.id}`, attributes: { type: r.type, interface: r.interface, protocol: r.protocol, source: r.source, destination: r.destination, destination_address: r.destination?.address } });
+              }
+            }
+          } catch { /* skip */ }
+          // Interfaces (network segments with IP/Subnet)
+          try {
+            const ifResult = await skillSandbox.execute(pfSkill, { action: 'list_interfaces' }, {} as any);
+            if (ifResult.success && Array.isArray(ifResult.data)) {
+              for (const i of ifResult.data) {
+                const name = i.descr || i.name || i.if || 'unknown';
+                const ip = i.ipaddr && i.ipaddr !== 'dhcp' ? i.ipaddr : undefined;
+                const subnet = i.subnet ? `${ip ?? ''}/${i.subnet}` : undefined;
+                assets.push({ name, assetType: 'network', sourceSkill: 'pfsense', sourceId: `if:${i.if ?? name}`, ipAddress: ip, attributes: { interface: i.if, subnet, vlan: i.tag, enable: i.enable, gateway: i.gateway } });
+              }
+            }
+          } catch { /* skip */ }
+          // VLANs
+          try {
+            const vlanResult = await skillSandbox.execute(pfSkill, { action: 'list_vlans' }, {} as any);
+            if (vlanResult.success && Array.isArray(vlanResult.data)) {
+              for (const v of vlanResult.data) {
+                assets.push({ name: v.descr || `VLAN ${v.tag}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `vlan:${v.tag}`, attributes: { vlan_tag: v.tag, parent_if: v.parentif ?? v.if?.split('.')[0], vlanif: v.vlanif ?? v.if } });
+              }
+            }
+          } catch { /* skip */ }
+          // Gateways
+          try {
+            const gwResult = await skillSandbox.execute(pfSkill, { action: 'list_gateways' }, {} as any);
+            if (gwResult.success && Array.isArray(gwResult.data)) {
+              for (const g of gwResult.data) {
+                assets.push({ name: g.name || `gw-${g.interface}`, assetType: 'network', sourceSkill: 'pfsense', sourceId: `gw:${g.name ?? g.interface}`, ipAddress: g.gateway as string, attributes: { interface: g.interface, monitor: g.monitor, status: g.status, default: g.defaultgw } });
               }
             }
           } catch { /* skip */ }
@@ -941,6 +1013,45 @@ export class Alfred {
             return result;
           };
         }
+
+        // Wire IP resolver callback (pfSense ARP/DHCP + UniFi clients → MAC-to-IP)
+        cmdbSkill.setIpResolverCallback(async () => {
+          const entries: Array<{ mac: string; ip: string; hostname?: string; source: string }> = [];
+          // pfSense ARP table
+          if (skillRegistry.has('pfsense')) {
+            try {
+              const arpResult = await skillSandbox.execute(skillRegistry.get('pfsense')!, { action: 'list_arp' }, {} as any);
+              if (arpResult.success && Array.isArray(arpResult.data)) {
+                for (const e of arpResult.data) {
+                  if (e.mac && e.ip) entries.push({ mac: String(e.mac), ip: String(e.ip), hostname: e.hostname as string, source: 'pfsense_arp' });
+                }
+              }
+            } catch { /* skip */ }
+          }
+          // pfSense DHCP leases
+          if (skillRegistry.has('pfsense')) {
+            try {
+              const dhcpResult = await skillSandbox.execute(skillRegistry.get('pfsense')!, { action: 'list_dhcp_leases' }, {} as any);
+              if (dhcpResult.success && Array.isArray(dhcpResult.data)) {
+                for (const l of dhcpResult.data) {
+                  if (l.mac && l.ip) entries.push({ mac: String(l.mac), ip: String(l.ip), hostname: l.hostname as string, source: 'pfsense_dhcp' });
+                }
+              }
+            } catch { /* skip */ }
+          }
+          // UniFi clients (all known clients with MAC + IP)
+          if (skillRegistry.has('unifi')) {
+            try {
+              const clientResult = await skillSandbox.execute(skillRegistry.get('unifi')!, { action: 'list_clients' }, {} as any);
+              if (clientResult.success && Array.isArray(clientResult.data)) {
+                for (const c of clientResult.data) {
+                  if (c.mac && c.ip) entries.push({ mac: String(c.mac), ip: String(c.ip), hostname: (c.hostname ?? c.name) as string, source: 'unifi' });
+                }
+              }
+            } catch { /* skip */ }
+          }
+          return entries;
+        });
 
         // Wire KG sync callback (CMDB → KG)
         if (this.config.cmdb?.kgSync !== false) {

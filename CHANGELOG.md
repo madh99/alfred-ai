@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.358] - 2026-04-05
+
+### Added
+- **pfSense: 4 neue Actions** — `list_vlans`, `list_gateways`, `list_dhcp_leases`, `list_arp`. VLANs, Gateways und ARP/DHCP-Tabelle jetzt abrufbar.
+- **Proxmox Discovery: VM IP-Adressen** — LXC Config IPs aus `net0` Feld + QEMU Guest Agent IPs. MAC-Adressen aus VM-Config für Cross-Reference.
+- **pfSense Discovery erweitert** — Entdeckt jetzt Interfaces (mit Subnet/VLAN), VLANs, Gateways als network Assets. Nicht mehr nur Firewall-Regeln.
+- **Cross-Source IP Resolution** — pfSense ARP + DHCP + UniFi Client MACs gegen Proxmox VM-Config MACs gematcht → fehlende IPs automatisch zugeordnet.
+- **Proxmox `api_raw` Action** — Generischer API-Zugriff für Discovery-Callbacks (LXC/QEMU Config, Guest Agent).
+
+### Fixed
+- **Deploy: Gateway nicht mehr hardcoded /24** — `gateway` und `subnet_prefix` Parameter konfigurierbar, Fallback auf /24 + .1.
+- **Deploy: fullDeploy Input-Validation** — Project, Domain, Host werden validiert bevor SSH-Calls passieren.
+- **Deploy: SSH Timeout 2→5 Min** — Lange `npm install` Builds laufen nicht mehr in Timeout.
+- **Deploy: Rollback → `git revert`** — Statt `git checkout HEAD~1` (detached HEAD) wird `git revert --no-edit HEAD` verwendet.
+- **Deploy: Warnungen bei übersprungenen Steps** — Firewall/Proxy/DNS zeigt Warnung wenn Skill nicht konfiguriert statt stillem Skip.
+
 ## [0.19.0-multi-ha.357] - 2026-04-05
 
 ### Fixed
