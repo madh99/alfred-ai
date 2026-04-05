@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.359] - 2026-04-05
+
+### Fixed
+- **Skill-Filter: Infra-Keywords fehlten** — CMDB, ITSM, InfraDocs, Cloudflare, NPM, pfSense, Deploy Skills wurden vom Category-Keyword-Filter ausgeschlossen und nie zum LLM geschickt. 40+ fehlende Keywords ergänzt (cmdb, dns, cloudflare, firewall, proxy, deploy, vlan, gateway, arp, dhcp, incident, runbook, etc.).
+
 ## [0.19.0-multi-ha.358] - 2026-04-05
 
 ### Added
