@@ -1610,6 +1610,13 @@ export class Alfred {
             this.logger.info({ provider: llmLinkProvider, model: llmLinkingCfg.model ?? 'mistral-small-latest' }, 'LLM entity linker enabled');
           }
         }
+        // Resolve user timezone for reasoning engine
+        let userTimezone: string | undefined;
+        try {
+          const ownerProfile = await userRepo.getProfile?.(this.ownerMasterUserId || ownerUserId);
+          userTimezone = ownerProfile?.timezone;
+        } catch { /* fallback to server TZ */ }
+
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
           todoRepo,
@@ -1641,6 +1648,7 @@ export class Alfred {
           noteRepo,
           this.reminderRepo,
           documentRepo,
+          userTimezone,
         );
       }
     }

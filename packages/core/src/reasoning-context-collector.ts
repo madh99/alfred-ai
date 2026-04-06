@@ -83,6 +83,7 @@ export class ReasoningContextCollector {
     private readonly noteRepo?: NoteRepository,
     private readonly reminderRepo?: ReminderRepository,
     private readonly documentRepo?: DocumentRepository,
+    private readonly userTimezone?: string,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -102,10 +103,12 @@ export class ReasoningContextCollector {
     this.resolvedUserId = await this.getEffectiveUserId();
 
     const now = new Date();
+    const tz = this.userTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     const dateTime = now.toLocaleString('de-AT', {
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
       hour: '2-digit', minute: '2-digit',
-    });
+      timeZone: tz,
+    }) + ` (${tz})`;
 
     const sources = this.buildSourceDefs(now);
 

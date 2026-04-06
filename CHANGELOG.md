@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.362] - 2026-04-06
+
+### Fixed
+- **Reasoning: LLM bekommt jetzt Datum/Uhrzeit** — `ctx.dateTime` wird als erste Zeile in alle Reasoning-Prompts injiziert. LLM halluziniert keine Zeitstempel mehr.
+- **Reasoning: User-Timezone** — Reasoning-Engine, Context-Collector und DeliveryScheduler nutzen jetzt die User-Timezone (aus Profil) statt Server-UTC. Alle Stunden-Buckets (Activity-Profile, Delivery-Entscheidung) sind timezone-korrekt.
+- **DeliveryScheduler: Timezone-aware** — `getHours()` → `toLocaleString` mit User-Timezone. Activity-Profile wird in User-Stunden gebaut. Delivery-Entscheidung prüft User-Stunde, nicht UTC-Stunde.
+- **Deferred Insights: Alter-Hinweis** — Insights die >30 Min deferred waren zeigen "(erstellt vor Xh)" im Titel bei Zustellung.
+
 ## [0.19.0-multi-ha.361] - 2026-04-06
 
 ### Fixed

@@ -117,12 +117,14 @@ export class ReasoningEngine {
     private readonly noteRepo?: import('@alfred/storage').NoteRepository,
     private readonly reminderRepoRef?: import('@alfred/storage').ReminderRepository,
     private readonly documentRepo?: import('@alfred/storage').DocumentRepository,
+    private readonly userTimezone?: string,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
     this.tier = config?.tier ?? 'default';
     this.deduplicationHours = config?.deduplicationHours ?? 12;
 
+    const tz = userTimezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     this.collector = collector ?? new ReasoningContextCollector(
       this.skillRegistry, this.skillSandbox, this.userRepo,
       this.calendarProvider, this.todoRepo, this.watchRepo,
@@ -130,11 +132,12 @@ export class ReasoningEngine {
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
       this.defaultLocation, this.logger, this.workflowRepo,
       bmwTelematicRepo, noteRepo, reminderRepoRef, documentRepo,
+      tz,
     );
 
     // Smart delivery timing
     if (this.adapter) {
-      this.deliveryScheduler = new DeliveryScheduler(this.adapter, this.logger.child({ component: 'delivery-scheduler' }));
+      this.deliveryScheduler = new DeliveryScheduler(this.adapter, this.logger.child({ component: 'delivery-scheduler' }), tz);
     }
   }
 
@@ -513,7 +516,9 @@ ${this.buildTopicInstructions()}`;
   // ── Prompt Building ─────────────────────────────────────────
 
   private formatSections(ctx: CollectedContext): string {
-    return ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
+    const header = `=== Aktuelles Datum & Uhrzeit ===\n${ctx.dateTime}`;
+    const sections = ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
+    return `${header}\n\n${sections}`;
   }
 
   private formatEnrichedContext(enriched: Map<string, string>): string {
@@ -942,7 +947,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           const adapter = this.adapters.get(this.defaultPlatform);
           if (adapter) {
             for (const d of deferred) {
-              await adapter.sendMessage(this.defaultChatId, d.message);
+              // Add age indicator for deferred insights
+              let msg = d.message;
+              if (d.created_at) {
+                const ageMs = Date.now() - new Date(d.created_at).getTime();
+                const ageMin = Math.round(ageMs / 60_000);
+                if (ageMin > 30) {
+                  const ageStr = ageMin >= 120 ? `${Math.round(ageMin / 60)}h` : `${ageMin} Min`;
+                  msg = msg.replace(/^(💡 \*\*Alfred Insights\*\*)/, `$1 _(erstellt vor ${ageStr})_`);
+                }
+              }
+              await adapter.sendMessage(this.defaultChatId, msg);
               // Process deferred actions
               try {
                 const deferredActions = JSON.parse(d.actions) as ProposedAction[];

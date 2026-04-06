@@ -38,11 +38,25 @@ export interface ActivityProfile {
  */
 export class DeliveryScheduler {
   private profile?: ActivityProfile;
+  private readonly timezone: string;
 
   constructor(
     private readonly adapter: AsyncDbAdapter,
     private readonly logger: Logger,
-  ) {}
+    timezone?: string,
+  ) {
+    this.timezone = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+
+  /** Get current hour in the user's timezone. */
+  private getHourInUserTz(): number {
+    return parseInt(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: this.timezone }), 10);
+  }
+
+  /** Get hour from a UTC ISO string in the user's timezone. */
+  private getHourFromIsoInUserTz(iso: string): number {
+    return parseInt(new Date(iso).toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: this.timezone }), 10);
+  }
 
   /** Load cached profile from skill_state or compute fresh one. */
   async loadOrComputeProfile(userId: string): Promise<ActivityProfile> {
@@ -90,14 +104,14 @@ export class DeliveryScheduler {
     // Bucket by hour
     const msgByHour = new Array(24).fill(0);
     for (const row of messageRows) {
-      try { msgByHour[new Date(row.created_at).getHours()]++; } catch { /* skip */ }
+      try { msgByHour[this.getHourFromIsoInUserTz(row.created_at)]++; } catch { /* skip */ }
     }
 
     const confirmByHour = new Array(24).fill(0);
     const expiredByHour = new Array(24).fill(0);
     for (const row of confirmRows) {
       try {
-        const hour = new Date(row.resolved_at).getHours();
+        const hour = this.getHourFromIsoInUserTz(row.resolved_at);
         if (row.status === 'approved' || row.status === 'rejected') confirmByHour[hour]++;
         else if (row.status === 'expired') expiredByHour[hour]++;
       } catch { /* skip */ }
@@ -146,7 +160,7 @@ export class DeliveryScheduler {
     const profileAge = Date.now() - new Date(profile.computedAt).getTime();
     const hasActiveHours = profile.classifications.some(c => c === 'ACTIVE' || c === 'WAKING');
     if (profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours) return true; // <3 days, no active hours → deliver
-    const hour = new Date().getHours();
+    const hour = this.getHourInUserTz();
     const currentClass = profile.classifications[hour];
     const minClass = MIN_HOUR_CLASS[urgency];
     return CLASS_ORDER[currentClass] >= CLASS_ORDER[minClass];
@@ -166,14 +180,14 @@ export class DeliveryScheduler {
   }
 
   /** Get pending deferred insights that are not stale. Max 5 (batching). */
-  async getPendingDeferred(chatId: string): Promise<Array<{ id: string; message: string; actions: string; urgency: string }>> {
+  async getPendingDeferred(chatId: string): Promise<Array<{ id: string; message: string; actions: string; urgency: string; created_at: string }>> {
     const now = new Date().toISOString();
     const rows = await this.adapter.query(
-      `SELECT id, message, actions, urgency FROM deferred_insights
+      `SELECT id, message, actions, urgency, created_at FROM deferred_insights
        WHERE chat_id = ? AND delivered = 0 AND stale_at > ?
        ORDER BY created_at ASC LIMIT 5`,
       [chatId, now],
-    ) as Array<{ id: string; message: string; actions: string; urgency: string }>;
+    ) as Array<{ id: string; message: string; actions: string; urgency: string; created_at: string }>;
     return rows;
   }
 
