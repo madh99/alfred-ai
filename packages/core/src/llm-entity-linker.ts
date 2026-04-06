@@ -171,9 +171,10 @@ export class LLMEntityLinker {
       `- [${e.entityType}] "${e.name}"${e.attributes?.value ? ` — ${String(e.attributes.value).slice(0, 120)}` : ''}${e.attributes?.role ? ` (${e.attributes.role})` : ''}`,
     ).join('\n');
 
-    const allList = all.map(e =>
-      `- [${e.entityType}] "${e.name}"`,
-    ).join('\n');
+    const allList = all.map(e => {
+      const extra = e.attributes?.realName ? ` (Realname: ${e.attributes.realName})` : '';
+      return `- [${e.entityType}] "${e.name}"${extra}`;
+    }).join('\n');
 
     const relList = existingRelations.length > 0
       ? existingRelations.map(r => `- "${r.source}" —${r.type}→ "${r.target}" (strength: ${r.strength.toFixed(1)})`).join('\n')
@@ -220,6 +221,8 @@ REGELN:
 - Nicht wiederholen was offensichtlich ist (gleicher Name = gleiche Entity)
 - KEINE Relations vorschlagen die in BESTEHENDE RELATIONEN schon existieren
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
+- KEINE Entities erstellen die offensichtlich eine bereits existierende Entity unter anderem Namen beschreiben (z.B. wenn "User" einen Realnamen hat, keine separate Entity für diesen Namen erstellen — stattdessen zur User-Entity verlinken)
+- Wenn eine Entity einen Realnamen-Attribut hat, betrachte diesen als Alias — Referenzen zu diesem Namen gehören zur existierenden Entity
 - corrections: nur wenn der aktuelle Typ eindeutig falsch ist
 
 TRANSITIVE INFERENZ (wichtig!):
@@ -327,7 +330,11 @@ TRANSITIVE INFERENZ (wichtig!):
         if (source.entityType !== 'person' || target.entityType !== 'organization') continue;
       }
       if (rel.type === 'parent_of' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
-      if (rel.type === 'spouse' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
+      if (rel.type === 'spouse') {
+        if (source.entityType !== 'person' || target.entityType !== 'person') continue;
+        // Spouse only from memory-sourced entities (like sibling) — too high-stakes for LLM guessing
+        if (!source.sources.includes('memories') && !target.sources.includes('memories')) continue;
+      }
       if (rel.type === 'family' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
       if (rel.type === 'sibling') {
         if (source.entityType !== 'person' || target.entityType !== 'person') continue;

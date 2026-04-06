@@ -323,6 +323,49 @@ export class KnowledgeGraphRepository {
     await this.adapter.execute('DELETE FROM kg_entities WHERE id = ?', [id]);
   }
 
+  /** Migrate all relations from one entity to another, then delete the source entity. */
+  async migrateEntityRelations(userId: string, fromId: string, toId: string): Promise<number> {
+    let migrated = 0;
+    // Move source-side relations (fromId → target becomes toId → target)
+    const srcRels = await this.adapter.query(
+      'SELECT id, target_entity_id, relation_type FROM kg_relations WHERE user_id = ? AND source_entity_id = ?',
+      [userId, fromId],
+    );
+    for (const r of srcRels) {
+      // Check if toId already has this relation to avoid duplicates
+      const exists = await this.adapter.queryOne(
+        'SELECT 1 FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?',
+        [userId, toId, r.target_entity_id, r.relation_type],
+      );
+      if (exists) {
+        await this.adapter.execute('DELETE FROM kg_relations WHERE id = ?', [r.id]);
+      } else {
+        await this.adapter.execute('UPDATE kg_relations SET source_entity_id = ? WHERE id = ?', [toId, r.id]);
+        migrated++;
+      }
+    }
+    // Move target-side relations (source → fromId becomes source → toId)
+    const tgtRels = await this.adapter.query(
+      'SELECT id, source_entity_id, relation_type FROM kg_relations WHERE user_id = ? AND target_entity_id = ?',
+      [userId, fromId],
+    );
+    for (const r of tgtRels) {
+      const exists = await this.adapter.queryOne(
+        'SELECT 1 FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?',
+        [userId, r.source_entity_id, toId, r.relation_type],
+      );
+      if (exists) {
+        await this.adapter.execute('DELETE FROM kg_relations WHERE id = ?', [r.id]);
+      } else {
+        await this.adapter.execute('UPDATE kg_relations SET target_entity_id = ? WHERE id = ?', [toId, r.id]);
+        migrated++;
+      }
+    }
+    // Delete the phantom entity
+    await this.deleteEntity(fromId);
+    return migrated;
+  }
+
   // ── Maintenance ─────────────────────────────────────────────
 
   /** Decay confidence of entities not seen for a while. */

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.368] - 2026-04-07
+
+### Fixed
+- **KG: User realName aus Profil** — User-Entity bekommt dynamisch `realName` aus Profil/Memories. LLM sieht `[person] "User" (Realname: ...)` und erstellt keine Duplikat-Entities mehr.
+- **KG: Generische Duplikat-Regel** — LLM-Prompt: "Keine Entities erstellen die eine existierende Entity unter anderem Namen beschreiben."
+- **KG: Spouse Guard** — `spouse` Relation braucht `sources.includes('memories')` wie `sibling`.
+- **KG: Location-Patterns** — Geo-Präpositions-Extraktion: "nach Köln", "in London", "Messe in Berlin" → Location-Entity. Nicht mehr nur KNOWN_LOCATIONS.
+- **KG: Phantom-Entity Cleanup** — `migrateEntityRelations()` + automatische Erkennung in Maintenance.
+
 ## [0.19.0-multi-ha.366] - 2026-04-07
 
 ### Added

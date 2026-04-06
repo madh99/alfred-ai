@@ -86,6 +86,8 @@ export class KnowledgeGraphService {
   private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
   /** Names of CMDB-managed assets — excluded from text extraction to avoid double-creation. */
   private cmdbEntityNames = new Set<string>();
+  /** Cached user real name from profile (resolved once). */
+  private userRealName?: string;
 
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
@@ -97,6 +99,25 @@ export class KnowledgeGraphService {
     private readonly defaultChatId?: string,
     private readonly defaultPlatform?: string,
   ) {}
+
+  /** Upsert the User entity with realName from profile (cached). */
+  private async upsertUserEntity(userId: string): Promise<import('@alfred/storage').KGEntity> {
+    if (!this.userRealName && this.userRepo) {
+      try {
+        const profile = await (this.userRepo as any).getProfile?.(userId);
+        this.userRealName = profile?.displayName || profile?.username || undefined;
+      } catch { /* skip */ }
+      if (!this.userRealName && this.memoryRepo) {
+        try {
+          const nameMem = await this.memoryRepo.recall(userId, 'personal_name');
+          if (nameMem) this.userRealName = nameMem.value;
+        } catch { /* skip */ }
+      }
+    }
+    const attrs: Record<string, unknown> = {};
+    if (this.userRealName) attrs.realName = this.userRealName;
+    return this.kgRepo.upsertEntity(userId, 'User', 'person', attrs, 'system');
+  }
 
   /** Set optional LLM-based entity linker. */
   setLLMLinker(linker: import('./llm-entity-linker.js').LLMEntityLinker): void {
@@ -700,7 +721,30 @@ export class KnowledgeGraphService {
       }
 
       if (decayed > 0 || prunedEntities > 0 || prunedRelations > 0 || prunedEvents > 0 || mergedDupes > 0) {
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes }, 'KG maintenance completed');
+        // Phantom user-name detection: find person entities whose name contains
+        // all tokens of the User entity's realName → migrate relations to User
+        let phantomsMerged = 0;
+        try {
+          const allPersons = await this.kgRepo.getEntitiesByType(userId, 'person');
+          const userEntity = allPersons.find(e => e.name === 'User');
+          const realName = userEntity?.attributes?.realName as string | undefined;
+          if (userEntity && realName && realName.length >= 3) {
+            const nameTokens = realName.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+            for (const person of allPersons) {
+              if (person.id === userEntity.id) continue;
+              if (person.name === 'User') continue;
+              const personLower = person.normalizedName;
+              // Check if all name tokens appear in the person's name
+              if (nameTokens.length >= 2 && nameTokens.every(t => personLower.includes(t))) {
+                const migrated = await this.kgRepo.migrateEntityRelations(userId, person.id, userEntity.id);
+                this.logger.info({ phantom: person.name, migrated }, 'KG: Phantom user entity merged into User');
+                phantomsMerged++;
+              }
+            }
+          }
+        } catch { /* non-critical */ }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -794,7 +838,7 @@ export class KnowledgeGraphService {
       const vehicle = await this.kgRepo.upsertEntity(userId, 'BMW', 'vehicle', attrs, 'bmw');
 
       // Relation: User → owns → Vehicle
-      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      const user = await this.upsertUserEntity(userId);
       await this.kgRepo.upsertRelation(userId, user.id, vehicle.id, 'owns', undefined, 'bmw');
     }
   }
@@ -899,7 +943,7 @@ export class KnowledgeGraphService {
       const strompreis = await this.kgRepo.upsertEntity(userId, 'Strompreis', 'metric',
         { price_ct: price, cheap: price < 10 }, 'energy');
       // Relation: User → monitors → Strompreis
-      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      const user = await this.upsertUserEntity(userId);
       await this.kgRepo.upsertRelation(userId, user.id, strompreis.id, 'monitors', `${price}ct/kWh`, 'energy');
     }
   }
@@ -955,7 +999,7 @@ export class KnowledgeGraphService {
 
   private async extractFromCrypto(userId: string, content: string): Promise<void> {
     const posRe = /\b(BTC|ETH|SOL|ADA|DOT|XRP|DOGE|LINK|AVAX|MATIC|Bitcoin|Ethereum)\b[*:\s]*([0-9.,]+)(?:\s*[×x€$]?\s*[€$]?\s*([0-9.,]+))?/gi;
-    const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+    const user = await this.upsertUserEntity(userId);
     let match;
     while ((match = posRe.exec(content)) !== null) {
       const [, coin, amount, value] = match;
@@ -1017,7 +1061,7 @@ export class KnowledgeGraphService {
     if (Object.keys(attrs).length > 0) {
       const wallbox = await this.kgRepo.upsertEntity(userId, 'Wallbox', 'item', attrs, 'charger');
       // Relation: User → owns → Wallbox
-      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      const user = await this.upsertUserEntity(userId);
       await this.kgRepo.upsertRelation(userId, user.id, wallbox.id, 'owns', undefined, 'charger');
     }
   }
@@ -1126,7 +1170,7 @@ export class KnowledgeGraphService {
     try {
       // 1. Memory entities (persons, contacts) → KG person entities + User relations
       //    Canonical name resolution: same real person → same entity, context as attributes/relations
-      const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+      const user = await this.upsertUserEntity(userId);
       const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder']);
       const canonicalPersons = new Map<string, string>(); // firstName → canonical "Title Firstname"
 
@@ -1293,7 +1337,7 @@ export class KnowledgeGraphService {
             if (roleMatch) attrs.role = roleMatch[1].trim();
             attrs.memoryKey = job.key;
             const org = await this.kgRepo.upsertEntity(userId, orgName, 'organization' as any, attrs, 'memories');
-            const user = await this.kgRepo.upsertEntity(userId, 'User', 'person', {}, 'system');
+            const user = await this.upsertUserEntity(userId);
             await this.kgRepo.upsertRelation(userId, user.id, org.id, 'works_at', roleMatch?.[1]?.slice(0, 80), 'memories');
           }
         }
@@ -1454,9 +1498,45 @@ export class KnowledgeGraphService {
   private async extractLocations(userId: string, sectionKey: string, content: string): Promise<void> {
     // Only extract locations from user-relevant sections, not RSS feeds
     if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
+
+    // 1. Known locations (always recognized, even without preposition context)
     for (const city of KNOWN_LOCATIONS) {
       if (content.includes(city)) {
         await this.kgRepo.upsertEntity(userId, city, 'location', {}, sectionKey);
+      }
+    }
+
+    // 2. Pattern-based: German geographic prepositions → location candidates
+    // "nach Köln", "in London", "aus München", "über Zürich", "durch Berlin"
+    const GEO_PATTERNS = [
+      /\b(?:nach|in|aus|über|durch)\s+([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s-][A-ZÄÖÜ][a-zäöüß]+)?)\b/g,
+      /\b(?:Messe|Flughafen|Bahnhof|Hotel|Flug|Reise)\s+(?:in\s+|nach\s+)?([A-ZÄÖÜ][a-zäöüß]{2,})\b/g,
+    ];
+
+    for (const pattern of GEO_PATTERNS) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        const candidate = match[1].trim();
+        if (candidate.length < 3 || candidate.length > 30) continue;
+        // Skip if already a known person, org, or in blacklists
+        if (PERSON_BLACKLIST.has(candidate.toLowerCase())) continue;
+        if (KNOWN_LOCATIONS_LOWER.has(candidate.toLowerCase())) {
+          // Already handled above, but ensure it's created
+          await this.kgRepo.upsertEntity(userId, candidate, 'location', {}, sectionKey);
+          continue;
+        }
+        // Skip German common nouns that start uppercase (compound words > 7 chars)
+        if (!candidate.includes(' ') && candidate.length > 7 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(candidate)) {
+          // Could be a compound noun like "Mittwoch", "Frühstück" — skip if suffix matches
+          if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i.test(candidate)) continue;
+        }
+        // Skip known entity names that are not locations
+        if (this.cmdbEntityNames.has(candidate.toLowerCase())) continue;
+        // Create as location candidate
+        try {
+          await this.kgRepo.upsertEntity(userId, candidate, 'location', { detectedBy: 'geo_pattern' }, sectionKey);
+        } catch { /* constraint violation — skip */ }
       }
     }
   }
