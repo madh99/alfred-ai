@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.365] - 2026-04-07
+
+### Fixed
+- **Reminder-Spam behoben** — 3 Fixes: (1) Keyword-Dedup nutzte falsche userId (Telegram-Chat-ID statt masterUserId) → Dedup fand nie existierende Reminders. (2) Gefeuerte Reminders (letzte 24h) im Reasoning-Kontext sichtbar als "✅ BEREITS ERINNERT" → LLM sieht dass Thema schon behandelt wurde. (3) Action-Hash Expiry-Check repariert → wasNotified prüft jetzt das Ablaufdatum.
+
 ## [0.19.0-multi-ha.364] - 2026-04-06
 
 ### Fixed

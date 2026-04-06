@@ -4,8 +4,10 @@ export class CalendarNotificationRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
   async wasNotified(eventId: string, chatId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    // Check if notified AND expiry (event_start) hasn't passed yet
     const row = await this.adapter.queryOne(
-      'SELECT 1 FROM calendar_notifications WHERE event_id = ? AND chat_id = ?', [eventId, chatId],
+      'SELECT 1 FROM calendar_notifications WHERE event_id = ? AND chat_id = ? AND event_start > ?', [eventId, chatId, now],
     );
     return !!row;
   }

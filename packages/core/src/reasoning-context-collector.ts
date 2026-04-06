@@ -578,19 +578,37 @@ export class ReasoningContextCollector {
   private async fetchReminders(): Promise<string> {
     try {
       const uid = await this.getEffectiveUserId();
+      const lines: string[] = [];
+
+      // Active (unfired) reminders due within 24h
       const pending = await this.reminderRepo!.getAllPending();
-      // Filter: this user's reminders, due within 24h or overdue
       const cutoff = new Date(Date.now() + 24 * 60 * 60_000).toISOString();
       const relevant = pending
         .filter(r => r.userId === uid || r.chatId === this.defaultChatId)
         .filter(r => r.triggerAt <= cutoff)
         .slice(0, 10);
-      if (relevant.length === 0) return 'Keine aktiven Erinnerungen.';
-      return relevant.map(r => {
+      for (const r of relevant) {
         const due = new Date(r.triggerAt);
         const overdue = due.getTime() < Date.now();
-        return `- ${overdue ? '⚠️ ÜBERFÄLLIG' : due.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${r.message}`;
-      }).join('\n');
+        lines.push(`- ${overdue ? '⚠️ ÜBERFÄLLIG' : due.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${r.message}`);
+      }
+
+      // Recently fired reminders (last 24h) — so LLM knows the topic was already handled
+      try {
+        const recentCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+        const fired = await (this.reminderRepo as any).adapter?.query?.(
+          "SELECT message, trigger_at FROM reminders WHERE fired = 1 AND trigger_at > ? AND (user_id = ? OR chat_id = ?) ORDER BY trigger_at DESC LIMIT 10",
+          [recentCutoff, uid, this.defaultChatId],
+        ) as Array<{ message: string; trigger_at: string }> | undefined;
+        if (fired?.length) {
+          for (const r of fired) {
+            const time = new Date(r.trigger_at).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: this.userTimezone });
+            lines.push(`- ✅ BEREITS ERINNERT (${time}): ${r.message.slice(0, 80)}`);
+          }
+        }
+      } catch { /* non-critical */ }
+
+      return lines.length > 0 ? lines.join('\n') : 'Keine aktiven Erinnerungen.';
     } catch { return '(Erinnerungen nicht verfügbar)'; }
   }
 

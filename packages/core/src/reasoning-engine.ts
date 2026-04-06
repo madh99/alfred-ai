@@ -83,6 +83,7 @@ export class ReasoningEngine {
   private readonly deduplicationHours: number;
   private readonly collector: ReasoningContextCollector;
   private deliveryScheduler?: DeliveryScheduler;
+  private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
   private tickRunning = false;
 
@@ -997,12 +998,20 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
       }
 
-      // Skip reminder if an active unfired reminder with similar topic already exists
+      // Skip reminder if an active (unfired OR recently fired) reminder with similar topic exists
       if (action.skillName === 'reminder' && action.skillParams?.message) {
         try {
+          if (!this.resolvedOwnerUserId) {
+            try {
+              const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId);
+              this.resolvedOwnerUserId = user.masterUserId ?? user.id ?? this.defaultChatId;
+            } catch { this.resolvedOwnerUserId = this.defaultChatId; }
+          }
+          const uid = this.resolvedOwnerUserId;
+          const recentCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
           const existingReminders = await this.adapter?.query(
-            "SELECT message FROM reminders WHERE fired = 0 AND user_id = ?",
-            [this.defaultChatId],
+            "SELECT message FROM reminders WHERE (fired = 0 OR (fired = 1 AND trigger_at > ?)) AND (user_id = ? OR chat_id = ?)",
+            [recentCutoff, uid, this.defaultChatId],
           ) as Array<{ message: string }> | undefined;
           if (existingReminders) {
             const actionWords = new Set(String(action.skillParams.message).toLowerCase().split(/\s+/).filter(w => w.length >= 4));
