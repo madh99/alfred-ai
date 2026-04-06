@@ -28,12 +28,14 @@ interface LLMCorrection {
 
 interface LLMLinkingResult {
   relations?: LLMRelation[];
+  weaken?: LLMRelation[];
+  remove?: LLMRelation[];
   newEntities?: LLMNewEntity[];
   corrections?: LLMCorrection[];
 }
 
 const VALID_RELATION_TYPES = new Set([
-  'relates_to', 'used_for', 'caused_by', 'depends_on', 'part_of',
+  'relates_to', 'mentioned_with', 'used_for', 'caused_by', 'depends_on', 'part_of',
   'prepares_for', 'relevant_to', 'located_at', 'works_at', 'parent_of',
   'spouse', 'sibling', 'family', 'grandparent_of', 'aunt_uncle_of',
   'knows', 'owns', 'monitors', 'affects', 'plays_at', 'same_as',
@@ -131,8 +133,19 @@ export class LLMEntityLinker {
       } catch { /* non-critical */ }
     }
 
+    // Load existing relations for context (so LLM can identify stale/wrong ones)
+    let existingRelations: Array<{ source: string; target: string; type: string; strength: number }> = [];
+    try {
+      const graph = await this.kgRepo.getFullGraph(userId);
+      const entityById = new Map(allEntities.map(e => [e.id, e.name]));
+      existingRelations = graph.relations
+        .filter(r => entityById.has(r.sourceEntityId) && entityById.has(r.targetEntityId))
+        .map(r => ({ source: entityById.get(r.sourceEntityId)!, target: entityById.get(r.targetEntityId)!, type: r.relationType, strength: r.strength }))
+        .slice(0, 50);
+    } catch { /* non-critical */ }
+
     // Build prompt
-    const prompt = this.buildPrompt(toAnalyze, allEntities, docContext);
+    const prompt = this.buildPrompt(toAnalyze, allEntities, docContext, existingRelations);
 
     // Call LLM
     const model = this.config.model ?? 'mistral-small-latest';
@@ -153,7 +166,7 @@ export class LLMEntityLinker {
     return stats;
   }
 
-  private buildPrompt(changed: KGEntity[], all: KGEntity[], docContext = ''): string {
+  private buildPrompt(changed: KGEntity[], all: KGEntity[], docContext = '', existingRelations: Array<{ source: string; target: string; type: string; strength: number }> = []): string {
     const changedList = changed.map(e =>
       `- [${e.entityType}] "${e.name}"${e.attributes?.value ? ` — ${String(e.attributes.value).slice(0, 120)}` : ''}${e.attributes?.role ? ` (${e.attributes.role})` : ''}`,
     ).join('\n');
@@ -162,7 +175,11 @@ export class LLMEntityLinker {
       `- [${e.entityType}] "${e.name}"`,
     ).join('\n');
 
-    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge zu ALLEN bestehenden Entities.${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
+    const relList = existingRelations.length > 0
+      ? existingRelations.map(r => `- "${r.source}" —${r.type}→ "${r.target}" (strength: ${r.strength.toFixed(1)})`).join('\n')
+      : '(keine)';
+
+    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge. Prüfe auch ob BESTEHENDE RELATIONEN noch korrekt sind.${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
 
 NEUE/GEÄNDERTE ENTITIES:
 ${changedList}
@@ -170,11 +187,20 @@ ${changedList}
 ALLE BESTEHENDEN ENTITIES:
 ${allList}
 
-Antworte NUR als JSON-Objekt mit diesen 3 optionalen Arrays:
+BESTEHENDE RELATIONEN (Top 50):
+${relList}
+
+Antworte NUR als JSON-Objekt mit diesen 5 optionalen Arrays:
 
 {
   "relations": [
     {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Kurze Begründung"}
+  ],
+  "weaken": [
+    {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Warum veraltet/falsch"}
+  ],
+  "remove": [
+    {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Warum komplett falsch"}
   ],
   "newEntities": [
     {"name": "Neuer Name", "type": "entity_type", "attributes": {"key": "value"}, "reason": "Warum erstellen"}
@@ -186,11 +212,15 @@ Antworte NUR als JSON-Objekt mit diesen 3 optionalen Arrays:
 
 REGELN:
 - Nur ECHTE semantische Zusammenhänge, KEINE Spekulation
-- Relation-Typen: relates_to, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at
+- Relation-Typen: mentioned_with, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at
 - Entity-Typen: person, location, item, vehicle, event, organization, metric
+- "weaken": nutze wenn eine bestehende Relation wahrscheinlich veraltet ist (z.B. alter Arbeitgeber, alte Adresse) — Strength wird halbiert
+- "remove": nutze NUR wenn eine Relation eindeutig falsch ist (z.B. falsche Person-Zuordnung, offensichtlicher Extraktionsfehler)
+- Prüfe die BESTEHENDEN RELATIONEN — gibt es widersprüchliche oder veraltete?
 - Nicht wiederholen was offensichtlich ist (gleicher Name = gleiche Entity)
+- KEINE Relations vorschlagen die in BESTEHENDE RELATIONEN schon existieren
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
-- corrections: nur wenn der aktuelle Typ eindeutig falsch ist — insbesondere wenn etwas als "person" markiert ist aber eigentlich organization/item/location sein sollte
+- corrections: nur wenn der aktuelle Typ eindeutig falsch ist
 
 TRANSITIVE INFERENZ (wichtig!):
 - Wenn A parent_of B und A spouse C → C ist auch parent_of B
@@ -198,9 +228,9 @@ TRANSITIVE INFERENZ (wichtig!):
 - Wenn A parent_of B und A parent_of C → B und C sind siblings
 - Wenn ein "Freund" eine Ehefrau hat → Freund spouse Ehefrau
 - Wenn jemand bei einer Firma arbeitet → Person works_at Organization
-- Prüfe ob bestehende Entities falsch typisiert sind (z.B. "Hausbatterie" als person statt item, "Zürich Versicherungs" als person statt organization)
+- Prüfe ob bestehende Entities falsch typisiert sind
 
-- Wenn nichts zu tun: {"relations":[],"newEntities":[],"corrections":[]}`;
+- Wenn nichts zu tun: {"relations":[],"weaken":[],"remove":[],"newEntities":[],"corrections":[]}`;
   }
 
   private async callLLM(prompt: string, model: string): Promise<LLMLinkingResult> {
@@ -331,6 +361,36 @@ TRANSITIVE INFERENZ (wichtig!):
         await this.kgRepo.updateEntityType(existing.id, corr.newType, mergedAttrs);
         stats.corrections++;
       }
+    }
+
+    // 4. Weaken stale/outdated relations (halve strength)
+    for (const w of (result.weaken ?? []).slice(0, 10)) {
+      const source = entityByName.get(w.source.toLowerCase());
+      const target = entityByName.get(w.target.toLowerCase());
+      if (!source || !target) continue;
+      try {
+        const allRels = await this.kgRepo.getRelationsForEntity(userId, source.id);
+        const match = allRels.find(r => r.targetEntityId === target.id && r.relationType === w.type);
+        if (match) {
+          await this.kgRepo.updateRelationStrength(match.id, Math.max(0.1, match.strength * 0.5));
+          this.logger.debug({ source: w.source, target: w.target, type: w.type, reason: w.reason }, 'Relation weakened by LLM');
+        }
+      } catch { /* non-critical */ }
+    }
+
+    // 5. Remove clearly wrong relations
+    for (const r of (result.remove ?? []).slice(0, 5)) {
+      const source = entityByName.get(r.source.toLowerCase());
+      const target = entityByName.get(r.target.toLowerCase());
+      if (!source || !target) continue;
+      try {
+        const allRels = await this.kgRepo.getRelationsForEntity(userId, source.id);
+        const match = allRels.find(rel => rel.targetEntityId === target.id && rel.relationType === r.type);
+        if (match) {
+          await this.kgRepo.deleteRelation(match.id);
+          this.logger.info({ source: r.source, target: r.target, type: r.type, reason: r.reason }, 'Relation removed by LLM');
+        }
+      } catch { /* non-critical */ }
     }
 
     return stats;

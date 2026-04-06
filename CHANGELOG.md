@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.366] - 2026-04-07
+
+### Added
+- **KG: Relation-Decay** — `decayOldRelations(30, 0.1)` analog zu Entity-Decay. Stale Relations verlieren Strength über Zeit und werden bei <0.2 gepruned. Verhindert Noise-Akkumulation.
+- **KG: LLM sieht existierende Relations** — Top-50 Relations als Kontext im LLM-Linker-Prompt. LLM kann veraltete Relations identifizieren und `weaken`/`remove` vorschlagen.
+- **KG: LLM kann Relations schwächen/entfernen** — Neue Actions `weaken` (Strength halbieren) und `remove` (löschen) für veraltete/falsche Relations.
+- **KG: Confidence nach Source-Qualität** — Memory: +0.3, CMDB: +0.2, Chat: +0.15, LLM/SmartHome: +0.1, Feeds: +0.05 statt pauschal +0.1.
+- **KG: `mentioned_with` statt `relates_to`** — Generic-Linker erzeugt semantisch ehrlicheren Relation-Typ. LLM-Linker kann zu spezifischem Typ upgraden.
+- **KG: Entity Cap 200→500, Relation Cap 500→1000** — `getFullGraph()` Limits erhöht. Log-Warnung wenn Cap erreicht wird.
+
 ## [0.19.0-multi-ha.365] - 2026-04-07
 
 ### Fixed

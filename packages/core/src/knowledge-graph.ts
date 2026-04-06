@@ -229,6 +229,9 @@ export class KnowledgeGraphService {
   async buildConnectionMap(userId: string): Promise<string> {
     try {
       const { entities, relations } = await this.kgRepo.getFullGraph(userId);
+      if (entities.length >= 500) {
+        this.logger.warn({ count: entities.length }, 'KG: Entity cap reached (500) — some entities excluded from connection map');
+      }
       if (entities.length < 2) return '';
 
       const entityMap = new Map(entities.map(e => [e.id, e]));
@@ -608,7 +611,7 @@ export class KnowledgeGraphService {
           if (regex.test(combined)) {
             await this.kgRepo.upsertRelation(
               userId, entity.id, targetEntity.id,
-              'relates_to', undefined, 'generic',
+              'mentioned_with', undefined, 'generic',
             );
             linked++;
           }
@@ -626,6 +629,7 @@ export class KnowledgeGraphService {
   async maintenance(userId: string): Promise<void> {
     try {
       const decayed = await this.kgRepo.decayOldEntities(userId, 30, 0.1);
+      const decayedRelations = await this.kgRepo.decayOldRelations(userId, 30, 0.1);
       const prunedEntities = await this.kgRepo.pruneWeakEntities(userId, 0.2);
       const prunedRelations = await this.kgRepo.pruneWeakRelations(userId, 0.2);
 

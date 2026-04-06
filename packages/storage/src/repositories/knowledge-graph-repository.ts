@@ -44,6 +44,18 @@ export class KnowledgeGraphRepository {
   /**
    * UPSERT entity: creates new or updates existing (confidence+0.1, mention_count++, sources merged).
    */
+  /** Confidence increment based on source quality. Higher-quality sources contribute more. */
+  private confidenceIncrement(source?: string): number {
+    switch (source) {
+      case 'memories': case 'memory': return 0.3;
+      case 'cmdb': return 0.2;
+      case 'chat': case 'document': return 0.15;
+      case 'llm_linking': case 'smarthome': return 0.1;
+      case 'feeds': case 'generic': return 0.05;
+      default: return 0.1;
+    }
+  }
+
   async upsertEntity(
     userId: string, name: string, entityType: KGEntityType,
     attributes?: Record<string, unknown>, source?: string,
@@ -53,6 +65,7 @@ export class KnowledgeGraphRepository {
     const id = randomUUID();
     const sourcesJson = source ? JSON.stringify([source]) : '[]';
     const attrsJson = attributes ? JSON.stringify(attributes) : '{}';
+    const increment = this.confidenceIncrement(source);
 
     // First try: check if entity exists and merge sources + attributes
     const existing = await this.adapter.queryOne(
@@ -77,7 +90,7 @@ export class KnowledgeGraphRepository {
         UPDATE kg_entities SET
           attributes = ?,
           sources = ?,
-          confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END,
+          confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END,
           last_seen_at = ?,
           mention_count = mention_count + 1
         WHERE id = ?
@@ -109,7 +122,7 @@ export class KnowledgeGraphRepository {
           await this.adapter.execute(`
             UPDATE kg_entities SET
               name = ?, normalized_name = ?, attributes = ?, sources = ?,
-              confidence = CASE WHEN confidence + 0.1 > 1.0 THEN 1.0 ELSE confidence + 0.1 END, last_seen_at = ?, mention_count = mention_count + 1
+              confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END, last_seen_at = ?, mention_count = mention_count + 1
             WHERE id = ?
           `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
         } catch { /* constraint violation if betterNormalized already exists — keep existing */ }
@@ -125,7 +138,7 @@ export class KnowledgeGraphRepository {
         INSERT INTO kg_entities (id, user_id, name, normalized_name, entity_type, attributes, sources, confidence, first_seen_at, last_seen_at, mention_count)
         VALUES (?, ?, ?, ?, ?, ?, ?, 0.5, ?, ?, 1)
         ON CONFLICT (user_id, entity_type, normalized_name) DO UPDATE SET
-          confidence = CASE WHEN kg_entities.confidence + 0.1 > 1.0 THEN 1.0 ELSE kg_entities.confidence + 0.1 END,
+          confidence = CASE WHEN kg_entities.confidence + ${increment} > 1.0 THEN 1.0 ELSE kg_entities.confidence + ${increment} END,
           last_seen_at = excluded.last_seen_at,
           mention_count = kg_entities.mention_count + 1
       `, [id, userId, name, normalized, entityType, attrsJson, sourcesJson, now, now]);
@@ -269,12 +282,12 @@ export class KnowledgeGraphRepository {
   /** Get full graph for a user (entities + relations). Capped for performance. */
   async getFullGraph(userId: string): Promise<{ entities: KGEntity[]; relations: KGRelation[] }> {
     const entities = await this.adapter.query(
-      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 200',
+      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 500',
       [userId],
     ) as Record<string, unknown>[];
 
     const relations = await this.adapter.query(
-      'SELECT * FROM kg_relations WHERE user_id = ? ORDER BY strength DESC, mention_count DESC LIMIT 500',
+      'SELECT * FROM kg_relations WHERE user_id = ? ORDER BY strength DESC, mention_count DESC LIMIT 1000',
       [userId],
     ) as Record<string, unknown>[];
 
@@ -322,12 +335,36 @@ export class KnowledgeGraphRepository {
     return result.changes;
   }
 
+  /** Decay strength of relations not seen for a while (analogous to decayOldEntities). */
+  async decayOldRelations(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
+    const result = await this.adapter.execute(
+      'UPDATE kg_relations SET strength = MAX(0, strength - ?) WHERE user_id = ? AND last_seen_at < ?',
+      [decayAmount, userId, cutoff],
+    );
+    return result.changes;
+  }
+
   /** Update a specific relation's strength. */
   async updateRelationStrength(relationId: string, newStrength: number): Promise<void> {
     await this.adapter.execute(
       'UPDATE kg_relations SET strength = ?, last_seen_at = ? WHERE id = ?',
       [newStrength, new Date().toISOString(), relationId],
     );
+  }
+
+  /** Get all relations for a specific entity (as source or target). */
+  async getRelationsForEntity(userId: string, entityId: string): Promise<KGRelation[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM kg_relations WHERE user_id = ? AND (source_entity_id = ? OR target_entity_id = ?)',
+      [userId, entityId, entityId],
+    );
+    return rows.map(r => this.mapRelation(r));
+  }
+
+  /** Delete a specific relation by ID. */
+  async deleteRelation(relationId: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM kg_relations WHERE id = ?', [relationId]);
   }
 
   /** Delete entities with confidence below threshold (CASCADE deletes relations). */
