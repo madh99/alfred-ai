@@ -990,7 +990,7 @@ export class Alfred {
           } catch { /* non-critical */ }
         });
 
-        // Wire monitor alert → auto-incident creation
+        // Wire monitor alert → auto-incident creation with batch-aware dedup + linking
         if (this.config.cmdb?.autoIncidentFromMonitor !== false && skillRegistry.has('monitor')) {
           const origMonitor = skillRegistry.get('monitor')!;
           const origExecute = origMonitor.execute.bind(origMonitor);
@@ -998,15 +998,38 @@ export class Alfred {
             const result = await origExecute(input, ctx);
             if (result.success && Array.isArray(result.data) && result.data.length > 0) {
               const userId = ctx.masterUserId || ctx.userId;
+              // Track first incident per source within this batch for relatedIncidentId linking
+              const batchFirstBySource = new Map<string, string>();
+
               for (const alert of result.data as Array<{ source: string; message: string }>) {
                 try {
                   const keywords = alert.message.split(/\s+/).filter(w => w.length >= 4).map(w => w.toLowerCase());
-                  // Find CMDB asset by source
+                  const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
+
+                  // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
                   const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
-                  if (!existingInc) {
-                    const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
-                    await itsmRepo.createIncident(userId, { title: `${alert.source}: ${alert.message.slice(0, 100)}`, severity, symptoms: alert.message, detectedBy: 'monitor' });
+                  if (existingInc) {
+                    await itsmRepo.appendSymptoms(userId, existingInc.id, alert.message);
+                    if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, existingInc.id);
+                    continue;
                   }
+
+                  // 2. No keyword match → create new incident, link to batch-first or recent same-source
+                  let relatedId = batchFirstBySource.get(alert.source);
+                  if (!relatedId) {
+                    const recent = await itsmRepo.findRecentIncidentForSource(userId, alert.source, 4);
+                    if (recent) relatedId = recent.id;
+                  }
+
+                  const newInc = await itsmRepo.createIncident(userId, {
+                    title: `${alert.source}: ${alert.message.slice(0, 100)}`,
+                    severity,
+                    symptoms: alert.message,
+                    detectedBy: 'monitor',
+                    relatedIncidentId: relatedId,
+                  });
+
+                  if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
                 } catch { /* dedup or creation failure — non-critical */ }
               }
             }

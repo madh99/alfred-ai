@@ -160,6 +160,7 @@ export class ItsmRepository {
       title: 'title', description: 'description', severity: 'severity',
       priority: 'priority', symptoms: 'symptoms', rootCause: 'root_cause',
       resolution: 'resolution', workaround: 'workaround', postmortem: 'postmortem',
+      relatedIncidentId: 'related_incident_id',
     };
 
     for (const [key, col] of Object.entries(simple)) {
@@ -198,13 +199,34 @@ export class ItsmRepository {
 
     for (const inc of all) {
       const titleLower = inc.title.toLowerCase();
-      // Match by source label in title OR by keyword overlap
       const sourceMatch = titleLower.includes(sourceLabel.toLowerCase());
       const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
       if (sourceMatch && matchCount >= 1) return inc;
       if (matchCount >= Math.min(2, titleKeywords.length)) return inc;
     }
     return null;
+  }
+
+  /** Find any open incident from the same source within a time window. */
+  async findRecentIncidentForSource(userId: string, sourceLabel: string, withinHours = 4): Promise<CmdbIncident | null> {
+    const cutoff = new Date(Date.now() - withinHours * 3_600_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents WHERE user_id = ? AND status NOT IN ('closed', 'cancelled', 'resolved') AND opened_at >= ? ORDER BY opened_at DESC`,
+      [userId, cutoff],
+    );
+    const incidents = rows.map(rowToIncident);
+    const srcLower = sourceLabel.toLowerCase();
+    return incidents.find(inc => inc.title.toLowerCase().includes(srcLower)) ?? null;
+  }
+
+  /** Append a new alert message to an existing incident's symptoms. */
+  async appendSymptoms(userId: string, id: string, newSymptom: string): Promise<void> {
+    const existing = await this.getIncidentById(userId, id);
+    if (!existing) return;
+    const updated = existing.symptoms
+      ? `${existing.symptoms}\n---\n${new Date().toISOString().slice(0, 16)} ${newSymptom}`
+      : newSymptom;
+    await this.updateIncident(userId, id, { symptoms: updated });
   }
 
   // ── Services ───────────────────────────────────────────────

@@ -121,6 +121,22 @@ export class ItsmSkill extends Skill {
     const title = input.title as string;
     if (!title) return { success: false, error: 'title erforderlich' };
 
+    // Dedup: check if a similar incident is already open
+    const keywords = title.split(/\s+/).filter(w => w.length >= 4).map(w => w.toLowerCase());
+    const sourceLabel = title.split(':')[0]?.trim() || '';
+    const existing = await this.itsm.findOpenIncidentForAsset(userId, sourceLabel, keywords);
+    if (existing) {
+      // Append new symptoms if provided
+      if (input.symptoms) {
+        await this.itsm.appendSymptoms(userId, existing.id, input.symptoms as string);
+      }
+      const sevIcon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[existing.severity] ?? '⚪';
+      return { success: true, data: existing, display: `${sevIcon} Incident bereits offen: **${existing.title}** (${existing.status}) — ID: ${existing.id}` };
+    }
+
+    // Check for related incident from same source within 4h
+    const recentSameSource = sourceLabel ? await this.itsm.findRecentIncidentForSource(userId, sourceLabel) : null;
+
     const inc = await this.itsm.createIncident(userId, {
       title,
       description: input.description as string,
@@ -130,10 +146,12 @@ export class ItsmSkill extends Skill {
       affectedServiceIds: input.affected_service_ids as string[],
       symptoms: input.symptoms as string,
       detectedBy: input.detected_by as string ?? 'user_report',
+      relatedIncidentId: (input.related_incident_id as string) ?? recentSameSource?.id,
     });
 
     const sevIcon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[inc.severity] ?? '⚪';
-    return { success: true, data: inc, display: `${sevIcon} Incident erstellt: **${inc.title}** (${inc.severity}) — ID: ${inc.id}` };
+    const related = inc.relatedIncidentId ? ` (verwandt mit ${inc.relatedIncidentId.slice(0, 8)})` : '';
+    return { success: true, data: inc, display: `${sevIcon} Incident erstellt: **${inc.title}** (${inc.severity})${related} — ID: ${inc.id}` };
   }
 
   private async updateIncident(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
@@ -195,6 +213,7 @@ export class ItsmSkill extends Skill {
       inc.rootCause ? `### Root Cause\n${inc.rootCause}` : '',
       inc.resolution ? `### Resolution\n${inc.resolution}` : '',
       inc.workaround ? `### Workaround\n${inc.workaround}` : '',
+      inc.relatedIncidentId ? `### Verwandter Incident\nID: ${inc.relatedIncidentId}` : '',
     ].filter(Boolean).join('\n');
 
     return { success: true, data: inc, display };

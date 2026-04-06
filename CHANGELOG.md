@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.361] - 2026-04-06
+
+### Fixed
+- **ITSM Incident-Dedup** — ItsmSkill prüft vor Erstellung ob ein ähnlicher Incident bereits offen ist (Keyword-Match). Bei Duplikat: existierenden Incident zurückgeben + Symptoms anhängen statt neuen erstellen.
+- **Monitor-Batch Verknüpfung** — Alerts gleicher Source im selben Monitor-Lauf werden über `relatedIncidentId` verknüpft. Keyword-Match → Symptoms-Append, verschiedenes Thema → neuer verknüpfter Incident.
+- **Zeitfenster-Dedup** — Gleiche Source innerhalb 4h → neuer Incident bekommt `relatedIncidentId` auf den zeitlich näheren offenen Incident.
+- **Reasoning Kontext** — Offene Incident-Titel (Top 10, nach Severity) im Reasoning-Kontext. LLM sieht jetzt "Offene Incidents: [high] Proxmox Replication Job fehlgeschlagen (open)" statt nur "7 offen".
+- **relatedIncidentId** — Wird jetzt in ItsmSkill, Monitor-Hook, UI Detail-Panel und Chat-Display angezeigt. `updateIncident` unterstützt das Feld.
+
 ## [0.19.0-multi-ha.360] - 2026-04-06
 
 ### Fixed

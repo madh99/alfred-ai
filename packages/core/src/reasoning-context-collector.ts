@@ -283,10 +283,10 @@ export class ReasoningContextCollector {
       });
     }
 
-    // CMDB summary (asset counts + open incidents)
+    // CMDB summary (asset counts + open incidents with titles)
     if (this.skillRegistry.has('cmdb') || this.skillRegistry.has('itsm')) {
       defs.push({
-        key: 'cmdb', label: 'CMDB / ITSM', priority: 2, maxTokens: 150,
+        key: 'cmdb', label: 'CMDB / ITSM', priority: 2, maxTokens: 200,
         fetch: async () => {
           const parts: string[] = [];
           try {
@@ -299,6 +299,23 @@ export class ReasoningContextCollector {
             if (this.skillRegistry.has('itsm')) {
               const dashResult = await this.fetchWithTimeout('itsm', { action: 'dashboard' }, 10_000);
               if (dashResult) parts.push(dashResult);
+              // Include open incident titles so LLM can avoid duplicates
+              const incResult = await this.fetchWithTimeout('itsm', { action: 'list_incidents', status: 'open' }, 10_000);
+              if (incResult) {
+                // fetchWithTimeout returns the display string; extract just the titles
+                // Alternatively, parse the skill result data
+                const skill = this.skillRegistry.get('itsm');
+                if (skill) {
+                  const raw = await this.skillSandbox.execute(skill, { action: 'list_incidents', status: 'open' }, {} as any);
+                  if (raw.success && Array.isArray(raw.data)) {
+                    const titles = (raw.data as Array<{ title: string; severity: string; status: string }>)
+                      .slice(0, 10)
+                      .map(i => `- [${i.severity}] ${i.title} (${i.status})`)
+                      .join('\n');
+                    if (titles) parts.push(`Offene Incidents:\n${titles}`);
+                  }
+                }
+              }
             }
           } catch { /* skip */ }
           return parts.join('\n') || '';

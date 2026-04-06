@@ -27,6 +27,7 @@ interface Incident {
   acknowledgedAt: string | null;
   resolvedAt: string | null;
   closedAt: string | null;
+  relatedIncidentId: string | null;
 }
 
 interface ChangeRequest {
@@ -549,6 +550,14 @@ export function ItsmPage() {
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Workaround</p>
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedIncident.workaround}</p>
+                </div>
+              )}
+
+              {/* Related Incident */}
+              {selectedIncident.relatedIncidentId && (
+                <div className="bg-[#1a1a1a] rounded p-2">
+                  <p className="text-xs text-gray-500 mb-1">Verwandter Incident</p>
+                  <p className="text-sm text-blue-400 font-mono">{selectedIncident.relatedIncidentId.slice(0, 8)}...</p>
                 </div>
               )}
 
