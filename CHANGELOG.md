@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.360] - 2026-04-06
+
+### Fixed
+- **Skill-Filter: Superset nur für Watch/Schedule** — Shell, CodeAgent, Script, Befehl, automatisch triggern nicht mehr den Superset (80+ Tools). Nur Watch/Schedule/Background/Alert/Zeitangaben triggern Cross-Category-Zugriff. Spart ~3000-5000 Token pro Nicht-Watch-Automation-Request.
+- **Skill-Filter: 5 generische Keywords entfernt** — `clone`, `klone`, `template`, `regel`, `npm` aus Infrastructure entfernt (waren false-positives für Git-Clone, E-Mail-Templates, deutsche Idiome, Node Package Manager). Infra-Kontext wird durch spezifischere Keywords (proxmox, vm, lxc, firewall, nginx, proxy) korrekt erkannt.
+- **Skill-Filter: `monitor` in Infrastructure** — MonitorSkill jetzt auch ohne Automation-Superset erreichbar. "Monitor Status" routet zu Infrastructure statt 80+ Tools.
+
 ## [0.19.0-multi-ha.359] - 2026-04-05
 
 ### Fixed
