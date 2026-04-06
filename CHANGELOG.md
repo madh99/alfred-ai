@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.364] - 2026-04-06
+
+### Fixed
+- **LLM Entity-Linker: CMDB-only Entities gefiltert** — Entities mit `sources === ['cmdb']` werden aus dem Linker-Prompt ausgeschlossen. Reduziert ~2.700 → ~500 Entities (identisch mit vor CMDB). Cross-Domain Entities (CMDB + andere Source) bleiben erhalten. Behebt den permanenten 30s Timeout seit CMDB-Discovery.
+- **LLM Entity-Linker: lastRunAt bei Fehler setzen** — Verhindert Retry bei jedem Reasoning-Zyklus. Bei Timeout/Fehler wartet der Linker bis zum nächsten Schedule statt 48 Fehl-Calls/Tag.
+- **KG Generic-Linker: CMDB-only Filter** — `buildGenericEntityLinks` filtert CMDB-only Entities. Reduziert O(n²) von 7,3 Mio auf ~250k Regex-Operationen pro Zyklus.
+
 ## [0.19.0-multi-ha.363] - 2026-04-06
 
 ### Fixed

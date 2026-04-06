@@ -82,7 +82,17 @@ export class LLMEntityLinker {
 
   /** Run the LLM entity linking pass. */
   async run(userId: string): Promise<{ relations: number; newEntities: number; corrections: number }> {
-    const allEntities = await this.kgRepo.getAllEntities(userId);
+    const rawEntities = await this.kgRepo.getAllEntities(userId);
+
+    // Filter out CMDB-only entities — they are already linked via CMDB relations.
+    // Keep entities that have multiple sources (e.g. ['cmdb', 'chat']) since those
+    // represent cross-domain entities worth linking to persons/orgs/locations.
+    const allEntities = rawEntities.filter(e => {
+      const sources = e.sources ?? [];
+      if (sources.length === 1 && sources[0] === 'cmdb') return false;
+      return true;
+    });
+
     if (allEntities.length < 3) return { relations: 0, newEntities: 0, corrections: 0 };
 
     // Mix of entities to analyze: changed entities + core entities (persons, locations, vehicles, orgs)
@@ -131,6 +141,7 @@ export class LLMEntityLinker {
       result = await this.callLLM(prompt, model);
     } catch (err) {
       this.logger.warn({ err }, 'LLM entity linking call failed');
+      this.lastRunAt = new Date().toISOString(); // Prevent retry on every cycle
       return { relations: 0, newEntities: 0, corrections: 0 };
     }
 

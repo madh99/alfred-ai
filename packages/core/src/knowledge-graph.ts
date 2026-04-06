@@ -553,7 +553,12 @@ export class KnowledgeGraphService {
 
   private async buildGenericEntityLinks(userId: string): Promise<void> {
     try {
-      const allEntities = await this.kgRepo.getAllEntities(userId);
+      const rawEntities = await this.kgRepo.getAllEntities(userId);
+      // Filter out CMDB-only entities to avoid O(n²) explosion with 2000+ infra assets
+      const allEntities = rawEntities.filter(e => {
+        const sources = e.sources ?? [];
+        return !(sources.length === 1 && sources[0] === 'cmdb');
+      });
       if (allEntities.length < 2) return;
 
       // Build a lookup: normalized name → entity + word-boundary regex
