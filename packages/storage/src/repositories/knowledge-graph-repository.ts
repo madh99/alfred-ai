@@ -282,12 +282,12 @@ export class KnowledgeGraphRepository {
   /** Get full graph for a user (entities + relations). Capped for performance. */
   async getFullGraph(userId: string): Promise<{ entities: KGEntity[]; relations: KGRelation[] }> {
     const entities = await this.adapter.query(
-      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 500',
+      'SELECT * FROM kg_entities WHERE user_id = ? ORDER BY confidence DESC, mention_count DESC LIMIT 5000',
       [userId],
     ) as Record<string, unknown>[];
 
     const relations = await this.adapter.query(
-      'SELECT * FROM kg_relations WHERE user_id = ? ORDER BY strength DESC, mention_count DESC LIMIT 1000',
+      'SELECT * FROM kg_relations WHERE user_id = ? ORDER BY strength DESC, mention_count DESC LIMIT 5000',
       [userId],
     ) as Record<string, unknown>[];
 

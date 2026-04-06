@@ -229,8 +229,8 @@ export class KnowledgeGraphService {
   async buildConnectionMap(userId: string): Promise<string> {
     try {
       const { entities, relations } = await this.kgRepo.getFullGraph(userId);
-      if (entities.length >= 500) {
-        this.logger.warn({ count: entities.length }, 'KG: Entity cap reached (500) — some entities excluded from connection map');
+      if (entities.length >= 5000) {
+        this.logger.warn({ count: entities.length }, 'KG: Entity cap reached (5000) — some entities excluded from connection map');
       }
       if (entities.length < 2) return '';
 
