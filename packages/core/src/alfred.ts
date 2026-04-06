@@ -997,7 +997,7 @@ export class Alfred {
           origMonitor.execute = async (input: Record<string, unknown>, ctx: any) => {
             const result = await origExecute(input, ctx);
             if (result.success && Array.isArray(result.data) && result.data.length > 0) {
-              const userId = ctx.masterUserId || ctx.userId;
+              const userId = this.ownerMasterUserId || ctx.masterUserId || ctx.userId;
               // Track first incident per source within this batch for relatedIncidentId linking
               const batchFirstBySource = new Map<string, string>();
 
@@ -1030,7 +1030,7 @@ export class Alfred {
                   });
 
                   if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
-                } catch { /* dedup or creation failure — non-critical */ }
+                } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
               }
             }
             return result;

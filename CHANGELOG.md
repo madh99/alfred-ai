@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.363] - 2026-04-06
+
+### Fixed
+- **Monitor→Incident: userId auf ownerMasterUserId** — Incidents werden jetzt unter der korrekten Master-UUID erstellt statt der rohen Telegram-Chat-ID. Verhindert dass Incidents in der API/WebUI unsichtbar sind.
+- **Monitor→Incident: Fehler loggen** — `catch {}` → `catch (err) { logger.warn(...) }`. Fehlgeschlagene Incident-Erstellungen werden jetzt geloggt statt still geschluckt.
+
 ## [0.19.0-multi-ha.362] - 2026-04-06
 
 ### Fixed
