@@ -1683,11 +1683,17 @@ export class Alfred {
           }
 
           // 3. Maintenance (dedup, prune)
-          this.logger.info('KG: starting maintenance...');
+          // 3. Maintenance — run and log directly from alfred.ts since KG logger may not flush to same output
           try {
+            const kgRepo2 = new KnowledgeGraphRepository(this.database.getAdapter());
+            const beforePersons = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).length;
+            const userE = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).find((e: any) => e.name === 'User');
+            this.logger.info({ realName: userE?.attributes?.realName, beforePersons }, 'KG: pre-maintenance check');
             await kgServiceInstance.maintenance(resolvedUserId);
-            this.logger.info('KG: maintenance done');
-          } catch (err) { this.logger.warn({ err: (err as Error).message, stack: (err as Error).stack?.slice(0, 200) }, 'KG maintenance in kg_analyze failed'); }
+            const afterPersons = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).length;
+            const phantomStill = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).find((e: any) => /markus dohnal als/i.test(e.name));
+            this.logger.info({ afterPersons, phantomStill: phantomStill?.name ?? 'GONE' }, 'KG: post-maintenance check');
+          } catch (err) { this.logger.warn({ err: (err as Error).message }, 'KG maintenance in kg_analyze failed'); }
 
           // 4. Get totals
           const graph = await kgRepo.getFullGraph(resolvedUserId);
