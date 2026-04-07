@@ -145,32 +145,33 @@ export class KnowledgeGraphService {
         if (!this.userRealName) {
           try {
             const results = await this.memoryRepo.search(userId, 'name');
-            for (const mem of results.slice(0, 10)) {
-              // Look for memories whose KEY contains "name" and VALUE looks like a full name
-              if (/name/i.test(mem.key) && this.isFullName(mem.value) && mem.value.length <= 50) {
+            for (const mem of results.slice(0, 20)) {
+              if (!/name/i.test(mem.key)) continue;
+              // If value IS a full name (just "Markus Dohnal"), use directly
+              if (this.isFullName(mem.value) && mem.value.split(/\s+/).length <= 3) {
                 this.userRealName = mem.value;
                 break;
               }
-            }
-          } catch { /* skip */ }
-        }
-
-        // 4. Search memories broadly for user's full name
-        // Patterns: "Mein Name ist X", "heißt X", employment memories with name
-        if (!this.userRealName) {
-          try {
-            const allMems = await this.memoryRepo.search(userId, 'name heißt vorname nachname');
-            for (const mem of allMems.slice(0, 20)) {
-              // Check memory values for patterns like "Name: Vorname Nachname" or "heißt Vorname Nachname"
+              // If value is a sentence, try to extract the name from it
               const namePatterns = [
                 /(?:name|heißt|heisse|bin)\s+(?:ist\s+)?([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i,
-                /(?:vorname|first.?name)\s*[:=]\s*([A-ZÄÖÜ][a-zäöüß]+)/i,
+                /(?:vollständiger?\s+name\s+(?:ist\s+)?)([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i,
               ];
               for (const p of namePatterns) {
                 const m = mem.value.match(p);
-                if (m && this.isFullName(m[1])) { this.userRealName = m[1].trim(); break; }
+                if (m && this.isFullName(m[1].trim())) { this.userRealName = m[1].trim(); break; }
               }
               if (this.userRealName) break;
+            }
+          } catch { /* skip */ }
+        }
+        // Also check key 'user_full_name' explicitly (common memory key from "Merke dir: Mein Name ist...")
+        if (!this.userRealName) {
+          try {
+            const fullNameMem = await this.memoryRepo.recall(userId, 'user_full_name');
+            if (fullNameMem?.value) {
+              const m = fullNameMem.value.match(/([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/);
+              if (m && this.isFullName(m[1])) this.userRealName = m[1].trim();
             }
           } catch { /* skip */ }
         }
@@ -860,7 +861,19 @@ export class KnowledgeGraphService {
           }
         } catch { /* non-critical */ }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved }, 'KG maintenance completed');
+        // Cleanup invalid person entities (newlines in name, blacklisted words, >40 chars)
+        let invalidPersonsCleaned = 0;
+        try {
+          const persons = await this.kgRepo.getEntitiesByType(userId, 'person');
+          for (const p of persons) {
+            if (/[\n\r\t]/.test(p.name) || p.name.length > 40 || PERSON_BLACKLIST.has(p.name.toLowerCase())) {
+              await this.kgRepo.deleteEntity(p.id);
+              invalidPersonsCleaned++;
+            }
+          }
+        } catch { /* non-critical */ }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
