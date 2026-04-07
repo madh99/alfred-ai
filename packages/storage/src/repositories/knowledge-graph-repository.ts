@@ -372,8 +372,8 @@ export class KnowledgeGraphRepository {
   async decayOldEntities(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
     const result = await this.adapter.execute(
-      'UPDATE kg_entities SET confidence = MAX(0, confidence - ?) WHERE user_id = ? AND last_seen_at < ?',
-      [decayAmount, userId, cutoff],
+      'UPDATE kg_entities SET confidence = CASE WHEN confidence - ? < 0 THEN 0 ELSE confidence - ? END WHERE user_id = ? AND last_seen_at < ?',
+      [decayAmount, decayAmount, userId, cutoff],
     );
     return result.changes;
   }
@@ -382,8 +382,8 @@ export class KnowledgeGraphRepository {
   async decayOldRelations(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
     const result = await this.adapter.execute(
-      'UPDATE kg_relations SET strength = MAX(0, strength - ?) WHERE user_id = ? AND last_seen_at < ?',
-      [decayAmount, userId, cutoff],
+      'UPDATE kg_relations SET strength = CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END WHERE user_id = ? AND last_seen_at < ?',
+      [decayAmount, decayAmount, userId, cutoff],
     );
     return result.changes;
   }
