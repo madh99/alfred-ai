@@ -1683,7 +1683,11 @@ export class Alfred {
           }
 
           // 3. Maintenance (dedup, prune)
-          try { await kgServiceInstance.maintenance(resolvedUserId); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'KG maintenance in kg_analyze failed'); }
+          this.logger.info('KG: starting maintenance...');
+          try {
+            await kgServiceInstance.maintenance(resolvedUserId);
+            this.logger.info('KG: maintenance done');
+          } catch (err) { this.logger.warn({ err: (err as Error).message, stack: (err as Error).stack?.slice(0, 200) }, 'KG maintenance in kg_analyze failed'); }
 
           // 4. Get totals
           const graph = await kgRepo.getFullGraph(resolvedUserId);
