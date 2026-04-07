@@ -311,9 +311,9 @@ export class ReasoningContextCollector {
                 if (skill) {
                   const raw = await this.skillSandbox.execute(skill, { action: 'list_incidents', status: 'open' }, {} as any);
                   if (raw.success && Array.isArray(raw.data)) {
-                    const titles = (raw.data as Array<{ title: string; severity: string; status: string }>)
+                    const titles = (raw.data as Array<{ id: string; title: string; severity: string; status: string }>)
                       .slice(0, 10)
-                      .map(i => `- [${i.severity}] ${i.title} (${i.status})`)
+                      .map(i => `- [${i.severity}] ${i.title} (${i.status}) — ID: ${i.id}`)
                       .join('\n');
                     if (titles) parts.push(`Offene Incidents:\n${titles}`);
                   }

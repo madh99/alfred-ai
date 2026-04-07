@@ -685,7 +685,8 @@ AKTIONSTYPEN:
 5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","id":"<reminder-id>"}}
 
 ${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
-${this.skillRegistry.has('itsm') ? `7. ITSM Incident: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
+${this.skillRegistry.has('itsm') ? `7. ITSM Incident erstellen: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
+7b. ITSM Incident aktualisieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"<ID aus offene Incidents>","root_cause":"...","severity":"high"}}
 8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}` : ''}
 
 WICHTIGE REGELN FÜR AKTIONSWAHL:
@@ -693,9 +694,11 @@ WICHTIGE REGELN FÜR AKTIONSWAHL:
 - NIEMALS "delegate" für Aufgaben die Browser, Login oder externe Accounts erfordern
 - delegate NUR für echte Multi-Step Alfred-interne Aufgaben (z.B. mehrere Skills kombinieren)
 - BMW "Rate Limit" oder "Token abgelaufen" → skillName:"bmw", skillParams:{"action":"authorize"} (startet OAuth-Flow)${this.skillRegistry.has('itsm') ? `
-- Infra-Probleme (Node offline, CPU/RAM hoch, Service down) → Incident erstellen (itsm)
-- Geplante Infra-Änderungen → Change Request erstellen (itsm)
-- Prüfe "CMDB / ITSM" Section → keine doppelten Incidents/Changes vorschlagen` : ''}
+- Infra-Probleme (Node offline, CPU/RAM hoch, Service down) → Incident erstellen ODER bestehenden aktualisieren
+- Geplante Infra-Änderungen → Change Request erstellen
+- Prüfe "Offene Incidents" in der CMDB/ITSM Section: Wenn ein offener Incident DASSELBE Thema behandelt → KEINEN neuen erstellen! Stattdessen update_incident mit der ID verwenden um root_cause, severity oder symptoms zu ergänzen
+- VERSCHIEDENE Probleme am gleichen Gerät SIND verschiedene Incidents (z.B. "Disk voll" ≠ "Updates nötig")
+- Erkennst du ein MUSTER (mehrere Geräte gleichzeitig betroffen) → update_incident auf den relevantesten offenen Incident mit root_cause-Analyse` : ''}
 - triggerAt MUSS in der Zukunft liegen! Aktuelle Zeit beachten.
 
 DRINGLICHKEIT (als "urgency" Feld in jeder Aktion):
