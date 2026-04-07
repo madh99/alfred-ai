@@ -47,6 +47,13 @@ const PERSON_BLACKLIST = new Set([
   'webhook', 'backup', 'server', 'cluster', 'docker', 'proxy', 'gateway',
   'switch', 'router', 'sensor', 'adapter', 'plugin', 'module', 'service',
   'update', 'upgrade', 'release', 'version', 'config', 'setup', 'status',
+  // Chat/UI fragments that get extracted as persons
+  'chat', 'betrag', 'favicon', 'abfahrt', 'ankunft', 'strecke', 'route',
+  'zuhause', 'tech', 'online', 'datum', 'budget', 'inbox', 'ordner',
+  'angebot', 'rechnung', 'zahlung', 'beleg', 'dokument', 'notiz',
+  'kalender', 'termin', 'aufgabe', 'erinnerung', 'warnung', 'fehler',
+  'wichtig', 'dringend', 'erledigt', 'offen', 'aktiv', 'fertig',
+  'damit', 'also', 'hier', 'dort', 'noch', 'schon', 'jetzt',
 ]);
 
 /** Company suffixes — if name contains these, it's an organization not a person. */
@@ -148,18 +155,30 @@ export class KnowledgeGraphService {
           } catch { /* skip */ }
         }
 
-        // 4. Extract from CV documents if available
+        // 4. Extract from CV/document entity names
         if (!this.userRealName) {
           try {
             const docs = await this.kgRepo.getAllEntities(userId);
-            const cvDoc = docs.find(e => e.entityType === 'item' && /cv|lebenslauf|resume/i.test(e.name));
-            if (cvDoc) {
-              // Extract name from "CV-Update Markus Dohnal" or "CV-MarkusDohnal.docx"
-              const nameMatch = cvDoc.name.match(/(?:CV|Lebenslauf|Resume)[_\-\s]+([A-ZÄÖÜ][a-zäöüß]+[\s_\-]+[A-ZÄÖÜ][a-zäöüß]+)/i);
-              if (nameMatch) {
-                const extracted = nameMatch[1].replace(/[_\-]/g, ' ').trim();
-                if (this.isFullName(extracted)) this.userRealName = extracted;
+            const cvDocs = docs.filter(e => (e.entityType === 'item' || e.entityType === 'event') && /cv|lebenslauf|resume/i.test(e.name));
+            for (const cvDoc of cvDocs) {
+              // Try multiple patterns:
+              // "CV-Update Markus Dohnal" → skip "Update", get "Markus Dohnal"
+              // "Markus_Dohnal_CV_aktualisiert.pdf" → get "Markus Dohnal"
+              // "CV-MarkusDohnal.docx" → split CamelCase → "Markus Dohnal"
+              const patterns = [
+                /(?:CV|Lebenslauf|Resume)[_\-\s]+(?:Update[_\-\s]+)?([A-ZÄÖÜ][a-zäöüß]+[_\-\s]+[A-ZÄÖÜ][a-zäöüß]+)/i,
+                /^([A-ZÄÖÜ][a-zäöüß]+[_\-\s]+[A-ZÄÖÜ][a-zäöüß]+)[_\-\s]+(?:CV|Lebenslauf|Resume)/i,
+                /(?:CV|Lebenslauf|Resume)[_\-]([A-Z][a-z]+[A-Z][a-z]+)/i, // CamelCase: CVMarkusDohnal
+              ];
+              for (const pattern of patterns) {
+                const m = cvDoc.name.match(pattern);
+                if (m) {
+                  // Split CamelCase and normalize
+                  let extracted = m[1].replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-]/g, ' ').trim();
+                  if (this.isFullName(extracted)) { this.userRealName = extracted; break; }
+                }
               }
+              if (this.userRealName) break;
             }
           } catch { /* skip */ }
         }
@@ -1676,6 +1695,10 @@ export class KnowledgeGraphService {
 
   /** Classify an extracted name into the correct entity type. */
   private classifyEntityName(name: string): string | null {
+    // Reject names with newlines, control chars, or that are clearly chat fragments
+    if (/[\n\r\t]/.test(name)) return null;
+    if (name.length < 2 || name.length > 40) return null;
+
     const lower = name.toLowerCase();
 
     // 0. CMDB-managed entity? Skip — CMDB is the source of truth for infra entities.
