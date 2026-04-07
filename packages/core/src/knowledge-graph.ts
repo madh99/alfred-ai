@@ -865,13 +865,18 @@ export class KnowledgeGraphService {
             list.push(e);
             byNorm.set(key, list);
           }
+          // Type conflict priority: CMDB types > organization > person > item
+          const TYPE_PRIORITY: Record<string, number> = {
+            server: 10, service: 10, container: 10, network_device: 10, certificate: 10,
+            organization: 8, vehicle: 7, location: 6, person: 5, event: 4, metric: 3, item: 1,
+          };
           for (const [, group] of byNorm) {
             if (group.length < 2) continue;
-            const hasOrg = group.find(e => e.entityType === 'organization');
-            const hasPerson = group.find(e => e.entityType === 'person');
-            if (hasOrg && hasPerson) {
-              // Keep org, delete person (orgs are more likely correct when name matches both)
-              await this.kgRepo.migrateEntityRelations(userId, hasPerson.id, hasOrg.id);
+            // Sort by type priority descending — highest wins
+            const sorted = group.sort((a, b) => (TYPE_PRIORITY[b.entityType] ?? 0) - (TYPE_PRIORITY[a.entityType] ?? 0));
+            const winner = sorted[0];
+            for (let i = 1; i < sorted.length; i++) {
+              await this.kgRepo.migrateEntityRelations(userId, sorted[i].id, winner.id);
               typeConflictsResolved++;
             }
           }
@@ -908,8 +913,17 @@ export class KnowledgeGraphService {
       const event = await this.kgRepo.upsertEntity(userId, title.trim(), 'event', { time }, 'calendar');
 
       if (location) {
-        const loc = await this.kgRepo.upsertEntity(userId, location.trim(), 'location', {}, 'calendar');
-        await this.kgRepo.upsertRelation(userId, event.id, loc.id, 'located_at', `${time}`, 'calendar');
+        const locName = location.trim();
+        // Cross-check: don't create location if already known as organization, item, or service
+        const existing = await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'organization' as any)
+          ?? await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'item' as any);
+        if (!existing) {
+          // Skip generic non-location strings
+          if (!/^(online|remote|zoom|teams|webex|virtual|tbd|n\/a|überweisung|führung)/i.test(locName)) {
+            const loc = await this.kgRepo.upsertEntity(userId, locName, 'location', {}, 'calendar');
+            await this.kgRepo.upsertRelation(userId, event.id, loc.id, 'located_at', `${time}`, 'calendar');
+          }
+        }
       }
     }
   }
@@ -925,13 +939,17 @@ export class KnowledgeGraphService {
       const event = await this.kgRepo.upsertEntity(userId, title.trim(), 'event',
         { priority, dueDate, overdue }, 'todos');
 
-      // Extract person from "für <Name>" or "mit <Name>"
+      // Extract entities from "für <Name>" or "mit <Name>" — route through classifyEntityName
       for (const pattern of PERSON_PATTERNS) {
         pattern.lastIndex = 0;
         const personMatch = pattern.exec(title);
         if (personMatch) {
-          const person = await this.kgRepo.upsertEntity(userId, personMatch[1].trim(), 'person', {}, 'todos');
-          await this.kgRepo.upsertRelation(userId, event.id, person.id, 'involves', title.trim(), 'todos');
+          const rawName = personMatch[1].trim();
+          const entityType = this.classifyEntityName(rawName);
+          if (entityType) {
+            const entity = await this.kgRepo.upsertEntity(userId, rawName, entityType as any, {}, 'todos');
+            await this.kgRepo.upsertRelation(userId, event.id, entity.id, 'involves', title.trim(), 'todos');
+          }
         }
       }
     }
@@ -1735,7 +1753,8 @@ export class KnowledgeGraphService {
     // 3. German compound noun = likely item/concept, not person
     //    "Hausbatterie", "Ladefenster", "Strompreis", "Wallbox", "Fußball"
     //    Single word, >7 chars, no space, starts uppercase = German compound
-    if (!name.includes(' ') && name.length > 7 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(name)) return 'item';
+    // German compound nouns: single word, >9 chars (Hausbatterie=13, Strompreis=10, but Bernhard=8, Elisabeth=9 are names)
+    if (!name.includes(' ') && name.length > 9 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(name)) return 'item';
 
     // 4. Ends with typical German noun suffixes → concept, not person
     if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|eur|gie|rie|mus|tik|thek|tur|trie)$/i.test(name)) return 'item';
@@ -1773,10 +1792,14 @@ export class KnowledgeGraphService {
     // 8. All lowercase → not a proper name
     if (name === lower) return null;
 
-    // 9. Must be a person — but skip common German articles that slipped through
+    // 9. Skip common German articles
     if (/^(Dem|Der|Das|Den|Die|Ein|Eine)$/i.test(name)) return null;
 
-    return 'person';
+    // 10. Default: return null (unknown) instead of guessing 'person'.
+    // Person entities should come from explicit sources: syncMemoryEntities (hardcoded),
+    // extractFromEmail (sender names), LLM-Linker (context-based). The regex extractor
+    // cannot reliably distinguish persons from German nouns (all capitalized).
+    return null;
   }
 }
 
