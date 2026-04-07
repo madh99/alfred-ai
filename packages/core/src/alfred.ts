@@ -1187,7 +1187,14 @@ export class Alfred {
             try { await alfredUserRepo.linkPlatform(adminUser.id, platform, ownerUid); } catch { /* already linked */ }
           }
         }
-        this.ownerMasterUserId = adminUser.id;
+        // Resolve the MASTER user ID (from `users` table, not `alfred_users` table)
+        // adminUser.id is the alfred_users ID — we need the users.master_user_id instead
+        try {
+          const ownerUser = await userRepo.findOrCreate('telegram' as any, this.config.security.ownerUserId);
+          this.ownerMasterUserId = ownerUser.masterUserId ?? ownerUser.id;
+        } catch {
+          this.ownerMasterUserId = adminUser.id; // fallback
+        }
       }
 
       // Resolve Microsoft App credentials for Device Code Flow + shared resource setup
@@ -1683,17 +1690,8 @@ export class Alfred {
           }
 
           // 3. Maintenance (dedup, prune)
-          // 3. Maintenance — run and log directly from alfred.ts since KG logger may not flush to same output
-          try {
-            const kgRepo2 = new KnowledgeGraphRepository(this.database.getAdapter());
-            const beforePersons = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).length;
-            const userE = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).find((e: any) => e.name === 'User');
-            this.logger.info({ realName: userE?.attributes?.realName, beforePersons }, 'KG: pre-maintenance check');
-            await kgServiceInstance.maintenance(resolvedUserId);
-            const afterPersons = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).length;
-            const phantomStill = (await kgRepo2.getEntitiesByType(resolvedUserId, 'person' as any)).find((e: any) => /markus dohnal als/i.test(e.name));
-            this.logger.info({ afterPersons, phantomStill: phantomStill?.name ?? 'GONE' }, 'KG: post-maintenance check');
-          } catch (err) { this.logger.warn({ err: (err as Error).message }, 'KG maintenance in kg_analyze failed'); }
+          // 3. Maintenance (dedup, prune, phantom cleanup)
+          try { await kgServiceInstance.maintenance(resolvedUserId); } catch (err) { this.logger.warn({ err: (err as Error).message }, 'KG maintenance in kg_analyze failed'); }
 
           // 4. Get totals
           const graph = await kgRepo.getFullGraph(resolvedUserId);
