@@ -155,28 +155,20 @@ export class KnowledgeGraphService {
           } catch { /* skip */ }
         }
 
-        // 4. Extract from CV/document entity names
+        // 4. Search memories broadly for user's full name
+        // Patterns: "Mein Name ist X", "heißt X", employment memories with name
         if (!this.userRealName) {
           try {
-            const docs = await this.kgRepo.getAllEntities(userId);
-            const cvDocs = docs.filter(e => (e.entityType === 'item' || e.entityType === 'event') && /cv|lebenslauf|resume/i.test(e.name));
-            for (const cvDoc of cvDocs) {
-              // Try multiple patterns:
-              // "CV-Update Markus Dohnal" → skip "Update", get "Markus Dohnal"
-              // "Markus_Dohnal_CV_aktualisiert.pdf" → get "Markus Dohnal"
-              // "CV-MarkusDohnal.docx" → split CamelCase → "Markus Dohnal"
-              const patterns = [
-                /(?:CV|Lebenslauf|Resume)[_\-\s]+(?:Update[_\-\s]+)?([A-ZÄÖÜ][a-zäöüß]+[_\-\s]+[A-ZÄÖÜ][a-zäöüß]+)/i,
-                /^([A-ZÄÖÜ][a-zäöüß]+[_\-\s]+[A-ZÄÖÜ][a-zäöüß]+)[_\-\s]+(?:CV|Lebenslauf|Resume)/i,
-                /(?:CV|Lebenslauf|Resume)[_\-]([A-Z][a-z]+[A-Z][a-z]+)/i, // CamelCase: CVMarkusDohnal
+            const allMems = await this.memoryRepo.search(userId, 'name heißt vorname nachname');
+            for (const mem of allMems.slice(0, 20)) {
+              // Check memory values for patterns like "Name: Vorname Nachname" or "heißt Vorname Nachname"
+              const namePatterns = [
+                /(?:name|heißt|heisse|bin)\s+(?:ist\s+)?([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i,
+                /(?:vorname|first.?name)\s*[:=]\s*([A-ZÄÖÜ][a-zäöüß]+)/i,
               ];
-              for (const pattern of patterns) {
-                const m = cvDoc.name.match(pattern);
-                if (m) {
-                  // Split CamelCase and normalize
-                  let extracted = m[1].replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-]/g, ' ').trim();
-                  if (this.isFullName(extracted)) { this.userRealName = extracted; break; }
-                }
+              for (const p of namePatterns) {
+                const m = mem.value.match(p);
+                if (m && this.isFullName(m[1])) { this.userRealName = m[1].trim(); break; }
               }
               if (this.userRealName) break;
             }
