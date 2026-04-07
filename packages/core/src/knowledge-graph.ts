@@ -100,20 +100,66 @@ export class KnowledgeGraphService {
     private readonly defaultPlatform?: string,
   ) {}
 
-  /** Upsert the User entity with realName from profile (cached). */
+  /** Check if a name looks like a full name (not just initials like "M D"). */
+  private isFullName(name: string): boolean {
+    const tokens = name.trim().split(/\s+/);
+    return tokens.length >= 2 && tokens.every(t => t.length >= 3);
+  }
+
+  /** Upsert the User entity with realName from profile/memories (cached). */
   private async upsertUserEntity(userId: string): Promise<import('@alfred/storage').KGEntity> {
-    if (!this.userRealName && this.userRepo) {
-      try {
-        const profile = await (this.userRepo as any).getProfile?.(userId);
-        this.userRealName = profile?.displayName || profile?.username || undefined;
-      } catch { /* skip */ }
-      if (!this.userRealName && this.memoryRepo) {
+    if (!this.userRealName) {
+      // 1. Try profile displayName (if it's a full name, not just initials)
+      if (this.userRepo) {
         try {
-          const nameMem = await this.memoryRepo.recall(userId, 'personal_name');
-          if (nameMem) this.userRealName = nameMem.value;
+          const profile = await (this.userRepo as any).getProfile?.(userId);
+          const candidate = profile?.displayName || profile?.username;
+          if (candidate && this.isFullName(candidate)) this.userRealName = candidate;
         } catch { /* skip */ }
       }
+
+      // 2. Search memories for full name (multiple keys)
+      if (!this.userRealName && this.memoryRepo) {
+        const nameKeys = ['personal_name', 'user_name', 'full_name', 'name', 'real_name', 'owner_name'];
+        for (const key of nameKeys) {
+          try {
+            const mem = await this.memoryRepo.recall(userId, key);
+            if (mem?.value && this.isFullName(mem.value)) { this.userRealName = mem.value; break; }
+          } catch { /* skip */ }
+        }
+
+        // 3. Search memories by keyword if specific keys didn't work
+        if (!this.userRealName) {
+          try {
+            const results = await this.memoryRepo.search(userId, 'name');
+            for (const mem of results.slice(0, 10)) {
+              // Look for memories whose KEY contains "name" and VALUE looks like a full name
+              if (/name/i.test(mem.key) && this.isFullName(mem.value) && mem.value.length <= 50) {
+                this.userRealName = mem.value;
+                break;
+              }
+            }
+          } catch { /* skip */ }
+        }
+
+        // 4. Extract from CV documents if available
+        if (!this.userRealName) {
+          try {
+            const docs = await this.kgRepo.getAllEntities(userId);
+            const cvDoc = docs.find(e => e.entityType === 'item' && /cv|lebenslauf|resume/i.test(e.name));
+            if (cvDoc) {
+              // Extract name from "CV-Update Markus Dohnal" or "CV-MarkusDohnal.docx"
+              const nameMatch = cvDoc.name.match(/(?:CV|Lebenslauf|Resume)[_\-\s]+([A-ZÄÖÜ][a-zäöüß]+[\s_\-]+[A-ZÄÖÜ][a-zäöüß]+)/i);
+              if (nameMatch) {
+                const extracted = nameMatch[1].replace(/[_\-]/g, ' ').trim();
+                if (this.isFullName(extracted)) this.userRealName = extracted;
+              }
+            }
+          } catch { /* skip */ }
+        }
+      }
     }
+
     const attrs: Record<string, unknown> = {};
     if (this.userRealName) attrs.realName = this.userRealName;
     return this.kgRepo.upsertEntity(userId, 'User', 'person', attrs, 'system');
