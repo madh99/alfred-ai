@@ -255,7 +255,7 @@ export class KnowledgeGraphService {
 
     // Atomic swap of blacklist
     this.cmdbEntityNames = newNames;
-    this.logger.debug({ count: assets.length }, 'CMDB → KG sync complete');
+    this.logger.info({ count: assets.length }, 'CMDB → KG sync complete');
   }
 
   /**
@@ -312,7 +312,7 @@ export class KnowledgeGraphService {
         try {
           await this.llmLinker.run(userId);
         } catch (err) {
-          this.logger.debug({ err }, 'KG: LLM entity linking failed (non-critical)');
+          this.logger.info({ err }, 'KG: LLM entity linking failed (non-critical)');
         }
       }
     } catch (err) {
@@ -533,7 +533,7 @@ export class KnowledgeGraphService {
 
       return lines.join('\n');
     } catch (err) {
-      this.logger.debug({ err }, 'KG buildDeviceContext failed, using skill fallback');
+      this.logger.info({ err }, 'KG buildDeviceContext failed, using skill fallback');
       return this.buildDeviceContextFromSkills();
     }
   }
@@ -648,7 +648,7 @@ export class KnowledgeGraphService {
         }
       }
     } catch (err) {
-      this.logger.debug({ err }, 'KG: family inference failed');
+      this.logger.info({ err }, 'KG: family inference failed');
     }
   }
 
@@ -717,10 +717,10 @@ export class KnowledgeGraphService {
       }
 
       if (linked > 0) {
-        this.logger.debug({ linked }, 'KG: generic entity links created');
+        this.logger.info({ linked }, 'KG: generic entity links created');
       }
     } catch (err) {
-      this.logger.debug({ err }, 'KG: generic entity linking partially failed');
+      this.logger.info({ err }, 'KG: generic entity linking partially failed');
     }
   }
 
@@ -805,10 +805,10 @@ export class KnowledgeGraphService {
           const allPersons = await this.kgRepo.getEntitiesByType(userId, 'person' as any);
           const userEntity = allPersons.find(e => e.name === 'User');
           const realName = userEntity?.attributes?.realName as string | undefined;
-          this.logger.debug({ realName, personCount: allPersons.length, userFound: !!userEntity }, 'KG phantom detection: start');
+          this.logger.info({ realName, personCount: allPersons.length, userFound: !!userEntity }, 'KG phantom detection: start');
           if (userEntity && realName && realName.length >= 3) {
             const nameTokens = realName.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
-            this.logger.debug({ nameTokens }, 'KG phantom detection: tokens');
+            this.logger.info({ nameTokens }, 'KG phantom detection: tokens');
             for (const person of allPersons) {
               if (person.id === userEntity.id) continue;
               if (person.name === 'User') continue;
@@ -1300,7 +1300,7 @@ export class KnowledgeGraphService {
         }
       }
     } catch (err) {
-      this.logger.debug({ err }, 'KG: cross-extractor relations partially failed');
+      this.logger.info({ err }, 'KG: cross-extractor relations partially failed');
     }
   }
 
@@ -1546,7 +1546,7 @@ export class KnowledgeGraphService {
           { type: 'connection', value: mem.value.slice(0, 150) }, 'connections');
       }
     } catch (err) {
-      this.logger.debug({ err }, 'KG: memory sync partially failed');
+      this.logger.info({ err }, 'KG: memory sync partially failed');
     }
   }
 
