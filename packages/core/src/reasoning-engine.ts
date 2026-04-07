@@ -673,7 +673,8 @@ AKTIONSTYPEN:
 2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[...]}}
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
-5. Erinnerung: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
+5. Erinnerung erstellen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
+5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","id":"<reminder-id>"}}
 
 ${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
 ${this.skillRegistry.has('itsm') ? `7. ITSM Incident: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}

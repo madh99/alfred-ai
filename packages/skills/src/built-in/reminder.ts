@@ -3,7 +3,7 @@ import { Skill } from '../skill.js';
 import type { ReminderRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
-type ReminderAction = 'set' | 'list' | 'cancel';
+type ReminderAction = 'set' | 'list' | 'cancel' | 'delete';
 
 export class ReminderSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -76,6 +76,7 @@ export class ReminderSkill extends Skill {
       case 'list':
         return this.listReminders(context);
       case 'cancel':
+      case 'delete':
         return this.cancelReminder(input, context);
       default:
         return {

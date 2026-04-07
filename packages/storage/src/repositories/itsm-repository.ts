@@ -419,8 +419,8 @@ export class ItsmRepository {
     );
     let openIncidents = 0, criticalIncidents = 0;
     for (const r of incRows) {
-      openIncidents += r.cnt as number;
-      if (r.severity === 'critical') criticalIncidents += r.cnt as number;
+      openIncidents += Number(r.cnt);
+      if (r.severity === 'critical') criticalIncidents += Number(r.cnt);
     }
 
     const crRows = await this.db.query(
@@ -429,8 +429,8 @@ export class ItsmRepository {
     );
     let pendingChanges = 0, scheduledChanges = 0;
     for (const r of crRows) {
-      pendingChanges += r.cnt as number;
-      if (r.status === 'approved') scheduledChanges += r.cnt as number;
+      pendingChanges += Number(r.cnt);
+      if (r.status === 'approved') scheduledChanges += Number(r.cnt);
     }
 
     const svcRows = await this.db.query(
@@ -439,9 +439,9 @@ export class ItsmRepository {
     );
     let servicesHealthy = 0, servicesDegraded = 0, servicesDown = 0;
     for (const r of svcRows) {
-      if (r.health_status === 'healthy') servicesHealthy = r.cnt as number;
-      else if (r.health_status === 'degraded') servicesDegraded = r.cnt as number;
-      else if (r.health_status === 'down') servicesDown = r.cnt as number;
+      if (r.health_status === 'healthy') servicesHealthy = Number(r.cnt);
+      else if (r.health_status === 'degraded') servicesDegraded = Number(r.cnt);
+      else if (r.health_status === 'down') servicesDown = Number(r.cnt);
     }
 
     return { openIncidents, criticalIncidents, pendingChanges, scheduledChanges, servicesHealthy, servicesDegraded, servicesDown };
