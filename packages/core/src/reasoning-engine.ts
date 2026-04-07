@@ -682,11 +682,13 @@ AKTIONSTYPEN:
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
 5. Erinnerung erstellen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
-5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","id":"<reminder-id>"}}
+5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","id":"a3f2c8e1"}}
+    WICHTIG: id MUSS die exakte 8-stellige Hex-ID aus der Erinnerungen-Liste sein. NIEMALS erfinden!
 
 ${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
 ${this.skillRegistry.has('itsm') ? `7. ITSM Incident erstellen: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
-7b. ITSM Incident aktualisieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"<ID aus offene Incidents>","root_cause":"...","severity":"high"}}
+7b. ITSM Incident aktualisieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"0815bc66","root_cause":"...","severity":"high"}}
+    WICHTIG: incident_id MUSS die exakte 8-stellige Hex-ID aus der Offene-Incidents-Liste sein (z.B. "0815bc66"). NIEMALS eine ID erfinden!
 8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}` : ''}
 
 WICHTIGE REGELN FÜR AKTIONSWAHL:

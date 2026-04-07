@@ -313,9 +313,17 @@ export class ReasoningContextCollector {
                   if (raw.success && Array.isArray(raw.data)) {
                     const titles = (raw.data as Array<{ id: string; title: string; severity: string; status: string }>)
                       .slice(0, 10)
-                      .map(i => `- [${i.severity}] ${i.title} (${i.status}) — ID: ${i.id}`)
+                      .map(i => `- [${i.id.slice(0, 8)}] [${i.severity}] ${i.title} (${i.status})`)
                       .join('\n');
                     if (titles) parts.push(`Offene Incidents:\n${titles}`);
+                  }
+                  // Also include pending Change Requests
+                  const crRaw = await this.skillSandbox.execute(skill, { action: 'list_changes', status: 'draft' }, {} as any);
+                  if (crRaw.success && Array.isArray(crRaw.data)) {
+                    const pending = (crRaw.data as Array<{ id: string; title: string; type: string; status: string }>)
+                      .slice(0, 5)
+                      .map(c => `- [${c.id.slice(0, 8)}] ${c.title} (${c.type}, ${c.status})`);
+                    if (pending.length > 0) parts.push(`Offene Changes:\n${pending.join('\n')}`);
                   }
                 }
               }
@@ -590,20 +598,20 @@ export class ReasoningContextCollector {
       for (const r of relevant) {
         const due = new Date(r.triggerAt);
         const overdue = due.getTime() < Date.now();
-        lines.push(`- ${overdue ? '⚠️ ÜBERFÄLLIG' : due.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${r.message}`);
+        lines.push(`- [${r.id.slice(0, 8)}] ${overdue ? '⚠️ ÜBERFÄLLIG' : due.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}: ${r.message}`);
       }
 
       // Recently fired reminders (last 24h) — so LLM knows the topic was already handled
       try {
         const recentCutoff = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
         const fired = await (this.reminderRepo as any).adapter?.query?.(
-          "SELECT message, trigger_at FROM reminders WHERE fired = 1 AND trigger_at > ? AND (user_id = ? OR chat_id = ?) ORDER BY trigger_at DESC LIMIT 10",
+          "SELECT id, message, trigger_at FROM reminders WHERE fired = 1 AND trigger_at > ? AND (user_id = ? OR chat_id = ?) ORDER BY trigger_at DESC LIMIT 10",
           [recentCutoff, uid, this.defaultChatId],
         ) as Array<{ message: string; trigger_at: string }> | undefined;
         if (fired?.length) {
           for (const r of fired) {
             const time = new Date(r.trigger_at).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: this.userTimezone });
-            lines.push(`- ✅ BEREITS ERINNERT (${time}): ${r.message.slice(0, 80)}`);
+            lines.push(`- [${(r as any).id?.slice(0, 8) ?? '?'}] ✅ BEREITS ERINNERT (${time}): ${r.message.slice(0, 80)}`);
           }
         }
       } catch { /* non-critical */ }

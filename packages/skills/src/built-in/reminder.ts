@@ -287,9 +287,15 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    // Verify ownership: only allow canceling own reminders
+    // Verify ownership: only allow canceling own reminders (supports 8-char prefix IDs)
     const userReminders = await this.getAllReminders(context);
-    const ownsReminder = userReminders.some(r => r.id === reminderId);
+    let matchedId = reminderId;
+    const exactMatch = userReminders.find(r => r.id === reminderId);
+    if (!exactMatch && reminderId.length >= 6 && reminderId.length <= 12) {
+      const prefixMatch = userReminders.find(r => r.id.startsWith(reminderId));
+      if (prefixMatch) matchedId = prefixMatch.id;
+    }
+    const ownsReminder = userReminders.some(r => r.id === matchedId);
     if (!ownsReminder) {
       return {
         success: false,
@@ -297,7 +303,7 @@ export class ReminderSkill extends Skill {
       };
     }
 
-    const deleted = await this.reminderRepo.cancel(reminderId);
+    const deleted = await this.reminderRepo.cancel(matchedId);
 
     if (!deleted) {
       return {

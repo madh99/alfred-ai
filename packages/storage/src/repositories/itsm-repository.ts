@@ -126,9 +126,16 @@ export class ItsmRepository {
   }
 
   async getIncidentById(userId: string, id: string): Promise<CmdbIncident | null> {
-    const row = await this.db.queryOne(
+    // Exact match first
+    let row = await this.db.queryOne(
       `SELECT * FROM cmdb_incidents WHERE id = ? AND user_id = ?`, [id, userId],
     );
+    // Prefix match fallback (8-char short IDs like Git)
+    if (!row && id.length >= 6 && id.length <= 12 && /^[0-9a-f]+$/i.test(id)) {
+      row = await this.db.queryOne(
+        `SELECT * FROM cmdb_incidents WHERE id LIKE ? AND user_id = ?`, [id + '%', userId],
+      );
+    }
     return row ? rowToIncident(row) : null;
   }
 
