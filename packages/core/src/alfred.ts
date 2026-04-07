@@ -1003,7 +1003,9 @@ export class Alfred {
 
               for (const alert of result.data as Array<{ source: string; message: string }>) {
                 try {
-                  const keywords = alert.message.split(/\s+/).filter(w => w.length >= 4).map(w => w.toLowerCase());
+                  // Filter out generic alert words so device/entity names become the distinguishing keywords
+                  const GENERIC_ALERT_WORDS = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'warning', 'health', 'check', 'entities', 'unavailable', 'subsystem', 'battery', 'settings', 'offline', 'online']);
+                  const keywords = alert.message.split(/[\s"()]+/).filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
                   const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
 
                   // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
