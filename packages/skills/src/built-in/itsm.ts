@@ -15,7 +15,7 @@ export class ItsmSkill extends Skill {
     description:
       'IT Service Management — Incident-, Change- und Service-Verwaltung. ' +
       '"create_incident" erstellt einen Incident (title, severity, affected_asset_ids, symptoms). ' +
-      '"update_incident" aktualisiert (incident_id, status, root_cause, resolution, workaround). ' +
+      '"update_incident" aktualisiert (incident_id, status, root_cause, resolution, workaround, investigation_notes, postmortem). ' +
       '"list_incidents" zeigt Incidents (filter: status, severity). ' +
       '"get_incident" zeigt Incident-Details (incident_id). ' +
       '"close_incident" schließt mit Resolution (incident_id, resolution). ' +
@@ -53,6 +53,11 @@ export class ItsmSkill extends Skill {
         root_cause: { type: 'string' },
         resolution: { type: 'string' },
         workaround: { type: 'string' },
+        investigation_notes: { type: 'string', description: 'Chronologische Untersuchungsnotizen (wird angehängt, nicht ersetzt)' },
+        lessons_learned: { type: 'string', description: 'Erkenntnisse / Lessons Learned' },
+        action_items: { type: 'string', description: 'TODOs / Action Items (Markdown-Checkliste)' },
+        postmortem: { type: 'string' },
+        related_incident_id: { type: 'string' },
         type: { type: 'string', enum: ['standard', 'normal', 'emergency'] },
         risk_level: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
         implementation_plan: { type: 'string' },
@@ -169,7 +174,7 @@ export class ItsmSkill extends Skill {
     if (!id) return { success: false, error: 'incident_id erforderlich' };
 
     const updates: Record<string, unknown> = {};
-    for (const key of ['title', 'description', 'severity', 'status', 'priority', 'symptoms', 'root_cause', 'resolution', 'workaround']) {
+    for (const key of ['title', 'description', 'severity', 'status', 'priority', 'symptoms', 'investigation_notes', 'root_cause', 'resolution', 'workaround', 'lessons_learned', 'action_items', 'postmortem', 'related_incident_id']) {
       const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
       if (input[key] !== undefined) updates[camelKey] = input[key];
     }

@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.393] - 2026-04-08
+
+### Fixed
+- **ITSM: Migration v53** — lessons_learned + action_items Spalten als eigene Migration (v52 war bereits deployed mit nur investigation_notes). Behebt HTTP 500 beim Speichern von Lessons Learned / Action Items im WebUI.
+- **ITSM: Review-Fixes** — 6 Bugs/Gaps behoben: Transition-Modal State-Leak bei acknowledged, Note-State bei Incident-Wechsel nicht zurückgesetzt, EditableTextField stale bei Wechsel, appendSymptoms Format inkonsistent, 5→1 DB-Calls für Reasoning-Kontext, lessons_learned/action_items im Prompt.
+
+## [0.19.0-multi-ha.391] - 2026-04-07
+
+### Added
+- **ITSM: investigation_notes, lessons_learned, action_items Felder** — 3 neue DB-Felder (Migration v52). investigation_notes = chronologisches Append-Feld für Analysen/Tätigkeiten. lessons_learned + action_items = optional bei Close oder jederzeit editierbar.
+- **ITSM: Status-Transition-Modal (WebUI)** — Statuswechsel-Buttons öffnen Modal mit kontextabhängigen Pflichtfeldern: investigating → investigation_notes, mitigating → workaround, resolved → root_cause + resolution, closed → lessons_learned + action_items (optional).
+- **ITSM: Inline-Editing im Detail-Panel** — "Notiz hinzufügen" Button für investigation_notes jederzeit (nicht nur bei Statuswechsel). Lessons Learned + Action Items als editierbare Felder mit Speichern/Abbrechen.
+- **ITSM: Asset/Service-Verknüpfung (WebUI)** — Betroffene Assets und Services: Name statt UUID anzeigen, Dropdown-Picker zum Hinzufügen, ×-Button zum Entfernen. CMDB-Assets werden beim Laden mitgeladen.
+- **ITSM: Mitigating Button + Badge** — Fehlender UI-Button + Status-Badge für "mitigating" hinzugefügt.
+- **ITSM: Reasoning sieht alle aktiven Incidents** — Nicht nur "open", sondern auch acknowledged/investigating/mitigating + kürzlich gelöste (24h). Root-Cause wird im Kontext mitgeliefert.
+
+### Fixed
+- **ITSM: update_incident Schema erweitert** — investigation_notes, lessons_learned, action_items, postmortem, related_incident_id waren in DB aber nicht im Skill-Schema. symptoms + investigation_notes als Append-Felder (chronologisch mit Timestamp).
+- **ITSM: Postmortem-Template** — Zeigt investigation_notes, liest lessons_learned + action_items aus DB (Fallback: dynamisch generiert). Hinweise welcher Status welches Feld befüllt.
+- **ITSM: Reasoning Incident-Lifecycle** — Prompt erklärt vollständigen Lifecycle (open→acknowledged→investigating→mitigating→resolved→closed) mit Feld-Zuordnung pro Status.
+
 ## [0.19.0-multi-ha.368] - 2026-04-07
 
 ### Fixed

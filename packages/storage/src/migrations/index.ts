@@ -1249,4 +1249,19 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE cmdb_services ADD COLUMN health_reason TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 52,
+    description: 'Add investigation_notes to cmdb_incidents',
+    up(db) {
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN investigation_notes TEXT`); } catch { /* exists */ }
+    },
+  },
+  {
+    version: 53,
+    description: 'Add lessons_learned, action_items to cmdb_incidents',
+    up(db) {
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN lessons_learned TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN action_items TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

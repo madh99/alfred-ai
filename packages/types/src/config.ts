@@ -626,9 +626,12 @@ export interface CmdbIncident {
   affectedAssetIds: string[];
   affectedServiceIds: string[];
   symptoms?: string;
+  investigationNotes?: string;
   rootCause?: string;
   resolution?: string;
   workaround?: string;
+  lessonsLearned?: string;
+  actionItems?: string;
   postmortem?: string;
   detectedBy?: string;
   relatedIncidentId?: string;

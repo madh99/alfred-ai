@@ -365,14 +365,17 @@ export class InfraDocsSkill extends Skill {
       '## Symptome',
       inc.symptoms ?? '— nicht dokumentiert —',
       '',
+      '## Untersuchung',
+      inc.investigationNotes ?? '— keine Untersuchungsnotizen —',
+      '',
       '## Root Cause',
-      inc.rootCause ?? '— nicht dokumentiert —',
+      inc.rootCause ?? '— nicht dokumentiert (wird bei Status "resolved" gesetzt) —',
       '',
       '## Resolution',
-      inc.resolution ?? '— nicht dokumentiert —',
+      inc.resolution ?? '— nicht dokumentiert (wird bei Status "resolved" gesetzt) —',
       '',
       '## Workaround',
-      inc.workaround ?? '— nicht dokumentiert —',
+      inc.workaround ?? '— nicht dokumentiert (wird bei Status "mitigating" gesetzt) —',
       '',
       '## Timeline',
       `- ${inc.openedAt} — Incident eröffnet`,
@@ -381,12 +384,17 @@ export class InfraDocsSkill extends Skill {
       inc.closedAt ? `- ${inc.closedAt} — Closed` : '',
       '',
       '## Lessons Learned',
-      '— TODO —',
+      inc.lessonsLearned ?? (inc.rootCause && inc.resolution
+        ? `Root Cause war: ${inc.rootCause}\nLösung: ${inc.resolution}`
+        : '— ausstehend —'),
       '',
       '## Action Items',
-      '- [ ] Root Cause dokumentieren',
-      '- [ ] Monitoring verbessern',
-      '- [ ] Runbook aktualisieren',
+      inc.actionItems ?? [
+        ...(inc.rootCause ? ['- [x] Root Cause dokumentieren'] : ['- [ ] Root Cause dokumentieren']),
+        ...(inc.resolution ? ['- [x] Resolution dokumentieren'] : ['- [ ] Resolution dokumentieren']),
+        '- [ ] Monitoring verbessern',
+        '- [ ] Runbook aktualisieren',
+      ].join('\n'),
     ].filter(Boolean).join('\n');
 
     // Persist: write-back to incident + archive

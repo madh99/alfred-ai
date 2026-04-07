@@ -18,9 +18,12 @@ interface Incident {
   affectedAssetIds: string[];
   affectedServiceIds: string[];
   symptoms: string;
+  investigationNotes: string;
   rootCause: string;
   resolution: string;
   workaround: string;
+  lessonsLearned: string;
+  actionItems: string;
   postmortem: string;
   detectedBy: string;
   openedAt: string;
@@ -28,6 +31,13 @@ interface Incident {
   resolvedAt: string | null;
   closedAt: string | null;
   relatedIncidentId: string | null;
+}
+
+interface TransitionModalConfig {
+  incidentId: string;
+  targetStatus: string;
+  label: string;
+  fields: Array<{ key: string; label: string; required: boolean; placeholder: string }>;
 }
 
 interface ChangeRequest {
@@ -130,6 +140,7 @@ function statusBadge(status: string) {
     open: 'bg-red-500/10 text-red-400',
     acknowledged: 'bg-orange-500/10 text-orange-400',
     investigating: 'bg-yellow-500/10 text-yellow-400',
+    mitigating: 'bg-purple-500/10 text-purple-400',
     resolved: 'bg-green-500/10 text-green-400',
     closed: 'bg-gray-500/10 text-gray-400',
     draft: 'bg-gray-500/10 text-gray-400',
@@ -141,6 +152,53 @@ function statusBadge(status: string) {
     cancelled: 'bg-gray-500/10 text-gray-400',
   };
   return map[status] ?? 'bg-gray-500/10 text-gray-400';
+}
+
+/* ------------------------------------------------------------------ */
+/*  Editable Text Field                                                */
+/* ------------------------------------------------------------------ */
+
+function EditableTextField({ label, value, placeholder, onSave, disabled }: {
+  label: string; value?: string; placeholder?: string; onSave: (val: string) => void; disabled?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value ?? '');
+
+  // Sync when value changes externally (e.g. incident selection change)
+  useEffect(() => { setText(value ?? ''); setEditing(false); }, [value]);
+
+  return (
+    <div>
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      {editing ? (
+        <div className="space-y-2">
+          <textarea
+            className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[80px]"
+            placeholder={placeholder}
+            value={text}
+            onChange={e => setText(e.target.value)}
+          />
+          <div className="flex gap-2">
+            <button onClick={() => { onSave(text); setEditing(false); }} className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Speichern</button>
+            <button onClick={() => { setText(value ?? ''); setEditing(false); }} className="px-3 py-1 text-xs text-gray-400 hover:text-white">Abbrechen</button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          {value ? (
+            <p className="text-sm text-gray-300 whitespace-pre-wrap">{value}</p>
+          ) : (
+            <p className="text-xs text-gray-500 italic">Nicht dokumentiert.</p>
+          )}
+          {!disabled && (
+            <button onClick={() => { setText(value ?? ''); setEditing(true); }} className="mt-1 text-xs text-blue-400 hover:text-blue-300">
+              {value ? 'Bearbeiten' : '+ Hinzufügen'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -246,6 +304,7 @@ export function ItsmPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [changes, setChanges] = useState<ChangeRequest[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [allAssets, setAllAssets] = useState<Array<{ id: string; name: string; assetType: string }>>([]);
 
   // Selection
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -262,6 +321,14 @@ export function ItsmPage() {
   const [showCreateIncident, setShowCreateIncident] = useState(false);
   const [showCreateChange, setShowCreateChange] = useState(false);
   const [showCreateService, setShowCreateService] = useState(false);
+
+  // Status transition modal
+  const [transitionModal, setTransitionModal] = useState<TransitionModalConfig | null>(null);
+  const [transitionFields, setTransitionFields] = useState<Record<string, string>>({});
+
+  // Inline note adding
+  const [addingNote, setAddingNote] = useState(false);
+  const [noteText, setNoteText] = useState('');
 
   // Docs generation
   const [generatingRunbook, setGeneratingRunbook] = useState(false);
@@ -297,14 +364,24 @@ export function ItsmPage() {
     } catch (e) { setError((e as Error).message); }
   }, [client]);
 
+  const loadAssets = useCallback(async () => {
+    try {
+      const data = await client.cmdbListAssets();
+      setAllAssets(Array.isArray(data) ? data : []);
+    } catch { /* non-critical */ }
+  }, [client]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
-    await Promise.all([loadIncidents(), loadChanges(), loadServices()]);
+    await Promise.all([loadIncidents(), loadChanges(), loadServices(), loadAssets()]);
     setLoading(false);
-  }, [loadIncidents, loadChanges, loadServices]);
+  }, [loadIncidents, loadChanges, loadServices, loadAssets]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Reset note state when switching incidents
+  useEffect(() => { setAddingNote(false); setNoteText(''); }, [selectedIncident?.id]);
 
   // Load document history when a service is selected
   useEffect(() => {
@@ -317,11 +394,46 @@ export function ItsmPage() {
 
   /* ---- Actions ---- */
 
-  async function updateIncidentStatus(id: string, status: string) {
+  const TRANSITION_FIELDS: Record<string, Array<{ key: string; label: string; required: boolean; placeholder: string }>> = {
+    acknowledged: [],
+    investigating: [{ key: 'investigation_notes', label: 'Untersuchungsnotizen', required: true, placeholder: 'Was wird untersucht? Erste Beobachtungen...' }],
+    mitigating: [{ key: 'workaround', label: 'Workaround', required: true, placeholder: 'Welcher Workaround wird angewendet?' }],
+    resolved: [
+      { key: 'root_cause', label: 'Root Cause', required: true, placeholder: 'Was war die Ursache?' },
+      { key: 'resolution', label: 'Resolution', required: true, placeholder: 'Wie wurde es gelöst?' },
+    ],
+    closed: [
+      { key: 'lessons_learned', label: 'Lessons Learned', required: false, placeholder: 'Was wurde gelernt? (optional)' },
+      { key: 'action_items', label: 'Action Items', required: false, placeholder: '- [ ] Monitoring verbessern\n- [ ] Runbook aktualisieren (optional)' },
+    ],
+  };
+
+  function openTransitionModal(incidentId: string, targetStatus: string) {
+    const fields = TRANSITION_FIELDS[targetStatus] ?? [];
+    if (fields.length === 0) {
+      // No fields required — submit immediately without modal
+      submitTransition(incidentId, targetStatus, {});
+      return;
+    }
+    const labels: Record<string, string> = { acknowledged: 'Acknowledge', investigating: 'Investigate', mitigating: 'Mitigate', resolved: 'Resolve', closed: 'Close' };
+    setTransitionFields({});
+    setTransitionModal({ incidentId, targetStatus, label: labels[targetStatus] ?? targetStatus, fields });
+  }
+
+  async function updateIncidentField(id: string, fields: Record<string, unknown>) {
     try {
-      const updated = await client.itsmUpdateIncident(id, { status });
+      const updated = await client.itsmUpdateIncident(id, fields);
       setIncidents(prev => prev.map(i => i.id === id ? { ...i, ...updated } : i));
       if (selectedIncident?.id === id) setSelectedIncident({ ...selectedIncident, ...updated });
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function submitTransition(id: string, status: string, fields: Record<string, string>) {
+    try {
+      const updated = await client.itsmUpdateIncident(id, { status, ...fields });
+      setIncidents(prev => prev.map(i => i.id === id ? { ...i, ...updated } : i));
+      if (selectedIncident?.id === id) setSelectedIncident({ ...selectedIncident, ...updated });
+      setTransitionModal(null);
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -545,6 +657,42 @@ export function ItsmPage() {
                 </div>
               )}
 
+              {/* Investigation Notes — always visible with "Add Note" */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Untersuchungsnotizen</p>
+                {selectedIncident.investigationNotes ? (
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap mb-2">{selectedIncident.investigationNotes}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 italic mb-2">Keine Notizen vorhanden.</p>
+                )}
+                {selectedIncident.status !== 'closed' && selectedIncident.status !== 'resolved' && (
+                  addingNote ? (
+                    <div className="space-y-2">
+                      <textarea
+                        className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[60px]"
+                        placeholder="Beobachtung, Analyse, Maßnahme..."
+                        value={noteText}
+                        onChange={e => setNoteText(e.target.value)}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={async () => {
+                            if (!noteText.trim()) return;
+                            await updateIncidentField(selectedIncident.id, { investigation_notes: noteText.trim() });
+                            setNoteText('');
+                            setAddingNote(false);
+                          }}
+                          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded"
+                        >Speichern</button>
+                        <button onClick={() => { setAddingNote(false); setNoteText(''); }} className="px-3 py-1 text-xs text-gray-400 hover:text-white">Abbrechen</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setAddingNote(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Notiz hinzufügen</button>
+                  )
+                )}
+              </div>
+
               {selectedIncident.rootCause && (
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Root Cause</p>
@@ -565,6 +713,24 @@ export function ItsmPage() {
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedIncident.workaround}</p>
                 </div>
               )}
+
+              {/* Lessons Learned — editable */}
+              <EditableTextField
+                label="Lessons Learned"
+                value={selectedIncident.lessonsLearned}
+                placeholder="Was wurde gelernt? Was würde man anders machen?"
+                onSave={val => updateIncidentField(selectedIncident.id, { lessons_learned: val })}
+                disabled={selectedIncident.status === 'closed'}
+              />
+
+              {/* Action Items — editable */}
+              <EditableTextField
+                label="Action Items"
+                value={selectedIncident.actionItems}
+                placeholder="- [ ] Monitoring verbessern&#10;- [ ] Runbook aktualisieren&#10;- [ ] ..."
+                onSave={val => updateIncidentField(selectedIncident.id, { action_items: val })}
+                disabled={selectedIncident.status === 'closed'}
+              />
 
               {/* Related Incident */}
               {selectedIncident.relatedIncidentId && (
@@ -591,17 +757,79 @@ export function ItsmPage() {
                 </button>
               </div>
 
-              {/* Affected Assets */}
-              {selectedIncident.affectedAssetIds?.length > 0 && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Betroffene Assets ({selectedIncident.affectedAssetIds.length})</p>
-                  <div className="flex gap-1 flex-wrap">
-                    {selectedIncident.affectedAssetIds.map(id => (
-                      <span key={id} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-400 font-mono">{id}</span>
-                    ))}
-                  </div>
+              {/* Affected Assets — with name resolution + add/remove */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Betroffene Assets ({selectedIncident.affectedAssetIds?.length ?? 0})</p>
+                <div className="flex gap-1 flex-wrap mb-2">
+                  {(selectedIncident.affectedAssetIds ?? []).map(aid => {
+                    const asset = allAssets.find(a => a.id === aid);
+                    return (
+                      <span key={aid} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-300 font-mono flex items-center gap-1">
+                        {asset ? `${asset.name} (${asset.assetType})` : aid.slice(0, 8)}
+                        {selectedIncident.status !== 'closed' && (
+                          <button
+                            onClick={() => updateIncidentField(selectedIncident.id, { affected_asset_ids: selectedIncident.affectedAssetIds.filter(x => x !== aid) })}
+                            className="text-red-400 hover:text-red-300 ml-1"
+                          >&times;</button>
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
-              )}
+                {selectedIncident.status !== 'closed' && allAssets.length > 0 && (
+                  <select
+                    className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-400 w-full"
+                    value=""
+                    onChange={e => {
+                      if (!e.target.value) return;
+                      const newIds = [...(selectedIncident.affectedAssetIds ?? []), e.target.value];
+                      updateIncidentField(selectedIncident.id, { affected_asset_ids: newIds });
+                    }}
+                  >
+                    <option value="">+ Asset verknüpfen...</option>
+                    {allAssets
+                      .filter(a => !(selectedIncident.affectedAssetIds ?? []).includes(a.id))
+                      .map(a => <option key={a.id} value={a.id}>{a.name} ({a.assetType})</option>)}
+                  </select>
+                )}
+              </div>
+
+              {/* Affected Services — with name resolution + add/remove */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Betroffene Services ({selectedIncident.affectedServiceIds?.length ?? 0})</p>
+                <div className="flex gap-1 flex-wrap mb-2">
+                  {(selectedIncident.affectedServiceIds ?? []).map(sid => {
+                    const svc = services.find(s => s.id === sid);
+                    return (
+                      <span key={sid} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-300 font-mono flex items-center gap-1">
+                        {svc ? svc.name : sid.slice(0, 8)}
+                        {selectedIncident.status !== 'closed' && (
+                          <button
+                            onClick={() => updateIncidentField(selectedIncident.id, { affected_service_ids: selectedIncident.affectedServiceIds.filter(x => x !== sid) })}
+                            className="text-red-400 hover:text-red-300 ml-1"
+                          >&times;</button>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+                {selectedIncident.status !== 'closed' && services.length > 0 && (
+                  <select
+                    className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-400 w-full"
+                    value=""
+                    onChange={e => {
+                      if (!e.target.value) return;
+                      const newIds = [...(selectedIncident.affectedServiceIds ?? []), e.target.value];
+                      updateIncidentField(selectedIncident.id, { affected_service_ids: newIds });
+                    }}
+                  >
+                    <option value="">+ Service verknüpfen...</option>
+                    {services
+                      .filter(s => !(selectedIncident.affectedServiceIds ?? []).includes(s.id))
+                      .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                )}
+              </div>
 
               {/* Timeline */}
               <div>
@@ -618,16 +846,19 @@ export function ItsmPage() {
               {/* Action Buttons */}
               <div className="flex gap-2 flex-wrap pt-2 border-t border-[#1f1f1f]">
                 {selectedIncident.status === 'open' && (
-                  <button onClick={() => updateIncidentStatus(selectedIncident.id, 'acknowledged')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Acknowledge</button>
+                  <button onClick={() => openTransitionModal(selectedIncident.id, 'acknowledged')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Acknowledge</button>
                 )}
                 {(selectedIncident.status === 'open' || selectedIncident.status === 'acknowledged') && (
-                  <button onClick={() => updateIncidentStatus(selectedIncident.id, 'investigating')} className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-white rounded">Investigate</button>
+                  <button onClick={() => openTransitionModal(selectedIncident.id, 'investigating')} className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-white rounded">Investigate</button>
+                )}
+                {(selectedIncident.status === 'investigating') && (
+                  <button onClick={() => openTransitionModal(selectedIncident.id, 'mitigating')} className="px-3 py-1.5 text-xs bg-purple-600 hover:bg-purple-500 text-white rounded">Mitigate</button>
                 )}
                 {selectedIncident.status !== 'resolved' && selectedIncident.status !== 'closed' && (
-                  <button onClick={() => updateIncidentStatus(selectedIncident.id, 'resolved')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Resolve</button>
+                  <button onClick={() => openTransitionModal(selectedIncident.id, 'resolved')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Resolve</button>
                 )}
                 {selectedIncident.status !== 'closed' && (
-                  <button onClick={() => updateIncidentStatus(selectedIncident.id, 'closed')} className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded">Close</button>
+                  <button onClick={() => openTransitionModal(selectedIncident.id, 'closed')} className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded">Close</button>
                 )}
               </div>
             </div>
@@ -1028,6 +1259,41 @@ export function ItsmPage() {
       {showCreateIncident && <CreateIncidentModal onClose={() => setShowCreateIncident(false)} onSave={createIncident} />}
       {showCreateChange && <CreateChangeModal onClose={() => setShowCreateChange(false)} onSave={createChange} />}
       {showCreateService && <CreateServiceModal onClose={() => setShowCreateService(false)} onSave={createService} />}
+
+      {/* Status Transition Modal */}
+      {transitionModal && transitionModal.fields.length > 0 && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold text-white">Incident → {transitionModal.label}</h3>
+            {transitionModal.fields.map(f => (
+              <div key={f.key}>
+                <label className="text-xs text-gray-400 mb-1 block">
+                  {f.label} {f.required && <span className="text-red-400">*</span>}
+                </label>
+                <textarea
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[80px]"
+                  placeholder={f.placeholder}
+                  value={transitionFields[f.key] ?? ''}
+                  onChange={e => setTransitionFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                />
+              </div>
+            ))}
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setTransitionModal(null)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button
+                onClick={() => {
+                  const missing = transitionModal.fields.filter(f => f.required && !transitionFields[f.key]?.trim());
+                  if (missing.length > 0) { setError(`Pflichtfeld: ${missing.map(f => f.label).join(', ')}`); return; }
+                  submitTransition(transitionModal.incidentId, transitionModal.targetStatus, transitionFields);
+                }}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded"
+              >
+                {transitionModal.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

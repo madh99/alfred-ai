@@ -554,4 +554,19 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE cmdb_services ADD COLUMN IF NOT EXISTS health_reason TEXT`, []);
     },
   },
+  {
+    version: 52,
+    description: 'Add investigation_notes to cmdb_incidents',
+    async up(db) {
+      await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS investigation_notes TEXT`, []);
+    },
+  },
+  {
+    version: 53,
+    description: 'Add lessons_learned, action_items to cmdb_incidents',
+    async up(db) {
+      await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS lessons_learned TEXT`, []);
+      await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS action_items TEXT`, []);
+    },
+  },
 ];

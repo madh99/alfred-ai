@@ -289,7 +289,7 @@ export class ReasoningContextCollector {
     // CMDB summary (asset counts + open incidents with titles)
     if (this.skillRegistry.has('cmdb') || this.skillRegistry.has('itsm')) {
       defs.push({
-        key: 'cmdb', label: 'CMDB / ITSM', priority: 2, maxTokens: 200,
+        key: 'cmdb', label: 'CMDB / ITSM', priority: 2, maxTokens: 300,
         fetch: async () => {
           const parts: string[] = [];
           try {
@@ -302,21 +302,34 @@ export class ReasoningContextCollector {
             if (this.skillRegistry.has('itsm')) {
               const dashResult = await this.fetchWithTimeout('itsm', { action: 'dashboard' }, 10_000);
               if (dashResult) parts.push(dashResult);
-              // Include open incident titles so LLM can avoid duplicates
-              const incResult = await this.fetchWithTimeout('itsm', { action: 'list_incidents', status: 'open' }, 10_000);
-              if (incResult) {
-                // fetchWithTimeout returns the display string; extract just the titles
-                // Alternatively, parse the skill result data
-                const skill = this.skillRegistry.get('itsm');
-                if (skill) {
-                  const raw = await this.skillSandbox.execute(skill, { action: 'list_incidents', status: 'open' }, {} as any);
-                  if (raw.success && Array.isArray(raw.data)) {
-                    const titles = (raw.data as Array<{ id: string; title: string; severity: string; status: string }>)
-                      .slice(0, 10)
-                      .map(i => `- [${i.id.slice(0, 8)}] [${i.severity}] ${i.title} (${i.status})`)
-                      .join('\n');
-                    if (titles) parts.push(`Offene Incidents:\n${titles}`);
+              // Include active + recently resolved incidents so LLM can update/avoid duplicates
+              const skill = this.skillRegistry.get('itsm');
+              if (skill) {
+                {
+                  // Single fetch: all incidents, then filter by status in code
+                  const allRaw = await this.skillSandbox.execute(skill, { action: 'list_incidents' }, {} as any);
+                  if (allRaw.success && Array.isArray(allRaw.data)) {
+                    const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string }>;
+                    const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
+                    const active = allInc.filter(i => activeStatuses.has(i.status));
+                    const activeLines = active.slice(0, 15)
+                      .map(i => {
+                        let line = `- [${i.id.slice(0, 8)}] [${i.severity}] ${i.title} (${i.status})`;
+                        if (i.rootCause) line += ` — RC: ${i.rootCause.slice(0, 60)}`;
+                        return line;
+                      }).join('\n');
+                    if (activeLines) parts.push(`Aktive Incidents:\n${activeLines}`);
+
+                    // Recently resolved (last 24h) so LLM doesn't re-create
+                    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+                    const recent = allInc
+                      .filter(i => i.status === 'resolved' && i.resolvedAt && new Date(i.resolvedAt).getTime() > cutoff)
+                      .slice(0, 5)
+                      .map(i => `- [${i.id.slice(0, 8)}] ${i.title} (resolved)`);
+                    if (recent.length > 0) parts.push(`Kürzlich gelöst (24h):\n${recent.join('\n')}`);
                   }
+                }
+                {
                   // Also include pending Change Requests
                   const crRaw = await this.skillSandbox.execute(skill, { action: 'list_changes', status: 'draft' }, {} as any);
                   if (crRaw.success && Array.isArray(crRaw.data)) {

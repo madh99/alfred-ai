@@ -2210,7 +2210,14 @@ export class Alfred {
           listIncidents: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listIncidents(await resolveUser(uid), filters as any),
           getIncident: async (uid: string, id: string) => itsmRepo.getIncidentById(await resolveUser(uid), id),
           createIncident: async (uid: string, data: Record<string, unknown>) => itsmRepo.createIncident(await resolveUser(uid), data as any),
-          updateIncident: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateIncident(await resolveUser(uid), id, data as any),
+          updateIncident: async (uid: string, id: string, data: Record<string, unknown>) => {
+            // snake_case → camelCase for API/WebUI callers
+            const mapped: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(data)) {
+              mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
+            }
+            return itsmRepo.updateIncident(await resolveUser(uid), id, mapped as any);
+          },
           listChanges: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listChangeRequests(await resolveUser(uid), filters as any),
           createChange: async (uid: string, data: Record<string, unknown>) => itsmRepo.createChangeRequest(await resolveUser(uid), data as any),
           updateChange: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateChangeRequest(await resolveUser(uid), id, data as any),

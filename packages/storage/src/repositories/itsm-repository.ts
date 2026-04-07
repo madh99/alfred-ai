@@ -27,9 +27,12 @@ function rowToIncident(r: DbRow): CmdbIncident {
     affectedAssetIds: parseJsonArray(r.affected_asset_ids),
     affectedServiceIds: parseJsonArray(r.affected_service_ids),
     symptoms: r.symptoms as string | undefined,
+    investigationNotes: r.investigation_notes as string | undefined,
     rootCause: r.root_cause as string | undefined,
     resolution: r.resolution as string | undefined,
     workaround: r.workaround as string | undefined,
+    lessonsLearned: r.lessons_learned as string | undefined,
+    actionItems: r.action_items as string | undefined,
     postmortem: r.postmortem as string | undefined,
     detectedBy: r.detected_by as string | undefined,
     relatedIncidentId: r.related_incident_id as string | undefined,
@@ -156,7 +159,8 @@ export class ItsmRepository {
   async updateIncident(userId: string, id: string, updates: Partial<{
     title: string; description: string; severity: IncidentSeverity; status: IncidentStatus;
     priority: number; affectedAssetIds: string[]; affectedServiceIds: string[];
-    symptoms: string; rootCause: string; resolution: string; workaround: string;
+    symptoms: string; investigationNotes: string; rootCause: string; resolution: string; workaround: string;
+    lessonsLearned: string; actionItems: string; postmortem: string; relatedIncidentId: string;
   }>): Promise<CmdbIncident | null> {
     const existing = await this.getIncidentById(userId, id);
     if (!existing) return null;
@@ -167,13 +171,23 @@ export class ItsmRepository {
 
     const simple: Record<string, string> = {
       title: 'title', description: 'description', severity: 'severity',
-      priority: 'priority', symptoms: 'symptoms', rootCause: 'root_cause',
-      resolution: 'resolution', workaround: 'workaround', postmortem: 'postmortem',
+      priority: 'priority', rootCause: 'root_cause',
+      resolution: 'resolution', workaround: 'workaround',
+      lessonsLearned: 'lessons_learned', actionItems: 'action_items', postmortem: 'postmortem',
       relatedIncidentId: 'related_incident_id',
     };
 
     for (const [key, col] of Object.entries(simple)) {
       if (key in updates) { fields.push(`${col} = ?`); params.push((updates as any)[key] ?? null); }
+    }
+
+    // Append-only fields (chronological log)
+    for (const [key, col] of [['symptoms', 'symptoms'], ['investigationNotes', 'investigation_notes']] as const) {
+      if (key in updates && (updates as any)[key]) {
+        const prev = (existing as any)[key] as string | undefined;
+        const newVal = prev ? `${prev}\n[${now}] ${(updates as any)[key]}` : `[${now}] ${(updates as any)[key]}`;
+        fields.push(`${col} = ?`); params.push(newVal);
+      }
     }
 
     if (updates.affectedAssetIds) { fields.push(`affected_asset_ids = ?`); params.push(JSON.stringify(updates.affectedAssetIds)); }
@@ -232,10 +246,14 @@ export class ItsmRepository {
   async appendSymptoms(userId: string, id: string, newSymptom: string): Promise<void> {
     const existing = await this.getIncidentById(userId, id);
     if (!existing) return;
+    const now = new Date().toISOString();
     const updated = existing.symptoms
-      ? `${existing.symptoms}\n---\n${new Date().toISOString().slice(0, 16)} ${newSymptom}`
-      : newSymptom;
-    await this.updateIncident(userId, id, { symptoms: updated });
+      ? `${existing.symptoms}\n[${now}] ${newSymptom}`
+      : `[${now}] ${newSymptom}`;
+    await this.db.execute(
+      `UPDATE cmdb_incidents SET symptoms = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [updated, now, id, userId],
+    );
   }
 
   // ── Services ───────────────────────────────────────────────
