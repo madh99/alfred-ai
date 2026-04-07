@@ -170,8 +170,21 @@ export class KnowledgeGraphService {
           try {
             const fullNameMem = await this.memoryRepo.recall(userId, 'user_full_name');
             if (fullNameMem?.value) {
-              const m = fullNameMem.value.match(/([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/);
-              if (m && this.isFullName(m[1])) this.userRealName = m[1].trim();
+              // Try explicit patterns first: "Name ist X Y", "heißt X Y"
+              const explicit = fullNameMem.value.match(/(?:name\s+ist|heißt|bin)\s+([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i);
+              if (explicit && this.isFullName(explicit[1])) {
+                this.userRealName = explicit[1].trim();
+              } else {
+                // Fallback: take the LAST two capitalized words (most likely the actual name at end of sentence)
+                const words = fullNameMem.value.split(/\s+/);
+                for (let i = words.length - 2; i >= 0; i--) {
+                  const pair = words[i] + ' ' + words[i + 1];
+                  if (/^[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/.test(pair) && this.isFullName(pair)) {
+                    this.userRealName = pair;
+                    break;
+                  }
+                }
+              }
             }
           } catch { /* skip */ }
         }
