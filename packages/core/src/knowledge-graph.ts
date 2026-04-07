@@ -880,8 +880,9 @@ export class KnowledgeGraphService {
         // Cleanup invalid person entities (newlines in name, blacklisted words, >40 chars)
         let invalidPersonsCleaned = 0;
         try {
-          const persons = await this.kgRepo.getEntitiesByType(userId, 'person');
+          const persons = await this.kgRepo.getEntitiesByType(userId, 'person' as any);
           for (const p of persons) {
+            if (p.name === 'User') continue; // Never delete the User entity
             if (/[\n\r\t]/.test(p.name) || p.name.length > 40 || PERSON_BLACKLIST.has(p.name.toLowerCase())) {
               await this.kgRepo.deleteEntity(p.id);
               invalidPersonsCleaned++;
