@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.394] - 2026-04-08
+
+### Fixed
+- **ITSM: Severity + Priority editierbar (WebUI)** — Inline-Dropdowns im Incident-Detail statt read-only Badges. Bei geschlossenen Incidents read-only.
+
 ## [0.19.0-multi-ha.393] - 2026-04-08
 
 ### Fixed

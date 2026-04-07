@@ -637,10 +637,37 @@ export function ItsmPage() {
                 <button onClick={() => setSelectedIncident(null)} className="text-gray-500 hover:text-gray-300 text-lg">x</button>
               </div>
 
-              <div className="flex gap-2 flex-wrap">
-                <span className={clsx('text-xs px-2 py-0.5 rounded-full', SEV_BG[selectedIncident.severity])}>{selectedIncident.severity}</span>
+              <div className="flex gap-2 flex-wrap items-center">
+                {selectedIncident.status !== 'closed' ? (
+                  <select
+                    className={clsx('text-xs px-2 py-0.5 rounded-full border-0 cursor-pointer', SEV_BG[selectedIncident.severity])}
+                    value={selectedIncident.severity}
+                    onChange={e => updateIncidentField(selectedIncident.id, { severity: e.target.value })}
+                  >
+                    <option value="critical">critical</option>
+                    <option value="high">high</option>
+                    <option value="medium">medium</option>
+                    <option value="low">low</option>
+                  </select>
+                ) : (
+                  <span className={clsx('text-xs px-2 py-0.5 rounded-full', SEV_BG[selectedIncident.severity])}>{selectedIncident.severity}</span>
+                )}
                 <span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(selectedIncident.status))}>{selectedIncident.status}</span>
-                {selectedIncident.priority && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400">P: {selectedIncident.priority}</span>}
+                {selectedIncident.status !== 'closed' ? (
+                  <select
+                    className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400 border-0 cursor-pointer"
+                    value={selectedIncident.priority ?? '3'}
+                    onChange={e => updateIncidentField(selectedIncident.id, { priority: Number(e.target.value) })}
+                  >
+                    <option value="1">P1</option>
+                    <option value="2">P2</option>
+                    <option value="3">P3</option>
+                    <option value="4">P4</option>
+                    <option value="5">P5</option>
+                  </select>
+                ) : (
+                  selectedIncident.priority && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400">P: {selectedIncident.priority}</span>
+                )}
               </div>
 
               {selectedIncident.description && (
