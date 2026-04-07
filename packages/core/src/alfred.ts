@@ -1034,6 +1034,13 @@ export class Alfred {
                   if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
                 } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
               }
+              // After all incidents processed, trigger service health re-evaluation
+              try {
+                const itsmSkillRef = skillRegistry.get('itsm');
+                if (itsmSkillRef) {
+                  await skillSandbox.execute(itsmSkillRef, { action: 'health_check' }, { userId, masterUserId: userId } as any);
+                }
+              } catch { /* non-critical */ }
             }
             return result;
           };

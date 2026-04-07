@@ -47,6 +47,17 @@ interface ChangeRequest {
   result: string;
 }
 
+interface ServiceComponent {
+  assetId?: string;
+  serviceId?: string;
+  externalUrl?: string;
+  role: string;
+  name: string;
+  required: boolean;
+  healthStatus?: string;
+  healthReason?: string;
+}
+
 interface Service {
   id: string;
   name: string;
@@ -56,6 +67,7 @@ interface Service {
   url: string;
   healthCheckUrl: string;
   healthStatus: 'healthy' | 'degraded' | 'down' | 'unknown';
+  healthReason: string | null;
   criticality: string;
   dependencies: string[];
   assetIds: string[];
@@ -64,6 +76,7 @@ interface Service {
   slaNotes: string;
   maintenanceWindow: string;
   tags: string[];
+  components: ServiceComponent[];
 }
 
 type Tab = 'incidents' | 'changes' | 'services';
@@ -859,6 +872,12 @@ export function ItsmPage() {
                 {selectedService.environment && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400">{selectedService.environment}</span>}
               </div>
 
+              {selectedService.healthReason && (
+                <p className={clsx('text-xs', selectedService.healthStatus === 'down' ? 'text-red-400' : 'text-yellow-400')}>
+                  {'\u26a0\ufe0f'} Grund: {selectedService.healthReason}
+                </p>
+              )}
+
               {selectedService.description && (
                 <div>
                   <p className="text-xs text-gray-500 mb-1">Beschreibung</p>
@@ -915,6 +934,39 @@ export function ItsmPage() {
                   <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedService.documentation}</p>
                 </div>
               )}
+
+              {/* Komponenten */}
+              <div>
+                <p className="text-xs text-gray-500 mb-2">Komponenten</p>
+                {(!selectedService.components || selectedService.components.length === 0) ? (
+                  <p className="text-xs text-gray-500 italic">Keine Komponenten definiert.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {selectedService.components.map((comp, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2">
+                        <span className={clsx('w-2 h-2 rounded-full mt-0.5 shrink-0', {
+                          'bg-green-500': comp.healthStatus === 'healthy',
+                          'bg-yellow-500': comp.healthStatus === 'degraded',
+                          'bg-red-500': comp.healthStatus === 'down',
+                          'bg-gray-500': !comp.healthStatus || comp.healthStatus === 'unknown',
+                        })} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-gray-200">{comp.name}</span>
+                            <span className="text-gray-500">({comp.role})</span>
+                            {comp.required && <span className="text-[10px] px-1.5 py-0 rounded bg-orange-500/10 text-orange-400">required</span>}
+                          </div>
+                          {comp.healthReason && (
+                            <p className={clsx('mt-0.5', comp.healthStatus === 'down' ? 'text-red-400' : 'text-yellow-400')}>
+                              {comp.healthReason}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Runbook Generation */}
               <div>

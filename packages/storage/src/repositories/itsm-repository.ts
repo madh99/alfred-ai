@@ -53,10 +53,12 @@ function rowToService(r: DbRow): CmdbService {
     url: r.url as string | undefined,
     healthCheckUrl: r.health_check_url as string | undefined,
     healthStatus: r.health_status as ServiceHealthStatus,
+    healthReason: r.health_reason as string | undefined,
     lastHealthCheck: r.last_health_check as string | undefined,
     criticality: r.criticality as ServiceCriticality | undefined,
     dependencies: parseJsonArray(r.dependencies),
     assetIds: parseJsonArray(r.asset_ids),
+    components: (() => { try { return JSON.parse((r.components as string) || '[]'); } catch { return []; } })(),
     owner: r.owner as string | undefined,
     documentation: r.documentation as string | undefined,
     slaNotes: r.sla_notes as string | undefined,
@@ -289,7 +291,7 @@ export class ItsmRepository {
     const simple: Record<string, string> = {
       name: 'name', description: 'description', category: 'category',
       environment: 'environment', url: 'url', healthCheckUrl: 'health_check_url',
-      healthStatus: 'health_status', criticality: 'criticality',
+      healthStatus: 'health_status', healthReason: 'health_reason', criticality: 'criticality',
       owner: 'owner', documentation: 'documentation', slaNotes: 'sla_notes',
       maintenanceWindow: 'maintenance_window', tags: 'tags',
     };
@@ -300,6 +302,7 @@ export class ItsmRepository {
 
     if (updates.dependencies) { fields.push(`dependencies = ?`); params.push(JSON.stringify(updates.dependencies)); }
     if (updates.assetIds) { fields.push(`asset_ids = ?`); params.push(JSON.stringify(updates.assetIds)); }
+    if ((updates as any).components) { fields.push(`components = ?`); params.push(JSON.stringify((updates as any).components)); }
     if (updates.lastHealthCheck) { fields.push(`last_health_check = ?`); params.push(updates.lastHealthCheck); }
 
     if (fields.length === 0) return existing;
@@ -310,10 +313,25 @@ export class ItsmRepository {
     return this.getServiceById(userId, id);
   }
 
-  async updateServiceHealth(userId: string, id: string, status: ServiceHealthStatus): Promise<void> {
-    await this.db.execute(
-      `UPDATE cmdb_services SET health_status = ?, last_health_check = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [status, new Date().toISOString(), new Date().toISOString(), id, userId],
+  async updateServiceHealth(userId: string, id: string, status: ServiceHealthStatus, reason?: string, components?: import('@alfred/types').ServiceComponent[]): Promise<void> {
+    const now = new Date().toISOString();
+    const fields = ['health_status = ?', 'last_health_check = ?', 'updated_at = ?'];
+    const params: unknown[] = [status, now, now];
+    if (reason !== undefined) { fields.push('health_reason = ?'); params.push(reason); }
+    if (components) { fields.push('components = ?'); params.push(JSON.stringify(components)); }
+    params.push(id, userId);
+    await this.db.execute(`UPDATE cmdb_services SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
+  }
+
+  /** Find all services that reference a given asset (via asset_ids or components). */
+  async getServicesForAsset(userId: string, assetId: string): Promise<CmdbService[]> {
+    // JSON scan: check both asset_ids array and components[].assetId
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_services WHERE user_id = ? AND (asset_ids LIKE ? OR components LIKE ?)`,
+      [userId, `%${assetId}%`, `%${assetId}%`],
+    );
+    return rows.map(rowToService).filter(s =>
+      s.assetIds.includes(assetId) || s.components.some(c => c.assetId === assetId),
     );
   }
 

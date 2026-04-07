@@ -640,6 +640,19 @@ export interface CmdbIncident {
   updatedAt: string;
 }
 
+export type ServiceComponentRole = 'database' | 'cache' | 'storage' | 'compute' | 'api' | 'proxy' | 'messaging' | 'monitoring' | 'dns' | 'other';
+
+export interface ServiceComponent {
+  assetId?: string;
+  serviceId?: string;
+  externalUrl?: string;
+  role: ServiceComponentRole;
+  name: string;
+  required: boolean;
+  healthStatus?: ServiceHealthStatus;
+  healthReason?: string;
+}
+
 export interface CmdbService {
   id: string;
   userId: string;
@@ -650,10 +663,12 @@ export interface CmdbService {
   url?: string;
   healthCheckUrl?: string;
   healthStatus: ServiceHealthStatus;
+  healthReason?: string;
   lastHealthCheck?: string;
   criticality?: ServiceCriticality;
   dependencies: string[];
   assetIds: string[];
+  components: ServiceComponent[];
   owner?: string;
   documentation?: string;
   slaNotes?: string;

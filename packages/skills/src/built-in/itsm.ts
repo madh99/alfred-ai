@@ -6,7 +6,7 @@ import { Skill } from '../skill.js';
 type Action =
   | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'close_incident'
   | 'create_change_request' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
-  | 'add_service' | 'update_service' | 'health_check' | 'impact_analysis' | 'dashboard';
+  | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -27,7 +27,9 @@ export class ItsmSkill extends Skill {
       '"list_changes" zeigt Change Requests (filter: status, type). ' +
       '"add_service" registriert einen Service (name, category, url, health_check_url, criticality, asset_ids, dependencies). ' +
       '"update_service" aktualisiert (service_id + Felder). ' +
-      '"health_check" prüft Health aller Services. ' +
+      '"add_component" fügt eine Komponente zu einem Service hinzu (service_id, component_name, component_role, component_asset_id oder component_external_url, component_required). ' +
+      '"remove_component" entfernt eine Komponente (service_id, component_name). ' +
+      '"health_check" prüft Health aller Services (3-Layer: URL + Asset-Status + Dependencies). ' +
       '"impact_analysis" analysiert Auswirkungen bei Asset-Ausfall (asset_id). ' +
       '"dashboard" zeigt ITSM-Übersicht.',
     riskLevel: 'write',
@@ -35,7 +37,7 @@ export class ItsmSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'add_service', 'update_service', 'health_check', 'impact_analysis', 'dashboard'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         service_id: { type: 'string' },
@@ -71,6 +73,12 @@ export class ItsmSkill extends Skill {
         maintenance_window: { type: 'string' },
         tags: { type: 'string' },
         environment: { type: 'string' },
+        component_name: { type: 'string', description: 'Name der Komponente (z.B. PostgreSQL, Redis)' },
+        component_role: { type: 'string', enum: ['database', 'cache', 'storage', 'compute', 'api', 'proxy', 'messaging', 'monitoring', 'dns', 'other'] },
+        component_asset_id: { type: 'string', description: 'CMDB Asset-ID der Komponente' },
+        component_service_id: { type: 'string', description: 'Service-ID einer Service-Dependency' },
+        component_external_url: { type: 'string', description: 'Externe URL (z.B. https://api.telegram.org)' },
+        component_required: { type: 'boolean', description: 'true = Service down wenn Komponente down, false = degraded' },
       },
       required: ['action'],
     },
@@ -105,6 +113,8 @@ export class ItsmSkill extends Skill {
         case 'list_changes': return await this.listChanges(userId, input);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
+        case 'add_component': return await this.addComponent(userId, input);
+        case 'remove_component': return await this.removeComponent(userId, input);
         case 'health_check': return await this.healthCheck(userId);
         case 'impact_analysis': return await this.impactAnalysis(userId, input.asset_id as string);
         case 'dashboard': return await this.dashboard(userId);
@@ -343,35 +353,138 @@ export class ItsmSkill extends Skill {
     return { success: true, data: result, display: `✅ Service **${result.name}** aktualisiert` };
   }
 
+  private async addComponent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    if (!serviceId) return { success: false, error: 'service_id erforderlich' };
+    const name = input.component_name as string;
+    const role = input.component_role as string ?? 'other';
+    if (!name) return { success: false, error: 'component_name erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    const component: any = { name, role, required: input.component_required !== false };
+    if (input.component_asset_id) component.assetId = input.component_asset_id;
+    if (input.component_service_id) component.serviceId = input.component_service_id;
+    if (input.component_external_url) component.externalUrl = input.component_external_url;
+
+    const components = [...svc.components, component];
+    // Sync assetId into flat asset_ids for backward compat
+    const assetIds = [...new Set([...svc.assetIds, ...(component.assetId ? [component.assetId] : [])])];
+    await this.itsm.updateService(userId, serviceId, { components, assetIds } as any);
+
+    return { success: true, data: component, display: `✅ Komponente **${name}** (${role}) zu Service **${svc.name}** hinzugefügt` };
+  }
+
+  private async removeComponent(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    const name = input.component_name as string;
+    if (!serviceId || !name) return { success: false, error: 'service_id und component_name erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    const components = svc.components.filter(c => c.name !== name);
+    if (components.length === svc.components.length) return { success: false, error: `Komponente ${name} nicht gefunden` };
+    await this.itsm.updateService(userId, serviceId, { components } as any);
+
+    return { success: true, display: `✅ Komponente **${name}** von Service **${svc.name}** entfernt` };
+  }
+
   private async healthCheck(userId: string): Promise<SkillResult> {
     const services = await this.itsm.listServices(userId);
-    const results: { name: string; url: string; status: ServiceHealthStatus; latencyMs?: number; error?: string }[] = [];
+    const results: { name: string; status: ServiceHealthStatus; reason?: string; latencyMs?: number; error?: string }[] = [];
 
     for (const svc of services) {
-      if (!svc.healthCheckUrl) {
-        results.push({ name: svc.name, url: '—', status: svc.healthStatus });
-        continue;
+      const reasons: string[] = [];
+      let worstStatus = 'healthy' as ServiceHealthStatus;
+      const updatedComponents = [...svc.components];
+
+      // Layer 1: URL health check (if configured)
+      if (svc.healthCheckUrl) {
+        const start = Date.now();
+        try {
+          const res = await fetch(svc.healthCheckUrl, { signal: AbortSignal.timeout(10_000) });
+          const latencyMs = Date.now() - start;
+          if (!res.ok) {
+            const urlStatus: ServiceHealthStatus = res.status >= 500 ? 'down' : 'degraded';
+            if (urlStatus === 'down') worstStatus = 'down';
+            else if (worstStatus !== 'down') worstStatus = 'degraded';
+            reasons.push(`URL ${svc.healthCheckUrl}: HTTP ${res.status}`);
+          }
+          results.push({ name: svc.name, status: worstStatus, latencyMs });
+        } catch (err: any) {
+          worstStatus = 'down';
+          reasons.push(`URL ${svc.healthCheckUrl}: ${err.message?.slice(0, 60)}`);
+          results.push({ name: svc.name, status: 'down', error: err.message?.slice(0, 80) });
+        }
       }
 
-      const start = Date.now();
-      try {
-        const res = await fetch(svc.healthCheckUrl, { signal: AbortSignal.timeout(10_000) });
-        const latencyMs = Date.now() - start;
-        const status: ServiceHealthStatus = res.ok ? 'healthy' : (res.status >= 500 ? 'down' : 'degraded');
-        await this.itsm.updateServiceHealth(userId, svc.id, status);
-        results.push({ name: svc.name, url: svc.healthCheckUrl, status, latencyMs });
-      } catch (err: any) {
-        await this.itsm.updateServiceHealth(userId, svc.id, 'down');
-        results.push({ name: svc.name, url: svc.healthCheckUrl, status: 'down', error: err.message?.slice(0, 80) });
+      // Layer 2: Component health (assets + external URLs + dependent services)
+      const visited = new Set<string>(); // Circular dependency guard
+      for (let ci = 0; ci < updatedComponents.length; ci++) {
+        const comp = updatedComponents[ci];
+        let compStatus: ServiceHealthStatus = 'healthy';
+        let compReason = '';
+
+        if (comp.assetId) {
+          // Check CMDB asset status
+          const asset = await this.cmdb.getAssetById(userId, comp.assetId);
+          if (asset) {
+            if (asset.status === 'inactive' || asset.status === 'decommissioned') {
+              compStatus = 'down'; compReason = `${asset.name} (${asset.status})`;
+            } else if (asset.status === 'degraded' || asset.status === 'unknown') {
+              compStatus = 'degraded'; compReason = `${asset.name} (${asset.status})`;
+            }
+          } else {
+            compStatus = 'unknown'; compReason = 'Asset nicht gefunden';
+          }
+        } else if (comp.serviceId && !visited.has(comp.serviceId)) {
+          // Check dependent service health (with circular guard)
+          visited.add(comp.serviceId);
+          const depSvc = await this.itsm.getServiceById(userId, comp.serviceId);
+          if (depSvc) {
+            if (depSvc.healthStatus === 'down') { compStatus = 'down'; compReason = `Service ${depSvc.name} down`; }
+            else if (depSvc.healthStatus === 'degraded') { compStatus = 'degraded'; compReason = `Service ${depSvc.name} degraded`; }
+          }
+        } else if (comp.externalUrl) {
+          try {
+            const res = await fetch(comp.externalUrl, { signal: AbortSignal.timeout(5_000) });
+            if (!res.ok) { compStatus = res.status >= 500 ? 'down' : 'degraded'; compReason = `HTTP ${res.status}`; }
+          } catch (err: any) {
+            compStatus = 'down'; compReason = err.message?.slice(0, 60);
+          }
+        }
+
+        updatedComponents[ci] = { ...comp, healthStatus: compStatus, healthReason: compReason || undefined };
+
+        if (compStatus === 'down') {
+          if (comp.required) { worstStatus = 'down'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
+          else if (worstStatus !== 'down') { worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
+        } else if (compStatus === 'degraded' && worstStatus === 'healthy') {
+          worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): degraded — ${compReason}`);
+        }
+      }
+
+      // Aggregate and update
+      const reason = reasons.length > 0 ? reasons.join('; ') : undefined;
+      await this.itsm.updateServiceHealth(userId, svc.id, worstStatus, reason, updatedComponents.length > 0 ? updatedComponents : undefined);
+
+      if (!results.some(r => r.name === svc.name)) {
+        results.push({ name: svc.name, status: worstStatus, reason });
+      } else {
+        const existing = results.find(r => r.name === svc.name)!;
+        existing.status = worstStatus;
+        existing.reason = reason;
       }
     }
 
     const icon = (s: ServiceHealthStatus) => ({ healthy: '🟢', degraded: '🟡', down: '🔴', unknown: '⚫' }[s]);
     const lines = results.map(r =>
-      `| ${icon(r.status)} ${r.status} | ${r.name} | ${r.latencyMs ? `${r.latencyMs}ms` : '—'} | ${r.error ?? '—'} |`,
+      `| ${icon(r.status)} ${r.status} | ${r.name} | ${r.reason ?? '—'} |`,
     );
 
-    const display = `## Health Check\n\n| Status | Service | Latenz | Fehler |\n|--------|---------|--------|--------|\n${lines.join('\n')}`;
+    const display = `## Health Check (3-Layer)\n\n| Status | Service | Reason |\n|--------|---------|--------|\n${lines.join('\n')}`;
     return { success: true, data: results, display };
   }
 
@@ -387,7 +500,8 @@ export class ItsmSkill extends Skill {
     // Find affected services
     const services = await this.itsm.listServices(userId);
     const affectedServices = services.filter(s =>
-      s.assetIds.some(aid => topo.assets.some(a => a.id === aid)),
+      s.assetIds.some(aid => topo.assets.some(a => a.id === aid)) ||
+      s.components.some(c => c.assetId && topo.assets.some(a => a.id === c.assetId)),
     );
 
     // Sort by criticality

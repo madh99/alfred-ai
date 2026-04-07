@@ -1241,4 +1241,12 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN postmortem TEXT`); } catch { /* column already exists */ }
     },
   },
+  {
+    version: 51,
+    description: 'Service components + health_reason on cmdb_services',
+    up(db) {
+      try { db.exec(`ALTER TABLE cmdb_services ADD COLUMN components TEXT NOT NULL DEFAULT '[]'`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_services ADD COLUMN health_reason TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

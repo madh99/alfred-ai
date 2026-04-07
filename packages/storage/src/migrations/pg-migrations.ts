@@ -546,4 +546,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS postmortem TEXT`, []);
     },
   },
+  {
+    version: 51,
+    description: 'Service components + health_reason on cmdb_services',
+    async up(db) {
+      await db.execute(`ALTER TABLE cmdb_services ADD COLUMN IF NOT EXISTS components TEXT NOT NULL DEFAULT '[]'`, []);
+      await db.execute(`ALTER TABLE cmdb_services ADD COLUMN IF NOT EXISTS health_reason TEXT`, []);
+    },
+  },
 ];
