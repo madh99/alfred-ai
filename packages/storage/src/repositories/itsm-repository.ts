@@ -8,6 +8,18 @@ import type {
   CmdbEnvironment,
 } from '@alfred/types';
 
+// ── Helpers ──────────────────────────────────────────────────
+
+function fmtLocalTime(isoUtc: string, tz?: string): string {
+  try {
+    return new Date(isoUtc).toLocaleString('de-AT', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+      ...(tz ? { timeZone: tz } : {}),
+    });
+  } catch { return isoUtc.slice(0, 16); }
+}
+
 // ── Row → Domain Mappers ─────────────────────────────────────
 
 function parseJsonArray(val: unknown): string[] {
@@ -99,6 +111,9 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
 // ── Repository ───────────────────────────────────────────────
 
 export class ItsmRepository {
+  /** User timezone for human-readable timestamps (e.g. 'Europe/Vienna'). */
+  timezone?: string;
+
   constructor(private readonly db: AsyncDbAdapter) {}
 
   // ── Incidents ──────────────────────────────────────────────
@@ -182,10 +197,11 @@ export class ItsmRepository {
     }
 
     // Append-only fields (chronological log)
+    const localTs = fmtLocalTime(now, this.timezone);
     for (const [key, col] of [['symptoms', 'symptoms'], ['investigationNotes', 'investigation_notes']] as const) {
       if (key in updates && (updates as any)[key]) {
         const prev = (existing as any)[key] as string | undefined;
-        const newVal = prev ? `${prev}\n---\n[${now}] ${(updates as any)[key]}` : `[${now}] ${(updates as any)[key]}`;
+        const newVal = prev ? `${prev}\n---\n${localTs} ${(updates as any)[key]}` : `${localTs} ${(updates as any)[key]}`;
         fields.push(`${col} = ?`); params.push(newVal);
       }
     }
@@ -247,9 +263,10 @@ export class ItsmRepository {
     const existing = await this.getIncidentById(userId, id);
     if (!existing) return;
     const now = new Date().toISOString();
+    const localTs = fmtLocalTime(now, this.timezone);
     const updated = existing.symptoms
-      ? `${existing.symptoms}\n---\n[${now}] ${newSymptom}`
-      : `[${now}] ${newSymptom}`;
+      ? `${existing.symptoms}\n---\n${localTs} ${newSymptom}`
+      : `${localTs} ${newSymptom}`;
     await this.db.execute(
       `UPDATE cmdb_incidents SET symptoms = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
       [updated, now, id, userId],

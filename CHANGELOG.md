@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.396] - 2026-04-08
+
+### Fixed
+- **ITSM: Timestamps in Lokalzeit** — Symptoms + Investigation Notes Append-Timestamps in Server-Timezone (Europe/Vienna) statt UTC. Format: `08.04.2026, 01:30` statt `[2026-04-07T23:30:00.000Z]`.
+
 ## [0.19.0-multi-ha.395] - 2026-04-08
 
 ### Fixed

@@ -762,6 +762,7 @@ export class Alfred {
       if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant)) {
         const cmdbRepo = new CmdbRepository(adapter);
         const itsmRepo = new ItsmRepository(adapter);
+        itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         const { CmdbSkill, ItsmSkill, InfraDocsSkill } = await import('@alfred/skills');
         const cmdbSkill = new CmdbSkill(cmdbRepo, this.config.cmdb?.staleThresholdDays ?? 7);
@@ -2166,6 +2167,7 @@ export class Alfred {
       if (apiAdapter && 'setCmdbCallbacks' in apiAdapter) {
         const cmdbRepo = new CmdbRepository(dbAdapter);
         const itsmRepo = new ItsmRepository(dbAdapter);
+        itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         const resolveUser = async (userId: string) => {
           if (!userId && this.config.security?.ownerUserId && this.userRepo) {
