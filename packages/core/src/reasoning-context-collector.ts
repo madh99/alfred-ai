@@ -408,7 +408,7 @@ export class ReasoningContextCollector {
       const overdue = await this.todoRepo.getOverdue();
       const windowEnd = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       const upcoming = await this.todoRepo.getDueInWindow(windowEnd);
-      const allOpen = await this.todoRepo.list(this.defaultChatId);
+      const allOpen = await this.todoRepo.list(this.resolvedUserId!);
 
       const lines: string[] = [];
       if (overdue.length > 0) {

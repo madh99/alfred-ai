@@ -316,6 +316,14 @@ ${this.buildTopicInstructions()}`;
     if (!this.shouldRun()) return;
     this.markRun();
 
+    // Resolve owner masterUserId once (cached) for memory lookups in this tick
+    if (!this.resolvedOwnerUserId) {
+      try {
+        const user = await this.userRepo.findOrCreate(this.defaultPlatform, this.defaultChatId);
+        this.resolvedOwnerUserId = user.masterUserId ?? user.id ?? this.defaultChatId;
+      } catch { this.resolvedOwnerUserId = this.defaultChatId; }
+    }
+
     try {
       // Distributed dedup: only one node runs reasoning per slot
       // For half_hourly: include minute bucket (e.g. reasoning:2026-04-01T10:00 vs :30)
@@ -865,7 +873,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
   private async getAutonomyLevel(): Promise<'confirm_all' | 'proactive' | 'autonomous'> {
     try {
-      const mem = await this.memoryRepo.recall(this.defaultChatId, 'autonomy_level');
+      const mem = await this.memoryRepo.recall(this.resolvedOwnerUserId || this.defaultChatId, 'autonomy_level');
       if (mem) {
         const level = mem.value.toLowerCase().trim();
         if (level.includes('autonomous') || level.includes('autonom')) return 'autonomous';
@@ -1043,7 +1051,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
       // Action-Gating: skip skills with very low historical acceptance rate
       try {
-        const feedback = await this.memoryRepo.recall(this.defaultChatId, `action_feedback_${action.skillName}`);
+        const feedback = await this.memoryRepo.recall(this.resolvedOwnerUserId || this.defaultChatId, `action_feedback_${action.skillName}`);
         if (feedback) {
           const rate = ActionFeedbackTracker.extractRate(feedback.value);
           if (rate !== undefined && rate < 0.2) {
