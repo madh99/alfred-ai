@@ -521,7 +521,7 @@ export interface InfraDefaultsConfig {
 // ── CMDB / ITSM ─────────────────────────────────────────────
 
 export type CmdbAssetType =
-  | 'server' | 'vm' | 'lxc' | 'container'
+  | 'server' | 'vm' | 'lxc' | 'container' | 'cluster' | 'storage'
   | 'service' | 'application'
   | 'dns_record' | 'proxy_host' | 'firewall_rule' | 'certificate'
   | 'network' | 'network_device'

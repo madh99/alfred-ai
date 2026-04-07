@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.397] - 2026-04-08
+
+### Added
+- **CMDB: Proxmox Cluster Discovery** — `/cluster/status` API liefert Cluster-Asset (Name, Quorum, Version, Node-Count) + Node-IPs (Corosync Ring0). Bei Single-Node graceful skip.
+- **CMDB: Proxmox Storage Discovery** — Cluster-weite Storage-Assets (Name, Typ, Content, Kapazität). `cluster → connects_to → storage` Relations.
+- **CMDB: Asset-Typen `cluster` + `storage`** — Neue CmdbAssetType-Werte, keine DB-Migration nötig (TEXT-Spalte).
+- **CMDB: Node → Cluster `part_of` Relations** — Jeder Proxmox-Node ist `part_of` seines Clusters.
+- **KG: cluster/storage Typ-Mapping** — Beide mappen auf KG-Entity-Typ `server` (Infrastruktur).
+- **WebUI: Cluster Farbe + Größe** — Lila (#c084fc), größter Node im Topologie-Graph (val=8).
+- **Topologie: Cluster + Storage Shapes** — Mermaid: Cluster = Subroutine (Doppelrahmen), Storage = Zylinder. Eigene CSS-Klassen.
+
+### Fixed
+- **CMDB: Proxmox Node-IPs** — Waren immer `undefined` weil `/nodes` keine IPs liefert. Jetzt aus `/cluster/status` Node-Entries extrahiert.
+
 ## [0.19.0-multi-ha.396] - 2026-04-08
 
 ### Fixed

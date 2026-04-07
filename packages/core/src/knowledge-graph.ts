@@ -212,7 +212,7 @@ export class KnowledgeGraphService {
    */
   async syncFromCmdb(userId: string, assets: Array<{ id: string; name: string; assetType: string; ipAddress?: string; sourceSkill?: string; status?: string; attributes?: Record<string, unknown> }>, relations: Array<{ sourceEntityName: string; targetEntityName: string; relationType: string }>): Promise<void> {
     const kgTypeMap: Record<string, string> = {
-      server: 'server', vm: 'server', lxc: 'server',
+      server: 'server', vm: 'server', lxc: 'server', cluster: 'server', storage: 'server',
       container: 'container', service: 'service', application: 'service',
       dns_record: 'service', proxy_host: 'service', certificate: 'certificate',
       network: 'network_device', network_device: 'network_device',

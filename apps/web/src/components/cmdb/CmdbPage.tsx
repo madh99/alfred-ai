@@ -7,6 +7,7 @@ import { useConfig } from '@/context/ConfigContext';
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 const TYPE_COLORS: Record<string, string> = {
+  cluster: '#c084fc',
   server: '#f87171',
   vm: '#60a5fa',
   lxc: '#60a5fa',
@@ -209,7 +210,7 @@ export function CmdbPage() {
         color: TYPE_COLORS[a.assetType] ?? '#6b7280',
         status: a.status,
         ipAddress: a.ipAddress,
-        val: a.assetType === 'server' ? 6 : a.assetType === 'network' ? 5 : 3,
+        val: a.assetType === 'cluster' ? 8 : a.assetType === 'server' ? 6 : a.assetType === 'network' ? 5 : 3,
         ...(saved ? { fx: saved.fx, fy: saved.fy } : {}),
       };
     });

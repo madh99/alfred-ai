@@ -784,14 +784,65 @@ export class Alfred {
         wrapSkillAsSource('proxmox', async () => {
           const assets: any[] = [];
           const relations: any[] = [];
+          const pxSkill = skillRegistry.get('proxmox')!;
+          const nodeIpMap = new Map<string, string>(); // node name → IP from cluster/status
+          let clusterSourceId: string | undefined;
           try {
-            const nodesResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'list_nodes' }, {} as any);
+            // 1. Cluster status (optional — fails gracefully on single-node)
+            try {
+              const clusterResult = await skillSandbox.execute(pxSkill, { action: 'cluster_status' }, {} as any);
+              if (clusterResult.success && Array.isArray(clusterResult.data)) {
+                const clusterEntry = (clusterResult.data as any[]).find((e: any) => e.type === 'cluster');
+                if (clusterEntry) {
+                  clusterSourceId = `cluster:${clusterEntry.name}`;
+                  assets.push({
+                    name: clusterEntry.name, assetType: 'cluster', sourceSkill: 'proxmox', sourceId: clusterSourceId,
+                    status: clusterEntry.quorate ? 'active' : 'degraded',
+                    attributes: { nodes: clusterEntry.nodes, version: clusterEntry.version, quorate: clusterEntry.quorate },
+                  });
+                }
+                // Extract node IPs from cluster/status node entries
+                for (const entry of clusterResult.data as any[]) {
+                  if (entry.type === 'node' && entry.name && entry.ip) {
+                    nodeIpMap.set(entry.name, entry.ip);
+                  }
+                }
+              }
+            } catch { /* single-node or cluster API not available */ }
+
+            // 2. Nodes
+            const nodesResult = await skillSandbox.execute(pxSkill, { action: 'list_nodes' }, {} as any);
             if (nodesResult.success && Array.isArray(nodesResult.data)) {
               for (const n of nodesResult.data) {
-                assets.push({ name: n.node, assetType: 'server', sourceSkill: 'proxmox', sourceId: `node:${n.node}`, ipAddress: n.ip, status: n.status === 'online' ? 'active' : 'inactive', attributes: { cpu: n.cpu, maxcpu: n.maxcpu, mem: n.mem, maxmem: n.maxmem, uptime: n.uptime } });
+                assets.push({ name: n.node, assetType: 'server', sourceSkill: 'proxmox', sourceId: `node:${n.node}`, ipAddress: nodeIpMap.get(n.node), status: n.status === 'online' ? 'active' : 'inactive', attributes: { cpu: n.cpu, maxcpu: n.maxcpu, mem: n.mem, maxmem: n.maxmem, uptime: n.uptime } });
+                if (clusterSourceId) {
+                  relations.push({ sourceKey: `proxmox:node:${n.node}`, targetKey: `proxmox:${clusterSourceId}`, relationType: 'part_of' as const });
+                }
               }
             }
-            const vmsResult = await skillSandbox.execute(skillRegistry.get('proxmox')!, { action: 'list_vms' }, {} as any);
+
+            // 3. Storage (cluster-wide)
+            try {
+              const storageResult = await skillSandbox.execute(pxSkill, { action: 'list_storage' }, {} as any);
+              if (storageResult.success && Array.isArray(storageResult.data)) {
+                for (const s of storageResult.data as any[]) {
+                  if (!s.enabled) continue;
+                  assets.push({
+                    name: s.storage, assetType: 'storage', sourceSkill: 'proxmox', sourceId: `storage:${s.storage}`,
+                    status: s.active ? 'active' : 'inactive',
+                    attributes: { storageType: s.type, content: s.content, used: s.used, total: s.total },
+                  });
+                  // Shared storage → connects_to each node (cluster-wide storage has no node restriction)
+                  // Node-specific storage from /nodes/{n}/storage would need per-node calls — skip for now
+                  if (clusterSourceId) {
+                    relations.push({ sourceKey: `proxmox:${clusterSourceId}`, targetKey: `proxmox:storage:${s.storage}`, relationType: 'connects_to' as const });
+                  }
+                }
+              }
+            } catch { /* storage listing failed */ }
+
+            // 4. VMs/LXCs
+            const vmsResult = await skillSandbox.execute(pxSkill, { action: 'list_vms' }, {} as any);
             if (vmsResult.success && Array.isArray(vmsResult.data)) {
               for (const v of vmsResult.data) {
                 const type = v.type === 'lxc' ? 'lxc' : 'vm';

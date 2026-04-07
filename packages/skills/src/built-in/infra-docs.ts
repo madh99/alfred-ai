@@ -135,10 +135,12 @@ export class InfraDocsSkill extends Skill {
       idLabel.set(a.id, label);
       // Mermaid node shapes by type
       const shapes: Record<string, string> = {
-        server: `${label}[["${a.name}"]]`,      // stadium
+        cluster: `${label}[[["${a.name}"]]]`,     // subroutine (double border)
+        server: `${label}[["${a.name}"]]`,        // stadium
         vm: `${label}["${a.name}"]`,              // rect
         lxc: `${label}["${a.name}"]`,
         container: `${label}("${a.name}")`,       // rounded
+        storage: `${label}[("${a.name}")]`,       // cylinder
         service: `${label}{{"${a.name}"}}`,        // hexagon
         dns_record: `${label}>"${a.name}"]`,       // flag
         proxy_host: `${label}(["${a.name}"])`,     // cylinder-like
@@ -167,10 +169,12 @@ export class InfraDocsSkill extends Skill {
     }
 
     // Style classes
+    lines.push('    classDef cluster fill:#8e44ad,stroke:#6c3483,color:white');
     lines.push('    classDef server fill:#e74c3c,stroke:#c0392b,color:white');
     lines.push('    classDef vm fill:#3498db,stroke:#2980b9,color:white');
     lines.push('    classDef lxc fill:#3498db,stroke:#2980b9,color:white');
     lines.push('    classDef container fill:#2ecc71,stroke:#27ae60,color:white');
+    lines.push('    classDef storage fill:#95a5a6,stroke:#7f8c8d,color:white');
     lines.push('    classDef dns fill:#f1c40f,stroke:#f39c12,color:black');
     lines.push('    classDef proxy fill:#e67e22,stroke:#d35400,color:white');
     lines.push('    classDef firewall fill:#9b59b6,stroke:#8e44ad,color:white');
@@ -180,8 +184,8 @@ export class InfraDocsSkill extends Skill {
       const label = idLabel.get(a.id);
       if (!label) continue;
       const cssClass: Record<string, string> = {
-        server: 'server', vm: 'vm', lxc: 'lxc', container: 'container',
-        dns_record: 'dns', proxy_host: 'proxy', firewall_rule: 'firewall',
+        cluster: 'cluster', server: 'server', vm: 'vm', lxc: 'lxc', container: 'container',
+        storage: 'storage', dns_record: 'dns', proxy_host: 'proxy', firewall_rule: 'firewall',
         network: 'network', network_device: 'network',
       };
       const cls = cssClass[a.assetType];
