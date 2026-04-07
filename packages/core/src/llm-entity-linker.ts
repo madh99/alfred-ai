@@ -34,11 +34,21 @@ interface LLMLinkingResult {
   corrections?: LLMCorrection[];
 }
 
-const VALID_RELATION_TYPES = new Set([
+// Known relation types: accepted at full strength (0.5).
+// The LLM MAY propose new types not in this set — those are accepted at lower strength (0.3).
+const KNOWN_RELATION_TYPES = new Set([
+  // Core relations
   'relates_to', 'mentioned_with', 'used_for', 'caused_by', 'depends_on', 'part_of',
   'prepares_for', 'relevant_to', 'located_at', 'works_at', 'parent_of',
   'spouse', 'sibling', 'family', 'grandparent_of', 'aunt_uncle_of',
   'knows', 'owns', 'monitors', 'affects', 'plays_at', 'same_as',
+  // Code-used types (extractors, cross-extractor, memories)
+  'involves', 'sent', 'available_at', 'charges_at', 'home_location',
+  'affects_cost', 'works_with', 'neighbor_of', 'has_pattern',
+  'prefers', 'dislikes', 'neutral_on',
+  // Activity/interest/skill relations
+  'practices', 'interested_in', 'skilled_at', 'hobby_of',
+  'teaches', 'coaches', 'studies', 'subscribes_to',
 ]);
 
 const VALID_ENTITY_TYPES = new Set([
@@ -213,7 +223,8 @@ Antworte NUR als JSON-Objekt mit diesen 5 optionalen Arrays:
 
 REGELN:
 - Nur ECHTE semantische Zusammenhänge, KEINE Spekulation
-- Relation-Typen: mentioned_with, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at
+- Relation-Typen (bevorzugt): mentioned_with, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at, practices, interested_in, skilled_at, involves, prefers, dislikes, teaches, coaches, subscribes_to
+- Du DARFST auch neue Relation-Typen erstellen wenn kein bestehender passt — englisch, snake_case, 3-30 Zeichen (z.B. "trains_at", "manages", "lives_near"). Neue Types starten mit niedrigerer Konfidenz.
 - Entity-Typen: person, location, item, vehicle, event, organization, metric
 - "weaken": nutze wenn eine bestehende Relation wahrscheinlich veraltet ist (z.B. alter Arbeitgeber, alte Adresse) — Strength wird halbiert
 - "remove": nutze NUR wenn eine Relation eindeutig falsch ist (z.B. falsche Person-Zuordnung, offensichtlicher Extraktionsfehler)
@@ -316,7 +327,8 @@ TRANSITIVE INFERENZ (wichtig!):
 
     // 1. Apply new relations (with type validation)
     for (const rel of (result.relations ?? []).slice(0, 20)) {
-      if (!VALID_RELATION_TYPES.has(rel.type)) continue;
+      // Validate relation type format (must be snake_case, 3-30 chars)
+      if (!rel.type || !/^[a-z][a-z_]{2,29}$/.test(rel.type)) continue;
       const source = entityByName.get(rel.source.toLowerCase());
       const target = entityByName.get(rel.target.toLowerCase());
       if (!source || !target || source.id === target.id) continue;
@@ -347,7 +359,11 @@ TRANSITIVE INFERENZ (wichtig!):
       if (source.entityType === 'organization' && target.entityType === 'organization' && !['same_as', 'part_of'].includes(rel.type)) continue;
       // Skip relations between items that are clearly HA entities (LED, Switch, AP, etc.)
       if (source.entityType === 'item' && target.entityType === 'item' && source.sources.includes('smarthome') && target.sources.includes('smarthome')) continue;
-      await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
+      const relation = await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
+      // New/unknown relation types start weaker (0.3) — they need confirmation to grow
+      if (!KNOWN_RELATION_TYPES.has(rel.type) && relation.strength >= 0.5) {
+        await this.kgRepo.updateRelationStrength(relation.id, 0.3);
+      }
       stats.relations++;
     }
 

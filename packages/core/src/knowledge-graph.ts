@@ -1746,6 +1746,27 @@ export class KnowledgeGraphService {
     // 6. Check person blacklist (generic words, brands)
     if (PERSON_BLACKLIST.has(lower)) return null;
 
+    // 6b. 2-word names: check if second word is a common German noun (not a surname)
+    //     "Noah Fußball" → second word "Fußball" is a noun → return null (not a person name)
+    //     "Maria Dohnal" → second word "Dohnal" is NOT a noun → keep as person
+    //     "Frau Alex" → second word "Alex" is NOT a noun → keep as person
+    if (name.includes(' ')) {
+      const words = name.split(/\s+/);
+      if (words.length === 2) {
+        const second = words[1];
+        const secondLower = second.toLowerCase();
+        // If second word is a single German compound noun (>6 chars, typical noun pattern)
+        if (second.length > 6 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(second) && !KNOWN_LOCATIONS_LOWER.has(secondLower)) {
+          // Check noun suffixes that indicate a common noun, not a surname
+          if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|gie|rie|mus|tik|tur|ball|spiel|kurs|weise|platz|zeit|werk|haus|raum|bahn|berg)$/i.test(second)) {
+            return null; // "Noah Fußball", "Linus Schwimmkurs" → not a person
+          }
+        }
+        // If second word is in the person blacklist → not a person name
+        if (PERSON_BLACKLIST.has(secondLower)) return null;
+      }
+    }
+
     // 7. Contains digits or underscores → not a person name
     if (/[0-9_]/.test(name)) return null;
 
