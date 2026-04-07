@@ -52,12 +52,18 @@ const PERSON_BLACKLIST = new Set([
 /** Company suffixes — if name contains these, it's an organization not a person. */
 const ORG_SUFFIXES = /\b(gmbh|ag|kg|inc|corp|ltd|llc|se|sarl|ict|ohg|og|co)\b/i;
 
+/** Domain-specific org keywords — standalone words that indicate an organization. */
+const ORG_KEYWORDS = /\b(versicherung\w*|bank\w*|sparkasse\w*|kreditanstalt\w*|genossenschaft\w*|stiftung\w*|verband\w*|verein\w*|versorger\w*|stadtwerk\w*|energi\w*|holding\w*|group\w*|consulting\w*|solutions\w*|systems?\w*|technologies\w*|services?\w*|partners?\w*|ventures?\w*|capital\w*|invest\w*|logisti\w*|pharma\w*|airlines?\w*|airways\w*|telecom\w*|medien\w*|verlag\w*)\b/i;
+
+/** Known brand/company names. */
+const KNOWN_BRANDS = new Set(['axians', 'apple', 'google', 'microsoft', 'tesla', 'nvidia', 'meta', 'amazon', 'anthropic', 'openai', 'mistral', 'aws', 'ibm', 'oracle', 'sap', 'siemens', 'bosch', 'a1', 'drei', 'magenta', 'raiffeisen', 'erste', 'bawag', 'uniqa', 'generali', 'allianz', 'awattar', 'willhaben', 'geizhals', 'cloudflare', 'docker', 'gitlab', 'github', 'spotify', 'sonos', 'proxmox', 'unifi', 'ubiquiti', 'bmw', 'audi', 'volkswagen', 'mercedes', 'porsche']);
+
 /** Check if a name is likely an organization. */
 function isLikelyOrganization(name: string): boolean {
   if (ORG_SUFFIXES.test(name)) return true;
-  // Single capitalized word that's a known brand/company
+  if (ORG_KEYWORDS.test(name)) return true;
   const lower = name.toLowerCase();
-  return ['axians', 'apple', 'google', 'microsoft', 'tesla', 'nvidia', 'meta', 'amazon', 'anthropic', 'openai', 'mistral'].includes(lower);
+  return KNOWN_BRANDS.has(lower);
 }
 
 /** Check if a name should be rejected as a person. */
@@ -790,7 +796,60 @@ export class KnowledgeGraphService {
           }
         } catch { /* non-critical */ }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged }, 'KG maintenance completed');
+        // Org variant dedup: merge orgs that share a prefix (e.g., "Axians" + "Axians ICT Austria GmbH")
+        let orgsMerged = 0;
+        try {
+          const allOrgs = (await this.kgRepo.getEntitiesByType(userId, 'organization' as any))
+            .sort((a, b) => b.mentionCount - a.mentionCount); // most-mentioned first = canonical
+          const stripSuffixes = (n: string) => n.toLowerCase().replace(/\b(gmbh|ag|kg|inc|corp|ltd|llc|se|sarl|ict|ohg|og|co)\b/gi, '').trim().replace(/\s+/g, ' ');
+          const orgsSeen = new Map<string, typeof allOrgs[0]>(); // canonical stem → best entity
+
+          for (const org of allOrgs) {
+            const stem = stripSuffixes(org.name);
+            if (stem.length < 3) continue;
+            // Check if any existing stem is a prefix of this stem or vice versa
+            let merged = false;
+            for (const [existingStem, existing] of orgsSeen) {
+              const shorter = stem.length < existingStem.length ? stem : existingStem;
+              const longer = stem.length < existingStem.length ? existingStem : stem;
+              if (longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === ' ')) {
+                // Merge: migrate relations from the weaker to the stronger
+                if (org.id !== existing.id) {
+                  await this.kgRepo.migrateEntityRelations(userId, org.id, existing.id);
+                  orgsMerged++;
+                }
+                merged = true;
+                break;
+              }
+            }
+            if (!merged) orgsSeen.set(stem, org);
+          }
+        } catch { /* non-critical */ }
+
+        // Type conflict resolution: same normalized_name as both person and organization → delete the lower-confidence one
+        let typeConflictsResolved = 0;
+        try {
+          const allEntities = await this.kgRepo.getAllEntities(userId);
+          const byNorm = new Map<string, typeof allEntities>();
+          for (const e of allEntities) {
+            const key = e.normalizedName;
+            const list = byNorm.get(key) || [];
+            list.push(e);
+            byNorm.set(key, list);
+          }
+          for (const [, group] of byNorm) {
+            if (group.length < 2) continue;
+            const hasOrg = group.find(e => e.entityType === 'organization');
+            const hasPerson = group.find(e => e.entityType === 'person');
+            if (hasOrg && hasPerson) {
+              // Keep org, delete person (orgs are more likely correct when name matches both)
+              await this.kgRepo.migrateEntityRelations(userId, hasPerson.id, hasOrg.id);
+              typeConflictsResolved++;
+            }
+          }
+        } catch { /* non-critical */ }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -1374,6 +1433,11 @@ export class KnowledgeGraphService {
             // Skip if it's "User" or an existing person entity
             if (orgName === 'User' || orgName.length < 3) continue;
             // Normalize: if full name (Axians ICT Austria GmbH) but short version exists, use short
+            // Reject sentence-like org names (contain verbs, too long, start with lowercase preposition)
+            if (orgName.length > 50) continue;
+            if (/^(als|bei|user|er|sie|ich|wir|das|der|die)\s/i.test(orgName)) continue;
+            if (/\b(arbeitet|ist|hat|wurde|wird|kann|soll|muss)\b/i.test(orgName)) continue;
+
             const shortName = orgName.split(/\s+/)[0]; // "Axians" from "Axians ICT Austria GmbH"
             const existingShort = await this.kgRepo.getEntityByName(userId, shortName, 'organization' as any);
             const effectiveOrgName = existingShort ? shortName : orgName;
@@ -1382,7 +1446,7 @@ export class KnowledgeGraphService {
             const attrs: Record<string, unknown> = {};
             if (roleMatch) attrs.role = roleMatch[1].trim();
             attrs.memoryKey = job.key;
-            const org = await this.kgRepo.upsertEntity(userId, orgName, 'organization' as any, attrs, 'memories');
+            const org = await this.kgRepo.upsertEntity(userId, effectiveOrgName, 'organization' as any, attrs, 'memories');
             const user = await this.upsertUserEntity(userId);
             await this.kgRepo.upsertRelation(userId, user.id, org.id, 'works_at', roleMatch?.[1]?.slice(0, 80), 'memories');
           }

@@ -132,6 +132,52 @@ export class KnowledgeGraphRepository {
       }
     }
 
+    // Fuzzy match for organizations: "Axians" should match "Axians ICT Austria GmbH"
+    // Rule: if new name is a pure prefix of existing (or vice versa), merge to the longer name
+    if (entityType === 'organization' && normalized.length >= 3) {
+      const orgFuzzy = await this.adapter.query(
+        "SELECT * FROM kg_entities WHERE user_id = ? AND entity_type = 'organization' AND (normalized_name LIKE ? OR ? LIKE normalized_name || '%')",
+        [userId, normalized + '%', normalized],
+      ) as Record<string, unknown>[];
+
+      if (orgFuzzy.length > 0) {
+        // Pick the best match: prefer the longest name (most specific), highest confidence
+        const best = orgFuzzy.sort((a, b) => {
+          const lenDiff = (b.name as string).length - (a.name as string).length;
+          if (lenDiff !== 0) return lenDiff;
+          return (b.confidence as number) - (a.confidence as number);
+        })[0];
+
+        // Only merge if the shorter name is a pure prefix (no conflicting suffix like "Deutschland" vs "Austria")
+        const bestNorm = best.normalized_name as string;
+        const shorter = normalized.length < bestNorm.length ? normalized : bestNorm;
+        const longer = normalized.length < bestNorm.length ? bestNorm : normalized;
+        // Check: the longer name starts with the shorter name followed by a space (not a different word)
+        if (longer.startsWith(shorter) && (longer.length === shorter.length || longer[shorter.length] === ' ')) {
+          let existingSources: string[] = [];
+          try { existingSources = JSON.parse(best.sources as string); } catch { /* empty */ }
+          if (source && !existingSources.includes(source)) existingSources.push(source);
+          let existingAttrs: Record<string, unknown> = {};
+          try { existingAttrs = JSON.parse(best.attributes as string); } catch { /* empty */ }
+          const mergedAttrs = { ...existingAttrs, ...(attributes ?? {}) };
+          const betterName = name.length > (best.name as string).length ? name : best.name as string;
+          const betterNormalized = betterName.trim().toLowerCase();
+
+          try {
+            await this.adapter.execute(`
+              UPDATE kg_entities SET
+                name = ?, normalized_name = ?, attributes = ?, sources = ?,
+                confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END, last_seen_at = ?, mention_count = mention_count + 1
+              WHERE id = ?
+            `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(existingSources), now, best.id as string]);
+          } catch { /* constraint violation — keep existing */ }
+
+          const row = await this.adapter.queryOne('SELECT * FROM kg_entities WHERE id = ?', [best.id]) as Record<string, unknown>;
+          return this.mapEntity(row);
+        }
+      }
+    }
+
     // New entity — atomic INSERT with ON CONFLICT fallback for HA safety.
     try {
       await this.adapter.execute(`

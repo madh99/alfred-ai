@@ -220,6 +220,7 @@ REGELN:
 - Prüfe die BESTEHENDEN RELATIONEN — gibt es widersprüchliche oder veraltete?
 - Nicht wiederholen was offensichtlich ist (gleicher Name = gleiche Entity)
 - KEINE Relations vorschlagen die in BESTEHENDE RELATIONEN schon existieren
+- KEINE Relations zwischen zwei Organisationen außer "same_as" (gleiche Firma, anderer Name) oder "part_of" (Tochtergesellschaft). Organisationen die zufällig im selben Graph sind haben KEINE Beziehung zueinander!
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
 - KEINE Entities erstellen die offensichtlich eine bereits existierende Entity unter anderem Namen beschreiben (z.B. wenn "User" einen Realnamen hat, keine separate Entity für diesen Namen erstellen — stattdessen zur User-Entity verlinken)
 - Wenn eine Entity einen Realnamen-Attribut hat, betrachte diesen als Alias — Referenzen zu diesem Namen gehören zur existierenden Entity
@@ -342,6 +343,8 @@ TRANSITIVE INFERENZ (wichtig!):
         if (!source.sources.includes('memories') || !target.sources.includes('memories')) continue;
       }
       if (rel.type === 'located_at' && target.entityType !== 'location') continue;
+      // Org↔Org: only allow same_as and part_of — never relates_to, used_for, etc.
+      if (source.entityType === 'organization' && target.entityType === 'organization' && !['same_as', 'part_of'].includes(rel.type)) continue;
       // Skip relations between items that are clearly HA entities (LED, Switch, AP, etc.)
       if (source.entityType === 'item' && target.entityType === 'item' && source.sources.includes('smarthome') && target.sources.includes('smarthome')) continue;
       await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
