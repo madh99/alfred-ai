@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.395] - 2026-04-08
+
+### Fixed
+- **ITSM: Append-Separator `---`** — Symptoms + Investigation Notes verwenden wieder `---` als visuelles Trennzeichen zwischen Einträgen, konsistent mit dem bestehenden Format.
+
 ## [0.19.0-multi-ha.394] - 2026-04-08
 
 ### Fixed

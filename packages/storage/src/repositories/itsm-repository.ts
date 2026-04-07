@@ -185,7 +185,7 @@ export class ItsmRepository {
     for (const [key, col] of [['symptoms', 'symptoms'], ['investigationNotes', 'investigation_notes']] as const) {
       if (key in updates && (updates as any)[key]) {
         const prev = (existing as any)[key] as string | undefined;
-        const newVal = prev ? `${prev}\n[${now}] ${(updates as any)[key]}` : `[${now}] ${(updates as any)[key]}`;
+        const newVal = prev ? `${prev}\n---\n[${now}] ${(updates as any)[key]}` : `[${now}] ${(updates as any)[key]}`;
         fields.push(`${col} = ?`); params.push(newVal);
       }
     }
@@ -248,7 +248,7 @@ export class ItsmRepository {
     if (!existing) return;
     const now = new Date().toISOString();
     const updated = existing.symptoms
-      ? `${existing.symptoms}\n[${now}] ${newSymptom}`
+      ? `${existing.symptoms}\n---\n[${now}] ${newSymptom}`
       : `[${now}] ${newSymptom}`;
     await this.db.execute(
       `UPDATE cmdb_incidents SET symptoms = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
