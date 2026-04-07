@@ -802,17 +802,20 @@ export class KnowledgeGraphService {
         // all tokens of the User entity's realName → migrate relations to User
         let phantomsMerged = 0;
         try {
-          const allPersons = await this.kgRepo.getEntitiesByType(userId, 'person');
+          const allPersons = await this.kgRepo.getEntitiesByType(userId, 'person' as any);
           const userEntity = allPersons.find(e => e.name === 'User');
           const realName = userEntity?.attributes?.realName as string | undefined;
+          this.logger.debug({ realName, personCount: allPersons.length, userFound: !!userEntity }, 'KG phantom detection: start');
           if (userEntity && realName && realName.length >= 3) {
             const nameTokens = realName.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
+            this.logger.debug({ nameTokens }, 'KG phantom detection: tokens');
             for (const person of allPersons) {
               if (person.id === userEntity.id) continue;
               if (person.name === 'User') continue;
               const personLower = person.normalizedName;
-              // Check if all name tokens appear in the person's name
-              if (nameTokens.length >= 2 && nameTokens.every(t => personLower.includes(t))) {
+              const allMatch = nameTokens.length >= 2 && nameTokens.every(t => personLower.includes(t));
+              if (allMatch) {
+                this.logger.info({ phantom: person.name, personLower, nameTokens }, 'KG: Phantom detected, merging...');
                 const migrated = await this.kgRepo.migrateEntityRelations(userId, person.id, userEntity.id);
                 this.logger.info({ phantom: person.name, migrated }, 'KG: Phantom user entity merged into User');
                 phantomsMerged++;
