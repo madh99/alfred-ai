@@ -832,12 +832,17 @@ export class ReasoningContextCollector {
         for (const query of ['heim', 'home', 'adress', 'wohn']) {
           const results = await this.memoryRepo.search(this.resolvedUserId!, query);
           if (results.length > 0) {
-            // Extract city from address value
+            // Extract city from address value: PLZ pattern first, then comma-separated parts
             const value = results[0].value;
-            for (const city of ['Wien', 'Linz', 'Graz', 'Salzburg', 'Innsbruck', 'Klagenfurt', 'St. Pölten', 'Altlengbach']) {
-              if (value.includes(city)) { location = city; break; }
+            // "3033 Altlengbach" or "80331 München"
+            const plzMatch = value.match(/\b\d{4,5}\s+([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s-][A-ZÄÖÜ][a-zäöüß]+)?)\b/);
+            if (plzMatch) { location = plzMatch[1]; break; }
+            // Comma-separated: "Musterstraße 5, Altlengbach" → second-to-last or last part
+            const parts = value.split(',').map((p: string) => p.trim());
+            if (parts.length >= 2) {
+              const candidate = parts.length >= 3 ? parts[parts.length - 2] : parts[parts.length - 1];
+              if (candidate.length > 2 && candidate.length < 40 && /^[A-ZÄÖÜ]/.test(candidate)) { location = candidate; break; }
             }
-            if (location) break;
             // Fallback: use the whole value as location
             if (value.length > 2 && value.length < 50) { location = value; break; }
           }

@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.398] - 2026-04-08
+
+### Changed
+- **KG: Dynamische Location-Erkennung** — `KNOWN_LOCATIONS` (35 hardcoded österreichische Städte) ersetzt durch selbstlernendes System:
+  - **Seed-Liste** als Kaltstart-Schutz (bleibt, wird aber beim Start mit KG-Entities vom Typ `location` gemergt)
+  - **PLZ-Regex** erkennt Orte aus Adressen generisch ("3033 Altlengbach", "80331 München", "10115 Berlin")
+  - **Geo-Präposition** erkennt neue Orte aus Chat ("nach Berlin", "in London") — registriert sie für zukünftige Erkennung ohne Präposition
+  - **Dynamische KG-Liste** wächst mit: einmal erkannter Ort wird in allen 8 Erkennungsstellen genutzt
+  - **Wetter-Location** im Reasoning-Collector: PLZ-Regex + Komma-Extraktion statt hardcoded 8-Städte-Liste
+- **KG: `isInvalidPersonName` dynamisch** — Person-Guard prüft gegen dynamische Location-Liste statt hardcoded Array
+
 ## [0.19.0-multi-ha.397] - 2026-04-08
 
 ### Added

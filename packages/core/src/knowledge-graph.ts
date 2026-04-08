@@ -7,8 +7,8 @@ import { buildSkillContext } from './context-factory.js';
 
 // ── Constants ────────────────────────────────────────────────
 
-/** Known Austrian cities for location extraction. */
-const KNOWN_LOCATIONS = [
+/** Seed locations for cold start — merged with dynamically learned locations from KG. */
+const SEED_LOCATIONS = [
   'Wien', 'Linz', 'Graz', 'Salzburg', 'Innsbruck', 'Klagenfurt',
   'Villach', 'Wels', 'St. Pölten', 'Dornbirn', 'Steyr', 'Wiener Neustadt',
   'Feldkirch', 'Bregenz', 'Leonding', 'Klosterneuburg', 'Baden', 'Leoben',
@@ -17,7 +17,8 @@ const KNOWN_LOCATIONS = [
   'Tulln', 'Hohenems', 'Ternitz', 'Perchtoldsdorf', 'Altlengbach',
 ];
 
-const KNOWN_LOCATIONS_LOWER = new Set(KNOWN_LOCATIONS.map(l => l.toLowerCase()));
+/** PLZ pattern: "3033 Altlengbach" or "80331 München" → extracts city name */
+const PLZ_CITY_REGEX = /\b(\d{4,5})\s+([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s-][A-ZÄÖÜ][a-zäöüß]+)?)\b/g;
 
 /** Approximate distances between Austrian cities (km, one-direction). */
 const DISTANCE_TABLE: Record<string, Record<string, number>> = {
@@ -74,10 +75,10 @@ function isLikelyOrganization(name: string): boolean {
 }
 
 /** Check if a name should be rejected as a person. */
-function isInvalidPersonName(name: string): boolean {
+function isInvalidPersonName(name: string, knownLocations?: Set<string>): boolean {
   const lower = name.toLowerCase();
   if (PERSON_BLACKLIST.has(lower)) return true;
-  if (KNOWN_LOCATIONS_LOWER.has(lower)) return true;
+  if (knownLocations?.has(lower)) return true;
   if (name.length < 3) return true;
   // Plural nouns / abstract concepts
   if (/(?:en|ung|keit|heit|tion|mus|nen|ngen|ffen|sten|ssen)$/i.test(name) && name.length > 5) return true;
@@ -99,6 +100,10 @@ export class KnowledgeGraphService {
   private llmLinker?: import('./llm-entity-linker.js').LLMEntityLinker;
   /** Names of CMDB-managed assets — excluded from text extraction to avoid double-creation. */
   private cmdbEntityNames = new Set<string>();
+  /** Dynamically learned location names (lowercase) — seeded from SEED_LOCATIONS + KG entities of type 'location'. */
+  private knownLocationsLower = new Set(SEED_LOCATIONS.map(l => l.toLowerCase()));
+  /** Original-case map for location names (lowercase → display name). */
+  private knownLocationsMap = new Map(SEED_LOCATIONS.map(l => [l.toLowerCase(), l]));
   /** Cached user real name from profile (resolved once). */
   private userRealName?: string;
 
@@ -112,6 +117,30 @@ export class KnowledgeGraphService {
     private readonly defaultChatId?: string,
     private readonly defaultPlatform?: string,
   ) {}
+
+  /** Refresh the dynamic location set from KG entities of type 'location'. */
+  private async refreshKnownLocations(userId: string): Promise<void> {
+    try {
+      const graph = await this.kgRepo.getFullGraph(userId);
+      for (const e of graph.entities) {
+        if (e.entityType === 'location') {
+          this.knownLocationsLower.add(e.name.toLowerCase());
+          this.knownLocationsMap.set(e.name.toLowerCase(), e.name);
+        }
+      }
+    } catch { /* keep seed list on error */ }
+  }
+
+  /** Add a newly discovered location to the dynamic set. */
+  private registerLocation(name: string): void {
+    this.knownLocationsLower.add(name.toLowerCase());
+    this.knownLocationsMap.set(name.toLowerCase(), name);
+  }
+
+  /** Get the known locations as an iterable of display names. */
+  getKnownLocations(): string[] {
+    return [...this.knownLocationsMap.values()];
+  }
 
   /** Check if a name looks like a full name (not just initials like "M D"). */
   private isFullName(name: string): boolean {
@@ -275,6 +304,9 @@ export class KnowledgeGraphService {
 
   async ingest(userId: string, sections: ReasoningSection[]): Promise<void> {
     try {
+      // Refresh dynamic location list from KG (learned locations from previous runs)
+      await this.refreshKnownLocations(userId);
+
       for (const section of sections) {
         if (!section.content || section.key === 'knowledge_graph') continue;
         switch (section.key) {
@@ -979,7 +1011,7 @@ export class KnowledgeGraphService {
 
       // Extract location from attributes (shop name, city)
       const valueStr = valueMatch?.[1] ?? '';
-      for (const city of KNOWN_LOCATIONS) {
+      for (const city of this.getKnownLocations()) {
         if (valueStr.includes(city)) {
           const loc = await this.kgRepo.upsertEntity(userId, city, 'location', {}, 'watches');
           await this.kgRepo.upsertRelation(userId, item.id, loc.id, 'available_at', valueStr.slice(0, 100), 'watches');
@@ -1015,12 +1047,23 @@ export class KnowledgeGraphService {
       const [, type, key, value] = match;
       const keyLower = key.toLowerCase();
 
-      // Extract addresses as locations
+      // Extract addresses as locations (dynamic list + PLZ pattern)
       if (keyLower.includes('adress') || keyLower.includes('address') || keyLower.includes('heim') || keyLower.includes('home')) {
-        // Try to find a city in the value
-        for (const city of KNOWN_LOCATIONS) {
+        const isHome = keyLower.includes('heim') || keyLower.includes('home');
+        // Known locations (dynamic)
+        for (const city of this.getKnownLocations()) {
           if (value.includes(city)) {
-            await this.kgRepo.upsertEntity(userId, city, 'location', { isHome: keyLower.includes('heim') || keyLower.includes('home') }, 'memories');
+            await this.kgRepo.upsertEntity(userId, city, 'location', { isHome }, 'memories');
+          }
+        }
+        // PLZ pattern: "3033 Altlengbach", "80331 München"
+        PLZ_CITY_REGEX.lastIndex = 0;
+        let plzMatch;
+        while ((plzMatch = PLZ_CITY_REGEX.exec(value)) !== null) {
+          const city = plzMatch[2];
+          if (!this.knownLocationsLower.has(city.toLowerCase())) {
+            this.registerLocation(city);
+            await this.kgRepo.upsertEntity(userId, city, 'location', { isHome, detectedBy: 'plz_pattern' }, 'memories');
           }
         }
       }
@@ -1352,7 +1395,7 @@ export class KnowledgeGraphService {
           const wClean = w.replace(/[^A-Za-zÄÖÜäöüß]/g, '');
           if (!wClean || wClean.length < 2) continue;
           if (TITLE_WORDS.has(wClean.toLowerCase())) { nameWords.push(wClean); continue; }
-          if (isInvalidPersonName(wClean)) continue;
+          if (isInvalidPersonName(wClean, this.knownLocationsLower)) continue;
           // After firstName is found, only accept surname-like words (short, no compound noun)
           if (firstName) {
             // Second word must look like a surname: <8 chars, not a concept
@@ -1410,7 +1453,7 @@ export class KnowledgeGraphService {
           const namePart = rest.split('_')[0];
           if (namePart.length < 3) continue;
           const personName = namePart.charAt(0).toUpperCase() + namePart.slice(1);
-          if (isInvalidPersonName(personName)) continue;
+          if (isInvalidPersonName(personName, this.knownLocationsLower)) continue;
 
           // Check canonical map — reuse existing entity if same firstName
           const canonical = canonicalPersons.get(namePart);
@@ -1472,7 +1515,7 @@ export class KnowledgeGraphService {
           const m = pattern.exec(mem.value);
           if (m) {
             const name = m[1].trim();
-            if (!isInvalidPersonName(name)) {
+            if (!isInvalidPersonName(name, this.knownLocationsLower)) {
               const person = await this.kgRepo.upsertEntity(userId, name, 'person',
                 { relationship: mem.key }, 'memories');
               await this.kgRepo.upsertRelation(userId, user.id, person.id, 'knows', mem.key, 'memories');
@@ -1512,12 +1555,23 @@ export class KnowledgeGraphService {
         }
       }
 
-      // 3. Memory facts with addresses → KG location entities
+      // 3. Memory facts with addresses → KG location entities (dynamic + PLZ)
       for (const query of ['adress', 'address', 'heim', 'home', 'büro', 'office', 'wohn']) {
         const facts = await this.memoryRepo.search(userId, query);
         for (const fact of facts.slice(0, 5)) {
-          const matchedCities = KNOWN_LOCATIONS.filter(c => fact.value.includes(c));
-          for (const city of matchedCities) {
+          // Collect cities: known locations + PLZ pattern matches
+          const cities = new Set<string>();
+          for (const city of this.getKnownLocations()) {
+            if (fact.value.includes(city)) cities.add(city);
+          }
+          PLZ_CITY_REGEX.lastIndex = 0;
+          let plzMatch;
+          while ((plzMatch = PLZ_CITY_REGEX.exec(fact.value)) !== null) {
+            const city = plzMatch[2];
+            cities.add(city);
+            this.registerLocation(city);
+          }
+          for (const city of cities) {
             // Find the sentence containing this city and check for home/work + negation
             const sentences = fact.value.split(/[.!]\s+/);
             const citySentence = sentences.find(s => s.includes(city)) ?? '';
@@ -1525,8 +1579,6 @@ export class KnowledgeGraphService {
             const hasHomeWord = /heim|home|wohn|zuhause|privat/i.test(lower);
             const hasWorkWord = /büro|office|arbeit|firma|work/i.test(lower);
             const hasNegation = /nicht|kein|never|no\s|!=|niemals/i.test(lower);
-            // "Wien ist die Büroadresse, nicht der Wohnort" → hasHomeWord + hasNegation → isHome=false
-            // "Altlengbach ist der Wohnort" → hasHomeWord, no negation → isHome=true
             const isHome = hasHomeWord && !hasNegation;
             const isWork = hasWorkWord && !hasNegation;
             await this.kgRepo.upsertEntity(userId, city, 'location',
@@ -1668,8 +1720,8 @@ export class KnowledgeGraphService {
     // Only extract locations from user-relevant sections, not RSS feeds
     if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
 
-    // 1. Known locations (always recognized, even without preposition context)
-    for (const city of KNOWN_LOCATIONS) {
+    // 1. Known locations — dynamic list (seed + learned from KG)
+    for (const city of this.getKnownLocations()) {
       if (content.includes(city)) {
         await this.kgRepo.upsertEntity(userId, city, 'location', {}, sectionKey);
       }
@@ -1690,7 +1742,7 @@ export class KnowledgeGraphService {
         if (candidate.length < 3 || candidate.length > 30) continue;
         // Skip if already a known person, org, or in blacklists
         if (PERSON_BLACKLIST.has(candidate.toLowerCase())) continue;
-        if (KNOWN_LOCATIONS_LOWER.has(candidate.toLowerCase())) {
+        if (this.knownLocationsLower.has(candidate.toLowerCase())) {
           // Already handled above, but ensure it's created
           await this.kgRepo.upsertEntity(userId, candidate, 'location', {}, sectionKey);
           continue;
@@ -1702,9 +1754,10 @@ export class KnowledgeGraphService {
         }
         // Skip known entity names that are not locations
         if (this.cmdbEntityNames.has(candidate.toLowerCase())) continue;
-        // Create as location candidate
+        // Create as location candidate and register for future recognition
         try {
           await this.kgRepo.upsertEntity(userId, candidate, 'location', { detectedBy: 'geo_pattern' }, sectionKey);
+          this.registerLocation(candidate);
         } catch { /* constraint violation — skip */ }
       }
     }
@@ -1745,7 +1798,7 @@ export class KnowledgeGraphService {
     if (this.cmdbEntityNames.has(lower)) return null;
 
     // 1. Known location?
-    if (KNOWN_LOCATIONS_LOWER.has(lower)) return 'location';
+    if (this.knownLocationsLower.has(lower)) return 'location';
 
     // 2. Organization? (AG, GmbH, ICT, Inc, etc.)
     if (isLikelyOrganization(name)) return 'organization';
@@ -1775,7 +1828,7 @@ export class KnowledgeGraphService {
         const second = words[1];
         const secondLower = second.toLowerCase();
         // If second word is a single German compound noun (>6 chars, typical noun pattern)
-        if (second.length > 6 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(second) && !KNOWN_LOCATIONS_LOWER.has(secondLower)) {
+        if (second.length > 6 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(second) && !this.knownLocationsLower.has(secondLower)) {
           // Check noun suffixes that indicate a common noun, not a surname
           if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|gie|rie|mus|tik|tur|ball|spiel|kurs|weise|platz|zeit|werk|haus|raum|bahn|berg)$/i.test(second)) {
             return null; // "Noah Fußball", "Linus Schwimmkurs" → not a person
