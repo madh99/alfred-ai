@@ -272,7 +272,7 @@ export class ReasoningContextCollector {
 
     // Insight tracking: delivered insights + resolved status (for follow-up reasoning)
     defs.push({
-      key: 'insightTracking', label: 'Insight-Tracking', priority: 2, maxTokens: 100,
+      key: 'insightTracking', label: 'Insight-Tracking', priority: 1, maxTokens: 150,
       fetch: () => this.fetchInsightTracking(),
     });
 

@@ -218,7 +218,7 @@ Antworte NUR als JSON-Objekt mit diesen 5 optionalen Arrays:
     {"name": "Neuer Name", "type": "entity_type", "attributes": {"key": "value"}, "reason": "Warum erstellen"}
   ],
   "corrections": [
-    {"name": "Bestehender Name", "currentType": "alter_typ", "newType": "neuer_typ", "attributes": {"key": "value"}, "reason": "Warum ändern"}
+    {"name": "Bestehender Name", "currentType": "alter_typ", "newType": "neuer_typ", "newName": "optional — neuer Name falls Entity-Name falsch ist", "attributes": {"key": "value"}, "reason": "Warum ändern"}
   ]
 }
 

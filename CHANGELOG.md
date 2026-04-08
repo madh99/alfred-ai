@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.410] - 2026-04-09
+
+### Fixed
+- **Code Review: 10 HIGH Bugs gefixt**
+  1. `buildPersonalContext`: `lives_at` Switch-Case hinzugefügt — Locations nicht mehr stillschweigend verworfen
+  2. LLM-Linker: `newName` jetzt auch im Haupt-Prompt `buildPrompt` dokumentiert (war nur in `analyzeRecentChats`)
+  3. `insightTracking`: P2→P1 mit 150 Token — wird nicht mehr als letztes truncated
+  4. `queryRelevantContext` Dedup: case-insensitive Wort-Match statt `includes()` Substring
+  5. `appendSymptoms`: atomic SQL CASE-Append statt Read-Modify-Write (HA race-safe)
+  6. `findOpenIncidentForAsset`: 1 Query mit `IN(...)` statt 4 separate Queries
+  7. `tickRunning` Class-Field entfernt (war shadowed durch lokale Variable, dead code)
+  8. Priority Dropdown: `Number()` Cast entfernt — sendet jetzt konsistent String
+  9. Transition Modal: `transitionFields` nach Submit gecleared — keine stale Fields mehr
+  10. BMW Chunk-Boundary: `chunkEnd = chunkStart - 1` verhindert Overlap an Wochengrenzen
+
 ## [0.19.0-multi-ha.409] - 2026-04-09
 
 ### Fixed

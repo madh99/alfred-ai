@@ -230,11 +230,12 @@ export class ItsmRepository {
   }
 
   async findOpenIncidentForAsset(userId: string, sourceLabel: string, titleKeywords: string[]): Promise<CmdbIncident | null> {
-    const open = await this.listIncidents(userId, { status: 'open' });
-    const investigating = await this.listIncidents(userId, { status: 'investigating' });
-    const acknowledged = await this.listIncidents(userId, { status: 'acknowledged' });
-    const mitigating = await this.listIncidents(userId, { status: 'mitigating' });
-    const all = [...open, ...investigating, ...acknowledged, ...mitigating];
+    // Single query for all active statuses (replaces 4 separate queries)
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents WHERE user_id = ? AND status IN ('open', 'investigating', 'acknowledged', 'mitigating') ORDER BY created_at DESC LIMIT 100`,
+      [userId],
+    );
+    const all = (rows as any[]).map(rowToIncident);
 
     for (const inc of all) {
       const titleLower = inc.title.toLowerCase();
@@ -258,18 +259,15 @@ export class ItsmRepository {
     return incidents.find(inc => inc.title.toLowerCase().includes(srcLower)) ?? null;
   }
 
-  /** Append a new alert message to an existing incident's symptoms. */
+  /** Append a new alert message to an existing incident's symptoms (atomic, HA-safe). */
   async appendSymptoms(userId: string, id: string, newSymptom: string): Promise<void> {
-    const existing = await this.getIncidentById(userId, id);
-    if (!existing) return;
     const now = new Date().toISOString();
     const localTs = fmtLocalTime(now, this.timezone);
-    const updated = existing.symptoms
-      ? `${existing.symptoms}\n---\n${localTs} ${newSymptom}`
-      : `${localTs} ${newSymptom}`;
+    const entry = `${localTs} ${newSymptom}`;
+    // Atomic append — no read-modify-write race in HA
     await this.db.execute(
-      `UPDATE cmdb_incidents SET symptoms = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [updated, now, id, userId],
+      `UPDATE cmdb_incidents SET symptoms = CASE WHEN symptoms IS NULL OR symptoms = '' THEN ? ELSE symptoms || ? END, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [entry, `\n---\n${entry}`, now, id, userId],
     );
   }
 

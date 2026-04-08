@@ -1220,7 +1220,7 @@ export class BMWSkill extends Skill {
             if (!seenIds.has(key)) { seenIds.add(key); allSessions.push(s); }
           }
         } catch { /* skip failed chunk */ }
-        chunkEnd = chunkStart;
+        chunkEnd = chunkStart - 1; // avoid boundary overlap (exclusive end)
       }
       // Sort by startTime descending
       allSessions.sort((a, b) => ((b.startTime as number) ?? 0) - ((a.startTime as number) ?? 0));

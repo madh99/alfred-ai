@@ -85,7 +85,8 @@ export class ReasoningEngine {
   private deliveryScheduler?: DeliveryScheduler;
   private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
-  private tickRunning = false;
+  // Note: tickRunning guard is a local variable inside start() — intentionally not a class field
+  // to avoid cross-method state leaks. triggerOnEvent uses EVENT_COOLDOWN_MS for its own guard.
 
   constructor(
     private readonly calendarProvider: CalendarProvider | undefined,

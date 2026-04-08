@@ -213,8 +213,14 @@ export class KnowledgeGraphService {
           const INFRA_TYPES = new Set(['network_device', 'certificate', 'server', 'container', 'dns_record', 'proxy_host', 'firewall_rule', 'cluster', 'storage']);
           if (INFRA_TYPES.has(hit.entity.entityType)) continue;
           if (hit.entity.sources?.length === 1 && hit.entity.sources[0] === 'cmdb') continue;
-          // Deduplicate: skip if entity name already in personalContext
-          if (personalContext && personalContext.includes(hit.entity.name)) continue;
+          // Deduplicate: skip if entity name already in personalContext (case-insensitive, word boundary)
+          if (personalContext) {
+            const pcLower = personalContext.toLowerCase();
+            const nameLower = hit.entity.name.toLowerCase();
+            // Check if any word of the entity name (≥3 chars) appears in personalContext
+            const nameWords = nameLower.split(/\s+/).filter(w => w.length >= 3);
+            if (nameWords.some(w => pcLower.includes(w))) continue;
+          }
           results.push(hit);
           if (results.length >= 5) break;
         }
@@ -704,6 +710,8 @@ export class KnowledgeGraphService {
         } else if (rel.relationType === 'works_at' && other.entityType === 'organization') {
           const role = other.attributes?.role as string | undefined;
           work.push(`${other.name}${role ? ` (${role})` : ''}`);
+        } else if (rel.relationType === 'lives_at' && other.entityType === 'location') {
+          locations.push(`Wohnsitz: ${other.name}`);
         } else if (rel.relationType === 'owns') {
           if (other.entityType === 'vehicle') {
             const range = other.attributes?.range_km;

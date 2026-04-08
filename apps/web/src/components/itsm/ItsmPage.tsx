@@ -434,6 +434,7 @@ export function ItsmPage() {
       setIncidents(prev => prev.map(i => i.id === id ? { ...i, ...updated } : i));
       if (selectedIncident?.id === id) setSelectedIncident({ ...selectedIncident, ...updated });
       setTransitionModal(null);
+      setTransitionFields({});
     } catch (e) { setError((e as Error).message); }
   }
 
@@ -657,7 +658,7 @@ export function ItsmPage() {
                   <select
                     className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400 border-0 cursor-pointer"
                     value={selectedIncident.priority ?? '3'}
-                    onChange={e => updateIncidentField(selectedIncident.id, { priority: Number(e.target.value) })}
+                    onChange={e => updateIncidentField(selectedIncident.id, { priority: e.target.value })}
                   >
                     <option value="1">P1</option>
                     <option value="2">P2</option>
