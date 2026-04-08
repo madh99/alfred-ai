@@ -66,7 +66,8 @@ export class MemoryRepository {
          source = excluded.source,
          updated_at = excluded.updated_at,
          expires_at = NULL
-       WHERE NOT (memories.source = 'manual' AND excluded.source = 'auto')`,
+       WHERE NOT (memories.source = 'manual' AND excluded.source = 'auto')
+         AND NOT (memories.type = 'correction' AND excluded.source = 'auto')`,
       [id, userId, key, value, category, type, confidence, source, now, now],
     );
 

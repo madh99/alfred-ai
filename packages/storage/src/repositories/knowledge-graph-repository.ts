@@ -401,6 +401,16 @@ export class KnowledgeGraphRepository {
     }
   }
 
+  async renameEntity(id: string, newName: string): Promise<boolean> {
+    try {
+      await this.adapter.execute(
+        'UPDATE kg_entities SET name = ?, normalized_name = ?, last_seen_at = ? WHERE id = ?',
+        [newName, newName.trim().toLowerCase(), new Date().toISOString(), id],
+      );
+      return true;
+    } catch { return false; /* constraint violation — entity with newName already exists */ }
+  }
+
   /** Delete a single entity by ID (CASCADE deletes relations). */
   async deleteEntity(id: string): Promise<void> {
     await this.adapter.execute('DELETE FROM kg_entities WHERE id = ?', [id]);

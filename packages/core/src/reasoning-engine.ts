@@ -647,6 +647,7 @@ REGELN:
 - Nutze VERTIEFTE DATEN (falls vorhanden) für konkrete Zahlen
 - Berücksichtige TRENDS & ANOMALIEN (falls vorhanden)
 - Berücksichtige USER-FEEDBACK (falls vorhanden)
+- WICHTIG: Memories mit [correction] oder source=manual sind USER-KORREKTUREN. Diese haben ABSOLUTEN Vorrang vor eigenen Beobachtungen! Wenn ein Memory sagt "X ist kein Fehler" oder "X ist normales Verhalten", dann erstelle KEINEN Insight der X als Problem meldet. Interpretiere Beobachtungen IMMER im Kontext der erlernten Regeln.
 - KEINE generischen Tipps, KEINE Bewertung des Nutzerverhaltens
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit

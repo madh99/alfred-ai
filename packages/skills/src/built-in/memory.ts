@@ -107,7 +107,7 @@ export class MemorySkill extends Skill {
     const value = input.value as string | undefined;
     const category = input.category as string | undefined;
     const rawType = input.type as string | undefined;
-    const allowedTypes = ['entity', 'fact', 'general', 'preference'] as const;
+    const allowedTypes = ['entity', 'fact', 'general', 'preference', 'correction'] as const;
     const type = rawType && (allowedTypes as readonly string[]).includes(rawType)
       ? (rawType as typeof allowedTypes[number])
       : 'general';

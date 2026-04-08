@@ -1607,6 +1607,10 @@ export class KnowledgeGraphService {
       const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder']);
       const canonicalPersons = new Map<string, string>(); // firstName → canonical "Title Firstname"
 
+      // Load correction memories to override canonical names (e.g., "Noah heißt Habel, nicht Dohnal")
+      const correctionMems = await this.memoryRepo.getByType(userId, 'correction', 20);
+      const correctionTexts = correctionMems.map(m => m.value.toLowerCase());
+
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
         // Strip punctuation, split on comma/parens/period, take first segment
@@ -1639,8 +1643,23 @@ export class KnowledgeGraphService {
         // This ensures "Sohn Linus" (from child_linus) and "Linus" (from linus_football_club)
         // map to the same entity
         const canonical = canonicalPersons.get(firstName);
-        const effectiveName = canonical ?? personName;
+        let effectiveName = canonical ?? personName;
         if (!canonical) canonicalPersons.set(firstName, personName);
+
+        // Check if a correction memory overrides this person's name
+        // e.g., "Noah heißt Habel" or "Noah und Lena heissen Habel"
+        for (const ct of correctionTexts) {
+          if (ct.includes(firstName)) {
+            // Extract the corrected surname from patterns like "heisst/heißt/heissen X" or "Nachname X"
+            const surnameMatch = ct.match(new RegExp(`${firstName}[^.]*?(?:hei[sß][st]e?n?|nachname[n]?)\\s+([A-ZÄÖÜ][a-zäöüß]+)`, 'i'));
+            if (surnameMatch) {
+              effectiveName = `${personName.split(' ').filter(w => !TITLE_WORDS.has(w.toLowerCase())).join(' ')} ${surnameMatch[1]}`.replace(/\s+/g, ' ').trim();
+              // Also update the canonical map so subsequent entities use the corrected name
+              canonicalPersons.set(firstName, effectiveName);
+              break;
+            }
+          }
+        }
 
         const person = await this.kgRepo.upsertEntity(userId, effectiveName, 'person',
           { memoryKey: mem.key, memoryConfidence: mem.confidence }, 'memories');

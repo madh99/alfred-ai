@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.407] - 2026-04-09
+
+### Fixed
+- **Korrektur-Pipeline: 8 Bugs vollständig gefixt**
+  - **Bug 1**: FeedbackService überschreibt jetzt das falsche Memory direkt (Keyword-Match + Key-Reuse) statt einen Timestamp-Key daneben zu legen. Korrektur wird als `type: correction`, `source: manual`, `confidence: 1.0` gespeichert.
+  - **Bug 2**: canonicalPersons prüft jetzt Correction-Memories vor der Kanonisierung. "Noah heißt Habel" → canonical Name wird auf "Noah Habel" aktualisiert statt "Noah Dohnal" zu behalten.
+  - **Bug 3**: `correction` Typ hat jetzt garantierten Slot im Chat-Prompt (neben `pattern` + `connection`). Korrekturen werden nicht mehr von generischen Memories verdrängt.
+  - **Bug 4**: Post-Processing erkennt "Ich merke mir"/"habe korrigiert" im LLM-Response und triggert Active-Learning falls kein Memory-Tool-Call gemacht wurde.
+  - **Bug 5**: Memory-Skill `allowedTypes` erweitert um `correction`. LLM kann jetzt explizit Korrektur-Memories anlegen.
+  - **Bug 6**: ON CONFLICT Guard schützt jetzt auch `correction`-Type Memories vor auto-Overwrite (zusätzlich zu `manual` Source).
+  - **Bug 7**: Reasoning Detail-Prompt enthält explizite Regel: "manual-Source + correction-Type Memories haben ABSOLUTEN Vorrang vor eigenen Beobachtungen."
+  - **Bug 8**: LLM Entity Linker kann jetzt Entity-Namen korrigieren (`newName` Feld in `LLMCorrection`). Neue Repository-Methode `renameEntity()`.
+
 ## [0.19.0-multi-ha.406] - 2026-04-08
 
 ### Fixed

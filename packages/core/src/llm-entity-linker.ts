@@ -22,6 +22,7 @@ interface LLMCorrection {
   name: string;
   currentType: string;
   newType: string;
+  newName?: string;
   attributes?: Record<string, unknown>;
   reason?: string;
 }
@@ -378,14 +379,24 @@ TRANSITIVE INFERENZ (wichtig!):
 
     // 3. Apply corrections (type changes + attribute updates)
     for (const corr of (result.corrections ?? []).slice(0, 10)) {
-      if (!VALID_ENTITY_TYPES.has(corr.newType)) continue;
       const existing = entityByName.get(corr.name.toLowerCase());
       if (!existing) continue;
-      if (existing.entityType === corr.currentType && corr.newType !== corr.currentType) {
-        // Update entity type + merge attributes
+
+      // Type correction
+      if (VALID_ENTITY_TYPES.has(corr.newType) && existing.entityType === corr.currentType && corr.newType !== corr.currentType) {
         const mergedAttrs = { ...existing.attributes, ...(corr.attributes ?? {}) };
         await this.kgRepo.updateEntityType(existing.id, corr.newType, mergedAttrs);
         stats.corrections++;
+      }
+
+      // Name correction (e.g., "Noah Dohnal" → "Noah Habel")
+      if (corr.newName && corr.newName !== corr.name && corr.newName.length >= 2 && corr.newName.length <= 50) {
+        const renamed = await this.kgRepo.renameEntity(existing.id, corr.newName);
+        if (renamed) {
+          entityByName.delete(corr.name.toLowerCase());
+          entityByName.set(corr.newName.toLowerCase(), { ...existing, name: corr.newName });
+          stats.corrections++;
+        }
       }
     }
 

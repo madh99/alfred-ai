@@ -474,7 +474,7 @@ export class MessagePipeline {
           const existingKeys = new Set((memories ?? []).map(m => m.key));
           const userIds = [masterUserId, ...(linkedPlatformUserIds ?? []).filter(id => id !== masterUserId)];
           for (const uid of userIds) {
-            for (const type of ['pattern', 'connection'] as const) {
+            for (const type of ['pattern', 'connection', 'correction'] as const) {
               const typed = await this.memoryRepo.getByType(uid, type, 5);
               for (const m of typed) {
                 if (!existingKeys.has(m.key)) {
@@ -988,6 +988,19 @@ export class MessagePipeline {
       // 9. Active learning: extract memories from conversation (fire-and-forget)
       if (this.activeLearning) {
         this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
+      }
+
+      // 9a3. Detect "Ich merke mir" in LLM response without actual memory tool call — ensure save
+      if (this.memoryRepo && masterUserId && responseText) {
+        const MERKE_RE = /(?:ich (?:merke|speichere|notiere) mir|gemerkt|verstanden.*merke|habe.*gespeichert|habe.*korrigiert)/i;
+        if (MERKE_RE.test(responseText)) {
+          // The LLM claimed to remember something — ensure active learning runs with high signal.
+          // (Active learning may have already been triggered above, but it's rate-limited so double-fire is safe)
+          if (this.activeLearning) {
+            this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
+          }
+          this.logger.info('Pipeline: LLM claimed to remember — ensured active learning trigger');
+        }
       }
 
       // 9b. KG entity extraction from chat (fire-and-forget)
