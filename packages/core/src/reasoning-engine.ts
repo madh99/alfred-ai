@@ -720,7 +720,7 @@ SICHERHEIT:
 - Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}
 
 FOLLOW-UP:
-- Prüfe "insight_delivered:" Memories in der Erinnerungen-Section. Wenn ein Insight >24h alt ist und kein passendes "insight_resolved:" Memory existiert, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").
+- Prüfe die "Insight-Tracking" Section. Wenn ein Insight als OFFEN markiert ist und >24h alt, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").
 - Erstelle KEINEN Follow-up für rein informative Insights (Wetter, Strompreis, Status-Updates).`;
   }
 
@@ -955,15 +955,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           this.insightTracker.trackInsightSent(category);
         }
       }
-      // Track delivered insights as memories for follow-up
+      // Track delivered insights as feedback memories with 7-day expiry (for follow-up tracking)
       if (this.memoryRepo && this.resolvedOwnerUserId) {
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
         for (const insight of insights) {
           const topicWords = insight.toLowerCase().replace(/[^a-zäöüß\s]/g, '').split(/\s+/)
             .filter(w => w.length >= 4).slice(0, 3).sort().join('_');
           if (topicWords) {
             try {
               await this.memoryRepo.saveWithMetadata(this.resolvedOwnerUserId, `insight_delivered:${topicWords}`,
-                insight.slice(0, 200), 'general', 'connection', 0.6, 'auto');
+                insight.slice(0, 200), 'general', 'feedback', 0.6, 'auto');
+              await this.memoryRepo.setExpiry(this.resolvedOwnerUserId, `insight_delivered:${topicWords}`, expiresAt);
             } catch { /* non-critical */ }
           }
         }

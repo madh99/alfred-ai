@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.406] - 2026-04-08
+
+### Fixed
+- **Reasoning: Insight-Tracking als eigene Context-Section** — `insight_delivered` Memories von Typ `connection` → `feedback` mit 7-Tage Expiry umgestellt. Eigene P2-Section "Insight-Tracking" (100 Token Budget) im Reasoning-Kontext statt Memory-Connection-Slots. Active-Learning Connections werden nicht mehr von Insight-Logs verdrängt.
+
 ## [0.19.0-multi-ha.405] - 2026-04-08
 
 ### Added

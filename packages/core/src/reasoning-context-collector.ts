@@ -270,6 +270,12 @@ export class ReasoningContextCollector {
       { key: 'feedback', label: 'Nutzer-Feedback', priority: 3, maxTokens: 100, fetch: () => this.fetchFeedback() },
     );
 
+    // Insight tracking: delivered insights + resolved status (for follow-up reasoning)
+    defs.push({
+      key: 'insightTracking', label: 'Insight-Tracking', priority: 2, maxTokens: 100,
+      fetch: () => this.fetchInsightTracking(),
+    });
+
     // RSS Feeds with extended timeout (check_all fetches multiple external servers)
     if (this.skillRegistry.has('feed_reader')) {
       defs.push({
@@ -692,6 +698,42 @@ export class ReasoningContextCollector {
       ).join('\n');
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: feedback fetch failed');
+      return '';
+    }
+  }
+
+  private async fetchInsightTracking(): Promise<string> {
+    if (!this.memoryRepo) return '';
+    try {
+      const userId = await this.getEffectiveUserId();
+      if (!userId) return '';
+
+      const cutoff48h = new Date(Date.now() - 48 * 60 * 60_000).toISOString();
+      const lines: string[] = [];
+
+      // Fetch delivered insights (last 48h)
+      const delivered = await this.memoryRepo.search(userId, 'insight_delivered');
+      const recent = delivered.filter(m => m.updatedAt > cutoff48h);
+      if (recent.length === 0) return '';
+
+      // Fetch resolved insights
+      const resolved = await this.memoryRepo.search(userId, 'insight_resolved');
+      const resolvedTopics = new Set(resolved.map(m => m.key.replace('insight_resolved:', '')));
+
+      for (const m of recent.slice(0, 5)) {
+        const topic = m.key.replace('insight_delivered:', '');
+        const ageH = Math.round((Date.now() - new Date(m.updatedAt).getTime()) / 3600_000);
+        const isResolved = resolvedTopics.has(topic);
+        const resolvedMem = isResolved ? resolved.find(r => r.key === `insight_resolved:${topic}`) : undefined;
+        const status = isResolved
+          ? `BESTÄTIGT (${resolvedMem?.value?.slice(0, 50) ?? 'ok'})`
+          : 'OFFEN';
+        lines.push(`- [vor ${ageH}h] ${status}: ${m.value.slice(0, 80)}`);
+      }
+
+      if (lines.length === 0) return '';
+      return `Gesendete Insights (letzte 48h):\n${lines.join('\n')}\nHinweis: OFFENE Insights >24h können Follow-up-Erinnerungen auslösen (nur bei handlungsrelevanten Themen, NICHT bei Status/Wetter/Preisen).`;
+    } catch {
       return '';
     }
   }
