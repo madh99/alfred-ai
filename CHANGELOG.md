@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.404] - 2026-04-08
+
+### Fixed
+- **BMW: Lade-Sessions Pagination** — BMW API liefert max ~10 Sessions pro Call. Bei Zeiträumen >14 Tage wird jetzt in 7-Tage-Chunks iterativ abgefragt mit Dedup. Laufende Nummer, Gesamtzähler + Summe kWh am Ende.
+
 ## [0.19.0-multi-ha.403] - 2026-04-08
 
 ### Fixed

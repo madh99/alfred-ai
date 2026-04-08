@@ -1197,20 +1197,50 @@ export class BMWSkill extends Skill {
     const toDate = to ?? now.toISOString();
     const fromDate = from ?? new Date(now.getTime() - 30 * 24 * 60 * 60_000).toISOString();
 
-    const data = await this.apiGet<Record<string, unknown>>(
-      `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
-    );
+    // BMW API returns max ~10 sessions per call. For longer ranges, chunk into 7-day windows.
+    const fromMs = new Date(fromDate).getTime();
+    const toMs = new Date(toDate).getTime();
+    const WEEK = 7 * 24 * 60 * 60_000;
+    const allSessions: Array<Record<string, unknown>> = [];
+    const seenIds = new Set<string>();
 
-    const sessions = (data.data ?? data.chargingSessions ?? []) as Array<Record<string, unknown>>;
+    // Single call for short ranges, chunked for longer ones
+    const needsChunking = (toMs - fromMs) > 14 * 24 * 60 * 60_000;
+    if (needsChunking) {
+      let chunkEnd = toMs;
+      while (chunkEnd > fromMs) {
+        const chunkStart = Math.max(chunkEnd - WEEK, fromMs);
+        try {
+          const chunk = await this.apiGet<Record<string, unknown>>(
+            `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(new Date(chunkStart).toISOString())}&to=${encodeURIComponent(new Date(chunkEnd).toISOString())}`,
+          );
+          const sessions = (chunk.data ?? chunk.chargingSessions ?? []) as Array<Record<string, unknown>>;
+          for (const s of sessions) {
+            const key = `${s.startTime}-${s.endTime}`;
+            if (!seenIds.has(key)) { seenIds.add(key); allSessions.push(s); }
+          }
+        } catch { /* skip failed chunk */ }
+        chunkEnd = chunkStart;
+      }
+      // Sort by startTime descending
+      allSessions.sort((a, b) => ((b.startTime as number) ?? 0) - ((a.startTime as number) ?? 0));
+    } else {
+      const data = await this.apiGet<Record<string, unknown>>(
+        `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
+      );
+      allSessions.push(...((data.data ?? data.chargingSessions ?? []) as Array<Record<string, unknown>>));
+    }
 
     const lines = [
       `## BMW Lade-Sessions (${fromDate.slice(0, 10)} – ${toDate.slice(0, 10)})`,
       '',
-      '| Start | Ende | Dauer | Energie | Start-SoC | End-SoC | km-Stand | Ort |',
-      '|-------|------|-------|---------|-----------|---------|----------|-----|',
+      '| # | Start | Ende | Dauer | Energie | Start-SoC | End-SoC | km-Stand | Ort |',
+      '|---|-------|------|-------|---------|-----------|---------|----------|-----|',
     ];
 
-    for (const s of sessions.slice(0, 20)) {
+    let totalEnergy = 0;
+    for (let i = 0; i < allSessions.length; i++) {
+      const s = allSessions[i];
       const startSec = s.startTime as number | undefined;
       const endSec = s.endTime as number | undefined;
       const fmtDateTime = (sec: number) => new Date(sec * 1000).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -1218,20 +1248,23 @@ export class BMWSkill extends Skill {
       const end = endSec ? fmtDateTime(endSec) : '-';
       const durationSec = s.totalChargingDurationSec as number | undefined;
       const duration = durationSec != null ? Math.round(durationSec / 60) : '-';
-      const energy = s.energyConsumedFromPowerGridKwh ?? '-';
+      const energy = s.energyConsumedFromPowerGridKwh as number | undefined;
       const startSoc = s.displayedStartSoc ?? '-';
       const endSoc = s.displayedSoc ?? '-';
       const mileage = s.mileage != null ? `${s.mileage}` : '-';
       const loc = (s.chargingLocation as Record<string, unknown> | undefined);
       const address = (loc?.formattedAddress as string | undefined) ?? (loc?.streetAddress as string | undefined) ?? '-';
-      lines.push(`| ${start} | ${end} | ${duration} min | ${energy} kWh | ${startSoc}% | ${endSoc}% | ${mileage} | ${address} |`);
+      lines.push(`| ${i + 1} | ${start} | ${end} | ${duration} min | ${energy ?? '-'} kWh | ${startSoc}% | ${endSoc}% | ${mileage} | ${address} |`);
+      if (energy != null) totalEnergy += energy;
     }
 
-    if (sessions.length === 0) {
-      lines.push('| - | - | Keine Sessions gefunden | - | - | - | - | - |');
+    if (allSessions.length === 0) {
+      lines.push('| - | - | - | Keine Sessions gefunden | - | - | - | - | - |');
+    } else {
+      lines.push('', `**Gesamt:** ${allSessions.length} Sessions, ${totalEnergy.toFixed(1)} kWh`);
     }
 
-    return { success: true, data, display: lines.join('\n') };
+    return { success: true, data: { sessions: allSessions, totalSessions: allSessions.length, totalEnergyKwh: totalEnergy }, display: lines.join('\n') };
   }
 
   // ── Consumption calculation from charging sessions ──────
