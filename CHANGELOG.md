@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.403] - 2026-04-08
+
+### Fixed
+- **KG: Location Quality-Gate `isPlausibleLocation()`** — Zentrale Validierung an 3 Stellen (refreshKnownLocations, registerLocation, extractLocations). Filtert: <4 Zeichen ("Ort"), Tech-Keywords ("Sovereign Cloud", "Digital Hub"), Noun-Suffixe, Sonderzeichen, Blacklist.
+- **CMDB: Storage Discovery `enabled` Filter** — `!s.enabled` filterte `undefined` als disabled. Fix: nur explizit `false`/`0` skippen.
+- **CMDB: Alte Daten unter falscher userId bereinigt** — 2206 Assets + 98 Relations + 1976 KG-Entities unter alfredUserId gelöscht (ownerMasterUserId-Fix v383 war korrekt, alte Daten nie aufgeräumt).
+
 ## [0.19.0-multi-ha.400] - 2026-04-08
 
 ### Added

@@ -826,7 +826,7 @@ export class Alfred {
               const storageResult = await skillSandbox.execute(pxSkill, { action: 'list_storage' }, {} as any);
               if (storageResult.success && Array.isArray(storageResult.data)) {
                 for (const s of storageResult.data as any[]) {
-                  if (!s.enabled) continue;
+                  if (s.enabled === false || s.enabled === 0) continue;
                   assets.push({
                     name: s.storage, assetType: 'storage', sourceSkill: 'proxmox', sourceId: `storage:${s.storage}`,
                     status: s.active ? 'active' : 'inactive',

@@ -129,24 +129,34 @@ export class KnowledgeGraphService {
   /** German noun suffixes that never appear in city names. */
   private static readonly NOUN_SUFFIXES = /(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i;
 
+  /** Words that disqualify a location candidate (tech, cloud, generic terms). */
+  private static readonly LOCATION_DISQUALIFIERS = /\b(cloud|stack|platform|service|engine|server|cluster|virtual|online|digital|smart|hub|lab|edge|node|zone|tier|core|base|space|net)\b/i;
+
+  /** Check if a name looks like a valid geographic location. */
+  private static isPlausibleLocation(name: string): boolean {
+    if (name.length < 4) return false; // "Ort", "See" — too short for a city
+    if (/[\n\r\t/|]/.test(name)) return false;
+    if (PERSON_BLACKLIST.has(name.toLowerCase())) return false;
+    if (KnowledgeGraphService.NOUN_SUFFIXES.test(name)) return false;
+    if (KnowledgeGraphService.LOCATION_DISQUALIFIERS.test(name)) return false;
+    return true;
+  }
+
   private async refreshKnownLocations(userId: string): Promise<void> {
     try {
       const graph = await this.kgRepo.getFullGraph(userId);
       for (const e of graph.entities) {
         if (e.entityType !== 'location') continue;
-        const name = e.name;
-        // Quality gate: skip garbage entries that would poison the dynamic list
-        if (/[\n\r\t/|]/.test(name)) continue;
-        if (PERSON_BLACKLIST.has(name.toLowerCase())) continue;
-        if (KnowledgeGraphService.NOUN_SUFFIXES.test(name)) continue;
-        this.knownLocationsLower.add(name.toLowerCase());
-        this.knownLocationsMap.set(name.toLowerCase(), name);
+        if (!KnowledgeGraphService.isPlausibleLocation(e.name)) continue;
+        this.knownLocationsLower.add(e.name.toLowerCase());
+        this.knownLocationsMap.set(e.name.toLowerCase(), e.name);
       }
     } catch { /* keep seed list on error */ }
   }
 
-  /** Add a newly discovered location to the dynamic set. */
+  /** Add a newly discovered location to the dynamic set (with quality gate). */
   private registerLocation(name: string): void {
+    if (!KnowledgeGraphService.isPlausibleLocation(name)) return;
     this.knownLocationsLower.add(name.toLowerCase());
     this.knownLocationsMap.set(name.toLowerCase(), name);
   }
@@ -1971,6 +1981,8 @@ export class KnowledgeGraphService {
         }
         // Skip known entity names that are not locations
         if (this.cmdbEntityNames.has(candidate.toLowerCase())) continue;
+        // Quality gate: skip implausible location names
+        if (!KnowledgeGraphService.isPlausibleLocation(candidate)) continue;
         // Create as location candidate and register for future recognition
         try {
           await this.kgRepo.upsertEntity(userId, candidate, 'location', { detectedBy: 'geo_pattern' }, sectionKey);
