@@ -199,6 +199,10 @@ export class KnowledgeGraphService {
         for (const hit of hits) {
           if (seen.has(hit.entity.id)) continue;
           seen.add(hit.entity.id);
+          // Skip CMDB infrastructure entities (irrelevant for chat)
+          const INFRA_TYPES = new Set(['network_device', 'certificate', 'server', 'container', 'dns_record', 'proxy_host', 'firewall_rule', 'cluster', 'storage']);
+          if (INFRA_TYPES.has(hit.entity.entityType)) continue;
+          if (hit.entity.sources?.length === 1 && hit.entity.sources[0] === 'cmdb') continue;
           // Deduplicate: skip if entity name already in personalContext
           if (personalContext && personalContext.includes(hit.entity.name)) continue;
           results.push(hit);
