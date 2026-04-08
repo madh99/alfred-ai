@@ -138,40 +138,13 @@ export class FeedbackService {
       { userMessage: opts.userMessage.slice(0, 500) },
     );
 
-    // Try to find and overwrite the WRONG memory that this correction addresses.
-    // Extract keywords from correction, search for matching memories, overwrite with corrected value.
-    let correctedExisting = false;
-    try {
-      const keywords = rawRule.toLowerCase().replace(/[^a-zäöüß\s]/g, '').split(/\s+/)
-        .filter(w => w.length >= 4 && !/^(nicht|kein|keine|falsch|wrong|sondern|heisst|heissen|heißt|heißen)$/.test(w));
-      if (keywords.length >= 2) {
-        const candidates = await this.memoryRepo.search(opts.userId, keywords[0]);
-        for (const candidate of candidates) {
-          if (candidate.source === 'manual' && candidate.type !== 'correction') continue; // don't overwrite manual non-corrections
-          // Check if candidate matches multiple keywords
-          const matchCount = keywords.filter(kw => candidate.value.toLowerCase().includes(kw) || candidate.key.toLowerCase().includes(kw)).length;
-          if (matchCount >= 2) {
-            // Overwrite this memory with the correction
-            await this.memoryRepo.saveWithMetadata(
-              opts.userId, candidate.key, rawRule, 'general', 'correction', 1.0, 'manual',
-            );
-            correctedExisting = true;
-            this.logger.info({ correctedKey: candidate.key, rawRule }, 'Feedback: corrected existing memory in-place');
-            break;
-          }
-        }
-      }
-    } catch { /* non-critical — fall through to save as new */ }
+    // Save correction as a new memory (safe — does not overwrite existing memories)
+    const memoryKey = `feedback:correction:${Date.now()}`;
+    await this.memoryRepo.saveWithMetadata(
+      opts.userId, memoryKey, rawRule, 'general', 'correction', 0.9, 'manual',
+    );
 
-    // If no existing memory was corrected, save as a new correction memory
-    if (!correctedExisting) {
-      const memoryKey = `feedback:correction:${Date.now()}`;
-      await this.memoryRepo.saveWithMetadata(
-        opts.userId, memoryKey, rawRule, 'general', 'correction', 0.9, 'manual',
-      );
-    }
-
-    this.logger.info({ rawRule, correctedExisting }, 'Feedback: conversation correction processed');
+    this.logger.info({ rawRule }, 'Feedback: conversation correction saved as correction memory');
 
     // Limit feedback memories to 20 — prune oldest beyond that
     try {

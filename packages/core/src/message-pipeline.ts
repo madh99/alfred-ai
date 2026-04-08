@@ -990,19 +990,6 @@ export class MessagePipeline {
         this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
       }
 
-      // 9a3. Detect "Ich merke mir" in LLM response without actual memory tool call — ensure save
-      if (this.memoryRepo && masterUserId && responseText) {
-        const MERKE_RE = /(?:ich (?:merke|speichere|notiere) mir|gemerkt|verstanden.*merke|habe.*gespeichert|habe.*korrigiert)/i;
-        if (MERKE_RE.test(responseText)) {
-          // The LLM claimed to remember something — ensure active learning runs with high signal.
-          // (Active learning may have already been triggered above, but it's rate-limited so double-fire is safe)
-          if (this.activeLearning) {
-            this.activeLearning.onMessageProcessed(masterUserId, message.text, responseText);
-          }
-          this.logger.info('Pipeline: LLM claimed to remember — ensured active learning trigger');
-        }
-      }
-
       // 9b. KG entity extraction from chat (fire-and-forget)
       if (this.kgService && masterUserId) {
         const chatText = `${message.text}\n${responseText}`;

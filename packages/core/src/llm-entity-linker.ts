@@ -464,7 +464,7 @@ Antworte als JSON:
 {
   "relations": [{"source": "...", "target": "...", "type": "...", "reason": "..."}],
   "newEntities": [{"name": "...", "type": "...", "attributes": {}, "reason": "..."}],
-  "corrections": [{"name": "...", "currentType": "...", "newType": "...", "reason": "..."}]
+  "corrections": [{"name": "...", "currentType": "...", "newType": "...", "newName": "optional — neuer Name falls Entity-Name falsch ist", "reason": "..."}]
 }
 
 Nur ECHTE Zusammenhänge, keine Spekulation. Wenn nichts gefunden: leere Arrays.`;

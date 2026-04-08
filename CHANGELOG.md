@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.408] - 2026-04-09
+
+### Fixed
+- **Revert: FeedbackService Keyword-Overwrite** — Gefährlicher Keyword-Match der korrekte Memories hätte überschreiben können wurde entfernt. Korrekturen werden wieder sicher als separate Einträge gespeichert (type: correction, source: manual).
+- **Revert: "Ich merke mir" Double-Trigger** — Unnötiger doppelter Active-Learning-Trigger entfernt. Active Learning wird bereits bei Zeile 990 ausgelöst; "habe korrigiert" matchte auch Tool-Call-Responses.
+- **LLM Linker: `newName` im Prompt** — Das `newName` Feld war im LLM-Correction-Schema nicht dokumentiert → wurde nie ausgelöst. Jetzt im Prompt als optionales Feld für Entity-Rename sichtbar.
+
 ## [0.19.0-multi-ha.407] - 2026-04-09
 
 ### Fixed
