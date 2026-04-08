@@ -663,11 +663,16 @@ export class MessagePipeline {
         } catch (calErr) { this.logger.warn({ err: calErr instanceof Error ? calErr.message : String(calErr) }, 'Calendar loading for system prompt failed'); }
       }
 
-      // Build dynamic device context from KG (user-specific, not hardcoded)
-      let deviceContext: string | undefined;
+      // Build personal context from KG (Tier 1: family, work, locations, devices)
+      let personalContext: string | undefined;
+      let queryContext: string | undefined;
       if (this.kgService) {
         try {
-          deviceContext = await this.kgService.buildDeviceContext(masterUserId) || undefined;
+          personalContext = await this.kgService.buildPersonalContext(masterUserId) || undefined;
+        } catch { /* skip, not critical */ }
+        // Query-aware KG context (Tier 2: entities relevant to this specific message)
+        try {
+          queryContext = await this.kgService.queryRelevantContext(masterUserId, message.text, personalContext) || undefined;
         } catch { /* skip, not critical */ }
       }
 
@@ -678,7 +683,8 @@ export class MessagePipeline {
         todayEvents: upcomingEvents,
         conversationSummary: summary?.summary,
         rules,
-        deviceContext,
+        personalContext,
+        queryContext,
       });
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"
@@ -986,6 +992,25 @@ export class MessagePipeline {
       if (this.kgService && masterUserId) {
         const chatText = `${message.text}\n${responseText}`;
         this.kgService.extractFromChat(masterUserId, chatText).catch(() => {});
+      }
+
+      // 9c. Insight-response detection: if user replies briefly with acknowledgment words,
+      //     mark the most recent insight_delivered as resolved (fire-and-forget)
+      if (this.memoryRepo && masterUserId && message.text.length <= 80) {
+        const msgLower = message.text.toLowerCase();
+        const ACK_WORDS = /\b(danke|ok|erledigt|gemacht|bestellt|done|passt|gut|alles klar|check|gekauft|gebucht|fertig|ja|thx|thanks)\b/;
+        if (ACK_WORDS.test(msgLower)) {
+          // Check if the previous bot message was an insight (reasoning-generated messages)
+          const lastBotMsg = history.filter(m => m.role === 'assistant').pop();
+          if (lastBotMsg?.content && (lastBotMsg.content.includes('💡') || lastBotMsg.content.includes('⚡') || lastBotMsg.content.includes('📋'))) {
+            const topicWords = lastBotMsg.content.slice(0, 100).toLowerCase().replace(/[^a-zäöüß\s]/g, '').split(/\s+/)
+              .filter((w: string) => w.length >= 4).slice(0, 3).sort().join('_');
+            if (topicWords) {
+              this.memoryRepo.saveWithMetadata(masterUserId, `insight_resolved:${topicWords}`,
+                `User: ${message.text.slice(0, 100)}`, 'general', 'feedback', 0.8, 'auto').catch(() => {});
+            }
+          }
+        }
       }
 
       // 10. Update conversation summary (fire-and-forget)

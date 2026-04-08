@@ -490,6 +490,7 @@ ${this.buildTopicInstructions()}`;
           changed: true,
         });
       }
+      this.kgService.markPersonalContextDirty();
       this.logger.info({ connectionMap: connectionMap?.slice(0, 200) ?? 'empty' }, 'KG: ingest + connectionMap done');
     } catch (err) {
       this.logger.error({ err }, 'KG: enrichment FAILED');
@@ -716,7 +717,11 @@ SICHERHEIT:
 - Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
 - Prüfe "Aktive Erinnerungen" Section — wenn dort bereits ein Reminder zum selben Thema existiert, KEINEN neuen vorschlagen!
 - Workflows + Delegate erfordern User-Bestätigung
-- Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}`;
+- Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}
+
+FOLLOW-UP:
+- Prüfe "insight_delivered:" Memories in der Erinnerungen-Section. Wenn ein Insight >24h alt ist und kein passendes "insight_resolved:" Memory existiert, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").
+- Erstelle KEINEN Follow-up für rein informative Insights (Wetter, Strompreis, Status-Updates).`;
   }
 
   private buildEventDetailPrompt(
@@ -948,6 +953,19 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         for (const insight of insights) {
           const category = InsightTracker.categorizeInsight(insight);
           this.insightTracker.trackInsightSent(category);
+        }
+      }
+      // Track delivered insights as memories for follow-up
+      if (this.memoryRepo && this.resolvedOwnerUserId) {
+        for (const insight of insights) {
+          const topicWords = insight.toLowerCase().replace(/[^a-zäöüß\s]/g, '').split(/\s+/)
+            .filter(w => w.length >= 4).slice(0, 3).sort().join('_');
+          if (topicWords) {
+            try {
+              await this.memoryRepo.saveWithMetadata(this.resolvedOwnerUserId, `insight_delivered:${topicWords}`,
+                insight.slice(0, 200), 'general', 'connection', 0.6, 'auto');
+            } catch { /* non-critical */ }
+          }
         }
       }
     }

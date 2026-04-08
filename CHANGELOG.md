@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.400] - 2026-04-08
+
+### Added
+- **Brain: Persönliches Umfeld im Chat (Tier 1)** — `buildPersonalContext()` liefert kompakten Kontext-Block: engste Familie (Spouse, Kinder, Eltern, Geschwister), Arbeitgeber, Wohnsitz/Büro, Fahrzeug, Smart Home Geräte-Zähler, Metriken. Gecached (1h/dirty-Flag). Ersetzt `buildDeviceContext` im Chat-Prompt. Max ~150 Token.
+- **Brain: Query-aware KG-Kontext (Tier 2)** — `queryRelevantContext()` extrahiert Keywords aus der User-Nachricht, findet relevante KG-Entities + 1-Hop Relations, dedupliziert gegen Tier 1. Neue Repository-Methode `searchEntitiesWithRelations()` (Single JOIN). 0-200 Token, nur wenn relevant.
+- **Brain: Insight-Feedback-Loop** — Gesendete Insights werden als `insight_delivered:` Memory gespeichert. User-Acknowledgments (danke/ok/erledigt) erzeugen `insight_resolved:` Memory. Reasoning-Prompt enthält Follow-up Regel für unerledigte Insights >24h.
+
 ## [0.19.0-multi-ha.399] - 2026-04-08
 
 ### Fixed

@@ -156,6 +156,84 @@ export class KnowledgeGraphService {
     return [...this.knownLocationsMap.values()];
   }
 
+  // ── Query-aware KG Context (Tier 2: on-demand per chat message) ──
+
+  /** German/English stop words to skip when extracting query keywords. */
+  private static readonly STOP_WORDS = new Set([
+    'der', 'die', 'das', 'den', 'dem', 'des', 'ein', 'eine', 'einer', 'einem', 'einen',
+    'ist', 'hat', 'war', 'wird', 'kann', 'soll', 'muss', 'darf', 'mag', 'bin', 'bist',
+    'und', 'oder', 'aber', 'weil', 'wenn', 'dass', 'als', 'wie', 'was', 'wer', 'wann',
+    'von', 'mit', 'für', 'auf', 'aus', 'bei', 'nach', 'über', 'vor', 'unter', 'zwischen',
+    'the', 'and', 'for', 'with', 'from', 'this', 'that', 'have', 'has', 'not', 'are',
+    'ich', 'mir', 'mich', 'mein', 'meine', 'dein', 'deine', 'sich', 'wir', 'uns',
+    'noch', 'schon', 'jetzt', 'hier', 'dort', 'auch', 'nur', 'sehr', 'ganz', 'bitte',
+    'kannst', 'könntest', 'würdest', 'hast', 'wann', 'warum', 'welche', 'welcher',
+  ]);
+
+  /**
+   * Query-aware KG context: extract keywords from user message,
+   * find matching entities + 1-hop relations, format as compact context block.
+   * Returns empty string if nothing relevant found.
+   */
+  async queryRelevantContext(userId: string, message: string, personalContext?: string): Promise<string> {
+    try {
+      // Extract keywords: capitalized words + words ≥4 chars, skip stop words
+      const words = message.split(/[\s,.!?;:()]+/).filter(Boolean);
+      const keywords: string[] = [];
+      for (const w of words) {
+        const clean = w.replace(/[^a-zA-ZäöüÄÖÜß-]/g, '');
+        if (clean.length < 3) continue;
+        if (KnowledgeGraphService.STOP_WORDS.has(clean.toLowerCase())) continue;
+        // Prioritize capitalized words (proper nouns)
+        if (/^[A-ZÄÖÜ]/.test(clean)) keywords.unshift(clean);
+        else if (clean.length >= 4) keywords.push(clean);
+      }
+
+      if (keywords.length === 0) return '';
+
+      // Search top 3 keywords, max 5 entities total
+      const seen = new Set<string>();
+      const results: Array<{ entity: any; relations: any[] }> = [];
+      for (const kw of keywords.slice(0, 3)) {
+        const hits = await this.kgRepo.searchEntitiesWithRelations(userId, kw, 3);
+        for (const hit of hits) {
+          if (seen.has(hit.entity.id)) continue;
+          seen.add(hit.entity.id);
+          // Deduplicate: skip if entity name already in personalContext
+          if (personalContext && personalContext.includes(hit.entity.name)) continue;
+          results.push(hit);
+          if (results.length >= 5) break;
+        }
+        if (results.length >= 5) break;
+      }
+
+      if (results.length === 0) return '';
+
+      // Format compact context
+      const lines: string[] = [];
+      for (const { entity, relations } of results) {
+        const attrs: string[] = [];
+        for (const [k, v] of Object.entries(entity.attributes ?? {})) {
+          if (['skillName', 'type', 'detectedBy', 'memoryKey', 'memoryConfidence'].includes(k)) continue;
+          const val = String(v);
+          if (val.length > 60) continue; // skip long text blobs
+          attrs.push(`${k}: ${val}`);
+        }
+        const relStrs = relations.slice(0, 5).map(r =>
+          r.direction === 'out' ? `→${r.relationType}→ ${r.relatedName}` : `${r.relatedName} →${r.relationType}→`,
+        );
+        const parts = [`${entity.name} [${entity.entityType}]`];
+        if (attrs.length) parts.push(attrs.join(', '));
+        if (relStrs.length) parts.push(relStrs.join(', '));
+        lines.push(parts.join(' | '));
+      }
+
+      return lines.join('\n');
+    } catch {
+      return '';
+    }
+  }
+
   /** Check if a name looks like a full name (not just initials like "M D"). */
   private isFullName(name: string): boolean {
     const tokens = name.trim().split(/\s+/);
@@ -540,6 +618,126 @@ export class KnowledgeGraphService {
    * Used in both chat system prompt and reasoning prompts.
    * Returns user-specific device descriptions, not hardcoded.
    */
+
+  // ── Personal Context (Tier 1: always in chat prompt) ──────
+
+  private personalContextCache?: { text: string; ts: number; userId: string };
+  private personalContextDirty = true;
+
+  /** Mark the personal context cache as stale (called after KG ingest). */
+  markPersonalContextDirty(): void { this.personalContextDirty = true; }
+
+  /**
+   * Build a compact personal context for the chat system prompt.
+   * Tier 1 only: immediate family, employer, home/work locations, vehicle.
+   * Cached for 1h or until KG ingest marks it dirty.
+   */
+  async buildPersonalContext(userId: string): Promise<string> {
+    const now = Date.now();
+    if (this.personalContextCache && this.personalContextCache.userId === userId
+      && !this.personalContextDirty && now - this.personalContextCache.ts < 3600_000) {
+      return this.personalContextCache.text;
+    }
+
+    try {
+      const graph = await this.kgRepo.getFullGraph(userId);
+      const { entities, relations } = graph;
+      const entityMap = new Map(entities.map(e => [e.id, e]));
+
+      // Find User entity
+      const userEntity = entities.find(e => e.name === 'User' && e.entityType === 'person');
+      if (!userEntity) return this.buildDeviceContext(userId); // fallback
+
+      // Collect Tier 1 relations from User (memory-sourced family + work)
+      const TIER1_TYPES = new Set(['spouse', 'parent_of', 'family', 'works_at', 'owns', 'lives_at']);
+      const userRelations = relations.filter(r =>
+        (r.sourceEntityId === userEntity.id || r.targetEntityId === userEntity.id)
+        && TIER1_TYPES.has(r.relationType),
+      );
+
+      // Build sections
+      const family: string[] = [];
+      const work: string[] = [];
+      const locations: string[] = [];
+      const devices: string[] = [];
+
+      for (const rel of userRelations) {
+        const otherId = rel.sourceEntityId === userEntity.id ? rel.targetEntityId : rel.sourceEntityId;
+        const other = entityMap.get(otherId);
+        if (!other) continue;
+
+        if (rel.relationType === 'spouse') {
+          family.push(`${other.name} (Ehepartner)`);
+        } else if (rel.relationType === 'parent_of') {
+          const bday = other.attributes?.birthday as string | undefined;
+          const extras: string[] = [];
+          // Find child-specific relations (plays_at, etc.)
+          const childRels = relations.filter(r => r.sourceEntityId === other.id && r.relationType === 'plays_at');
+          for (const cr of childRels) {
+            const club = entityMap.get(cr.targetEntityId);
+            if (club) extras.push(club.name);
+          }
+          if (bday) extras.push(`Geb. ${bday}`);
+          family.push(`${other.name}${extras.length ? ` (${extras.join(', ')})` : ''}`);
+        } else if (rel.relationType === 'family') {
+          // Determine role from memory key or relation context
+          const role = rel.context?.match(/mutter|mother/i) ? 'Mutter'
+            : rel.context?.match(/vater|father/i) ? 'Vater'
+            : rel.context?.match(/schwester|sister/i) ? 'Schwester'
+            : rel.context?.match(/bruder|brother/i) ? 'Bruder'
+            : 'Familie';
+          family.push(`${other.name} (${role})`);
+        } else if (rel.relationType === 'works_at' && other.entityType === 'organization') {
+          const role = other.attributes?.role as string | undefined;
+          work.push(`${other.name}${role ? ` (${role})` : ''}`);
+        } else if (rel.relationType === 'owns') {
+          if (other.entityType === 'vehicle') {
+            const range = other.attributes?.range_km;
+            const soc = other.attributes?.battery_pct;
+            const extras = [range ? `${range}km` : '', soc ? `${soc}%` : ''].filter(Boolean).join(', ');
+            devices.push(`${other.name}${extras ? ` (${extras})` : ''}`);
+          }
+        }
+      }
+
+      // Locations from location entities with isHome/isWork
+      const locs = entities.filter(e => e.entityType === 'location');
+      for (const loc of locs) {
+        if (loc.attributes?.isHome) locations.push(`Wohnsitz: ${loc.name}`);
+        else if (loc.attributes?.isWork) locations.push(`Büro: ${loc.name}`);
+      }
+
+      // Smart Home items (compact — just names)
+      const smItems = entities.filter(e => e.entityType === 'item' && (e.sources.includes('smarthome') || e.sources.includes('charger')));
+      if (smItems.length > 0) {
+        devices.push(`Smart Home: ${smItems.length} Geräte`);
+      }
+
+      // Metrics
+      const metrics = entities.filter(e => e.entityType === 'metric');
+      for (const m of metrics.slice(0, 3)) {
+        const val = m.attributes?.value ?? m.attributes?.price_ct ?? m.attributes?.temp_c;
+        if (val !== undefined) devices.push(`${m.name}: ${val}`);
+      }
+
+      // Assemble
+      const sections: string[] = [];
+      if (family.length) sections.push(`Familie: ${family.join(' | ')}`);
+      if (work.length) sections.push(`Arbeit: ${work.join(' | ')}`);
+      if (locations.length) sections.push(locations.join(' | '));
+      if (devices.length) sections.push(devices.join(' | '));
+
+      const text = sections.length > 0 ? sections.join('\n') : '';
+
+      this.personalContextCache = { text, ts: now, userId };
+      this.personalContextDirty = false;
+      return text;
+    } catch (err) {
+      this.logger.info({ err }, 'KG buildPersonalContext failed, using device fallback');
+      return this.buildDeviceContext(userId);
+    }
+  }
+
   async buildDeviceContext(userId: string): Promise<string> {
     try {
       const lines: string[] = [];

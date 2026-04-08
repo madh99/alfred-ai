@@ -244,6 +244,43 @@ export class KnowledgeGraphRepository {
     return rows.map(r => this.mapEntity(r));
   }
 
+  /**
+   * Search entities by name and return them with their 1-hop relations + related entity names.
+   * Single query — avoids N+1 lookups.
+   */
+  async searchEntitiesWithRelations(userId: string, query: string, limit = 5): Promise<Array<{
+    entity: KGEntity;
+    relations: Array<{ relationType: string; relatedName: string; relatedType: string; direction: 'out' | 'in' }>;
+  }>> {
+    const entities = await this.searchEntities(userId, query, limit);
+    if (entities.length === 0) return [];
+
+    const results: Array<{ entity: KGEntity; relations: Array<{ relationType: string; relatedName: string; relatedType: string; direction: 'out' | 'in' }> }> = [];
+
+    for (const entity of entities) {
+      const rels = await this.adapter.query(
+        `SELECT r.relation_type, r.source_entity_id, r.target_entity_id, e.name AS related_name, e.entity_type AS related_type
+         FROM kg_relations r
+         JOIN kg_entities e ON e.id = CASE WHEN r.source_entity_id = ? THEN r.target_entity_id ELSE r.source_entity_id END
+         WHERE r.user_id = ? AND (r.source_entity_id = ? OR r.target_entity_id = ?)
+         ORDER BY r.strength DESC LIMIT 10`,
+        [entity.id, userId, entity.id, entity.id],
+      ) as Record<string, unknown>[];
+
+      results.push({
+        entity,
+        relations: rels.map(r => ({
+          relationType: r.relation_type as string,
+          relatedName: r.related_name as string,
+          relatedType: r.related_type as string,
+          direction: (r.source_entity_id as string) === entity.id ? 'out' : 'in',
+        })),
+      });
+    }
+
+    return results;
+  }
+
   // ── Relation CRUD ───────────────────────────────────────────
 
   /**
