@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.399] - 2026-04-08
+
+### Fixed
+- **KG: Location Quality-Gate** — `refreshKnownLocations()` filtert Garbage-Entities (Newlines, Sonderzeichen, deutsche Noun-Suffixe, Blacklist-Wörter) aus der dynamischen Location-Liste. Verhindert dass alte Fehl-Entities die Erkennung vergiften.
+- **KG: Suffix-Filter ohne Length-Guard** — Deutsche Noun-Suffixe (-ung, -heit, -keit, -schaft, -tion, -tät, -nis, -ment, -tag, -zeit, -stück) werden unabhängig von der Wortlänge gefiltert. "Führung" (7 Zeichen) wird jetzt korrekt als Nicht-Ort erkannt.
+- **KG: Newline/Sonderzeichen Guard** — `extractLocations()` lehnt Candidates mit `\n\r\t/|` ab. Verhindert "Altlengbach\nGemerkt" etc.
+- **KG: Location-Blacklist** — PERSON_BLACKLIST erweitert um häufige "in X" False-Positives: Stunden, Absprache, Abstimmung, Home Assistant, etc.
+- **KG: DB-Bereinigung** — 8 falsche Location-Entities + 7 falsche Person-Entities gelöscht (Home Assistant, Führung, Stunden, Noah Fußball, Wien Haupt, etc.)
+
 ## [0.19.0-multi-ha.398] - 2026-04-08
 
 ### Changed

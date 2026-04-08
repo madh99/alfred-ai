@@ -55,6 +55,13 @@ const PERSON_BLACKLIST = new Set([
   'kalender', 'termin', 'aufgabe', 'erinnerung', 'warnung', 'fehler',
   'wichtig', 'dringend', 'erledigt', 'offen', 'aktiv', 'fertig',
   'damit', 'also', 'hier', 'dort', 'noch', 'schon', 'jetzt',
+  // Common German "in X" false-positive locations
+  'stunden', 'tagen', 'wochen', 'monaten', 'minuten', 'sekunden',
+  'absprache', 'abstimmung', 'anlehnung', 'aussicht', 'betracht', 'bezug',
+  'eile', 'folge', 'frage', 'kürze', 'ruhe', 'sachen', 'sicht',
+  'kraft', 'anspruch', 'verbindung', 'zukunft', 'wahrheit',
+  // Tech products mistaken as locations
+  'home assistant', 'homeassistant', 'proxmox', 'docker', 'kubernetes',
 ]);
 
 /** Company suffixes — if name contains these, it's an organization not a person. */
@@ -119,14 +126,21 @@ export class KnowledgeGraphService {
   ) {}
 
   /** Refresh the dynamic location set from KG entities of type 'location'. */
+  /** German noun suffixes that never appear in city names. */
+  private static readonly NOUN_SUFFIXES = /(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i;
+
   private async refreshKnownLocations(userId: string): Promise<void> {
     try {
       const graph = await this.kgRepo.getFullGraph(userId);
       for (const e of graph.entities) {
-        if (e.entityType === 'location') {
-          this.knownLocationsLower.add(e.name.toLowerCase());
-          this.knownLocationsMap.set(e.name.toLowerCase(), e.name);
-        }
+        if (e.entityType !== 'location') continue;
+        const name = e.name;
+        // Quality gate: skip garbage entries that would poison the dynamic list
+        if (/[\n\r\t/|]/.test(name)) continue;
+        if (PERSON_BLACKLIST.has(name.toLowerCase())) continue;
+        if (KnowledgeGraphService.NOUN_SUFFIXES.test(name)) continue;
+        this.knownLocationsLower.add(name.toLowerCase());
+        this.knownLocationsMap.set(name.toLowerCase(), name);
       }
     } catch { /* keep seed list on error */ }
   }
@@ -1740,6 +1754,8 @@ export class KnowledgeGraphService {
       while ((match = pattern.exec(content)) !== null) {
         const candidate = match[1].trim();
         if (candidate.length < 3 || candidate.length > 30) continue;
+        // Skip names with special characters (newlines, slashes from calendar entries etc.)
+        if (/[\n\r\t/|]/.test(candidate)) continue;
         // Skip if already a known person, org, or in blacklists
         if (PERSON_BLACKLIST.has(candidate.toLowerCase())) continue;
         if (this.knownLocationsLower.has(candidate.toLowerCase())) {
@@ -1747,10 +1763,9 @@ export class KnowledgeGraphService {
           await this.kgRepo.upsertEntity(userId, candidate, 'location', {}, sectionKey);
           continue;
         }
-        // Skip German common nouns that start uppercase (compound words > 7 chars)
-        if (!candidate.includes(' ') && candidate.length > 7 && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(candidate)) {
-          // Could be a compound noun like "Mittwoch", "Frühstück" — skip if suffix matches
-          if (/(?:ung|heit|keit|schaft|tion|tät|nis|ment|tag|zeit|stück)$/i.test(candidate)) continue;
+        // Skip German common nouns (suffix check without length restriction — no city ends in these)
+        if (!candidate.includes(' ') && /^[A-ZÄÖÜ][a-zäöüß]+$/.test(candidate)) {
+          if (KnowledgeGraphService.NOUN_SUFFIXES.test(candidate)) continue;
         }
         // Skip known entity names that are not locations
         if (this.cmdbEntityNames.has(candidate.toLowerCase())) continue;
