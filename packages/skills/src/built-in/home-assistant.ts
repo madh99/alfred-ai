@@ -22,10 +22,13 @@ type Action =
   | 'calendar_events'
   | 'error_log'
   | 'create_automation'
+  | 'update_automation'
   | 'delete_automation'
   | 'create_script'
+  | 'update_script'
   | 'delete_script'
   | 'create_scene'
+  | 'update_scene'
   | 'delete_scene'
   | 'briefing_summary'
   | 'energy_stats';
@@ -88,10 +91,13 @@ export class HomeAssistantSkill extends Skill {
             'calendar_events',
             'error_log',
             'create_automation',
+            'update_automation',
             'delete_automation',
             'create_script',
+            'update_script',
             'delete_script',
             'create_scene',
+            'update_scene',
             'delete_scene',
             'briefing_summary',
             'energy_stats',
@@ -260,14 +266,17 @@ export class HomeAssistantSkill extends Skill {
         case 'error_log':
           return await this.getErrorLog();
         case 'create_automation':
+        case 'update_automation':
           return await this.createConfig('automation', input.configId as string | undefined, input.configData as string | undefined);
         case 'delete_automation':
           return await this.deleteConfig('automation', input.configId as string | undefined);
         case 'create_script':
+        case 'update_script':
           return await this.createConfig('script', input.configId as string | undefined, input.configData as string | undefined);
         case 'delete_script':
           return await this.deleteConfig('script', input.configId as string | undefined);
         case 'create_scene':
+        case 'update_scene':
           return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined);
         case 'delete_scene':
           return await this.deleteConfig('scene', input.configId as string | undefined);

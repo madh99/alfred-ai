@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.405] - 2026-04-08
+
+### Added
+- **HomeAssistant: `update_automation/script/scene` Actions** — Aliases für `create_*` (HA Config API ist idempotent — POST mit gleicher ID = Update). Schließt die CRUD-Lücke die zu LLM-Halluzinationen führte.
+- **Reasoning: Action-Schema-Validierung** — Vorgeschlagene Actions werden gegen das Skill-Schema (`inputSchema.properties.action.enum`) validiert bevor sie ausgeführt oder in die Confirmation Queue enqueued werden. Halluzinierte Actions werden mit Warnung geloggt und übersprungen.
+
 ## [0.19.0-multi-ha.404] - 2026-04-08
 
 ### Fixed

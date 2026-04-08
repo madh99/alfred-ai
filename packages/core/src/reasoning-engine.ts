@@ -1127,6 +1127,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
 
         // High-risk or confirm_all mode -> confirmation queue
+        // Validate action before enqueuing (prevent hallucinated actions in queue)
+        const queueSkill = this.skillRegistry.get(action.skillName);
+        if (queueSkill && action.skillParams?.action) {
+          const qs = queueSkill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
+          const qValid = qs?.properties?.action?.enum;
+          if (qValid && !qValid.includes(action.skillParams.action as string)) {
+            this.logger.warn({ skillName: action.skillName, action: action.skillParams.action }, 'Reasoning: hallucinated action rejected before enqueue');
+            continue;
+          }
+        }
         if (!this.confirmationQueue) continue;
         await this.confirmationQueue.enqueue({
           chatId: this.defaultChatId,
@@ -1149,6 +1159,19 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
   private async executeDirectly(action: ProposedAction): Promise<void> {
     const skill = this.skillRegistry.get(action.skillName);
     if (!skill) return;
+
+    // Validate action against skill schema (prevent hallucinated actions)
+    const actionParam = action.skillParams?.action as string | undefined;
+    if (actionParam && skill.metadata.inputSchema) {
+      const schema = skill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } };
+      const validActions = schema.properties?.action?.enum;
+      if (validActions && !validActions.includes(actionParam)) {
+        this.logger.warn({ skillName: action.skillName, action: actionParam, validActions: validActions.join(',') },
+          'Reasoning: hallucinated action rejected — not in skill schema');
+        return;
+      }
+    }
+
     try {
       const { context } = await buildSkillContext(this.userRepo, {
         userId: this.defaultChatId,
