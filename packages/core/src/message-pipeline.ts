@@ -669,10 +669,12 @@ export class MessagePipeline {
       if (this.kgService) {
         try {
           personalContext = await this.kgService.buildPersonalContext(masterUserId) || undefined;
+          if (personalContext) this.logger.info({ chars: personalContext.length }, 'KG Tier 1: personalContext loaded');
         } catch { /* skip, not critical */ }
         // Query-aware KG context (Tier 2: entities relevant to this specific message)
         try {
           queryContext = await this.kgService.queryRelevantContext(masterUserId, message.text, personalContext) || undefined;
+          if (queryContext) this.logger.info({ chars: queryContext.length, preview: queryContext.slice(0, 120) }, 'KG Tier 2: queryContext loaded');
         } catch { /* skip, not critical */ }
       }
 
