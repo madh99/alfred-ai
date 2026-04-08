@@ -823,7 +823,7 @@ export class Alfred {
 
             // 3. Storage (cluster-wide)
             try {
-              const storageResult = await skillSandbox.execute(pxSkill, { action: 'list_storage' }, {} as any);
+              const storageResult = await skillSandbox.execute(pxSkill, { action: 'list_storage', node: '' }, {} as any);
               if (storageResult.success && Array.isArray(storageResult.data)) {
                 for (const s of storageResult.data as any[]) {
                   if (s.enabled === false || s.enabled === 0) continue;
@@ -2273,10 +2273,18 @@ export class Alfred {
           },
           listChanges: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listChangeRequests(await resolveUser(uid), filters as any),
           createChange: async (uid: string, data: Record<string, unknown>) => itsmRepo.createChangeRequest(await resolveUser(uid), data as any),
-          updateChange: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateChangeRequest(await resolveUser(uid), id, data as any),
+          updateChange: async (uid: string, id: string, data: Record<string, unknown>) => {
+            const mapped: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(data)) mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
+            return itsmRepo.updateChangeRequest(await resolveUser(uid), id, mapped as any);
+          },
           listServices: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listServices(await resolveUser(uid), filters as any),
           createService: async (uid: string, data: Record<string, unknown>) => itsmRepo.createService(await resolveUser(uid), data as any),
-          updateService: async (uid: string, id: string, data: Record<string, unknown>) => itsmRepo.updateService(await resolveUser(uid), id, data as any),
+          updateService: async (uid: string, id: string, data: Record<string, unknown>) => {
+            const mapped: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(data)) mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
+            return itsmRepo.updateService(await resolveUser(uid), id, mapped as any);
+          },
           healthCheck: async (uid: string) => {
             const itsmSkill = this.skillRegistry?.get('itsm');
             if (itsmSkill) return itsmSkill.execute({ action: 'health_check' }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);

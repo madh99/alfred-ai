@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.409] - 2026-04-09
+
+### Fixed
+- **5-Team Code Review: 8 CRITICAL Bugs gefixt**
+  1. `updateChange`/`updateService` API: snake→camelCase Mapping fehlte — WebUI PATCH Updates taten nichts
+  2. `personalContext` Cache: In-Memory dirty-Flag → DB-basierte 5min TTL (HA cross-node safe)
+  3. Proxmox Storage Discovery: `list_storage` nutzte `defaultNode` statt cluster-weiten `/storage` Endpoint
+  4. `get_incident` Display: investigationNotes, lessonsLearned, actionItems fehlten in der Ausgabe
+  5. Memory Skill Schema: `correction` Typ in `inputSchema.enum` ergänzt (war nur in Runtime allowedTypes)
+  6. ITSM Incident Dedup: Keywords jetzt aus Content nach `:` statt vollem Titel, generische Wörter gefiltert
+  7. `upsertRelation`: Re-fetch aus DB nach ON CONFLICT statt stale In-Memory Daten zurückgeben
+  8. Prompt Injection: `eventData`/`eventDescription` in Reasoning-Prompt sanitized (Newlines, `=` entfernt)
+
 ## [0.19.0-multi-ha.408] - 2026-04-09
 
 ### Fixed

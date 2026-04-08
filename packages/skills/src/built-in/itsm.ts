@@ -137,7 +137,10 @@ export class ItsmSkill extends Skill {
     if (!title) return { success: false, error: 'title erforderlich' };
 
     // Dedup: check if a similar incident is already open
-    const keywords = title.split(/\s+/).filter(w => w.length >= 4).map(w => w.toLowerCase());
+    // Use content after ':' for keywords (strip generic prefix like "Monitor:", "homeassistant:")
+    const afterColon = title.includes(':') ? title.split(':').slice(1).join(':').trim() : title;
+    const GENERIC_KEYWORDS = new Set(['device', 'state', 'status', 'check', 'alert', 'monitor', 'connected', 'failed', 'error', 'down', 'unavailable']);
+    const keywords = afterColon.split(/\s+/).filter(w => w.length >= 4 && !GENERIC_KEYWORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
     const sourceLabel = title.split(':')[0]?.trim() || '';
     const existing = await this.itsm.findOpenIncidentForAsset(userId, sourceLabel, keywords);
     if (existing) {
@@ -225,9 +228,12 @@ export class ItsmSkill extends Skill {
       '',
       assetNames.length > 0 ? `### Betroffene Assets\n${assetNames.map(n => `- ${n}`).join('\n')}` : '',
       inc.symptoms ? `### Symptome\n${inc.symptoms}` : '',
+      inc.investigationNotes ? `### Untersuchungsnotizen\n${inc.investigationNotes}` : '',
       inc.rootCause ? `### Root Cause\n${inc.rootCause}` : '',
       inc.resolution ? `### Resolution\n${inc.resolution}` : '',
       inc.workaround ? `### Workaround\n${inc.workaround}` : '',
+      inc.lessonsLearned ? `### Lessons Learned\n${inc.lessonsLearned}` : '',
+      inc.actionItems ? `### Action Items\n${inc.actionItems}` : '',
       inc.relatedIncidentId ? `### Verwandter Incident\nID: ${inc.relatedIncidentId}` : '',
     ].filter(Boolean).join('\n');
 

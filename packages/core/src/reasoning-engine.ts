@@ -200,9 +200,9 @@ export class ReasoningEngine {
       // Scan pass: quick analysis of event in context
       const scanPrompt = `Du bist Alfreds holistisches Denk-Modul. Ein Event ist eingetreten:
 
-EVENT: ${eventType}
-DETAILS: ${eventDescription}
-DATEN: ${JSON.stringify(eventData).slice(0, 500)}
+EVENT: ${String(eventType).replace(/[=\n\r]/g, ' ').slice(0, 100)}
+DETAILS: ${String(eventDescription).replace(/[=\n\r]/g, ' ').slice(0, 300)}
+DATEN: ${JSON.stringify(eventData).replace(/[=\n\r]/g, ' ').slice(0, 500)}
 
 KONTEXT (alle verfügbaren Datenquellen + Knowledge Graph):
 ${this.formatSections(context)}

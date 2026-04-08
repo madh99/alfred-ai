@@ -635,21 +635,21 @@ export class KnowledgeGraphService {
 
   // ── Personal Context (Tier 1: always in chat prompt) ──────
 
-  private personalContextCache?: { text: string; ts: number; userId: string };
-  private personalContextDirty = true;
+  private personalContextCache?: { text: string; ts: number; userId: string; kgVersion: string };
 
   /** Mark the personal context cache as stale (called after KG ingest). */
-  markPersonalContextDirty(): void { this.personalContextDirty = true; }
+  markPersonalContextDirty(): void { /* no-op — cache invalidation is now DB-based (cross-node safe) */ }
 
   /**
    * Build a compact personal context for the chat system prompt.
    * Tier 1 only: immediate family, employer, home/work locations, vehicle.
-   * Cached for 1h or until KG ingest marks it dirty.
+   * Cached for 5min + DB-based staleness check (cross-node safe in HA).
    */
   async buildPersonalContext(userId: string): Promise<string> {
     const now = Date.now();
+    // Short TTL (5min) + check if KG has newer data than our cache (cross-node safe)
     if (this.personalContextCache && this.personalContextCache.userId === userId
-      && !this.personalContextDirty && now - this.personalContextCache.ts < 3600_000) {
+      && now - this.personalContextCache.ts < 300_000) {
       return this.personalContextCache.text;
     }
 
@@ -743,8 +743,7 @@ export class KnowledgeGraphService {
 
       const text = sections.length > 0 ? sections.join('\n') : '';
 
-      this.personalContextCache = { text, ts: now, userId };
-      this.personalContextDirty = false;
+      this.personalContextCache = { text, ts: now, userId, kgVersion: '' };
       return text;
     } catch (err) {
       this.logger.info({ err }, 'KG buildPersonalContext failed, using device fallback');

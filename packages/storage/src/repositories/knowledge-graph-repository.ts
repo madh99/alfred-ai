@@ -327,6 +327,12 @@ export class KnowledgeGraphRepository {
       // Race condition — relation was created by parallel call
     }
 
+    // Re-fetch from DB to return actual state (handles ON CONFLICT updates + race conditions)
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?',
+      [userId, sourceId, targetId, relationType],
+    ) as Record<string, unknown> | null;
+    if (row) return this.mapRelation(row);
     return {
       id, userId, sourceEntityId: sourceId, targetEntityId: targetId,
       relationType, strength: 0.5, context: context ?? null,

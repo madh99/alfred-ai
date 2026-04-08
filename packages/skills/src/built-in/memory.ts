@@ -42,8 +42,8 @@ export class MemorySkill extends Skill {
         },
         type: {
           type: 'string',
-          enum: ['entity', 'fact', 'general', 'preference'],
-          description: 'Memory type: entity (people, pets, orgs), fact (addresses, dates, accounts), preference, or general (default)',
+          enum: ['entity', 'fact', 'general', 'preference', 'correction'],
+          description: 'Memory type: entity (people, pets, orgs), fact (addresses, dates, accounts), preference, correction (user-corrected facts), or general (default)',
         },
         query: {
           type: 'string',
