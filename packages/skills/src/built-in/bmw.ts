@@ -406,8 +406,22 @@ export class BMWSkill extends Skill {
 
   private async reconnectWithFreshToken(): Promise<void> {
     try {
-      // Always reload tokens from disk/DB first — another node or a fresh authorize may have saved new ones
-      const freshFromDisk = await this.loadTokens();
+      // Always reload tokens from disk/DB first — try all known userId paths
+      // (authorize may save under a different userId than streaming uses)
+      let freshFromDisk = await this.loadTokens();
+      if (!freshFromDisk || (freshFromDisk.expiresAt && freshFromDisk.expiresAt < Date.now())) {
+        // Current userId token is expired/missing — try other paths
+        const savedUserId = this.activeUserId;
+        for (const uid of ['default', this.injectedAlfredUserId ?? ''].filter(Boolean)) {
+          if (uid === savedUserId) continue;
+          this.activeUserId = uid;
+          const alt = await this.loadTokens();
+          if (alt && alt.refreshToken && (!freshFromDisk || (alt.expiresAt ?? 0) > (freshFromDisk.expiresAt ?? 0))) {
+            freshFromDisk = alt;
+          }
+        }
+        this.activeUserId = savedUserId;
+      }
       if (freshFromDisk) this.tokens = freshFromDisk;
 
       // Try to refresh the token
