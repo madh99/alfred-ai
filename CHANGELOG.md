@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.420] - 2026-04-09
+
+### Fixed
+- **BMW MQTT: Token-Reload vor Reconnect** — `reconnectWithFreshToken()` lädt jetzt IMMER den Token von Disk/DB bevor er refresht wird. Wenn ein `bmw authorize` auf einem anderen Node oder über Chat einen frischen Token gespeichert hat, wird dieser beim nächsten Reconnect gefunden statt den alten ungültigen Token endlos zu recyclen.
+
 ## [0.19.0-multi-ha.419] - 2026-04-09
 
 ### Fixed

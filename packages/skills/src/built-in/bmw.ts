@@ -406,7 +406,11 @@ export class BMWSkill extends Skill {
 
   private async reconnectWithFreshToken(): Promise<void> {
     try {
-      // Refresh the token
+      // Always reload tokens from disk/DB first — another node or a fresh authorize may have saved new ones
+      const freshFromDisk = await this.loadTokens();
+      if (freshFromDisk) this.tokens = freshFromDisk;
+
+      // Try to refresh the token
       const tokens = this.tokens;
       if (tokens) {
         await this.refreshAccessToken(tokens);
@@ -420,8 +424,8 @@ export class BMWSkill extends Skill {
       // Reconnect with new token
       await this.startStreaming();
     } catch {
-      // Retry in 5 minutes
-      this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), 300_000);
+      // Schedule retry — will reload tokens from disk on next attempt
+      this.scheduleReconnect(true);
     }
   }
 
