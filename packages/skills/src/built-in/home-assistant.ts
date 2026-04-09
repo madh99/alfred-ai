@@ -266,18 +266,21 @@ export class HomeAssistantSkill extends Skill {
         case 'error_log':
           return await this.getErrorLog();
         case 'create_automation':
+          return await this.createConfig('automation', input.configId as string | undefined, input.configData as string | undefined, false);
         case 'update_automation':
-          return await this.createConfig('automation', input.configId as string | undefined, input.configData as string | undefined);
+          return await this.createConfig('automation', input.configId as string | undefined, input.configData as string | undefined, true);
         case 'delete_automation':
           return await this.deleteConfig('automation', input.configId as string | undefined);
         case 'create_script':
+          return await this.createConfig('script', input.configId as string | undefined, input.configData as string | undefined, false);
         case 'update_script':
-          return await this.createConfig('script', input.configId as string | undefined, input.configData as string | undefined);
+          return await this.createConfig('script', input.configId as string | undefined, input.configData as string | undefined, true);
         case 'delete_script':
           return await this.deleteConfig('script', input.configId as string | undefined);
         case 'create_scene':
+          return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined, false);
         case 'update_scene':
-          return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined);
+          return await this.createConfig('scene', input.configId as string | undefined, input.configData as string | undefined, true);
         case 'delete_scene':
           return await this.deleteConfig('scene', input.configId as string | undefined);
         case 'briefing_summary':
@@ -1411,12 +1414,14 @@ export class HomeAssistantSkill extends Skill {
     type: 'automation' | 'script' | 'scene',
     configId?: string,
     configDataStr?: string,
+    isUpdate = false,
   ): Promise<SkillResult> {
+    const verb = isUpdate ? 'update' : 'create';
     if (!configId) {
-      return { success: false, error: `Missing required "configId" for create_${type}` };
+      return { success: false, error: `Missing required "configId" for ${verb}_${type}` };
     }
     if (!configDataStr) {
-      return { success: false, error: `Missing required "configData" for create_${type}` };
+      return { success: false, error: `Missing required "configData" for ${verb}_${type}` };
     }
 
     let configData: Record<string, unknown>;
@@ -1432,7 +1437,7 @@ export class HomeAssistantSkill extends Skill {
     return {
       success: true,
       data: result,
-      display: `**${type} created:** \`${configId}\`\n\n${configData.alias ?? configData.name ?? configId}`,
+      display: `**${type} ${isUpdate ? 'updated' : 'created'}:** \`${configId}\`\n\n${configData.alias ?? configData.name ?? configId}`,
     };
   }
 

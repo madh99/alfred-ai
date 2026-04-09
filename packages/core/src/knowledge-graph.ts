@@ -108,9 +108,9 @@ export class KnowledgeGraphService {
   /** Names of CMDB-managed assets — excluded from text extraction to avoid double-creation. */
   private cmdbEntityNames = new Set<string>();
   /** Dynamically learned location names (lowercase) — seeded from SEED_LOCATIONS + KG entities of type 'location'. */
-  private knownLocationsLower = new Set(SEED_LOCATIONS.map(l => l.toLowerCase()));
+  private knownLocationsLower = new Set(SEED_LOCATIONS.filter(l => KnowledgeGraphService.isPlausibleLocation(l)).map(l => l.toLowerCase()));
   /** Original-case map for location names (lowercase → display name). */
-  private knownLocationsMap = new Map(SEED_LOCATIONS.map(l => [l.toLowerCase(), l]));
+  private knownLocationsMap = new Map(SEED_LOCATIONS.filter(l => KnowledgeGraphService.isPlausibleLocation(l)).map(l => [l.toLowerCase(), l]));
   /** Cached user real name from profile (resolved once). */
   private userRealName?: string;
 
@@ -861,7 +861,8 @@ export class KnowledgeGraphService {
         if (r.relationType === 'family') {
           const target = entityById.get(r.targetEntityId);
           if (target) {
-            const key = (target.attributes?.memoryKey as string ?? '').toLowerCase();
+            // Check both entity attribute memoryKey AND relation context for role detection
+            const key = ((target.attributes?.memoryKey as string ?? '') + ' ' + (r.context ?? '')).toLowerCase();
             if (key.includes('mother') || key.includes('mutter')) motherId = r.targetEntityId;
             if (key.includes('father') || key.includes('vater')) fatherId = r.targetEntityId;
             if (key.includes('sister') || key.includes('schwester') || key.includes('brother') || key.includes('bruder')) {

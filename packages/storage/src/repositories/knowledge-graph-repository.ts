@@ -246,7 +246,7 @@ export class KnowledgeGraphRepository {
 
   /**
    * Search entities by name and return them with their 1-hop relations + related entity names.
-   * Single query — avoids N+1 lookups.
+   * Search + per-entity relation fetch (bounded N+1 with limit cap).
    */
   async searchEntitiesWithRelations(userId: string, query: string, limit = 5): Promise<Array<{
     entity: KGEntity;

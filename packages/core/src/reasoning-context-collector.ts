@@ -121,7 +121,7 @@ export class ReasoningContextCollector {
           label: src.label,
           priority: src.priority,
           content,
-          tokenEstimate: Math.ceil(content.length / 4),
+          tokenEstimate: Math.ceil(content.length / 3.5),
           changed: false, // set below
         };
       }),
@@ -711,13 +711,15 @@ export class ReasoningContextCollector {
       const cutoff48h = new Date(Date.now() - 48 * 60 * 60_000).toISOString();
       const lines: string[] = [];
 
-      // Fetch delivered insights (last 48h)
-      const delivered = await this.memoryRepo.search(userId, 'insight_delivered');
+      // Fetch delivered insights (last 48h) — filter by key prefix to avoid false positives
+      const deliveredRaw = await this.memoryRepo.search(userId, 'insight_delivered');
+      const delivered = deliveredRaw.filter(m => m.key.startsWith('insight_delivered:'));
       const recent = delivered.filter(m => m.updatedAt > cutoff48h);
       if (recent.length === 0) return '';
 
-      // Fetch resolved insights
-      const resolved = await this.memoryRepo.search(userId, 'insight_resolved');
+      // Fetch resolved insights — filter by key prefix
+      const resolvedRaw = await this.memoryRepo.search(userId, 'insight_resolved');
+      const resolved = resolvedRaw.filter(m => m.key.startsWith('insight_resolved:'));
       const resolvedTopics = new Set(resolved.map(m => m.key.replace('insight_resolved:', '')));
 
       for (const m of recent.slice(0, 5)) {
@@ -1010,7 +1012,7 @@ export class ReasoningContextCollector {
 
     for (const r of settled) {
       if (r.status !== 'fulfilled' || !r.value.content) continue;
-      const est = Math.ceil(r.value.content.length / 4);
+      const est = Math.ceil(r.value.content.length / 3.5);
       if (usedTokens + est > ReasoningContextCollector.MAX_ENRICHMENT_TOKENS) {
         const remaining = (ReasoningContextCollector.MAX_ENRICHMENT_TOKENS - usedTokens) * 4;
         if (remaining > 100) {

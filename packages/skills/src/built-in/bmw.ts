@@ -1228,7 +1228,10 @@ export class BMWSkill extends Skill {
       const data = await this.apiGet<Record<string, unknown>>(
         `/customers/vehicles/${vin}/chargingHistory?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`,
       );
-      allSessions.push(...((data.data ?? data.chargingSessions ?? []) as Array<Record<string, unknown>>));
+      for (const s of ((data.data ?? data.chargingSessions ?? []) as Array<Record<string, unknown>>)) {
+        const key = `${s.startTime}-${s.endTime}`;
+        if (!seenIds.has(key)) { seenIds.add(key); allSessions.push(s); }
+      }
     }
 
     const lines = [

@@ -135,7 +135,7 @@ export class InfraDocsSkill extends Skill {
       idLabel.set(a.id, label);
       // Mermaid node shapes by type
       const shapes: Record<string, string> = {
-        cluster: `${label}[[["${a.name}"]]]`,     // subroutine (double border)
+        cluster: `${label}[["${a.name}"]]`,        // subroutine shape
         server: `${label}[["${a.name}"]]`,        // stadium
         vm: `${label}["${a.name}"]`,              // rect
         lxc: `${label}["${a.name}"]`,

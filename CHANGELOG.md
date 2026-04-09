@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.411] - 2026-04-09
+
+### Fixed
+- **Code Review: 10 MEDIUM Bugs gefixt**
+  1. `fetchInsightTracking`: Key-Prefix-Filter statt LIKE-Suche (verhindert false positives)
+  2. Token-Schätzung: `/4` → `/3.5` im Reasoning-Collector (konsistent mit prompt-builder)
+  3. Family Inference: liest jetzt `rel.context` UND `memoryKey` für Mutter/Vater/Geschwister-Erkennung
+  4. `searchEntitiesWithRelations`: Kommentar korrigiert ("bounded N+1" statt "Single query")
+  5. HA `update_*` Actions: zeigen jetzt "updated" statt "created" in Success-Message
+  6. InfraDocs Mermaid: Cluster-Shape `[[[...]]]` → `[[...]]` (valides Subroutine-Shape)
+  7. BMW Non-Chunked Path: Dedup mit `seenIds` Set (konsistent mit Chunked-Path)
+  8. SEED_LOCATIONS: durchlaufen jetzt `isPlausibleLocation()` Gate bei Initialisierung
+  9. (MEDIUM 24/25/31 übersprungen — Frontend Tags Typ-Mismatch, doppelter Fetch, ON CONFLICT Doku — niedrig priorisiert)
+
 ## [0.19.0-multi-ha.410] - 2026-04-09
 
 ### Fixed
