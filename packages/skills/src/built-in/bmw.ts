@@ -226,6 +226,7 @@ export class BMWSkill extends Skill {
   private mqttReconnectTimer?: ReturnType<typeof setTimeout>;
   private mqttDbWriteTimer?: ReturnType<typeof setTimeout>;
   private mqttReconnectAttempts = 0;
+  private mqttLastCloseWasError = false;
   private streamingActive = false;
 
   constructor(config: BMWCarDataConfig) {
@@ -246,7 +247,13 @@ export class BMWSkill extends Skill {
 
   /** Start MQTT streaming if configured. Call after authorization. */
   async startStreaming(): Promise<void> {
-    if (this.streamingActive || !this.config?.streaming?.enabled) return;
+    if (!this.config?.streaming?.enabled) return;
+    // If old client exists but is not active, clean it up first
+    if (!this.streamingActive && this.mqttClient) {
+      try { this.mqttClient.end(true); } catch { /* ignore */ }
+      this.mqttClient = undefined;
+    }
+    if (this.streamingActive) return;
     const { username, topic } = this.config.streaming;
     if (!username || !topic) return;
 
@@ -347,6 +354,7 @@ export class BMWSkill extends Skill {
 
       this.mqttClient.on('error', (err: unknown) => {
         this.streamingActive = false;
+        this.mqttLastCloseWasError = true;
         console.warn('[BMW MQTT] Error:', err);
       });
 
@@ -360,8 +368,17 @@ export class BMWSkill extends Skill {
 
       this.mqttClient.on('close', () => {
         this.streamingActive = false;
-        console.log('[BMW MQTT] Connection closed, scheduling reconnect...');
-        this.scheduleReconnect();
+        const wasError = this.mqttLastCloseWasError;
+        this.mqttLastCloseWasError = false;
+        if (wasError) {
+          // Auth error / connection refused → exponential backoff
+          console.log('[BMW MQTT] Connection closed after error, scheduling backoff reconnect...');
+          this.scheduleReconnect(true);
+        } else {
+          // Normal disconnect (BMW closes idle connections) → fixed 60s reconnect, no backoff
+          console.log('[BMW MQTT] Connection closed (normal), reconnect in 60s...');
+          this.scheduleReconnect(false);
+        }
       });
 
       // Schedule token refresh before expiry
@@ -372,12 +389,18 @@ export class BMWSkill extends Skill {
     } catch (err) { console.warn('[BMW MQTT] Streaming setup failed:', err); }
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(useBackoff = true): void {
     if (this.mqttReconnectTimer) clearTimeout(this.mqttReconnectTimer);
-    // Exponential backoff: 60s → 120s → 240s → ... → max 15 min
-    this.mqttReconnectAttempts++;
-    const delay = Math.min(60_000 * Math.pow(2, Math.min(this.mqttReconnectAttempts - 1, 4)), 15 * 60_000);
-    console.log(`[BMW MQTT] Reconnect in ${Math.round(delay / 1000)}s (attempt ${this.mqttReconnectAttempts})`);
+    let delay: number;
+    if (useBackoff) {
+      // Exponential backoff for errors: 60s → 120s → 240s → ... → max 15 min
+      this.mqttReconnectAttempts++;
+      delay = Math.min(60_000 * Math.pow(2, Math.min(this.mqttReconnectAttempts - 1, 4)), 15 * 60_000);
+    } else {
+      // Normal disconnect (BMW idle close) → fixed 60s, no counter increment
+      delay = 60_000;
+    }
+    console.log(`[BMW MQTT] Reconnect in ${Math.round(delay / 1000)}s (attempt ${this.mqttReconnectAttempts}, backoff=${useBackoff})`);
     this.mqttReconnectTimer = setTimeout(() => this.reconnectWithFreshToken(), delay);
   }
 
@@ -643,8 +666,10 @@ export class BMWSkill extends Skill {
       this.startStreaming().catch(() => {});
     }
 
-    // Reset rate limit flag (new token = fresh session)
+    // Reset rate limit + MQTT backoff (new token = fresh session)
     this.rateLimitedUntil = 0;
+    this.mqttReconnectAttempts = 0;
+    this.mqttLastCloseWasError = false;
 
     const lines = [
       '## BMW Autorisierung erfolgreich',

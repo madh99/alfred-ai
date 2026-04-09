@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.418] - 2026-04-09
+
+### Fixed
+- **BMW MQTT: Reconnect-Logik überarbeitet**
+  - Normal-Disconnect (BMW schließt Idle-Verbindungen) → fester 60s Reconnect, KEIN Backoff
+  - Error-Disconnect (Bad Password, Connection Refused) → Exponential Backoff wie bisher
+  - Authorize → setzt Backoff-Counter + Error-Flag auf 0 zurück
+  - `startStreaming()` Guard gelockert: disconnected Client wird aufgeräumt statt blockiert
+
 ## [0.19.0-multi-ha.417] - 2026-04-09
 
 ### Added
