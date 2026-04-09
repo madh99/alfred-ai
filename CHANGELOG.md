@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.419] - 2026-04-09
+
+### Fixed
+- **BMW: Token-Refresh Resilienz** — 3 Ursachen für häufiges Re-Authorize behoben:
+  1. `this.tokens = null` nur noch bei echtem 400/401 (invalid refresh token), NICHT bei Netzwerk-Fehlern oder 5xx. Transiente Fehler → Token bleibt im RAM, nächster Reconnect versucht erneut.
+  2. Retry-Mechanismus: 1 automatischer Retry nach 3s bei Netzwerk/Timeout/5xx Fehlern.
+  3. Logging: BMW-API Response-Status wird geloggt bei Fehler (vorher nur generischer Fehlertext).
+
 ## [0.19.0-multi-ha.418] - 2026-04-09
 
 ### Fixed

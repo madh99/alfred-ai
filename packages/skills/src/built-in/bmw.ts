@@ -949,39 +949,62 @@ export class BMWSkill extends Skill {
   }
 
   private async refreshAccessToken(tokens: BMWTokens): Promise<string> {
-    const res = await fetch(TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: this.cfg.clientId,
-        grant_type: 'refresh_token',
-        refresh_token: tokens.refreshToken,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    // Retry once on transient errors
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(TOKEN_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: this.cfg.clientId,
+            grant_type: 'refresh_token',
+            refresh_token: tokens.refreshToken,
+          }),
+          signal: AbortSignal.timeout(15_000),
+        });
 
-    if (!res.ok) {
-      this.tokens = null;
-      throw new Error(
-        'Token-Refresh fehlgeschlagen. Bitte erneut "authorize" aufrufen.',
-      );
+        if (res.ok) {
+          const data = (await res.json()) as Record<string, unknown>;
+          const updated: BMWTokens = {
+            ...tokens,
+            accessToken: data.access_token as string,
+            refreshToken: (data.refresh_token as string) ?? tokens.refreshToken,
+            idToken: (data.id_token as string) ?? tokens.idToken,
+            expiresAt: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
+          };
+          delete updated.codeVerifier;
+          delete updated.deviceCode;
+          await this.saveTokens(updated);
+          this.tokens = updated;
+          return updated.accessToken;
+        }
+
+        // 400/401 = refresh token truly invalid → no retry
+        if (res.status === 400 || res.status === 401) {
+          const body = await res.text().catch(() => '');
+          console.warn(`[BMW] Token refresh permanently failed (${res.status}): ${body.slice(0, 200)}`);
+          this.tokens = null;
+          throw new Error('Token-Refresh fehlgeschlagen. Bitte erneut "authorize" aufrufen.');
+        }
+
+        // 5xx or other → transient, retry after delay
+        console.warn(`[BMW] Token refresh failed (${res.status}), attempt ${attempt + 1}/2`);
+        if (attempt === 0) await new Promise(r => setTimeout(r, 3000));
+      } catch (err) {
+        // Network/timeout error → retry
+        if (attempt === 0) {
+          console.warn('[BMW] Token refresh network error, retrying in 3s...', err);
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        // Second attempt also failed → keep tokens in RAM (don't null them!), reload from disk on next try
+        console.warn('[BMW] Token refresh failed after 2 attempts, keeping tokens for next retry');
+        throw new Error('Token-Refresh fehlgeschlagen (Netzwerk). Nächster Versuch beim nächsten Reconnect.');
+      }
     }
 
-    const data = (await res.json()) as Record<string, unknown>;
-    const updated: BMWTokens = {
-      ...tokens,
-      accessToken: data.access_token as string,
-      refreshToken: (data.refresh_token as string) ?? tokens.refreshToken,
-      idToken: (data.id_token as string) ?? tokens.idToken,
-      expiresAt: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
-    };
-    // Clear temporary auth fields
-    delete updated.codeVerifier;
-    delete updated.deviceCode;
-
-    await this.saveTokens(updated);
-    this.tokens = updated;
-    return updated.accessToken;
+    // Should not reach here, but just in case
+    throw new Error('Token-Refresh fehlgeschlagen.');
   }
 
   private async resolveVin(inputVin?: string): Promise<string> {
