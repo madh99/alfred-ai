@@ -974,7 +974,7 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         if (!this.activityProfile) {
           this.activityProfile = await this.deliveryScheduler.loadOrComputeProfile(this.defaultChatId);
         }
-        deliver = this.deliveryScheduler.shouldDeliverNow(urgency, this.activityProfile);
+        deliver = await this.deliveryScheduler.shouldDeliverNow(urgency, this.activityProfile, this.resolvedOwnerUserId);
       } catch { deliver = true; /* fallback: deliver */ }
     }
 

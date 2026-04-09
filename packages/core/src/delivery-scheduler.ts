@@ -153,13 +153,30 @@ export class DeliveryScheduler {
     return profile;
   }
 
-  /** Should this insight be delivered now, or deferred? */
-  shouldDeliverNow(urgency: Urgency, profile: ActivityProfile): boolean {
+  /** Should this insight be delivered now, or deferred? Checks realtime activity first, then profile. */
+  async shouldDeliverNow(urgency: Urgency, profile: ActivityProfile, userId?: string): Promise<boolean> {
     if (urgency === 'urgent') return true;
-    // If profile is too young (<7 days of data), always deliver (not enough data to defer)
+
+    // Realtime activity check: if user sent a message in the last 30 minutes → always deliver
+    if (userId) {
+      try {
+        const row = await this.adapter.queryOne(
+          `SELECT MAX(created_at) as latest FROM messages WHERE conversation_id IN (
+            SELECT id FROM conversations WHERE user_id = ?
+          ) AND role = 'user'`,
+          [userId],
+        ) as { latest: string } | undefined;
+        if (row?.latest) {
+          const lastActive = new Date(row.latest).getTime();
+          if (Date.now() - lastActive < 30 * 60_000) return true;
+        }
+      } catch { /* fallback to profile-based check */ }
+    }
+
+    // Profile-based: if profile is too young (<7 days of data), always deliver
     const profileAge = Date.now() - new Date(profile.computedAt).getTime();
     const hasActiveHours = profile.classifications.some(c => c === 'ACTIVE' || c === 'WAKING');
-    if (profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours) return true; // <3 days, no active hours → deliver
+    if (profileAge < 3 * 24 * 60 * 60_000 && !hasActiveHours) return true;
     const hour = this.getHourInUserTz();
     const currentClass = profile.classifications[hour];
     const minClass = MIN_HOUR_CLASS[urgency];
