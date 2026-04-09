@@ -325,6 +325,47 @@ ${this.buildTopicInstructions()}`;
       } catch { this.resolvedOwnerUserId = this.defaultChatId; }
     }
 
+    // Flush deferred insights if user recently active (cross-node safe — checks DB, not RAM)
+    if (this.deliveryScheduler) {
+      try {
+        const deferred = await this.deliveryScheduler.getPendingDeferred(this.defaultChatId);
+        if (deferred.length > 0) {
+          // Check last user message timestamp from DB (cross-node activity detection)
+          const lastMsg = await this.adapter?.queryOne(
+            `SELECT MAX(created_at) as latest FROM messages WHERE conversation_id IN (
+              SELECT id FROM conversations WHERE user_id = ?
+            ) AND role = 'user'`,
+            [this.resolvedOwnerUserId],
+          ) as { latest: string } | undefined;
+          const lastActive = lastMsg?.latest ? new Date(lastMsg.latest).getTime() : 0;
+          const recentlyActive = (Date.now() - lastActive) < 30 * 60_000; // Active in last 30min
+
+          if (recentlyActive) {
+            const adapter = this.adapters.get(this.defaultPlatform);
+            if (adapter) {
+              for (const d of deferred) {
+                let msg = d.message;
+                if (d.created_at) {
+                  const ageMin = Math.round((Date.now() - new Date(d.created_at).getTime()) / 60_000);
+                  if (ageMin > 30) {
+                    const ageStr = ageMin >= 120 ? `${Math.round(ageMin / 60)}h` : `${ageMin} Min`;
+                    msg = msg.replace(/^(💡 \*\*Alfred Insights\*\*)/, `$1 _(erstellt vor ${ageStr})_`);
+                  }
+                }
+                await adapter.sendMessage(this.defaultChatId, msg);
+                try {
+                  const deferredActions = JSON.parse(d.actions) as ProposedAction[];
+                  if (deferredActions.length > 0) await this.processActions(deferredActions);
+                } catch { /* no actions */ }
+              }
+              await this.deliveryScheduler.markDelivered(deferred.map(d => d.id));
+              this.logger.info({ count: deferred.length }, 'Deferred insights flushed (cross-node activity detected)');
+            }
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
     try {
       // Distributed dedup: only one node runs reasoning per slot
       // For half_hourly: include minute bucket (e.g. reasoning:2026-04-01T10:00 vs :30)

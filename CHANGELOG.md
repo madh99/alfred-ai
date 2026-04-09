@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.422] - 2026-04-09
+
+### Fixed
+- **Reasoning: Deferred Insights Cross-Node Flush** — Flush-Check am Anfang jedes Reasoning-Ticks statt nur innerhalb `deliverOrDefer()`. Activity-Detection via DB-Query (letzter User-Message Timestamp), nicht lokaler RAM. Funktioniert cross-node: Reasoning auf .93 erkennt User-Activity auf .92.
+
 ## [0.19.0-multi-ha.420] - 2026-04-09
 
 ### Fixed
