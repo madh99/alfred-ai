@@ -5,7 +5,7 @@ import { Skill } from '../skill.js';
 
 type Action =
   | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'close_incident'
-  | 'create_change_request' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
+  | 'create_change_request' | 'update_change' | 'get_change' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard';
 
 export class ItsmSkill extends Skill {
@@ -20,6 +20,8 @@ export class ItsmSkill extends Skill {
       '"get_incident" zeigt Incident-Details (incident_id). ' +
       '"close_incident" schließt mit Resolution (incident_id, resolution). ' +
       '"create_change_request" plant eine Änderung (title, type, risk_level, implementation_plan, rollback_plan). ' +
+      '"update_change" aktualisiert (change_id, description, implementation_plan, rollback_plan, test_plan, risk_level, result). ' +
+      '"get_change" zeigt Change-Details (change_id). ' +
       '"approve_change" genehmigt (change_id). ' +
       '"start_change" markiert als in Arbeit (change_id). ' +
       '"complete_change" schließt ab (change_id, result). ' +
@@ -37,7 +39,7 @@ export class ItsmSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         service_id: { type: 'string' },
@@ -111,6 +113,8 @@ export class ItsmSkill extends Skill {
         case 'get_incident': return await this.getIncident(userId, input.incident_id as string);
         case 'close_incident': return await this.closeIncident(userId, input);
         case 'create_change_request': return await this.createChangeRequest(userId, input);
+        case 'update_change': return await this.updateChange(userId, input);
+        case 'get_change': return await this.getChange(userId, input.change_id as string);
         case 'approve_change': return await this.approveChange(userId, input.change_id as string);
         case 'start_change': return await this.startChange(userId, input.change_id as string);
         case 'complete_change': return await this.completeChange(userId, input);
@@ -271,6 +275,46 @@ export class ItsmSkill extends Skill {
     });
 
     return { success: true, data: cr, display: `📋 Change Request erstellt: **${cr.title}** (${cr.type}, ${cr.riskLevel}) — ID: ${cr.id}` };
+  }
+
+  private async updateChange(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const id = input.change_id as string;
+    if (!id) return { success: false, error: 'change_id erforderlich' };
+
+    const updates: Record<string, unknown> = {};
+    for (const key of ['title', 'description', 'type', 'risk_level', 'status', 'implementation_plan', 'rollback_plan', 'test_plan', 'result', 'scheduled_at']) {
+      const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      if (input[key] !== undefined) updates[camelKey] = input[key];
+    }
+    if (input.affected_asset_ids) updates.affectedAssetIds = input.affected_asset_ids;
+    if (input.affected_service_ids) updates.affectedServiceIds = input.affected_service_ids;
+
+    const result = await this.itsm.updateChangeRequest(userId, id, updates as any);
+    if (!result) return { success: false, error: `Change ${id} nicht gefunden` };
+    return { success: true, data: result, display: `✅ Change **${result.title}** aktualisiert (Status: ${result.status})` };
+  }
+
+  private async getChange(userId: string, changeId: string): Promise<SkillResult> {
+    if (!changeId) return { success: false, error: 'change_id erforderlich' };
+    const changes = await this.itsm.listChangeRequests(userId, {});
+    const cr = changes.find(c => c.id === changeId || c.id.startsWith(changeId));
+    if (!cr) return { success: false, error: `Change ${changeId} nicht gefunden` };
+
+    const display = [
+      `## ${cr.title}`,
+      `**Typ:** ${cr.type} | **Risiko:** ${cr.riskLevel} | **Status:** ${cr.status}`,
+      cr.scheduledAt ? `**Geplant:** ${cr.scheduledAt.slice(0, 16)}` : '',
+      cr.startedAt ? `**Gestartet:** ${cr.startedAt.slice(0, 16)}` : '',
+      cr.completedAt ? `**Abgeschlossen:** ${cr.completedAt.slice(0, 16)}` : '',
+      '',
+      cr.description ? `### Beschreibung\n${cr.description}` : '',
+      cr.implementationPlan ? `### Implementation Plan\n${cr.implementationPlan}` : '',
+      cr.rollbackPlan ? `### Rollback Plan\n${cr.rollbackPlan}` : '',
+      cr.testPlan ? `### Test Plan\n${cr.testPlan}` : '',
+      cr.result ? `### Ergebnis\n${cr.result}` : '',
+    ].filter(Boolean).join('\n');
+
+    return { success: true, data: cr, display };
   }
 
   private async approveChange(userId: string, changeId: string): Promise<SkillResult> {

@@ -438,9 +438,42 @@ export function ItsmPage() {
     } catch (e) { setError((e as Error).message); }
   }
 
-  async function updateChangeStatus(id: string, status: string) {
+  // Change transition modal state
+  const [changeTransitionModal, setChangeTransitionModal] = useState<TransitionModalConfig | null>(null);
+  const [changeTransitionFields, setChangeTransitionFields] = useState<Record<string, string>>({});
+
+  const CHANGE_TRANSITION_FIELDS: Record<string, Array<{ key: string; label: string; required: boolean; placeholder: string }>> = {
+    approved: [],
+    in_progress: [],
+    completed: [{ key: 'result', label: 'Ergebnis', required: true, placeholder: 'Was wurde umgesetzt? Ergebnis der Änderung...' }],
+    rolled_back: [{ key: 'result', label: 'Rollback-Grund', required: true, placeholder: 'Warum wurde zurückgerollt?' }],
+    cancelled: [],
+  };
+
+  function openChangeTransition(changeId: string, targetStatus: string) {
+    const fields = CHANGE_TRANSITION_FIELDS[targetStatus] ?? [];
+    if (fields.length === 0) {
+      submitChangeTransition(changeId, targetStatus, {});
+      return;
+    }
+    const labels: Record<string, string> = { approved: 'Approve', in_progress: 'Start', completed: 'Complete', rolled_back: 'Rollback', cancelled: 'Cancel' };
+    setChangeTransitionFields({});
+    setChangeTransitionModal({ incidentId: changeId, targetStatus, label: labels[targetStatus] ?? targetStatus, fields });
+  }
+
+  async function submitChangeTransition(id: string, status: string, fields: Record<string, string>) {
     try {
-      const updated = await client.itsmUpdateChange(id, { status });
+      const updated = await client.itsmUpdateChange(id, { status, ...fields });
+      setChanges(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c));
+      if (selectedChange?.id === id) setSelectedChange({ ...selectedChange, ...updated });
+      setChangeTransitionModal(null);
+      setChangeTransitionFields({});
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function updateChangeField(id: string, fields: Record<string, unknown>) {
+    try {
+      const updated = await client.itsmUpdateChange(id, fields);
       setChanges(prev => prev.map(c => c.id === id ? { ...c, ...updated } : c));
       if (selectedChange?.id === id) setSelectedChange({ ...selectedChange, ...updated });
     } catch (e) { setError((e as Error).message); }
@@ -978,44 +1011,54 @@ export function ItsmPage() {
                 <span className={clsx('text-xs px-2 py-0.5 rounded-full', SEV_BG[selectedChange.riskLevel] ?? 'bg-gray-500/10 text-gray-400')}>Risiko: {selectedChange.riskLevel}</span>
               </div>
 
-              {selectedChange.description && (
+              <EditableTextField label="Beschreibung" value={selectedChange.description} placeholder="Beschreibung der Änderung..."
+                onSave={val => updateChangeField(selectedChange.id, { description: val })}
+                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+
+              <EditableTextField label="Implementation Plan" value={selectedChange.implementationPlan} placeholder="Schritte zur Umsetzung..."
+                onSave={val => updateChangeField(selectedChange.id, { implementation_plan: val })}
+                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+
+              <EditableTextField label="Rollback Plan" value={selectedChange.rollbackPlan} placeholder="Schritte zum Rückgängigmachen..."
+                onSave={val => updateChangeField(selectedChange.id, { rollback_plan: val })}
+                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+
+              <EditableTextField label="Test Plan" value={selectedChange.testPlan} placeholder="Wie wird die Änderung getestet?"
+                onSave={val => updateChangeField(selectedChange.id, { test_plan: val })}
+                disabled={selectedChange.status === 'completed' || selectedChange.status === 'rolled_back' || selectedChange.status === 'cancelled'} />
+
+              {selectedChange.result && (
                 <div>
-                  <p className="text-xs text-gray-500 mb-1">Beschreibung</p>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedChange.description}</p>
+                  <p className="text-xs text-gray-500 mb-1">Ergebnis</p>
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedChange.result}</p>
                 </div>
               )}
 
-              {selectedChange.implementationPlan && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Implementation Plan</p>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedChange.implementationPlan}</p>
+              {/* Betroffene Assets — mit Name-Auflösung + Picker */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Betroffene Assets ({selectedChange.affectedAssetIds?.length ?? 0})</p>
+                <div className="flex gap-1 flex-wrap mb-2">
+                  {(selectedChange.affectedAssetIds ?? []).map(aid => {
+                    const asset = allAssets.find(a => a.id === aid);
+                    return (
+                      <span key={aid} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-300 font-mono flex items-center gap-1">
+                        {asset ? `${asset.name} (${asset.assetType})` : aid.slice(0, 8)}
+                        {!['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && (
+                          <button onClick={() => updateChangeField(selectedChange.id, { affected_asset_ids: selectedChange.affectedAssetIds.filter(x => x !== aid) })}
+                            className="text-red-400 hover:text-red-300 ml-1">&times;</button>
+                        )}
+                      </span>
+                    );
+                  })}
                 </div>
-              )}
-
-              {selectedChange.rollbackPlan && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Rollback Plan</p>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedChange.rollbackPlan}</p>
-                </div>
-              )}
-
-              {selectedChange.testPlan && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Test Plan</p>
-                  <p className="text-sm text-gray-300 whitespace-pre-wrap">{selectedChange.testPlan}</p>
-                </div>
-              )}
-
-              {selectedChange.affectedAssetIds?.length > 0 && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">Betroffene Assets ({selectedChange.affectedAssetIds.length})</p>
-                  <div className="flex gap-1 flex-wrap">
-                    {selectedChange.affectedAssetIds.map(id => (
-                      <span key={id} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-400 font-mono">{id}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
+                {!['completed', 'rolled_back', 'cancelled'].includes(selectedChange.status) && allAssets.length > 0 && (
+                  <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-400 w-full" value=""
+                    onChange={e => { if (!e.target.value) return; updateChangeField(selectedChange.id, { affected_asset_ids: [...(selectedChange.affectedAssetIds ?? []), e.target.value] }); }}>
+                    <option value="">+ Asset verknüpfen...</option>
+                    {allAssets.filter(a => !(selectedChange.affectedAssetIds ?? []).includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name} ({a.assetType})</option>)}
+                  </select>
+                )}
+              </div>
 
               {/* Timeline */}
               <div>
@@ -1028,22 +1071,22 @@ export function ItsmPage() {
                 </div>
               </div>
 
-              {/* Action Buttons */}
+              {/* Action Buttons — mit Modal für Pflichtfelder */}
               <div className="flex gap-2 flex-wrap pt-2 border-t border-[#1f1f1f]">
                 {(selectedChange.status === 'draft' || selectedChange.status === 'pending') && (
-                  <button onClick={() => updateChangeStatus(selectedChange.id, 'approved')} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Approve</button>
+                  <button onClick={() => openChangeTransition(selectedChange.id, 'approved')} className="px-3 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Approve</button>
                 )}
                 {selectedChange.status === 'approved' && (
-                  <button onClick={() => updateChangeStatus(selectedChange.id, 'in_progress')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Start</button>
+                  <button onClick={() => openChangeTransition(selectedChange.id, 'in_progress')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Start</button>
                 )}
                 {selectedChange.status === 'in_progress' && (
-                  <button onClick={() => updateChangeStatus(selectedChange.id, 'completed')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Complete</button>
+                  <button onClick={() => openChangeTransition(selectedChange.id, 'completed')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Complete</button>
                 )}
                 {(selectedChange.status === 'in_progress' || selectedChange.status === 'completed') && (
-                  <button onClick={() => updateChangeStatus(selectedChange.id, 'rolled_back')} className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-500 text-white rounded">Rollback</button>
+                  <button onClick={() => openChangeTransition(selectedChange.id, 'rolled_back')} className="px-3 py-1.5 text-xs bg-red-600 hover:bg-red-500 text-white rounded">Rollback</button>
                 )}
                 {selectedChange.status !== 'completed' && selectedChange.status !== 'rolled_back' && selectedChange.status !== 'cancelled' && (
-                  <button onClick={() => updateChangeStatus(selectedChange.id, 'cancelled')} className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded">Cancel</button>
+                  <button onClick={() => openChangeTransition(selectedChange.id, 'cancelled')} className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded">Cancel</button>
                 )}
               </div>
             </div>
@@ -1317,6 +1360,41 @@ export function ItsmPage() {
                 className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded"
               >
                 {transitionModal.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Transition Modal */}
+      {changeTransitionModal && changeTransitionModal.fields.length > 0 && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold text-white">Change → {changeTransitionModal.label}</h3>
+            {changeTransitionModal.fields.map(f => (
+              <div key={f.key}>
+                <label className="text-xs text-gray-400 mb-1 block">
+                  {f.label} {f.required && <span className="text-red-400">*</span>}
+                </label>
+                <textarea
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[80px]"
+                  placeholder={f.placeholder}
+                  value={changeTransitionFields[f.key] ?? ''}
+                  onChange={e => setChangeTransitionFields(prev => ({ ...prev, [f.key]: e.target.value }))}
+                />
+              </div>
+            ))}
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setChangeTransitionModal(null)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button
+                onClick={() => {
+                  const missing = changeTransitionModal.fields.filter(f => f.required && !changeTransitionFields[f.key]?.trim());
+                  if (missing.length > 0) { setError(`Pflichtfeld: ${missing.map(f => f.label).join(', ')}`); return; }
+                  submitChangeTransition(changeTransitionModal.incidentId, changeTransitionModal.targetStatus, changeTransitionFields);
+                }}
+                className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded"
+              >
+                {changeTransitionModal.label}
               </button>
             </div>
           </div>

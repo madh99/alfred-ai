@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.413] - 2026-04-09
+
+### Added
+- **ITSM: Change-Prozess vollständig** — Analog zum Incident-Lifecycle:
+  - `update_change` + `get_change` Skill-Actions (Pläne editierbar, Details abrufbar)
+  - WebUI: EditableTextField für Implementation Plan, Rollback Plan, Test Plan, Description
+  - WebUI: Transition-Modal mit Pflichtfeldern (Complete → result, Rollback → result)
+  - WebUI: Asset-Verknüpfung mit Name-Auflösung + Dropdown-Picker
+  - WebUI: Result-Anzeige im Detail-Panel
+
 ## [0.19.0-multi-ha.412] - 2026-04-09
 
 ### Fixed
