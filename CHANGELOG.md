@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.415] - 2026-04-09
+
+### Added
+- **ITSM Problem Management — Phase 2: Skill Layer**
+  - 11 neue Skill-Actions: create_problem, update_problem, get_problem, list_problems, link_incident_to_problem, unlink_incident_from_problem, promote_to_problem, create_fix_change, mark_known_error, detect_problem_patterns, problem_dashboard
+  - ProblemRepository an ItsmSkill-Constructor angebunden
+  - promote_to_problem: Incident→Problem Hochstufung mit Auto-Link + Severity→Priority Mapping
+  - create_fix_change: Change Request als permanenten Fix mit bidirektionaler Verknüpfung + auto Status-Advance
+  - detect_problem_patterns: Keyword+Asset+Service Clustering mit Markdown-Tabelle
+
 ## [0.19.0-multi-ha.414] - 2026-04-09
 
 ### Added

@@ -1,11 +1,12 @@
 import type { SkillMetadata, SkillContext, SkillResult, IncidentSeverity, ServiceHealthStatus } from '@alfred/types';
-import type { ItsmRepository } from '@alfred/storage';
+import type { ItsmRepository, ProblemRepository } from '@alfred/storage';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
 type Action =
   | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'close_incident'
   | 'create_change_request' | 'update_change' | 'get_change' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
+  | 'create_problem' | 'update_problem' | 'get_problem' | 'list_problems' | 'link_incident_to_problem' | 'unlink_incident_from_problem' | 'promote_to_problem' | 'create_fix_change' | 'mark_known_error' | 'detect_problem_patterns' | 'problem_dashboard'
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard';
 
 export class ItsmSkill extends Skill {
@@ -27,6 +28,16 @@ export class ItsmSkill extends Skill {
       '"complete_change" schließt ab (change_id, result). ' +
       '"rollback_change" Rollback (change_id, result). ' +
       '"list_changes" zeigt Change Requests (filter: status, type). ' +
+      '"create_problem" erstellt Problem (title, priority, category, linked_incident_ids, workaround). ' +
+      '"update_problem" aktualisiert (problem_id, root_cause_description, workaround, proposed_fix, analysis_notes, is_known_error). ' +
+      '"get_problem" zeigt Problem-Details (problem_id). ' +
+      '"list_problems" listet Probleme (filter: status, priority, is_known_error). ' +
+      '"link_incident_to_problem" verknüpft Incident→Problem (problem_id, incident_id). ' +
+      '"promote_to_problem" erstellt Problem aus Incident(s) (incident_id, linked_incident_ids). ' +
+      '"create_fix_change" erstellt Change Request als Fix (problem_id, title, implementation_plan). ' +
+      '"mark_known_error" setzt Known-Error-Flag (problem_id, known_error_description). ' +
+      '"detect_problem_patterns" erkennt Incident-Muster (pattern_window_days, min_incidents). ' +
+      '"problem_dashboard" zeigt Problem-Übersicht. ' +
       '"add_service" registriert einen Service (name, category, url, health_check_url, criticality, asset_ids, dependencies). ' +
       '"update_service" aktualisiert (service_id + Felder). ' +
       '"add_component" fügt eine Komponente zu einem Service hinzu (service_id, component_name, component_role, component_asset_id oder component_external_url, component_required). ' +
@@ -39,9 +50,10 @@ export class ItsmSkill extends Skill {
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
+        problem_id: { type: 'string' },
         service_id: { type: 'string' },
         asset_id: { type: 'string' },
         title: { type: 'string' },
@@ -86,6 +98,16 @@ export class ItsmSkill extends Skill {
         component_service_id: { type: 'string', description: 'Service-ID einer Service-Dependency' },
         component_external_url: { type: 'string', description: 'Externe URL (z.B. https://api.telegram.org)' },
         component_required: { type: 'boolean', description: 'true = Service down wenn Komponente down, false = degraded' },
+        // Problem Management
+        root_cause_description: { type: 'string' },
+        root_cause_category: { type: 'string', enum: ['infrastructure', 'software', 'configuration', 'capacity', 'security', 'network', 'data', 'process', 'external', 'unknown'] },
+        proposed_fix: { type: 'string' },
+        analysis_notes: { type: 'string', description: 'Chronologische Analyse-Notizen (wird angehängt)' },
+        is_known_error: { type: 'boolean' },
+        known_error_description: { type: 'string' },
+        linked_incident_ids: { type: 'array', items: { type: 'string' } },
+        pattern_window_days: { type: 'number', description: 'Zeitfenster für Pattern-Erkennung (default: 7 Tage)' },
+        min_incidents: { type: 'number', description: 'Mindestanzahl Incidents für Pattern (default: 3)' },
       },
       required: ['action'],
     },
@@ -94,11 +116,13 @@ export class ItsmSkill extends Skill {
 
   private readonly itsm: ItsmRepository;
   private readonly cmdb: CmdbRepository;
+  private readonly problem?: ProblemRepository;
 
-  constructor(itsmRepo: ItsmRepository, cmdbRepo: CmdbRepository) {
+  constructor(itsmRepo: ItsmRepository, cmdbRepo: CmdbRepository, problemRepo?: ProblemRepository) {
     super();
     this.itsm = itsmRepo;
     this.cmdb = cmdbRepo;
+    this.problem = problemRepo;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -120,6 +144,18 @@ export class ItsmSkill extends Skill {
         case 'complete_change': return await this.completeChange(userId, input);
         case 'rollback_change': return await this.rollbackChange(userId, input);
         case 'list_changes': return await this.listChanges(userId, input);
+        // Problem Management
+        case 'create_problem': return await this.createProblem(userId, input);
+        case 'update_problem': return await this.updateProblemAction(userId, input);
+        case 'get_problem': return await this.getProblem(userId, input.problem_id as string);
+        case 'list_problems': return await this.listProblemsAction(userId, input);
+        case 'link_incident_to_problem': return await this.linkIncidentToProblem(userId, input);
+        case 'unlink_incident_from_problem': return await this.unlinkIncidentFromProblem(userId, input);
+        case 'promote_to_problem': return await this.promoteToProblem(userId, input);
+        case 'create_fix_change': return await this.createFixChange(userId, input);
+        case 'mark_known_error': return await this.markKnownError(userId, input);
+        case 'detect_problem_patterns': return await this.detectProblemPatterns(userId, input);
+        case 'problem_dashboard': return await this.problemDashboardAction(userId);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
         case 'add_component': return await this.addComponent(userId, input);
@@ -362,6 +398,215 @@ export class ItsmSkill extends Skill {
 
     const display = `## Change Requests (${changes.length})\n\n| | Titel | Typ | Risiko | Status | Geplant |\n|--|-------|-----|--------|--------|--------|\n${lines.join('\n')}`;
     return { success: true, data: changes, display };
+  }
+
+  // ── Problem Management ─────────────────────────────────────
+
+  private async createProblem(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const title = input.title as string;
+    if (!title) return { success: false, error: 'title erforderlich' };
+
+    const prob = await this.problem.createProblem(userId, {
+      title, description: input.description as string,
+      priority: input.priority as any, category: input.category as any,
+      linkedIncidentIds: input.linked_incident_ids as string[],
+      affectedAssetIds: input.affected_asset_ids as string[],
+      affectedServiceIds: input.affected_service_ids as string[],
+      workaround: input.workaround as string,
+      detectedBy: input.detected_by as any ?? 'manual',
+    });
+
+    // Link incidents bidirectionally
+    for (const incId of (input.linked_incident_ids as string[] ?? [])) {
+      await this.problem.linkIncident(userId, prob.id, incId);
+    }
+
+    const icon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[prob.priority] ?? '📋';
+    return { success: true, data: prob, display: `${icon} Problem erstellt: **${prob.title}** (${prob.priority}) — ID: ${prob.id}` };
+  }
+
+  private async updateProblemAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const id = input.problem_id as string;
+    if (!id) return { success: false, error: 'problem_id erforderlich' };
+
+    // Handle analysis_notes as append-only
+    if (input.analysis_notes) {
+      await this.problem.appendAnalysisNotes(userId, id, input.analysis_notes as string);
+    }
+
+    const updates: Record<string, unknown> = {};
+    for (const key of ['title', 'description', 'status', 'priority', 'category', 'root_cause_description', 'root_cause_category', 'workaround', 'proposed_fix', 'is_known_error', 'known_error_description']) {
+      const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      if (input[key] !== undefined) updates[camelKey] = input[key];
+    }
+    if (input.affected_asset_ids) updates.affectedAssetIds = input.affected_asset_ids;
+    if (input.affected_service_ids) updates.affectedServiceIds = input.affected_service_ids;
+
+    const result = await this.problem.updateProblem(userId, id, updates as any);
+    if (!result) return { success: false, error: `Problem ${id} nicht gefunden` };
+    return { success: true, data: result, display: `✅ Problem **${result.title}** aktualisiert (${result.status})` };
+  }
+
+  private async getProblem(userId: string, problemId: string): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    if (!problemId) return { success: false, error: 'problem_id erforderlich' };
+    const prob = await this.problem.getProblemById(userId, problemId);
+    if (!prob) return { success: false, error: `Problem ${problemId} nicht gefunden` };
+
+    const display = [
+      `## ${prob.title}`,
+      `**Priority:** ${prob.priority} | **Status:** ${prob.status} | **Category:** ${prob.category ?? '—'}`,
+      prob.isKnownError ? `**⚠️ KNOWN ERROR**${prob.knownErrorDescription ? `: ${prob.knownErrorDescription}` : ''}` : '',
+      `**Detected:** ${prob.detectedAt?.slice(0, 16)} by ${prob.detectedBy}`,
+      prob.analyzedAt ? `**Analyzed:** ${prob.analyzedAt.slice(0, 16)}` : '',
+      prob.rootCauseIdentifiedAt ? `**Root Cause identified:** ${prob.rootCauseIdentifiedAt.slice(0, 16)}` : '',
+      prob.resolvedAt ? `**Resolved:** ${prob.resolvedAt.slice(0, 16)}` : '',
+      '',
+      prob.description ? `### Beschreibung\n${prob.description}` : '',
+      prob.rootCauseDescription ? `### Root Cause\n${prob.rootCauseDescription}` : '',
+      prob.workaround ? `### Workaround\n${prob.workaround}` : '',
+      prob.proposedFix ? `### Proposed Fix\n${prob.proposedFix}` : '',
+      prob.analysisNotes ? `### Analyse-Notizen\n${prob.analysisNotes}` : '',
+      prob.linkedIncidentIds.length > 0 ? `### Verknüpfte Incidents (${prob.linkedIncidentIds.length})\n${prob.linkedIncidentIds.map(id => `- ${id.slice(0, 8)}`).join('\n')}` : '',
+      prob.linkedChangeRequestId ? `### Fix-Change: ${prob.linkedChangeRequestId.slice(0, 8)}` : '',
+    ].filter(Boolean).join('\n');
+
+    return { success: true, data: prob, display };
+  }
+
+  private async listProblemsAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const problems = await this.problem.listProblems(userId, {
+      status: input.status as any, priority: input.priority as any,
+      isKnownError: input.is_known_error as boolean | undefined,
+    });
+    if (problems.length === 0) return { success: true, data: [], display: 'Keine Probleme gefunden.' };
+
+    const icon = (p: string) => ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[p] ?? '📋');
+    const lines = problems.map(p =>
+      `| ${icon(p.priority)} ${p.priority} | ${p.title} | ${p.status} | ${p.isKnownError ? 'KE' : '—'} | ${p.linkedIncidentIds.length} | ${p.detectedAt?.slice(0, 10)} |`,
+    );
+    const display = `## Probleme (${problems.length})\n\n| Prio | Titel | Status | KE | Incidents | Erkannt |\n|------|-------|--------|----|-----------|---------|\n${lines.join('\n')}`;
+    return { success: true, data: problems, display };
+  }
+
+  private async linkIncidentToProblem(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const problemId = input.problem_id as string;
+    const incidentId = input.incident_id as string;
+    if (!problemId || !incidentId) return { success: false, error: 'problem_id + incident_id erforderlich' };
+    const result = await this.problem.linkIncident(userId, problemId, incidentId);
+    if (!result) return { success: false, error: `Problem ${problemId} nicht gefunden` };
+    return { success: true, data: result, display: `🔗 Incident ${incidentId.slice(0, 8)} mit Problem **${result.title}** verknüpft (${result.linkedIncidentIds.length} Incidents)` };
+  }
+
+  private async unlinkIncidentFromProblem(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const problemId = input.problem_id as string;
+    const incidentId = input.incident_id as string;
+    if (!problemId || !incidentId) return { success: false, error: 'problem_id + incident_id erforderlich' };
+    const result = await this.problem.unlinkIncident(userId, problemId, incidentId);
+    if (!result) return { success: false, error: `Problem ${problemId} nicht gefunden` };
+    return { success: true, data: result, display: `🔓 Incident ${incidentId.slice(0, 8)} von Problem **${result.title}** getrennt` };
+  }
+
+  private async promoteToProblem(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const sourceId = input.incident_id as string;
+    const linkedIds = input.linked_incident_ids as string[] ?? [];
+    if (!sourceId && linkedIds.length === 0) return { success: false, error: 'incident_id oder linked_incident_ids erforderlich' };
+
+    // Read source incident for defaults
+    const allIds = sourceId ? [sourceId, ...linkedIds] : linkedIds;
+    const sourceInc = await this.itsm.getIncidentById(userId, allIds[0]);
+    const title = input.title as string ?? sourceInc?.title ?? 'Problem';
+    const sevMap: Record<string, string> = { critical: 'high', high: 'high', medium: 'medium', low: 'low' };
+    const priority = input.priority as string ?? sevMap[sourceInc?.severity ?? 'medium'] ?? 'medium';
+
+    const prob = await this.problem.createProblem(userId, {
+      title, priority: priority as any,
+      affectedAssetIds: sourceInc?.affectedAssetIds, affectedServiceIds: sourceInc?.affectedServiceIds,
+      detectedBy: 'manual', detectionMethod: 'promote_from_incident',
+      workaround: sourceInc?.workaround,
+    });
+
+    for (const incId of allIds) {
+      await this.problem.linkIncident(userId, prob.id, incId);
+    }
+
+    return { success: true, data: prob, display: `📋 Problem aus ${allIds.length} Incident(s) erstellt: **${prob.title}** — ID: ${prob.id}` };
+  }
+
+  private async createFixChange(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const problemId = input.problem_id as string;
+    if (!problemId) return { success: false, error: 'problem_id erforderlich' };
+    const prob = await this.problem.getProblemById(userId, problemId);
+    if (!prob) return { success: false, error: `Problem ${problemId} nicht gefunden` };
+
+    const cr = await this.itsm.createChangeRequest(userId, {
+      title: input.title as string ?? `Fix: ${prob.title}`,
+      description: prob.proposedFix ?? prob.rootCauseDescription,
+      type: 'normal' as any, riskLevel: prob.priority as any,
+      implementationPlan: input.implementation_plan as string,
+      rollbackPlan: input.rollback_plan as string,
+      testPlan: input.test_plan as string,
+      scheduledAt: input.scheduled_at as string,
+      affectedAssetIds: prob.affectedAssetIds,
+      affectedServiceIds: prob.affectedServiceIds,
+    });
+
+    await this.problem.linkChangeRequest(userId, prob.id, cr.id);
+    // Advance problem to fix_in_progress if appropriate
+    if (prob.status === 'root_cause_identified' || prob.status === 'analyzing') {
+      await this.problem.updateProblem(userId, prob.id, { status: 'fix_in_progress' });
+    }
+
+    return { success: true, data: { problem: prob, changeRequest: cr }, display: `🔧 Fix-Change **${cr.title}** erstellt für Problem **${prob.title}** — Change-ID: ${cr.id.slice(0, 8)}` };
+  }
+
+  private async markKnownError(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const id = input.problem_id as string;
+    if (!id) return { success: false, error: 'problem_id erforderlich' };
+    const result = await this.problem.updateProblem(userId, id, {
+      isKnownError: true, knownErrorDescription: input.known_error_description as string,
+    });
+    if (!result) return { success: false, error: `Problem ${id} nicht gefunden` };
+    return { success: true, data: result, display: `⚠️ Problem **${result.title}** als Known Error markiert` };
+  }
+
+  private async detectProblemPatterns(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const patterns = await this.problem.detectPatterns(userId, {
+      windowDays: input.pattern_window_days as number,
+      minIncidents: input.min_incidents as number,
+    });
+    if (patterns.length === 0) return { success: true, data: [], display: 'Keine Incident-Muster erkannt.' };
+
+    const lines = patterns.map((p, i) =>
+      `| ${i + 1} | ${p.keywordCluster.join(', ')} | ${p.incidentCount} | ${p.assetIds.length} Assets | ${p.firstSeen.slice(0, 10)}–${p.lastSeen.slice(0, 10)} | ${p.existingProblemId ? p.existingProblemId.slice(0, 8) : 'Neu'} |`,
+    );
+    const display = `## Erkannte Incident-Muster (${patterns.length})\n\n| # | Keywords | Incidents | Scope | Zeitraum | Problem |\n|---|----------|-----------|-------|----------|--------|\n${lines.join('\n')}`;
+    return { success: true, data: patterns, display };
+  }
+
+  private async problemDashboardAction(userId: string): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const dash = await this.problem.getDashboard(userId);
+    const display = [
+      '## Problem Dashboard',
+      `**Offene Probleme:** ${dash.openProblems} | **Known Errors:** ${dash.knownErrors}`,
+      '',
+      '### Nach Status',
+      ...Object.entries(dash.problemsByStatus).map(([s, c]) => `- ${s}: ${c}`),
+      '',
+      '### Nach Priorität',
+      ...Object.entries(dash.problemsByPriority).map(([p, c]) => `- ${p}: ${c}`),
+    ].join('\n');
+    return { success: true, data: dash, display };
   }
 
   // ── Services ───────────────────────────────────────────────

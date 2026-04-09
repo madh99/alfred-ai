@@ -764,9 +764,12 @@ export class Alfred {
         const itsmRepo = new ItsmRepository(adapter);
         itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
+        const { ProblemRepository } = await import('@alfred/storage');
+        const problemRepo = new ProblemRepository(adapter);
+
         const { CmdbSkill, ItsmSkill, InfraDocsSkill } = await import('@alfred/skills');
         const cmdbSkill = new CmdbSkill(cmdbRepo, this.config.cmdb?.staleThresholdDays ?? 7);
-        const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo);
+        const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo, problemRepo);
         const infraDocsSkill = new InfraDocsSkill(cmdbRepo, itsmRepo);
 
         // Wire LLM callback for runbook generation
