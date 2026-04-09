@@ -2222,6 +2222,8 @@ export class Alfred {
         const cmdbRepo = new CmdbRepository(dbAdapter);
         const itsmRepo = new ItsmRepository(dbAdapter);
         itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const { ProblemRepository: ProblemRepo } = await import('@alfred/storage');
+        const problemRepo = new ProblemRepo(dbAdapter);
 
         const resolveUser = async (userId: string) => {
           if (!userId && this.config.security?.ownerUserId && this.userRepo) {
@@ -2294,6 +2296,24 @@ export class Alfred {
             return { success: false, error: 'ITSM skill not registered' };
           },
           getDashboard: async (uid: string) => itsmRepo.getDashboard(await resolveUser(uid)),
+          // Problem Management
+          listProblems: async (uid: string, filters?: Record<string, unknown>) => problemRepo.listProblems(await resolveUser(uid), filters as any),
+          getProblem: async (uid: string, id: string) => problemRepo.getProblemById(await resolveUser(uid), id),
+          createProblem: async (uid: string, data: Record<string, unknown>) => problemRepo.createProblem(await resolveUser(uid), data as any),
+          updateProblem: async (uid: string, id: string, data: Record<string, unknown>) => {
+            const mapped: Record<string, unknown> = {};
+            for (const [k, v] of Object.entries(data)) mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
+            return problemRepo.updateProblem(await resolveUser(uid), id, mapped as any);
+          },
+          linkIncidentToProblem: async (uid: string, problemId: string, incidentId: string) => problemRepo.linkIncident(await resolveUser(uid), problemId, incidentId),
+          unlinkIncidentFromProblem: async (uid: string, problemId: string, incidentId: string) => problemRepo.unlinkIncident(await resolveUser(uid), problemId, incidentId),
+          createFixChange: async (uid: string, problemId: string, data: Record<string, unknown>) => {
+            const cr = await itsmRepo.createChangeRequest(await resolveUser(uid), { ...data, linkedProblemId: problemId } as any);
+            await problemRepo.linkChangeRequest(await resolveUser(uid), problemId, cr.id);
+            return { problem: await problemRepo.getProblemById(await resolveUser(uid), problemId), changeRequest: cr };
+          },
+          detectPatterns: async (uid: string, data: Record<string, unknown>) => problemRepo.detectPatterns(await resolveUser(uid), data as any),
+          getProblemDashboard: async (uid: string) => problemRepo.getDashboard(await resolveUser(uid)),
         });
 
         (apiAdapter as any).setDocsCallbacks({

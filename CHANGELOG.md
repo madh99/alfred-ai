@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.416] - 2026-04-09
+
+### Added
+- **ITSM Problem Management — Phase 3+4: HTTP + Reasoning**
+  - 10 neue API-Endpoints: CRUD Problems, link/unlink Incidents, fix-change, detect-patterns, dashboard
+  - snake→camelCase Mapping für Problem-Updates (konsistent mit Incident/Change)
+  - Reasoning-Prompt: Problem-Regeln (3+ Incidents → Problem, Known Error → Workaround zitieren, permanent Fix → Change)
+  - Reasoning-Kontext: Aktive Probleme + Known Errors mit Workaround-Preview im CMDB/ITSM-Block
+
 ## [0.19.0-multi-ha.415] - 2026-04-09
 
 ### Added

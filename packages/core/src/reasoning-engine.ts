@@ -706,7 +706,13 @@ WICHTIGE REGELN FÜR AKTIONSWAHL:
 - Incident-Lifecycle: open → acknowledged → investigating (investigation_notes setzen!) → mitigating (workaround setzen!) → resolved (root_cause + resolution setzen!) → closed (lessons_learned + action_items optional)
 - "Kürzlich gelöst" Incidents: KEINEN neuen Incident für dasselbe Thema erstellen
 - VERSCHIEDENE Probleme am gleichen Gerät SIND verschiedene Incidents (z.B. "Disk voll" ≠ "Updates nötig")
-- Erkennst du ein MUSTER (mehrere Geräte gleichzeitig betroffen) → update_incident auf den relevantesten aktiven Incident mit root_cause-Analyse` : ''}
+- Erkennst du ein MUSTER (mehrere Geräte gleichzeitig betroffen) → update_incident auf den relevantesten aktiven Incident mit root_cause-Analyse
+- PROBLEM MANAGEMENT: Wenn 3+ Incidents das gleiche Symptom zeigen → prüfe "Aktive Probleme". Wenn kein Problem existiert → create_problem mit allen incident IDs. Wenn ein Problem existiert → link_incident_to_problem
+- Known Errors haben einen Workaround → bei neuen Incidents den Workaround zitieren, nicht als neues Problem melden
+- Permanent-Fix für ein Problem → create_fix_change (Change Request), NICHT direkt Änderungen vornehmen
+7d. Problem erstellen: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_problem","title":"...","priority":"high","linked_incident_ids":["<id1>","<id2>"]}}
+7e. Incident mit Problem verknüpfen: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"link_incident_to_problem","problem_id":"<id>","incident_id":"<id>"}}
+7f. Known Error markieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"mark_known_error","problem_id":"<id>","known_error_description":"..."}}` : ''}
 - triggerAt MUSS in der Zukunft liegen! Aktuelle Zeit beachten.
 
 DRINGLICHKEIT (als "urgency" Feld in jeder Aktion):

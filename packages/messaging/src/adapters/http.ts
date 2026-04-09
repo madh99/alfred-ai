@@ -62,6 +62,16 @@ export interface ItsmCallbacks {
   updateService: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
   healthCheck: (userId: string) => Promise<any>;
   getDashboard: (userId: string) => Promise<any>;
+  // Problem Management
+  listProblems: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
+  getProblem: (userId: string, id: string) => Promise<any>;
+  createProblem: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateProblem: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  linkIncidentToProblem: (userId: string, problemId: string, incidentId: string) => Promise<any>;
+  unlinkIncidentFromProblem: (userId: string, problemId: string, incidentId: string) => Promise<any>;
+  createFixChange: (userId: string, problemId: string, data: Record<string, unknown>) => Promise<any>;
+  detectPatterns: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  getProblemDashboard: (userId: string) => Promise<any>;
 }
 
 export interface DocsCallbacks {
@@ -483,6 +493,35 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateService(userId, id, body));
     } else if (url.pathname === '/api/itsm/dashboard' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.getDashboard(userId));
+    // ── Problem Management API ──
+    } else if (url.pathname === '/api/itsm/problems/detect-patterns' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.detectPatterns(userId, body));
+    } else if (url.pathname === '/api/itsm/problems/dashboard' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getProblemDashboard(userId));
+    } else if (url.pathname === '/api/itsm/problems' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listProblems(userId, filters);
+      });
+    } else if (url.pathname === '/api/itsm/problems' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createProblem(userId, body));
+    } else if (url.pathname.match(/^\/api\/itsm\/problems\/[^/]+\/link-incident$/) && req.method === 'POST') {
+      const id = url.pathname.split('/api/itsm/problems/')[1].split('/link-incident')[0];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.linkIncidentToProblem(userId, id, body.incident_id as string));
+    } else if (url.pathname.match(/^\/api\/itsm\/problems\/[^/]+\/link-incident\/[^/]+$/) && req.method === 'DELETE') {
+      const parts = url.pathname.split('/');
+      const problemId = parts[4];
+      const incidentId = parts[6];
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.unlinkIncidentFromProblem(userId, problemId, incidentId));
+    } else if (url.pathname.match(/^\/api\/itsm\/problems\/[^/]+\/fix-change$/) && req.method === 'POST') {
+      const id = url.pathname.split('/api/itsm/problems/')[1].split('/fix-change')[0];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createFixChange(userId, id, body));
+    } else if (url.pathname.startsWith('/api/itsm/problems/') && req.method === 'GET') {
+      const id = url.pathname.split('/api/itsm/problems/')[1];
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getProblem(userId, id));
+    } else if (url.pathname.startsWith('/api/itsm/problems/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/api/itsm/problems/')[1];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateProblem(userId, id, body));
     // ── Docs API ──
     } else if (url.pathname === '/api/docs/generate' && req.method === 'POST') {
       this.handleDocsBodyRoute(req, res, (cbs, userId, body) => cbs.generate(userId, body.type as string, body));

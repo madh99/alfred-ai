@@ -345,6 +345,22 @@ export class ReasoningContextCollector {
                     if (pending.length > 0) parts.push(`Offene Changes:\n${pending.join('\n')}`);
                   }
                 }
+
+                // Active problems + known errors
+                {
+                  const probRaw = await this.skillSandbox.execute(skill, { action: 'list_problems' }, {} as any);
+                  if (probRaw.success && Array.isArray(probRaw.data)) {
+                    const activeProbs = (probRaw.data as any[]).filter((p: any) => !['resolved', 'closed'].includes(p.status));
+                    const probLines = activeProbs.slice(0, 10).map((p: any) => {
+                      let line = `- [${p.id.slice(0, 8)}] [${p.priority}] ${p.title} (${p.status})`;
+                      if (p.isKnownError) line += ' [KNOWN ERROR]';
+                      if (p.workaround) line += ` — WA: ${String(p.workaround).slice(0, 60)}`;
+                      if (p.linkedIncidentIds?.length > 0) line += ` — ${p.linkedIncidentIds.length} Inc`;
+                      return line;
+                    }).join('\n');
+                    if (probLines) parts.push(`Aktive Probleme:\n${probLines}`);
+                  }
+                }
               }
             }
           } catch { /* skip */ }
