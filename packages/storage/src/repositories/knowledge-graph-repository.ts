@@ -470,9 +470,14 @@ export class KnowledgeGraphRepository {
   /** Decay confidence of entities not seen for a while. */
   async decayOldEntities(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
+    // Two-step: set to 0 where it would go negative, subtract elsewhere
+    await this.adapter.execute(
+      'UPDATE kg_entities SET confidence = 0 WHERE user_id = ? AND last_seen_at < ? AND confidence <= ?',
+      [userId, cutoff, decayAmount],
+    );
     const result = await this.adapter.execute(
-      'UPDATE kg_entities SET confidence = (CASE WHEN confidence - ? < 0 THEN 0 ELSE confidence - ? END) WHERE user_id = ? AND last_seen_at < ?',
-      [decayAmount, decayAmount, userId, cutoff],
+      'UPDATE kg_entities SET confidence = confidence - ? WHERE user_id = ? AND last_seen_at < ? AND confidence > ?',
+      [decayAmount, userId, cutoff, decayAmount],
     );
     return result.changes;
   }
@@ -480,9 +485,13 @@ export class KnowledgeGraphRepository {
   /** Decay strength of relations not seen for a while (analogous to decayOldEntities). */
   async decayOldRelations(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
+    await this.adapter.execute(
+      'UPDATE kg_relations SET strength = 0 WHERE user_id = ? AND last_seen_at < ? AND strength <= ?',
+      [userId, cutoff, decayAmount],
+    );
     const result = await this.adapter.execute(
-      'UPDATE kg_relations SET strength = (CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END) WHERE user_id = ? AND last_seen_at < ?',
-      [decayAmount, decayAmount, userId, cutoff],
+      'UPDATE kg_relations SET strength = strength - ? WHERE user_id = ? AND last_seen_at < ? AND strength > ?',
+      [decayAmount, userId, cutoff, decayAmount],
     );
     return result.changes;
   }

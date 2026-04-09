@@ -268,8 +268,8 @@ export class ItsmRepository {
     const entry = `${localTs} ${newSymptom}`;
     // Atomic append — no read-modify-write race in HA
     await this.db.execute(
-      `UPDATE cmdb_incidents SET symptoms = (CASE WHEN symptoms IS NULL OR symptoms = '' THEN ? ELSE symptoms || ? END), updated_at = ? WHERE id = ? AND user_id = ?`,
-      [entry, `\n---\n${entry}`, now, id, userId],
+      `UPDATE cmdb_incidents SET symptoms = COALESCE(NULLIF(symptoms, '') || ? , ?), updated_at = ? WHERE id = ? AND user_id = ?`,
+      [`\n---\n${entry}`, entry, now, id, userId],
     );
   }
 
