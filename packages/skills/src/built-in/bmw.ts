@@ -956,14 +956,22 @@ export class BMWSkill extends Skill {
     // Retry once on transient errors
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
+        const params: Record<string, string> = {
+          client_id: this.cfg.clientId,
+          grant_type: 'refresh_token',
+          refresh_token: tokens.refreshToken,
+        };
+        // Debug: log what we're sending (mask token for security)
+        const hasRefresh = !!tokens.refreshToken && tokens.refreshToken.length > 10;
+        const hasClientId = !!this.cfg.clientId;
+        console.log(`[BMW] Token refresh attempt ${attempt + 1}: clientId=${hasClientId}, refreshToken=${hasRefresh ? tokens.refreshToken.slice(0, 8) + '...' + tokens.refreshToken.length + 'chars' : 'MISSING'}`);
+
+        // Filter out undefined/empty values that would send "undefined" as string
+        const cleanParams = Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== '' && v !== 'undefined'));
         const res = await fetch(TOKEN_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: this.cfg.clientId,
-            grant_type: 'refresh_token',
-            refresh_token: tokens.refreshToken,
-          }),
+          body: new URLSearchParams(cleanParams),
           signal: AbortSignal.timeout(15_000),
         });
 
