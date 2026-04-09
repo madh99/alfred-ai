@@ -137,11 +137,16 @@ export class ProblemRepository {
   }
 
   async appendAnalysisNotes(userId: string, id: string, note: string): Promise<void> {
+    const existing = await this.getProblemById(userId, id);
+    if (!existing) return;
     const now = new Date().toISOString();
     const entry = `${now.slice(0, 16)} ${note}`;
+    const updated = existing.analysisNotes
+      ? `${existing.analysisNotes}\n---\n${entry}`
+      : entry;
     await this.db.execute(
-      `UPDATE cmdb_problems SET analysis_notes = CASE WHEN analysis_notes IS NULL OR analysis_notes = '' THEN ? ELSE concat(analysis_notes, ?) END, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [entry, `\n---\n${entry}`, now, id, userId],
+      `UPDATE cmdb_problems SET analysis_notes = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [updated, now, id, userId],
     );
   }
 

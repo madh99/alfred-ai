@@ -261,15 +261,19 @@ export class ItsmRepository {
     return incidents.find(inc => inc.title.toLowerCase().includes(srcLower)) ?? null;
   }
 
-  /** Append a new alert message to an existing incident's symptoms (atomic, HA-safe). */
+  /** Append a new alert message to an existing incident's symptoms. */
   async appendSymptoms(userId: string, id: string, newSymptom: string): Promise<void> {
+    const existing = await this.getIncidentById(userId, id);
+    if (!existing) return;
     const now = new Date().toISOString();
     const localTs = fmtLocalTime(now, this.timezone);
     const entry = `${localTs} ${newSymptom}`;
-    // Atomic append — no read-modify-write race in HA
+    const updated = existing.symptoms
+      ? `${existing.symptoms}\n---\n${entry}`
+      : entry;
     await this.db.execute(
-      `UPDATE cmdb_incidents SET symptoms = CASE WHEN symptoms IS NULL OR symptoms = '' THEN ? ELSE concat(symptoms, ?) END, updated_at = ? WHERE id = ? AND user_id = ?`,
-      [entry, `\n---\n${entry}`, now, id, userId],
+      `UPDATE cmdb_incidents SET symptoms = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+      [updated, now, id, userId],
     );
   }
 
