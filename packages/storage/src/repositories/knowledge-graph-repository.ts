@@ -90,7 +90,7 @@ export class KnowledgeGraphRepository {
         UPDATE kg_entities SET
           attributes = ?,
           sources = ?,
-          confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END,
+          confidence = (CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END),
           last_seen_at = ?,
           mention_count = mention_count + 1
         WHERE id = ?
@@ -122,7 +122,7 @@ export class KnowledgeGraphRepository {
           await this.adapter.execute(`
             UPDATE kg_entities SET
               name = ?, normalized_name = ?, attributes = ?, sources = ?,
-              confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END, last_seen_at = ?, mention_count = mention_count + 1
+              confidence = (CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END), last_seen_at = ?, mention_count = mention_count + 1
             WHERE id = ?
           `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(fuzzySources), now, fuzzyMatch.id as string]);
         } catch { /* constraint violation if betterNormalized already exists — keep existing */ }
@@ -167,7 +167,7 @@ export class KnowledgeGraphRepository {
             await this.adapter.execute(`
               UPDATE kg_entities SET
                 name = ?, normalized_name = ?, attributes = ?, sources = ?,
-                confidence = CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END, last_seen_at = ?, mention_count = mention_count + 1
+                confidence = (CASE WHEN confidence + ${increment} > 1.0 THEN 1.0 ELSE confidence + ${increment} END), last_seen_at = ?, mention_count = mention_count + 1
               WHERE id = ?
             `, [betterName, betterNormalized, JSON.stringify(mergedAttrs), JSON.stringify(existingSources), now, best.id as string]);
           } catch { /* constraint violation — keep existing */ }
@@ -301,7 +301,7 @@ export class KnowledgeGraphRepository {
     if (existing) {
       await this.adapter.execute(`
         UPDATE kg_relations SET
-          strength = CASE WHEN strength + 0.1 > 1.0 THEN 1.0 ELSE strength + 0.1 END,
+          strength = (CASE WHEN strength + 0.1 > 1.0 THEN 1.0 ELSE strength + 0.1 END),
           context = COALESCE(?, context),
           last_seen_at = ?,
           mention_count = mention_count + 1
@@ -471,7 +471,7 @@ export class KnowledgeGraphRepository {
   async decayOldEntities(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
     const result = await this.adapter.execute(
-      'UPDATE kg_entities SET confidence = CASE WHEN confidence - ? < 0 THEN 0 ELSE confidence - ? END WHERE user_id = ? AND last_seen_at < ?',
+      'UPDATE kg_entities SET confidence = (CASE WHEN confidence - ? < 0 THEN 0 ELSE confidence - ? END) WHERE user_id = ? AND last_seen_at < ?',
       [decayAmount, decayAmount, userId, cutoff],
     );
     return result.changes;
@@ -481,7 +481,7 @@ export class KnowledgeGraphRepository {
   async decayOldRelations(userId: string, olderThanDays: number, decayAmount: number): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
     const result = await this.adapter.execute(
-      'UPDATE kg_relations SET strength = CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END WHERE user_id = ? AND last_seen_at < ?',
+      'UPDATE kg_relations SET strength = (CASE WHEN strength - ? < 0 THEN 0 ELSE strength - ? END) WHERE user_id = ? AND last_seen_at < ?',
       [decayAmount, decayAmount, userId, cutoff],
     );
     return result.changes;
