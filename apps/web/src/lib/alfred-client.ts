@@ -299,6 +299,45 @@ export class AlfredClient {
     return res.json();
   }
 
+  // ── Problem Management API ──
+
+  async itsmListProblems(filters?: Record<string, string>): Promise<any[]> {
+    const params = filters ? '?' + new URLSearchParams(filters).toString() : '';
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmCreateProblem(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmUpdateProblem(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmLinkIncidentToProblem(problemId: string, incidentId: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/${problemId}/link-incident`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ incident_id: incidentId }) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmUnlinkIncidentFromProblem(problemId: string, incidentId: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/${problemId}/link-incident/${incidentId}`, { method: 'DELETE', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmDetectPatterns(windowDays?: number, minIncidents?: number): Promise<any[]> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/detect-patterns`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ window_days: windowDays, min_incidents: minIncidents }) });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ── Docs API ──
 
   async docsGenerate(type: string, params?: Record<string, unknown>): Promise<any> {

@@ -89,7 +89,33 @@ interface Service {
   components: ServiceComponent[];
 }
 
-type Tab = 'incidents' | 'changes' | 'services';
+interface Problem {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  category: string;
+  rootCauseDescription: string;
+  rootCauseCategory: string;
+  workaround: string;
+  proposedFix: string;
+  isKnownError: boolean;
+  knownErrorDescription: string;
+  analysisNotes: string;
+  linkedIncidentIds: string[];
+  linkedChangeRequestId: string | null;
+  affectedAssetIds: string[];
+  affectedServiceIds: string[];
+  detectedBy: string;
+  detectedAt: string;
+  analyzedAt: string | null;
+  rootCauseIdentifiedAt: string | null;
+  resolvedAt: string | null;
+  closedAt: string | null;
+}
+
+type Tab = 'incidents' | 'changes' | 'services' | 'problems';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -141,6 +167,10 @@ function statusBadge(status: string) {
     acknowledged: 'bg-orange-500/10 text-orange-400',
     investigating: 'bg-yellow-500/10 text-yellow-400',
     mitigating: 'bg-purple-500/10 text-purple-400',
+    logged: 'bg-blue-500/10 text-blue-400',
+    analyzing: 'bg-yellow-500/10 text-yellow-400',
+    root_cause_identified: 'bg-purple-500/10 text-purple-400',
+    fix_in_progress: 'bg-orange-500/10 text-orange-400',
     resolved: 'bg-green-500/10 text-green-400',
     closed: 'bg-gray-500/10 text-gray-400',
     draft: 'bg-gray-500/10 text-gray-400',
@@ -305,6 +335,13 @@ export function ItsmPage() {
   const [changes, setChanges] = useState<ChangeRequest[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [allAssets, setAllAssets] = useState<Array<{ id: string; name: string; assetType: string }>>([]);
+  const [problems, setProblems] = useState<Problem[]>([]);
+  const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
+  const [showCreateProblem, setShowCreateProblem] = useState(false);
+  const [probStatusFilter, setProbStatusFilter] = useState('');
+  const [probPriorityFilter, setProbPriorityFilter] = useState('');
+  const [addingAnalysisNote, setAddingAnalysisNote] = useState(false);
+  const [analysisNoteText, setAnalysisNoteText] = useState('');
 
   // Selection
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -371,12 +408,22 @@ export function ItsmPage() {
     } catch { /* non-critical */ }
   }, [client]);
 
+  const loadProblems = useCallback(async () => {
+    try {
+      const filters: Record<string, string> = {};
+      if (probStatusFilter) filters.status = probStatusFilter;
+      if (probPriorityFilter) filters.priority = probPriorityFilter;
+      const data = await client.itsmListProblems(Object.keys(filters).length ? filters : undefined);
+      setProblems(Array.isArray(data) ? data : []);
+    } catch (e) { setError((e as Error).message); }
+  }, [client, probStatusFilter, probPriorityFilter]);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setError(null);
-    await Promise.all([loadIncidents(), loadChanges(), loadServices(), loadAssets()]);
+    await Promise.all([loadIncidents(), loadChanges(), loadServices(), loadAssets(), loadProblems()]);
     setLoading(false);
-  }, [loadIncidents, loadChanges, loadServices, loadAssets]);
+  }, [loadIncidents, loadChanges, loadServices, loadAssets, loadProblems]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -510,6 +557,56 @@ export function ItsmPage() {
     } catch (e) { setError((e as Error).message); }
   }
 
+  // Problem Management Actions
+  async function createProblem(data: Partial<Problem>) {
+    try {
+      const created = await client.itsmCreateProblem(data);
+      setProblems(prev => [created, ...prev]);
+      setShowCreateProblem(false);
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  async function updateProblemField(id: string, fields: Record<string, unknown>) {
+    try {
+      const updated = await client.itsmUpdateProblem(id, fields);
+      setProblems(prev => prev.map(p => p.id === id ? { ...p, ...updated } : p));
+      if (selectedProblem?.id === id) setSelectedProblem({ ...selectedProblem, ...updated });
+    } catch (e) { setError((e as Error).message); }
+  }
+
+  // Problem status transitions
+  const PROBLEM_TRANSITION_FIELDS: Record<string, Array<{ key: string; label: string; required: boolean; placeholder: string }>> = {
+    analyzing: [],
+    root_cause_identified: [
+      { key: 'root_cause_description', label: 'Root Cause', required: true, placeholder: 'Was ist die Ursache?' },
+      { key: 'root_cause_category', label: 'Kategorie', required: false, placeholder: 'infrastructure/software/...' },
+    ],
+    fix_in_progress: [],
+    resolved: [{ key: 'proposed_fix', label: 'Angewandter Fix', required: true, placeholder: 'Wie wurde es dauerhaft gelöst?' }],
+    closed: [],
+  };
+
+  const [problemTransitionModal, setProblemTransitionModal] = useState<TransitionModalConfig | null>(null);
+  const [problemTransitionFields, setProblemTransitionFields] = useState<Record<string, string>>({});
+
+  function openProblemTransition(problemId: string, targetStatus: string) {
+    const fields = PROBLEM_TRANSITION_FIELDS[targetStatus] ?? [];
+    if (fields.length === 0) { submitProblemTransition(problemId, targetStatus, {}); return; }
+    const labels: Record<string, string> = { analyzing: 'Analyze', root_cause_identified: 'Root Cause', fix_in_progress: 'Fix starten', resolved: 'Resolve', closed: 'Close' };
+    setProblemTransitionFields({});
+    setProblemTransitionModal({ incidentId: problemId, targetStatus, label: labels[targetStatus] ?? targetStatus, fields });
+  }
+
+  async function submitProblemTransition(id: string, status: string, fields: Record<string, string>) {
+    try {
+      const updated = await client.itsmUpdateProblem(id, { status, ...fields });
+      setProblems(prev => prev.map(p => p.id === id ? { ...p, ...updated } : p));
+      if (selectedProblem?.id === id) setSelectedProblem({ ...selectedProblem, ...updated });
+      setProblemTransitionModal(null);
+      setProblemTransitionFields({});
+    } catch (e) { setError((e as Error).message); }
+  }
+
   async function generateRunbook(serviceId: string) {
     setGeneratingRunbook(true);
     try {
@@ -557,6 +654,7 @@ export function ItsmPage() {
     { key: 'incidents', label: 'Incidents', count: incidents.length },
     { key: 'changes', label: 'Change Requests', count: changes.length },
     { key: 'services', label: 'Services', count: services.length },
+    { key: 'problems', label: 'Problems', count: problems.length },
   ];
 
   return (
@@ -579,7 +677,7 @@ export function ItsmPage() {
         {tabs.map(t => (
           <button
             key={t.key}
-            onClick={() => { setTab(t.key); setSelectedIncident(null); setSelectedChange(null); setSelectedService(null); setGeneratingRunbook(false); setGeneratingPostmortem(false); setServiceDocs([]); }}
+            onClick={() => { setTab(t.key); setSelectedIncident(null); setSelectedChange(null); setSelectedService(null); setSelectedProblem(null); setGeneratingRunbook(false); setGeneratingPostmortem(false); setServiceDocs([]); }}
             className={clsx(
               'px-4 py-2 text-sm font-medium border-b-2 transition-colors',
               tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400 hover:text-gray-200',
@@ -1326,10 +1424,238 @@ export function ItsmPage() {
         </div>
       )}
 
+      {/* ============= PROBLEMS TAB ============= */}
+      {!loading && tab === 'problems' && (
+        <div className="flex gap-6">
+          <div className={clsx('space-y-3', selectedProblem ? 'w-1/2' : 'w-full')}>
+            <div className="flex gap-2 items-center flex-wrap">
+              <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={probStatusFilter} onChange={e => setProbStatusFilter(e.target.value)}>
+                <option value="">Alle Status</option>
+                <option value="logged">Logged</option>
+                <option value="analyzing">Analyzing</option>
+                <option value="root_cause_identified">Root Cause ID</option>
+                <option value="fix_in_progress">Fix in Progress</option>
+                <option value="resolved">Resolved</option>
+                <option value="closed">Closed</option>
+              </select>
+              <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={probPriorityFilter} onChange={e => setProbPriorityFilter(e.target.value)}>
+                <option value="">Alle Prioritäten</option>
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+              <div className="flex-1" />
+              <button onClick={() => setShowCreateProblem(true)} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center gap-1">
+                <span>+</span> Problem
+              </button>
+            </div>
+
+            <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[#0d0d0d] text-gray-400">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-medium w-8">P</th>
+                    <th className="text-left px-4 py-2 font-medium">Titel</th>
+                    <th className="text-left px-4 py-2 font-medium">Status</th>
+                    <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Inc</th>
+                    <th className="text-left px-4 py-2 font-medium hidden md:table-cell">KE</th>
+                    <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Erkannt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {problems.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Keine Probleme gefunden.</td></tr>
+                  )}
+                  {problems.map(prob => (
+                    <tr key={prob.id} onClick={() => setSelectedProblem(prob)}
+                      className={clsx('border-t border-[#1f1f1f] cursor-pointer transition-colors', selectedProblem?.id === prob.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]')}>
+                      <td className="px-4 py-2"><span className={SEV_COLORS[prob.priority]}>{SEV_ICONS[prob.priority] ?? '●'}</span></td>
+                      <td className="px-4 py-2 text-gray-200">{prob.title}</td>
+                      <td className="px-4 py-2"><span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(prob.status))}>{prob.status}</span></td>
+                      <td className="px-4 py-2 text-gray-400 text-xs hidden md:table-cell">{prob.linkedIncidentIds?.length ?? 0}</td>
+                      <td className="px-4 py-2 hidden md:table-cell">{prob.isKnownError ? <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">KE</span> : '—'}</td>
+                      <td className="px-4 py-2 text-gray-500 text-xs hidden md:table-cell">{fmtDate(prob.detectedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Problem Detail */}
+          {selectedProblem && (
+            <div className="w-1/2 bg-[#111111] border border-[#1f1f1f] rounded-xl p-5 space-y-4 overflow-y-auto max-h-[calc(100vh-220px)]">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-200">{selectedProblem.title}</h3>
+                  <p className="text-xs text-gray-500 mt-1">ID: {selectedProblem.id}</p>
+                </div>
+                <button onClick={() => setSelectedProblem(null)} className="text-gray-500 hover:text-gray-300 text-lg">x</button>
+              </div>
+
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className={clsx('text-xs px-2 py-0.5 rounded-full', SEV_BG[selectedProblem.priority])}>{selectedProblem.priority}</span>
+                <span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(selectedProblem.status))}>{selectedProblem.status}</span>
+                {selectedProblem.category && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-500/10 text-gray-400">{selectedProblem.category}</span>}
+                {selectedProblem.isKnownError && <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400">Known Error</span>}
+              </div>
+
+              <EditableTextField label="Beschreibung" value={selectedProblem.description} placeholder="Problem-Beschreibung..."
+                onSave={val => updateProblemField(selectedProblem.id, { description: val })}
+                disabled={selectedProblem.status === 'closed'} />
+
+              <EditableTextField label="Root Cause" value={selectedProblem.rootCauseDescription} placeholder="Was ist die Ursache?"
+                onSave={val => updateProblemField(selectedProblem.id, { root_cause_description: val })}
+                disabled={selectedProblem.status === 'closed'} />
+
+              <EditableTextField label="Workaround" value={selectedProblem.workaround} placeholder="Temporärer Workaround..."
+                onSave={val => updateProblemField(selectedProblem.id, { workaround: val })}
+                disabled={selectedProblem.status === 'closed'} />
+
+              <EditableTextField label="Proposed Fix" value={selectedProblem.proposedFix} placeholder="Permanenter Lösungsvorschlag..."
+                onSave={val => updateProblemField(selectedProblem.id, { proposed_fix: val })}
+                disabled={selectedProblem.status === 'closed'} />
+
+              {/* Known Error Toggle */}
+              {selectedProblem.status !== 'closed' && (
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-xs text-amber-400 cursor-pointer">
+                    <input type="checkbox" checked={selectedProblem.isKnownError}
+                      onChange={e => updateProblemField(selectedProblem.id, { is_known_error: e.target.checked })} />
+                    Known Error (Root Cause bekannt, Fix ausstehend)
+                  </label>
+                  {selectedProblem.isKnownError && (
+                    <EditableTextField label="Known Error Beschreibung" value={selectedProblem.knownErrorDescription} placeholder="Bekannte Ursache + Workaround..."
+                      onSave={val => updateProblemField(selectedProblem.id, { known_error_description: val })} />
+                  )}
+                </div>
+              )}
+
+              {/* Analysis Notes — append-only */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Analyse-Notizen</p>
+                {selectedProblem.analysisNotes ? (
+                  <p className="text-sm text-gray-300 whitespace-pre-wrap mb-2">{selectedProblem.analysisNotes}</p>
+                ) : (
+                  <p className="text-xs text-gray-500 italic mb-2">Keine Notizen vorhanden.</p>
+                )}
+                {selectedProblem.status !== 'closed' && (
+                  addingAnalysisNote ? (
+                    <div className="space-y-2">
+                      <textarea className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[60px]"
+                        placeholder="Analyse, Beobachtung, Hypothese..." value={analysisNoteText} onChange={e => setAnalysisNoteText(e.target.value)} />
+                      <div className="flex gap-2">
+                        <button onClick={async () => { if (!analysisNoteText.trim()) return; await updateProblemField(selectedProblem.id, { analysis_notes: analysisNoteText.trim() }); setAnalysisNoteText(''); setAddingAnalysisNote(false); }}
+                          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded">Speichern</button>
+                        <button onClick={() => { setAddingAnalysisNote(false); setAnalysisNoteText(''); }} className="px-3 py-1 text-xs text-gray-400 hover:text-white">Abbrechen</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button onClick={() => setAddingAnalysisNote(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Notiz hinzufügen</button>
+                  )
+                )}
+              </div>
+
+              {/* Linked Incidents */}
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Verknüpfte Incidents ({selectedProblem.linkedIncidentIds?.length ?? 0})</p>
+                <div className="flex gap-1 flex-wrap mb-2">
+                  {(selectedProblem.linkedIncidentIds ?? []).map(incId => {
+                    const inc = incidents.find(i => i.id === incId);
+                    return (
+                      <span key={incId} className="text-xs bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-0.5 text-gray-300 font-mono flex items-center gap-1">
+                        {inc ? `${inc.title.slice(0, 30)}` : incId.slice(0, 8)}
+                        {inc && <span className={clsx('text-[10px] px-1 rounded', statusBadge(inc.status))}>{inc.status}</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Linked Change Request */}
+              {selectedProblem.linkedChangeRequestId && (
+                <div className="bg-[#1a1a1a] rounded p-2">
+                  <p className="text-xs text-gray-500 mb-1">Fix-Change Request</p>
+                  <p className="text-sm text-blue-400 font-mono">{selectedProblem.linkedChangeRequestId.slice(0, 8)}...</p>
+                </div>
+              )}
+
+              {/* Timeline */}
+              <div>
+                <p className="text-xs text-gray-500 mb-2">Timeline</p>
+                <div className="space-y-1 text-xs">
+                  <div className="flex gap-3"><span className="text-gray-500 w-24">Erkannt:</span><span className="text-gray-300">{fmtDate(selectedProblem.detectedAt)}</span></div>
+                  {selectedProblem.analyzedAt && <div className="flex gap-3"><span className="text-gray-500 w-24">Analysiert:</span><span className="text-gray-300">{fmtDate(selectedProblem.analyzedAt)}</span></div>}
+                  {selectedProblem.rootCauseIdentifiedAt && <div className="flex gap-3"><span className="text-gray-500 w-24">Root Cause:</span><span className="text-gray-300">{fmtDate(selectedProblem.rootCauseIdentifiedAt)}</span></div>}
+                  {selectedProblem.resolvedAt && <div className="flex gap-3"><span className="text-gray-500 w-24">Resolved:</span><span className="text-gray-300">{fmtDate(selectedProblem.resolvedAt)}</span></div>}
+                  {selectedProblem.closedAt && <div className="flex gap-3"><span className="text-gray-500 w-24">Closed:</span><span className="text-gray-300">{fmtDate(selectedProblem.closedAt)}</span></div>}
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-2 flex-wrap pt-2 border-t border-[#1f1f1f]">
+                {selectedProblem.status === 'logged' && (
+                  <button onClick={() => openProblemTransition(selectedProblem.id, 'analyzing')} className="px-3 py-1.5 text-xs bg-yellow-600 hover:bg-yellow-500 text-white rounded">Analyze</button>
+                )}
+                {selectedProblem.status === 'analyzing' && (
+                  <button onClick={() => openProblemTransition(selectedProblem.id, 'root_cause_identified')} className="px-3 py-1.5 text-xs bg-purple-600 hover:bg-purple-500 text-white rounded">Root Cause</button>
+                )}
+                {selectedProblem.status === 'root_cause_identified' && (
+                  <button onClick={() => openProblemTransition(selectedProblem.id, 'fix_in_progress')} className="px-3 py-1.5 text-xs bg-orange-600 hover:bg-orange-500 text-white rounded">Fix starten</button>
+                )}
+                {selectedProblem.status !== 'resolved' && selectedProblem.status !== 'closed' && (
+                  <button onClick={() => openProblemTransition(selectedProblem.id, 'resolved')} className="px-3 py-1.5 text-xs bg-green-600 hover:bg-green-500 text-white rounded">Resolve</button>
+                )}
+                {selectedProblem.status === 'resolved' && (
+                  <button onClick={() => openProblemTransition(selectedProblem.id, 'closed')} className="px-3 py-1.5 text-xs bg-gray-600 hover:bg-gray-500 text-white rounded">Close</button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Create Modals */}
       {showCreateIncident && <CreateIncidentModal onClose={() => setShowCreateIncident(false)} onSave={createIncident} />}
       {showCreateChange && <CreateChangeModal onClose={() => setShowCreateChange(false)} onSave={createChange} />}
       {showCreateService && <CreateServiceModal onClose={() => setShowCreateService(false)} onSave={createService} />}
+
+      {/* Create Problem Modal */}
+      {showCreateProblem && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setShowCreateProblem(false)}>
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-full max-w-lg space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-200">Neues Problem</h3>
+            <input id="prob-title" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200" placeholder="Titel" />
+            <div className="flex gap-2">
+              <select id="prob-priority" className="flex-1 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200" defaultValue="medium">
+                <option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+              </select>
+              <select id="prob-category" className="flex-1 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200" defaultValue="">
+                <option value="">Kategorie...</option>
+                <option value="infrastructure">Infrastructure</option><option value="software">Software</option><option value="configuration">Configuration</option>
+                <option value="capacity">Capacity</option><option value="security">Security</option><option value="network">Network</option><option value="unknown">Unknown</option>
+              </select>
+            </div>
+            <textarea id="prob-desc" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 h-24" placeholder="Beschreibung" />
+            <textarea id="prob-wa" className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 h-16" placeholder="Workaround (optional)" />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowCreateProblem(false)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button onClick={() => {
+                const title = (document.getElementById('prob-title') as HTMLInputElement)?.value;
+                if (!title) return;
+                createProblem({
+                  title,
+                  priority: (document.getElementById('prob-priority') as HTMLSelectElement)?.value as any,
+                  category: (document.getElementById('prob-category') as HTMLSelectElement)?.value || undefined,
+                  description: (document.getElementById('prob-desc') as HTMLTextAreaElement)?.value || undefined,
+                  workaround: (document.getElementById('prob-wa') as HTMLTextAreaElement)?.value || undefined,
+                } as any);
+              }} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded">Erstellen</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Status Transition Modal */}
       {transitionModal && transitionModal.fields.length > 0 && (
@@ -1396,6 +1722,31 @@ export function ItsmPage() {
               >
                 {changeTransitionModal.label}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Problem Transition Modal */}
+      {problemTransitionModal && problemTransitionModal.fields.length > 0 && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold text-white">Problem → {problemTransitionModal.label}</h3>
+            {problemTransitionModal.fields.map(f => (
+              <div key={f.key}>
+                <label className="text-xs text-gray-400 mb-1 block">{f.label} {f.required && <span className="text-red-400">*</span>}</label>
+                <textarea className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200 min-h-[80px]"
+                  placeholder={f.placeholder} value={problemTransitionFields[f.key] ?? ''}
+                  onChange={e => setProblemTransitionFields(prev => ({ ...prev, [f.key]: e.target.value }))} />
+              </div>
+            ))}
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setProblemTransitionModal(null)} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button onClick={() => {
+                const missing = problemTransitionModal.fields.filter(f => f.required && !problemTransitionFields[f.key]?.trim());
+                if (missing.length > 0) { setError(`Pflichtfeld: ${missing.map(f => f.label).join(', ')}`); return; }
+                submitProblemTransition(problemTransitionModal.incidentId, problemTransitionModal.targetStatus, problemTransitionFields);
+              }} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded">{problemTransitionModal.label}</button>
             </div>
           </div>
         </div>

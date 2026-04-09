@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.417] - 2026-04-09
+
+### Added
+- **ITSM Problem Management — Phase 5: WebUI komplett**
+  - Neuer "Problems" Tab in ITSM-Seite mit Filter (Status, Priority), Tabelle, Detail-Panel
+  - Problem-Lifecycle: Logged→Analyzing→Root Cause→Fix in Progress→Resolved→Closed mit Transition-Modals
+  - EditableTextField: Description, Root Cause, Workaround, Proposed Fix
+  - Known Error Toggle + Beschreibung (amber callout)
+  - Analysis Notes append-only (wie Incident Investigation Notes)
+  - Verknüpfte Incidents + Linked Change Request Anzeige
+  - Timeline (Detected, Analyzed, Root Cause, Resolved, Closed)
+  - Create Problem Modal (Titel, Priority, Category, Description, Workaround)
+  - 7 neue API-Client-Methoden
+
 ## [0.19.0-multi-ha.416] - 2026-04-09
 
 ### Added
