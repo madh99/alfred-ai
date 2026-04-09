@@ -140,7 +140,7 @@ export class ProblemRepository {
     const now = new Date().toISOString();
     const entry = `${now.slice(0, 16)} ${note}`;
     await this.db.execute(
-      `UPDATE cmdb_problems SET analysis_notes = COALESCE(NULLIF(analysis_notes, '') || ? , ?), updated_at = ? WHERE id = ? AND user_id = ?`,
+      `UPDATE cmdb_problems SET analysis_notes = CASE WHEN analysis_notes IS NULL OR analysis_notes = '' THEN ? ELSE concat(analysis_notes, ?) END, updated_at = ? WHERE id = ? AND user_id = ?`,
       [entry, `\n---\n${entry}`, now, id, userId],
     );
   }
