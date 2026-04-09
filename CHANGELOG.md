@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.412] - 2026-04-09
+
+### Fixed
+- **Code Review: letzte 3 MEDIUM Bugs**
+  1. CMDB Tags: Refetch nach Save statt optimistischem string[]-to-string Cast
+  2. ITSM `generateRunbook`: doppelter `itsmListServices` Fetch eliminiert
+  3. ON CONFLICT Guards: SQL-Kommentar dokumentiert das Schutz-Verhalten (manual, correction)
+
 ## [0.19.0-multi-ha.411] - 2026-04-09
 
 ### Fixed

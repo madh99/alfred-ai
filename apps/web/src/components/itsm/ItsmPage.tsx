@@ -481,9 +481,9 @@ export function ItsmPage() {
     setGeneratingRunbook(true);
     try {
       await client.docsGenerate('runbook', { service_id: serviceId });
-      await loadServices();
-      // Refresh selected service from updated list
+      // Refresh services list (single fetch, not double)
       const updated = (await client.itsmListServices()) as Service[];
+      setServices(Array.isArray(updated) ? updated : []);
       const svc = updated.find(s => s.id === serviceId);
       if (svc) setSelectedService(svc);
       // Load document history

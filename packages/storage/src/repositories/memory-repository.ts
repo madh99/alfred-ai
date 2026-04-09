@@ -66,6 +66,9 @@ export class MemoryRepository {
          source = excluded.source,
          updated_at = excluded.updated_at,
          expires_at = NULL
+       -- Guard 1: auto cannot overwrite manual (user's explicit saves are protected)
+       -- Guard 2: auto cannot overwrite correction-type memories (user corrections are permanent)
+       -- Note: manual CAN overwrite manual/correction. auto CAN overwrite auto (except corrections).
        WHERE NOT (memories.source = 'manual' AND excluded.source = 'auto')
          AND NOT (memories.type = 'correction' AND excluded.source = 'auto')`,
       [id, userId, key, value, category, type, confidence, source, now, now],

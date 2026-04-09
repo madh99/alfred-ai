@@ -278,11 +278,11 @@ export function CmdbPage() {
       if (JSON.stringify(newTags) !== JSON.stringify(selectedAsset.tags ?? [])) updates.tags = newTags;
       if (Object.keys(updates).length > 0) {
         await client.cmdbUpdateAsset(selectedAsset.id, updates);
-        await fetchData();
-        // Re-select to refresh detail
-        const updated = { ...selectedAsset, ...updates } as CmdbAsset;
-        if (updates.tags) updated.tags = updates.tags as string;
-        setSelectedAsset(updated);
+        // Refetch fresh data from server to avoid type mismatches (tags: string[] vs string)
+        const freshAssets = await client.cmdbListAssets();
+        setAssets(freshAssets);
+        const fresh = freshAssets.find((a: any) => a.id === selectedAsset.id);
+        if (fresh) setSelectedAsset(fresh);
       }
       setEditMode(false);
     } catch (err) {
