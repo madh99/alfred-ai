@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.424] - 2026-04-09
+
+### Fixed
+- **BMW: Token-userId nachhaltig gelöst** — Grundlegende Architektur-Bereinigung statt Quickfix:
+  - Neues `tokenUserId` Feld: einmal gesetzt durch `setServiceResolver(ownerMasterUserId)`, danach fix für alle Token-Operationen
+  - Token-Getter/Setter, `loadTokensFromDisk`, `saveTokens`, `resolveDbAccess` nutzen alle konsistent `tokenUserId`
+  - `startStreaming()`: kein userId-Loop mehr, direkter Load über `tokenUserId`
+  - `reconnectWithFreshToken()`: kein Multi-Path-Workaround, einfacher RAM-Clear + Reload
+  - `execute()`: setzt `tokenUserId` als Fallback wenn nicht durch `setServiceResolver` initialisiert
+  - Token-Migration beim Start: konsolidiert alte `bmw-tokens-default.json` / `bmw-tokens-{alfredUserId}.json` in die kanonische `bmw-tokens-{ownerMasterUserId}.json`
+
 ## [0.19.0-multi-ha.422] - 2026-04-09
 
 ### Fixed

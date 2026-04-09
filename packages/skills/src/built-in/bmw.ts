@@ -185,10 +185,12 @@ export class BMWSkill extends Skill {
   };
 
   private readonly config: BMWCarDataConfig;
-  /** Per-user token storage keyed by alfredUserId (or 'default' for global). */
+  /** Token storage — single BMW account, keyed by tokenUserId (ownerMasterUserId). */
   private tokensByUser: Map<string, BMWTokens | null> = new Map();
   private cacheByUser: Map<string, Map<string, CacheEntry>> = new Map();
   private activeUserId = 'default';
+  /** The stable userId for token file/DB storage. Set once by setServiceResolver, never changes. */
+  private tokenUserId = 'default';
 
   /** Injected from alfred.ts — available on ALL nodes, not just the one running execute(). */
   private injectedServiceResolver?: SkillContext['userServiceResolver'];
@@ -196,8 +198,8 @@ export class BMWSkill extends Skill {
   /** Injected from alfred.ts — DB persistence for telematic data (cross-node + history). */
   private telematicRepo?: { insert(userId: string, vin: string, source: 'mqtt' | 'rest', data: Record<string, unknown>): Promise<void>; getLatest(userId: string, vin: string): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getLatestBySource(userId: string, vin: string, source: 'mqtt' | 'rest'): Promise<{ telematicData: Record<string, unknown>; createdAt: string } | undefined>; getHistory(userId: string, vin: string, from: string, to: string, limit?: number): Promise<Array<{ telematicData: Record<string, unknown>; source: string; createdAt: string }>> };
 
-  private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.activeUserId) ?? null; }
-  private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.activeUserId, t); }
+  private get tokens(): BMWTokens | null { return this.tokensByUser.get(this.tokenUserId) ?? null; }
+  private set tokens(t: BMWTokens | null) { this.tokensByUser.set(this.tokenUserId, t); }
   private get cache(): Map<string, CacheEntry> {
     if (!this.cacheByUser.has(this.activeUserId)) this.cacheByUser.set(this.activeUserId, new Map());
     return this.cacheByUser.get(this.activeUserId)!;
@@ -235,9 +237,37 @@ export class BMWSkill extends Skill {
   }
 
   /** Inject service resolver from alfred.ts so token persistence works on ALL HA nodes. */
-  setServiceResolver(resolver: SkillContext['userServiceResolver'], alfredUserId?: string): void {
+  setServiceResolver(resolver: SkillContext['userServiceResolver'], ownerMasterUserId?: string): void {
     this.injectedServiceResolver = resolver;
-    this.injectedAlfredUserId = alfredUserId;
+    this.injectedAlfredUserId = ownerMasterUserId;
+    // Set the stable token userId — all token reads/writes use this path
+    if (ownerMasterUserId) {
+      this.tokenUserId = ownerMasterUserId;
+      this.activeUserId = ownerMasterUserId;
+      // Migrate: consolidate old token files into the canonical path
+      this.migrateTokenFiles(ownerMasterUserId).catch(() => {});
+    }
+  }
+
+  /** One-time migration: find the freshest token across all legacy files and save to canonical path. */
+  private async migrateTokenFiles(canonicalUserId: string): Promise<void> {
+    const legacyIds = ['default', canonicalUserId];
+    let best: BMWTokens | null = null;
+    for (const uid of legacyIds) {
+      try {
+        const raw = await readFile(getTokenPath(uid), 'utf-8');
+        const tokens = JSON.parse(raw) as BMWTokens;
+        if (!best || (tokens.expiresAt ?? 0) > (best.expiresAt ?? 0)) best = tokens;
+      } catch { /* file doesn't exist */ }
+    }
+    if (best) {
+      // Save to canonical path
+      const savedId = this.activeUserId;
+      this.activeUserId = canonicalUserId;
+      this.tokens = best;
+      await this.saveTokens(best);
+      this.activeUserId = savedId;
+    }
   }
 
   /** Inject telematic repository for DB-persisted BMW data (cross-node access + history). */
@@ -257,14 +287,9 @@ export class BMWSkill extends Skill {
     const { username, topic } = this.config.streaming;
     if (!username || !topic) return;
 
-    // Load tokens if not yet available (they're lazily loaded on first skill call)
-    // Try 'default' userId first, then injected alfredUserId
-    for (const uid of [this.activeUserId, this.injectedAlfredUserId ?? ''].filter(Boolean)) {
-      this.activeUserId = uid;
-      if (!this.tokens?.idToken) {
-        const loaded = await this.loadTokens();
-        if (loaded) { this.tokens = loaded; break; }
-      } else { break; }
+    // Load tokens (single canonical path via tokenUserId)
+    if (!this.tokens?.idToken) {
+      await this.loadTokens();
     }
     let tokens = this.tokens;
     if (!tokens?.idToken) return; // Still no tokens — user hasn't authorized yet
@@ -406,23 +431,9 @@ export class BMWSkill extends Skill {
 
   private async reconnectWithFreshToken(): Promise<void> {
     try {
-      // Always reload tokens from disk/DB first — try all known userId paths
-      // (authorize may save under a different userId than streaming uses)
-      let freshFromDisk = await this.loadTokens();
-      if (!freshFromDisk || (freshFromDisk.expiresAt && freshFromDisk.expiresAt < Date.now())) {
-        // Current userId token is expired/missing — try other paths
-        const savedUserId = this.activeUserId;
-        for (const uid of ['default', this.injectedAlfredUserId ?? ''].filter(Boolean)) {
-          if (uid === savedUserId) continue;
-          this.activeUserId = uid;
-          const alt = await this.loadTokens();
-          if (alt && alt.refreshToken && (!freshFromDisk || (alt.expiresAt ?? 0) > (freshFromDisk.expiresAt ?? 0))) {
-            freshFromDisk = alt;
-          }
-        }
-        this.activeUserId = savedUserId;
-      }
-      if (freshFromDisk) this.tokens = freshFromDisk;
+      // Reload tokens from disk/DB (single canonical path via tokenUserId)
+      this.tokens = null; // clear RAM cache to force disk/DB reload
+      await this.loadTokens();
 
       // Try to refresh the token
       const tokens = this.tokens;
@@ -458,9 +469,13 @@ export class BMWSkill extends Skill {
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
     // Resolve per-user BMW config if available
     this.activeConfig = await this.resolveUserConfig(_context) ?? undefined;
-    // Isolate tokens/cache per user
+    // activeUserId for cache isolation only — tokens always use tokenUserId
     this.activeUserId = _context.alfredUserId ?? _context.masterUserId ?? 'default';
     this.activeContext = _context;
+    // Ensure tokenUserId is set if not yet initialized by setServiceResolver
+    if (this.tokenUserId === 'default' && _context.masterUserId) {
+      this.tokenUserId = _context.masterUserId;
+    }
 
     try {
       if (!this.hasCfg) {
@@ -875,7 +890,8 @@ export class BMWSkill extends Skill {
   /** Resolve the best available service resolver + userId for DB token persistence. */
   private resolveDbAccess(): { resolver: SkillContext['userServiceResolver']; userId: string } | null {
     const resolver = this.injectedServiceResolver ?? this.activeContext?.userServiceResolver;
-    const userId = this.activeContext?.alfredUserId ?? this.injectedAlfredUserId ?? '__global__';
+    // Always use tokenUserId for consistent DB key (not activeContext.alfredUserId which varies per request)
+    const userId = this.tokenUserId !== 'default' ? this.tokenUserId : (this.injectedAlfredUserId ?? '__global__');
     if (!resolver) return null;
     return { resolver, userId };
   }
@@ -893,10 +909,10 @@ export class BMWSkill extends Skill {
     return await this.loadTokensFromDisk();
   }
 
-  /** Read tokens from disk, bypassing in-memory cache */
+  /** Read tokens from disk, bypassing in-memory cache. Always uses tokenUserId for consistent path. */
   private async loadTokensFromDisk(): Promise<BMWTokens | null> {
     try {
-      const raw = await readFile(getTokenPath(this.activeUserId), 'utf-8');
+      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
       const tokens = JSON.parse(raw) as BMWTokens;
       this.tokens = tokens;
       return tokens;
@@ -918,8 +934,8 @@ export class BMWSkill extends Skill {
     // Always write to disk as backup (backward compat + fallback)
     try {
       await mkdir(join(homedir(), '.alfred'), { recursive: true });
-      await writeFile(getTokenPath(this.activeUserId), JSON.stringify(tokens, null, 2), 'utf-8');
-      try { await chmod(getTokenPath(this.activeUserId), 0o600); } catch { /* Windows has no chmod */ }
+      await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(tokens, null, 2), 'utf-8');
+      try { await chmod(getTokenPath(this.tokenUserId), 0o600); } catch { /* Windows has no chmod */ }
     } catch { /* best-effort disk write */ }
   }
 
