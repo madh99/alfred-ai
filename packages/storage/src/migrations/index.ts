@@ -1264,4 +1264,44 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN action_items TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 54,
+    description: 'Problem Management — cmdb_problems + problem_id on incidents + linked_problem_id on changes',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmdb_problems (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL DEFAULT 'logged',
+          priority TEXT NOT NULL DEFAULT 'medium',
+          category TEXT,
+          root_cause_description TEXT,
+          root_cause_category TEXT,
+          workaround TEXT,
+          proposed_fix TEXT,
+          is_known_error INTEGER NOT NULL DEFAULT 0,
+          known_error_description TEXT,
+          analysis_notes TEXT,
+          linked_incident_ids TEXT NOT NULL DEFAULT '[]',
+          linked_change_request_id TEXT,
+          affected_asset_ids TEXT NOT NULL DEFAULT '[]',
+          affected_service_ids TEXT NOT NULL DEFAULT '[]',
+          detected_by TEXT NOT NULL DEFAULT 'manual',
+          detection_method TEXT,
+          detected_at TEXT NOT NULL DEFAULT (datetime('now')),
+          analyzed_at TEXT,
+          root_cause_identified_at TEXT,
+          resolved_at TEXT,
+          closed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmdb_problems_user_status ON cmdb_problems(user_id, status);
+      `);
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN problem_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_change_requests ADD COLUMN linked_problem_id TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

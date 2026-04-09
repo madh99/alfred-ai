@@ -635,6 +635,7 @@ export interface CmdbIncident {
   postmortem?: string;
   detectedBy?: string;
   relatedIncidentId?: string;
+  problemId?: string;
   openedAt: string;
   acknowledgedAt?: string;
   resolvedAt?: string;
@@ -699,13 +700,56 @@ export interface CmdbChangeRequest {
   completedAt?: string;
   result?: string;
   linkedIncidentId?: string;
+  linkedProblemId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export type CmdbDocType = 'runbook' | 'postmortem' | 'inventory' | 'topology' | 'service_map' | 'change_log' | 'custom';
+// ── Problem Management ──────────────────────────────────────
+
+export type ProblemStatus =
+  | 'logged' | 'analyzing' | 'root_cause_identified'
+  | 'fix_in_progress' | 'resolved' | 'closed';
+
+export type ProblemPriority = 'critical' | 'high' | 'medium' | 'low';
+
+export type ProblemCategory =
+  | 'infrastructure' | 'software' | 'configuration' | 'capacity'
+  | 'security' | 'network' | 'data' | 'process' | 'external' | 'unknown';
+
+export interface CmdbProblem {
+  id: string;
+  userId: string;
+  title: string;
+  description?: string;
+  status: ProblemStatus;
+  priority: ProblemPriority;
+  category?: ProblemCategory;
+  rootCauseDescription?: string;
+  rootCauseCategory?: ProblemCategory;
+  workaround?: string;
+  proposedFix?: string;
+  isKnownError: boolean;
+  knownErrorDescription?: string;
+  analysisNotes?: string;
+  linkedIncidentIds: string[];
+  linkedChangeRequestId?: string;
+  affectedAssetIds: string[];
+  affectedServiceIds: string[];
+  detectedBy: 'auto' | 'manual' | 'user_report';
+  detectionMethod?: string;
+  detectedAt: string;
+  analyzedAt?: string;
+  rootCauseIdentifiedAt?: string;
+  resolvedAt?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CmdbDocType = 'runbook' | 'postmortem' | 'inventory' | 'topology' | 'service_map' | 'change_log' | 'problem_analysis' | 'custom';
 export type CmdbDocFormat = 'markdown' | 'mermaid';
-export type CmdbLinkedEntityType = 'asset' | 'service' | 'incident' | 'change_request';
+export type CmdbLinkedEntityType = 'asset' | 'service' | 'incident' | 'change_request' | 'problem';
 
 export interface CmdbDocument {
   id: string;

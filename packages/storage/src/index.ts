@@ -64,3 +64,4 @@ export { BrainstormingRepository, type BrainstormingSession, type BrainstormingI
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
 export { CmdbRepository } from './repositories/cmdb-repository.js';
 export { ItsmRepository } from './repositories/itsm-repository.js';
+export { ProblemRepository } from './repositories/problem-repository.js';

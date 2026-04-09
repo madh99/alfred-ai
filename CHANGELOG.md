@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.414] - 2026-04-09
+
+### Added
+- **ITSM Problem Management — Phase 1: Types + Storage**
+  - `CmdbProblem` Interface: 27 Felder, 6-Status-Lifecycle (logged→analyzing→root_cause_identified→fix_in_progress→resolved→closed), Known-Error-Flag, Root-Cause-Analyse, bidirektionale Incident/Change-Verknüpfung
+  - `ProblemRepository`: CRUD, linkIncident/unlinkIncident (bidirektional mit Denormalisierung), linkChangeRequest, appendAnalysisNotes (atomic), detectPatterns (Keyword+Asset+Service Clustering), getDashboard
+  - Migration v54: `cmdb_problems` Tabelle + `problem_id` auf Incidents + `linked_problem_id` auf Change Requests
+  - `CmdbIncident.problemId` + `CmdbChangeRequest.linkedProblemId` Felder
+
 ## [0.19.0-multi-ha.413] - 2026-04-09
 
 ### Added

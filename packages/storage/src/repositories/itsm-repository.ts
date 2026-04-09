@@ -48,6 +48,7 @@ function rowToIncident(r: DbRow): CmdbIncident {
     postmortem: r.postmortem as string | undefined,
     detectedBy: r.detected_by as string | undefined,
     relatedIncidentId: r.related_incident_id as string | undefined,
+    problemId: r.problem_id as string | undefined,
     openedAt: r.opened_at as string,
     acknowledgedAt: r.acknowledged_at as string | undefined,
     resolvedAt: r.resolved_at as string | undefined,
@@ -103,6 +104,7 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
     completedAt: r.completed_at as string | undefined,
     result: r.result as string | undefined,
     linkedIncidentId: r.linked_incident_id as string | undefined,
+    linkedProblemId: r.linked_problem_id as string | undefined,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
