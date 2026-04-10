@@ -315,7 +315,7 @@ export class ReasoningContextCollector {
                   // Single fetch: all incidents, then filter by status in code
                   const allRaw = await this.skillSandbox.execute(skill, { action: 'list_incidents' }, {} as any);
                   if (allRaw.success && Array.isArray(allRaw.data)) {
-                    const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string }>;
+                    const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string; resolution?: string }>;
                     const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
                     const active = allInc.filter(i => activeStatuses.has(i.status));
                     const activeLines = active.slice(0, 15)
@@ -326,12 +326,17 @@ export class ReasoningContextCollector {
                       }).join('\n');
                     if (activeLines) parts.push(`Aktive Incidents:\n${activeLines}`);
 
-                    // Recently resolved (last 24h) so LLM doesn't re-create
+                    // Recently resolved (last 24h) so LLM doesn't re-create.
+                    // Auto-resolved incidents get a distinct tag so the LLM can mention them proactively.
                     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
                     const recent = allInc
                       .filter(i => i.status === 'resolved' && i.resolvedAt && new Date(i.resolvedAt).getTime() > cutoff)
                       .slice(0, 5)
-                      .map(i => `- [${i.id.slice(0, 8)}] ${i.title} (resolved)`);
+                      .map(i => {
+                        const isAuto = i.resolution?.startsWith('🔄 Auto-resolved');
+                        const tag = isAuto ? ' (🔄 auto-resolved)' : ' (resolved)';
+                        return `- [${i.id.slice(0, 8)}] ${i.title}${tag}`;
+                      });
                     if (recent.length > 0) parts.push(`Kürzlich gelöst (24h):\n${recent.join('\n')}`);
                   }
                 }

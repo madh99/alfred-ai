@@ -261,6 +261,34 @@ export class ItsmRepository {
     return incidents.find(inc => inc.title.toLowerCase().includes(srcLower)) ?? null;
   }
 
+  /**
+   * Find auto-recovery candidates: monitor-created incidents that are still 'open',
+   * have no user-authored fields filled, are not linked to a problem, and whose
+   * updated_at is older than minAgeMinutes.
+   *
+   * Source-based filtering (by title prefix) must be done in the caller after fetch,
+   * since incidents don't have an explicit source column.
+   */
+  async findRecoveryCandidates(userId: string, minAgeMinutes: number): Promise<CmdbIncident[]> {
+    const cutoffIso = new Date(Date.now() - minAgeMinutes * 60_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents
+       WHERE user_id = ?
+         AND status = 'open'
+         AND detected_by = 'monitor'
+         AND updated_at <= ?
+         AND (investigation_notes IS NULL OR investigation_notes = '')
+         AND (lessons_learned IS NULL OR lessons_learned = '')
+         AND (action_items IS NULL OR action_items = '')
+         AND (postmortem IS NULL OR postmortem = '')
+         AND (problem_id IS NULL OR problem_id = '')
+       ORDER BY updated_at ASC
+       LIMIT 50`,
+      [userId, cutoffIso],
+    );
+    return rows.map(rowToIncident);
+  }
+
   /** Append a new alert message to an existing incident's symptoms. */
   async appendSymptoms(userId: string, id: string, newSymptom: string): Promise<void> {
     const existing = await this.getIncidentById(userId, id);

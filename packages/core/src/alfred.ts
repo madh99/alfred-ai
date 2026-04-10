@@ -1051,51 +1051,124 @@ export class Alfred {
           const origExecute = origMonitor.execute.bind(origMonitor);
           origMonitor.execute = async (input: Record<string, unknown>, ctx: any) => {
             const result = await origExecute(input, ctx);
-            if (result.success && Array.isArray(result.data) && result.data.length > 0) {
+            if (result.success) {
               const userId = this.ownerMasterUserId || ctx.masterUserId || ctx.userId;
-              // Track first incident per source within this batch for relatedIncidentId linking
-              const batchFirstBySource = new Map<string, string>();
+              const alerts = Array.isArray(result.data)
+                ? result.data as Array<{ source: string; message: string }>
+                : [];
 
-              for (const alert of result.data as Array<{ source: string; message: string }>) {
-                try {
-                  // Filter out generic alert words so device/entity names become the distinguishing keywords
-                  const GENERIC_ALERT_WORDS = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'warning', 'health', 'check', 'entities', 'unavailable', 'subsystem', 'battery', 'settings', 'offline', 'online']);
-                  const keywords = alert.message.split(/[\s"()]+/).filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
-                  const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
+              // ── 1. Alert processing: create/append incidents ──
+              if (alerts.length > 0) {
+                // Track first incident per source within this batch for relatedIncidentId linking
+                const batchFirstBySource = new Map<string, string>();
 
-                  // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
-                  const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
-                  if (existingInc) {
-                    await itsmRepo.appendSymptoms(userId, existingInc.id, alert.message);
-                    if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, existingInc.id);
-                    continue;
-                  }
+                for (const alert of alerts) {
+                  try {
+                    // Filter out generic alert words so device/entity names become the distinguishing keywords
+                    const GENERIC_ALERT_WORDS = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'warning', 'health', 'check', 'entities', 'unavailable', 'subsystem', 'battery', 'settings', 'offline', 'online']);
+                    const keywords = alert.message.split(/[\s"()]+/).filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
+                    const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
 
-                  // 2. No keyword match → create new incident, link to batch-first or recent same-source
-                  let relatedId = batchFirstBySource.get(alert.source);
-                  if (!relatedId) {
-                    const recent = await itsmRepo.findRecentIncidentForSource(userId, alert.source, 4);
-                    if (recent) relatedId = recent.id;
-                  }
+                    // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
+                    const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
+                    if (existingInc) {
+                      await itsmRepo.appendSymptoms(userId, existingInc.id, alert.message);
+                      if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, existingInc.id);
+                      continue;
+                    }
 
-                  const newInc = await itsmRepo.createIncident(userId, {
-                    title: `${alert.source}: ${alert.message.slice(0, 100)}`,
-                    severity,
-                    symptoms: alert.message,
-                    detectedBy: 'monitor',
-                    relatedIncidentId: relatedId,
-                  });
+                    // 2. No keyword match → create new incident, link to batch-first or recent same-source
+                    let relatedId = batchFirstBySource.get(alert.source);
+                    if (!relatedId) {
+                      const recent = await itsmRepo.findRecentIncidentForSource(userId, alert.source, 4);
+                      if (recent) relatedId = recent.id;
+                    }
 
-                  if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
-                } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
-              }
-              // After all incidents processed, trigger service health re-evaluation
-              try {
-                const itsmSkillRef = skillRegistry.get('itsm');
-                if (itsmSkillRef) {
-                  await skillSandbox.execute(itsmSkillRef, { action: 'health_check' }, { userId, masterUserId: userId } as any);
+                    const newInc = await itsmRepo.createIncident(userId, {
+                      title: `${alert.source}: ${alert.message.slice(0, 100)}`,
+                      severity,
+                      symptoms: alert.message,
+                      detectedBy: 'monitor',
+                      relatedIncidentId: relatedId,
+                    });
+
+                    if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
+                  } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
                 }
-              } catch { /* non-critical */ }
+                // After all incidents processed, trigger service health re-evaluation
+                try {
+                  const itsmSkillRef = skillRegistry.get('itsm');
+                  if (itsmSkillRef) {
+                    await skillSandbox.execute(itsmSkillRef, { action: 'health_check' }, { userId, masterUserId: userId } as any);
+                  }
+                } catch { /* non-critical */ }
+              }
+
+              // ── 2. Auto-Recovery scan (runs on every successful monitor run) ──
+              // Resolves monitor-created incidents whose underlying condition
+              // is no longer present: clean source + no user interaction + 60min quiet.
+              try {
+                // Sources that were actually attempted in this run
+                const requestedChecks = (input.checks as string[] | undefined) ?? [];
+                const configuredSources: string[] = [];
+                if (this.config.proxmox) configuredSources.push('proxmox');
+                if (this.config.unifi) configuredSources.push('unifi');
+                if (this.config.homeassistant) configuredSources.push('homeassistant');
+                if (this.config.proxmoxBackup) configuredSources.push('proxmox_backup');
+                const checkedSources = requestedChecks.length > 0 ? requestedChecks : configuredSources;
+
+                // Sources whose check itself failed (e.g. API timeout) — skip recovery for those
+                const failedSources = new Set<string>();
+                for (const a of alerts) {
+                  if (a.message.startsWith('Health check failed')) failedSources.add(a.source);
+                }
+                const cleanSources = checkedSources.filter(s => !failedSources.has(s));
+
+                if (cleanSources.length > 0) {
+                  const RECOVERY_MIN_AGE_MIN = 60;
+                  const candidates = await itsmRepo.findRecoveryCandidates(userId, RECOVERY_MIN_AGE_MIN);
+
+                  let resolvedCount = 0;
+                  for (const inc of candidates) {
+                    const titleLower = inc.title.toLowerCase();
+                    const matchedSource = cleanSources.find(s => titleLower.startsWith(`${s}:`));
+                    if (!matchedSource) continue;
+
+                    const ageMinutes = Math.floor(
+                      (Date.now() - new Date(inc.updatedAt).getTime()) / 60_000,
+                    );
+
+                    try {
+                      await itsmRepo.updateIncident(userId, inc.id, {
+                        status: 'resolved',
+                        resolution: `🔄 Auto-resolved: Monitor-Bedingung für "${matchedSource}" ist seit ${ageMinutes}min nicht mehr aufgetreten. Finaler Close liegt beim User.`,
+                      });
+                      resolvedCount++;
+                      this.logger.info(
+                        { incidentId: inc.id, source: matchedSource, ageMinutes },
+                        'ITSM auto-recovery: incident resolved',
+                      );
+                    } catch (err) {
+                      this.logger.warn(
+                        { err: (err as Error).message, incidentId: inc.id },
+                        'ITSM auto-recovery: update failed',
+                      );
+                    }
+                  }
+
+                  if (resolvedCount > 0) {
+                    this.logger.info(
+                      { resolvedCount, cleanSources },
+                      `ITSM auto-recovery: ${resolvedCount} incident(s) resolved`,
+                    );
+                  }
+                }
+              } catch (err) {
+                this.logger.warn(
+                  { err: (err as Error).message },
+                  'ITSM auto-recovery scan failed',
+                );
+              }
             }
             return result;
           };

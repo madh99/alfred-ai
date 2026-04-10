@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.435] - 2026-04-10
+
+### Added
+- **ITSM Auto-Recovery für Monitor-Incidents** — Incidents die vom Monitor-Skill automatisch erstellt wurden, werden jetzt automatisch auf `resolved` gesetzt wenn die zugrundeliegende Bedingung sich selbst erledigt hat. Vermeidet Zombie-Incidents:
+  - Neue Repo-Methode `findRecoveryCandidates()` in `itsm-repository.ts` mit strikten Filter-Kriterien: `status='open'` + `detected_by='monitor'` + `updated_at > 60min alt` + keine User-Notes (`investigation_notes`, `lessons_learned`, `action_items`, `postmortem` leer) + nicht zu einem Problem verlinkt (`problem_id IS NULL`)
+  - Monitor-Wrapper in `alfred.ts` erweitert um Recovery-Scan: läuft nach Alert-Processing auf JEDEM erfolgreichen Monitor-Run (auch bei leerem Alert-Result — genau dann ist Recovery möglich)
+  - Source-Safety: Recovery-Kandidaten werden nur für Sources ausgeführt die (a) im aktuellen Run gecheckt wurden und (b) keinen "Health check failed" Alert lieferten. API-Timeouts führen nicht zu fälschlichem Auto-Resolve
+  - Input-`checks`-Scope wird respektiert: Monitor-Call mit `{ checks: ['proxmox'] }` resolved nur Proxmox-Incidents, nicht UniFi/HA/PBS
+  - Title-Prefix-Match gegen clean sources (`proxmox:` / `unifi:` / `homeassistant:` / `proxmox_backup:`) — konsistent mit bestehender Dedup-Logik
+  - Resolution-Text: `🔄 Auto-resolved: Monitor-Bedingung für "{source}" ist seit {N}min nicht mehr aufgetreten. Finaler Close liegt beim User.`
+- **Reasoning Context Enhancement**: `reasoning-context-collector.ts` unterscheidet in "Kürzlich gelöst (24h)" Section jetzt zwischen normalen Resolves `(resolved)` und Auto-Resolves `(🔄 auto-resolved)` via Resolution-Prefix-Check. Dadurch kann das LLM auto-resolvte Incidents im nächsten proaktiven Briefing distinct erwähnen ohne neue Notification-Infrastruktur
+
+### Fixed
+- Monitor-Wrapper lief bisher nur wenn `result.data.length > 0`. Restrukturiert auf `if (result.success)` damit der neue Recovery-Scan auch auf clean runs (0 Alerts) ausgeführt wird. Alert-Processing + health_check Verhalten bleibt unverändert
+
 ## [0.19.0-multi-ha.434] - 2026-04-10
 
 ### Fixed
