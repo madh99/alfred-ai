@@ -148,15 +148,16 @@ export class KnowledgeGraphService {
   private async refreshKnownLocations(userId: string): Promise<void> {
     try {
       const graph = await this.kgRepo.getFullGraph(userId);
-      // Trusted sources that don't need geocoding validation
-      const TRUSTED_SOURCES = new Set(['memories', 'bmw', 'weather', 'llm_linking']);
+      // CRITICAL: ONLY load entities that are explicitly geocode-validated.
+      // Source-based trust ('memories', 'bmw', etc.) is unreliable because `sources`
+      // contains sectionKey strings, not actual provenance. A regex hit in a memory text
+      // gets `sources: ['memories']` even though the underlying string is garbage.
+      // Without geocoding validation, the dynamic location list poisons itself.
       for (const e of graph.entities) {
         if (e.entityType !== 'location') continue;
         if (!KnowledgeGraphService.isPlausibleLocation(e.name)) continue;
-        // Only load into dynamic list if from trusted source OR geocode-validated
-        const hasTrustedSource = e.sources.some((s: string) => TRUSTED_SOURCES.has(s));
         const isGeocodeValidated = (e.attributes as any)?.geocodeValidated === true;
-        if (!hasTrustedSource && !isGeocodeValidated) continue;
+        if (!isGeocodeValidated) continue;
         this.knownLocationsLower.add(e.name.toLowerCase());
         this.knownLocationsMap.set(e.name.toLowerCase(), e.name);
       }
@@ -1902,8 +1903,10 @@ export class KnowledgeGraphService {
             const hasNegation = /nicht|kein|never|no\s|!=|niemals/i.test(lower);
             const isHome = hasHomeWord && !hasNegation;
             const isWork = hasWorkWord && !hasNegation;
+            // Address: use the matching sentence (compact), NOT the whole memory blob
+            const addressSnippet = citySentence.trim().slice(0, 200);
             await this.kgRepo.upsertEntity(userId, city, 'location',
-              { isHome, isWork, address: fact.value }, 'memories');
+              { isHome, isWork, address: addressSnippet }, 'memories');
           }
         }
       }

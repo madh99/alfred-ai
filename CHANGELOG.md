@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.434] - 2026-04-10
+
+### Fixed
+- **KG Location: Designfehler in TRUSTED_SOURCES behoben + Address-Pollution gestoppt** — Nachfolge-Fix zu v433:
+  - **Designfehler:** v433 trustete Locations mit `sources: ['memories'|'bmw'|'weather'|'llm_linking']`. Aber `sources` enthält sectionKey-Strings, NICHT echte Provenance — ein Regex-Hit in Memory-Text ergibt automatisch `sources: ['memories']`, auch wenn der Treffer Mist ist. Dadurch konnten "Fußball-Match", "Bedarf", "Internat Kapfenberg" trotzdem in `knownLocationsLower` landen
+  - **Fix:** `refreshKnownLocations()` lädt jetzt AUSSCHLIESSLICH Entities mit `geocodeValidated: true` Attribut. Source-basiertes Trust komplett entfernt
+  - **Self-Reinforcing Loop in `extractFromMemories()`:** beim Address-Scan wurde der KOMPLETTE Memory-Text als `address`-Feld der Location-Entity gespeichert (deshalb stand bei "Fußball-Match" eine ganze Briefing-Zusammenfassung im address-Feld). Fix: nur den passenden Satz, max 200 Zeichen
+  - DB-Cleanup: 3 zombie Locations gelöscht (Fußball-Match, Bedarf, Internat Kapfenberg)
+  - Saubere Echte (Hamburg, Düsseldorf, Eichgraben, Eggelsberg, Sankt Pölten) heilen sich automatisch: bei nächster Text-Extraktion → Nominatim → ✅ → upsert mit `geocodeValidated: true`
+
 ## [0.19.0-multi-ha.433] - 2026-04-10
 
 ### Fixed
