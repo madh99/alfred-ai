@@ -111,6 +111,9 @@ export class KnowledgeGraphService {
   private knownLocationsLower = new Set(SEED_LOCATIONS.filter(l => KnowledgeGraphService.isPlausibleLocation(l)).map(l => l.toLowerCase()));
   /** Original-case map for location names (lowercase → display name). */
   private knownLocationsMap = new Map(SEED_LOCATIONS.filter(l => KnowledgeGraphService.isPlausibleLocation(l)).map(l => [l.toLowerCase(), l]));
+  /** Geocoding validation cache: candidate → true (real place) or false (not a place). */
+  private geocodeCache = new Map<string, boolean>();
+  private lastGeocodeFetchAt = 0;
   /** Cached user real name from profile (resolved once). */
   private userRealName?: string;
 
@@ -145,9 +148,15 @@ export class KnowledgeGraphService {
   private async refreshKnownLocations(userId: string): Promise<void> {
     try {
       const graph = await this.kgRepo.getFullGraph(userId);
+      // Trusted sources that don't need geocoding validation
+      const TRUSTED_SOURCES = new Set(['memories', 'bmw', 'weather', 'llm_linking']);
       for (const e of graph.entities) {
         if (e.entityType !== 'location') continue;
         if (!KnowledgeGraphService.isPlausibleLocation(e.name)) continue;
+        // Only load into dynamic list if from trusted source OR geocode-validated
+        const hasTrustedSource = e.sources.some((s: string) => TRUSTED_SOURCES.has(s));
+        const isGeocodeValidated = (e.attributes as any)?.geocodeValidated === true;
+        if (!hasTrustedSource && !isGeocodeValidated) continue;
         this.knownLocationsLower.add(e.name.toLowerCase());
         this.knownLocationsMap.set(e.name.toLowerCase(), e.name);
       }
@@ -159,6 +168,65 @@ export class KnowledgeGraphService {
     if (!KnowledgeGraphService.isPlausibleLocation(name)) return;
     this.knownLocationsLower.add(name.toLowerCase());
     this.knownLocationsMap.set(name.toLowerCase(), name);
+  }
+
+  /**
+   * Validate a location candidate via Nominatim geocoding.
+   * Returns true if the candidate is a real geographic place, false otherwise.
+   * Results are cached permanently (places don't change).
+   * Rate-limited to 1 request/second (Nominatim policy).
+   */
+  private async validateLocationViaGeocoding(candidate: string): Promise<boolean> {
+    const key = candidate.toLowerCase().trim();
+
+    // Check cache first
+    if (this.geocodeCache.has(key)) return this.geocodeCache.get(key)!;
+
+    // Seed locations are always valid (skip geocoding)
+    if (this.knownLocationsLower.has(key)) {
+      this.geocodeCache.set(key, true);
+      return true;
+    }
+
+    // Rate limit: 1 request per second
+    const now = Date.now();
+    const elapsed = now - this.lastGeocodeFetchAt;
+    if (elapsed < 1100) {
+      await new Promise(r => setTimeout(r, 1100 - elapsed));
+    }
+    this.lastGeocodeFetchAt = Date.now();
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(candidate)}&format=json&limit=1&addressdetails=0`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Alfred-AI/1.0 (personal assistant)' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        // Nominatim error → be conservative, don't create
+        this.geocodeCache.set(key, false);
+        return false;
+      }
+      const results = await res.json() as Array<{ type?: string; class?: string }>;
+      // A real place has results with class 'place' or 'boundary'
+      const isPlace = results.length > 0 && results.some(r =>
+        r.class === 'place' || r.class === 'boundary' ||
+        r.type === 'city' || r.type === 'town' || r.type === 'village' ||
+        r.type === 'hamlet' || r.type === 'suburb' || r.type === 'municipality' ||
+        r.type === 'administrative' || r.type === 'country' || r.type === 'state',
+      );
+      this.geocodeCache.set(key, isPlace);
+      if (isPlace) {
+        this.logger.info({ candidate, type: results[0]?.type }, 'Geocoding: validated as real place');
+      } else {
+        this.logger.info({ candidate, results: results.length }, 'Geocoding: rejected — not a geographic place');
+      }
+      return isPlace;
+    } catch {
+      // Network error → be conservative, don't create
+      this.geocodeCache.set(key, false);
+      return false;
+    }
   }
 
   /** Get the known locations as an iterable of display names. */
@@ -1971,7 +2039,7 @@ export class KnowledgeGraphService {
 
   private async extractLocations(userId: string, sectionKey: string, content: string): Promise<void> {
     // Only extract locations from user-relevant sections, not RSS feeds
-    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth' || sectionKey === 'insightTracking') return;
 
     // 1. Known locations — dynamic list (seed + learned from KG)
     for (const city of this.getKnownLocations()) {
@@ -2010,9 +2078,12 @@ export class KnowledgeGraphService {
         if (this.cmdbEntityNames.has(candidate.toLowerCase())) continue;
         // Quality gate: skip implausible location names
         if (!KnowledgeGraphService.isPlausibleLocation(candidate)) continue;
-        // Create as location candidate and register for future recognition
+        // Geocoding validation: only create if Nominatim confirms it's a real place
+        const isRealPlace = await this.validateLocationViaGeocoding(candidate);
+        if (!isRealPlace) continue;
+        // Create as validated location and register for future recognition
         try {
-          await this.kgRepo.upsertEntity(userId, candidate, 'location', { detectedBy: 'geo_pattern' }, sectionKey);
+          await this.kgRepo.upsertEntity(userId, candidate, 'location', { detectedBy: 'geo_pattern', geocodeValidated: true }, sectionKey);
           this.registerLocation(candidate);
         } catch { /* constraint violation — skip */ }
       }
@@ -2024,7 +2095,7 @@ export class KnowledgeGraphService {
    * Routes each extraction to the correct entity type instead of blindly creating persons.
    */
   private async extractEntitiesFromText(userId: string, sectionKey: string, content: string): Promise<void> {
-    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth') return;
+    if (sectionKey === 'feeds' || sectionKey === 'infra' || sectionKey === 'activity' || sectionKey === 'skillHealth' || sectionKey === 'insightTracking') return;
 
     for (const pattern of PERSON_PATTERNS) {
       pattern.lastIndex = 0;

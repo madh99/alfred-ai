@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.433] - 2026-04-10
+
+### Fixed
+- **KG Location-Erkennung: Nominatim-Validierung statt Hardcoded-Liste** — generische, dynamische Lösung gegen False Positives ("Memories", "Hinweis", "Bitcoin", "Microsoft Todo", "Ladeort"):
+  - Neue Methode `validateLocationViaGeocoding()`: prüft jeden Geo-Regex-Candidate per Nominatim (`nominatim.openstreetmap.org/search`) auf reale Existenz als Ort (`class=place|boundary` oder `type=city|town|village|hamlet|suburb|municipality|administrative|country|state`)
+  - In-Memory `geocodeCache` Map verhindert wiederholte Lookups für gleiche Candidates
+  - Rate-Limit konform (1 Request/Sekunde via `lastGeocodeFetchAt` Throttle)
+  - 5s HTTP-Timeout + konservativer Fallback (bei Fehler → kein Entity erstellen)
+  - `extractLocations()` Pfad 2 (geo_pattern) ruft Validierung VOR `upsertEntity` auf — markiert validierte Locations mit `geocodeValidated: true` Attribut
+  - `refreshKnownLocations()` lädt nur Entities aus TRUSTED_SOURCES (`memories`, `bmw`, `weather`, `llm_linking`) ODER mit `geocodeValidated: true` Flag → durchbricht den Self-Reinforcing Feedback-Loop
+  - `insightTracking` Section in Exclude-Listen ergänzt (war Quelle vieler False Positives)
+  - DB-Cleanup: 7 falsche Locations entfernt (Memories, Hinweis, Bitcoin, Microsoft Todo, Ladeort, West Europe, Altengbach)
+
 ## [0.19.0-multi-ha.424] - 2026-04-09
 
 ### Fixed
