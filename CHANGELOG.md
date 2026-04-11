@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.436] - 2026-04-11
+
+### Fixed
+- **Reasoning Action-Parser robuster gegen Emoji-Header und Multi-Block-JSON** — Behebt ein UX-Problem bei dem Roh-JSON-Action-Vorschläge des LLM als sichtbarer Text in Insights beim User landen statt verarbeitet zu werden:
+  - **Header-Regex (`reasoning-engine.ts:830-870`)** akzeptiert jetzt Emojis und beliebige Zeichen zwischen `##` und `ACTIONS`. Vorher: `#{1,3}\s*ACTIONS?` (nur Whitespace erlaubt) → matched nicht `## 🔧 ACTIONS`. Jetzt: `#{1,3}[^\w\n]*ACTIONS?` (Emojis, Punktuation, Spaces erlaubt). Konstanten als statische Klassenfelder `ACTIONS_HEADER_REGEX` und `ACTIONS_HEADER_TRAILING_REGEX` ausgelagert
+  - **Multi-Block-Parser (`tryParseActions`)** unterstützt jetzt drei Formate: (1) einzelnes JSON-Objekt `{...}`, (2) JSON-Array `[{...}, {...}]`, (3) mehrere separate JSON-Codeblöcke ```` ```json {...} ``` ```` mit Markdown dazwischen. Vorher wurde nur ein Array akzeptiert. Neue Hilfsmethode `parseSingleJsonExpression()` parst sowohl Objekte als auch Arrays
+  - **Defensive Strip (`stripUnparsedActions`)** als Sicherheitsnetz: selbst wenn der Parser gar keine Actions extrahieren konnte, werden ACTIONS-Section-Header, JSON-Codeblöcke und Pseudo-Header `**Aktion #N: ...**` aus dem visible insight text wegstrippt. Verhindert dass Roh-JSONs jemals beim User landen
+- **Symptom des behobenen Bugs**: Im 22:35 Insight vom 11.04. landeten zwei vollständige LLM-Action-JSON-Blöcke (`itsm:create_incident` + `reminder:set`) als sichtbarer Text in der Telegram-Nachricht beim User. Ursache: LLM hatte `## 🔧 ACTIONS` mit Emoji als Section-Header benutzt, der alte Regex erlaubte kein Emoji zwischen `##` und `ACTIONS`. Plus: zwei separate Codeblöcke statt einem Array → auch der Last-Resort-Parser griff nicht. Folge: 0 Actions geparst, kompletter Text inkl. JSON wurde als Insight ausgegeben
+
+### Notes
+- Beide Action-Vorschläge aus dem genannten 22:35 Insight wären auch nach diesem Fix nicht doppelt erstellt worden — der ITSM-Skill `createIncident` hat eine eigene Dedup-Schicht (`findOpenIncidentForAsset`), die den vorgeschlagenen "Infrastruktur-Fehler"-Incident gegen den existierenden `homeassistant: Health check failed`-Incident gemacht hätte (3+ shared keywords). Der Reminder-Vorschlag wäre durch den Reminder-Dedup-Gate in `processActions` gegen den existierenden 09:31-Reminder gefiltert worden. Der Fix ändert also primär das **Erscheinungsbild** (kein Roh-JSON mehr im Chat) und stellt sicher dass legitime Vorschläge zumindest in die Confirmation-Queue kommen statt verloren zu gehen
+
 ## [0.19.0-multi-ha.435] - 2026-04-10
 
 ### Added

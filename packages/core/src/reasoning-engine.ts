@@ -827,14 +827,27 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
 
   // ── Action Support ──────────────────────────────────────────
 
+  /**
+   * Header regex for ACTIONS section.
+   * Accepts: **ACTIONS**, *ACTIONS*, ## ACTIONS, ### ACTIONS, ## 🔧 ACTIONS, ## ⚙️ Actions, etc.
+   * The `[^\w\n]*` between hashes and ACTIONS allows emojis, spaces, and punctuation
+   * (anything that is not a word character or newline).
+   */
+  private static readonly ACTIONS_HEADER_REGEX =
+    /\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}[^\w\n]*ACTIONS?)\s*\n/i;
+
+  /** Same pattern but anchored to end of string, for stripping trailing headers. */
+  private static readonly ACTIONS_HEADER_TRAILING_REGEX =
+    /\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}[^\w\n]*ACTIONS?)\s*$/i;
+
   private parseReasoningResponse(text: string): ParsedReasoningResponse {
     // Find actions separator — LLM might use exact marker, markdown header, or variations
     let markerIdx = text.indexOf(ACTION_MARKER);
     let markerLen = ACTION_MARKER.length;
 
     if (markerIdx === -1) {
-      // Fallback: match **ACTIONS**, ## ACTIONS, ACTIONS, etc.
-      const altMatch = text.match(/\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}\s*ACTIONS?)\s*\n/i);
+      // Fallback: match **ACTIONS**, ## ACTIONS, ## 🔧 ACTIONS, etc.
+      const altMatch = text.match(ReasoningEngine.ACTIONS_HEADER_REGEX);
       if (altMatch && altMatch.index !== undefined) {
         markerIdx = altMatch.index;
         markerLen = altMatch[0].length;
@@ -844,14 +857,18 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     if (markerIdx === -1) {
       // Last resort: look for JSON array with action objects anywhere in text
       const jsonMatch = text.match(/```(?:json)?\s*\n\s*(\[\s*\{[\s\S]*?"type"\s*:\s*"[\s\S]*?\}\s*\])\s*\n\s*```/);
-      if (jsonMatch) {
+      if (jsonMatch && jsonMatch.index !== undefined) {
         const insightText = text.slice(0, jsonMatch.index).trim();
         const actions = this.tryParseActions(jsonMatch[1]);
-        // Strip the JSON block from insights
-        const cleanedInsightText = insightText.replace(/\n\s*(?:\*{1,2}ACTIONS?\*{1,2}|#{1,3}\s*ACTIONS?)\s*$/i, '').trim();
+        // Strip the trailing ACTIONS header (if any) from insights
+        const cleanedInsightText = insightText.replace(ReasoningEngine.ACTIONS_HEADER_TRAILING_REGEX, '').trim();
         return { insights: this.parseInsights(cleanedInsightText), actions };
       }
-      return { insights: this.parseInsights(text), actions: [] };
+      // Defensive strip: even though we couldn't parse, hide raw JSON code blocks and
+      // ACTIONS section headers from user-visible insight text. Better an empty insight
+      // tail than raw JSON leaking to the user.
+      const cleanedText = this.stripUnparsedActions(text);
+      return { insights: this.parseInsights(cleanedText), actions: [] };
     }
 
     const insightText = text.slice(0, markerIdx).trim();
@@ -863,22 +880,76 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     return { insights, actions };
   }
 
+  /**
+   * Defensive strip: when the parser cannot extract structured actions, remove
+   * any recognizable ACTIONS section and JSON code blocks from the visible text
+   * so that the user never sees raw JSON leaking through.
+   */
+  private stripUnparsedActions(text: string): string {
+    let result = text;
+    // 1. Strip everything from a recognizable ACTIONS header onwards
+    const headerMatch = result.match(ReasoningEngine.ACTIONS_HEADER_REGEX);
+    if (headerMatch && headerMatch.index !== undefined) {
+      result = result.slice(0, headerMatch.index).trim();
+    }
+    // 2. Strip any remaining stray ```json ... ``` code blocks
+    result = result.replace(/```(?:json)?\s*\n[\s\S]*?\n\s*```/g, '').trim();
+    // 3. Strip dangling "**Aktion #N: ...**" pseudo-headers without code blocks
+    result = result.replace(/\n\s*\*{1,2}Aktion\s*#?\d+[^\n]*\*{1,2}\s*\n?/gi, '\n').trim();
+    return result;
+  }
+
+  /**
+   * Try to parse actions from a text fragment. Accepts multiple shapes:
+   *  - A single JSON object: {...}
+   *  - A JSON array: [{...}, {...}]
+   *  - Multiple JSON code blocks: ```json {...} ``` ... ```json {...} ```
+   *  - Mixed text with embedded JSON code blocks
+   */
   private tryParseActions(jsonText: string): ProposedAction[] {
+    // Approach 1: parse the entire text as one JSON expression (object or array),
+    // optionally stripping a single surrounding code block fence.
+    const stripped = jsonText
+      .replace(/^```(?:json)?\s*\n?/, '')
+      .replace(/\n?\s*```\s*$/, '')
+      .trim();
+    let actions = this.parseSingleJsonExpression(stripped);
+    if (actions.length > 0) return actions;
+
+    // Approach 2: maybe there are multiple JSON code blocks throughout the text
+    // (LLM produced separate blocks per action instead of a single array).
+    const blockMatches = [...jsonText.matchAll(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g)];
+    if (blockMatches.length > 0) {
+      const collected: ProposedAction[] = [];
+      for (const m of blockMatches) {
+        collected.push(...this.parseSingleJsonExpression(m[1].trim()));
+      }
+      if (collected.length > 0) return collected;
+    }
+
+    this.logger.warn('Reasoning: failed to parse actions JSON, ignoring');
+    return [];
+  }
+
+  /**
+   * Parse a single JSON expression string into ProposedAction[]. Accepts both
+   * a single object (wrapped) and an array. Returns [] on parse error or schema
+   * mismatch (silently — caller logs the warning if everything fails).
+   */
+  private parseSingleJsonExpression(jsonText: string): ProposedAction[] {
     try {
       const parsed = JSON.parse(jsonText);
-      if (Array.isArray(parsed)) {
-        return parsed.filter(a =>
-          a && typeof a === 'object' &&
-          typeof a.type === 'string' &&
-          typeof a.description === 'string' &&
-          typeof a.skillName === 'string' &&
-          typeof a.skillParams === 'object' && a.skillParams !== null,
-        ) as ProposedAction[];
-      }
+      const arr = Array.isArray(parsed) ? parsed : [parsed];
+      return arr.filter(a =>
+        a && typeof a === 'object' &&
+        typeof a.type === 'string' &&
+        typeof a.description === 'string' &&
+        typeof a.skillName === 'string' &&
+        typeof a.skillParams === 'object' && a.skillParams !== null,
+      ) as ProposedAction[];
     } catch {
-      this.logger.warn('Reasoning: failed to parse actions JSON, ignoring');
+      return [];
     }
-    return [];
   }
 
   private actionHash(action: ProposedAction): string {
