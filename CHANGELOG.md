@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.437] - 2026-04-12
+
+### Fixed
+- **Microsoft Email: readMessage markiert Mails als gelesen** — Microsoft Graph GET auf Messages setzt `isRead` nicht automatisch (anders als Outlook Client oder IMAP FETCH mit `\Seen` Flag). Neuer PATCH-Call nach dem GET setzt `isRead: true`. Kritisch für Scheduled Tasks die ungelesene Mails verarbeiten: ohne diesen Fix wird dieselbe Mail bei jedem Cron-Tick erneut verarbeitet weil sie immer als ungelesen erscheint. Best-effort (try/catch), scheitert nicht wenn Mark-as-Read fehlschlägt
+
 ## [0.19.0-multi-ha.436] - 2026-04-11
 
 ### Fixed

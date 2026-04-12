@@ -126,6 +126,20 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
     const data = await this.graphRequest(`${this.userPath}/messages/${id}?${params}`);
 
+    // Auto-mark as read via Microsoft Graph PATCH (matches Outlook Web behavior).
+    // This is critical for scheduled tasks that process unread emails — without this,
+    // the same email gets reprocessed on every cron tick because Graph GET does not
+    // set isRead (unlike Outlook client or IMAP FETCH which set \Seen automatically).
+    if (!data.isRead) {
+      try {
+        await this.graphRequest(`${this.userPath}/messages/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isRead: true }),
+        });
+      } catch { /* best effort — don't fail the read if mark-as-read fails */ }
+    }
+
     let attachments: EmailAttachment[] = [];
     if (data.hasAttachments) {
       const attData = await this.graphRequest(`${this.userPath}/messages/${id}/attachments?$select=id,name,contentType,size`);
