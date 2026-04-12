@@ -112,11 +112,47 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     const params = new URLSearchParams({
       $top: String(Math.min(Math.max(1, count), 50)),
       $orderby: 'receivedDateTime desc',
-      $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
+      $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments,conversationId,importance,inferenceClassification',
     });
 
     const data = await this.graphRequest(`${this.userPath}/mailFolders/inbox/messages?${params}`);
-    return (data.value ?? []).map((item: any) => this.mapMessage(item));
+    const messages = (data.value ?? []).map((item: any) => this.mapMessage(item));
+
+    // Reply detection: batch-check which conversations have sent replies.
+    // Collect unique conversationIds, then check Sent Items for matches.
+    await this.detectReplies(messages);
+
+    return messages;
+  }
+
+  /**
+   * Detect which inbox messages the user has replied to by checking Sent Items
+   * for matching conversationIds. Batch query to minimize API calls.
+   */
+  private async detectReplies(messages: EmailMessage[]): Promise<void> {
+    const unrepliedWithConvId = messages.filter(m => m.conversationId && !m.replied);
+    if (unrepliedWithConvId.length === 0) return;
+
+    // Batch: get recent sent items and match by conversationId
+    try {
+      const sentParams = new URLSearchParams({
+        $top: '50',
+        $orderby: 'sentDateTime desc',
+        $select: 'conversationId',
+        // Only check sent items from last 14 days for performance
+        $filter: `sentDateTime ge ${new Date(Date.now() - 14 * 86400_000).toISOString()}`,
+      });
+      const sentData = await this.graphRequest(`${this.userPath}/mailFolders/sentitems/messages?${sentParams}`);
+      const sentConvIds = new Set<string>(
+        (sentData.value ?? []).map((item: any) => item.conversationId as string).filter(Boolean),
+      );
+
+      for (const msg of messages) {
+        if (msg.conversationId && sentConvIds.has(msg.conversationId)) {
+          msg.replied = true;
+        }
+      }
+    } catch { /* best effort — don't fail inbox if reply detection fails */ }
   }
 
   async readMessage(id: string): Promise<EmailDetail> {
@@ -547,6 +583,9 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       read: item.isRead ?? false,
       preview: item.bodyPreview ?? undefined,
       hasAttachments: item.hasAttachments ?? false,
+      conversationId: item.conversationId ?? undefined,
+      importance: item.importance ?? undefined,
+      classification: item.inferenceClassification ?? undefined,
     };
   }
 

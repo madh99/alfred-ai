@@ -775,6 +775,14 @@ KRITISCH — TERMINE UND DATEN:
 - Wenn du einen Termin/eine Fahrt aus Memory-Kontext VERMUTEST aber er NICHT im Kalender-Block steht: schreibe "laut Memory erwähnt — im Kalender nicht bestätigt". NIEMALS ein konkretes Datum erfinden.
 - Ein Memory-Eintrag wie "Kapfenberg 18:00" OHNE Datum bedeutet NICHT dass diese Fahrt am nächsten freien Tag stattfindet!` : ''}
 
+E-MAIL INSIGHTS:
+- Die E-Mail-Inbox zeigt den Status jeder Mail: 🔴 UNREAD, 📖 READ, ✅ REPLIED, ℹ️ AUTO.
+- Emails mit ✅ REPLIED sind ERLEDIGT — NICHT als offenen Handlungsbedarf darstellen.
+- Emails mit ℹ️ AUTO (no-reply@, notifications, CI/CD) sind automatische Benachrichtigungen — nur erwähnen wenn anomal oder sicherheitsrelevant.
+- Emails mit 📖 READ die KEIN ✅ REPLIED haben KÖNNTEN noch Antwort brauchen — aber prüfe den Betreff: Rechnungen, Bestätigungen, Newsletter brauchen keine Antwort.
+- Wenn du eine Email in einem früheren Insight bereits erwähnt hast (prüfe "Insight-Tracking" Section), erwähne sie NICHT erneut es sei denn der Status hat sich geändert (z.B. von UNREAD zu REPLIED).
+- NIEMALS eine Email als "unbeantwortet" oder "ausstehend" bezeichnen wenn sie ✅ REPLIED ist.
+
 FOLLOW-UP:
 - Prüfe die "Insight-Tracking" Section. Wenn ein Insight als OFFEN markiert ist und >24h alt, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").
 - Erstelle KEINEN Follow-up für rein informative Insights (Wetter, Strompreis, Status-Updates).`;

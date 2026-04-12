@@ -7,6 +7,14 @@ export interface EmailMessage {
   read: boolean;
   preview?: string;
   hasAttachments?: boolean;
+  /** Microsoft Graph conversationId — groups messages in the same thread. */
+  conversationId?: string;
+  /** Whether the user has replied to this email (detected via Sent Items check). */
+  replied?: boolean;
+  /** Email importance: high, normal, low. */
+  importance?: 'high' | 'normal' | 'low';
+  /** Microsoft inference classification: focused or other (junk/newsletter). */
+  classification?: 'focused' | 'other';
 }
 
 export interface EmailDetail extends EmailMessage {

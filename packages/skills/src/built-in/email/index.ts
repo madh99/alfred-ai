@@ -288,6 +288,9 @@ export class EmailSkill extends Skill {
 
   // ── Handlers ─────────────────────────────────────────────────────
 
+  /** Automated sender patterns — emails from these don't need user action. */
+  private static readonly AUTOMATED_SENDERS = /no[_-]?reply@|noreply@|notifications?@|ci@|builds?@|npm|github\.com|gitlab\.com|sentry\.io/i;
+
   private async handleInbox(input: Record<string, unknown>): Promise<SkillResult> {
     const resolved = this.resolveProvider(input);
     if ('success' in resolved) return resolved;
@@ -301,17 +304,33 @@ export class EmailSkill extends Skill {
     }
 
     const unreadCount = messages.filter(m => !m.read).length;
+    const needsReplyCount = messages.filter(m => !m.replied && !m.read && !EmailSkill.AUTOMATED_SENDERS.test(m.from)).length;
 
     const display = messages.map((m, i) => {
-      const unread = m.read ? '' : ' [UNREAD]';
+      // Status indicator: replied > read > unread, plus automated detection
+      const isAutomated = EmailSkill.AUTOMATED_SENDERS.test(m.from) || m.classification === 'other';
+      let status: string;
+      if (m.replied) status = '✅ REPLIED';
+      else if (isAutomated) status = 'ℹ️ AUTO';
+      else if (m.read) status = '📖 READ';
+      else status = '🔴 UNREAD';
+
       const att = m.hasAttachments ? ' [ATT]' : '';
-      return `${i + 1}. [${this.encodeId(account, m.id)}]${unread}${att} ${m.subject}\n   From: ${m.from}\n   Date: ${m.date.toISOString()}`;
+      const imp = m.importance === 'high' ? ' ❗' : '';
+      const preview = m.preview ? `\n   Preview: ${m.preview.slice(0, 120).replace(/\n/g, ' ')}` : '';
+      const dateStr = m.date.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+      return `${i + 1}. [${this.encodeId(account, m.id)}] ${status}${att}${imp} ${m.subject}\n   From: ${m.from} | ${dateStr}${preview}`;
     }).join('\n\n');
+
+    const summary = needsReplyCount > 0
+      ? `Inbox (${unreadCount} unread, ${needsReplyCount} needs reply):`
+      : `Inbox (${unreadCount} unread):`;
 
     return {
       success: true,
-      data: { messages: messages.map(m => ({ ...m, id: this.encodeId(account, m.id) })), unreadCount },
-      display: this.accountLabel(account, `Inbox (${unreadCount} unread):\n\n${display}`),
+      data: { messages: messages.map(m => ({ ...m, id: this.encodeId(account, m.id) })), unreadCount, needsReplyCount },
+      display: this.accountLabel(account, `${summary}\n\n${display}`),
     };
   }
 

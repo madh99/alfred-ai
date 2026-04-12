@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.444] - 2026-04-12
+
+### Added
+- **Email: Volle Lifecycle-Awareness in 5 Levels** — Alfred kennt jetzt den vollständigen Status jeder Email (gelesen, beantwortet, automatisch) statt nur Subject/From/Date:
+  - **Level 1 — Body-Preview + Read-Status:** `bodyPreview` (bereits von Graph geladen, aber nie angezeigt) wird jetzt im Display gezeigt (120 Zeichen). Expliziter Read-Status: 🔴 UNREAD, 📖 READ, ✅ REPLIED, ℹ️ AUTO
+  - **Level 2 — Reply-Detection:** `conversationId` wird von Graph geladen. Neue Methode `detectReplies()` in Microsoft-Provider: batch-queried Sent Items (letzte 14 Tage) und matched conversationIds gegen Inbox. Emails die der User beantwortet hat bekommen `replied: true` → Display zeigt ✅ REPLIED. 1 extra Graph-Call pro fetchInbox, gecached pro Pass
+  - **Level 3 — Automatische Kategorisierung:** `importance` und `inferenceClassification` (focused/other) von Graph geladen. Neue `AUTOMATED_SENDERS` Regex (`no_reply@`, `noreply@`, `notifications@`, `ci@`, `npm`, `github.com`, `gitlab.com`, `sentry.io`). Mails von automatischen Sendern oder mit `classification=other` bekommen ℹ️ AUTO Status. Inbox-Summary zeigt `needsReplyCount` (unread + unreplied + non-automated)
+  - **Level 4+5 — Reasoning-Prompt Email-Lifecycle:** Neuer Prompt-Abschnitt "E-MAIL INSIGHTS" im Reasoning-Detail-Prompt: ✅ REPLIED ist erledigt (nicht als Handlungsbedarf), ℹ️ AUTO nur bei Anomalie erwähnen, 📖 READ ohne REPLIED könnte Antwort brauchen (kontextabhängig), bereits in Insight erwähnte Emails nicht erneut melden
+
+### Changed
+- **EmailMessage Interface erweitert** (`email-provider.ts`): Neue Felder `conversationId`, `replied`, `importance`, `classification`
+- **Microsoft Provider `fetchInbox`:** Graph-Request enthält jetzt `conversationId,importance,inferenceClassification` + Reply-Detection via Sent-Items-Batch-Query
+- **Email Display-Format:** Von `"1. [id][UNREAD] Subject\n   From: ... Date: ..."` zu `"1. [id] 🔴 UNREAD Subject\n   From: ... | 12.04. 11:15\n   Preview: erste 120 Zeichen..."` — reicheres Format mit Status-Icons, Datum im deutschen Format, Body-Preview
+
 ## [0.19.0-multi-ha.443] - 2026-04-12
 
 ### Fixed
