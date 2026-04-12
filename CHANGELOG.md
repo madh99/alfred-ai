@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.454] - 2026-04-13
+
+### Added
+- **BMW: CBS, HU/AU, CheckControl und Reifendruck Descriptors registriert** — 11 neue Keys in der DESCRIPTORS-Liste. Beim nächsten Alfred-Restart wird der Container mit den erweiterten Descriptors neu erstellt (1 API-Call). Ab dann liefert MQTT diese Daten kostenlos:
+  - `vehicle.status.conditionBasedServices` — Wartungsbedarf (Ölwechsel, Bremsen, Fahrzeugcheck)
+  - `vehicle.status.serviceTime.inspectionDateLegal` — nächste HU/AU
+  - `vehicle.status.checkControl` — Warnmeldungen (Scheibenwaschwasser, Reifendruck-Alarm, Motorleuchte)
+  - `vehicle.chassis.axle.row{1,2}.wheel.{left,right}.tire.pressure` + `pressureTarget` — Reifendruck aller 4 Räder (bereits per MQTT geliefert, jetzt auch für REST-Fallback registriert)
+- **Kein Display/Parsing in diesem Release** — Datenformat von CBS/checkControl wird erst nach Eintreffen der echten MQTT-Daten in der DB analysiert, dann implementiert
+
 ## [0.19.0-multi-ha.453] - 2026-04-13
 
 ### Fixed
