@@ -694,7 +694,7 @@ export class MessagePipeline {
       if (this.skillRegistry?.has('itsm') && this.skillSandbox) {
         try {
           const itsmSkill = this.skillRegistry.get('itsm')!;
-          const listResult = await this.skillSandbox.execute(itsmSkill, { action: 'list_incidents', status: 'open' }, baseContext);
+          const listResult = await this.skillSandbox.execute(itsmSkill, { action: 'list_incidents' }, baseContext);
           if (listResult.success && Array.isArray(listResult.data)) {
             const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
             const active = (listResult.data as Array<{ id: string; title: string; severity: string; status: string }>)

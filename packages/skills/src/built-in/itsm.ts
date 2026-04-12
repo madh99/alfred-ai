@@ -239,10 +239,10 @@ export class ItsmSkill extends Skill {
 
     const sevIcon = (s: string) => ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[s] ?? '⚪');
     const lines = incidents.map(i =>
-      `| ${sevIcon(i.severity)} ${i.severity} | ${i.title} | ${i.status} | ${i.openedAt?.slice(0, 10)} | ${i.affectedAssetIds.length} Assets |`,
+      `| ${i.id.slice(0, 8)} | ${sevIcon(i.severity)} ${i.severity} | ${i.title.slice(0, 60)} | ${i.status} | ${i.openedAt?.slice(0, 10)} |`,
     );
 
-    const display = `## Incidents (${incidents.length})\n\n| Sev | Titel | Status | Datum | Betroffene |\n|-----|-------|--------|-------|------------|\n${lines.join('\n')}`;
+    const display = `## Incidents (${incidents.length})\nNutze die ID für update_incident, get_incident, close_incident.\n\n| ID | Sev | Titel | Status | Datum |\n|----|-----|-------|--------|-------|\n${lines.join('\n')}`;
     return { success: true, data: incidents, display };
   }
 

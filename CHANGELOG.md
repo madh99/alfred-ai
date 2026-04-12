@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.446] - 2026-04-12
+
+### Fixed
+- **ITSM `list_incidents` zeigt jetzt Incident-IDs** — Die Display-Tabelle hatte keine ID-Spalte. Alfred konnte Incidents sehen aber nicht per ID referenzieren. Fix: ID-Spalte (8-stellig) + Hinweis "Nutze die ID für update_incident" in der Tabelle
+- **ITSM System-Prompt-Filter war zu restriktiv** — Der Chat-Prompt-Injector filterte `status='open'`, aber der UDM Pro Incident hatte `status='acknowledged'` → wurde nicht geladen. Fix: Kein Status-Filter im DB-Query, stattdessen client-seitig auf active statuses (open/acknowledged/investigating/mitigating) filtern
+
 ## [0.19.0-multi-ha.445] - 2026-04-12
 
 ### Fixed
