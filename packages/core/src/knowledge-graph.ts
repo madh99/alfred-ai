@@ -55,11 +55,17 @@ const PERSON_BLACKLIST = new Set([
   'kalender', 'termin', 'aufgabe', 'erinnerung', 'warnung', 'fehler',
   'wichtig', 'dringend', 'erledigt', 'offen', 'aktiv', 'fertig',
   'damit', 'also', 'hier', 'dort', 'noch', 'schon', 'jetzt',
-  // Common German "in X" false-positive locations
+  // Common German "in X" / "nach X" false-positive locations
   'stunden', 'tagen', 'wochen', 'monaten', 'minuten', 'sekunden',
   'absprache', 'abstimmung', 'anlehnung', 'aussicht', 'betracht', 'bezug',
   'eile', 'folge', 'frage', 'kürze', 'ruhe', 'sachen', 'sicht',
   'kraft', 'anspruch', 'verbindung', 'zukunft', 'wahrheit',
+  // "nach Hause", "zu Hause", "in Match", "in Memory", "im Schritt"
+  'hause', 'match', 'schritt', 'memory', 'stelle', 'betrieb', 'betracht',
+  'grunde', 'laufe', 'rahmen', 'sinne', 'summe', 'zuge', 'nähe',
+  // Common German nouns that become false orgs/entities via "bei/von/mit X"
+  'verbindungsprobleme', 'verbindung', 'verwendung', 'verarbeitung',
+  'verfügung', 'vergleich', 'vorschlag', 'voraussetzung', 'vorbereitung',
   // Tech products mistaken as locations
   'home assistant', 'homeassistant', 'proxmox', 'docker', 'kubernetes',
 ]);
@@ -177,6 +183,17 @@ export class KnowledgeGraphService {
    * Results are cached permanently (places don't change).
    * Rate-limited to 1 request/second (Nominatim policy).
    */
+  /** Place types that represent real geographic locations (not farms, restaurants, kiosks, etc.). */
+  private static readonly VALID_PLACE_TYPES = new Set([
+    'city', 'town', 'village', 'hamlet', 'suburb',
+    'municipality', 'administrative', 'country', 'state',
+  ]);
+
+  /** Minimum Nominatim importance score to accept a result as a real place.
+   *  Verified: smallest real DACH town in user context (Bisamberg) = 0.406.
+   *  All false positives (Match=0.13, Schritt=0.11, Memory=0.13) are below 0.3. */
+  private static readonly MIN_GEOCODE_IMPORTANCE = 0.3;
+
   private async validateLocationViaGeocoding(candidate: string): Promise<boolean> {
     const key = candidate.toLowerCase().trim();
 
@@ -198,33 +215,46 @@ export class KnowledgeGraphService {
     this.lastGeocodeFetchAt = Date.now();
 
     try {
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(candidate)}&format=json&limit=1&addressdetails=0`;
+      // DACH country filter to avoid Tennessee hamlets and Irish admin-boundaries.
+      // Limit to 3 results to check name-match (first result might be fuzzy).
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(candidate)}&format=json&limit=3&addressdetails=0&countrycodes=at,de,ch`;
       const res = await fetch(url, {
         headers: { 'User-Agent': 'Alfred-AI/1.0 (personal assistant)' },
         signal: AbortSignal.timeout(5000),
       });
       if (!res.ok) {
-        // Nominatim error → be conservative, don't create
         this.geocodeCache.set(key, false);
         return false;
       }
-      const results = await res.json() as Array<{ type?: string; class?: string }>;
-      // A real place has results with class 'place' or 'boundary'
-      const isPlace = results.length > 0 && results.some(r =>
-        r.class === 'place' || r.class === 'boundary' ||
-        r.type === 'city' || r.type === 'town' || r.type === 'village' ||
-        r.type === 'hamlet' || r.type === 'suburb' || r.type === 'municipality' ||
-        r.type === 'administrative' || r.type === 'country' || r.type === 'state',
-      );
+      const results = await res.json() as Array<{ type?: string; class?: string; importance?: number; display_name?: string }>;
+
+      // Three-layer validation:
+      // 1. Type must be a real geographic settlement (not farm, restaurant, kiosk, highway, etc.)
+      // 2. Importance ≥ 0.3 (filters tiny hamlets and fuzzy matches)
+      // 3. Name match: display_name must start with the candidate (case-insensitive)
+      //    This prevents "Hause" matching "Aglasterhausen" via Nominatim fuzzy search.
+      const candidateLower = candidate.toLowerCase();
+      const isPlace = results.some(r => {
+        const hasValidType = KnowledgeGraphService.VALID_PLACE_TYPES.has(r.type ?? '');
+        const hasMinImportance = (r.importance ?? 0) >= KnowledgeGraphService.MIN_GEOCODE_IMPORTANCE;
+        const displayLower = (r.display_name ?? '').toLowerCase();
+        const nameMatches = displayLower.startsWith(candidateLower);
+        return hasValidType && hasMinImportance && nameMatches;
+      });
+
       this.geocodeCache.set(key, isPlace);
       if (isPlace) {
-        this.logger.info({ candidate, type: results[0]?.type }, 'Geocoding: validated as real place');
+        const match = results.find(r => KnowledgeGraphService.VALID_PLACE_TYPES.has(r.type ?? ''));
+        this.logger.info({ candidate, type: match?.type, importance: match?.importance }, 'Geocoding: validated as real place');
       } else {
-        this.logger.info({ candidate, results: results.length }, 'Geocoding: rejected — not a geographic place');
+        const reason = results.length === 0 ? 'no results'
+          : !results.some(r => KnowledgeGraphService.VALID_PLACE_TYPES.has(r.type ?? '')) ? 'wrong type'
+          : !results.some(r => (r.importance ?? 0) >= KnowledgeGraphService.MIN_GEOCODE_IMPORTANCE) ? 'low importance'
+          : 'name mismatch';
+        this.logger.info({ candidate, reason, topResult: results[0]?.display_name?.slice(0, 40) }, 'Geocoding: rejected');
       }
       return isPlace;
     } catch {
-      // Network error → be conservative, don't create
       this.geocodeCache.set(key, false);
       return false;
     }

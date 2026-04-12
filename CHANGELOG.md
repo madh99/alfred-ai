@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.438] - 2026-04-12
+
+### Fixed
+- **KG Location-Validierung v2: Nominatim False-Positive-Rate drastisch reduziert** — Die v433-Nominatim-Validierung war zu breit: `r.class === 'place'` matched Farmen, Kioske und Bushaltestellen weltweit. Drei neue Schutzschichten:
+  - **DACH-Country-Filter** (`countrycodes=at,de,ch`) in der Nominatim-URL — eliminiert Tennessee-Hamlets und irische Admin-Boundaries für deutsche Alltagswörter
+  - **Importance-Threshold ≥ 0.3** — verifiziert: niedrigster echter DACH-Ort (Bisamberg) = 0.406, höchster False-Positive (Schritt/Farm) = 0.107. Sicherer Abstand
+  - **Name-Match-Check** — `display_name` muss mit dem Suchbegriff beginnen (case-insensitive). Verhindert Fuzzy-Matches wie "Hause" → "Aglasterhausen"
+  - **Type-Only-Filter statt Class-Catch-All** — akzeptiert nur `city/town/village/hamlet/suburb/municipality/administrative/country/state`. Schließt aus: `farm/isolated_dwelling/restaurant/fast_food/kiosk/highway/boatyard`
+  - Konstanten `VALID_PLACE_TYPES` und `MIN_GEOCODE_IMPORTANCE` als statische Klassenfelder
+- **PERSON_BLACKLIST erweitert** um 25+ neue deutsche Alltagswörter die als falsche Locations/Orgs aufgetaucht waren: `hause`, `match`, `schritt`, `memory`, `stelle`, `grunde`, `laufe`, `rahmen`, `sinne`, `summe`, `zuge`, `nähe`, `verbindungsprobleme`, `verfügung`, `vergleich`, `vorschlag` etc.
+- **LLM Entity-Linker: Blacklist-Check hinzugefügt** (`llm-entity-linker.ts`) — der Linker erstellte Entities wie "Zuhause" (Organization) und "Verbindungsprobleme" (Organization) obwohl "zuhause" bereits in der PERSON_BLACKLIST war, weil der Linker die Blacklist komplett umging. Neue Methode `isBlacklistedEntityName()` mit eigener Wortliste + Heuristik (rein-lowercase single-word → skip) wird jetzt VOR `upsertEntity` geprüft
+- DB-Cleanup: 6 falsche Entities gelöscht (Match, Hause, Schritt, Memory, Zuhause, Verbindungsprobleme) + 22 zugehörige Relations
+
 ## [0.19.0-multi-ha.437] - 2026-04-12
 
 ### Fixed

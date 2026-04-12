@@ -73,6 +73,21 @@ export class LLMEntityLinker {
   /** Set optional document repo for chunk-based linking. */
   setDocumentRepo(repo: import('@alfred/storage').DocumentRepository): void { this.documentRepo = repo; }
 
+  /** German common words that the LLM sometimes proposes as entity names.
+   *  These should never become entities regardless of LLM classification. */
+  private static readonly BLACKLISTED_ENTITY_NAMES = new Set([
+    'zuhause', 'hause', 'match', 'schritt', 'memory', 'stelle', 'betrieb',
+    'verbindungsprobleme', 'verbindung', 'verwendung', 'verarbeitung',
+    'verfügung', 'vergleich', 'vorschlag', 'zusammenfassung', 'beschreibung',
+    'erinnerung', 'warnung', 'fehler', 'ergebnis', 'übersicht', 'antwort',
+    'hinweis', 'lösung', 'problem', 'update', 'status', 'version',
+    'konfiguration', 'einstellung', 'information', 'nachricht', 'anfrage',
+    'bitte', 'danke', 'hilfe', 'beispiel', 'option', 'empfehlung',
+    'inbox', 'kalender', 'notiz', 'aufgabe', 'rechnung', 'dokument',
+    'backup', 'server', 'cluster', 'gateway', 'switch', 'router',
+    'webhook', 'plugin', 'module', 'service', 'adapter', 'sensor',
+  ]);
+
   constructor(
     private readonly kgRepo: KnowledgeGraphRepository,
     private readonly config: LLMLinkingConfig,
@@ -80,6 +95,17 @@ export class LLMEntityLinker {
     private readonly apiKey: string,
     private readonly baseUrl: string = 'https://api.mistral.ai/v1',
   ) {}
+
+  /** Check if a proposed entity name is a common word that should never be an entity. */
+  private isBlacklistedEntityName(name: string): boolean {
+    const lower = name.toLowerCase().trim();
+    if (LLMEntityLinker.BLACKLISTED_ENTITY_NAMES.has(lower)) return true;
+    // Single word, all lowercase → likely a German common noun, not a proper name
+    if (/^[a-zäöüß]+$/.test(name) && name.length > 3) return true;
+    // Contains control characters or is too short/long
+    if (/[\n\r\t]/.test(name) || name.length < 2 || name.length > 50) return true;
+    return false;
+  }
 
   /** Check if a run is due based on schedule. */
   shouldRun(): boolean {
@@ -368,10 +394,15 @@ TRANSITIVE INFERENZ (wichtig!):
       stats.relations++;
     }
 
-    // 2. Create new entities
+    // 2. Create new entities (with blacklist check — LLM sometimes proposes
+    //    common German words like "Zuhause", "Verbindungsprobleme" as entities)
     for (const ne of (result.newEntities ?? []).slice(0, 5)) {
       if (!VALID_ENTITY_TYPES.has(ne.type)) continue;
       if (entityByName.has(ne.name.toLowerCase())) continue; // already exists
+      if (this.isBlacklistedEntityName(ne.name)) {
+        this.logger.debug({ name: ne.name, type: ne.type }, 'LLM linker: skipped blacklisted entity name');
+        continue;
+      }
       const entity = await this.kgRepo.upsertEntity(userId, ne.name, ne.type as any, ne.attributes ?? {}, 'llm_linking');
       entityByName.set(ne.name.toLowerCase(), entity);
       stats.newEntities++;
