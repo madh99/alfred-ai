@@ -6,5 +6,6 @@ export { MatrixAdapter } from './adapters/matrix.js';
 export { WhatsAppAdapter } from './adapters/whatsapp.js';
 export { SignalAdapter } from './adapters/signal.js';
 export { MSTeamsAdapter } from './adapters/msteams.js';
+export type { MSTeamsDbCallback } from './adapters/msteams.js';
 export { CLIAdapter } from './adapters/cli.js';
 export { HttpAdapter } from './adapters/http.js';

@@ -9,6 +9,12 @@ import { randomUUID } from 'node:crypto';
 import type { NormalizedMessage, SendMessageOptions, MSTeamsConfig } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
+/** Minimal DB interface for ConversationReference persistence (injected, no storage dependency). */
+export interface MSTeamsDbCallback {
+  saveConversationRef(chatId: string, ref: Record<string, unknown>): Promise<void>;
+  loadAllConversationRefs(): Promise<Map<string, Record<string, unknown>>>;
+}
+
 // Minimal inline types for botbuilder (lazy-loaded at runtime, no compile-time dependency)
 interface BotBuilderModule {
   CloudAdapter: new (auth: unknown) => CloudAdapterInstance;
@@ -31,13 +37,27 @@ export class MSTeamsAdapter extends MessagingAdapter {
 
   /** Stored conversation references for proactive messaging (chatId → ref). */
   private conversationRefs = new Map<string, Record<string, unknown>>();
+  private dbCallback?: MSTeamsDbCallback;
 
   constructor(private readonly config: MSTeamsConfig) {
     super();
   }
 
+  /** Set DB callback for cross-node ConversationReference persistence. */
+  setDbCallback(cb: MSTeamsDbCallback): void {
+    this.dbCallback = cb;
+  }
+
   async connect(): Promise<void> {
     this.status = 'connecting';
+
+    // Restore conversation references from DB (critical for cluster failover)
+    if (this.dbCallback) {
+      try {
+        const refs = await this.dbCallback.loadAllConversationRefs();
+        for (const [k, v] of refs) this.conversationRefs.set(k, v);
+      } catch { /* start fresh if DB load fails */ }
+    }
 
     // Lazy-load botbuilder (externalized dependency like mqtt/sonos/ccxt)
     this.botbuilder = await (Function('return import("botbuilder")')() as Promise<BotBuilderModule>);
@@ -148,9 +168,13 @@ export class MSTeamsAdapter extends MessagingAdapter {
       }
     }
 
-    // Store ConversationReference for proactive messaging
+    // Store ConversationReference for proactive messaging (in-memory + DB for cluster failover)
     const ref = bb.TurnContext.getConversationReference(activity);
-    this.conversationRefs.set(conversation.id as string, ref);
+    const chatId = conversation.id as string;
+    this.conversationRefs.set(chatId, ref);
+    if (this.dbCallback) {
+      this.dbCallback.saveConversationRef(chatId, ref).catch(() => { /* best effort */ });
+    }
 
     // Determine chat type
     const chatType = conversationType === 'personal' ? 'dm' as const : 'group' as const;

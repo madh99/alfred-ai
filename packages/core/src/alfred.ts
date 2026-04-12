@@ -2030,8 +2030,40 @@ export class Alfred {
 
     if (config.msteams?.enabled && config.msteams.appId) {
       const { MSTeamsAdapter } = await import('@alfred/messaging');
-      this.adapters.set('msteams', new MSTeamsAdapter(config.msteams));
-      this.logger.info({ port: config.msteams.webhookPort ?? 3978 }, 'MS Teams adapter registered');
+      const teamsAdapter = new MSTeamsAdapter(config.msteams);
+
+      // Wire ConversationReference persistence via skill_state table (cluster-aware)
+      const dbAdapter = this.database.getAdapter();
+      const SKILL_KEY = 'msteams';
+      const REF_PREFIX = 'conv_ref:';
+      const systemUserId = '_system';
+      teamsAdapter.setDbCallback({
+        async saveConversationRef(chatId: string, ref: Record<string, unknown>): Promise<void> {
+          const id = `msteams-ref-${chatId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}`;
+          const now = new Date().toISOString();
+          await dbAdapter.execute(
+            `INSERT INTO skill_state (id, user_id, skill, key, value, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT (user_id, skill, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+            [id, systemUserId, SKILL_KEY, `${REF_PREFIX}${chatId}`, JSON.stringify(ref), now],
+          );
+        },
+        async loadAllConversationRefs(): Promise<Map<string, Record<string, unknown>>> {
+          const rows = await dbAdapter.query(
+            `SELECT key, value FROM skill_state WHERE user_id = ? AND skill = ? AND key LIKE ?`,
+            [systemUserId, SKILL_KEY, `${REF_PREFIX}%`],
+          );
+          const map = new Map<string, Record<string, unknown>>();
+          for (const row of rows) {
+            const chatId = (row.key as string).slice(REF_PREFIX.length);
+            try { map.set(chatId, JSON.parse(row.value as string)); } catch { /* skip malformed */ }
+          }
+          return map;
+        },
+      });
+
+      this.adapters.set('msteams', teamsAdapter);
+      this.logger.info({ port: config.msteams.webhookPort ?? 3978 }, 'MS Teams adapter registered (cluster-aware ConversationRef persistence)');
     }
 
     if (config.api?.enabled !== false) {

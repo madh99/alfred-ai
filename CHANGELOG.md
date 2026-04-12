@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.440] - 2026-04-12
+
+### Added
+- **MS Teams Adapter: Cluster-aware ConversationReference-Persistenz** — ConversationReferences werden bei jedem eingehenden Turn in der `skill_state` DB-Tabelle gespeichert (Key: `conv_ref:{chatId}`, Skill: `msteams`, User: `_system`). Beim `connect()` werden alle gespeicherten Refs aus der DB geladen. Dadurch:
+  - **Cluster-Failover:** Wenn Node A crasht und Node B den `msteams` Adapter-Claim übernimmt, lädt B die ConversationRefs aus der DB und kann sofort proaktive Messages senden (Insights, Reminders) — ohne dass der User erneut schreiben muss
+  - **Restart-Safe:** Nach Alfred-Restart gehen keine Conversation-Kontexte verloren
+  - Interface `MSTeamsDbCallback` mit `saveConversationRef()` und `loadAllConversationRefs()` — Dependency-Injection Pattern (kein Storage-Import im messaging-Package nötig)
+  - Wiring in `alfred.ts:initializeAdapters()`: DB-Adapter wird durchgereicht, nutzt `skill_state` Tabelle mit UPSERT-Pattern (ON CONFLICT UPDATE)
+
 ## [0.19.0-multi-ha.439] - 2026-04-12
 
 ### Added
