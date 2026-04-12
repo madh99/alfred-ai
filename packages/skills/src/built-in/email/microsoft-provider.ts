@@ -74,11 +74,19 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
     if (res.status === 401) {
       await this.refreshAccessToken();
       const retry = await doFetch(this.accessToken);
-      if (!retry.ok) throw new Error(`Graph API error: ${retry.status}`);
+      if (!retry.ok) {
+        const retryBody = await retry.text().catch(() => '');
+        throw new Error(`Graph API error: ${retry.status}: ${retryBody.slice(0, 300)}`);
+      }
       return this.parseJsonOrUndefined(retry);
     }
 
-    if (!res.ok) throw new Error(`Graph API error: ${res.status}`);
+    if (!res.ok) {
+      // Include the response body in the error — Graph API error details are critical for debugging
+      const errorBody = await res.text().catch(() => '');
+      const errorDetail = errorBody ? `: ${errorBody.slice(0, 300)}` : '';
+      throw new Error(`Graph API error: ${res.status}${errorDetail}`);
+    }
     return this.parseJsonOrUndefined(res);
   }
 

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.449] - 2026-04-12
+
+### Fixed
+- **Microsoft Email: Graph API Error-Body im Fehler sichtbar** — `graphRequest()` warf bei HTTP-Fehlern nur `"Graph API error: 400"` ohne den Response-Body. Der Body enthält die eigentliche Fehlerbeschreibung (z.B. `ErrorItemNotFound`, `ErrorInvalidRecipients`, `ErrorAccessDenied`). Fix: Error-Body (max 300 Zeichen) wird jetzt in die Error-Message aufgenommen. Betrifft sowohl den primären als auch den Retry-Pfad (nach 401 Token-Refresh). Kritisch für Debugging des Email-Reply-400-Fehlers
+
 ## [0.19.0-multi-ha.448] - 2026-04-12
 
 ### Fixed
