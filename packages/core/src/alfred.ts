@@ -2555,6 +2555,13 @@ export class Alfred {
                 const feedbackTracker = new ActionFeedbackTracker(this.activityRepo, this.memoryRepo, this.logger.child({ component: 'action-feedback' }));
                 await feedbackTracker.analyze(user.id);
               }
+              // Cleanup expired memories (connection_*, event-bound, TTL-based)
+              if (this.memoryRepo) {
+                try {
+                  const cleaned = await this.memoryRepo.cleanupExpired();
+                  if (cleaned > 0) this.logger.info({ cleaned }, 'Expired memories cleaned up');
+                } catch (err) { this.logger.warn({ err: (err as Error).message }, 'Memory cleanup failed'); }
+              }
               // Prune old BMW telematic history (keep 90 days)
               if (this.bmwTelematicRepo) {
                 const pruned = await this.bmwTelematicRepo.prune(90);

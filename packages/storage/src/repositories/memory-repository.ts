@@ -127,9 +127,10 @@ export class MemoryRepository {
 
   async search(userId: string, query: string): Promise<MemoryEntry[]> {
     const pattern = `%${query}%`;
+    const now = new Date().toISOString();
     const rows = await this.adapter.query(
-      'SELECT * FROM memories WHERE user_id = ? AND (key LIKE ? OR value LIKE ?) ORDER BY updated_at DESC',
-      [userId, pattern, pattern],
+      'SELECT * FROM memories WHERE user_id = ? AND (key LIKE ? OR value LIKE ?) AND (expires_at IS NULL OR expires_at > ?) ORDER BY updated_at DESC',
+      [userId, pattern, pattern, now],
     ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));
@@ -238,9 +239,10 @@ export class MemoryRepository {
   }
 
   async getByType(userId: string, type: string, limit = 10): Promise<MemoryEntry[]> {
+    const now = new Date().toISOString();
     const rows = await this.adapter.query(
-      'SELECT * FROM memories WHERE user_id = ? AND type = ? ORDER BY confidence DESC, updated_at DESC LIMIT ?',
-      [userId, type, limit],
+      'SELECT * FROM memories WHERE user_id = ? AND type = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, updated_at DESC LIMIT ?',
+      [userId, type, now, limit],
     ) as Record<string, unknown>[];
     return rows.map((row) => this.mapRow(row));
   }
@@ -256,9 +258,10 @@ export class MemoryRepository {
   }
 
   async getRecentForPrompt(userId: string, limit = 20): Promise<MemoryEntry[]> {
+    const now = new Date().toISOString();
     const rows = await this.adapter.query(
-      'SELECT * FROM memories WHERE user_id = ? ORDER BY confidence DESC, updated_at DESC LIMIT ?',
-      [userId, limit],
+      'SELECT * FROM memories WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY confidence DESC, updated_at DESC LIMIT ?',
+      [userId, now, limit],
     ) as Record<string, unknown>[];
 
     return rows.map((row) => this.mapRow(row));

@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.443] - 2026-04-12
+
+### Fixed
+- **Memory: `expires_at` Filter endlich aktiv in allen Queries** — Die `expires_at` Spalte existierte bereits (seit Migration v26) mit `setExpiry()`, `saveWithTTL()` und `cleanupExpired()` Methoden, aber die kritischen Lese-Methoden filterten NICHT darauf:
+  - **`getRecentForPrompt()`**: Lädt jetzt nur Memories mit `expires_at IS NULL OR expires_at > now()`. Vorher: alle Memories inklusive abgelaufene → stale Event-Planungen landeten im Reasoning-Kontext und das LLM erfand daraus falsche zukünftige Termine
+  - **`search()`**: Gleicher Filter ergänzt
+  - **`getByType()`**: Gleicher Filter ergänzt (betrifft connection/pattern Memories im Reasoning-Kontext)
+- **Memory-Cleanup in wöchentlicher Maintenance** — `cleanupExpired()` wird jetzt im Sonntag-4AM-Zyklus aufgerufen (zusammen mit TemporalAnalyzer, KG-Maintenance, ActionFeedbackTracker). Löscht abgelaufene Memories dauerhaft aus der DB
+- **Generische Korrekturen statt datumsspezifische** — Neuer Prompt-Hinweis im Chat-System-Prompt (`prompt-builder.ts`): Wenn der User einen geplanten Trip/Termin korrigiert ("kein Trip", "findet nicht statt"), soll Alfred eine GENERISCHE Korrektur-Memory speichern (`correction_no_{topic}`) OHNE spezifisches Datum, plus `expires_at` auf den stale Planning-Memories setzen. Vorher: Alfred erstellte datumspezifische Korrekturen ("kein Trip am 12.04") die am nächsten Tag nicht mehr galten → LLM erfand den Trip für einen anderen Tag
+- **DB-Cleanup: 14 stale Kapfenberg-Memories expired** — Trip-Planungen, datumspezifische Korrekturen und erledigte Insight-Delivery-Records zu Kapfenberg-Fahrten die nicht mehr aktuell sind. Permanente Fakten (Noah Internat, Distanz, Routenvergleich) unberührt
+
+### Notes
+- Keine DB-Migration nötig — `expires_at` Spalte existiert seit v26 (SQLite) und PG-Schema
+- Die `extractFutureEventDate()` Methode im Memory-Extractor setzte bereits `expires_at` für erkannte Event-Dates — aber nur bei der Chat-Extraktion. KG-Connection-Memories und manuelle Saves nutzten es nicht. Mit dem Filter in den Read-Methoden wirkt `expires_at` jetzt durchgehend
+
 ## [0.19.0-multi-ha.442] - 2026-04-12
 
 ### Fixed
