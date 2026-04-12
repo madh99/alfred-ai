@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.447] - 2026-04-12
+
+### Fixed
+- **Insight-Delivered Memory TTL: 7 Tage → 48 Stunden** — Insight-Tracking-Memories (`insight_delivered:*`) hatten ein 7-Tage-TTL. Zustandsbeschreibungen wie "Email ist ungelesen" blieben deshalb eine volle Woche im Kontext — auch nachdem die Email längst gelesen wurde. Das LLM wiederholte den veralteten Zustand in jedem Insight. Fix: TTL von 7 auf 2 Tage reduziert (48h). Gibt dem User genug Reaktionszeit für Follow-ups, verhindert aber dass stale Zustände den Kontext eine Woche verunreinigen
+- DB-Cleanup: 31 stale Spond/Fußball Insight-Tracking-Memories expired die "ungelesen" Zustände beschrieben die nicht mehr aktuell sind
+
 ## [0.19.0-multi-ha.446] - 2026-04-12
 
 ### Fixed

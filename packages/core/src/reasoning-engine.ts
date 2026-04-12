@@ -1090,9 +1090,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
           this.insightTracker.trackInsightSent(category);
         }
       }
-      // Track delivered insights as feedback memories with 7-day expiry (for follow-up tracking)
+      // Track delivered insights as feedback memories with 48h expiry.
+      // Was 7 days — but that caused stale state descriptions ("Email ungelesen") to persist
+      // long after the state changed. 48h gives the user time to react while preventing
+      // the LLM from repeating outdated claims for a full week.
       if (this.memoryRepo && this.resolvedOwnerUserId) {
-        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
+        const expiresAt = new Date(Date.now() + 48 * 60 * 60_000).toISOString();
         for (const insight of insights) {
           const topicWords = insight.toLowerCase().replace(/[^a-zäöüß\s]/g, '').split(/\s+/)
             .filter(w => w.length >= 4).slice(0, 3).sort().join('_');
