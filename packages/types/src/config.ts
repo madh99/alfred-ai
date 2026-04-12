@@ -28,6 +28,29 @@ export interface SignalConfig {
   enabled: boolean;
 }
 
+export interface MSTeamsConfig {
+  /** Enable/disable MS Teams adapter. */
+  enabled?: boolean;
+  /** Azure Bot / Entra App Registration Client ID. */
+  appId: string;
+  /** Client Secret from Entra App Registration. */
+  appPassword: string;
+  /** Azure AD Tenant ID (single-tenant mode). */
+  tenantId: string;
+  /** Port for Bot Framework webhook listener. Default: 3978. */
+  webhookPort?: number;
+  /** Path for Bot Framework webhook endpoint. Default: /api/messages. */
+  webhookPath?: string;
+  /** Who may DM the bot. Default: 'open'. */
+  dmPolicy?: 'open' | 'allowlist' | 'disabled';
+  /** AAD Object IDs of allowed DM users (for dmPolicy='allowlist'). */
+  allowedUsers?: string[];
+  /** Require @mention in channels before responding. Default: true. */
+  requireMention?: boolean;
+  /** Reply style in channels/groups: in-thread or top-level. Default: 'thread'. */
+  replyStyle?: 'thread' | 'top-level';
+}
+
 export interface StorageConfig {
   path: string;
   backend?: 'sqlite' | 'postgres';
@@ -791,6 +814,7 @@ export interface AlfredConfig {
   whatsapp?: WhatsAppConfig;
   matrix?: MatrixConfig;
   signal?: SignalConfig;
+  msteams?: MSTeamsConfig;
   llm: MultiModelConfig;
   storage: StorageConfig;
   logger: LoggerConfig;

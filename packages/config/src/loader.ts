@@ -218,6 +218,16 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_PFSENSE_API_KEY: ['pfsense', 'apiKey'],
   ALFRED_PFSENSE_USERNAME: ['pfsense', 'username'],
   ALFRED_PFSENSE_PASSWORD: ['pfsense', 'password'],
+  // MS Teams
+  ALFRED_MSTEAMS_ENABLED: ['msteams', 'enabled'],
+  ALFRED_MSTEAMS_APP_ID: ['msteams', 'appId'],
+  ALFRED_MSTEAMS_APP_PASSWORD: ['msteams', 'appPassword'],
+  ALFRED_MSTEAMS_TENANT_ID: ['msteams', 'tenantId'],
+  ALFRED_MSTEAMS_WEBHOOK_PORT: ['msteams', 'webhookPort'],
+  ALFRED_MSTEAMS_WEBHOOK_PATH: ['msteams', 'webhookPath'],
+  ALFRED_MSTEAMS_DM_POLICY: ['msteams', 'dmPolicy'],
+  ALFRED_MSTEAMS_REQUIRE_MENTION: ['msteams', 'requireMention'],
+  ALFRED_MSTEAMS_REPLY_STYLE: ['msteams', 'replyStyle'],
   // Infra Defaults
   ALFRED_INFRA_DEFAULT_NETWORK: ['infra', 'network'],
   ALFRED_INFRA_DEFAULT_PROXMOX_NODE: ['infra', 'proxmoxNode'],

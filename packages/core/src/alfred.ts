@@ -2028,6 +2028,12 @@ export class Alfred {
       this.logger.info('Signal adapter registered');
     }
 
+    if (config.msteams?.enabled && config.msteams.appId) {
+      const { MSTeamsAdapter } = await import('@alfred/messaging');
+      this.adapters.set('msteams', new MSTeamsAdapter(config.msteams));
+      this.logger.info({ port: config.msteams.webhookPort ?? 3978 }, 'MS Teams adapter registered');
+    }
+
     if (config.api?.enabled !== false) {
       const { HttpAdapter } = await import('@alfred/messaging');
       const port = config.api?.port ?? 3420;

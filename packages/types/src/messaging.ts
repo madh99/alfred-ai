@@ -1,4 +1,4 @@
-export type Platform = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'matrix' | 'cli' | 'api';
+export type Platform = 'telegram' | 'discord' | 'whatsapp' | 'signal' | 'matrix' | 'msteams' | 'cli' | 'api';
 
 export type ChatType = 'dm' | 'group';
 

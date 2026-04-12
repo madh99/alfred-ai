@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.439] - 2026-04-12
+
+### Added
+- **MS Teams Messaging Adapter (Phase 1: Basic Chat)** — Alfred als Teams-Bot für 1:1 DMs, Gruppenchats und Channels:
+  - Neuer Adapter `packages/messaging/src/adapters/msteams.ts` basierend auf Microsoft Bot Framework SDK (`botbuilder`)
+  - Webhook-Listener (HTTP POST `/api/messages`) empfängt Bot Framework Activities
+  - Eingehende Nachrichten werden zu `NormalizedMessage` gemappt (wie Telegram/Discord)
+  - `@mention`-Stripping in Channels (Teams prefixed automatisch "@BotName")
+  - Typing-Indicator sofort bei Nachrichteneingang
+  - Proactive Messaging via `ConversationReference` — Alfred kann ohne vorherige User-Nachricht in bestehende Chats schreiben
+  - `editMessage` und `deleteMessage` Support via Bot Framework `updateActivity`/`deleteActivity`
+  - Health-Endpoint auf `/health` für Monitoring
+  - Access Control: `dmPolicy` (open/allowlist/disabled), `allowedUsers` (AAD Object IDs), `requireMention` (Channels)
+  - Config: `MSTeamsConfig` in `packages/types/src/config.ts` mit appId, appPassword, tenantId, webhookPort, webhookPath, dmPolicy, allowedUsers, requireMention, replyStyle
+  - ENV-Overrides: `ALFRED_MSTEAMS_APP_ID`, `ALFRED_MSTEAMS_APP_PASSWORD`, `ALFRED_MSTEAMS_TENANT_ID`, `ALFRED_MSTEAMS_WEBHOOK_PORT`, etc.
+  - Platform `'msteams'` zu `Platform` Union-Type hinzugefügt
+  - `botbuilder@^4.23.0` als externalisierte Dependency in CLI package (lazy-loaded via `Function('return import(...)')()`)
+  - Adapter-Registrierung in `alfred.ts:initializeAdapters()` wenn `config.msteams.enabled && config.msteams.appId`
+  - Spec-Dokument: `docs/specs/msteams-adapter.md` mit Phase 2 (Files, History, Proactive) und Phase 3 (Adaptive Cards) Roadmap
+
+### Notes — MS Teams Setup (einmalig nötig vor Nutzung)
+1. Azure Bot Resource erstellen (App ID, Client Secret, Tenant ID)
+2. Messaging Endpoint setzen auf `https://<public-url>/api/messages`
+3. Teams App Manifest (ZIP) mit botId erstellen und sideloaden
+4. Config setzen: `msteams.enabled=true`, `msteams.appId=...`, `msteams.appPassword=...`, `msteams.tenantId=...`
+5. DNS + Nginx Proxy einrichten (z.B. teams.lokalkraft.at → Alfred:3978)
+
 ## [0.19.0-multi-ha.438] - 2026-04-12
 
 ### Fixed
