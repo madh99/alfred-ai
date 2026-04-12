@@ -766,7 +766,14 @@ SICHERHEIT:
 - Prüfe "Aktive Watches" und "Aktive Workflows" Sections — KEINE Duplikate vorschlagen
 - Prüfe "Aktive Erinnerungen" Section — wenn dort bereits ein Reminder zum selben Thema existiert, KEINEN neuen vorschlagen!
 - Workflows + Delegate erfordern User-Bestätigung
-- Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg` : ''}
+- Wenn keine Aktionen sinnvoll: lass den ${ACTION_MARKER} Block weg
+
+KRITISCH — TERMINE UND DATEN:
+- NENNE NIEMALS ein konkretes Datum+Uhrzeit in Insights AUSSER es steht EXAKT so im Kalender-Block ("Kalender (nächste 48h)").
+- Memory-Einträge über vergangene Fahrten, Erinnerungen oder Planungen sind KEINE zukünftigen Termine! Sie beschreiben die VERGANGENHEIT.
+- "Bereits erinnert"-Einträge (✅) sind ERLEDIGT — nicht als zukünftige Termine referenzieren.
+- Wenn du einen Termin/eine Fahrt aus Memory-Kontext VERMUTEST aber er NICHT im Kalender-Block steht: schreibe "laut Memory erwähnt — im Kalender nicht bestätigt". NIEMALS ein konkretes Datum erfinden.
+- Ein Memory-Eintrag wie "Kapfenberg 18:00" OHNE Datum bedeutet NICHT dass diese Fahrt am nächsten freien Tag stattfindet!` : ''}
 
 FOLLOW-UP:
 - Prüfe die "Insight-Tracking" Section. Wenn ein Insight als OFFEN markiert ist und >24h alt, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").

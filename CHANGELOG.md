@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.442] - 2026-04-12
+
+### Fixed
+- **Reasoning-Engine: LLM darf keine Termine aus Memory-Fragmenten erfinden** — Neue Prompt-Sektion "KRITISCH — TERMINE UND DATEN" im Reasoning-Detail-Prompt. Verbietet dem LLM explizit, konkrete Datum+Uhrzeit-Kombinationen in Insights zu nennen die NICHT im Kalender-Block stehen. Memory-Einträge über vergangene Fahrten/Erinnerungen sind keine zukünftigen Termine. Hintergrund: Alfred hat wiederholt "Kapfenberg-Abfahrt 18.04. 18:00" in Insights genannt obwohl kein solcher Kalendertermin existiert — das LLM hat aus persistenten Memory-Fragmenten ("Kapfenberg 18:00" von einem alten Reminder, "Kapfenberg-Fahrten erfordern BMW-Ladeplanung" aus KG-Connections) ein falsches Datum konstruiert
+
 ## [0.19.0-multi-ha.441] - 2026-04-12
 
 ### Fixed
