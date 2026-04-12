@@ -2296,8 +2296,8 @@ For complex tasks, work through multiple steps:
 - Time: ${p}`,i?.timezone&&i.timezone!==l&&(c+=`
 - Server timezone: ${l}`),r&&r.length>0){c+=`
 
-## Upcoming events (next 7 days)`;for(let g of r){let w=g.allDay?"All day":g.start.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",...i?.timezone?{timeZone:i.timezone}:{}}),E=g.allDay?"":`-${g.end.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",...i?.timezone?{timeZone:i.timezone}:{}})}`,T=g.location?` @ ${g.location}`:"";c+=`
-- ${w}${E}: ${g.title}${T}`}}if(e.personalContext&&(c+=`
+## Upcoming events (next 7 days)`;let g=i?.timezone?{timeZone:i.timezone}:{};for(let w of r){let E=w.start.toLocaleDateString("de-AT",{weekday:"short",day:"2-digit",month:"2-digit",...g}),T=w.allDay?"Ganzt\xE4gig":w.start.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",...g}),k=w.allDay?"":`\u2013${w.end.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",...g})}`,S=w.location?` @ ${w.location}`:"";c+=`
+- ${E} ${T}${k}: ${w.title}${S}`}}if(e.personalContext&&(c+=`
 
 ## Pers\xF6nliches Umfeld des Users
 `,c+=e.personalContext,c+=`

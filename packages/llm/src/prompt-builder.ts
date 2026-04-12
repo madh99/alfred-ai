@@ -356,23 +356,29 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
     // Upcoming calendar events (next 7 days)
     if (todayEvents && todayEvents.length > 0) {
       prompt += '\n\n## Upcoming events (next 7 days)';
+      const tzOpts = userProfile?.timezone ? { timeZone: userProfile.timezone } : {};
       for (const event of todayEvents) {
+        // CRITICAL: include DATE (not just time) — without the date, the LLM guesses
+        // which day an event falls on and consistently gets it wrong.
+        const dateStr = event.start.toLocaleDateString('de-AT', {
+          weekday: 'short', day: '2-digit', month: '2-digit', ...tzOpts,
+        });
         const startTime = event.allDay
-          ? 'All day'
+          ? 'Ganztägig'
           : event.start.toLocaleTimeString('en-GB', {
               hour: '2-digit',
               minute: '2-digit',
-              ...(userProfile?.timezone ? { timeZone: userProfile.timezone } : {}),
+              ...tzOpts,
             });
         const endTime = event.allDay
           ? ''
-          : `-${event.end.toLocaleTimeString('en-GB', {
+          : `–${event.end.toLocaleTimeString('en-GB', {
               hour: '2-digit',
               minute: '2-digit',
-              ...(userProfile?.timezone ? { timeZone: userProfile.timezone } : {}),
+              ...tzOpts,
             })}`;
         const location = event.location ? ` @ ${event.location}` : '';
-        prompt += `\n- ${startTime}${endTime}: ${event.title}${location}`;
+        prompt += `\n- ${dateStr} ${startTime}${endTime}: ${event.title}${location}`;
       }
     }
 

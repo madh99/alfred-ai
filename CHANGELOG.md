@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.441] - 2026-04-12
+
+### Fixed
+- **Kalender: DATUM fehlte im System-Prompt → LLM hat Tage geraten und falsch zugeordnet** — Root-Cause für das wiederkehrende Problem dass Alfred falsche Kalender-Daten nennt (z.B. "Noah-Termin am 14.04" statt 17.04). Die Ursache: `prompt-builder.ts:375` formatierte Events als `"08:45-09:45: Titel @ Ort"` OHNE das Datum. 21 Events über 7 Tage in einer flachen Liste, nur mit Uhrzeit — das LLM hatte keine Möglichkeit zu wissen welcher Tag welches Event hat und hat geraten. Fix: Jedes Event bekommt jetzt das Datum vorangestellt im Format `"Do. 17.04. 08:45–09:45: Titel @ Ort"` via `toLocaleDateString('de-AT', { weekday: 'short', day: '2-digit', month: '2-digit' })`. Ganztags-Events als "Ganztägig" statt "All day". En-Dash statt Hyphen für Zeitspannen
+
 ## [0.19.0-multi-ha.440] - 2026-04-12
 
 ### Added
