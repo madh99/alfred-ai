@@ -493,11 +493,16 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
   async createDraft(input: SendEmailInput): Promise<{ messageId: string }> {
     if (input.replyTo) {
-      // Create a reply draft (not sent)
+      // Create a reply draft (not sent) — convert plain text to HTML like sendMessage reply
+      const htmlComment = input.isHtml ? input.body : input.body
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        .replace(/^/, '<p>').replace(/$/, '</p>');
       const data = await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/createReply`, {
         method: 'POST',
         body: JSON.stringify({
-          comment: input.body,
+          comment: htmlComment,
         }),
       });
       // Add attachments to reply draft if provided

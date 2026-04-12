@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.452] - 2026-04-13
+
+### Fixed
+- **Email Draft-Reply: gleiche HTML-Konvertierung wie Send-Reply** — `createDraft()` mit `replyTo` sendete den Body ebenfalls als Plain Text statt HTML an Graph's `createReply` Endpoint. Gleicher Fix wie v451 (Plain → HTML mit `<p>`, `<br>`, Entity-Escaping) auch für den Draft-Pfad angewendet
+
 ## [0.19.0-multi-ha.451] - 2026-04-13
 
 ### Fixed
