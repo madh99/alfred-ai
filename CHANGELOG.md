@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.448] - 2026-04-12
+
+### Fixed
+- **KRITISCH: ITSM/Problem/Service UPDATE mit Short-ID hat 0 Rows affected** — `updateIncident`, `updateService`, `updateChangeRequest`, `updateProblem` nutzten die vom Caller übergebene ID (oft 8-stellige Short-ID vom LLM) im `WHERE id = ?` Clause. Aber `getIncidentById` findet via `LIKE 'a5b8a0f2%'` (prefix match), die `UPDATE` braucht den exakten Full-UUID. Folge: `getIncidentById` findet → Update SQL matched 0 Rows → keine Änderung → Return des unveränderten Incident als "success" = **False Positive**. Fix: Alle 4 UPDATE-Methoden nutzen jetzt `existing.id` (Full-UUID aus DB) statt `id` (caller's Short-ID). Betrifft `itsm-repository.ts` (Incidents, Services, Changes) und `problem-repository.ts` (Problems)
+
 ## [0.19.0-multi-ha.447] - 2026-04-12
 
 ### Fixed

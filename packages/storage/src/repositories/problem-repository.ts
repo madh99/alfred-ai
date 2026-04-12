@@ -130,7 +130,7 @@ export class ProblemRepository {
 
     if (fields.length === 0) return existing;
     fields.push(`updated_at = ?`); params.push(now);
-    params.push(id, userId);
+    params.push(existing.id, userId);  // Use full UUID, not caller's short ID
 
     await this.db.execute(`UPDATE cmdb_problems SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getProblemById(userId, id);

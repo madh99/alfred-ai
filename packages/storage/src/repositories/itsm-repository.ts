@@ -221,7 +221,9 @@ export class ItsmRepository {
 
     if (fields.length === 0) return existing;
     fields.push(`updated_at = ?`); params.push(now);
-    params.push(id, userId);
+    // CRITICAL: use existing.id (full UUID from DB), NOT the caller's short ID.
+    // getIncidentById uses LIKE prefix match to find, but UPDATE needs exact match.
+    params.push(existing.id, userId);
 
     await this.db.execute(`UPDATE cmdb_incidents SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getIncidentById(userId, id);
@@ -381,7 +383,7 @@ export class ItsmRepository {
 
     if (fields.length === 0) return existing;
     fields.push(`updated_at = ?`); params.push(new Date().toISOString());
-    params.push(id, userId);
+    params.push(existing.id, userId);  // Use full UUID, not caller's short ID
 
     await this.db.execute(`UPDATE cmdb_services SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getServiceById(userId, id);
@@ -492,7 +494,7 @@ export class ItsmRepository {
 
     if (fields.length === 0) return existing;
     fields.push(`updated_at = ?`); params.push(now);
-    params.push(id, userId);
+    params.push(existing.id, userId);  // Use full UUID, not caller's short ID
 
     await this.db.execute(`UPDATE cmdb_change_requests SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getChangeRequestById(userId, id);
