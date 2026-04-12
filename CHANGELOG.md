@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.451] - 2026-04-13
+
+### Fixed
+- **Email Reply: Plain-Text → HTML Konvertierung für Graph API** — Microsoft Graph's `reply` Endpoint interpretiert das `comment`-Feld als HTML, aber Alfred sendete Plain Text mit `\n`. Folge: der Reply war ein einziger Fließtext-Block ohne Absätze. Fix: Automatische Konvertierung in `microsoft-provider.ts:sendMessage()`: `\n\n` → `</p><p>` (Absätze), `\n` → `<br>` (Zeilenumbrüche), HTML-Entities escaped (`&`, `<`, `>`). Gilt für beide Reply-Pfade (mit und ohne Attachments)
+
 ## [0.19.0-multi-ha.450] - 2026-04-12
 
 ### Fixed

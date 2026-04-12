@@ -414,11 +414,20 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
   async sendMessage(input: SendEmailInput): Promise<{ messageId: string }> {
     if (input.replyTo) {
+      // Convert plain text to HTML for Graph API reply comment.
+      // Graph's reply endpoint treats `comment` as HTML — without conversion,
+      // \n line breaks are ignored and the reply is one solid paragraph.
+      const htmlComment = input.isHtml ? input.body : input.body
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n\n/g, '</p><p>')
+        .replace(/\n/g, '<br>')
+        .replace(/^/, '<p>').replace(/$/, '</p>');
+
       if (input.attachments && input.attachments.length > 0) {
         // Reply with attachments: create reply draft → add attachments → send
         const draftData = await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/createReply`, {
           method: 'POST',
-          body: JSON.stringify({ comment: input.body }),
+          body: JSON.stringify({ comment: htmlComment }),
         });
         const draftId = draftData?.id;
         if (draftId) {
@@ -443,7 +452,7 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
       // Reply without attachments: direct reply
       await this.graphRequest(`${this.userPath}/messages/${input.replyTo}/reply`, {
         method: 'POST',
-        body: JSON.stringify({ comment: input.body }),
+        body: JSON.stringify({ comment: htmlComment }),
       });
       return { messageId: input.replyTo };
     }
