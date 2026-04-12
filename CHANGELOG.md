@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.455] - 2026-04-13
+
+### Fixed
+- **BMW: `savePartialTokens` nutzte `activeUserId` statt `tokenUserId`** — Bei der tokenUserId-Konsolidierung (v424) wurde `savePartialTokens` vergessen. Es schrieb deviceCode/codeVerifier in die FALSCHE Datei (`bmw-tokens-91df4602-*.json` via `activeUserId`) während `loadTokensFromDisk` aus der RICHTIGEN Datei las (`bmw-tokens-f165df7a-*.json` via `tokenUserId`). Folge: `bmw authorize` konnte den gespeicherten deviceCode nie finden und generierte bei jedem Aufruf einen neuen Code → Endlosschleife. Fix: `getTokenPath(this.activeUserId)` → `getTokenPath(this.tokenUserId)` an beiden Stellen (Zeile 961 + 981)
+
 ## [0.19.0-multi-ha.454] - 2026-04-13
 
 ### Added

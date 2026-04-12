@@ -958,7 +958,7 @@ export class BMWSkill extends Skill {
     // Merge with existing data
     let existing: Partial<BMWTokens> = {};
     try {
-      const raw = await readFile(getTokenPath(this.activeUserId), 'utf-8');
+      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
       existing = JSON.parse(raw) as Partial<BMWTokens>;
     } catch {
       // no existing file
@@ -978,7 +978,7 @@ export class BMWSkill extends Skill {
     // Always write to disk as backup
     try {
       await mkdir(join(homedir(), '.alfred'), { recursive: true });
-      await writeFile(getTokenPath(this.activeUserId), JSON.stringify(merged, null, 2), 'utf-8');
+      await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(merged, null, 2), 'utf-8');
     } catch { /* best-effort disk write */ }
   }
 
