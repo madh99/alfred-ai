@@ -215,10 +215,17 @@ export class MicrosoftGraphEmailProvider extends EmailProvider {
 
   async searchMessages(query: string, count: number): Promise<EmailMessage[]> {
     const pageSize = Math.min(Math.max(1, count), 50);
+    // Sanitize query for Microsoft Graph $search: strip inner quotes and Gmail-style operators
+    // that Graph doesn't understand. Graph $search uses KQL, not Gmail syntax.
+    const sanitized = query
+      .replace(/"/g, '')                          // strip all quotes (cause nested quote errors)
+      .replace(/\b(from|to|subject|is|has):/gi, '') // strip Gmail-style operators
+      .replace(/\s+/g, ' ')                       // collapse whitespace
+      .trim();
     const params = new URLSearchParams({
-      $search: `"${query}"`,
+      $search: `"${sanitized}"`,
       $top: String(pageSize),
-      $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments',
+      $select: 'id,from,toRecipients,subject,receivedDateTime,isRead,bodyPreview,hasAttachments,conversationId,importance,inferenceClassification',
     });
 
     const data = await this.graphRequest(`${this.userPath}/messages?${params}`);

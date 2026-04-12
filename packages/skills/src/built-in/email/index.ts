@@ -51,7 +51,11 @@ export class EmailSkill extends Skill {
       },
     };
 
-    const description = 'Access your email: check inbox, read, search, send, draft, reply, forward, attachment. Use "list_accounts" to see available email accounts. Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it.';
+    const description = 'Access your email: check inbox, read, search, send, draft, reply, forward, attachment. ' +
+      'Use "list_accounts" to see available email accounts. ' +
+      'Use "draft" instead of "send" when the user asks to prepare/draft an email without sending it. ' +
+      'REPLY: Use action="reply" with the messageId from a previous inbox/read/search result — do NOT search again for an email you already have the messageId for. Reply sends an in-thread response (not a new email). ' +
+      'SEARCH: Use simple keywords (e.g. "aWATTar Rechnung"), NOT Gmail operators like "from:", "subject:", "is:unread" — those are not supported by Microsoft Graph.';
 
     this.metadata = {
       name: 'email',

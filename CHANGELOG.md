@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.450] - 2026-04-12
+
+### Fixed
+- **Email Search: Microsoft Graph `$search` Quote-Sanitizing** — LLM sendete Queries mit verschachtelten Anführungszeichen und Gmail-Operatoren (`from:support@ui.com subject:"Ubiquiti Support"`) die Graph `$search` nicht versteht → 400 Bad Request. Fix: `searchMessages()` in `microsoft-provider.ts` strippt jetzt alle `"` Zeichen und Gmail-Operatoren (`from:`, `to:`, `subject:`, `is:`, `has:`) aus dem Query bevor er in `$search` eingesetzt wird. Der sanitierte Query enthält nur die Keywords die Graph tatsächlich matchen kann
+- **Email Skill Description: Reply + Search Instruktionen** — LLM versuchte Emails per search zu finden statt die bekannte messageId direkt zu nutzen, und verwendete Gmail-Syntax die Microsoft Graph nicht unterstützt. Neue Skill-Description instruiert: (1) Reply direkt mit bekannter messageId aufrufen, nicht nochmal suchen (2) Search-Queries als einfache Keywords, keine Gmail-Operatoren
+
 ## [0.19.0-multi-ha.449] - 2026-04-12
 
 ### Fixed
