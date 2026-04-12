@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.445] - 2026-04-12
+
+### Fixed
+- **ITSM: Aktive Incidents im Chat-System-Prompt** — Alfred konnte in Chat-Konversationen keine Incidents updaten weil die Incident-IDs nur im Reasoning-Kontext (alle 30 Min) verfügbar waren, nicht im Chat-System-Prompt. Wenn der User sagte "update den Incident", kannte Alfred die ID nicht und der Tool-Call schlug fehl. Fix: `message-pipeline.ts` lädt jetzt bei jedem Chat aktive ITSM-Incidents (max 10, status: open/acknowledged/investigating/mitigating) per `itsm list_incidents` und fügt sie als `## Aktive ITSM-Incidents` Section in den System-Prompt ein, mit 8-stelliger Short-ID die der LLM direkt für `update_incident` verwenden kann
+
 ## [0.19.0-multi-ha.444] - 2026-04-12
 
 ### Added

@@ -689,6 +689,25 @@ export class MessagePipeline {
         queryContext,
       });
 
+      // Inject active ITSM incidents into system prompt so the LLM can reference
+      // correct incident IDs when updating. Without this, the LLM guesses IDs and fails.
+      if (this.skillRegistry?.has('itsm') && this.skillSandbox) {
+        try {
+          const itsmSkill = this.skillRegistry.get('itsm')!;
+          const listResult = await this.skillSandbox.execute(itsmSkill, { action: 'list_incidents', status: 'open' }, baseContext);
+          if (listResult.success && Array.isArray(listResult.data)) {
+            const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
+            const active = (listResult.data as Array<{ id: string; title: string; severity: string; status: string }>)
+              .filter(i => activeStatuses.has(i.status))
+              .slice(0, 10);
+            if (active.length > 0) {
+              const lines = active.map(i => `- [${i.id.slice(0, 8)}] [${i.severity}] ${i.title} (${i.status})`);
+              system += `\n\n## Aktive ITSM-Incidents\nNutze die 8-stellige ID in eckigen Klammern für update_incident.\n${lines.join('\n')}`;
+            }
+          }
+        } catch { /* non-critical — chat works without ITSM context */ }
+      }
+
       // Inject active agent status so the LLM can answer "what is the agent doing?"
       const agentStatusBlock = this.buildActiveAgentStatus();
       if (agentStatusBlock) {
