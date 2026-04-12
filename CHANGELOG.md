@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.453] - 2026-04-13
+
+### Fixed
+- **Email Skill: Reply-Draft Instruktion explizit** — LLM rief `action='draft'` mit `to` + `subject='RE: ...'` auf statt mit `messageId`. Ergebnis: neues Email das aussieht wie ein Reply aber NICHT im Thread ist. Fix: Skill-Description erklärt jetzt explizit: "REPLY DRAFT: Use action='draft' WITH messageId (NOT with to/subject!) to create an in-thread reply draft"
+
 ## [0.19.0-multi-ha.452] - 2026-04-13
 
 ### Fixed
