@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.458] - 2026-04-13
+
+### Fixed
+- **BMW Container-Descriptors: API-verifizierte Key-Liste** — Alle 293 CarData Elements gegen die BMW Container-API getestet. Ergebnis: Nur 33 Keys sind als REST-Container-Descriptor gültig (Charging, GPS, Odometer, Trunk). Doors, Windows, Lock, CBS, checkControl, Tires, Service-Daten sind ausschließlich MQTT-only. DESCRIPTORS-Array korrigiert: 30 base + GPS lat/lon/heading + Odometer + Trunk = 35 Keys. Ungültige Keys entfernt die CU-402 "Telematic key is invalid" verursachten
+- **BMW GPS-Keys korrigiert** — `vehicle.location.gps.*` (MQTT-only) durch `vehicle.cabin.infotainment.navigation.currentLocation.*` (REST-valid) ersetzt. GPS kommt jetzt über REST UND MQTT
+- **BMW MQTT_ALT_KEYS bidirektional** — Mappings in beide Richtungen (REST→MQTT und MQTT→REST) für GPS, Lock, Doors, Trunk, Windows. `tvm()` findet Daten unabhängig davon ob MQTT oder REST als Quelle dient
+- **BMW Container Auto-Update beim ersten REST-Call** — `resolveContainerId` prüft einmal pro Prozess-Lifetime ob die Descriptor-Anzahl stimmt und erstellt den Container automatisch neu. Kein manuelles `authorize` nötig nach Code-Updates
+
 ## [0.19.0-multi-ha.456] - 2026-04-13
 
 ### Fixed

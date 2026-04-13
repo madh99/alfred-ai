@@ -32,7 +32,9 @@ function generateCodeChallenge(verifier: string): string {
   return crypto.createHash('sha256').update(verifier).digest('base64url');
 }
 
-// ── Telematik Descriptor Keys (from BMW Telematics Data Catalogue) ───
+// ── Telematik Descriptor Keys (REST Container — verified against BMW API 2026-04-13) ───
+// NOTE: Doors, windows, lock, CBS, checkControl, tires, service dates, alarm, lights,
+//       engine status are MQTT-only and NOT valid as container descriptors.
 const DESCRIPTORS = [
   // Battery & SoC
   'vehicle.drivetrain.batteryManagement.header',
@@ -74,14 +76,12 @@ const DESCRIPTORS = [
   'vehicle.vehicleIdentification.basicVehicleData',
   // Odometer
   'vehicle.vehicle.travelledDistance',
-  // Security — lock, doors, trunk, windows
-  'vehicle.access.centralLocking.isLocked',
-  'vehicle.body.door.driver.isOpen',
+  // Trunk
   'vehicle.body.trunk.isOpen',
-  'vehicle.body.window.driver.isOpen',
-  // GPS location
-  'vehicle.location.gps.latitude',
-  'vehicle.location.gps.longitude',
+  // GPS location (correct keys from BMW TDC — vehicle.location.gps.* are MQTT-only aliases)
+  'vehicle.cabin.infotainment.navigation.currentLocation.latitude',
+  'vehicle.cabin.infotainment.navigation.currentLocation.longitude',
+  'vehicle.cabin.infotainment.navigation.currentLocation.heading',
 ];
 
 // ── Types ─────────────────────────────────────────────────
@@ -111,16 +111,30 @@ function tv(data: TelematicResponse, ...keys: string[]): string {
   return '?';
 }
 
-/** MQTT→REST descriptor mapping for common fields. */
+/** Bidirectional key aliases — MQTT and REST use different keys for the same data.
+ *  tvm() tries the primary key first, then all aliases. */
 const MQTT_ALT_KEYS: Record<string, string[]> = {
+  // SoC: REST container key ↔ MQTT streaming key
   'vehicle.drivetrain.batteryManagement.header': ['vehicle.powertrain.electric.battery.stateOfCharge.displayed'],
+  // Range: multiple MQTT variants
   'vehicle.drivetrain.electricEngine.remainingElectricRange': ['vehicle.drivetrain.lastRemainingRange', 'vehicle.drivetrain.electricEngine.kombiRemainingElectricRange'],
-  'vehicle.access.centralLocking.isLocked': ['vehicle.cabin.door.status'],
+  // GPS: REST container keys ↔ MQTT keys (vehicle.location.gps.* comes via MQTT)
+  'vehicle.cabin.infotainment.navigation.currentLocation.latitude': ['vehicle.location.gps.latitude'],
+  'vehicle.cabin.infotainment.navigation.currentLocation.longitude': ['vehicle.location.gps.longitude'],
   'vehicle.location.gps.latitude': ['vehicle.cabin.infotainment.navigation.currentLocation.latitude'],
   'vehicle.location.gps.longitude': ['vehicle.cabin.infotainment.navigation.currentLocation.longitude'],
+  // Lock: MQTT key → REST fallback
+  'vehicle.access.centralLocking.isLocked': ['vehicle.cabin.door.lock.status', 'vehicle.cabin.door.status'],
+  'vehicle.cabin.door.lock.status': ['vehicle.access.centralLocking.isLocked', 'vehicle.cabin.door.status'],
+  // Doors: MQTT key → REST fallback
   'vehicle.body.door.driver.isOpen': ['vehicle.cabin.door.row1.driver.isOpen'],
+  'vehicle.cabin.door.row1.driver.isOpen': ['vehicle.body.door.driver.isOpen'],
+  // Trunk
   'vehicle.body.trunk.isOpen': ['vehicle.body.trunk.door.isOpen'],
+  'vehicle.body.trunk.door.isOpen': ['vehicle.body.trunk.isOpen'],
+  // Windows: MQTT key → REST fallback
   'vehicle.body.window.driver.isOpen': ['vehicle.cabin.window.row1.driver.status'],
+  'vehicle.cabin.window.row1.driver.status': ['vehicle.body.window.driver.isOpen'],
 };
 
 /** Read with fallback to MQTT alternative keys. */
@@ -1082,18 +1096,36 @@ export class BMWSkill extends Skill {
     throw new Error('Keine VIN angegeben und keine gespeicherte VIN gefunden. Bitte zuerst "authorize" aufrufen.');
   }
 
+  private containerChecked = false;
+
   private async resolveContainerId(): Promise<string> {
     const tokens = await this.loadTokens();
-    if (tokens?.containerId) return tokens.containerId;
-    // Self-healing: try to create container if token exists but containerId is empty
-    if (tokens?.accessToken) {
+    if (!tokens?.accessToken) {
+      throw new Error('Kein Token gefunden. Bitte EINMAL "authorize" aufrufen.');
+    }
+
+    // On first REST call per process lifetime, verify container has correct descriptors
+    if (tokens.containerId && !this.containerChecked) {
+      this.containerChecked = true;
       try {
         const containerId = await this.ensureContainer(tokens.accessToken);
-        tokens.containerId = containerId;
-        await this.saveTokens(tokens);
-        return containerId;
-      } catch { /* fall through to error */ }
+        if (containerId !== tokens.containerId) {
+          tokens.containerId = containerId;
+          await this.saveTokens(tokens);
+        }
+      } catch { /* rate limit or API error — use existing container */ }
     }
+
+    if (tokens.containerId) return tokens.containerId;
+
+    // Self-healing: create container if containerId is empty
+    try {
+      const containerId = await this.ensureContainer(tokens.accessToken);
+      tokens.containerId = containerId;
+      await this.saveTokens(tokens);
+      return containerId;
+    } catch { /* fall through to error */ }
+
     throw new Error('Kein Container gefunden. Bitte EINMAL "authorize" aufrufen und auf Browser-Bestätigung warten. Danach wird der Container automatisch erstellt. NICHT mehrfach authorize aufrufen!');
   }
 
