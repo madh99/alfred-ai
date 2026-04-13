@@ -294,7 +294,7 @@ export function KnowledgeGraphPage() {
               linkDirectionalParticles={(link: any) => link.strength > 0.7 ? 2 : 0}
               linkDirectionalParticleWidth={2}
               linkDirectionalParticleColor={() => '#60a5fa'}
-              onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
+              onNodeClick={(node: any) => { console.log('[KG] Node clicked:', node.name, node.id); setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
               onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); setEditMode(false); }}
               onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); setEditMode(false); }}
               backgroundColor="#0a0a0a"
