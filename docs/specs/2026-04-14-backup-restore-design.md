@@ -12,12 +12,27 @@ Neue Actions im bestehenden `database-skill.ts`:
 
 ### `backup`
 - Parameter: `connection` (Name), `format` (sql/custom/archive, default: custom), `label` (optional)
-- Führt `pg_dump` / `mysqldump` / SQLite `.backup` / `mongodump` aus (je nach Provider)
+- Pro Provider:
+  - **PostgreSQL:** `pg_dump --format=custom`
+  - **MySQL/MariaDB:** `mysqldump`
+  - **MS SQL:** `BACKUP DATABASE ... TO DISK` (T-SQL über bestehende Verbindung)
+  - **SQLite:** `.backup()` API
+  - **MongoDB:** `mongodump`
+  - **Redis:** `BGSAVE` + Kopie der RDB-Datei
+  - **InfluxDB:** `influx backup` CLI
 - Speichert unter konfiguriertem Pfad mit Timestamp
 - Gibt Dateipfad + Größe zurück
 
 ### `restore`
 - Parameter: `connection` (Name), `backup_id` oder `file` (Pfad)
+- Pro Provider:
+  - **PostgreSQL:** `pg_restore`
+  - **MySQL/MariaDB:** `mysql < dump.sql`
+  - **MS SQL:** `RESTORE DATABASE ... FROM DISK` (T-SQL über bestehende Verbindung)
+  - **SQLite:** Datei ersetzen + reconnect
+  - **MongoDB:** `mongorestore`
+  - **Redis:** RDB-Datei ersetzen + `DEBUG RELOAD`
+  - **InfluxDB:** `influx restore` CLI
 - Zeigt Backup-Details (Datum, Größe, Quelle)
 - Führt Restore nur aus wenn global oder per Connection `restore_via_query: true` konfiguriert
 - Default: zeigt nur Info, kein Restore
