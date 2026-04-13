@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.463] - 2026-04-13
+
+### Fixed
+- **BMW MQTT nach Authorize immer neustarten** — Nach erfolgreichem authorize wurde MQTT nur neugestartet wenn `streamingActive || mqttClient` true war. Wenn MQTT im Backoff hing (beides false), wurde es nicht neugestartet → MQTT blieb tot mit altem kaputtem Token. Jetzt: `stopStreaming()` + `startStreaming()` immer nach authorize
+
 ## [0.19.0-multi-ha.462] - 2026-04-13
 
 ### Fixed

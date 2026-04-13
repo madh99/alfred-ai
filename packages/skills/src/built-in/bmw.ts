@@ -774,11 +774,10 @@ export class BMWSkill extends Skill {
       console.warn(`[BMW] ensureContainer failed (preserved=${baseTokens.containerId}): ${containerError}`);
     }
 
-    // Restart MQTT streaming with new token (if streaming was active)
-    if (this.streamingActive || this.mqttClient) {
-      this.stopStreaming();
-      this.startStreaming().catch(() => {});
-    }
+    // Restart MQTT streaming with new token — always try after successful authorize,
+    // even if streaming was in backoff (streamingActive=false, mqttClient=undefined).
+    this.stopStreaming();
+    this.startStreaming().catch(() => {});
 
     // Reset rate limit + MQTT backoff (new token = fresh session)
     this.rateLimitedUntil = 0;
