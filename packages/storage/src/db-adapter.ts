@@ -98,7 +98,12 @@ export class PostgresAsyncAdapter implements AsyncDbAdapter {
   readonly type = 'postgres' as const;
   private pool: any;
 
-  constructor(private readonly connectionString: string) {}
+  /** Exposed for backup tools (pg_dump --dbname=connStr). */
+  readonly connString: string;
+
+  constructor(private readonly connectionString: string) {
+    this.connString = connectionString;
+  }
 
   async initialize(): Promise<void> {
     let Pool: any;

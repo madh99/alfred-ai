@@ -95,31 +95,30 @@ export class SystemBackupSkill extends Skill {
     // 1. Database
     try {
       if (this.dbAdapter.type === 'postgres') {
-        const pgConfig = (this.dbAdapter as any).config ?? {};
+        const connStr = (this.dbAdapter as any).connString as string | undefined;
         const outFile = join(backupDir, 'alfred.dump');
-        const args = [
-          '--host', pgConfig.host ?? 'localhost',
-          '--port', String(pgConfig.port ?? 5432),
-          '--dbname', pgConfig.database ?? 'alfred',
-          '--format', 'custom',
-          '--file', outFile,
-        ];
-        if (pgConfig.user) args.push('--username', pgConfig.user);
-        const env = { ...process.env };
-        if (pgConfig.password) env.PGPASSWORD = pgConfig.password;
-        await execFileAsync('pg_dump', args, { env, timeout: 300_000 });
+        if (connStr) {
+          // pg_dump supports connection string directly via --dbname
+          const args = ['--format', 'custom', '--file', outFile, '--dbname', connStr];
+          await execFileAsync('pg_dump', args, { timeout: 300_000 });
+        } else {
+          // Fallback: try default local connection
+          await execFileAsync('pg_dump', ['--format', 'custom', '--file', outFile, '--dbname', 'alfred'], { timeout: 300_000 });
+        }
         const st = await stat(outFile);
         totalSize += st.size;
         includes.push('database');
       } else {
-        // SQLite
+        // SQLite — better-sqlite3 Database has .name property = file path
+        const dbPath = (this.dbAdapter as any).db?.name as string | undefined;
         const outFile = join(backupDir, 'alfred.sqlite');
-        try {
-          await this.dbAdapter.execute(`VACUUM INTO '${outFile.replace(/'/g, "''")}'`);
+        if (dbPath) {
+          // Direct file copy is safest for SQLite backup
+          await copyFile(dbPath, outFile);
           const st = await stat(outFile);
           totalSize += st.size;
           includes.push('database');
-        } catch { /* VACUUM INTO not supported in all versions */ }
+        }
       }
     } catch { /* DB backup failed — continue with files */ }
 
