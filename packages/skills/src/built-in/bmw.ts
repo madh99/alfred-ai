@@ -726,27 +726,32 @@ export class BMWSkill extends Skill {
 
     const data = (await res.json()) as Record<string, unknown>;
     const accessToken = data.access_token as string;
-    console.log(`[BMW] pollToken: token exchange SUCCESS, accessToken=${accessToken?.slice(0, 10)}...`);
+    const refreshToken = data.refresh_token as string | undefined;
+    console.log(`[BMW] pollToken: token exchange SUCCESS, accessToken=${accessToken?.slice(0, 10)}..., hasRefresh=${!!refreshToken}`);
+
+    // Read existing tokens to preserve VIN/containerId and fall back for missing fields
+    let existingTokens: Partial<BMWTokens> = {};
+    try {
+      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
+      existingTokens = JSON.parse(raw) as Partial<BMWTokens>;
+    } catch { /* no existing file */ }
 
     // CRITICAL: Save tokens IMMEDIATELY — VIN/container are fetched after but must not block saving.
     const baseTokens: BMWTokens = {
       accessToken,
-      refreshToken: data.refresh_token as string,
-      idToken: data.id_token as string,
+      refreshToken: refreshToken || existingTokens.refreshToken || '',
+      idToken: (data.id_token as string) || existingTokens.idToken || '',
       expiresAt: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
-      vin: '',
-      containerId: '',
+      vin: existingTokens.vin || '',
+      containerId: existingTokens.containerId || '',
     };
 
-    // Preserve VIN + containerId from previous session (so we don't lose them if fetchVin/ensureContainer fail)
+    // Clear deviceCode/codeVerifier — auth flow completed
     try {
-      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
-      const existing = JSON.parse(raw) as Record<string, unknown>;
-      if (existing.vin) baseTokens.vin = existing.vin as string;
-      if (existing.containerId) baseTokens.containerId = existing.containerId as string;
-      delete existing.deviceCode;
-      delete existing.codeVerifier;
-      await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(existing, null, 2), 'utf-8');
+      const cleaned = { ...existingTokens };
+      delete cleaned.deviceCode;
+      delete cleaned.codeVerifier;
+      await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(cleaned, null, 2), 'utf-8');
     } catch { /* best effort */ }
 
     await this.saveTokens(baseTokens);

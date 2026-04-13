@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.464] - 2026-04-13
+
+### Fixed
+- **BMW pollToken: refreshToken ging bei Token-Exchange verloren** — Nach Device-Code-Exchange wurde `data.refresh_token` (undefined bei manchen BMW-Responses) direkt als refreshToken gespeichert → Datei hatte keinen gültigen refreshToken → MQTT konnte nach Neustart nicht refreshen. Jetzt: Fallback auf existierenden refreshToken wenn BMW keinen neuen liefert. VIN/containerId werden aus bestehender Datei übernommen statt separat gelesen
+
 ## [0.19.0-multi-ha.463] - 2026-04-13
 
 ### Fixed
