@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.459] - 2026-04-13
+
+### Fixed
+- **BMW pollToken: Disk-First statt DB-First für codeVerifier** — pollToken las den PKCE codeVerifier zuerst aus der DB (Key `partial`), wo ein alter Wert von einem früheren Authorize-Versuch liegen konnte. Jetzt: Disk zuerst (savePartialTokens schreibt immer dorthin, MQTT-Refresh preservt es), DB nur als Fallback. Zusätzlich: deviceCode-Matching — der Verifier wird nur akzeptiert wenn er zum aktuellen deviceCode passt
+- **BMW pollToken Logging** — Diagnostik-Logs für verifier-Quelle und BMW-Antwort bei Fehler
+
 ## [0.19.0-multi-ha.458] - 2026-04-13
 
 ### Fixed

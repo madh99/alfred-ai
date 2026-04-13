@@ -637,17 +637,40 @@ export class BMWSkill extends Skill {
   }
 
   private async pollToken(deviceCode: string): Promise<SkillResult> {
-    // Load PKCE verifier from PARTIAL tokens (not the main access tokens)
-    let partial: BMWTokens | null = null;
-    const db = this.resolveDbAccess();
-    if (db) {
-      try {
-        const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'partial');
-        if (svc) partial = svc as unknown as BMWTokens;
-      } catch { /* fallback to disk */ }
+    // Load PKCE verifier — try DISK FIRST (most reliable during active auth flow),
+    // then DB as fallback. Previous approach (DB first) could read stale partial data.
+    let codeVerifier: string | undefined;
+    let verifierSource = 'none';
+
+    // 1. Disk — savePartialTokens always writes here, MQTT refresh preserves it
+    const diskTokens = await this.loadTokensFromDisk();
+    if (diskTokens?.codeVerifier && diskTokens?.deviceCode === deviceCode) {
+      codeVerifier = diskTokens.codeVerifier;
+      verifierSource = 'disk (matched deviceCode)';
+    } else if (diskTokens?.codeVerifier) {
+      codeVerifier = diskTokens.codeVerifier;
+      verifierSource = 'disk (deviceCode mismatch or missing)';
     }
-    if (!partial) partial = await this.loadTokensFromDisk();
-    const codeVerifier = partial?.codeVerifier;
+
+    // 2. DB fallback — only if disk didn't have it
+    if (!codeVerifier) {
+      const db = this.resolveDbAccess();
+      if (db) {
+        try {
+          const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'partial');
+          if (svc) {
+            const partial = svc as unknown as BMWTokens;
+            if (partial.codeVerifier) {
+              codeVerifier = partial.codeVerifier;
+              verifierSource = 'db:partial';
+            }
+          }
+        } catch { /* no DB access */ }
+      }
+    }
+
+    console.log(`[BMW] pollToken: verifier from ${verifierSource}, len=${codeVerifier?.length ?? 0}, deviceCode=${deviceCode.slice(0, 20)}...`);
+
     if (!codeVerifier) {
       throw new Error('Kein code_verifier gefunden. Bitte zuerst "authorize" ohne device_code aufrufen.');
     }
@@ -666,6 +689,7 @@ export class BMWSkill extends Skill {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      console.log(`[BMW] pollToken response: HTTP ${res.status}, body=${text.slice(0, 200)}`);
       if (text.includes('authorization_pending')) {
         return {
           success: true,
@@ -989,6 +1013,7 @@ export class BMWSkill extends Skill {
       // no existing file
     }
     const merged = { ...existing, ...partial };
+    console.log(`[BMW] savePartialTokens: path=${getTokenPath(this.tokenUserId)}, hasVerifier=${!!merged.codeVerifier}, verifierLen=${merged.codeVerifier?.length ?? 0}, hasDeviceCode=${!!merged.deviceCode}`);
 
     // Save to DB if available (HA-safe)
     const db = this.resolveDbAccess();
