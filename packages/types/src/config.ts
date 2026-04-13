@@ -860,7 +860,21 @@ export interface AlfredConfig {
   pfsense?: PfSenseConfig;
   infra?: InfraDefaultsConfig;
   cmdb?: CmdbConfig;
+  backup?: BackupConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };
+}
+
+export interface BackupConfig {
+  enabled?: boolean;
+  schedule?: string;
+  retention_days?: number;
+  storage?: 'local' | 's3' | 'both' | 'none';
+  local_path?: string;
+  s3_bucket?: string;
+  restore_via_chat?: boolean;
+  include_tokens?: boolean;
+  include_config?: boolean;
+  include_minio?: boolean;
 }

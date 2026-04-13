@@ -242,6 +242,17 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_CMDB_AUTO_INCIDENT: ['cmdb', 'autoIncidentFromMonitor'],
   ALFRED_CMDB_KG_SYNC: ['cmdb', 'kgSync'],
   ALFRED_CMDB_HEALTH_CHECK_INTERVAL: ['cmdb', 'healthCheckIntervalMinutes'],
+  // Backup
+  ALFRED_BACKUP_ENABLED: ['backup', 'enabled'],
+  ALFRED_BACKUP_SCHEDULE: ['backup', 'schedule'],
+  ALFRED_BACKUP_RETENTION_DAYS: ['backup', 'retention_days'],
+  ALFRED_BACKUP_STORAGE: ['backup', 'storage'],
+  ALFRED_BACKUP_LOCAL_PATH: ['backup', 'local_path'],
+  ALFRED_BACKUP_S3_BUCKET: ['backup', 's3_bucket'],
+  ALFRED_BACKUP_RESTORE_VIA_CHAT: ['backup', 'restore_via_chat'],
+  ALFRED_BACKUP_INCLUDE_TOKENS: ['backup', 'include_tokens'],
+  ALFRED_BACKUP_INCLUDE_CONFIG: ['backup', 'include_config'],
+  ALFRED_BACKUP_INCLUDE_MINIO: ['backup', 'include_minio'],
   // Recipe
   ALFRED_RECIPE_SPOONACULAR_API_KEY: ['recipe', 'spoonacular', 'apiKey'],
   ALFRED_RECIPE_EDAMAM_APP_ID: ['recipe', 'edamam', 'appId'],

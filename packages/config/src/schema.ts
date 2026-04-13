@@ -591,5 +591,17 @@ export const AlfredConfigSchema = z.object({
   pfsense: PfSenseConfigSchema.optional(),
   infra: InfraDefaultsConfigSchema.optional(),
   cmdb: CmdbConfigSchema.optional(),
+  backup: z.object({
+    enabled: z.boolean().default(false),
+    schedule: z.string().default('0 3 * * *'),
+    retention_days: z.number().default(30),
+    storage: z.enum(['local', 's3', 'both', 'none']).default('local'),
+    local_path: z.string().default('/root/alfred/backups'),
+    s3_bucket: z.string().optional(),
+    restore_via_chat: z.boolean().default(false),
+    include_tokens: z.boolean().default(true),
+    include_config: z.boolean().default(true),
+    include_minio: z.boolean().default(false),
+  }).optional(),
   conversation: ConversationConfigSchema,
 });
