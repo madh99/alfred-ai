@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.462] - 2026-04-13
+
+### Fixed
+- **BMW Authorize: Token-Verlust bei fetchVin/ensureContainer Fehler** — Nach erfolgreichem Token-Exchange crashte `fetchVin` oder `ensureContainer` (z.B. Rate-Limit), und die Exception wurde in authorize's catch-Block geschluckt → Token ging verloren, User bekam "pending" statt Erfolg. Jetzt: Tokens werden SOFORT nach Exchange gespeichert, VIN/containerId aus vorheriger Session preserved, fetchVin und ensureContainer sind non-fatal
+
 ## [0.19.0-multi-ha.461] - 2026-04-13
 
 ### Fixed

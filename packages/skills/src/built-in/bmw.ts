@@ -726,8 +726,9 @@ export class BMWSkill extends Skill {
 
     const data = (await res.json()) as Record<string, unknown>;
     const accessToken = data.access_token as string;
+    console.log(`[BMW] pollToken: token exchange SUCCESS, accessToken=${accessToken?.slice(0, 10)}...`);
 
-    // Save tokens first so they're not lost if container setup fails
+    // CRITICAL: Save tokens IMMEDIATELY — VIN/container are fetched after but must not block saving.
     const baseTokens: BMWTokens = {
       accessToken,
       refreshToken: data.refresh_token as string,
@@ -737,25 +738,32 @@ export class BMWSkill extends Skill {
       containerId: '',
     };
 
-    // Fetch VIN
-    const vin = await this.fetchVin(accessToken);
-    baseTokens.vin = vin;
-
-    // Clear deviceCode/codeVerifier from disk BEFORE saveTokens —
-    // the auth flow completed successfully, no more polling needed.
-    // Without this, saveTokens would re-read and preserve them from the file.
+    // Preserve VIN + containerId from previous session (so we don't lose them if fetchVin/ensureContainer fail)
     try {
       const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
       const existing = JSON.parse(raw) as Record<string, unknown>;
+      if (existing.vin) baseTokens.vin = existing.vin as string;
+      if (existing.containerId) baseTokens.containerId = existing.containerId as string;
       delete existing.deviceCode;
       delete existing.codeVerifier;
       await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(existing, null, 2), 'utf-8');
     } catch { /* best effort */ }
 
     await this.saveTokens(baseTokens);
+    this.tokens = baseTokens;
+    console.log(`[BMW] pollToken: tokens saved (vin=${baseTokens.vin}, container=${baseTokens.containerId})`);
 
-    // Setup container — save tokens even if this fails
-    let containerId = '';
+    // Fetch VIN — non-fatal, use preserved VIN on failure
+    try {
+      const vin = await this.fetchVin(accessToken);
+      baseTokens.vin = vin;
+      await this.saveTokens(baseTokens);
+    } catch (err) {
+      console.warn(`[BMW] fetchVin failed (preserved=${baseTokens.vin}): ${err instanceof Error ? err.message : err}`);
+    }
+
+    // Setup container — non-fatal, use preserved containerId on failure
+    let containerId = baseTokens.containerId;
     let containerError = '';
     try {
       containerId = await this.ensureContainer(accessToken);
@@ -763,9 +771,8 @@ export class BMWSkill extends Skill {
       await this.saveTokens(baseTokens);
     } catch (err) {
       containerError = err instanceof Error ? err.message : String(err);
+      console.warn(`[BMW] ensureContainer failed (preserved=${baseTokens.containerId}): ${containerError}`);
     }
-
-    this.tokens = baseTokens;
 
     // Restart MQTT streaming with new token (if streaming was active)
     if (this.streamingActive || this.mqttClient) {
@@ -781,7 +788,7 @@ export class BMWSkill extends Skill {
     const lines = [
       '## BMW Autorisierung erfolgreich',
       '',
-      `**VIN:** ${vin}`,
+      `**VIN:** ${baseTokens.vin}`,
     ];
     if (containerId) {
       lines.push(`**Container:** ${containerId}`);
@@ -794,7 +801,7 @@ export class BMWSkill extends Skill {
 
     return {
       success: containerId !== '',
-      data: { vin, containerId, containerError: containerError || undefined },
+      data: { vin: baseTokens.vin, containerId, containerError: containerError || undefined },
       display: lines.join('\n'),
     };
   }
