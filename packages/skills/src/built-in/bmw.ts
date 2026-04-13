@@ -82,21 +82,6 @@ const DESCRIPTORS = [
   // GPS location
   'vehicle.location.gps.latitude',
   'vehicle.location.gps.longitude',
-  // Condition Based Services (CBS) — maintenance needs (oil, brakes, vehicle check)
-  'vehicle.status.conditionBasedServices',
-  // Legal inspection date (HU/AU)
-  'vehicle.status.serviceTime.inspectionDateLegal',
-  // Check Control Messages — warnings (washer fluid, tire pressure alerts, engine light)
-  'vehicle.status.checkControl',
-  // Tire pressure (all 4 wheels + targets — already delivered via MQTT, adding for REST fallback)
-  'vehicle.chassis.axle.row1.wheel.left.tire.pressure',
-  'vehicle.chassis.axle.row1.wheel.left.tire.pressureTarget',
-  'vehicle.chassis.axle.row1.wheel.right.tire.pressure',
-  'vehicle.chassis.axle.row1.wheel.right.tire.pressureTarget',
-  'vehicle.chassis.axle.row2.wheel.left.tire.pressure',
-  'vehicle.chassis.axle.row2.wheel.left.tire.pressureTarget',
-  'vehicle.chassis.axle.row2.wheel.right.tire.pressure',
-  'vehicle.chassis.axle.row2.wheel.right.tire.pressureTarget',
 ];
 
 // ── Types ─────────────────────────────────────────────────
