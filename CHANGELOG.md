@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.461] - 2026-04-13
+
+### Fixed
+- **BMW MQTT Streaming HA-Failover** — BMW MQTT Streaming hatte keinen Cluster-Failover. Wenn der Node starb der das Streaming hielt, übernahm der andere Node nicht. Ursache: `bmw-streaming` wurde nicht als `registerPlatform` registriert und der `onAcquired`-Callback behandelte nur Messaging-Adapter. Jetzt: `bmw-streaming` wird registriert, bei Claim-Übernahme (toter Node, expired TTL) startet der übernehmende Node automatisch `startStreaming()`
+
 ## [0.19.0-multi-ha.460] - 2026-04-13
 
 ### Fixed

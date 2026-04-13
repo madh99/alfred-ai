@@ -2173,8 +2173,17 @@ export class Alfred {
         }
       }
 
-      // When expired claims become available, connect the adapter
+      // When expired claims become available, connect the adapter (or start BMW streaming)
       this.adapterClaimManager.onAcquired(async (platform) => {
+        if (platform === 'bmw-streaming') {
+          if (this.bmwSkill) {
+            this.logger.info('BMW MQTT streaming acquired from dead node, starting...');
+            (this.bmwSkill as any).startStreaming()
+              .then(() => this.logger.info('BMW MQTT streaming started (failover)'))
+              .catch((err: unknown) => this.logger.warn({ err }, 'BMW MQTT streaming failover failed'));
+          }
+          return;
+        }
         const adapter = this.adapters.get(platform as any);
         if (adapter && adapter.getStatus() === 'disconnected') {
           this.setupAdapterHandlers(platform as any, adapter);
@@ -2197,8 +2206,11 @@ export class Alfred {
       }
     }
 
-    // Start BMW MQTT streaming — cluster-aware (only one node connects)
+    // Start BMW MQTT streaming — cluster-aware with failover
     if (this.bmwSkill && this.config.bmw?.streaming?.enabled) {
+      if (this.adapterClaimManager) {
+        this.adapterClaimManager.registerPlatform('bmw-streaming');
+      }
       const canStream = !this.adapterClaimManager || await this.adapterClaimManager.tryClaim('bmw-streaming');
       if (canStream) {
         this.logger.info({ username: this.config.bmw.streaming.username, topic: this.config.bmw.streaming.topic }, 'Starting BMW MQTT streaming...');
