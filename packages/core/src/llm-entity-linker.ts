@@ -382,6 +382,18 @@ TRANSITIVE INFERENZ (wichtig!):
         if (!source.sources.includes('memories') || !target.sources.includes('memories')) continue;
       }
       if (rel.type === 'located_at' && target.entityType !== 'location') continue;
+      // same_as between persons: only if names are genuinely the same person (alias, nickname, etc.)
+      // NOT just same surname — "Linus Dohnal" != "Markus Dohnal"
+      if (rel.type === 'same_as' && source.entityType === 'person' && target.entityType === 'person') {
+        const srcName = source.name.toLowerCase().trim();
+        const tgtName = target.name.toLowerCase().trim();
+        // Allow: exact match, one contains the other (e.g. "Alex" ↔ "Alexandra"), or "Sohn X" ↔ "X Surname"
+        const srcFirst = srcName.split(/\s+/)[0].replace(/^(sohn|tochter)\s*/i, '');
+        const tgtFirst = tgtName.split(/\s+/)[0].replace(/^(sohn|tochter)\s*/i, '');
+        if (srcName !== tgtName && !srcName.includes(tgtName) && !tgtName.includes(srcName) && srcFirst !== tgtFirst) {
+          continue; // Different persons with same surname — skip
+        }
+      }
       // Org↔Org: only allow same_as and part_of — never relates_to, used_for, etc.
       if (source.entityType === 'organization' && target.entityType === 'organization' && !['same_as', 'part_of'].includes(rel.type)) continue;
       // Skip relations between items that are clearly HA entities (LED, Switch, AP, etc.)

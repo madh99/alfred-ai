@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.465] - 2026-04-13
+
+### Fixed
+- **KG: `same_as` zwischen Personen mit gleichem Nachnamen verhindert** — LLM Entity-Linker schlug `Linus Dohnal same_as Markus Dohnal` vor (Sohn = Vater) weil beide "Dohnal" heißen. Dadurch bekam Linus alle Relationen von Markus (Cryptos, BMW, Arbeitgeber, Ehefrau). Jetzt: `same_as` zwischen Personen nur wenn Vorname übereinstimmt oder ein Name den anderen enthält (Alias/Spitzname). 27 falsche Relationen aus DB bereinigt
+
 ## [0.19.0-multi-ha.464] - 2026-04-13
 
 ### Fixed
