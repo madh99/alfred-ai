@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.475] - 2026-04-14
+
+### Added
+- **Backup & Restore** — Zwei neue Komponenten:
+  - **Database-Skill: `backup`/`restore` Actions** — Backup/Restore für alle 7 DB-Provider (PostgreSQL, MySQL, MS SQL, SQLite, MongoDB, Redis, InfluxDB). MS SQL unterstützt Backup-Ketten: `copy_only` (default, bricht keine Kette), `full`, `differential`, `log` (Transaction Log für Point-in-Time Recovery)
+  - **System-Backup-Skill** — Sichert Alfreds eigene Datenbank (PG/SQLite) + Token-Dateien + Config. 6 Actions: backup, restore, list, status, configure, delete. Konfigurierbar: Zeitplan (Cron), Retention (pro Backup individuell oder global), Speicherort (lokal/S3/beides/keins), Restore per Chat (default: aus). Cluster-aware via AdapterClaimManager. Labels + permanente Backups
+
 ## [0.19.0-multi-ha.472] - 2026-04-13
 
 ### Fixed
