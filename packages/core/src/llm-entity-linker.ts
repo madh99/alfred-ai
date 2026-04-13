@@ -500,13 +500,27 @@ TRANSITIVE INFERENZ (wichtig!):
     if (messages.length < 5) return { relations: 0, newEntities: 0, corrections: 0 };
 
     const allEntities = await this.kgRepo.getAllEntities(userId);
-    const entityList = allEntities.map(e => `- [${e.entityType}] "${e.name}"`).join('\n');
+    const entityList = allEntities.map(e => {
+      const extra = e.attributes?.realName ? ` (Realname: ${e.attributes.realName})` : '';
+      return `- [${e.entityType}] "${e.name}"${extra}`;
+    }).join('\n');
+
+    // Identify User + children for prompt context (same as buildPrompt)
+    const userEntity = allEntities.find(e => e.name === 'User' && e.entityType === 'person');
+    const userRealName = userEntity?.attributes?.realName as string | undefined;
+    const childEntities = allEntities.filter(e => e.entityType === 'person' && /^(sohn|tochter)\s/i.test(e.name));
+    const childNames = childEntities.map(e => `"${e.name}"`).join(', ');
 
     const chatSample = messages.slice(0, 100).map(m =>
       `[${m.role}]: ${m.content.slice(0, 150)}`,
     ).join('\n');
 
     const prompt = `Du bist ein Knowledge-Graph-Analyst. Analysiere diese Chat-Konversationen und extrahiere IMPLIZITES Wissen das nicht explizit als Fakt gespeichert wurde.
+
+WICHTIG — IDENTITÄT:
+- "User" ist der Hauptbenutzer${userRealName ? ` (Realname: ${userRealName})` : ''}. Alle persönlichen Relationen (owns, works_at, monitors, prefers, dislikes, uses, subscribes_to) gehören zum "User" — NICHT zu seinen Kindern oder anderen Familienmitgliedern.
+${childNames ? `- Kinder des Users: ${childNames}. Diese sind EIGENSTÄNDIGE Personen. Sie besitzen NICHT die Dinge des Users (Cryptos, Fahrzeuge, Wallbox etc.). Verwechsle sie NICHT mit dem User.` : ''}
+- Entities mit ähnlichem Nachnamen sind NICHT dieselbe Person. "Linus Dohnal" ≠ "Markus Dohnal".
 
 BESTEHENDE ENTITIES:
 ${entityList}
@@ -519,14 +533,18 @@ Finde:
 2. RELATIONEN zwischen bestehenden Entities die aus dem Chat-Kontext hervorgehen
 3. TYP-KORREKTUREN für falsch klassifizierte Entities
 
+REGELN:
+- Nur ECHTE Zusammenhänge, keine Spekulation
+- KEINE Entities für Attribute (Geburtsdatum, Staatsbürgerschaft, Alter, Adresse) — diese gehören als Attribute auf die Person-Entity
+- KEINE same_as zwischen Personen mit verschiedenen Vornamen
+- Wenn nichts gefunden: leere Arrays
+
 Antworte als JSON:
 {
   "relations": [{"source": "...", "target": "...", "type": "...", "reason": "..."}],
   "newEntities": [{"name": "...", "type": "...", "attributes": {}, "reason": "..."}],
   "corrections": [{"name": "...", "currentType": "...", "newType": "...", "newName": "optional — neuer Name falls Entity-Name falsch ist", "reason": "..."}]
-}
-
-Nur ECHTE Zusammenhänge, keine Spekulation. Wenn nichts gefunden: leere Arrays.`;
+}`;
 
     const model = this.config.model ?? 'mistral-small-latest';
     try {

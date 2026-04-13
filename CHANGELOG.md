@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.469] - 2026-04-13
+
+### Fixed
+- **KG: Wöchentlicher Chat-LLM-Lauf hatte ungeschützten Prompt** — `analyzeRecentChats` hatte einen eigenen Prompt ohne User-Identität, Kinder-Liste, oder Attribut-Verbot. Konnte falsche Entities und Relations vorschlagen. Jetzt: gleiche Schutzregeln wie der normale LLM-Linker-Prompt
+- **KG: Personen-Attribute aus Memories** — `syncMemoryEntities` liest jetzt `child_*_full_name`, `spouse_full_name`, `user_birthday` Memories und setzt `fullName`/`birthday` als Attribute auf die Person-Entities. Passiert automatisch bei jedem Reasoning-Zyklus
+- **KG DB bereinigt** — `Verbindungsprobleme` Entity gelöscht, Route-Text Locations gelöscht, falsche `isHome` auf Bisamberg/Kapfenberg/Tulln/Eichgraben korrigiert, User-Attribute (Geburtstag, Staatsbürgerschaft, Adresse) gesetzt, Kinder fullNames gesetzt
+
 ## [0.19.0-multi-ha.468] - 2026-04-13
 
 ### Fixed

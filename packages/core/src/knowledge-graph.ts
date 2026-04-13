@@ -1813,6 +1813,39 @@ export class KnowledgeGraphService {
         await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
       }
 
+      // 1a-enrichment: Enrich person entities with fullName/birthday from dedicated memories
+      //   child_linus_full_name → "Linus Dohnal" → Sohn Linus gets fullName attribute
+      //   user_birthday → User gets birthday attribute
+      const allMems0 = await this.memoryRepo.getRecentForPrompt(userId, 100);
+      for (const mem of allMems0) {
+        const k = mem.key.toLowerCase();
+        // child_*_full_name → find matching person entity and set fullName
+        if (k.match(/^child_\w+_full_name$/)) {
+          const childFirst = k.replace('child_', '').replace('_full_name', '');
+          // Find person entity whose name contains this first name
+          const match = existingPersons.find(e =>
+            e.normalizedName.split(/\s+/).some(w => w === childFirst),
+          );
+          if (match && mem.value.trim().length >= 3) {
+            await this.kgRepo.upsertEntity(userId, match.name, 'person', { ...match.attributes, fullName: mem.value.trim() }, 'memories');
+          }
+        }
+        // spouse_full_name → Alexandra gets fullName
+        if (k === 'spouse_full_name' && mem.value.trim().length >= 3) {
+          const spouseEntity = existingPersons.find(e => {
+            const spouseFirst = mem.value.trim().split(/\s+/)[0]?.toLowerCase();
+            return e.normalizedName.split(/\s+/).some(w => w.length >= 3 && (w === spouseFirst || spouseFirst?.includes(w) || w.includes(spouseFirst ?? '')));
+          });
+          if (spouseEntity) {
+            await this.kgRepo.upsertEntity(userId, spouseEntity.name, 'person', { ...spouseEntity.attributes, fullName: mem.value.trim() }, 'memories');
+          }
+        }
+        // user_birthday / birthday → User
+        if ((k === 'user_birthday' || k === 'birthday') && user) {
+          await this.kgRepo.upsertEntity(userId, 'User', 'person', { ...user.attributes, birthday: mem.value.trim() }, 'system');
+        }
+      }
+
       // 1b. Extract persons from ALL memory keys (any type) with person-name patterns
       //     "friend_bernhard_birthday" → Person "Bernhard" + User→knows→Bernhard
       //     "friend_bernhard_spouse_name" (value "Sabine") → Bernhard→spouse→Sabine
