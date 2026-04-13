@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.471] - 2026-04-13
+
+### Fixed
+- **WebUI KG: Detail-Panel `shrink-0`** — Panel wurde durch flex-1 des Graph-Containers möglicherweise auf 0 gedrückt. `shrink-0` verhindert das
+
 ## [0.19.0-multi-ha.470] - 2026-04-13
 
 ### Fixed

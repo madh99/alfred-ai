@@ -341,7 +341,7 @@ export function KnowledgeGraphPage() {
 
         {/* Detail Panel */}
         {(selectedNode || selectedLink) && (
-          <div className="w-80 border-l border-[#1f1f1f] bg-[#111111] overflow-y-auto p-4">
+          <div className="w-80 shrink-0 border-l border-[#1f1f1f] bg-[#111111] overflow-y-auto p-4">
             {selectedNode && !editMode && (
               <div>
                 <div className="flex items-center justify-between mb-3">
