@@ -299,6 +299,13 @@ export function KnowledgeGraphPage() {
               onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); setEditMode(false); }}
               backgroundColor="#0a0a0a"
               nodeCanvasObjectMode={() => 'replace'}
+              nodePointerAreaPaint={(node: any, color: string, ctx: any) => {
+                const size = node.val * 1.5;
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, Math.max(size, 6), 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+              }}
               nodeCanvasObject={(node: any, ctx: any, globalScale: number) => {
                 const label = shortLabel(node.name);
                 const size = node.val * 1.5;
