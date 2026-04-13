@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.467] - 2026-04-13
+
+### Fixed
+- **KG: LLM Entity-Linker weiß jetzt wer der User ist** — Prompt enthält User-Identität (Realname), Kinder-Liste, und explizite Regel: persönliche Relationen (owns, works_at, monitors, prefers, dislikes) gehören zum User nicht zu Kindern. Code-Validierung blockt `owns/monitors/prefers/dislikes/uses/subscribes_to` von Sohn/Tochter-Entities. DB bereinigt: 29 falsche Relationen gelöscht (Noah plays_at SV Altlengbach, Sohn Noah same_as Sohn Linus, Tochter Lena same_as Tochter Hannah, "Kinder"-Entity komplett entfernt, Maria parent_of→grandparent_of korrigiert, etc.)
+
 ## [0.19.0-multi-ha.466] - 2026-04-13
 
 ### Fixed

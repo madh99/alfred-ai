@@ -217,7 +217,18 @@ export class LLMEntityLinker {
       ? existingRelations.map(r => `- "${r.source}" —${r.type}→ "${r.target}" (strength: ${r.strength.toFixed(1)})`).join('\n')
       : '(keine)';
 
-    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge. Prüfe auch ob BESTEHENDE RELATIONEN noch korrekt sind.${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
+    // Identify User entity and children for prompt context
+    const userEntity = all.find(e => e.name === 'User' && e.entityType === 'person');
+    const userRealName = userEntity?.attributes?.realName as string | undefined;
+    const childEntities = all.filter(e => e.entityType === 'person' && /^(sohn|tochter)\s/i.test(e.name));
+    const childNames = childEntities.map(e => `"${e.name}"`).join(', ');
+
+    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge. Prüfe auch ob BESTEHENDE RELATIONEN noch korrekt sind.
+
+WICHTIG — IDENTITÄT:
+- "User" ist der Hauptbenutzer${userRealName ? ` (Realname: ${userRealName})` : ''}. Alle persönlichen Relationen (owns, works_at, monitors, prefers, dislikes, uses, subscribes_to) gehören zum "User" — NICHT zu seinen Kindern oder anderen Familienmitgliedern.
+${childNames ? `- Kinder des Users: ${childNames}. Diese sind EIGENSTÄNDIGE Personen. Sie besitzen NICHT die Dinge des Users (Cryptos, Fahrzeuge, Wallbox etc.). Verwechsle sie NICHT mit dem User.` : ''}
+- Entities mit ähnlichem Nachnamen sind NICHT dieselbe Person. "Linus Dohnal" ≠ "Markus Dohnal".${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
 
 NEUE/GEÄNDERTE ENTITIES:
 ${changedList}
@@ -368,6 +379,10 @@ TRANSITIVE INFERENZ (wichtig!):
       }
       if (rel.type === 'plays_at') {
         if (source.entityType !== 'person' || target.entityType !== 'organization') continue;
+      }
+      // Personal preference/ownership relations only for User, not children or other family
+      if (['owns', 'monitors', 'prefers', 'dislikes', 'uses', 'subscribes_to'].includes(rel.type)) {
+        if (source.entityType === 'person' && source.name !== 'User' && /^(sohn|tochter)\s/i.test(source.name)) continue;
       }
       if (rel.type === 'parent_of' && (source.entityType !== 'person' || target.entityType !== 'person')) continue;
       if (rel.type === 'spouse') {
