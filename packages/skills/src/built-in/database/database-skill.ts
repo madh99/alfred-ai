@@ -18,13 +18,15 @@ Actions:
 - describe: Show columns of a table. Params: connection, table
 - query: Execute a query. Params: connection, sql (SQL/Flux/Redis command). Default read-only. Results limited to rowLimit (default 100)
 - test: Test connection. Params: connection
+- backup: Backup a database. Params: connection, label (optional), backup_type (MS SQL: copy_only|full|differential|log, default: copy_only)
+- restore: Restore a database. Params: connection, backup_id (file path), stop_at (MS SQL log point-in-time, optional)
 Watch-compatible: query action returns rowCount and first row data for condition evaluation.`,
     riskLevel: 'admin',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['connect', 'disconnect', 'list', 'schema', 'describe', 'query', 'test'], description: 'Database action' },
+        action: { type: 'string', enum: ['connect', 'disconnect', 'list', 'schema', 'describe', 'query', 'test', 'backup', 'restore'], description: 'Database action' },
         name: { type: 'string', description: 'Connection name (for connect/disconnect)' },
         connection: { type: 'string', description: 'Connection name to use (for schema/describe/query/test)' },
         type: { type: 'string', enum: ['postgres', 'mysql', 'mssql', 'mongodb', 'influx', 'sqlite', 'redis'], description: 'Database type (for connect)' },
@@ -37,6 +39,10 @@ Watch-compatible: query action returns rowCount and first row data for condition
         table: { type: 'string', description: 'Table name (for describe)' },
         sql: { type: 'string', description: 'SQL query, Flux query, MongoDB query, or Redis command (for query)' },
         format: { type: 'string', enum: ['auto', 'table', 'csv'], description: 'Output format (for query). auto: table for small results, csv for large. Default: auto' },
+        label: { type: 'string', description: 'Backup label (for backup)' },
+        backup_type: { type: 'string', enum: ['copy_only', 'full', 'differential', 'log'], description: 'MS SQL backup type (default: copy_only)' },
+        backup_id: { type: 'string', description: 'Backup file path (for restore)' },
+        stop_at: { type: 'string', description: 'MS SQL point-in-time restore (ISO date, for restore with log backup)' },
       },
       required: ['action'],
     },
@@ -63,6 +69,8 @@ Watch-compatible: query action returns rowCount and first row data for condition
       case 'describe': return this.describeTable(input);
       case 'query': return this.executeQuery(input);
       case 'test': return this.testConnection(input);
+      case 'backup': return this.backupDatabase(input);
+      case 'restore': return this.restoreDatabase(input);
       default: return { success: false, error: `Unknown action "${action}".` };
     }
   }
@@ -285,5 +293,53 @@ Watch-compatible: query action returns rowCount and first row data for condition
     await provider.connect();
     this.providers.set(conn.name, provider);
     return provider;
+  }
+
+  private async backupDatabase(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = input.connection as string;
+    if (!name) return { success: false, error: 'Missing connection name' };
+    const provider = await this.getProviderByName(name);
+    if (!provider) return { success: false, error: `Connection "${name}" not found. Use "list" to see connections.` };
+    if (!provider.backup) return { success: false, error: `Backup not supported for ${provider.type}` };
+
+    const backupDir = '/tmp/alfred-db-backups';
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir(backupDir, { recursive: true });
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const outputPath = `${backupDir}/${name}_${timestamp}`;
+
+    const result = await provider.backup({
+      outputPath,
+      format: (input.format as any) ?? 'custom',
+      label: input.label as string | undefined,
+      backupType: (input.backup_type as any) ?? 'copy_only',
+    });
+
+    const sizeMB = (result.sizeBytes / 1024 / 1024).toFixed(1);
+    return {
+      success: true,
+      data: result,
+      display: [
+        '## Backup erfolgreich',
+        `**Connection:** ${name} (${provider.type})`,
+        `**Datei:** ${result.path}`,
+        `**Größe:** ${sizeMB} MB`,
+        `**Dauer:** ${(result.duration_ms / 1000).toFixed(1)}s`,
+        input.label ? `**Label:** ${input.label}` : '',
+      ].filter(Boolean).join('\n'),
+    };
+  }
+
+  private async restoreDatabase(input: Record<string, unknown>): Promise<SkillResult> {
+    const name = input.connection as string;
+    const file = (input.backup_id ?? input.file) as string;
+    if (!name) return { success: false, error: 'Missing connection name' };
+    if (!file) return { success: false, error: 'Missing backup_id or file path' };
+    const provider = await this.getProviderByName(name);
+    if (!provider) return { success: false, error: `Connection "${name}" not found.` };
+    if (!provider.restore) return { success: false, error: `Restore not supported for ${provider.type}` };
+
+    await provider.restore({ inputPath: file, stopAt: input.stop_at as string | undefined });
+    return { success: true, display: `## Restore erfolgreich\n**Connection:** ${name}\n**Quelle:** ${file}` };
   }
 }
