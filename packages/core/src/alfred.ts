@@ -1418,6 +1418,20 @@ export class Alfred {
       this.logger.info('Database skill registered');
     }
 
+    // 4u-backup. System Backup (optional)
+    if (this.config.backup?.enabled) {
+      const { SystemBackupSkill } = await import('@alfred/skills');
+      const pkg = await import('../../cli/package.json', { with: { type: 'json' } }).catch(() => ({ default: { version: 'unknown' } }));
+      const backupSkill = new SystemBackupSkill(
+        this.config.backup,
+        adapter,
+        this.config.cluster?.nodeId ?? 'single',
+        pkg.default.version ?? 'unknown',
+      );
+      skillRegistry.register(backupSkill);
+      this.logger.info('System Backup skill registered');
+    }
+
     // 4u. YouTube (optional, requires API key)
     if (this.config.youtube?.apiKey) {
       const { YouTubeSkill } = await import('@alfred/skills');
@@ -2231,6 +2245,36 @@ export class Alfred {
     this.calendarWatcher?.start();
     this.todoWatcher?.start();
     this.reasoningEngine?.start();
+
+    // Scheduled system backups
+    if (this.config.backup?.enabled && this.config.backup?.storage !== 'none') {
+      if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('system-backup');
+      const backupSkill = this.skillRegistry.get('system_backup') as any;
+      if (backupSkill) {
+        let lastBackupMinute = -1;
+        setInterval(async () => {
+          const now = new Date();
+          if (now.getMinutes() === lastBackupMinute) return;
+          const schedule = this.config.backup?.schedule ?? '0 3 * * *';
+          const [min, hour] = schedule.split(' ');
+          const minMatch = min === '*' || (min.includes('/') ? now.getMinutes() % parseInt(min.split('/')[1]) === 0 : min.split(',').some(p => parseInt(p) === now.getMinutes()));
+          const hourMatch = hour === '*' || (hour.includes('/') ? now.getHours() % parseInt(hour.split('/')[1]) === 0 : hour.split(',').some(p => parseInt(p) === now.getHours()));
+          if (!minMatch || !hourMatch) return;
+          lastBackupMinute = now.getMinutes();
+          if (this.adapterClaimManager) {
+            const claimed = await this.adapterClaimManager.tryClaim('system-backup');
+            if (!claimed) return;
+          }
+          try {
+            await backupSkill.createBackup({}, 'scheduled');
+            this.logger.info('Scheduled system backup completed');
+          } catch (err) {
+            this.logger.warn({ err }, 'Scheduled system backup failed');
+          }
+        }, 60_000);
+        this.logger.info({ schedule: this.config.backup.schedule ?? '0 3 * * *' }, 'System backup scheduler started');
+      }
+    }
 
     // Wire inbound webhooks (if configured)
     if (this.config.webhooks?.length && this.watchEngine) {
