@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.470] - 2026-04-13
+
+### Fixed
+- **KG: Attribut-Enrichment auf bestehende Entities** — LLM-Linker `corrections` kann jetzt Attribute auf bestehende Entities setzen ohne den Typ zu ändern. Wenn Alfred lernt "Mutter wohnt in Eichgraben", passiert: (1) Attribut `livesIn: Eichgraben` auf Maria Dohnal, (2) Location-Entity "Eichgraben" erstellt, (3) Relation Maria→lives_in→Eichgraben. Prompt in beiden LLM-Pfaden (normaler Linker + wöchentlicher Chat-Lauf) erklärt das Pattern mit Beispiel
+
 ## [0.19.0-multi-ha.469] - 2026-04-13
 
 ### Fixed

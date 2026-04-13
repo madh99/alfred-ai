@@ -255,7 +255,7 @@ Antworte NUR als JSON-Objekt mit diesen 5 optionalen Arrays:
     {"name": "Neuer Name", "type": "entity_type", "attributes": {"key": "value"}, "reason": "Warum erstellen"}
   ],
   "corrections": [
-    {"name": "Bestehender Name", "currentType": "alter_typ", "newType": "neuer_typ", "newName": "optional — neuer Name falls Entity-Name falsch ist", "attributes": {"key": "value"}, "reason": "Warum ändern"}
+    {"name": "Bestehender Name", "currentType": "alter_typ", "newType": "neuer_typ oder gleicher_typ bei reinem Attribut-Update", "newName": "optional — neuer Name falls Entity-Name falsch ist", "attributes": {"key": "value"}, "reason": "Warum ändern/anreichern"}
   ]
 }
 
@@ -273,7 +273,7 @@ REGELN:
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
 - KEINE Entities erstellen die offensichtlich eine bereits existierende Entity unter anderem Namen beschreiben (z.B. wenn "User" einen Realnamen hat, keine separate Entity für diesen Namen erstellen — stattdessen zur User-Entity verlinken)
 - Wenn eine Entity einen Realnamen-Attribut hat, betrachte diesen als Alias — Referenzen zu diesem Namen gehören zur existierenden Entity
-- KEINE Entities für Attribute wie Geburtsdatum, Staatsbürgerschaft, Alter, Adresse, Telefonnummer — diese gehören als Attribute auf die Person-Entity, nicht als separate Entities
+- KEINE Entities für Attribute wie Geburtsdatum, Staatsbürgerschaft, Alter, Adresse, Telefonnummer — diese gehören als Attribute auf die Person-Entity via "corrections" (gleicher Typ, nur attributes setzen). Beispiel: Mutter wohnt in Eichgraben → corrections: {"name":"Maria Dohnal","currentType":"person","newType":"person","attributes":{"livesIn":"Eichgraben"}} UND relation: Maria Dohnal→lives_in→Eichgraben UND newEntity Eichgraben (location) falls nicht vorhanden
 - corrections: nur wenn der aktuelle Typ eindeutig falsch ist
 
 TRANSITIVE INFERENZ (wichtig!):
@@ -436,7 +436,7 @@ TRANSITIVE INFERENZ (wichtig!):
       stats.newEntities++;
     }
 
-    // 3. Apply corrections (type changes + attribute updates)
+    // 3. Apply corrections (type changes, attribute enrichment, name corrections)
     for (const corr of (result.corrections ?? []).slice(0, 10)) {
       const existing = entityByName.get(corr.name.toLowerCase());
       if (!existing) continue;
@@ -445,6 +445,11 @@ TRANSITIVE INFERENZ (wichtig!):
       if (VALID_ENTITY_TYPES.has(corr.newType) && existing.entityType === corr.currentType && corr.newType !== corr.currentType) {
         const mergedAttrs = { ...existing.attributes, ...(corr.attributes ?? {}) };
         await this.kgRepo.updateEntityType(existing.id, corr.newType, mergedAttrs);
+        stats.corrections++;
+      } else if (corr.attributes && Object.keys(corr.attributes).length > 0) {
+        // Attribute enrichment without type change (e.g., add birthday, livesIn, employer to a person)
+        const mergedAttrs = { ...existing.attributes, ...corr.attributes };
+        await this.kgRepo.upsertEntity(userId, existing.name, existing.entityType as any, mergedAttrs, existing.sources[0] ?? 'llm_linking');
         stats.corrections++;
       }
 
@@ -535,7 +540,7 @@ Finde:
 
 REGELN:
 - Nur ECHTE Zusammenhänge, keine Spekulation
-- KEINE Entities für Attribute (Geburtsdatum, Staatsbürgerschaft, Alter, Adresse) — diese gehören als Attribute auf die Person-Entity
+- KEINE Entities für Attribute (Geburtsdatum, Staatsbürgerschaft, Alter, Adresse) — nutze "corrections" mit attributes stattdessen. Beispiel: Person wohnt in Eichgraben → corrections: {"name":"Person","currentType":"person","newType":"person","attributes":{"livesIn":"Eichgraben"}} + relation Person→lives_in→Eichgraben + newEntity Eichgraben (location)
 - KEINE same_as zwischen Personen mit verschiedenen Vornamen
 - Wenn nichts gefunden: leere Arrays
 
@@ -543,7 +548,7 @@ Antworte als JSON:
 {
   "relations": [{"source": "...", "target": "...", "type": "...", "reason": "..."}],
   "newEntities": [{"name": "...", "type": "...", "attributes": {}, "reason": "..."}],
-  "corrections": [{"name": "...", "currentType": "...", "newType": "...", "newName": "optional — neuer Name falls Entity-Name falsch ist", "reason": "..."}]
+  "corrections": [{"name": "...", "currentType": "...", "newType": "...", "attributes": {"key":"value"}, "reason": "..."}]
 }`;
 
     const model = this.config.model ?? 'mistral-small-latest';
