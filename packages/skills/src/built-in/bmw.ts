@@ -693,6 +693,18 @@ export class BMWSkill extends Skill {
     // Fetch VIN
     const vin = await this.fetchVin(accessToken);
     baseTokens.vin = vin;
+
+    // Clear deviceCode/codeVerifier from disk BEFORE saveTokens —
+    // the auth flow completed successfully, no more polling needed.
+    // Without this, saveTokens would re-read and preserve them from the file.
+    try {
+      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
+      const existing = JSON.parse(raw) as Record<string, unknown>;
+      delete existing.deviceCode;
+      delete existing.codeVerifier;
+      await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(existing, null, 2), 'utf-8');
+    } catch { /* best effort */ }
+
     await this.saveTokens(baseTokens);
 
     // Setup container — save tokens even if this fails
@@ -937,6 +949,20 @@ export class BMWSkill extends Skill {
   }
 
   private async saveTokens(tokens: BMWTokens): Promise<void> {
+    // Preserve deviceCode/codeVerifier from existing file if an authorize flow is in progress.
+    // Without this, the MQTT 60s token-refresh cycle calls saveTokens which overwrites the file
+    // and destroys the pending device code before the user can complete browser confirmation.
+    try {
+      const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
+      const existing = JSON.parse(raw) as Record<string, unknown>;
+      if (existing.deviceCode) {
+        (tokens as unknown as Record<string, unknown>).deviceCode = existing.deviceCode;
+        (tokens as unknown as Record<string, unknown>).codeVerifier = existing.codeVerifier;
+        // Preserve the device code expiresAt, not the access token expiresAt
+        // (they share the same field but mean different things during auth flow)
+      }
+    } catch { /* no existing file — nothing to preserve */ }
+
     // Save to DB if available (HA-safe)
     const db = this.resolveDbAccess();
     if (db) {

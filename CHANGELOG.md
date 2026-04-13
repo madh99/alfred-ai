@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.456] - 2026-04-13
+
+### Fixed
+- **BMW Authorize Endlosschleife: `saveTokens` überschrieb `deviceCode`** — `saveTokens` (aufgerufen alle 60-120s vom MQTT Token-Refresh) schrieb das komplette BMWTokens-Objekt auf Disk und überschrieb dabei den von `savePartialTokens` gespeicherten `deviceCode`/`codeVerifier`. Der User hatte ein Zeitfenster von <60s um den Browser-Code zu bestätigen UND Alfred erneut aufzurufen — praktisch unmöglich. Fix: `saveTokens` liest vor dem Schreiben die bestehende Datei und preservt `deviceCode`/`codeVerifier` falls vorhanden. Nach erfolgreichem Token-Exchange in `pollToken` wird `deviceCode`/`codeVerifier` explizit aus der Datei entfernt damit es nicht ewig drin bleibt. Der Freshness-Guard (v424) kann jetzt endlich wirken weil der deviceCode zwischen den authorize-Calls überlebt
+
 ## [0.19.0-multi-ha.455] - 2026-04-13
 
 ### Fixed
