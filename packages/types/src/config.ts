@@ -861,6 +861,7 @@ export interface AlfredConfig {
   infra?: InfraDefaultsConfig;
   cmdb?: CmdbConfig;
   backup?: BackupConfig;
+  commvault?: CommvaultConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };
@@ -877,4 +878,19 @@ export interface BackupConfig {
   include_tokens?: boolean;
   include_config?: boolean;
   include_minio?: boolean;
+}
+
+export interface CommvaultConfig {
+  enabled?: boolean;
+  baseUrl: string;
+  apiToken?: string;
+  username?: string;
+  password?: string;
+  verifyTls?: boolean;
+  confirmation_mode?: boolean;
+  polling_interval?: number;
+  auto_retry_failed?: boolean;
+  auto_incident?: boolean;
+  storage_warning_pct?: number;
+  sla_rpo_hours?: number;
 }
