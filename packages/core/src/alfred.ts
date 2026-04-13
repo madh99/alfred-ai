@@ -1427,6 +1427,7 @@ export class Alfred {
         adapter,
         this.config.cluster?.nodeId ?? 'single',
         pkg.default.version ?? 'unknown',
+        this.config.fileStore,
       );
       skillRegistry.register(backupSkill);
       this.logger.info('System Backup skill registered');

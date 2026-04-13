@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult, BackupConfig } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, BackupConfig, FileStoreConfig } from '@alfred/types';
 import type { AsyncDbAdapter } from '@alfred/storage';
 import { Skill } from '../skill.js';
 import { mkdir, readdir, readFile, writeFile, copyFile, rm, stat } from 'node:fs/promises';
@@ -58,13 +58,15 @@ export class SystemBackupSkill extends Skill {
   private readonly dbAdapter: AsyncDbAdapter;
   private readonly nodeId: string;
   private readonly alfredVersion: string;
+  private readonly fileStoreConfig?: FileStoreConfig;
 
-  constructor(config: BackupConfig, dbAdapter: AsyncDbAdapter, nodeId: string, alfredVersion: string) {
+  constructor(config: BackupConfig, dbAdapter: AsyncDbAdapter, nodeId: string, alfredVersion: string, fileStoreConfig?: FileStoreConfig) {
     super();
     this.config = { ...config };
     this.dbAdapter = dbAdapter;
     this.nodeId = nodeId;
     this.alfredVersion = alfredVersion;
+    this.fileStoreConfig = fileStoreConfig;
   }
 
   async execute(input: Record<string, unknown>, _context: SkillContext): Promise<SkillResult> {
@@ -351,13 +353,30 @@ export class SystemBackupSkill extends Skill {
   }
 
   private async uploadToS3(backupDir: string, id: string): Promise<void> {
-    if (!this.config.s3_bucket) return;
+    const bucket = this.config.s3_bucket;
+    if (!bucket) return;
+
     const S3 = await (Function('return import("@aws-sdk/client-s3")')() as Promise<any>);
-    const client = new S3.S3Client({});
+
+    // Use FileStore S3 credentials if available, otherwise fall back to AWS env vars
+    const s3Options: Record<string, unknown> = {};
+    const endpoint = this.fileStoreConfig?.s3Endpoint;
+    const accessKey = this.fileStoreConfig?.s3AccessKey;
+    const secretKey = this.fileStoreConfig?.s3SecretKey;
+    const region = this.fileStoreConfig?.s3Region ?? 'us-east-1';
+
+    if (endpoint) s3Options.endpoint = endpoint;
+    if (accessKey && secretKey) {
+      s3Options.credentials = { accessKeyId: accessKey, secretAccessKey: secretKey };
+    }
+    s3Options.region = region;
+    s3Options.forcePathStyle = true; // MinIO needs path-style
+
+    const client = new S3.S3Client(s3Options);
     const files = await readdir(backupDir);
     for (const f of files) {
       const body = await readFile(join(backupDir, f));
-      await client.send(new S3.PutObjectCommand({ Bucket: this.config.s3_bucket, Key: `${id}/${f}`, Body: body }));
+      await client.send(new S3.PutObjectCommand({ Bucket: bucket, Key: `${id}/${f}`, Body: body }));
     }
   }
 }
