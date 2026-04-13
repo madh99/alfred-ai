@@ -39,6 +39,8 @@ const PERSON_PATTERNS = [
 
 /** Words that are NOT person names — generic terms, brands, products, events. */
 const PERSON_BLACKLIST = new Set([
+  // Generic German family/group words (not person names)
+  'kinder', 'eltern', 'familie', 'geschwister', 'enkel', 'verwandte', 'nachbarn',
   // Generic German words
   'plan', 'haupt', 'nacht', 'radio', 'doorbell', 'user', 'apple', 'code',
   'supreme', 'amazon', 'google', 'microsoft', 'tesla', 'meta', 'nvidia',
@@ -1139,19 +1141,20 @@ export class KnowledgeGraphService {
         }
       }
 
-      // Fuzzy person merge: HA person entities (Alexandra) → Memory persons (Frau Alex)
+      // Fuzzy person merge: HA person entities (Alexandra) → Memory persons (Sohn Noah, Alexandra)
+      // Merge HA entity INTO memory entity (memory is canonical) — migrate relations, delete HA entity.
       const persons = (await this.kgRepo.getAllEntities(userId)).filter(e => e.entityType === 'person');
-      const haPersons = persons.filter(e => e.sources.includes('smarthome'));
-      const memPersons = persons.filter(e => e.sources.includes('memories') && !e.sources.includes('smarthome'));
+      const haPersons = persons.filter(e => e.sources.includes('smarthome') && !e.sources.includes('memories'));
+      const memPersons = persons.filter(e => e.sources.includes('memories'));
       for (const ha of haPersons) {
         for (const mem of memPersons) {
-          // Check if one name contains the other (Alexandra ↔ Frau Alex, Noah ↔ Sohn Noah)
           const haLower = ha.normalizedName;
           const memWords = mem.normalizedName.split(/\s+/);
           if (memWords.some(w => w.length >= 4 && haLower.includes(w)) ||
               memWords.some(w => w.length >= 4 && w.includes(haLower))) {
-            // Link HA person to memory person (same real person)
-            await this.kgRepo.upsertRelation(userId, ha.id, mem.id, 'same_as', undefined, 'maintenance');
+            // Merge HA entity into memory entity (relations migrated, HA entity deleted)
+            await this.kgRepo.migrateEntityRelations(userId, ha.id, mem.id);
+            break; // HA entity is deleted, stop inner loop
           }
         }
       }
@@ -1287,7 +1290,8 @@ export class KnowledgeGraphService {
       const event = await this.kgRepo.upsertEntity(userId, title.trim(), 'event', { time }, 'calendar');
 
       if (location) {
-        const locName = location.trim();
+        // Strip address details after comma (e.g., "Höglinger Denzel GesmbH, Estermannstraße 2-4, 4020 Linz" → "Höglinger Denzel GesmbH")
+        const locName = location.trim().split(',')[0].trim();
         // Cross-check: don't create location if already known as organization, item, or service
         const existing = await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'organization' as any)
           ?? await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'item' as any);
@@ -1410,14 +1414,8 @@ export class KnowledgeGraphService {
         }
       }
 
-      // Extract entity-type memories as persons/organizations
-      if (type === 'entity' || type === 'relationship') {
-        // Simple heuristic: if key contains person-like terms
-        if (keyLower.includes('partner') || keyLower.includes('frau') || keyLower.includes('mann') ||
-            keyLower.includes('chef') || keyLower.includes('freund') || keyLower.includes('kollege')) {
-          await this.kgRepo.upsertEntity(userId, value.trim().split(',')[0].trim(), 'person', { role: key }, 'memories');
-        }
-      }
+      // Person extraction from entity/relationship memories is handled by syncMemoryEntities (more robust).
+      // Legacy person creation removed — syncMemoryEntities covers all cases (partner/frau/mann/chef/freund/kollege).
     }
   }
 
@@ -1539,8 +1537,13 @@ export class KnowledgeGraphService {
       const attrs: Record<string, unknown> = { entity_id: eid, state: st };
       if (unit.trim() !== '-' && unit.trim().length > 0) attrs.unit = unit.trim();
 
-      // HA person.* entities are people, not items
-      const entityType = eid.startsWith('person.') ? 'person' : 'item';
+      // HA person.* entities are people, not items — but skip user's own HA person
+      // (lowercase short names like "madh" are usernames, not real person names)
+      let entityType: string = 'item';
+      if (eid.startsWith('person.')) {
+        const isProperName = /^[A-ZÄÖÜ]/.test(name) && name.length >= 4;
+        entityType = isProperName ? 'person' : 'item';
+      }
       await this.kgRepo.upsertEntity(userId, name, entityType as any, attrs, 'smarthome');
       count++;
     }
@@ -1723,6 +1726,16 @@ export class KnowledgeGraphService {
       const TITLE_WORDS = new Set(['sohn', 'tochter', 'frau', 'herr', 'schwester', 'bruder']);
       const canonicalPersons = new Map<string, string>(); // firstName → canonical "Title Firstname"
 
+      // Pre-load existing person entities for fuzzy dedup (prevents "Frau Alex" when "Alexandra" exists)
+      const existingPersons = (await this.kgRepo.getAllEntities(userId)).filter(e => e.entityType === 'person');
+      for (const ep of existingPersons) {
+        // Register all existing first names in the canonical map
+        const epWords = ep.normalizedName.split(/\s+/).filter(w => !TITLE_WORDS.has(w) && w.length >= 3);
+        for (const w of epWords) {
+          if (!canonicalPersons.has(w)) canonicalPersons.set(w, ep.name);
+        }
+      }
+
       // Load correction memories to override canonical names (e.g., "Noah heißt Habel, nicht Dohnal")
       const correctionMems = await this.memoryRepo.getByType(userId, 'correction', 20);
       const correctionTexts = correctionMems.map(m => m.value.toLowerCase());
@@ -1792,8 +1805,9 @@ export class KnowledgeGraphService {
         const k = mem.key.toLowerCase();
         const isFriend = k.includes('friend') || k.includes('freund');
         const relType = isFriend ? 'knows'
-          : k.includes('child') || k.includes('sohn') || k.includes('tochter') || k.includes('kinder') ? 'parent_of'
+          : k.includes('child') || k.includes('sohn') || k.includes('tochter') ? 'parent_of'
           : k.includes('spouse') || k.includes('frau') || k.includes('mann') || k.includes('partner') ? 'spouse'
+          : k.includes('chef') || k.includes('vorgesetzt') ? 'works_with'
           : k.includes('mother') || k.includes('father') || k.includes('sister') || k.includes('brother') || k.includes('mutter') || k.includes('schwester') || k.includes('bruder') || k.includes('vater') ? 'family'
           : 'knows';
         await this.kgRepo.upsertRelation(userId, user.id, person.id, relType, mem.key, 'memories');
@@ -2067,16 +2081,10 @@ export class KnowledgeGraphService {
     }
   }
 
-  private async extractFromReminders(userId: string, content: string): Promise<void> {
-    // Format: "- DD.MM. HH:MM: message" or "- ⚠️ ÜBERFÄLLIG: message"
-    const re = /^\s*-\s+(?:⚠️ ÜBERFÄLLIG|[\d.]+,?\s*[\d:]+):\s*(.+)$/gm;
-    let match;
-    while ((match = re.exec(content)) !== null) {
-      const message = match[1].trim();
-      if (message.length < 5) continue;
-      await this.kgRepo.upsertEntity(userId, message.slice(0, 80), 'event',
-        { type: 'reminder' }, 'reminders');
-    }
+  private async extractFromReminders(_userId: string, _content: string): Promise<void> {
+    // Disabled: Reminder full-text as event entities creates noise (generic sentences as entity names).
+    // Reminders are already in the system prompt — KG duplication adds no value.
+    // Location extraction from reminders still works via extractLocations().
   }
 
   private async extractLocations(userId: string, sectionKey: string, content: string): Promise<void> {

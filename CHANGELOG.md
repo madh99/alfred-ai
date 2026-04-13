@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.468] - 2026-04-13
+
+### Fixed
+- **KG: Vollständige Bereinigung der Entity-Erstellung (9 Fixes)** — Tiefgehende Analyse aller 23 Entity-Erstellungspfade, 6 Relation-Mechanismen und aller Downstream-Konsumenten (Chat-Prompt, Reasoning, WebUI, LLM-Linker, Memory-Rückkanal):
+  - **F1:** PERSON_BLACKLIST um Gruppen-Wörter erweitert (kinder, eltern, familie, geschwister, enkel) → "Kinder" wird nie als Person-Entity erstellt
+  - **F2:** DB-Fuzzy-Dedup vor Person-Erstellung — bestehende Person-Entities werden in die canonical-Map geladen. "Frau Alex" wird nicht mehr erstellt wenn "Alexandra" existiert (Vorname-Match "alex" in "alexandra")
+  - **F3:** Legacy-Personen-Erstellung in `extractFromMemories` entfernt (Zeile 1413-1420). Wird vollständig von `syncMemoryEntities` abgedeckt. `chef`-Keyword in Relation-Ableitung aufgenommen (→ works_with)
+  - **F4:** SmartHome `person.*` Entities: Lowercase-/Kurznamen (z.B. "madh") werden als `item` statt `person` erstellt. HA-Personen mit korrekten Namen (Alexandra, Noah) bleiben Personen
+  - **F5:** `extractFromReminders` deaktiviert — Reminder-Ganztexte als Event-Entities erzeugten nur Rauschen. Reminders sind im System-Prompt direkt verfügbar
+  - **F6:** Calendar-Location vor erstem Komma abgeschnitten — verhindert "Höglinger Denzel GesmbH, Estermannstraße 2-4, 4020 Linz" als Entity
+  - **F7:** HA↔Memory Person-Merge: `migrateEntityRelations` statt `same_as` — HA-Entity wird in Memory-Entity gemerged (Relationen migriert, HA-Entity gelöscht). `same_as` wurde nirgends gelesen/interpretiert
+  - **F9:** LLM-Linker Prompt: Entities für Attribute (Geburtsdatum, Staatsbürgerschaft etc.) explizit verboten
+
 ## [0.19.0-multi-ha.467] - 2026-04-13
 
 ### Fixed

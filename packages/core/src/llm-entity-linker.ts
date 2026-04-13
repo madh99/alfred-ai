@@ -273,6 +273,7 @@ REGELN:
 - newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
 - KEINE Entities erstellen die offensichtlich eine bereits existierende Entity unter anderem Namen beschreiben (z.B. wenn "User" einen Realnamen hat, keine separate Entity für diesen Namen erstellen — stattdessen zur User-Entity verlinken)
 - Wenn eine Entity einen Realnamen-Attribut hat, betrachte diesen als Alias — Referenzen zu diesem Namen gehören zur existierenden Entity
+- KEINE Entities für Attribute wie Geburtsdatum, Staatsbürgerschaft, Alter, Adresse, Telefonnummer — diese gehören als Attribute auf die Person-Entity, nicht als separate Entities
 - corrections: nur wenn der aktuelle Typ eindeutig falsch ist
 
 TRANSITIVE INFERENZ (wichtig!):
