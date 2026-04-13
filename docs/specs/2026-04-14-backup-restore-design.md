@@ -11,11 +11,15 @@ Zwei Komponenten:
 Neue Actions im bestehenden `database-skill.ts`:
 
 ### `backup`
-- Parameter: `connection` (Name), `format` (sql/custom/archive, default: custom), `label` (optional)
+- Parameter: `connection` (Name), `format` (sql/custom/archive, default: custom), `label` (optional), `backup_type` (nur MS SQL: copy_only/full/differential/log, default: copy_only)
 - Pro Provider:
   - **PostgreSQL:** `pg_dump --format=custom`
   - **MySQL/MariaDB:** `mysqldump`
-  - **MS SQL:** `BACKUP DATABASE ... TO DISK` (T-SQL über bestehende Verbindung)
+  - **MS SQL:** T-SQL über bestehende Verbindung, mit `backup_type` Parameter:
+    - `copy_only` (default) — `BACKUP DATABASE ... WITH COPY_ONLY` — bricht keine bestehende Kette
+    - `full` — `BACKUP DATABASE ... TO DISK` — setzt Differential-Basis zurück
+    - `differential` — `BACKUP DATABASE ... WITH DIFFERENTIAL` — nur Änderungen seit Full
+    - `log` — `BACKUP LOG ... TO DISK` — Transaction Log Backup (Kette für Point-in-Time Recovery)
   - **SQLite:** `.backup()` API
   - **MongoDB:** `mongodump`
   - **Redis:** `BGSAVE` + Kopie der RDB-Datei
@@ -28,7 +32,10 @@ Neue Actions im bestehenden `database-skill.ts`:
 - Pro Provider:
   - **PostgreSQL:** `pg_restore`
   - **MySQL/MariaDB:** `mysql < dump.sql`
-  - **MS SQL:** `RESTORE DATABASE ... FROM DISK` (T-SQL über bestehende Verbindung)
+  - **MS SQL:** T-SQL über bestehende Verbindung:
+    - Full/Copy-Only/Differential: `RESTORE DATABASE ... FROM DISK`
+    - Log-Chain: `RESTORE LOG ... FROM DISK` (Point-in-Time mit `STOPAT`)
+    - Zeigt verfügbare Backups via `RESTORE HEADERONLY FROM DISK`
   - **SQLite:** Datei ersetzen + reconnect
   - **MongoDB:** `mongorestore`
   - **Redis:** RDB-Datei ersetzen + `DEBUG RELOAD`
