@@ -24,6 +24,24 @@ export interface ColumnInfo {
   primaryKey?: boolean;
 }
 
+export interface BackupOptions {
+  outputPath: string;
+  format?: 'sql' | 'custom' | 'archive';
+  label?: string;
+  backupType?: 'full' | 'differential' | 'log' | 'copy_only';
+}
+
+export interface RestoreOptions {
+  inputPath: string;
+  stopAt?: string;
+}
+
+export interface BackupResult {
+  path: string;
+  sizeBytes: number;
+  duration_ms: number;
+}
+
 export interface DbProvider {
   type: string;
   connect(): Promise<void>;
@@ -32,6 +50,8 @@ export interface DbProvider {
   getTables(): Promise<TableInfo[]>;
   describeTable(name: string): Promise<ColumnInfo[]>;
   query(sql: string, params?: unknown[]): Promise<QueryResult>;
+  backup?(opts: BackupOptions): Promise<BackupResult>;
+  restore?(opts: RestoreOptions): Promise<void>;
 }
 
 interface ConnConfig {
@@ -84,6 +104,42 @@ export class PostgresProvider implements DbProvider {
     const rows = r.rows?.slice(0, limit) ?? [];
     return { columns, rows, rowCount: r.rowCount ?? rows.length, truncated: (r.rows?.length ?? 0) > limit };
   }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const format = opts.format === 'sql' ? 'plain' : 'custom';
+    const ext = format === 'plain' ? '.sql' : '.dump';
+    const outFile = `${opts.outputPath}${ext}`;
+    const args = [
+      '--host', this.config.host, '--port', String(this.config.port ?? 5432),
+      '--dbname', this.config.database ?? 'postgres', '--format', format, '--file', outFile,
+    ];
+    if (this.config.username) args.push('--username', this.config.username);
+    const env = { ...process.env };
+    if (this.config.password) env.PGPASSWORD = this.config.password;
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)('pg_dump', args, { env, timeout: 300_000 });
+    const { stat } = await import('node:fs/promises');
+    const st = await stat(outFile);
+    return { path: outFile, sizeBytes: st.size, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const isCustom = opts.inputPath.endsWith('.dump');
+    const cmd = isCustom ? 'pg_restore' : 'psql';
+    const args = isCustom
+      ? ['--host', this.config.host, '--port', String(this.config.port ?? 5432),
+         '--dbname', this.config.database ?? 'postgres', '--clean', '--if-exists', opts.inputPath]
+      : ['--host', this.config.host, '--port', String(this.config.port ?? 5432),
+         '--dbname', this.config.database ?? 'postgres', '--file', opts.inputPath];
+    if (this.config.username) args.push('--username', this.config.username);
+    const env = { ...process.env };
+    if (this.config.password) env.PGPASSWORD = this.config.password;
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)(cmd, args, { env, timeout: 600_000 });
+  }
 }
 
 // ── MySQL / MariaDB ─────────────────────────────────────────
@@ -129,6 +185,35 @@ export class MySQLProvider implements DbProvider {
     const limited = Array.isArray(rows) ? rows.slice(0, limit) : [];
     return { columns, rows: limited, rowCount: limited.length, truncated: Array.isArray(rows) && rows.length > limit };
   }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const outFile = `${opts.outputPath}.sql`;
+    const args = [
+      '--host', this.config.host, '--port', String(this.config.port ?? 3306),
+      '--result-file', outFile, '--single-transaction', '--routines', '--triggers', '--events',
+    ];
+    if (this.config.username) args.push('--user', this.config.username);
+    if (this.config.database) args.push(this.config.database);
+    const env = { ...process.env };
+    if (this.config.password) env.MYSQL_PWD = this.config.password;
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)('mysqldump', args, { env, timeout: 300_000 });
+    const { stat } = await import('node:fs/promises');
+    const st = await stat(outFile);
+    return { path: outFile, sizeBytes: st.size, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const { execSync } = await import('node:child_process');
+    const args = [`--host=${this.config.host}`, `--port=${this.config.port ?? 3306}`];
+    if (this.config.username) args.push(`--user=${this.config.username}`);
+    if (this.config.database) args.push(`--database=${this.config.database}`);
+    const env = { ...process.env };
+    if (this.config.password) env.MYSQL_PWD = this.config.password;
+    execSync(`mysql ${args.join(' ')} < "${opts.inputPath}"`, { env, timeout: 600_000 });
+  }
 }
 
 // ── MS SQL ───────────────────────────────────────────────────
@@ -168,6 +253,42 @@ export class MSSQLProvider implements DbProvider {
     const rows = r.recordset?.slice(0, limit) ?? [];
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
     return { columns, rows, rowCount: r.rowsAffected?.[0] ?? rows.length, truncated: (r.recordset?.length ?? 0) > limit };
+  }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const bt = opts.backupType ?? 'copy_only';
+    const dbName = this.config.database ?? 'master';
+    const ext = bt === 'log' ? '.trn' : '.bak';
+    const outFile = `${opts.outputPath}${ext}`;
+    const label = opts.label ?? `Alfred ${bt} Backup`;
+    const sql = bt === 'log'
+      ? `BACKUP LOG [${dbName}] TO DISK = N'${outFile}' WITH FORMAT, INIT, NAME = N'${label}'`
+      : bt === 'differential'
+        ? `BACKUP DATABASE [${dbName}] TO DISK = N'${outFile}' WITH DIFFERENTIAL, FORMAT, INIT, NAME = N'${label}'`
+        : bt === 'full'
+          ? `BACKUP DATABASE [${dbName}] TO DISK = N'${outFile}' WITH FORMAT, INIT, NAME = N'${label}'`
+          : `BACKUP DATABASE [${dbName}] TO DISK = N'${outFile}' WITH COPY_ONLY, FORMAT, INIT, NAME = N'${label}'`;
+    await this.query(sql);
+    // Get backup size from header
+    let sizeBytes = 0;
+    try {
+      const hdr = await this.query(`RESTORE HEADERONLY FROM DISK = N'${outFile}'`);
+      sizeBytes = (hdr.rows[0]?.BackupSize as number) ?? 0;
+    } catch { /* size unknown */ }
+    return { path: outFile, sizeBytes, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const dbName = this.config.database ?? 'master';
+    const isLog = opts.inputPath.endsWith('.trn');
+    if (isLog && opts.stopAt) {
+      await this.query(`RESTORE LOG [${dbName}] FROM DISK = N'${opts.inputPath}' WITH STOPAT = N'${opts.stopAt}'`);
+    } else if (isLog) {
+      await this.query(`RESTORE LOG [${dbName}] FROM DISK = N'${opts.inputPath}' WITH NORECOVERY`);
+    } else {
+      await this.query(`RESTORE DATABASE [${dbName}] FROM DISK = N'${opts.inputPath}' WITH REPLACE`);
+    }
   }
 }
 
@@ -232,6 +353,31 @@ export class MongoProvider implements DbProvider {
     }
     return { columns: [], rows: [], rowCount: 0, truncated: false };
   }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const outDir = opts.outputPath;
+    const args = ['--out', outDir];
+    if (this.config.database) args.push('--db', this.config.database);
+    const port = this.config.port ?? 27017;
+    const auth = this.config.username ? `${this.config.username}:${encodeURIComponent(this.config.password ?? '')}@` : '';
+    args.push('--uri', `mongodb://${auth}${this.config.host}:${port}`);
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)('mongodump', args, { timeout: 300_000 });
+    return { path: outDir, sizeBytes: 0, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const args = ['--drop', opts.inputPath];
+    if (this.config.database) args.push('--db', this.config.database);
+    const port = this.config.port ?? 27017;
+    const auth = this.config.username ? `${this.config.username}:${encodeURIComponent(this.config.password ?? '')}@` : '';
+    args.push('--uri', `mongodb://${auth}${this.config.host}:${port}`);
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)('mongorestore', args, { timeout: 600_000 });
+  }
 }
 
 // ── InfluxDB ─────────────────────────────────────────────────
@@ -270,6 +416,22 @@ export class InfluxProvider implements DbProvider {
     const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
     return { columns, rows, rowCount: rows.length, truncated: rows.length >= limit };
   }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const args = ['backup', '--path', opts.outputPath];
+    if (this.config.database) args.push('--bucket', this.config.database);
+    await promisify(ef)('influx', args, { timeout: 300_000 });
+    return { path: opts.outputPath, sizeBytes: 0, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const { execFile: ef } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    await promisify(ef)('influx', ['restore', '--path', opts.inputPath], { timeout: 600_000 });
+  }
 }
 
 // ── SQLite ────────────────────────────────────────────────────
@@ -306,6 +468,23 @@ export class SQLiteProvider implements DbProvider {
     }
     const result = this.db.prepare(sql).run();
     return { columns: ['changes'], rows: [{ changes: result.changes }], rowCount: 1, truncated: false };
+  }
+
+  async backup(opts: BackupOptions): Promise<BackupResult> {
+    const start = Date.now();
+    const outFile = `${opts.outputPath}.sqlite`;
+    this.db.exec(`VACUUM INTO '${outFile.replace(/'/g, "''")}'`);
+    const { stat } = await import('node:fs/promises');
+    const st = await stat(outFile);
+    return { path: outFile, sizeBytes: st.size, duration_ms: Date.now() - start };
+  }
+
+  async restore(opts: RestoreOptions): Promise<void> {
+    const dbPath = this.config.host;
+    this.db.close();
+    const { copyFile } = await import('node:fs/promises');
+    await copyFile(opts.inputPath, dbPath);
+    await this.connect();
   }
 }
 
@@ -354,6 +533,18 @@ export class RedisProvider implements DbProvider {
     // Generic command
     const result = await this.client.call(cmd, ...args);
     return { columns: ['result'], rows: [{ result: typeof result === 'object' ? JSON.stringify(result) : result }], rowCount: 1, truncated: false };
+  }
+
+  async backup(): Promise<BackupResult> {
+    const start = Date.now();
+    await this.client.bgsave();
+    // Wait for BGSAVE to complete (max 30s)
+    for (let i = 0; i < 30; i++) {
+      const lastSave = await this.client.lastsave();
+      if (Date.now() / 1000 - lastSave < 5) break;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    return { path: 'RDB on server (BGSAVE)', sizeBytes: 0, duration_ms: Date.now() - start };
   }
 }
 
