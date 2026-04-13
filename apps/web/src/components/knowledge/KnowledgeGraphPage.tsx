@@ -261,7 +261,7 @@ export function KnowledgeGraphPage() {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
         {/* Graph */}
         <div className="flex-1 relative bg-[#0a0a0a]">
           {graphData.nodes.length > 0 ? (
@@ -294,7 +294,7 @@ export function KnowledgeGraphPage() {
               linkDirectionalParticles={(link: any) => link.strength > 0.7 ? 2 : 0}
               linkDirectionalParticleWidth={2}
               linkDirectionalParticleColor={() => '#60a5fa'}
-              onNodeClick={(node: any) => { console.log('[KG] Node clicked:', node.name, node.id); setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
+              onNodeClick={(node: any) => { setSelectedNode(node); setSelectedLink(null); setEditMode(false); }}
               onLinkClick={(link: any) => { setSelectedLink(link); setSelectedNode(null); setEditMode(false); }}
               onBackgroundClick={() => { setSelectedNode(null); setSelectedLink(null); setEditMode(false); }}
               backgroundColor="#0a0a0a"
@@ -346,9 +346,9 @@ export function KnowledgeGraphPage() {
           )}
         </div>
 
-        {/* Detail Panel */}
+        {/* Detail Panel — absolute positioned to avoid ForceGraph2D canvas overlap */}
         {(selectedNode || selectedLink) && (
-          <div className="w-80 shrink-0 border-l border-[#1f1f1f] bg-[#111111] overflow-y-auto p-4">
+          <div className="absolute right-0 top-0 bottom-0 w-80 z-10 border-l border-[#1f1f1f] bg-[#111111] overflow-y-auto p-4">
             {selectedNode && !editMode && (
               <div>
                 <div className="flex items-center justify-between mb-3">
