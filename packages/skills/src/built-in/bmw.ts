@@ -576,16 +576,40 @@ export class BMWSkill extends Skill {
           };
         }
         return pollResult;
-      } catch {
-        // If pending code is still fresh, don't generate a new one — tell user to confirm the existing one
-        if (isFresh) {
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Terminal errors — don't retry, clear pending code and generate a new one
+        if (msg.includes('access_denied') || msg.includes('expired_token') || msg.includes('invalid_grant')) {
+          console.warn(`[BMW] Pending device code rejected: ${msg.slice(0, 200)}`);
+          // Clear stale device code from disk + DB so next call generates fresh one
+          try {
+            const raw = await readFile(getTokenPath(this.tokenUserId), 'utf-8');
+            const existing = JSON.parse(raw) as Record<string, unknown>;
+            delete existing.deviceCode;
+            delete existing.codeVerifier;
+            await writeFile(getTokenPath(this.tokenUserId), JSON.stringify(existing, null, 2), 'utf-8');
+          } catch { /* best effort */ }
+          const db = this.resolveDbAccess();
+          if (db) {
+            try {
+              const svc = await db.resolver!.getServiceConfig(db.userId, 'bmw_tokens', 'partial') as Record<string, unknown> | null;
+              if (svc) {
+                delete svc.deviceCode;
+                delete svc.codeVerifier;
+                await db.resolver!.saveServiceConfig(db.userId, 'bmw_tokens', 'partial', svc);
+              }
+            } catch { /* best effort */ }
+          }
+          // Fall through to generate new device code
+        } else if (isFresh) {
+          // Only mask as "pending" for transient errors (network, timeout) when code is still fresh
           return {
             success: true,
             data: { status: 'pending' },
             display: 'Ein Autorisierungscode wurde bereits generiert. Bitte bestätige ihn im Browser und rufe dann erneut "authorize" auf. WICHTIG: Keine anderen BMW-Aktionen aufrufen bis die Autorisierung abgeschlossen ist!',
           };
         }
-        // Code expired — fall through to generate a new one
+        // Code expired or terminal error — fall through to generate a new one
       }
     }
 

@@ -5,11 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.459] - 2026-04-13
+## [0.19.0-multi-ha.460] - 2026-04-13
 
 ### Fixed
-- **BMW pollToken: Disk-First statt DB-First für codeVerifier** — pollToken las den PKCE codeVerifier zuerst aus der DB (Key `partial`), wo ein alter Wert von einem früheren Authorize-Versuch liegen konnte. Jetzt: Disk zuerst (savePartialTokens schreibt immer dorthin, MQTT-Refresh preservt es), DB nur als Fallback. Zusätzlich: deviceCode-Matching — der Verifier wird nur akzeptiert wenn er zum aktuellen deviceCode passt
-- **BMW pollToken Logging** — Diagnostik-Logs für verifier-Quelle und BMW-Antwort bei Fehler
+- **BMW Authorize-Schleife: `access_denied`/`expired_token` wurde als "pending" maskiert** — Wenn BMW `access_denied` oder `expired_token` zurückgab, fing der catch-Block den Fehler und sagte dem User "bitte im Browser bestätigen" — obwohl BMW die Autorisierung klar abgelehnt hatte. Jetzt: terminale Fehler (`access_denied`, `expired_token`, `invalid_grant`) räumen den alten deviceCode auf (Disk + DB) und generieren sofort einen neuen Code. Nur transiente Fehler (Netzwerk, Timeout) werden als "pending" maskiert
+- **BMW pollToken: Disk-First statt DB-First für codeVerifier** — Verhindert dass ein alter DB-Eintrag den aktuellen codeVerifier überschreibt
+- **BMW pollToken Logging** — Verifier-Quelle und BMW-Antwort bei Fehler
 
 ## [0.19.0-multi-ha.458] - 2026-04-13
 
