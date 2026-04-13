@@ -371,13 +371,26 @@ export class KnowledgeGraphService {
         } catch { /* skip */ }
       }
 
-      // 2. Search memories for full name (multiple keys)
+      // 2. Search memories for full name (multiple keys — user_full_name first!)
       if (!this.userRealName && this.memoryRepo) {
-        const nameKeys = ['personal_name', 'user_name', 'full_name', 'name', 'real_name', 'owner_name'];
+        const nameKeys = ['user_full_name', 'personal_name', 'user_name', 'full_name', 'name', 'real_name', 'owner_name'];
         for (const key of nameKeys) {
           try {
             const mem = await this.memoryRepo.recall(userId, key);
-            if (mem?.value && this.isFullName(mem.value)) { this.userRealName = mem.value; break; }
+            if (!mem?.value) continue;
+            const val = mem.value.trim();
+            // Short value (2-3 words) that IS a name → use directly
+            if (val.split(/\s+/).length <= 3 && this.isFullName(val)) { this.userRealName = val; break; }
+            // Longer value = sentence → extract name with patterns
+            const namePatterns = [
+              /(?:name\s+ist|heißt|heisse|bin)\s+([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i,
+              /(?:vollständiger?\s+name\s+(?:ist\s+)?)([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i,
+            ];
+            for (const p of namePatterns) {
+              const m = val.match(p);
+              if (m && this.isFullName(m[1].trim())) { this.userRealName = m[1].trim(); break; }
+            }
+            if (this.userRealName) break;
           } catch { /* skip */ }
         }
 
@@ -387,6 +400,8 @@ export class KnowledgeGraphService {
             const results = await this.memoryRepo.search(userId, 'name');
             for (const mem of results.slice(0, 20)) {
               if (!/name/i.test(mem.key)) continue;
+              // Skip memories about OTHER people (children, friends, spouse)
+              if (/^(child|friend|spouse|partner|sibling|mother|father|parent|brother|sister)_/i.test(mem.key)) continue;
               // If value IS a full name (just "Markus Dohnal"), use directly
               if (this.isFullName(mem.value) && mem.value.split(/\s+/).length <= 3) {
                 this.userRealName = mem.value;
@@ -405,24 +420,18 @@ export class KnowledgeGraphService {
             }
           } catch { /* skip */ }
         }
-        // Also check key 'user_full_name' explicitly (common memory key from "Merke dir: Mein Name ist...")
+        // user_full_name is now handled in nameKeys loop above — keep last-word fallback as safety net
         if (!this.userRealName) {
           try {
             const fullNameMem = await this.memoryRepo.recall(userId, 'user_full_name');
             if (fullNameMem?.value) {
-              // Try explicit patterns first: "Name ist X Y", "heißt X Y"
-              const explicit = fullNameMem.value.match(/(?:name\s+ist|heißt|bin)\s+([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)/i);
-              if (explicit && this.isFullName(explicit[1])) {
-                this.userRealName = explicit[1].trim();
-              } else {
-                // Fallback: take the LAST two capitalized words (most likely the actual name at end of sentence)
-                const words = fullNameMem.value.split(/\s+/);
-                for (let i = words.length - 2; i >= 0; i--) {
-                  const pair = words[i] + ' ' + words[i + 1];
-                  if (/^[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/.test(pair) && this.isFullName(pair)) {
-                    this.userRealName = pair;
-                    break;
-                  }
+              // Fallback: take the LAST two capitalized words (most likely the actual name at end of sentence)
+              const words = fullNameMem.value.split(/\s+/);
+              for (let i = words.length - 2; i >= 0; i--) {
+                const pair = words[i] + ' ' + words[i + 1];
+                if (/^[A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+$/.test(pair) && this.isFullName(pair)) {
+                  this.userRealName = pair;
+                  break;
                 }
               }
             }

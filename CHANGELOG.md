@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.466] - 2026-04-13
+
+### Fixed
+- **KG: User-Name falsch aufgelöst → Sohn bekam alle User-Relationen** — `upsertUserEntity` suchte Memories mit `search(userId, 'name')` und fand `child_linus_full_name` ("Linus Dohnal") vor `user_full_name` ("Mein vollständiger Name ist Markus Dohnal"). Dadurch wurde "Linus Dohnal" als `realName` gesetzt, Phantom Detection mergte "Markus Dohnal" in "Linus Dohnal", und der Sohn bekam Cryptos, BMW, Arbeitgeber, Ehefrau. Fixes:
+  - `user_full_name` als erster Key in der nameKeys-Liste (direkte Abfrage vor Suche)
+  - Memory-Search filtert Keys mit `child_`, `friend_`, `spouse_` etc. Prefix aus
+  - Satz-Parsing für Memory-Werte die keine reinen Namen sind (z.B. "Mein Name ist X Y")
+  - `same_as` zwischen Personen nur bei übereinstimmendem Vornamen (LLM Entity-Linker)
+  - DB bereinigt: User.realName→"Markus Dohnal", Linus Dohnal source→memories, "Markus Dohnal" Entity in "User" gemerged, 32 falsche Relationen gelöscht
+
 ## [0.19.0-multi-ha.465] - 2026-04-13
 
 ### Fixed
