@@ -459,6 +459,20 @@ export class MessagePipeline {
             }
           }
         } catch (err) { this.logger.debug({ err }, 'Memory loading failed'); }
+
+        // Apply temporal decay to fallback results (MemoryRetriever does this internally, fallback paths don't)
+        if (memories && memories.length > 0) {
+          const now = Date.now();
+          const HALF_LIFE = 30 * 24 * 60 * 60_000;
+          memories = memories
+            .map(m => {
+              const age = now - new Date((m as any).updatedAt ?? (m as any).createdAt ?? now).getTime();
+              const decay = Math.exp((-Math.LN2 * Math.max(0, age)) / HALF_LIFE);
+              const conf = (m as any).confidence ?? 1;
+              return { ...m, score: (m.score ?? 1) * conf * decay };
+            })
+            .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+        }
       }
 
       // 5a. Apply memory token budget: filter low-relevance and cap by token count

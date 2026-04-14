@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.486] - 2026-04-14
+
+### Fixed
+- **Memory: Temporal Decay auf Fallback-Pfade erweitert** — Wenn `MemoryRetriever` nicht verfügbar ist, sortieren die Fallback-Pfade in `message-pipeline.ts` jetzt ebenfalls nach 30-Tage exponentieller Halbwertszeit × Confidence. Aktuelle Memories werden bevorzugt
+- **Memory: Embedding-Cleanup nach Consolidation** — `MemoryConsolidator` räumt jetzt verwaiste Embeddings auf wenn Memories gelöscht oder gemerged werden. Verhindert unbegrenztes Wachstum der Embeddings-Tabelle
+
 ## [0.19.0-multi-ha.485] - 2026-04-14
 
 ### Fixed

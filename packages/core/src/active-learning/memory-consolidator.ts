@@ -1,6 +1,6 @@
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
-import type { MemoryRepository, MemoryEntry } from '@alfred/storage';
+import type { MemoryRepository, MemoryEntry, EmbeddingRepository } from '@alfred/storage';
 
 const MERGE_PROMPT = `You are a memory consolidation system. Merge these similar memories into one concise entry.
 
@@ -11,11 +11,16 @@ Return a single JSON object with: {"key": "merged_key", "value": "merged concise
 Return ONLY valid JSON, no explanation.`;
 
 export class MemoryConsolidator {
+  private embeddingRepo?: EmbeddingRepository;
+
   constructor(
     private readonly llm: LLMProvider,
     private readonly memoryRepo: MemoryRepository,
     private readonly logger: Logger,
   ) {}
+
+  /** Set optional embedding repo for cleanup after memory deletion. */
+  setEmbeddingRepo(repo: EmbeddingRepository): void { this.embeddingRepo = repo; }
 
   /**
    * Run consolidation for a user:
@@ -34,7 +39,12 @@ export class MemoryConsolidator {
     try {
       const stale = await this.memoryRepo.findStale(userId, staleDays, staleMaxConfidence);
       if (stale.length > 0) {
-        deleted = await this.memoryRepo.deleteByIds(stale.map(m => m.id));
+        const staleIds = stale.map(m => m.id);
+        deleted = await this.memoryRepo.deleteByIds(staleIds);
+        // Clean up orphaned embeddings
+        if (this.embeddingRepo) {
+          for (const id of staleIds) { await this.embeddingRepo.delete('memory', id, userId).catch(() => {}); }
+        }
         this.logger.info({ userId, deleted }, 'Deleted stale memories');
       }
     } catch (err) {
@@ -49,7 +59,11 @@ export class MemoryConsolidator {
         r => r.confidence < 0.3 && r.updatedAt < ruleCutoff,
       );
       if (expiredRules.length > 0) {
-        const ruleDeleted = await this.memoryRepo.deleteByIds(expiredRules.map(r => r.id));
+        const ruleIds = expiredRules.map(r => r.id);
+        const ruleDeleted = await this.memoryRepo.deleteByIds(ruleIds);
+        if (this.embeddingRepo) {
+          for (const id of ruleIds) { await this.embeddingRepo.delete('memory', id, userId).catch(() => {}); }
+        }
         deleted += ruleDeleted;
         this.logger.info(
           { userId, ruleDeleted, keys: expiredRules.map(r => r.key) },
@@ -80,8 +94,12 @@ export class MemoryConsolidator {
               maxConfidence,
               'auto',
             );
-            // Then delete old entries
-            await this.memoryRepo.deleteByIds(group.map(m => m.id));
+            // Then delete old entries + orphaned embeddings
+            const groupIds = group.map(m => m.id);
+            await this.memoryRepo.deleteByIds(groupIds);
+            if (this.embeddingRepo) {
+              for (const id of groupIds) { await this.embeddingRepo.delete('memory', id, userId).catch(() => {}); }
+            }
             merged++;
             this.logger.info(
               { mergedKeys: group.map(m => m.key), newKey: mergeResult.key },

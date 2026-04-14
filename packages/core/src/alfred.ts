@@ -2654,6 +2654,11 @@ export class Alfred {
     // Memory consolidation: daily cleanup of stale + duplicate memories (runs at ~3:00 AM)
     if (this.config.activeLearning?.enabled !== false && this.memoryRepo) {
       const consolidator = new MemoryConsolidator(this.llmProvider, this.memoryRepo, this.logger.child({ component: 'memory-consolidator' }));
+      if (this.database) {
+        const { EmbeddingRepository } = await import('@alfred/storage');
+        const embRepo = new EmbeddingRepository(this.database.getAdapter());
+        consolidator.setEmbeddingRepo(embRepo);
+      }
       const userRepoRef = this.userRepo;
       let lastConsolidationDay = '';
       this.memoryConsolidatorTimer = setInterval(async () => {
