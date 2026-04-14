@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.484] - 2026-04-14
+
+### Added
+- **BMW: 3 neue Actions (dedizierte Endpunkte)**
+  - `tyre_diagnosis` — Smart Maintenance Reifendiagnose: Dimension, Verschleiß, Defekte, Montage-Datum, Hersteller, Profil für alle 4 Räder + eingelagerte Reifen. Nutzt `/smartMaintenanceTyreDiagnosis` Endpunkt
+  - `basic_data` — Fahrzeug-Basisdaten: Marke, Typ, Antrieb, Farbe, Baujahr, Land, Motor, Lademodi, SA-Codes. Nutzt `/basicData` Endpunkt
+  - `image` — Fahrzeugbild als PNG (Base64-encoded). Nutzt `/image` Endpunkt
+
 ## [0.19.0-multi-ha.480] - 2026-04-14
 
 ### Added

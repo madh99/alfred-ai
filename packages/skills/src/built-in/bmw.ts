@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 
-type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions' | 'consumption' | 'history';
+type Action = 'authorize' | 'status' | 'charging' | 'charging_sessions' | 'consumption' | 'history' | 'tyre_diagnosis' | 'basic_data' | 'image';
 
 // ── BMW CarData Customer API ──────────────────────────────
 const DEVICE_CODE_URL = 'https://customer.bmwgroup.com/gcdm/oauth/device/code';
@@ -161,15 +161,18 @@ export class BMWSkill extends Skill {
       '"charging_sessions" listet Lade-Sessions (from/to Zeitraum). ' +
       '"consumption" berechnet Durchschnittsverbrauch (kWh/100km) aus Lade-Sessions — ' +
       'optional mit period: "last" (letzte Fahrt), "week", "month", "year", "all" (default: month). ' +
-      '"history" zeigt gespeicherte Telematik-Werte (SoC, Reichweite, Standort) über einen Zeitraum (from/to, default: 7 Tage).',
+      '"history" zeigt gespeicherte Telematik-Werte (SoC, Reichweite, Standort) über einen Zeitraum (from/to, default: 7 Tage). ' +
+      '"tyre_diagnosis" zeigt Smart Maintenance Reifendiagnose (Dimension, Verschleiß, Defekte, Montage). ' +
+      '"basic_data" zeigt Fahrzeug-Basisdaten (Modell, Farbe, Baujahr, Antrieb, SA-Codes). ' +
+      '"image" liefert ein Fahrzeugbild als PNG.',
     riskLevel: 'read',
-    version: '2.2.0',
+    version: '2.3.0',
     inputSchema: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['authorize', 'status', 'charging', 'charging_sessions', 'consumption', 'history'],
+          enum: ['authorize', 'status', 'charging', 'charging_sessions', 'consumption', 'history', 'tyre_diagnosis', 'basic_data', 'image'],
           description: 'BMW CarData action',
         },
         vin: {
@@ -522,6 +525,12 @@ export class BMWSkill extends Skill {
             input.from as string | undefined,
             input.to as string | undefined,
           );
+        case 'tyre_diagnosis':
+          return await this.getTyreDiagnosis(input.vin as string | undefined);
+        case 'basic_data':
+          return await this.getBasicData(input.vin as string | undefined);
+        case 'image':
+          return await this.getVehicleImage(input.vin as string | undefined);
         default:
           return { success: false, error: `Unknown action "${action as string}"` };
       }
@@ -1696,5 +1705,130 @@ export class BMWSkill extends Skill {
     }
 
     return { success: true, data: { entries: entries.length, from: fromDate, to: toDate }, display: lines.join('\n') };
+  }
+
+  // ── Dedicated Endpoints (BMW CarData 3.3.4) ─────────────────
+
+  private async getTyreDiagnosis(inputVin?: string): Promise<SkillResult> {
+    const vin = await this.resolveVin(inputVin);
+    const data = await this.apiGet<Record<string, unknown>>(
+      `/customers/vehicles/${vin}/smartMaintenanceTyreDiagnosis`,
+    );
+
+    const car = (data as any).passengerCar;
+    if (!car?.mountedTyres) return { success: true, data, display: 'Keine Reifendaten verfügbar.' };
+
+    const mounted = car.mountedTyres;
+    const lines = ['## BMW Reifendiagnose (Smart Maintenance)', ''];
+
+    const qualityStatus = mounted.aggregatedQualityStatus;
+    if (qualityStatus) {
+      lines.push(`**Gesamtstatus:** ${qualityStatus.value ?? qualityStatus.qualityStatus ?? '?'}`);
+      lines.push('');
+    }
+
+    const positions = [
+      { key: 'frontLeft', label: 'Vorne Links' },
+      { key: 'frontRight', label: 'Vorne Rechts' },
+      { key: 'rearLeft', label: 'Hinten Links' },
+      { key: 'rearRight', label: 'Hinten Rechts' },
+    ];
+
+    for (const pos of positions) {
+      const tyre = mounted[pos.key];
+      if (!tyre) continue;
+      const dim = tyre.dimension?.value ?? '?';
+      const season = tyre.season?.value ?? tyre.season?.season ?? '?';
+      const wear = tyre.tyreWear;
+      const wearStr = wear ? `${wear.value ?? wear.status ?? '?'}${wear.dueMileage ? ` (${wear.dueMileage} km)` : ''}` : '?';
+      const defect = tyre.tyreDefect;
+      const defectStr = defect?.status && defect.status !== 'NO_DEFECT' ? ` ⚠️ ${defect.value ?? defect.status}` : '';
+      const mountDate = tyre.mountingDate?.value ?? tyre.mountingDate?.mountingDate ?? '';
+      const tread = tyre.tread;
+      const treadStr = tread ? `${tread.manufacturer ?? ''} ${tread.treadDesign ?? ''}`.trim() : '';
+
+      lines.push(`**${pos.label}:** ${dim} (${season})`);
+      if (treadStr) lines.push(`  Reifen: ${treadStr}`);
+      lines.push(`  Verschleiß: ${wearStr}${defectStr}`);
+      if (mountDate) lines.push(`  Montiert: ${mountDate}`);
+    }
+
+    // Unmounted tyres
+    const unmounted = car.unmountedTyres;
+    if (unmounted?.frontLeft || unmounted?.rearLeft) {
+      lines.push('', '**Eingelagerte Reifen:**');
+      for (const pos of positions) {
+        const tyre = unmounted?.[pos.key];
+        if (!tyre?.dimension) continue;
+        const dim = tyre.dimension.value ?? '?';
+        const season = tyre.season?.value ?? '?';
+        lines.push(`  ${pos.label}: ${dim} (${season})`);
+      }
+    }
+
+    return { success: true, data, display: lines.join('\n') };
+  }
+
+  private async getBasicData(inputVin?: string): Promise<SkillResult> {
+    const vin = await this.resolveVin(inputVin);
+    const data = await this.apiGet<Record<string, unknown>>(
+      `/customers/vehicles/${vin}/basicData`,
+    );
+
+    const lines = ['## BMW Fahrzeugdaten', ''];
+    if (data.brand) lines.push(`**Marke:** ${data.brand}`);
+    if (data.bodyType) lines.push(`**Typ:** ${data.bodyType}`);
+    if (data.driveTrain) lines.push(`**Antrieb:** ${data.driveTrain}`);
+    if (data.colourDescription) lines.push(`**Farbe:** ${data.colourDescription}`);
+    if (data.constructionDate) lines.push(`**Baujahr:** ${String(data.constructionDate).slice(0, 10)}`);
+    if (data.countryCode) lines.push(`**Land:** ${data.countryCode}`);
+    if (data.engine) lines.push(`**Motor:** ${data.engine}`);
+    if (data.chargingModes) lines.push(`**Lademodi:** ${(data.chargingModes as string[]).join(', ')}`);
+    if (data.fullSAList) {
+      const codes = String(data.fullSAList).split(',').map(c => c.trim());
+      lines.push(`**Sonderausstattung:** ${codes.length} Codes`);
+      lines.push(`  ${codes.slice(0, 20).join(', ')}${codes.length > 20 ? ` ... (+${codes.length - 20})` : ''}`);
+    }
+
+    return { success: true, data, display: lines.join('\n') };
+  }
+
+  private async getVehicleImage(inputVin?: string): Promise<SkillResult> {
+    const vin = await this.resolveVin(inputVin);
+
+    let accessToken = await this.ensureToken();
+    const url = `${API_BASE}/customers/vehicles/${vin}/image`;
+
+    let res = await fetch(url, {
+      headers: { ...this.apiHeaders(accessToken), Accept: 'image/png' },
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (res.status === 401) {
+      const tokens = await this.loadTokens();
+      if (tokens) {
+        accessToken = await this.refreshAccessToken(tokens);
+        res = await fetch(url, {
+          headers: { ...this.apiHeaders(accessToken), Accept: 'image/png' },
+          signal: AbortSignal.timeout(15_000),
+        });
+      }
+    }
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      return { success: false, error: `Fahrzeugbild nicht verfügbar: HTTP ${res.status} — ${detail.slice(0, 200)}` };
+    }
+
+    const contentType = res.headers.get('content-type') ?? 'image/png';
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const base64 = buffer.toString('base64');
+    const sizeMB = (buffer.length / 1024 / 1024).toFixed(2);
+
+    return {
+      success: true,
+      data: { contentType, sizeBytes: buffer.length, base64 },
+      display: `## BMW Fahrzeugbild\n\n**Format:** ${contentType}\n**Größe:** ${sizeMB} MB\n\n![BMW](data:${contentType};base64,${base64})`,
+    };
   }
 }
