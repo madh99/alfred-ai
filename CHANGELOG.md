@@ -18,6 +18,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   - **Template-Resolution** — Schritte können Ergebnisse vorheriger Schritte referenzieren: `{{step_0.distance_km}}`
   - **Sicherheit:** Min 1 Checkpoint pro Plan, max 10 Schritte, max 3 Re-Plannings, 24h Timeout
 
+## [0.19.0-multi-ha.491] - 2026-04-15
+
+### Fixed
+- **Insight-Tracker: Fundamentaler Redesign** — Das System bestrafte Alfred für nützliche Insights die keine Antwort brauchten. 6 Fixes:
+  - **Informativ vs Handlungsrelevant:** Neue `classifyInsightType()` — informative Insights (Wetter, Crypto, Status) werden nicht mehr getrackt. Nur handlungsrelevante Insights (Konflikte, Warnungen, Deadlines) erwarten eine Reaktion
+  - **Batch-Tracking:** Gebündelte Insights (5 in einer Nachricht) werden als 1 Batch getrackt statt 5 einzelne Einträge. User-Reaktion gilt für alle Kategorien im Batch
+  - **Reaktionsfenster 30min → 2h:** User liest Insights oft erst 1h später
+  - **Nur explizite Ablehnungen zählen:** Threshold von `ignoredRate >= 0.7` auf `negativeRate >= 0.5`. Stille = neutral, nicht negativ
+  - **System B → System A Bridge:** `insight_resolved` (konversationsbasiert, genauer) speist jetzt in InsightTracker Preference-Learning ein
+  - **Deferred Insights werden getrackt:** Flush-Pfade rufen jetzt `trackInsightBatch()` auf
+  - **LLM-Prompt:** "EXPLIZIT abgelehnt — reduzieren, NICHT eliminieren" statt "weniger senden"
+  - **DB Cleanup:** 18 falsche "ignoriert"-Preferences + Stats resetted
+
 ## [0.19.0-multi-ha.488] - 2026-04-14
 
 ### Added

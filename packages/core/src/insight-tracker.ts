@@ -1,8 +1,8 @@
 import type { Logger } from 'pino';
 import type { MemoryRepository, SkillStateRepository } from '@alfred/storage';
 
-interface PendingInsight {
-  category: string;
+interface PendingBatch {
+  categories: string[];
   sentAt: number;
 }
 
@@ -15,14 +15,16 @@ interface CategoryStats {
 export class InsightTracker {
   private static readonly STATS_MEMORY_KEY = 'insight_tracker_stats';
 
-  /** Insights awaiting user reaction (max 30 min window). */
-  private pending: PendingInsight[] = [];
+  /** Batches of actionable insights awaiting user reaction (2h window). */
+  private pendingBatches: PendingBatch[] = [];
   /** Accumulated stats per category. */
   private stats = new Map<string, CategoryStats>();
   /** Whether stats have been loaded from DB. */
   private loaded = false;
   /** Minimum interactions before saving preference. */
-  private readonly MIN_SAMPLES = 5;
+  private readonly MIN_SAMPLES = 10;
+  /** Reaction window: 2 hours (was 30 min — too short for async messaging). */
+  private static readonly REACTION_WINDOW_MS = 2 * 60 * 60_000;
 
   constructor(
     private readonly memoryRepo: MemoryRepository,
@@ -47,7 +49,7 @@ export class InsightTracker {
         }
       }
     } catch {
-      // No persisted state yet — fine on fresh start
+      // No persisted state yet
     }
     this.loaded = true;
   }
@@ -62,73 +64,90 @@ export class InsightTracker {
   }
 
   /**
-   * Called by ReasoningEngine after sending an insight.
-   * Category is derived from the insight context (energy, calendar, crypto, rss, todo, weather, travel, shopping).
+   * Track a batch of insights sent together.
+   * Only ACTIONABLE insights are tracked — informational ones don't need a response.
    */
-  trackInsightSent(category: string): void {
-    this.pending.push({ category, sentAt: Date.now() });
-    // Expire old pending insights (>30 min)
-    const cutoff = Date.now() - 30 * 60_000;
-    this.pending = this.pending.filter(p => p.sentAt > cutoff);
+  trackInsightBatch(categories: string[], insightTexts: string[]): void {
+    const actionableCategories = categories.filter((_, i) =>
+      InsightTracker.classifyInsightType(insightTexts[i] ?? '') === 'actionable',
+    );
+    if (actionableCategories.length === 0) return;
+
+    this.pendingBatches.push({ categories: actionableCategories, sentAt: Date.now() });
+
+    // Expire old batches
+    const cutoff = Date.now() - InsightTracker.REACTION_WINDOW_MS;
+    this.pendingBatches = this.pendingBatches.filter(b => b.sentAt > cutoff);
+  }
+
+  /**
+   * Legacy single-insight tracking — delegates to batch tracking.
+   */
+  trackInsightSent(category: string, insightText?: string): void {
+    this.trackInsightBatch([category], [insightText ?? '']);
   }
 
   /**
    * Called by MessagePipeline when user sends a message.
-   * Checks if it's a reaction to a recent insight.
+   * Checks if it's a reaction to a recent insight batch.
    */
   async onUserMessage(userId: string, text: string): Promise<void> {
     await this.ensureLoaded(userId);
-    if (this.pending.length === 0) return;
+    if (this.pendingBatches.length === 0) return;
 
-    const cutoff = Date.now() - 30 * 60_000;
-    const recent = this.pending.filter(p => p.sentAt > cutoff);
+    const cutoff = Date.now() - InsightTracker.REACTION_WINDOW_MS;
+    const recent = this.pendingBatches.filter(b => b.sentAt > cutoff);
     if (recent.length === 0) return;
 
-    // Determine sentiment from user message
     const sentiment = this.detectSentiment(text);
+    if (sentiment === 'neutral') return;
 
-    if (sentiment === 'neutral') {
-      // Not clearly a reaction to an insight — ignore
-      return;
+    // Apply sentiment to ALL categories in the most recent batch
+    const batch = recent[recent.length - 1];
+    for (const cat of batch.categories) {
+      const stat = this.stats.get(cat) ?? { positive: 0, negative: 0, ignored: 0 };
+      if (sentiment === 'positive') stat.positive++;
+      else if (sentiment === 'negative') stat.negative++;
+      this.stats.set(cat, stat);
     }
 
-    // Apply sentiment to the most recent pending insight
-    const latest = recent[recent.length - 1];
-    const stat = this.stats.get(latest.category) ?? { positive: 0, negative: 0, ignored: 0 };
-
-    if (sentiment === 'positive') {
-      stat.positive++;
-    } else if (sentiment === 'negative') {
-      stat.negative++;
-    }
-
-    this.stats.set(latest.category, stat);
     await this.persistStats(userId).catch(() => {});
-
-    // Remove the reacted-to insight from pending
-    this.pending = this.pending.filter(p => p !== latest);
-
-    // Save preference if enough samples
+    this.pendingBatches = this.pendingBatches.filter(b => b !== batch);
     await this.savePreferences(userId);
   }
 
   /**
-   * Called periodically (e.g. hourly) to mark unreacted insights as "ignored".
+   * Called when System B (message-pipeline insight-response detection) resolves an insight.
+   * This is more accurate than keyword detection — feeds into preference learning.
+   */
+  async onInsightResolved(userId: string, category: string): Promise<void> {
+    await this.ensureLoaded(userId);
+    const stat = this.stats.get(category) ?? { positive: 0, negative: 0, ignored: 0 };
+    stat.positive++;
+    this.stats.set(category, stat);
+    await this.persistStats(userId).catch(() => {});
+    await this.savePreferences(userId);
+  }
+
+  /**
+   * Called periodically to mark unreacted ACTIONABLE insights as "ignored".
+   * Informational insights are never tracked, so they never become "ignored".
    */
   async processExpired(userId: string): Promise<void> {
     await this.ensureLoaded(userId);
-    const cutoff = Date.now() - 30 * 60_000;
-    const expired = this.pending.filter(p => p.sentAt <= cutoff);
+    const cutoff = Date.now() - InsightTracker.REACTION_WINDOW_MS;
+    const expired = this.pendingBatches.filter(b => b.sentAt <= cutoff);
 
-    for (const p of expired) {
-      const stat = this.stats.get(p.category) ?? { positive: 0, negative: 0, ignored: 0 };
-      stat.ignored++;
-      this.stats.set(p.category, stat);
+    for (const batch of expired) {
+      for (const cat of batch.categories) {
+        const stat = this.stats.get(cat) ?? { positive: 0, negative: 0, ignored: 0 };
+        stat.ignored++;
+        this.stats.set(cat, stat);
+      }
     }
 
-    this.pending = this.pending.filter(p => p.sentAt > cutoff);
+    this.pendingBatches = this.pendingBatches.filter(b => b.sentAt > cutoff);
 
-    // Save if enough data
     if (expired.length > 0) {
       await this.persistStats(userId).catch(() => {});
       this.savePreferences(userId).catch(() => {});
@@ -138,14 +157,14 @@ export class InsightTracker {
   private detectSentiment(text: string): 'positive' | 'negative' | 'neutral' {
     const lower = text.toLowerCase().trim();
 
-    // Positive signals
-    if (/\b(danke|super|perfekt|genau|gut|toll|klasse|top|prima|stimmt|richtig|ja|ok|mach|erledige|kümmere)\b/.test(lower)) {
-      return 'positive';
+    // Negative signals (explicit rejection — these are reliable)
+    if (/\b(stopp|stop|nervig|nervt|aufhören|nicht mehr|zu viel|spam|egal|unwichtig|brauche? ich nicht|interessiert mich nicht|halt die fresse|sei still|ruhe)\b/.test(lower)) {
+      return 'negative';
     }
 
-    // Negative signals
-    if (/\b(stopp|stop|nervig|nervt|aufhören|nicht mehr|zu viel|spam|egal|unwichtig|brauche? ich nicht|interessiert mich nicht)\b/.test(lower)) {
-      return 'negative';
+    // Positive signals (explicit acknowledgment)
+    if (/\b(danke|super|perfekt|genau|gut|toll|klasse|top|prima|stimmt|richtig|mach|erledige|kümmere|passt|alles klar|check|verstanden|noted|thx|thanks)\b/.test(lower)) {
+      return 'positive';
     }
 
     return 'neutral';
@@ -158,22 +177,21 @@ export class InsightTracker {
 
       const positiveRate = stat.positive / total;
       const negativeRate = stat.negative / total;
-      const ignoredRate = stat.ignored / total;
 
       let preference: string;
       let confidence: number;
 
-      if (positiveRate >= 0.6) {
-        preference = `User reagiert positiv auf ${category}-Insights (${stat.positive}/${total} Reaktionen)`;
+      if (positiveRate >= 0.5) {
+        preference = `User findet ${category}-Insights nützlich (${stat.positive}/${total} positiv)`;
         confidence = Math.min(0.95, 0.6 + positiveRate * 0.3);
-      } else if (negativeRate >= 0.3) {
-        preference = `User lehnt ${category}-Insights ab (${stat.negative}/${total} negativ) — reduzieren`;
+      } else if (negativeRate >= 0.5) {
+        // Only explicit rejections trigger "reduce" — not silence
+        preference = `User hat ${category}-Insights EXPLIZIT abgelehnt (${stat.negative}/${total} negativ) — Häufigkeit reduzieren aber nicht eliminieren`;
         confidence = Math.min(0.95, 0.6 + negativeRate * 0.3);
-      } else if (ignoredRate >= 0.7) {
-        preference = `User ignoriert ${category}-Insights meist (${stat.ignored}/${total} ohne Reaktion) — weniger senden`;
-        confidence = Math.min(0.9, 0.5 + ignoredRate * 0.3);
       } else {
-        continue; // No clear preference yet
+        // No clear preference — don't save anything
+        // This is the key change: silence ≠ rejection
+        continue;
       }
 
       try {
@@ -184,6 +202,18 @@ export class InsightTracker {
         this.logger.info({ category, preference, total }, 'Insight preference saved');
       } catch { /* skip */ }
     }
+  }
+
+  /**
+   * Classify whether an insight is informational (no response expected)
+   * or actionable (user should respond or take action).
+   */
+  static classifyInsightType(text: string): 'informational' | 'actionable' {
+    const lower = text.toLowerCase();
+    if (/konflikt|warnung|⚠️|dringend|deadline|handlungsbedarf|reicht nicht|fehlt|überfällig|sofort|laden nötig|prüfen|action|aktion|entscheid|bestätig/.test(lower)) {
+      return 'actionable';
+    }
+    return 'informational';
   }
 
   /**

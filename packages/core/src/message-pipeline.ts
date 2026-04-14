@@ -1047,6 +1047,11 @@ export class MessagePipeline {
             if (topicWords) {
               this.memoryRepo.saveWithMetadata(masterUserId, `insight_resolved:${topicWords}`,
                 `User: ${message.text.slice(0, 100)}`, 'general', 'feedback', 0.8, 'auto').catch(() => {});
+              // Feed into InsightTracker preference learning (System B → System A bridge)
+              if (this.insightTracker) {
+                const category = (await import('./insight-tracker.js')).InsightTracker.categorizeInsight(lastBotMsg.content);
+                this.insightTracker.onInsightResolved(masterUserId, category).catch(() => {});
+              }
             }
           }
         }

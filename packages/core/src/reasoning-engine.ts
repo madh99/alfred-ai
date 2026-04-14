@@ -357,6 +357,11 @@ ${this.buildTopicInstructions()}`;
                   }
                 }
                 await adapter.sendMessage(this.defaultChatId, msg);
+                if (this.insightTracker && d.message) {
+                  const lines = d.message.split('\n').filter((l: string) => l.trim().length > 10);
+                  const cats = lines.map((l: string) => InsightTracker.categorizeInsight(l));
+                  this.insightTracker.trackInsightBatch(cats, lines);
+                }
                 try {
                   const deferredActions = JSON.parse(d.actions) as ProposedAction[];
                   if (deferredActions.length > 0) await this.processActions(deferredActions);
@@ -1118,10 +1123,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         this.logger.info({ durationMs, insights: insights.length, actions: actions.length, urgency }, 'Reasoning pass: insights sent');
       }
       if (this.insightTracker) {
-        for (const insight of insights) {
-          const category = InsightTracker.categorizeInsight(insight);
-          this.insightTracker.trackInsightSent(category);
-        }
+        const categories = insights.map(i => InsightTracker.categorizeInsight(i));
+        this.insightTracker.trackInsightBatch(categories, insights);
       }
       // Track delivered insights as feedback memories with 48h expiry.
       // Was 7 days — but that caused stale state descriptions ("Email ungelesen") to persist
@@ -1167,6 +1170,12 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
                 }
               }
               await adapter.sendMessage(this.defaultChatId, msg);
+              // Track deferred insights for preference learning
+              if (this.insightTracker && d.message) {
+                const lines = d.message.split('\n').filter((l: string) => l.trim().length > 10);
+                const cats = lines.map((l: string) => InsightTracker.categorizeInsight(l));
+                this.insightTracker.trackInsightBatch(cats, lines);
+              }
               // Process deferred actions
               try {
                 const deferredActions = JSON.parse(d.actions) as ProposedAction[];

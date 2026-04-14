@@ -984,10 +984,11 @@ export class ReasoningContextCollector {
       // Insight preferences
       const prefs = await this.memoryRepo.search(this.resolvedUserId!, 'insight_pref_');
       if (prefs.length > 0) {
-        const positive = prefs.filter(p => p.value.includes('positiv')).map(p => p.key.replace('insight_pref_', ''));
-        const negative = prefs.filter(p => p.value.includes('ablehnt') || p.value.includes('ignoriert')).map(p => p.key.replace('insight_pref_', ''));
-        if (positive.length > 0) parts.push(`Insight-Präferenz positiv: ${positive.join(', ')}`);
-        if (negative.length > 0) parts.push(`Insight-Präferenz negativ: ${negative.join(', ')}`);
+        const positive = prefs.filter(p => p.value.includes('nützlich') || p.value.includes('positiv')).map(p => p.key.replace('insight_pref_', ''));
+        const negative = prefs.filter(p => p.value.includes('abgelehnt') || p.value.includes('ablehnt')).map(p => p.key.replace('insight_pref_', ''));
+        // Note: "ignoriert" preferences from the old system are not included — silence ≠ rejection
+        if (positive.length > 0) parts.push(`Insight-Präferenz positiv (User findet nützlich): ${positive.join(', ')}`);
+        if (negative.length > 0) parts.push(`Insight-Präferenz negativ (EXPLIZIT abgelehnt — Häufigkeit reduzieren, NICHT eliminieren): ${negative.join(', ')}`);
       }
 
       // Autonomy suggestion
