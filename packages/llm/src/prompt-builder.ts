@@ -44,6 +44,8 @@ export interface SystemPromptContext {
   queryContext?: string;
   /** Dynamic device/system context from Knowledge Graph — user-specific, not hardcoded. */
   deviceContext?: string;
+  /** Configurable personality: tone, humor, directness, language. */
+  personality?: { tone?: string; humor?: string; directness?: string; language?: string; custom?: string };
 }
 
 /**
@@ -154,7 +156,21 @@ export class PromptBuilder {
     const os = process.platform === 'darwin' ? 'macOS' : process.platform === 'win32' ? 'Windows' : 'Linux';
     const homeDir = process.env['HOME'] || process.env['USERPROFILE'] || '~';
 
-    let prompt = `You are Alfred, a personal AI assistant. You run on ${os} (home: ${homeDir}).
+    let prompt = `You are Alfred, a personal AI assistant. You run on ${os} (home: ${homeDir}).`;
+
+    // Personality injection (cacheable prefix — before core principles)
+    if (context.personality) {
+      const p = context.personality;
+      const parts: string[] = [];
+      if (p.tone) parts.push(`Tone: ${p.tone}`);
+      if (p.humor) parts.push(`Humor: ${p.humor}`);
+      if (p.directness) parts.push(`Directness: ${p.directness}`);
+      if (p.language) parts.push(`Default language: ${p.language}`);
+      if (p.custom) parts.push(p.custom);
+      if (parts.length > 0) prompt += `\n\n## Personality\n${parts.join('\n')}`;
+    }
+
+    prompt += `
 
 ## Core principles
 - **When the user's intent is clear**, ACT immediately using your tools. Don't explain what you'll do — just do it.

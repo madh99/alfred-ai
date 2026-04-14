@@ -115,7 +115,7 @@ export class DelegateSkill extends Skill {
     tracker.ping('starting', { maxIterations });
 
     // Build tools list — exclude 'delegate' to prevent recursion
-    const tools = this.buildSubAgentTools();
+    const tools = this.buildSubAgentTools(task);
 
     // Restore data store from checkpoint or start fresh
     const dataStore = new Map<string, string>();
@@ -297,17 +297,36 @@ export class DelegateSkill extends Skill {
     }
   }
 
-  private buildSubAgentTools(): ToolDefinition[] {
+  private buildSubAgentTools(task?: string): ToolDefinition[] {
     if (!this.skillRegistry) return [];
 
-    return this.skillRegistry
+    let skills = this.skillRegistry
       .getAll()
-      .filter(s => s.metadata.name !== 'delegate') // prevent recursion
-      .map(s => ({
-        name: s.metadata.name,
-        description: s.metadata.description,
-        inputSchema: s.metadata.inputSchema,
-      }));
+      .filter(s => s.metadata.name !== 'delegate'); // prevent recursion
+
+    // Minimal mode: keyword-match task against skill descriptions to filter irrelevant tools.
+    // Saves 2000-8000 tokens per delegate iteration while keeping all relevant skills.
+    if (task && skills.length > 15) {
+      const taskLower = task.toLowerCase();
+      const taskWords = taskLower.split(/\s+/).filter(w => w.length >= 3);
+      const scored = skills.map(s => {
+        const desc = (s.metadata.description + ' ' + s.metadata.name).toLowerCase();
+        const hits = taskWords.filter(w => desc.includes(w)).length;
+        return { skill: s, hits };
+      });
+      // Keep skills with ≥1 keyword hit + always include core skills
+      const coreSkills = new Set(['calculator', 'web_search', 'memory', 'shell', 'file', 'note', 'reminder']);
+      const filtered = scored.filter(s => s.hits > 0 || coreSkills.has(s.skill.metadata.name));
+      if (filtered.length >= 5) {
+        skills = filtered.map(s => s.skill);
+      }
+    }
+
+    return skills.map(s => ({
+      name: s.metadata.name,
+      description: s.metadata.description,
+      inputSchema: s.metadata.inputSchema,
+    }));
   }
 
   private async executeSubAgentTool(

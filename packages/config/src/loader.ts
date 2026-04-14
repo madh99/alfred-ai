@@ -242,6 +242,12 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_CMDB_AUTO_INCIDENT: ['cmdb', 'autoIncidentFromMonitor'],
   ALFRED_CMDB_KG_SYNC: ['cmdb', 'kgSync'],
   ALFRED_CMDB_HEALTH_CHECK_INTERVAL: ['cmdb', 'healthCheckIntervalMinutes'],
+  // Personality
+  ALFRED_PERSONALITY_TONE: ['personality', 'tone'],
+  ALFRED_PERSONALITY_HUMOR: ['personality', 'humor'],
+  ALFRED_PERSONALITY_DIRECTNESS: ['personality', 'directness'],
+  ALFRED_PERSONALITY_LANGUAGE: ['personality', 'language'],
+  ALFRED_PERSONALITY_CUSTOM: ['personality', 'custom'],
   // MikroTik
   ALFRED_MIKROTIK_ENABLED: ['mikrotik', 'enabled'],
   ALFRED_MIKROTIK_HOST: ['mikrotik', 'host'],

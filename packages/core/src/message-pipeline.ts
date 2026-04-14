@@ -138,6 +138,7 @@ export interface PipelineOptions {
   maxHistoryMessages?: number;
   documentProcessor?: import('./document-processor.js').DocumentProcessor;
   conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
+  personality?: { tone?: string; humor?: string; directness?: string; language?: string; custom?: string };
 }
 
 /** Tracks a running delegate agent so other messages can query its status. */
@@ -169,6 +170,7 @@ export class MessagePipeline {
   private readonly maxHistoryMessages: number;
   private readonly documentProcessor?: import('./document-processor.js').DocumentProcessor;
   private readonly conversationSummarizer?: import('./conversation-summarizer.js').ConversationSummarizer;
+  private readonly personality?: { tone?: string; humor?: string; directness?: string; language?: string; custom?: string };
 
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
@@ -292,6 +294,7 @@ export class MessagePipeline {
     this.maxHistoryMessages = options.maxHistoryMessages ?? 30;
     this.documentProcessor = options.documentProcessor;
     this.conversationSummarizer = options.conversationSummarizer;
+    this.personality = options.personality;
     this.promptBuilder = new PromptBuilder();
   }
 
@@ -701,6 +704,7 @@ export class MessagePipeline {
         rules,
         personalContext,
         queryContext,
+        personality: this.personality,
       });
 
       // Inject active ITSM incidents into system prompt so the LLM can reference

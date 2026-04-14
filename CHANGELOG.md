@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.488] - 2026-04-14
+
+### Added
+- **Personality-Config** — Konfigurierbarer Persönlichkeits-Block im System-Prompt: Ton, Humor, Direktheit, Sprache, Custom-Text. Wird im cachebaren Prefix platziert (vor Core Principles). Config über `personality:` Block in YAML oder ENV (`ALFRED_PERSONALITY_TONE` etc.)
+- **Delegate Prompt-Modes** — Sub-Agents bekommen nur noch task-relevante Skills als Tools statt alle 65+. Keyword-Matching auf Task-Text filtert irrelevante Skills. Spart 2.000-8.000 Tokens pro Delegate-Iteration. Fallback auf volles Set wenn <5 Skills matchen
+- **Onboarding Skill** — Geführte Ersteinrichtung: fragt Name, Wohnort, Arbeitgeber, Partner, Kinder, Sprache nacheinander ab und speichert als Memories. 4 Actions: start, step, skip, status
+
 ## [0.19.0-multi-ha.487] - 2026-04-14
 
 ### Added

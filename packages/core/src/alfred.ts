@@ -1344,6 +1344,19 @@ export class Alfred {
     const helpSkill = new HelpSkill(skillRegistry);
     skillRegistry.register(helpSkill);
 
+    // 4s3. Onboarding (always available)
+    {
+      const { OnboardingSkill } = await import('@alfred/skills');
+      const onboardingSkill = new OnboardingSkill();
+      if (memoryRepo) {
+        const uid = this.ownerMasterUserId || '';
+        onboardingSkill.setMemoryCallback(async (key, value, type, category) => {
+          await memoryRepo.saveWithMetadata(uid, key, value, category, type as any, 1.0, 'manual');
+        });
+      }
+      skillRegistry.register(onboardingSkill);
+    }
+
     // 4t. User Management (always available)
     {
       const { AlfredUserRepository } = await import('@alfred/storage');
@@ -1646,6 +1659,7 @@ export class Alfred {
       maxHistoryMessages: this.config.conversation?.maxHistoryMessages ?? 100,
       documentProcessor,
       conversationSummarizer,
+      personality: this.config.personality,
     });
 
     // 5e. Initialize cluster manager BEFORE schedulers

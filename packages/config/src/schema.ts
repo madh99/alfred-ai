@@ -603,6 +603,13 @@ export const AlfredConfigSchema = z.object({
     include_config: z.coerce.boolean().default(true),
     include_minio: z.coerce.boolean().default(false),
   }).optional(),
+  personality: z.object({
+    tone: z.string().optional(),
+    humor: z.string().optional(),
+    directness: z.string().optional(),
+    language: z.string().optional(),
+    custom: z.string().optional(),
+  }).optional(),
   mikrotik: z.object({
     enabled: z.coerce.boolean().default(false),
     confirmation_mode: z.coerce.boolean().default(false),

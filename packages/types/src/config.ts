@@ -863,6 +863,7 @@ export interface AlfredConfig {
   backup?: BackupConfig;
   commvault?: CommvaultConfig;
   mikrotik?: MikroTikConfig;
+  personality?: PersonalityConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };
@@ -904,6 +905,14 @@ export interface MikroTikRouterConfig {
   port?: number;
   ssl?: boolean;
   default?: boolean;
+}
+
+export interface PersonalityConfig {
+  tone?: string;
+  humor?: string;
+  directness?: string;
+  language?: string;
+  custom?: string;
 }
 
 export interface MikroTikConfig {
