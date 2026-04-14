@@ -1031,6 +1031,48 @@ export class Alfred {
           return { assets, relations: [] };
         });
 
+        wrapSkillAsSource('mikrotik', async () => {
+          const assets: any[] = [];
+          const relations: any[] = [];
+          const mtSkill = skillRegistry.get('mikrotik')! as any;
+          const routers = mtSkill.getRouters?.() ?? [];
+          for (const cfg of routers) {
+            const conn = { name: cfg.name, cfg };
+            try {
+              // Router as network_device asset
+              const res = await mtSkill.api(conn, 'GET', '/system/resource');
+              const identity = await mtSkill.api(conn, 'GET', '/system/identity');
+              const routerName = identity?.name ?? cfg.name;
+              const routerAsset = { name: routerName, assetType: 'network_device' as const, sourceSkill: 'mikrotik', sourceId: `router:${cfg.name}`, ipAddress: cfg.host, status: 'active' as const, attributes: { version: res.version, architecture: res['architecture-name'], board: res['board-name'], cpu_count: res['cpu-count'], total_memory: res['total-memory'], uptime: res.uptime } };
+              assets.push(routerAsset);
+
+              // Interfaces as network assets
+              const ifaces = await mtSkill.api(conn, 'GET', '/interface');
+              for (const i of (ifaces as any[])) {
+                if (i.type === 'bridge' || i.type === 'loopback') continue;
+                assets.push({ name: `${routerName}/${i.name}`, assetType: 'network' as const, sourceSkill: 'mikrotik', sourceId: `if:${cfg.name}:${i.name}`, attributes: { type: i.type, mac: i['mac-address'], running: i.running, mtu: i['actual-mtu'] } });
+                relations.push({ sourceEntityName: `${routerName}/${i.name}`, targetEntityName: routerName, relationType: 'part_of' });
+              }
+
+              // Firewall rules
+              const fwRules = await mtSkill.api(conn, 'GET', '/ip/firewall/filter');
+              for (const r of (fwRules as any[]).slice(0, 50)) {
+                const ruleName = r.comment || `${r.chain}-${r.action}-${r['.id']}`;
+                assets.push({ name: `${routerName}/fw/${ruleName}`, assetType: 'firewall_rule' as const, sourceSkill: 'mikrotik', sourceId: `fw:${cfg.name}:${r['.id']}`, attributes: { chain: r.chain, action: r.action, src: r['src-address'], dst: r['dst-address'], protocol: r.protocol, port: r['dst-port'], disabled: r.disabled } });
+              }
+
+              // DHCP leases as discovered devices
+              const leases = await mtSkill.api(conn, 'GET', '/ip/dhcp-server/lease');
+              for (const l of (leases as any[])) {
+                if (l.status !== 'bound') continue;
+                const deviceName = l['host-name'] || l['mac-address'] || l.address;
+                assets.push({ name: deviceName, assetType: 'network_device' as const, sourceSkill: 'mikrotik', sourceId: `dhcp:${cfg.name}:${l['mac-address'] ?? l.address}`, ipAddress: l.address, attributes: { mac: l['mac-address'], hostname: l['host-name'], server: l.server, dynamic: l.dynamic } });
+              }
+            } catch { /* router unreachable — skip */ }
+          }
+          return { assets, relations };
+        });
+
         // Wire CMDB registration callback for full_deploy
         deploySkill.setCmdbCallback?.(async (result: Record<string, unknown>) => {
           try {

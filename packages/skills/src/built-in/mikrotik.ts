@@ -166,7 +166,8 @@ export class MikroTikSkill extends Skill {
 
   // ── Router Resolution ──────────────────────────────────────
 
-  private getRouters(): MikroTikRouterConfig[] {
+  /** Exposed for CMDB discovery. */
+  getRouters(): MikroTikRouterConfig[] {
     const routers = [...(this.config.routers ?? []), ...this.dynamicRouters];
     // Single-router ENV shorthand
     if (routers.length === 0 && this.config.host) {
@@ -195,7 +196,8 @@ export class MikroTikSkill extends Skill {
 
   // ── REST API ───────────────────────────────────────────────
 
-  private async api<T = unknown>(conn: RouterConn, method: string, path: string, body?: Record<string, unknown>): Promise<T> {
+  /** Exposed for CMDB discovery. */
+  async api<T = unknown>(conn: RouterConn, method: string, path: string, body?: Record<string, unknown>): Promise<T> {
     const { cfg } = conn;
     const proto = cfg.ssl !== false ? 'https' : 'http';
     const port = cfg.port ?? (cfg.ssl !== false ? 443 : 80);

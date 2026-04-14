@@ -37,7 +37,7 @@ export class CmdbSkill extends Skill {
     description:
       'Configuration Management Database — Zentrales Inventar aller Infrastruktur-Assets. ' +
       '"discover" scannt alle konfigurierten Infra-Skills und aktualisiert das CMDB. ' +
-      '"discover_source" scannt nur eine bestimmte Quelle (source: proxmox/docker/unifi/cloudflare_dns/npm/pfsense/homeassistant). ' +
+      '"discover_source" scannt nur eine bestimmte Quelle (source: proxmox/docker/unifi/cloudflare_dns/npm/pfsense/homeassistant/mikrotik). ' +
       '"list_assets" zeigt Assets (filter: asset_type, status, environment, source_skill, search, tags). ' +
       '"get_asset" zeigt Asset-Details + Relationen + Change-History (asset_id). ' +
       '"add_asset" erstellt ein Asset manuell (name, asset_type, ip_address, hostname, environment, owner, purpose, tags). ' +
