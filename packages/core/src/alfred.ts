@@ -1450,6 +1450,22 @@ export class Alfred {
       this.logger.info('Commvault skill registered');
     }
 
+    // 4u-mikrotik. MikroTik RouterOS (optional)
+    if (this.config.mikrotik?.enabled) {
+      const { MikroTikSkill } = await import('@alfred/skills');
+      const mtSkill = new MikroTikSkill(this.config.mikrotik);
+      if (this.config.cmdb?.autoIncidentFromMonitor) {
+        const itsmSkill = skillRegistry.get('itsm');
+        if (itsmSkill) {
+          mtSkill.setItsmCallback(async (input) => {
+            return itsmSkill.execute(input, { alfredUserId: this.ownerMasterUserId } as any);
+          });
+        }
+      }
+      skillRegistry.register(mtSkill);
+      this.logger.info('MikroTik skill registered');
+    }
+
     // 4u. YouTube (optional, requires API key)
     if (this.config.youtube?.apiKey) {
       const { YouTubeSkill } = await import('@alfred/skills');
@@ -2315,6 +2331,30 @@ export class Alfred {
           }
         }, intervalMs);
         this.logger.info({ interval: `${this.config.commvault.polling_interval ?? 30}min` }, 'Commvault monitoring started');
+      }
+    }
+
+    // MikroTik proactive monitoring
+    if (this.config.mikrotik?.enabled && (this.config.mikrotik.polling_interval ?? 5) > 0) {
+      if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('mikrotik-monitor');
+      const mtSkill = this.skillRegistry.get('mikrotik') as any;
+      if (mtSkill?.pollAndReport) {
+        const intervalMs = (this.config.mikrotik.polling_interval ?? 5) * 60_000;
+        setInterval(async () => {
+          if (this.adapterClaimManager) {
+            const claimed = await this.adapterClaimManager.tryClaim('mikrotik-monitor');
+            if (!claimed) return;
+          }
+          try {
+            const result = await mtSkill.pollAndReport();
+            if (result.downInterfaces.length > 0 || result.cpuWarnings.length > 0) {
+              this.logger.info({ ...result }, 'MikroTik monitoring alert');
+            }
+          } catch (err) {
+            this.logger.debug({ err }, 'MikroTik monitoring poll failed');
+          }
+        }, intervalMs);
+        this.logger.info({ interval: `${this.config.mikrotik.polling_interval ?? 5}min` }, 'MikroTik monitoring started');
       }
     }
 

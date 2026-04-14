@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.480] - 2026-04-14
+
+### Added
+- **MikroTik RouterOS Management Skill** — RouterOS REST API v7.x, Multi-Router-fähig. 34 Actions:
+  - **Monitoring:** status, interfaces, traffic, resources, logs, dhcp_leases, arp, routes, dns_cache, connections, neighbors, wireless
+  - **Konfiguration:** firewall_rules, add/remove/enable/disable_firewall, nat_rules, add/remove_nat, set_dns, add/remove_address, enable/disable_interface, add/remove_route, add_dhcp_static, set_queue, backup_config
+  - **Troubleshooting:** ping, traceroute, torch
+  - **Verwaltung:** list_routers, add/remove_router, configure
+  - Multi-Router: benannte Verbindungen mit Default-Router, dynamisch hinzufügbar
+  - Proaktives Monitoring: Interface up/down, CPU/RAM-Warnungen, ITSM-Auto-Incident
+  - Reasoning-Integration: Router-Status im proaktiven Denken
+  - Cluster-aware Monitoring (AdapterClaimManager)
+
 ## [0.19.0-multi-ha.479] - 2026-04-14
 
 ### Added

@@ -235,6 +235,17 @@ export class ReasoningContextCollector {
       });
     }
 
+    if (this.skillRegistry.has('mikrotik')) {
+      defs.push({
+        key: 'mikrotik', label: 'MikroTik Router', priority: 2, maxTokens: 200,
+        fetch: async () => {
+          const skill = this.skillRegistry.get('mikrotik') as any;
+          if (skill?.buildReasoningContext) return skill.buildReasoningContext();
+          return '(MikroTik: keine Daten)';
+        },
+      });
+    }
+
     if (this.skillRegistry.has('commvault')) {
       defs.push({
         key: 'commvault', label: 'Commvault Backup', priority: 2, maxTokens: 200,
