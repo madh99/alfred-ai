@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.485] - 2026-04-14
+
+### Fixed
+- **KG: 4 verbleibende Müll-Quellen gefixt**
+  - "Frau Alex" Duplikat: Canonical-Map Substring-Match (alex→alexandra)
+  - Satzfragmente als Organisationen: Validierung verschärft (Großbuchstabe, keine Klammern, Verb-Blacklist, PERSON_BLACKLIST)
+  - LLM-Linker Müll-Entities: newEntity-Validierung (keine Phrasen mit von/und/der, keine Satzzeichen, max 40 Zeichen)
+  - Calendar-Events: Kurze/generische Titel gefiltert (Bot, Von...), Route-Texte als Location ausgeschlossen
+  - DB bereinigt: 12 Müll-Entities gelöscht
+
 ## [0.19.0-multi-ha.484] - 2026-04-14
 
 ### Added

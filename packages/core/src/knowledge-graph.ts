@@ -1287,7 +1287,11 @@ export class KnowledgeGraphService {
     let match;
     while ((match = re.exec(content)) !== null) {
       const [, time, title, location] = match;
-      const event = await this.kgRepo.upsertEntity(userId, title.trim(), 'event', { time }, 'calendar');
+      const trimmed = title.trim();
+      // Skip too-short titles, route texts, and generic words
+      if (trimmed.length < 4) continue;
+      if (/^(Von\s|Nach\s|Bot$|Meeting$|Call$)/i.test(trimmed)) continue;
+      const event = await this.kgRepo.upsertEntity(userId, trimmed, 'event', { time }, 'calendar');
 
       if (location) {
         // Strip address details after comma (e.g., "Höglinger Denzel GesmbH, Estermannstraße 2-4, 4020 Linz" → "Höglinger Denzel GesmbH")
@@ -1296,8 +1300,8 @@ export class KnowledgeGraphService {
         const existing = await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'organization' as any)
           ?? await this.kgRepo.getEntityByName?.(userId, locName.toLowerCase(), 'item' as any);
         if (!existing) {
-          // Skip generic non-location strings
-          if (!/^(online|remote|zoom|teams|webex|virtual|tbd|n\/a|überweisung|führung)/i.test(locName)) {
+          // Skip generic non-location strings and route-text fragments
+          if (!/^(online|remote|zoom|teams|webex|virtual|tbd|n\/a|überweisung|führung|von\s|nach\s)/i.test(locName) && locName.length >= 3) {
             const loc = await this.kgRepo.upsertEntity(userId, locName, 'location', {}, 'calendar');
             await this.kgRepo.upsertRelation(userId, event.id, loc.id, 'located_at', `${time}`, 'calendar');
           }
@@ -1728,11 +1732,12 @@ export class KnowledgeGraphService {
 
       // Pre-load existing person entities for fuzzy dedup (prevents "Frau Alex" when "Alexandra" exists)
       const existingPersons = (await this.kgRepo.getAllEntities(userId)).filter(e => e.entityType === 'person');
+      const existingPersonNames: string[] = []; // for substring matching
       for (const ep of existingPersons) {
-        // Register all existing first names in the canonical map
         const epWords = ep.normalizedName.split(/\s+/).filter(w => !TITLE_WORDS.has(w) && w.length >= 3);
         for (const w of epWords) {
           if (!canonicalPersons.has(w)) canonicalPersons.set(w, ep.name);
+          existingPersonNames.push(w);
         }
       }
 
@@ -1770,8 +1775,13 @@ export class KnowledgeGraphService {
 
         // Canonical resolution: if we already have this firstName, reuse the canonical name
         // This ensures "Sohn Linus" (from child_linus) and "Linus" (from linus_football_club)
-        // map to the same entity
-        const canonical = canonicalPersons.get(firstName);
+        // map to the same entity. Also handles substring matches: "alex" → "Alexandra"
+        let canonical = canonicalPersons.get(firstName);
+        if (!canonical && firstName.length >= 3) {
+          // Substring match: "alex" matches "alexandra" or vice versa
+          const match = existingPersonNames.find(n => n.includes(firstName) || firstName.includes(n));
+          if (match) canonical = canonicalPersons.get(match);
+        }
         let effectiveName = canonical ?? personName;
         if (!canonical) canonicalPersons.set(firstName, personName);
 
@@ -1942,11 +1952,13 @@ export class KnowledgeGraphService {
             const orgName = orgMatch[1].trim();
             // Skip if it's "User" or an existing person entity
             if (orgName === 'User' || orgName.length < 3) continue;
-            // Normalize: if full name (Axians ICT Austria GmbH) but short version exists, use short
-            // Reject sentence-like org names (contain verbs, too long, start with lowercase preposition)
+            // Reject invalid org names
             if (orgName.length > 50) continue;
-            if (/^(als|bei|user|er|sie|ich|wir|das|der|die)\s/i.test(orgName)) continue;
-            if (/\b(arbeitet|ist|hat|wurde|wird|kann|soll|muss)\b/i.test(orgName)) continue;
+            if (/^(als|bei|user|er|sie|ich|wir|das|der|die|and|all|npm|von)\s/i.test(orgName)) continue;
+            if (/\b(arbeitet|ist|hat|wurde|wird|kann|soll|muss|processed|confirmed|active|nominal)\b/i.test(orgName)) continue;
+            if (/[()]/.test(orgName)) continue; // contains parens = sentence fragment
+            if (!/^[A-ZÄÖÜ]/.test(orgName)) continue; // must start with uppercase
+            if (PERSON_BLACKLIST.has(orgName.toLowerCase())) continue;
 
             const shortName = orgName.split(/\s+/)[0]; // "Axians" from "Axians ICT Austria GmbH"
             const existingShort = await this.kgRepo.getEntityByName(userId, shortName, 'organization' as any);

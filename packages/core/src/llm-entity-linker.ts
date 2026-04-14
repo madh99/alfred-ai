@@ -431,6 +431,11 @@ TRANSITIVE INFERENZ (wichtig!):
         this.logger.debug({ name: ne.name, type: ne.type }, 'LLM linker: skipped blacklisted entity name');
         continue;
       }
+      // Reject sentence fragments and phrases as entity names
+      if (ne.name.length > 40) continue;
+      if (/\b(von|und|oder|für|mit|der|die|das|ein|eine|ist|hat|wird|alle|system)\b/i.test(ne.name) && ne.type !== 'event') continue;
+      if (/[.!?;()]/.test(ne.name)) continue; // sentence punctuation
+      if (ne.type === 'person' && !/^[A-ZÄÖÜ]/.test(ne.name)) continue;
       const entity = await this.kgRepo.upsertEntity(userId, ne.name, ne.type as any, ne.attributes ?? {}, 'llm_linking');
       entityByName.set(ne.name.toLowerCase(), entity);
       stats.newEntities++;
