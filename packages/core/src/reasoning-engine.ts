@@ -793,6 +793,21 @@ KRITISCH — TERMINE UND DATEN:
 - Wenn du einen Termin/eine Fahrt aus Memory-Kontext VERMUTEST aber er NICHT im Kalender-Block steht: schreibe "laut Memory erwähnt — im Kalender nicht bestätigt". NIEMALS ein konkretes Datum erfinden.
 - Ein Memory-Eintrag wie "Kapfenberg 18:00" OHNE Datum bedeutet NICHT dass diese Fahrt am nächsten freien Tag stattfindet!` : ''}
 
+BMW LADEPLANUNG (wenn BMW-Daten vorhanden):
+Wenn ein Termin mit Fahrt in den nächsten 24h ansteht:
+1. Berechne benötigten SoC: Distanz (km) / 4.5 (kWh/100km Effizienz) + 15% Reserve
+2. Vergleiche mit aktuellem SoC aus BMW-Daten
+3. Wenn SoC REICHT → nichts melden
+4. Wenn SoC NICHT reicht und Fahrt in >2h:
+   - Fehlende kWh = (Ziel-SoC% - Aktuell-SoC%) × 0.66 (66kWh Batterie)
+   - Ladezeit Wallbox = fehlende kWh / 11 (kW AC) → in Stunden
+   - Ladefenster = Abfahrtszeit MINUS Ladezeit MINUS 30min Puffer
+   - Prüfe ob günstiger Strompreis im Ladefenster verfügbar (aWATTar)
+   - Vorschlag: "Wallbox-Ladefenster [Uhrzeit]-[Uhrzeit] aktivieren"
+5. Wenn SoC NICHT reicht und Fahrt in <2h:
+   - Melde: "SoC reicht nicht. Schnelllader unterwegs einplanen (ca. 20min für 30%)"
+WICHTIG: Ladeplanung NUR 1-10h vor der Fahrt, NICHT Tage im Voraus. Das Ladefenster betrifft die VICTRON-HAUSBATTERIE NICHT den BMW — nutze den korrekten Smart-Home-Entity.
+
 E-MAIL INSIGHTS:
 - Die E-Mail-Inbox zeigt den Status jeder Mail: 🔴 UNREAD, 📖 READ, ✅ REPLIED, ℹ️ AUTO.
 - Emails mit ✅ REPLIED sind ERLEDIGT — NICHT als offenen Handlungsbedarf darstellen.
