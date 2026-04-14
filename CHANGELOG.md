@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.479] - 2026-04-14
+
+### Added
+- **Commvault Backup Management Skill** — Vollständige CommServe REST API v2 Integration mit 15 Actions:
+  - **Operativ:** status, jobs, job_detail, clients, client_detail, storage, alerts
+  - **Strategisch:** report (SLA/Compliance mit RPO-Prüfung), analyze (LLM-basierte Fehleranalyse + Optimierungsvorschläge)
+  - **Aktiv:** start_job, stop_job, retry_job, restore, modify_schedule
+  - **Auth:** API Token oder Username/Password mit Auto-Renewal
+  - **Proaktives Monitoring:** Konfigurierbares Polling (default 30min), Auto-Retry fehlgeschlagener Jobs, Storage-Warnungen, SLA-Verletzungserkennung
+  - **ITSM-Integration:** Automatische Incident-Erstellung bei Backup-Fehlern (mit Dedup)
+  - **Reasoning-Integration:** Commvault-Status im Reasoning-Kontext (fehlgeschlagene Jobs, Storage-Warnungen)
+  - **Konfigurierbar:** confirmation_mode (Schreibaktionen über Confirmation Queue), polling_interval, auto_retry, auto_incident, storage_warning_pct, sla_rpo_hours
+  - **Cluster-aware:** AdapterClaimManager für Monitoring-Dedup in HA-Setup
+  - **Bekannte Fehlercodes:** Integrierte Lookup-Tabelle für VSS, Netzwerk, Storage I/O, DDB Fehler
+
 ## [0.19.0-multi-ha.475] - 2026-04-14
 
 ### Added
