@@ -758,8 +758,16 @@ export class Alfred {
       skillRegistry.register(deploySkill);
       this.logger.info('Deploy skill registered (with orchestration)');
 
+      // 4o5-mikrotik. MikroTik RouterOS (optional — before CMDB so discovery source is available)
+      if (this.config.mikrotik?.enabled) {
+        const { MikroTikSkill } = await import('@alfred/skills');
+        const mtSkill = new MikroTikSkill(this.config.mikrotik);
+        skillRegistry.register(mtSkill);
+        this.logger.info('MikroTik skill registered');
+      }
+
       // 4o6. CMDB + ITSM + InfraDocs (auto-enabled when any infra skill is configured)
-      if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant)) {
+      if (this.config.cmdb?.enabled !== false && (this.config.proxmox || this.config.unifi || this.config.docker || this.config.cloudflare || this.config.nginxProxyManager || this.config.pfsense || this.config.homeassistant || this.config.mikrotik)) {
         const cmdbRepo = new CmdbRepository(adapter);
         const itsmRepo = new ItsmRepository(adapter);
         itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -1492,20 +1500,15 @@ export class Alfred {
       this.logger.info('Commvault skill registered');
     }
 
-    // 4u-mikrotik. MikroTik RouterOS (optional)
-    if (this.config.mikrotik?.enabled) {
-      const { MikroTikSkill } = await import('@alfred/skills');
-      const mtSkill = new MikroTikSkill(this.config.mikrotik);
-      if (this.config.cmdb?.autoIncidentFromMonitor) {
-        const itsmSkill = skillRegistry.get('itsm');
-        if (itsmSkill) {
-          mtSkill.setItsmCallback(async (input) => {
-            return itsmSkill.execute(input, { alfredUserId: this.ownerMasterUserId } as any);
-          });
-        }
+    // MikroTik ITSM callback wiring (skill already registered before CMDB)
+    if (this.config.mikrotik?.enabled && this.config.cmdb?.autoIncidentFromMonitor) {
+      const mtSkill = skillRegistry.get('mikrotik') as any;
+      const itsmSkill = skillRegistry.get('itsm');
+      if (mtSkill && itsmSkill) {
+        mtSkill.setItsmCallback(async (input: Record<string, unknown>) => {
+          return itsmSkill.execute(input, { alfredUserId: this.ownerMasterUserId } as any);
+        });
       }
-      skillRegistry.register(mtSkill);
-      this.logger.info('MikroTik skill registered');
     }
 
     // 4u. YouTube (optional, requires API key)
