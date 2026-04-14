@@ -1433,6 +1433,23 @@ export class Alfred {
       this.logger.info('System Backup skill registered');
     }
 
+    // 4u-commvault. Commvault Backup Management (optional)
+    if (this.config.commvault?.enabled) {
+      const { CommvaultSkill } = await import('@alfred/skills');
+      const cvSkill = new CommvaultSkill(this.config.commvault);
+      // Wire ITSM callback for auto-incident creation
+      if (this.config.cmdb?.autoIncidentFromMonitor) {
+        const itsmSkill = skillRegistry.get('itsm');
+        if (itsmSkill) {
+          cvSkill.setItsmCallback(async (input) => {
+            return itsmSkill.execute(input, { alfredUserId: this.ownerMasterUserId } as any);
+          });
+        }
+      }
+      skillRegistry.register(cvSkill);
+      this.logger.info('Commvault skill registered');
+    }
+
     // 4u. YouTube (optional, requires API key)
     if (this.config.youtube?.apiKey) {
       const { YouTubeSkill } = await import('@alfred/skills');
@@ -2274,6 +2291,30 @@ export class Alfred {
           }
         }, 60_000);
         this.logger.info({ schedule: this.config.backup.schedule ?? '0 3 * * *' }, 'System backup scheduler started');
+      }
+    }
+
+    // Commvault proactive monitoring
+    if (this.config.commvault?.enabled && (this.config.commvault.polling_interval ?? 30) > 0) {
+      if (this.adapterClaimManager) this.adapterClaimManager.registerPlatform('commvault-monitor');
+      const cvSkill = this.skillRegistry.get('commvault') as any;
+      if (cvSkill?.pollAndReport) {
+        const intervalMs = (this.config.commvault.polling_interval ?? 30) * 60_000;
+        setInterval(async () => {
+          if (this.adapterClaimManager) {
+            const claimed = await this.adapterClaimManager.tryClaim('commvault-monitor');
+            if (!claimed) return;
+          }
+          try {
+            const result = await cvSkill.pollAndReport();
+            if (result.failed > 0 || result.storageWarnings.length > 0 || result.slaViolations.length > 0) {
+              this.logger.info({ ...result }, 'Commvault monitoring alert');
+            }
+          } catch (err) {
+            this.logger.debug({ err }, 'Commvault monitoring poll failed');
+          }
+        }, intervalMs);
+        this.logger.info({ interval: `${this.config.commvault.polling_interval ?? 30}min` }, 'Commvault monitoring started');
       }
     }
 

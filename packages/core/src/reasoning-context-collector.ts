@@ -235,6 +235,17 @@ export class ReasoningContextCollector {
       });
     }
 
+    if (this.skillRegistry.has('commvault')) {
+      defs.push({
+        key: 'commvault', label: 'Commvault Backup', priority: 2, maxTokens: 200,
+        fetch: async () => {
+          const skill = this.skillRegistry.get('commvault') as any;
+          if (skill?.buildReasoningContext) return skill.buildReasoningContext();
+          return '(Commvault: keine Daten)';
+        },
+      });
+    }
+
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
       { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', limit: 5 }, maxTokens: 250 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
