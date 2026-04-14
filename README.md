@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.432-blue" alt="Version">
+  <img src="https://img.shields.io/badge/version-0.19.0--multi--ha.490-blue" alt="Version">
   <img src="https://img.shields.io/badge/node-%3E%3D20-green" alt="Node">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <img src="https://img.shields.io/badge/typescript-5.7+-blue" alt="TypeScript">
@@ -15,11 +15,11 @@
 </pre>
 
 <p align="center">
-  <strong>Self-hosted AI assistant for Telegram, Discord, WhatsApp, Matrix, Signal & HTTP API</strong>
+  <strong>Self-hosted AI assistant for Telegram, Discord, WhatsApp, Matrix, Signal, Microsoft Teams & HTTP API</strong>
 </p>
 
 <p align="center">
-  Alfred is a self-hosted AI assistant that connects to Telegram, Discord, WhatsApp, Matrix, and Signal simultaneously — plus an HTTP API for CLI and web access. It remembers who you are across platforms, learns from every conversation, and executes real-world tasks through an extensible skill system.
+  Alfred is a self-hosted AI assistant that connects to Telegram, Discord, WhatsApp, Matrix, Signal, and Microsoft Teams simultaneously — plus an HTTP API for CLI and web access. It remembers who you are across platforms, learns from every conversation, thinks proactively about your life, and executes real-world tasks through 90+ skills — from managing your BMW to controlling your smart home to planning your week.
 </p>
 
 ---
@@ -29,10 +29,12 @@
 I built Alfred because I wanted a single AI assistant I could reach from any messaging app — without losing context when switching between them.
 
 - **Cross-Platform Identity** — Link your accounts across Telegram, Matrix, Discord, WhatsApp, and Signal. Alfred recognizes you as the same person. Memories, preferences, and conversation context carry over.
-- **Persistent Memory** — Automatically extracts and stores facts, preferences, and context from conversations. Remembers things across sessions without being told to.
-- **Extensible Skill System** — Goes beyond chat. Sends emails, sets reminders, searches the web, manages files, runs code, reads documents, manages your calendar — triggered through natural language.
-- **Any LLM** — Works with Claude, GPT-4, Gemini, Ollama, or any OpenAI-compatible endpoint. Different models can be assigned to different task tiers. Runs fully local if needed.
-- **Self-Hosted** — All data stays on your machine in a local SQLite database. No cloud dependency, no telemetry, no accounts.
+- **Persistent Memory + Knowledge Graph** — Automatically extracts and stores facts, preferences, and context from conversations. Builds a Knowledge Graph with entities, relations, and cross-domain connections. Semantic search via pgvector embeddings. Memory consolidation via LLM-based dreaming.
+- **Proactive Reasoning** — Thinks autonomously every 30 minutes. Analyzes 20+ data sources (calendar, email, BMW, smart home, weather, energy prices, CMDB). Proposes actions, creates multi-step plans, detects conflicts.
+- **Autonomous Planning** — Recognizes complex scenarios (trip + charging + weather + logistics) and creates executable multi-step plans with checkpoints for user approval. LLM re-evaluates after each step.
+- **90+ Skills** — Goes beyond chat. Manages infrastructure (Proxmox, UniFi, MikroTik, Home Assistant, Docker), vehicles (BMW CarData + MQTT), backup systems (Commvault, System Backup), CMDB/ITSM, emails, calendars, code agents, and more.
+- **Any LLM** — Works with Claude, GPT-5, Gemini, Ollama, or any OpenAI-compatible endpoint. Different models can be assigned to different task tiers. Runs fully local if needed.
+- **Self-Hosted** — All data stays on your machine. SQLite for single-instance, PostgreSQL + Redis + MinIO for HA cluster. No cloud dependency, no telemetry.
 
 ---
 
@@ -47,6 +49,7 @@ I built Alfred because I wanted a single AI assistant I could reach from any mes
 | **WhatsApp** | baileys | Text, images, files, voice |
 | **Matrix** | matrix-bot-sdk | Text, images, files, voice, end-to-end encryption capable |
 | **Signal** | signal-cli REST | Text, attachments |
+| **Microsoft Teams** | Bot Framework | Text, adaptive cards, proactive messaging, cluster-aware |
 | **HTTP API** | built-in | REST + SSE streaming, CORS-ready for web UIs |
 | **CLI** | built-in | Interactive terminal, auto-connects to running server |
 
@@ -97,30 +100,33 @@ Alfred kann Mistral AI Dienste unabhängig vom Haupt-LLM-Provider nutzen — z.B
 
 Kein Dienst ist eine Pflicht-Abhängigkeit. Alfred funktioniert ohne Mistral-Key wie bisher. Der Key wird automatisch an alle Dienste weitergereicht wenn deren Provider auf `mistral` steht.
 
-### Built-in Skills (65+)
+### Built-in Skills (90+)
 
 Alfred exposes capabilities as **skills** — tools the LLM can call autonomously based on your request.
 
 | Category | Skills | Description |
 |----------|--------|-------------|
-| **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search. **Memory-Schutz**: entity/fact Protection (UPSERT-Guard, Consolidator-Guard, Delete-Confirm), Cross-Context Connection-Memories, Insight-Preference Learning |
-| **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents |
+| **Memory** | `memory`, `note`, `profile` | Persistent storage, recall, semantic search (pgvector). Memory consolidation (LLM-based dreaming), temporal decay, embedding cleanup. Entity/fact protection, connection-memories, insight-preference learning |
+| **Communication** | `email`, `cross_platform`, `delegate` | Send/read/forward emails (IMAP/SMTP or Microsoft 365 Graph API, multi-account), reply drafts, PDF/DOCX attachment reading, cross-platform messaging, autonomous sub-agents with task-filtered tool sets |
 | **Contacts** | `contacts` | CardDAV, Google People API, Microsoft Graph — search, create, update, delete contacts |
-| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions (AND/OR conditions, skill execution on trigger, human-in-the-loop confirmation, template variables, **watch chains** for multi-step automations, **quiet-hours** mit Digest-Zusammenfassung, **update**-Action für Live-Anpassung, **always_\* Operatoren** für wiederkehrende Alerts), workflow chains (multi-step skill pipelines with **if/else branching**), calendar lead-time notifications, Morgenbriefing, self-healing (auto-disable failing skills), **learning feedback loop** (behavioral memory from rejections/corrections) |
-| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube`, `recipe` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, system info, RSS/Atom feed monitoring, **YouTube** (Suche, Video-Info, Transkript-Extraktion, Channel-Monitoring), Rezeptsuche (Spoonacular/Edamam/Open Food Facts) |
-| **Documents** | `document` | Ingest PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search. **OCR** via Mistral für Handschrift, Tabellen, Rechnungen → strukturierter Markdown |
-| **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution (PDF, DOCX, Excel), CLI coding agent orchestration, **autonomous project agent** (plan → code → validate → fix → commit loop, Telegram-controlled) |
-| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor`, `database`, `mqtt` | Proxmox VE cluster, UniFi network, Home Assistant smart home (Entitäten steuern, Services aufrufen, Automationen/Skripte/Szenen erstellen & löschen), Docker containers, BMW CarData, deterministic health checks (inkl. Proxmox Backup Server), MQTT publish/subscribe (Zigbee2MQTT Discovery) |
-| **Navigation & Travel** | `routing`, `transit_search`, `travel` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (ÖBB/Wiener Linien via HAFAS), Flugsuche & Reiseplanung (Kiwi/Booking.com) |
-| **Energy** | `energy_price`, `goe_charger` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT) mit Netzentgelten und Abgaben, go-e Charger Wallbox-Steuerung |
-| **Finance** | `crypto_price`, `bitpanda`, `trading` | Kryptowährungs-Preise (CoinGecko), Bitpanda Portfolio/Trades/Ticker, Crypto-Trading auf 110+ Exchanges (CCXT) |
-| **Marketplace & Shopping** | `marketplace`, `shopping` | Marktplatz-Suche auf willhaben.at und eBay — Inseratliste, Preisvergleich, Einzelinserat-Details, Watch-Alerts, Produktsuche & Preisvergleich (Geizhals) |
+| **Scheduling & Automation** | `reminder`, `scheduled_task`, `background_task`, `todo`, `microsoft_todo`, `watch`, `workflow`, `briefing` | Timed reminders, cron jobs, long-running tasks (persistent checkpoint/resume), local todo lists, Microsoft To Do (Graph API), condition-based alerts with actions, watch chains, quiet-hours, workflow chains (multi-step skill pipelines with if/else branching), Morgenbriefing, self-healing, learning feedback loop |
+| **Information** | `web_search`, `weather`, `system_info`, `calculator`, `feed_reader`, `youtube`, `recipe` | Brave/Tavily/SearXNG/DuckDuckGo search, weather, RSS/Atom feeds, YouTube (Suche, Transkripte, Channel-Monitoring), Rezeptsuche (Spoonacular/Edamam/Open Food Facts) |
+| **Documents** | `document` | PDF, DOCX, TXT, CSV, Markdown — RAG with semantic search. OCR via Mistral |
+| **Code** | `code_sandbox`, `code_agent`, `project_agent` | Sandboxed JS/Python execution, CLI coding agent orchestration, autonomous project agent |
+| **Infrastructure** | `proxmox`, `unifi`, `homeassistant`, `docker`, `bmw`, `monitor`, `database`, `mqtt`, `mikrotik`, `commvault` | Proxmox VE cluster, UniFi network, Home Assistant smart home, Docker containers, BMW CarData (REST + MQTT Streaming + Reifendiagnose + Fahrzeugbild), health checks, MQTT pub/sub, **MikroTik RouterOS** (34 Actions: Monitoring, Firewall, NAT, DHCP, Routing, Troubleshooting, Multi-Router), **Commvault** (15 Actions: Jobs, Clients, Storage, Alerts, SLA Reports, LLM-Analyse, Auto-Retry, ITSM-Integration) |
+| **Infra Pipeline** | `cloudflare_dns`, `nginx_proxy_manager`, `pfsense`, `deploy` | Cloudflare DNS (Zonen, Records, Multi-Level TLD), Nginx Proxy Manager (Hosts, SSL), pfSense Firewall (Rules, VLANs, Gateways), SSH-basiertes Deployment mit Full Orchestrator (VM/LXC erstellen → Deploy → DNS → Proxy → Firewall) |
+| **CMDB & ITSM** | `cmdb`, `itsm`, `infra_docs` | Configuration Management Database (Auto-Discovery aus 8 Infra-Skills inkl. MikroTik), Incident/Change/Service Management, Impact-Analysis, InfraDocs (Inventar, Topologie, Runbooks) |
+| **Backup** | `system_backup`, `database` (backup/restore) | System-Backup (Alfred DB + Tokens + Config, Zeitplan, Retention, S3/MinIO), Database-Backup für alle 7 Provider (PG, MySQL, MS SQL mit Backup-Ketten, SQLite, MongoDB, Redis, InfluxDB) |
+| **Navigation & Travel** | `routing`, `transit_search`, `travel` | Google Routes API (Live-Traffic), Öffentlicher Nahverkehr Österreich (HAFAS), Flugsuche & Reiseplanung (Kiwi/Booking.com) |
+| **Energy** | `energy_price`, `goe_charger` | Echtzeit-Strompreise (aWATTar HOURLY, EPEX Spot AT), go-e Charger Wallbox-Steuerung |
+| **Finance** | `crypto_price`, `bitpanda`, `trading` | CoinGecko Preise, Bitpanda Portfolio/Trades, Crypto-Trading auf 110+ Exchanges (CCXT) |
+| **Marketplace & Shopping** | `marketplace`, `shopping` | willhaben.at + eBay Suche, Preisvergleich, Watch-Alerts, Geizhals |
 | **Files & System** | `file`, `clipboard`, `screenshot`, `shell`, `http` | Read/write files, clipboard, screenshots, shell commands, HTTP requests |
-| **Media** | `browser`, `tts`, `image_generate`, `spotify`, `sonos`, `voice` | Web browsing via Puppeteer, text-to-speech voice messages, AI image generation (OpenAI/Google), Spotify (OAuth PKCE, Playback, Playlists, Suche), Sonos (UPnP + Cloud, Multi-Room, Radio), **Voice Management** (Voice Cloning aus Audio-Samples, Sonos-Durchsagen, Custom TTS-Stimmen via Mistral Voxtral) |
-| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — inkl. `find_free_slot`, `check_conflicts`, **Duplikat-Prävention** (provider-agnostisch + Microsoft `transactionId`), **Vergangenheits-Check** |
-| **Productivity** | `onedrive` | Microsoft OneDrive (Graph API) — Dateien durchsuchen, hoch-/herunterladen, teilen |
-| **Admin** | `configure` | Configure services (Proxmox, UniFi, HA, Contacts, Docker) via chat — hot-reload, no restart needed |
-| **Multi-User** | `user_management`, `sharing`, `help` | Roles (admin/user/family/guest/service), invite codes, platform linking, per-user service config, share notes/todos/documents/services between users, interactive help |
+| **Media** | `browser`, `tts`, `image_generate`, `spotify`, `sonos`, `voice` | Puppeteer browsing, TTS, AI image generation, Spotify (OAuth PKCE), Sonos (UPnP + Cloud), Voice Cloning (Mistral Voxtral) |
+| **Calendar** | `calendar` | CalDAV, Google Calendar, Microsoft Calendar — find_free_slot, check_conflicts, Duplikat-Prävention |
+| **Productivity** | `onedrive`, `brainstorming` | Microsoft OneDrive (Graph API), KG-gestütztes Brainstorming mit persistenten Sessions |
+| **Admin** | `configure`, `onboarding` | Service-Konfiguration per Chat, geführte Ersteinrichtung für neue User |
+| **Multi-User** | `user_management`, `sharing`, `help` | Roles (admin/user/family/guest/service), invite codes, platform linking, per-user service config, sharing |
 
 ### Code Agent Orchestration
 
@@ -330,20 +336,24 @@ Connects via Unix socket (default) or TCP. Supports Docker Compose operations.
 
 #### BMW CarData
 
-Vehicle data from your BMW via the BMW CarData Customer API (`api-cardata.bmwgroup.com`):
+Vehicle data from your BMW via the BMW CarData Customer API — REST + MQTT Streaming:
 
-- Battery state of charge, electric range, battery health (SoH)
-- Charging status, power (kW), remaining time, target SoC
-- Plug/flap/lock status, AC voltage & amperage
-- Charging session history (custom date range)
-- Vehicle model & basic data
+- **Status:** SoC, Reichweite, SoH, Kilometerstand, GPS-Position (Reverse Geocoding), Türen/Fenster/Kofferraum, Verriegelung
+- **Charging:** Ladestatus, Leistung (kW), Restzeit, Ziel-SoC, Plug/Flap, AC Volt/Ampere
+- **History:** Ladehistorie (chunked für lange Zeiträume), Verbrauchsstatistik (kWh/100km)
+- **Reifendiagnose:** Smart Maintenance Tyre Diagnosis — Dimension, Verschleiß, Defekte, Montage-Datum für alle 4 Räder + eingelagerte Reifen
+- **Fahrzeugbild:** PNG-Bild vom Fahrzeug
+- **Basisdaten:** Modell, Farbe, Baujahr, Antrieb, SA-Codes
+- **MQTT Streaming:** Echtzeit-Daten über MQTT (68+ Datenpunkte: GPS, Türen, Fenster, Reifendruck, Alarm, Preconditioning). Cluster-aware mit HA-Failover
 
-Uses OAuth Device Authorization Flow with PKCE (S256). Container-based telematic data access. Tokens are stored persistently and refreshed automatically. Response cache (5 min TTL) respects BMW's 50 calls/day rate limit.
+OAuth Device Authorization Flow mit PKCE (S256). Container-basierter Telematik-Zugriff. 3-Tier Lookup: RAM → DB → REST. MQTT Token-Refresh alle 60s. Rate-Limit-Handling (CU-429). Graceful Degradation bei API-Ausfällen.
 
 ```
-You: "Wie ist der Ladestand meines Autos?"
+You: "BMW Status"
 You: "Zeig mir den Ladestatus"
+You: "BMW Reifendiagnose"
 You: "Zeig mir die letzten Ladevorgänge"
+You: "Zeig mir die Fahrzeugdaten"
 ```
 
 #### Routing (Google Routes API)
@@ -534,6 +544,72 @@ User rejects "Wallbox einschalten" 3x → Alfred stores behavioral feedback:
 User: "Nein, nicht so — beim nächsten Mal nur benachrichtigen"
   → Correction detected → stored as feedback memory
 ```
+
+### Knowledge Graph
+
+Alfred builds and maintains a Knowledge Graph from all data sources — entities, relations, cross-domain connections:
+
+- **Entities:** Persons, locations, organizations, vehicles, items, metrics, events — with attributes, confidence scores, sources
+- **Relations:** family, works_at, owns, plays_at, lives_at, monitors, etc. — with strength, context, bidirectional aliases
+- **Sources:** 15+ extractors (chat, email, calendar, BMW, SmartHome, crypto, feeds, CMDB, memories, documents)
+- **LLM Entity Linker:** Daily + weekly analysis (Mistral) — finds semantic connections, proposes new entities/relations, enriches attributes
+- **Family Inference:** Transitive relations (spouse+parent→parent, parent+parent→sibling, grandparent, aunt/uncle)
+- **CMDB Sync:** Infrastructure assets as KG entities with cross-domain relations
+- **WebUI Visualization:** Force-directed graph with node selection, editing, filtering by type
+- **Maintenance:** Automatic dedup, decay, phantom detection, org-variant merging
+
+```
+You: "Zeig mir den Knowledge Graph"
+You: "Wer ist mit wem verwandt?"
+You: "Analysiere den Knowledge Graph"
+```
+
+### Proactive Reasoning
+
+Alfred thinks autonomously every 30 minutes — analyzing 20+ data sources and proposing actions:
+
+- **Context:** Calendar, email, BMW, SmartHome, weather, energy prices, crypto, CMDB, ITSM, MikroTik, Commvault, feeds, memories, KG connections, active plans, trends
+- **Two-Pass Architecture:** Quick scan (512 tokens) → enrichment topics → detailed analysis (1536 tokens)
+- **Actions:** execute_skill, create_reminder, workflow/watch create, delegate, ITSM incidents, CMDB discovery, **multi-step plans**
+- **Autonomy Levels:** `confirm_all` (default), `proactive`, `autonomous` — configurable, learned from feedback
+- **BMW Ladeplanung:** Automatische SoC-Berechnung vor Fahrten, Wallbox-Ladefenster-Vorschlag, Schnelllader-Fallback
+- **Delivery Scheduling:** Activity-profil-basiert, Deferred Queue für Nachtruhe
+- **Event-Triggered:** Watches, Kalender-Events, externe Webhooks können Reasoning-Passes auslösen
+
+### Autonomous Multi-Step Planning
+
+Alfred's killer feature — recognizes complex scenarios and creates executable plans:
+
+```
+Scenario: Friday appointment in Weinburg + Thursday Noah pickup from Kapfenberg
+
+Alfred creates a Plan:
+📋 Plan: Weinburg-Gutachten vorbereiten
+
+⬜ 1. Route Do: Altlengbach → Kapfenberg berechnen (AUTO)
+⬜ 2. Route Fr: Altlengbach → Weinburg berechnen (AUTO)
+⬜ 3. BMW SoC prüfen — reicht Reichweite? (AUTO)
+⚠️ 4. Ladefenster heute Nacht vorschlagen (CHECKPOINT — deine Bestätigung)
+⬜ 5. Wetter Fr prüfen (AUTO)
+🔔 6. Reminder "Noah abholen" erstellen (PROACTIVE)
+🔔 7. Reminder "Abfahrt Weinburg" erstellen (PROACTIVE)
+
+✅ = läuft automatisch | ⚠️ = pausiert für deine Entscheidung | 🔔 = läuft mit Benachrichtigung
+```
+
+- **3 Risk-Levels:** AUTO (no confirmation), CHECKPOINT (pauses for user), PROACTIVE (runs with notification)
+- **LLM Re-Evaluation:** After every 3rd step, the LLM checks if the plan still makes sense
+- **Persistent:** Plans survive restarts (stored in DB), visible in reasoning context
+- **Template Resolution:** Steps can reference results from previous steps: `{{step_0.distance_km}}`
+
+### Backup & Restore
+
+Two components — Database Skill extension + System Backup Skill:
+
+- **System Backup:** Alfred DB (PG/SQLite) + Token files + Config. Scheduled (cron), configurable retention, S3/MinIO upload, labels, permanent backups
+- **Database Backup:** All 7 providers — PostgreSQL (`pg_dump`), MySQL, MS SQL (Backup-Ketten: copy_only/full/differential/log), SQLite, MongoDB, Redis, InfluxDB
+- **Restore:** Configurable — default CLI-only, optionally per Chat with Confirmation Queue
+- **Chat Interface:** `mach ein backup`, `backup liste`, `backup status`, `setze retention auf 14 tage`
 
 ### Cross-Platform Identity
 
@@ -992,6 +1068,33 @@ ALFRED_MICROSOFT_TODO_CLIENT_SECRET=
 ALFRED_MICROSOFT_TODO_TENANT_ID=
 ALFRED_MICROSOFT_TODO_REFRESH_TOKEN=
 
+# Personality (optional)
+ALFRED_PERSONALITY_TONE=freundlich, direkt, informell
+ALFRED_PERSONALITY_HUMOR=trocken, gelegentlich
+ALFRED_PERSONALITY_DIRECTNESS=sehr direkt, keine Umschweife
+ALFRED_PERSONALITY_LANGUAGE=Deutsch
+
+# Backup (optional)
+ALFRED_BACKUP_ENABLED=true
+ALFRED_BACKUP_STORAGE=both          # local | s3 | both | none
+ALFRED_BACKUP_LOCAL_PATH=/root/alfred/backups
+ALFRED_BACKUP_S3_BUCKET=alfred-backups
+ALFRED_BACKUP_SCHEDULE=0 3 * * *    # daily at 03:00
+ALFRED_BACKUP_RETENTION_DAYS=30
+
+# MikroTik (optional)
+ALFRED_MIKROTIK_ENABLED=true
+ALFRED_MIKROTIK_HOST=192.168.1.1
+ALFRED_MIKROTIK_USERNAME=alfred-api
+ALFRED_MIKROTIK_PASSWORD=...
+ALFRED_MIKROTIK_PORT=443
+ALFRED_MIKROTIK_SSL=true
+
+# Commvault (optional)
+ALFRED_COMMVAULT_ENABLED=true
+ALFRED_COMMVAULT_BASE_URL=https://commserve.example.com/api/v2
+ALFRED_COMMVAULT_API_TOKEN=...
+
 # Optional
 ALFRED_STORAGE_PATH=./data/alfred.db
 ALFRED_LOG_LEVEL=info
@@ -1176,22 +1279,30 @@ alfred start > /tmp/alfred.log 2>&1 &
 
 ## Roadmap
 
-- [x] Web Chat UI (Next.js, Dark Theme, SSE streaming, Dashboard mit Watches/Skills/Scheduled Tasks)
-- [x] Watch Chains (Watch A triggers Watch B, depth-limited recursive execution)
-- [x] Workflow Branching (if/else conditions, jumpTo, cycle guard)
-- [x] Learning Feedback Loop (rejection tracking, behavioral memory, correction signals)
-- [x] Reasoning with Actions (structured skill/reminder proposals via confirmation queue)
-- [x] Reasoning Engine (cross-domain proactive insights)
-- [x] Marketplace search & price comparison (willhaben.at, eBay)
-- [x] Workflow chains (multi-step skill pipelines)
-- [x] Persistent agents (checkpoint/resume for long-running tasks)
-- [x] Self-healing (auto-disable failing skills)
-- [x] Security audit — hardened shell blocklist, safe calculator parser, deep log redaction, race condition fixes
-- [ ] Google Cloud TTS & ElevenLabs voice providers
-- [ ] Plugin marketplace
-- [ ] End-to-end encrypted Matrix rooms
-- [x] Multi-user household support
+- [x] Web Chat UI + Dashboard + Knowledge Graph Visualisierung + CMDB/ITSM/InfraDocs WebUI
+- [x] Multi-user household support with role-based access
+- [x] Knowledge Graph with LLM Entity-Linker, Family Inference, CMDB Sync
+- [x] Proactive Reasoning Engine (cross-domain insights, actions, autonomous planning)
+- [x] Autonomous Multi-Step Planning (PlanningAgent + PlanExecutor)
+- [x] BMW CarData MQTT Streaming + Reifendiagnose + Fahrzeugbild + HA-Failover
+- [x] MikroTik RouterOS Management (34 Actions, Multi-Router, CMDB Discovery)
+- [x] Commvault Backup Management (15 Actions, LLM-Analyse, Auto-Retry, ITSM-Integration)
+- [x] Infrastructure Pipeline (Cloudflare DNS, Nginx Proxy Manager, pfSense, Deploy Orchestrator)
+- [x] CMDB + ITSM + InfraDocs (Auto-Discovery aus 8 Infra-Skills)
+- [x] Backup & Restore (System Backup + Database Skill für 7 DB-Provider inkl. MS SQL Ketten)
+- [x] Memory: pgvector Semantic Search, Temporal Decay, Embedding Cleanup, Consolidation
+- [x] Personality Config (Ton, Humor, Direktheit, Sprache)
+- [x] Delegate Prompt-Modes (task-filtered tool sets for sub-agents)
+- [x] Guided Onboarding Skill
+- [x] Microsoft Teams Adapter (Bot Framework, cluster-aware)
+- [ ] SharePoint Skill (Sites, Document Libraries, Listen, Search)
+- [ ] Slack Adapter
+- [ ] n8n/Node-RED Skill
+- [ ] Worker/Satellit-System (Remote-Agent auf beliebigen VMs)
+- [ ] Budget/Einkaufs-Skill (OCR Kassenzettel → Ausgaben tracken)
+- [ ] Self-Skill-Creation
 - [ ] Mobile companion app
+- [ ] Plugin marketplace
 
 ---
 
