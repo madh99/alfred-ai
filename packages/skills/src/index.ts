@@ -83,6 +83,7 @@ export { HelpSkill } from './built-in/help.js';
 export { YouTubeSkill } from './built-in/youtube.js';
 export { DatabaseSkill } from './built-in/database/index.js';
 export { SystemBackupSkill } from './built-in/system-backup.js';
+export { CommvaultSkill } from './built-in/commvault.js';
 export { UserManagementSkill, ROLE_SKILL_ACCESS } from './built-in/user-management.js';
 export { SharingSkill } from './built-in/sharing.js';
 export { OneDriveSkill } from './built-in/onedrive.js';
