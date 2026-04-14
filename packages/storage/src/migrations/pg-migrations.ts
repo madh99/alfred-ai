@@ -609,4 +609,26 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS linked_problem_id TEXT`, []);
     },
   },
+  {
+    version: 55,
+    description: 'Autonomous Planning — plans table',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS plans (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft',
+          steps JSONB NOT NULL DEFAULT '[]',
+          current_step_index INTEGER NOT NULL DEFAULT 0,
+          context JSONB NOT NULL DEFAULT '{}',
+          trigger_source TEXT NOT NULL DEFAULT 'reasoning',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans(user_id, status)`, []);
+    },
+  },
 ];

@@ -83,6 +83,32 @@ export class ConfirmationQueue {
   }
 
   /**
+   * Enqueue a plan for user approval. On approval, the plan executor starts.
+   */
+  private defaultChatId?: string;
+  private defaultPlatform?: string;
+
+  /** Set default chat/platform for plan notifications (called from ReasoningEngine). */
+  setDefaultTarget(chatId: string, platform: string): void {
+    this.defaultChatId = chatId;
+    this.defaultPlatform = platform;
+  }
+
+  async enqueuePlan(plan: import('@alfred/types').Plan, display: string): Promise<void> {
+    if (!this.defaultChatId || !this.defaultPlatform) return;
+    await this.enqueue({
+      chatId: this.defaultChatId,
+      platform: this.defaultPlatform,
+      source: 'reasoning',
+      sourceId: `plan:${plan.id}`,
+      description: display,
+      skillName: '__plan__',
+      skillParams: { planId: plan.id },
+      timeoutMinutes: 240,
+    });
+  }
+
+  /**
    * Check if an incoming message is a confirmation response.
    * Returns true if the message was handled (consumed), false if it should proceed normally.
    */

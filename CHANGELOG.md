@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.489] - 2026-04-14
+
+### Added
+- **Autonome Multi-Step-Planung** — Alfreds Killer-Feature. Wenn das Reasoning ein komplexes Szenario erkennt (Reise + Laden + Wetter + Logistik), erstellt es einen zusammenhängenden Plan statt einzelner Actions:
+  - **PlanningAgent** + **PlanExecutor** — erstellt, persistiert und führt Pläne schrittweise aus
+  - **3 Risk-Levels:** AUTO (läuft ohne Frage), CHECKPOINT (pausiert für User-Entscheidung), PROACTIVE (läuft mit Benachrichtigung)
+  - **LLM Re-Evaluation** — nach jedem 3. Schritt prüft das LLM ob der Plan noch sinnvoll ist
+  - **Plan-Persistenz** — Migration v55: `plans` Tabelle (PG + SQLite). Pläne überleben Neustarts
+  - **Reasoning-Integration** — neuer Action-Typ `execute_plan` im Prompt, aktive Pläne im Kontext (verhindert Duplikate)
+  - **ConfirmationQueue** — Plan-Bestätigung als Ganzes, Checkpoint-Handling
+  - **Template-Resolution** — Schritte können Ergebnisse vorheriger Schritte referenzieren: `{{step_0.distance_km}}`
+  - **Sicherheit:** Min 1 Checkpoint pro Plan, max 10 Schritte, max 3 Re-Plannings, 24h Timeout
+
 ## [0.19.0-multi-ha.488] - 2026-04-14
 
 ### Added

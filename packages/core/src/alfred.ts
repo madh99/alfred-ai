@@ -1904,6 +1904,30 @@ export class Alfred {
       }
     }
 
+    // Wire PlanningAgent into ReasoningEngine
+    if (this.reasoningEngine) {
+      const { PlanRepository } = await import('@alfred/storage');
+      const { PlanningAgent } = await import('./planning-agent.js');
+      const planRepo = new PlanRepository(adapter);
+      const planningAgent = new PlanningAgent(
+        planRepo,
+        llmProvider,
+        {
+          execute: async (skillName, params, userId) => {
+            const skill = skillRegistry.get(skillName);
+            if (!skill) return { success: false, error: `Skill "${skillName}" not found` };
+            return skillSandbox.execute(skill, params, { userId, masterUserId: userId } as any);
+          },
+        },
+        this.logger.child({ component: 'planning-agent' }),
+      );
+      this.reasoningEngine.setPlanningAgent(planningAgent);
+      // Also wire into context collector for active plans display
+      if ((this.reasoningEngine as any).collector?.setPlanningAgent) {
+        (this.reasoningEngine as any).collector.setPlanningAgent(planningAgent);
+      }
+    }
+
     // Wire KG service into pipeline for dynamic device context in chat prompts
     if (kgServiceInstance) {
       this.pipeline.setKnowledgeGraphService(kgServiceInstance);

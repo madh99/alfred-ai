@@ -1304,4 +1304,26 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE cmdb_change_requests ADD COLUMN linked_problem_id TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 55,
+    description: 'Autonomous Planning — plans table',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS plans (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'draft',
+          steps TEXT NOT NULL DEFAULT '[]',
+          current_step_index INTEGER NOT NULL DEFAULT 0,
+          context TEXT NOT NULL DEFAULT '{}',
+          trigger_source TEXT NOT NULL DEFAULT 'reasoning',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans(user_id, status)`);
+    },
+  },
 ];

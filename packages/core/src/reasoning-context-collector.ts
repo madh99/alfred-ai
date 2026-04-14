@@ -62,6 +62,9 @@ export class ReasoningContextCollector {
   private previousSuccess = new Map<string, boolean>();
   /** Resolved master user ID (cached after first resolve). */
   private resolvedUserId?: string;
+  /** Optional planning agent for active plans context. */
+  private planningAgent?: import('./planning-agent.js').PlanningAgent;
+  setPlanningAgent(agent: import('./planning-agent.js').PlanningAgent): void { this.planningAgent = agent; }
 
   constructor(
     private readonly skillRegistry: SkillRegistry,
@@ -228,6 +231,17 @@ export class ReasoningContextCollector {
     }
 
     // BMW with extended timeout (token refresh can take up to 15s + API call)
+    if (this.planningAgent) {
+      defs.push({
+        key: 'plans', label: 'Aktive Pläne', priority: 1, maxTokens: 200,
+        fetch: async () => {
+          const uid = this.resolvedUserId ?? '';
+          const summary = await this.planningAgent!.getContextSummary(uid);
+          return summary || '(keine aktiven Pläne)';
+        },
+      });
+    }
+
     if (this.skillRegistry.has('bmw')) {
       defs.push({
         key: 'bmw', label: 'BMW Status', priority: 2, maxTokens: 200,

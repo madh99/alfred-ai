@@ -52,7 +52,7 @@ function isNoInsights(text: string): boolean {
   return false;
 }
 
-type ReasoningActionType = 'execute_skill' | 'create_reminder';
+type ReasoningActionType = 'execute_skill' | 'create_reminder' | 'execute_plan';
 
 interface ProposedAction {
   type: ReasoningActionType;
@@ -83,6 +83,10 @@ export class ReasoningEngine {
   private readonly deduplicationHours: number;
   private readonly collector: ReasoningContextCollector;
   private deliveryScheduler?: DeliveryScheduler;
+  private planningAgent?: import('./planning-agent.js').PlanningAgent;
+
+  /** Set optional planning agent for autonomous multi-step plans. */
+  setPlanningAgent(agent: import('./planning-agent.js').PlanningAgent): void { this.planningAgent = agent; }
   private resolvedOwnerUserId?: string;
   private activityProfile?: ActivityProfile;
   // Note: tickRunning guard is a local variable inside start() — intentionally not a class field
@@ -736,6 +740,20 @@ ${this.skillRegistry.has('itsm') ? `7. ITSM Incident erstellen: {"type":"execute
     WICHTIG: incident_id MUSS die exakte 8-stellige Hex-ID aus der Aktive-Incidents-Liste sein (z.B. "0815bc66"). NIEMALS eine ID erfinden!
 8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}` : ''}
 
+9. PLAN ERSTELLEN (für Szenarien die MEHRERE zusammenhängende Schritte erfordern):
+{"type":"execute_plan","description":"...","goal":"Reise nach Weinburg vorbereiten","steps":[
+  {"description":"Route berechnen","skillName":"routing","skillParams":{"action":"route","from":"Altlengbach","to":"Weinburg"},"riskLevel":"auto","onFailure":"skip"},
+  {"description":"BMW SoC prüfen","skillName":"bmw","skillParams":{"action":"status"},"riskLevel":"auto","onFailure":"skip"},
+  {"description":"Ladefenster vorschlagen","skillName":"homeassistant","skillParams":{"action":"set_state","entity_id":"input_boolean.ladefenster","state":"on"},"riskLevel":"checkpoint","onFailure":"skip"},
+  {"description":"Reminder Abfahrt","skillName":"reminder","skillParams":{"action":"set","message":"Abfahrt Weinburg","triggerAt":"2026-04-17T07:30"},"riskLevel":"proactive","onFailure":"skip"}
+]}
+PLAN-REGELN:
+- Nutze Pläne NUR wenn ≥3 zusammenhängende Schritte nötig sind (Route+Laden+Wetter+Reminder etc.)
+- Max 10 Schritte, mindestens 1 Checkpoint (User-Bestätigung)
+- riskLevel: "auto" = läuft ohne Frage, "checkpoint" = pausiert für User, "proactive" = läuft mit Benachrichtigung
+- Schritte können Ergebnisse vorheriger Schritte referenzieren: {{step_0.distance_km}}
+- Prüfe "Aktive Pläne" Section VOR Planerstellung → keine Duplikate
+
 WICHTIGE REGELN FÜR AKTIONSWAHL:
 - Alfred kann NUR Skills ausführen die er hat. Wenn der User SELBST handeln muss (Browser öffnen, Zahlungsmethode ändern, Login auf Website) → IMMER Erinnerung (reminder) mit klarer Handlungsanweisung + URL
 - NIEMALS "delegate" für Aufgaben die Browser, Login oder externe Accounts erfordern
@@ -1154,7 +1172,32 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     const autonomyLevel = await this.getAutonomyLevel();
 
     const limit = actions.slice(0, 5);
+
+    // Handle execute_plan actions → delegate to PlanningAgent
     for (const action of limit) {
+      if ((action as any).type === 'execute_plan' && (action as any).goal && (action as any).steps && this.planningAgent) {
+        try {
+          const plan = await this.planningAgent.createPlan(
+            this.resolvedUserId ?? '',
+            (action as any).goal,
+            (action as any).steps,
+            'reasoning',
+          );
+          const display = this.planningAgent.formatPlan(plan);
+          // Enqueue plan approval as a single confirmation
+          if (this.confirmationQueue) {
+            await this.confirmationQueue.enqueuePlan(plan, display);
+          }
+          this.logger.info({ planId: plan.id, goal: plan.goal, steps: plan.steps.length }, 'Plan proposed for approval');
+        } catch (err) {
+          this.logger.warn({ err, goal: (action as any).goal }, 'Failed to create plan');
+        }
+        continue;
+      }
+    }
+
+    for (const action of limit) {
+      if ((action as any).type === 'execute_plan') continue; // already handled above
       // Normalize reminder params: LLM sometimes uses wrong field names
       if (action.skillName === 'reminder' && action.skillParams) {
         const p = action.skillParams;
