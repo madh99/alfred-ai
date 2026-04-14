@@ -862,6 +862,7 @@ export interface AlfredConfig {
   cmdb?: CmdbConfig;
   backup?: BackupConfig;
   commvault?: CommvaultConfig;
+  mikrotik?: MikroTikConfig;
   conversation?: {
     maxHistoryMessages?: number;
   };
@@ -893,4 +894,30 @@ export interface CommvaultConfig {
   auto_incident?: boolean;
   storage_warning_pct?: number;
   sla_rpo_hours?: number;
+}
+
+export interface MikroTikRouterConfig {
+  name: string;
+  host: string;
+  username: string;
+  password: string;
+  port?: number;
+  ssl?: boolean;
+  default?: boolean;
+}
+
+export interface MikroTikConfig {
+  enabled?: boolean;
+  confirmation_mode?: boolean;
+  polling_interval?: number;
+  auto_incident?: boolean;
+  cpu_warning_pct?: number;
+  ram_warning_pct?: number;
+  routers?: MikroTikRouterConfig[];
+  // Single-router ENV shorthand
+  host?: string;
+  username?: string;
+  password?: string;
+  port?: number;
+  ssl?: boolean;
 }

@@ -242,6 +242,18 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_CMDB_AUTO_INCIDENT: ['cmdb', 'autoIncidentFromMonitor'],
   ALFRED_CMDB_KG_SYNC: ['cmdb', 'kgSync'],
   ALFRED_CMDB_HEALTH_CHECK_INTERVAL: ['cmdb', 'healthCheckIntervalMinutes'],
+  // MikroTik
+  ALFRED_MIKROTIK_ENABLED: ['mikrotik', 'enabled'],
+  ALFRED_MIKROTIK_HOST: ['mikrotik', 'host'],
+  ALFRED_MIKROTIK_USERNAME: ['mikrotik', 'username'],
+  ALFRED_MIKROTIK_PASSWORD: ['mikrotik', 'password'],
+  ALFRED_MIKROTIK_PORT: ['mikrotik', 'port'],
+  ALFRED_MIKROTIK_SSL: ['mikrotik', 'ssl'],
+  ALFRED_MIKROTIK_CONFIRMATION_MODE: ['mikrotik', 'confirmation_mode'],
+  ALFRED_MIKROTIK_POLLING_INTERVAL: ['mikrotik', 'polling_interval'],
+  ALFRED_MIKROTIK_AUTO_INCIDENT: ['mikrotik', 'auto_incident'],
+  ALFRED_MIKROTIK_CPU_WARNING_PCT: ['mikrotik', 'cpu_warning_pct'],
+  ALFRED_MIKROTIK_RAM_WARNING_PCT: ['mikrotik', 'ram_warning_pct'],
   // Commvault
   ALFRED_COMMVAULT_ENABLED: ['commvault', 'enabled'],
   ALFRED_COMMVAULT_BASE_URL: ['commvault', 'baseUrl'],
