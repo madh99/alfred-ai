@@ -24,7 +24,71 @@ export interface StoreEmbeddingInput {
 }
 
 export class EmbeddingRepository {
+  private pgvectorAvailable: boolean | null = null;
+
   constructor(private readonly adapter: AsyncDbAdapter) {}
+
+  /**
+   * pgvector-accelerated nearest neighbor search (PG only).
+   * Falls back to null if pgvector is not available — caller should use JS-side cosine.
+   */
+  async vectorSearch(userId: string, queryEmbedding: number[], limit = 10): Promise<EmbeddingEntry[] | null> {
+    if (this.adapter.type !== 'postgres') return null;
+
+    // Check pgvector availability once
+    if (this.pgvectorAvailable === null) {
+      try {
+        await this.adapter.execute('CREATE EXTENSION IF NOT EXISTS vector', []);
+        // Migrate embedding column from BYTEA to vector if needed
+        try {
+          await this.adapter.execute(
+            `ALTER TABLE embeddings ADD COLUMN IF NOT EXISTS embedding_vec vector(${queryEmbedding.length})`,
+            [],
+          );
+        } catch { /* column might already exist */ }
+        this.pgvectorAvailable = true;
+      } catch {
+        this.pgvectorAvailable = false;
+      }
+    }
+    if (!this.pgvectorAvailable) return null;
+
+    try {
+      // Ensure embedding_vec is populated for this user
+      const needsBackfill = await this.adapter.queryOne(
+        'SELECT 1 FROM embeddings WHERE user_id = ? AND embedding_vec IS NULL LIMIT 1',
+        [userId],
+      );
+      if (needsBackfill) {
+        // Backfill: convert BYTEA → vector for this user's embeddings
+        const rows = await this.adapter.query(
+          'SELECT id, embedding FROM embeddings WHERE user_id = ? AND embedding_vec IS NULL',
+          [userId],
+        ) as Record<string, unknown>[];
+        for (const row of rows) {
+          const blob = row.embedding as Buffer;
+          const floats = Array.from(new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4));
+          const vecStr = `[${floats.join(',')}]`;
+          await this.adapter.execute(
+            'UPDATE embeddings SET embedding_vec = ?::vector WHERE id = ?',
+            [vecStr, row.id],
+          );
+        }
+      }
+
+      // pgvector cosine distance search
+      const vecStr = `[${queryEmbedding.join(',')}]`;
+      const results = await this.adapter.query(
+        `SELECT *, embedding_vec <=> ?::vector AS distance FROM embeddings WHERE user_id = ? AND embedding_vec IS NOT NULL ORDER BY distance LIMIT ?`,
+        [vecStr, userId, limit],
+      ) as Record<string, unknown>[];
+
+      return results.map(row => this.mapRow(row));
+    } catch (err) {
+      this.pgvectorAvailable = false;
+      return null; // fallback to JS-side
+    }
+  }
 
   async store(input: StoreEmbeddingInput): Promise<EmbeddingEntry> {
     const id = randomUUID();
@@ -44,6 +108,12 @@ export class EmbeddingRepository {
         'INSERT INTO embeddings (id, user_id, source_type, source_id, content, embedding, model, dimensions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [id, input.userId, input.sourceType, input.sourceId, input.content, buffer, input.model, input.dimensions, now],
       );
+
+      // If pgvector is available, also store as vector type for fast DB-side search
+      if (this.pgvectorAvailable && this.adapter.type === 'postgres') {
+        const vecStr = `[${input.embedding.join(',')}]`;
+        await tx.execute('UPDATE embeddings SET embedding_vec = ?::vector WHERE id = ?', [vecStr, id]).catch(() => {});
+      }
     });
 
     return {

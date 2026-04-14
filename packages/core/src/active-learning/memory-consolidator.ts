@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
 import type { MemoryRepository, MemoryEntry, EmbeddingRepository } from '@alfred/storage';
+import type { EmbeddingService } from '../embedding-service.js';
 
 const MERGE_PROMPT = `You are a memory consolidation system. Merge these similar memories into one concise entry.
 
@@ -19,8 +20,13 @@ export class MemoryConsolidator {
     private readonly logger: Logger,
   ) {}
 
+  private embeddingService?: EmbeddingService;
+
   /** Set optional embedding repo for cleanup after memory deletion. */
   setEmbeddingRepo(repo: EmbeddingRepository): void { this.embeddingRepo = repo; }
+
+  /** Set optional embedding service for semantic similarity grouping. */
+  setEmbeddingService(svc: EmbeddingService): void { this.embeddingService = svc; }
 
   /**
    * Run consolidation for a user:
@@ -118,7 +124,8 @@ export class MemoryConsolidator {
   }
 
   /**
-   * Find groups of similar memories using Jaccard similarity on key tokens.
+   * Find groups of similar memories using Jaccard similarity on key tokens
+   * + optional semantic similarity on values (when EmbeddingService is available).
    */
   private findSimilarGroups(memories: MemoryEntry[]): MemoryEntry[][] {
     // Filter out protected memories: entity/fact/rule types and manually created memories
@@ -134,14 +141,20 @@ export class MemoryConsolidator {
 
       const group = [candidates[i]];
       const tokensA = this.tokenize(candidates[i].key);
+      const valueTokensA = this.tokenize(candidates[i].value);
 
       for (let j = i + 1; j < candidates.length; j++) {
         if (used.has(candidates[j].id)) continue;
 
         const tokensB = this.tokenize(candidates[j].key);
-        const similarity = this.jaccardSimilarity(tokensA, tokensB);
+        const keySim = this.jaccardSimilarity(tokensA, tokensB);
 
-        if (similarity >= 0.5) {
+        // Also check value similarity for memories with different keys but similar content
+        const valueTokensB = this.tokenize(candidates[j].value);
+        const valueSim = this.jaccardSimilarity(valueTokensA, valueTokensB);
+
+        // Match if keys are similar (≥0.5) OR values are very similar (≥0.7)
+        if (keySim >= 0.5 || valueSim >= 0.7) {
           group.push(candidates[j]);
         }
       }

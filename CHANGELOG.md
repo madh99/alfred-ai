@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.487] - 2026-04-14
+
+### Added
+- **Memory: pgvector-Unterstützung für PostgreSQL** — `EmbeddingRepository.vectorSearch()` nutzt pgvector für DB-seitige Nearest-Neighbor-Suche statt JS-seitigem Full-Table-Scan. Automatische Erkennung: wenn pgvector Extension verfügbar → DB-Pfad, sonst → bestehender JS-Fallback. `embedding_vec` Spalte wird automatisch hinzugefügt und bestehende BYTEA-Embeddings on-demand backfilled. Docker-Image auf `pgvector/pgvector:pg16` wechseln um pgvector zu aktivieren
+- **Memory: Semantische Consolidation** — `MemoryConsolidator.findSimilarGroups()` prüft jetzt auch Value-Ähnlichkeit (Jaccard ≥0.7) zusätzlich zu Key-Ähnlichkeit (≥0.5). Findet Memories mit verschiedenen Keys aber ähnlichem Inhalt (z.B. `home_address` ↔ `wohnort_user`)
+
 ## [0.19.0-multi-ha.486] - 2026-04-14
 
 ### Fixed

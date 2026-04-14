@@ -81,18 +81,28 @@ export class EmbeddingService {
       const queryResult = await this.llm.embed(query);
       if (!queryResult) return [];
 
-      const embeddings = await this.embeddingRepo.findByUser(userId);
-      if (embeddings.length === 0) return [];
+      // Try pgvector-accelerated search first (PG only, much faster for large datasets)
+      const pgResults = await this.embeddingRepo.vectorSearch(userId, queryResult.embedding, limit);
+      let topResults: Array<{ content: string; sourceType: string; sourceId: string; score: number }>;
 
-      // Compute cosine similarity
-      const scored = embeddings.map(entry => {
-        const score = this.cosineSimilarity(queryResult.embedding, entry.embedding);
-        return { ...entry, score };
-      });
+      if (pgResults) {
+        // pgvector returns results sorted by distance (lower = more similar)
+        topResults = pgResults.map(r => ({
+          content: r.content, sourceType: r.sourceType, sourceId: r.sourceId,
+          score: 1 - ((r as any).distance ?? 0), // convert distance to similarity
+        }));
+      } else {
+        // Fallback: JS-side cosine similarity (loads all embeddings into memory)
+        const embeddings = await this.embeddingRepo.findByUser(userId);
+        if (embeddings.length === 0) return [];
 
-      // Sort by similarity (highest first) and take top-N
-      scored.sort((a, b) => b.score - a.score);
-      const topResults = scored.slice(0, limit);
+        const scored = embeddings.map(entry => {
+          const score = this.cosineSimilarity(queryResult.embedding, entry.embedding);
+          return { ...entry, score };
+        });
+        scored.sort((a, b) => b.score - a.score);
+        topResults = scored.slice(0, limit);
+      }
 
       return topResults.map(r => ({
         key: r.content.includes(':') ? r.content.split(':')[0].trim() : r.sourceId,
