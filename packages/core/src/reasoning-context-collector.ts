@@ -118,7 +118,12 @@ export class ReasoningContextCollector {
     // Fetch all sources in parallel (Promise.allSettled = non-blocking)
     const results = await Promise.allSettled(
       sources.map(async (src): Promise<ReasoningSection> => {
-        const content = await src.fetch();
+        let content = await src.fetch();
+        // Enforce per-source maxTokens limit (prevents any single source from hogging budget)
+        const maxChars = src.maxTokens * 4;
+        if (content.length > maxChars) {
+          content = content.slice(0, maxChars) + '\n...(gekürzt)';
+        }
         return {
           key: src.key,
           label: src.label,
@@ -188,7 +193,7 @@ export class ReasoningContextCollector {
       { key: 'calendar', label: 'Kalender (nächste 48h)', priority: 1, maxTokens: 400, fetch: () => this.fetchCalendar(now) },
       { key: 'todos', label: 'Offene Todos', priority: 1, maxTokens: 300, fetch: () => this.fetchTodos() },
       { key: 'watches', label: 'Aktive Watches', priority: 1, maxTokens: 300, fetch: () => this.fetchWatches() },
-      { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 500, fetch: () => this.fetchMemories() },
+      { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 800, fetch: () => this.fetchMemories() },
     );
 
     // Aktive Workflows (für Dedup — LLM sieht welche Workflows existieren)
@@ -278,7 +283,7 @@ export class ReasoningContextCollector {
     }
 
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
-      { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', count: 5 }, maxTokens: 250 },
+      { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', count: 5 }, maxTokens: 400 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
       { key: 'charger', label: 'Wallbox', skill: 'goe_charger', input: { action: 'status' }, maxTokens: 100 },
       { key: 'mstodo', label: 'Microsoft To Do', skill: 'microsoft_todo', input: { action: 'list_tasks' }, maxTokens: 200 },
