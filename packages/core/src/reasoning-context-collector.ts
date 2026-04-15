@@ -1214,7 +1214,7 @@ export class ReasoningContextCollector {
         // Preview: 80 chars for all emails (LLM needs content for cross-domain reasoning)
         const preview = m.preview ? `\n   ${m.preview.slice(0, 80).replace(/\n/g, ' ')}` : '';
 
-        return `${status}${att}${imp} ${m.subject}\n   ${m.from} | ${dateStr}${preview}`;
+        return `${i + 1}. ${status}${att}${imp} ${m.subject}\n   ${m.from} | ${dateStr}${preview}`;
       });
 
       const header = `Inbox (${messages.length} Emails, ${unreadCount} unread${needsReplyCount > 0 ? `, ${needsReplyCount} needs reply` : ''}):`;
