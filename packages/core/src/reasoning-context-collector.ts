@@ -318,8 +318,15 @@ export class ReasoningContextCollector {
       });
     }
 
+    // Email with dedicated reasoning formatter (15 emails, all with preview, token-efficient)
+    if (this.skillRegistry.has('email')) {
+      defs.push({
+        key: 'email', label: 'E-Mail Inbox', priority: 2, maxTokens: 500,
+        fetch: () => this.fetchEmailForReasoning(),
+      });
+    }
+
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
-      { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', count: 5 }, maxTokens: 400 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
       { key: 'charger', label: 'Wallbox', skill: 'goe_charger', input: { action: 'status' }, maxTokens: 100 },
       { key: 'mstodo', label: 'Microsoft To Do', skill: 'microsoft_todo', input: { action: 'list_tasks' }, maxTokens: 200 },
@@ -1146,6 +1153,76 @@ export class ReasoningContextCollector {
     }
 
     return results;
+  }
+
+  // ── Email Reasoning Fetcher ─────────────────────────────────
+
+  /**
+   * Fetch emails for reasoning context: 15 emails, all with preview,
+   * intelligently formatted with status tags. The LLM needs content
+   * (not just subjects) to discover cross-domain connections.
+   */
+  private async fetchEmailForReasoning(): Promise<string> {
+    const skill = this.skillRegistry.get('email');
+    if (!skill) return '(Email nicht verfügbar)';
+    try {
+      const { context } = await buildSkillContext(this.userRepo, {
+        userId: this.defaultChatId,
+        platform: this.defaultPlatform,
+        chatId: this.defaultChatId,
+        chatType: 'dm',
+      });
+
+      const result = await Promise.race([
+        this.skillSandbox.execute(skill, { action: 'inbox', count: 15 }, context),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('email timeout')), SKILL_FETCH_TIMEOUT_MS),
+        ),
+      ]);
+
+      if (!result.success) return `(Email: ${result.error})`;
+      if (!result.data || !Array.isArray((result.data as any).messages)) {
+        return result.display ?? '(Email: keine Daten)';
+      }
+
+      const messages = (result.data as any).messages as Array<{
+        id: string; subject: string; from: string; date: Date | string;
+        read?: boolean; replied?: boolean; hasAttachments?: boolean;
+        importance?: string; preview?: string; classification?: string;
+      }>;
+
+      if (messages.length === 0) return 'Inbox ist leer.';
+
+      const unreadCount = messages.filter(m => !m.read).length;
+      const needsReplyCount = messages.filter(m => !m.replied && !m.read).length;
+
+      const AUTOMATED = /no[_-]?reply@|noreply@|notifications?@|ci@|builds?@|npm|github\.com|gitlab\.com|sentry\.io/i;
+
+      const lines = messages.map((m, i) => {
+        const isAuto = AUTOMATED.test(m.from) || m.classification === 'other';
+        let status: string;
+        if (m.replied) status = '✅';
+        else if (m.read) status = '📖';
+        else if (isAuto) status = 'ℹ️';
+        else status = '🔴';
+
+        const att = m.hasAttachments ? ' [ATT]' : '';
+        const imp = m.importance === 'high' ? ' ❗' : '';
+        const dateObj = m.date instanceof Date ? m.date : new Date(m.date);
+        const dateStr = dateObj.toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+        // Preview: 80 chars for all emails (LLM needs content for cross-domain reasoning)
+        const preview = m.preview ? `\n   ${m.preview.slice(0, 80).replace(/\n/g, ' ')}` : '';
+
+        return `${status}${att}${imp} ${m.subject}\n   ${m.from} | ${dateStr}${preview}`;
+      });
+
+      const header = `Inbox (${messages.length} Emails, ${unreadCount} unread${needsReplyCount > 0 ? `, ${needsReplyCount} needs reply` : ''}):`;
+      return `${header}\n${lines.join('\n')}`;
+    } catch (err) {
+      this.logger.warn({ err }, 'ReasoningCollector: email reasoning fetch failed');
+      return '(Email-Abfrage fehlgeschlagen)';
+    }
   }
 
   // ── Skill Data Fetcher ──────────────────────────────────────
