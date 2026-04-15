@@ -5,7 +5,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.496] - 2026-04-15
+## [0.19.0-multi-ha.497] - 2026-04-15
 
 ### Added
 - **Enterprise-Grade Logging** — Rotating File-Logs mit pino-roll, Version in jeder Log-Zeile, aggregiertes Reasoning-Logging:
@@ -14,6 +14,7 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   - **Version in jedem Log** — Jede Log-Zeile enthält die Alfred-Version als `version`-Feld. Startup-Log zeigt Version, Node-Version und PID
   - **Reasoning-Collector Logging** — Ein aggregierter Info-Log nach Source-Fetch: Gesamtdauer, fulfilled/rejected/empty Counts, Truncations, langsame Sources (>2s). fitToBudget loggt jetzt gedroppte und budget-truncated Sections auf Info-Level (vorher debug = unsichtbar)
   - **fitToBudget Faktor-Korrektur** — Truncation-Faktor von `* 4` / `/ 4` auf `* 3.5` / `/ 3.5` korrigiert (konsistent mit Token-Schätzer, vgl. CHANGELOG v0.9.64)
+  - **Stdout-Schutz** — Wenn File-Logging aktiv und kein TTY (nohup/systemd), wird stdout-Transport übersprungen. Verhindert EIO-Crash bei geschlossenem Terminal
   - **Config** — `logger.file.enabled`, `logger.file.path`, `logger.file.maxSize`, `logger.file.maxFiles`, `logger.file.frequency` (Zod-Schema + ENV-Mappings)
 
 ## [0.19.0-multi-ha.495] - 2026-04-15

@@ -21,7 +21,7 @@ export async function startCommand(): Promise<void> {
     file: config.logger.file,
   });
 
-  logger.info({ name: config.name, version, nodeVersion: process.version, pid: process.pid }, 'Alfred starting');
+  logger.info({ nodeVersion: process.version }, 'Alfred starting');
 
   const alfred = new Alfred(config);
 
@@ -59,7 +59,7 @@ export async function startCommand(): Promise<void> {
   try {
     await alfred.initialize();
     await alfred.start();
-    logger.info({ version }, 'Alfred is ready');
+    logger.info('Alfred is ready');
 
     // Refresh model cache in background for all configured providers
     const llm = config.llm as Record<string, any>;

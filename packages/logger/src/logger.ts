@@ -25,6 +25,19 @@ export interface LogFileConfig {
   frequency?: 'daily' | 'hourly' | null;
 }
 
+/**
+ * Detect if stdout is connected to a real terminal/pipe or is detached (nohup, systemd).
+ * When detached, writing to stdout causes EIO — so skip stdout transport.
+ */
+function isStdoutAvailable(): boolean {
+  try {
+    // fd 1 not writable when detached (nohup without redirect, closed terminal)
+    return process.stdout.writable !== false;
+  } catch {
+    return false;
+  }
+}
+
 export function createLogger(name: string, level?: string, options?: { version?: string; file?: LogFileConfig }): pino.Logger {
   const logLevel = level ?? process.env.LOG_LEVEL ?? 'info';
   const usePretty =
@@ -40,7 +53,7 @@ export function createLogger(name: string, level?: string, options?: { version?:
 
   // Inject version as a base binding so every log line includes it
   if (options?.version) {
-    baseOpts.base = { pid: process.pid, hostname: undefined, version: options.version };
+    baseOpts.base = { pid: process.pid, version: options.version };
   }
 
   const fileConf = options?.file;
@@ -49,19 +62,25 @@ export function createLogger(name: string, level?: string, options?: { version?:
   // Build transport targets
   const targets: pino.TransportTargetOptions[] = [];
 
-  if (usePretty) {
-    targets.push({
-      target: 'pino-pretty',
-      options: { colorize: true },
-      level: logLevel,
-    });
-  } else {
-    // Production: JSON to stdout
-    targets.push({
-      target: 'pino/file',
-      options: { destination: 1 }, // fd 1 = stdout
-      level: logLevel,
-    });
+  // stdout transport: skip when file logging is active and stdout is detached (nohup)
+  // This prevents EIO crashes when the terminal is gone.
+  const stdoutAvailable = isStdoutAvailable();
+  const skipStdout = fileEnabled && !process.stdout.isTTY;
+
+  if (!skipStdout && stdoutAvailable) {
+    if (usePretty) {
+      targets.push({
+        target: 'pino-pretty',
+        options: { colorize: true },
+        level: logLevel,
+      });
+    } else {
+      targets.push({
+        target: 'pino/file',
+        options: { destination: 1 },
+        level: logLevel,
+      });
+    }
   }
 
   if (fileEnabled) {
@@ -87,8 +106,16 @@ export function createLogger(name: string, level?: string, options?: { version?:
     });
   }
 
+  // Fallback: if no targets (file disabled + stdout unavailable), use stdout anyway
+  if (targets.length === 0) {
+    if (usePretty) {
+      const transport = pino.transport({ target: 'pino-pretty', options: { colorize: true } });
+      return pino(baseOpts, transport);
+    }
+    return pino(baseOpts);
+  }
+
   if (targets.length === 1) {
-    // Single transport — use directly
     const transport = pino.transport(targets[0]);
     return pino(baseOpts, transport);
   }
