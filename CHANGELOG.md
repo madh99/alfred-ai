@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.502] - 2026-04-15
+
+### Fixed
+- **Reasoning: 5 Qualitäts-Verbesserungen** — Insight-Redundanz eliminiert, Event-Spam gestoppt, Doppel-Nachrichten behoben, Resolved-Topics besser erkannt, mehr Autonomie:
+  - **P1: Insight-Dedup auf Topic-Ebene** — Insights werden jetzt mit zwei Hashes dedupliziert: Content-Hash (erste 100 Zeichen) UND Topic-Hash (sortierte Keywords ≥4 Zeichen). "BMW-Ladestatus bestätigt" und "BMW-Ladefenster morgen kritisch" haben verschiedene Content-Hashes aber denselben Topic-Hash → werden als Duplikat erkannt
+  - **P2: Event-Trigger Spam gestoppt** — User-initiierte Skill-Ausführungen im Chat (email read, calendar list, todo list) triggern KEIN Reasoning mehr. Nur noch Watch-Alerts, Kalender-Notificationen und Todo-Overdue-Events in alfred.ts lösen Event-Reasoning aus. Eliminiert nutzlose Insights wie "E-Mail-Leseoperation konsistent mit Abend-Muster"
+  - **P3: Doppel-Nachrichten behoben** — Deferred-Insights wurden an ZWEI Stellen geflusht: am Anfang von tick() UND in deliverOrDefer(). User bekam deferred + neue + nochmal deferred Insights im selben Tick. Jetzt nur noch in tick()
+  - **P4: Resolved-Topics aus Insight-Tracking** — annotateResolvedTopics erkennt jetzt auch "BESTÄTIGT" Einträge aus dem Insight-Tracking-System (nicht nur Memory-Keywords wie "erledigt"). Wenn der User auf einen Insight reagiert hat ("ja", "erledigt", "passt"), wird das Thema als gelöst markiert und nicht erneut gemeldet. Zusätzlich: "geklärt" und "bereits gesagt" als neue Resolution-Keywords
+  - **P5: Autonomie-Level Default proactive** — PROACTIVE_SKILLS (reminder, todo, note, calendar, homeassistant, sonos, spotify, watch) werden jetzt automatisch ausgeführt und der User wird informiert ("Proaktiv ausgeführt: ...") statt eine Bestätigungsfrage zu stellen. HIGH_RISK Skills (email senden, delegate, workflow, bmw, deploy, itsm) erfordern weiterhin Bestätigung. User kann per Memory `autonomy_level: confirm_all` zurückwechseln
+
 ## [0.19.0-multi-ha.501] - 2026-04-15
 
 ### Added

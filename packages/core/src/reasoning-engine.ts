@@ -860,22 +860,42 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     return lines;
   }
 
-  private insightHash(text: string): string {
+  /** Content-based hash: first 100 chars normalized. Catches exact/near-exact repeats. */
+  private insightContentHash(text: string): string {
     const normalized = text.slice(0, 100).toLowerCase().replace(/\s+/g, ' ');
     return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
   }
 
+  /** Topic-based hash: sorted keywords ≥4 chars from first 200 chars. Catches same-topic rephrasing. */
+  private insightTopicHash(text: string): string {
+    const words = text.slice(0, 200).toLowerCase()
+      .replace(/[^a-zäöüß0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length >= 4)
+      .sort()
+      .join(' ');
+    return crypto.createHash('sha256').update(words).digest('hex').slice(0, 16);
+  }
+
   private async wasRecentlySent(insight: string): Promise<boolean> {
-    const hash = this.insightHash(insight);
-    const key = `reasoning:${hash}`;
-    return await this.notifRepo.wasNotified(key, this.defaultChatId);
+    const contentKey = `reasoning:${this.insightContentHash(insight)}`;
+    const topicKey = `reasoning-topic:${this.insightTopicHash(insight)}`;
+    // Duplicate if EITHER content hash OR topic hash was recently sent
+    const [contentSent, topicSent] = await Promise.all([
+      this.notifRepo.wasNotified(contentKey, this.defaultChatId),
+      this.notifRepo.wasNotified(topicKey, this.defaultChatId),
+    ]);
+    return contentSent || topicSent;
   }
 
   private async markSent(insight: string): Promise<void> {
-    const hash = this.insightHash(insight);
-    const key = `reasoning:${hash}`;
     const expiry = new Date(Date.now() + this.deduplicationHours * 60 * 60 * 1000).toISOString();
-    await this.notifRepo.markNotified(key, this.defaultChatId, this.defaultPlatform, expiry);
+    const contentKey = `reasoning:${this.insightContentHash(insight)}`;
+    const topicKey = `reasoning-topic:${this.insightTopicHash(insight)}`;
+    await Promise.all([
+      this.notifRepo.markNotified(contentKey, this.defaultChatId, this.defaultPlatform, expiry),
+      this.notifRepo.markNotified(topicKey, this.defaultChatId, this.defaultPlatform, expiry),
+    ]);
   }
 
   // ── Action Support ──────────────────────────────────────────
@@ -1063,10 +1083,13 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       if (mem) {
         const level = mem.value.toLowerCase().trim();
         if (level.includes('autonomous') || level.includes('autonom')) return 'autonomous';
+        if (level.includes('confirm') || level.includes('bestätig')) return 'confirm_all';
         if (level.includes('proactive') || level.includes('proaktiv')) return 'proactive';
       }
     } catch { /* use default */ }
-    return 'confirm_all';
+    // Default: proactive — PROACTIVE_SKILLS (reminder, todo, note, calendar, homeassistant)
+    // are auto-executed with user notification. HIGH_RISK skills still require confirmation.
+    return 'proactive';
   }
 
   private resolveUrgency(actions: ProposedAction[]): 'urgent' | 'high' | 'normal' | 'low' {
@@ -1151,43 +1174,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       await this.processActions(actions);
     }
 
-    // Also flush any previously deferred insights now that user is active
-    if (this.deliveryScheduler) {
-      try {
-        const deferred = await this.deliveryScheduler.getPendingDeferred(this.defaultChatId);
-        if (deferred.length > 0) {
-          const adapter = this.adapters.get(this.defaultPlatform);
-          if (adapter) {
-            for (const d of deferred) {
-              // Add age indicator for deferred insights
-              let msg = d.message;
-              if (d.created_at) {
-                const ageMs = Date.now() - new Date(d.created_at).getTime();
-                const ageMin = Math.round(ageMs / 60_000);
-                if (ageMin > 30) {
-                  const ageStr = ageMin >= 120 ? `${Math.round(ageMin / 60)}h` : `${ageMin} Min`;
-                  msg = msg.replace(/^(💡 \*\*Alfred Insights\*\*)/, `$1 _(erstellt vor ${ageStr})_`);
-                }
-              }
-              await adapter.sendMessage(this.defaultChatId, msg);
-              // Track deferred insights for preference learning
-              if (this.insightTracker && d.message) {
-                const lines = d.message.split('\n').filter((l: string) => l.trim().length > 10);
-                const cats = lines.map((l: string) => InsightTracker.categorizeInsight(l));
-                this.insightTracker.trackInsightBatch(cats, lines);
-              }
-              // Process deferred actions
-              try {
-                const deferredActions = JSON.parse(d.actions) as ProposedAction[];
-                if (deferredActions.length > 0) await this.processActions(deferredActions);
-              } catch { /* no actions */ }
-            }
-            await this.deliveryScheduler.markDelivered(deferred.map(d => d.id));
-            this.logger.info({ count: deferred.length }, 'Deferred insights flushed');
-          }
-        }
-      } catch { /* non-critical */ }
-    }
+    // Deferred flush is handled ONLY in tick() at the beginning — not here.
+    // Having it in both places caused double-delivery (user got deferred + new + deferred again).
   }
 
   private async processActions(actions: ProposedAction[]): Promise<void> {

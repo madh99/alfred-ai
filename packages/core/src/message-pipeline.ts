@@ -30,10 +30,11 @@ const NODE_LOCAL_SKILLS = new Set([
   'docker', 'code_sandbox', 'code_agent', 'project_agent', 'browser',
 ]);
 
-/** Skills whose successful execution triggers a focused reasoning pass (cross-domain connections). */
-const REASONING_TRIGGER_SKILLS = new Set([
-  'calendar', 'todo', 'microsoft_todo', 'email', 'homeassistant',
-]);
+/** Skills whose successful execution triggers a focused reasoning pass.
+ *  EMPTY: Watch/Calendar/Todo events are triggered via dedicated watchers in alfred.ts.
+ *  User-initiated chat skill calls (email read, calendar list) should NOT trigger reasoning
+ *  — that causes spam insights like "E-Mail-Leseoperation konsistent mit Abend-Muster". */
+const REASONING_TRIGGER_SKILLS = new Set<string>([]);
 
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations

@@ -612,35 +612,59 @@ export class ReasoningContextCollector {
    * annotate that section so the LLM doesn't re-surface it as an open issue.
    */
   private annotateResolvedTopics(sections: ReasoningSection[]): void {
-    const memorySection = sections.find(s => s.key === 'memories');
-    if (!memorySection) return;
+    // Collect resolved topic words from TWO sources:
+    // 1. Memory entries containing "erledigt/resolved/..." keywords
+    // 2. insight_resolved:* entries from the Insight-Tracking system (set when user acknowledges)
+    const resolvedTopicSets: Array<{ topicWords: string[]; label: string }> = [];
 
-    // Extract resolved memories: lines containing resolution keywords
-    const resolvedPattern = /erledigt|resolved|überholt|kein.{0,20}handlungsbedarf|nicht mehr.{0,20}problem|abgeschlossen/i;
-    const resolvedMemories: Array<{ key: string; line: string }> = [];
-    for (const line of memorySection.content.split('\n')) {
-      if (resolvedPattern.test(line)) {
-        // Extract the memory key: "- [type] key_name: value..."
-        const keyMatch = line.match(/\]\s*([^:]+):/);
-        if (keyMatch) resolvedMemories.push({ key: keyMatch[1].trim(), line });
+    // Source 1: Memory keywords
+    const memorySection = sections.find(s => s.key === 'memories');
+    if (memorySection) {
+      const resolvedPattern = /erledigt|resolved|überholt|kein.{0,20}handlungsbedarf|nicht mehr.{0,20}problem|abgeschlossen|geklärt|bereits gesagt/i;
+      for (const line of memorySection.content.split('\n')) {
+        if (resolvedPattern.test(line)) {
+          const keyMatch = line.match(/\]\s*([^:]+):/);
+          if (keyMatch) {
+            const topicWords = keyMatch[1].trim().split('_').filter(w => w.length >= 4).map(w => w.toLowerCase());
+            if (topicWords.length > 0) {
+              resolvedTopicSets.push({ topicWords, label: line.replace(/^-\s*\[.*?\]\s*/, '').slice(0, 150) });
+            }
+          }
+        }
       }
     }
-    if (resolvedMemories.length === 0) return;
 
-    // For each resolved memory, extract topic words from the key (split on _ and filter short words)
-    for (const resolved of resolvedMemories) {
-      const topicWords = resolved.key.split('_')
-        .filter(w => w.length >= 4)
-        .map(w => w.toLowerCase());
-      if (topicWords.length === 0) continue;
+    // Source 2: insight_resolved entries from Insight-Tracking section
+    const trackingSection = sections.find(s => s.key === 'insightTracking');
+    if (trackingSection) {
+      for (const line of trackingSection.content.split('\n')) {
+        if (/BESTÄTIGT|resolved/i.test(line)) {
+          // Extract topic words from the insight text
+          const textMatch = line.match(/:\s*(.+)$/);
+          if (textMatch) {
+            const topicWords = textMatch[1].toLowerCase()
+              .replace(/[^a-zäöüß0-9\s]/g, ' ')
+              .split(/\s+/)
+              .filter(w => w.length >= 4)
+              .slice(0, 5);
+            if (topicWords.length > 0) {
+              resolvedTopicSets.push({ topicWords, label: textMatch[1].slice(0, 150) });
+            }
+          }
+        }
+      }
+    }
 
-      // Annotate matching sections (not memories itself)
+    if (resolvedTopicSets.length === 0) return;
+
+    // Annotate matching sections
+    for (const resolved of resolvedTopicSets) {
       for (const section of sections) {
-        if (section.key === 'memories') continue;
+        if (section.key === 'memories' || section.key === 'insightTracking') continue;
         const contentLower = section.content.toLowerCase();
-        const matches = topicWords.filter(w => contentLower.includes(w));
-        if (matches.length >= 2 || (matches.length === 1 && topicWords.length === 1)) {
-          section.content += `\n\n✅ ERLEDIGT laut User-Memory: "${resolved.line.replace(/^-\s*\[.*?\]\s*/, '').slice(0, 150)}" — NICHT als offenes Problem oder Handlungsbedarf darstellen.`;
+        const matches = resolved.topicWords.filter(w => contentLower.includes(w));
+        if (matches.length >= 2 || (matches.length === 1 && resolved.topicWords.length === 1)) {
+          section.content += `\n\n✅ ERLEDIGT: "${resolved.label}" — NICHT als offenes Problem oder Handlungsbedarf darstellen.`;
         }
       }
     }
