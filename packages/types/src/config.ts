@@ -57,10 +57,19 @@ export interface StorageConfig {
   connectionString?: string;  // PostgreSQL connection string (for HA cluster)
 }
 
+export interface LogFileConfig {
+  enabled?: boolean;
+  path?: string;
+  maxSize?: string;
+  maxFiles?: number;
+  frequency?: 'daily' | 'hourly' | null;
+}
+
 export interface LoggerConfig {
   level: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
   pretty: boolean;
   auditLogPath?: string;
+  file?: LogFileConfig;
 }
 
 export interface SecurityConfig {

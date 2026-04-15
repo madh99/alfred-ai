@@ -180,6 +180,9 @@ importers:
       pino-pretty:
         specifier: ^13.0.0
         version: 13.1.3
+      pino-roll:
+        specifier: ^2.0.1
+        version: 2.2.0
       puppeteer:
         specifier: ^24.0.0
         version: 24.37.5(typescript@5.9.3)
@@ -346,6 +349,9 @@ importers:
       pino-pretty:
         specifier: ^13.0.0
         version: 13.1.3
+      pino-roll:
+        specifier: ^2.0.1
+        version: 2.2.0
 
   packages/messaging:
     dependencies:
@@ -2680,6 +2686,9 @@ packages:
     resolution: {integrity: sha512-7hvf7/GW8e86rW0ptuwS3OcBGDjIi6SZva7hCyWC0yYry2cOPmLIjXAUHI6DK2HsnwJd9ifmt57i8eV2n4YNpw==}
     engines: {node: '>= 14'}
 
+  date-fns@4.1.0:
+    resolution: {integrity: sha512-Ukq0owbQXxa/U3EGtsdVBkR1w7KOQ5gIBqdH2hkvknzZPYvBxb/aa6E8L7tmjFtkwZBu3UXBbjIgPo/Ez4xaNg==}
+
   dateformat@4.6.3:
     resolution: {integrity: sha512-2P0p0pFGzHS5EMnhdxQi7aJN+iMheud0UhG4dlE1DLAlvL8JHjJJTX/CSm4JXwV0Ka5nGk3zC5mcb5bUQUxxMA==}
 
@@ -4396,6 +4405,9 @@ packages:
   pino-pretty@13.1.3:
     resolution: {integrity: sha512-ttXRkkOz6WWC95KeY9+xxWL6AtImwbyMHrL1mSwqwW9u+vLp/WIElvHvCSDg0xO/Dzrggz1zv3rN5ovTRVowKg==}
     hasBin: true
+
+  pino-roll@2.2.0:
+    resolution: {integrity: sha512-PSigcOfIQHcPIRcQFuDFe5RVD37waq9T3No8lqPr4CdIaSa9pshUOPVCO1C1mmb3VQ1n5VXUGuKSNk6yDMUi6w==}
 
   pino-std-serializers@7.1.0:
     resolution: {integrity: sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==}
@@ -8204,6 +8216,8 @@ snapshots:
 
   data-uri-to-buffer@6.0.2: {}
 
+  date-fns@4.1.0: {}
+
   dateformat@4.6.3: {}
 
   dayjs@1.11.19: {}
@@ -10395,6 +10409,11 @@ snapshots:
       secure-json-parse: 4.1.0
       sonic-boom: 4.2.1
       strip-json-comments: 5.0.3
+
+  pino-roll@2.2.0:
+    dependencies:
+      date-fns: 4.1.0
+      sonic-boom: 4.2.1
 
   pino-std-serializers@7.1.0: {}
 

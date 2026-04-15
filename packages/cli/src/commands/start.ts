@@ -2,9 +2,11 @@ import { ConfigLoader } from '@alfred/config';
 import { createLogger } from '@alfred/logger';
 import { Alfred } from '@alfred/core';
 import { refreshCacheInBackground } from '../model-discovery.js';
+import { getVersion } from '../version.js';
 
 export async function startCommand(): Promise<void> {
   const configLoader = new ConfigLoader();
+  const version = getVersion();
 
   let config;
   try {
@@ -14,9 +16,12 @@ export async function startCommand(): Promise<void> {
     process.exit(1);
   }
 
-  const logger = createLogger('cli', config.logger.level);
+  const logger = createLogger('alfred', config.logger.level, {
+    version,
+    file: config.logger.file,
+  });
 
-  logger.info({ name: config.name }, 'Configuration loaded');
+  logger.info({ name: config.name, version, nodeVersion: process.version, pid: process.pid }, 'Alfred starting');
 
   const alfred = new Alfred(config);
 
@@ -54,7 +59,7 @@ export async function startCommand(): Promise<void> {
   try {
     await alfred.initialize();
     await alfred.start();
-    logger.info('Alfred is ready');
+    logger.info({ version }, 'Alfred is ready');
 
     // Refresh model cache in background for all configured providers
     const llm = config.llm as Record<string, any>;

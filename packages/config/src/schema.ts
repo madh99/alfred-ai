@@ -34,10 +34,19 @@ export const StorageConfigSchema = z.object({
   connectionString: z.string().optional(),
 });
 
+export const LogFileConfigSchema = z.object({
+  enabled: z.coerce.boolean().optional(),
+  path: z.string().optional(),
+  maxSize: z.string().optional(),
+  maxFiles: z.coerce.number().optional(),
+  frequency: z.enum(['daily', 'hourly']).nullable().optional(),
+});
+
 export const LoggerConfigSchema = z.object({
   level: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']),
   pretty: z.boolean(),
   auditLogPath: z.string().optional(),
+  file: LogFileConfigSchema.optional(),
 });
 
 export const ModerationConfigSchema = z.object({

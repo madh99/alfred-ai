@@ -116,13 +116,21 @@ export class ReasoningContextCollector {
     const sources = this.buildSourceDefs(now);
 
     // Fetch all sources in parallel (Promise.allSettled = non-blocking)
+    const fetchStart = Date.now();
+    const truncations: string[] = [];
+    const timings: Record<string, number> = {};
+
     const results = await Promise.allSettled(
       sources.map(async (src): Promise<ReasoningSection> => {
+        const t0 = Date.now();
         let content = await src.fetch();
+        timings[src.key] = Date.now() - t0;
+
         // Enforce per-source maxTokens limit (prevents any single source from hogging budget)
         // Factor 3.5 matches tokenEstimate calculation (content.length / 3.5) — see CHANGELOG v0.9.64
         const maxChars = Math.floor(src.maxTokens * 3.5);
         if (content.length > maxChars) {
+          const originalTokens = Math.ceil(content.length / 3.5);
           // Truncate at line boundaries to avoid cutting mid-entry
           const lines = content.split('\n');
           let charCount = 0;
@@ -133,6 +141,7 @@ export class ReasoningContextCollector {
             charCount += line.length + 1;
           }
           content = kept.join('\n') + '\n...(gekürzt)';
+          truncations.push(`${src.key}:${originalTokens}→${src.maxTokens}`);
         }
         return {
           key: src.key,
@@ -145,19 +154,36 @@ export class ReasoningContextCollector {
       }),
     );
 
-    // Collect fulfilled results, skip failures — with diagnostic logging
+    // Collect fulfilled results, skip failures
     const sections: ReasoningSection[] = [];
+    const rejected: string[] = [];
+    const empty: string[] = [];
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
       const srcKey = sources[i]?.key ?? `unknown-${i}`;
       if (r.status === 'rejected') {
-        this.logger.warn({ key: srcKey, reason: String(r.reason) }, 'ReasoningCollector: source REJECTED');
+        rejected.push(`${srcKey}: ${String(r.reason).slice(0, 100)}`);
       } else if (!r.value.content) {
-        this.logger.warn({ key: srcKey, contentType: typeof r.value.content, contentLen: 0 }, 'ReasoningCollector: source returned EMPTY content');
+        empty.push(srcKey);
       } else {
         sections.push(r.value);
       }
     }
+
+    // Single aggregated log for all fetch results
+    const fetchDuration = Date.now() - fetchStart;
+    const slowSources = Object.entries(timings).filter(([, ms]) => ms > 2000).map(([k, ms]) => `${k}:${ms}ms`);
+    this.logger.info({
+      component: 'reasoning-collector',
+      fetchDurationMs: fetchDuration,
+      total: sources.length, fulfilled: sections.length,
+      rejected: rejected.length, empty: empty.length,
+      truncated: truncations.length > 0 ? truncations.join(', ') : undefined,
+      slow: slowSources.length > 0 ? slowSources.join(', ') : undefined,
+    }, 'ReasoningCollector: sources fetched');
+
+    if (rejected.length > 0) this.logger.warn({ rejected }, 'ReasoningCollector: sources rejected');
+    if (empty.length > 0) this.logger.warn({ empty }, 'ReasoningCollector: sources returned empty content');
 
     // Change detection + error status annotation
     const changedSections: string[] = [];
@@ -459,10 +485,12 @@ export class ReasoningContextCollector {
 
     const result: ReasoningSection[] = [];
     let remaining = maxTokens;
+    const dropped: string[] = [];
+    const budgetTruncated: string[] = [];
 
     for (const section of sorted) {
       if (remaining <= 0) {
-        this.logger?.debug({ key: section.key, tokens: section.tokenEstimate, reason: 'budget_exhausted' }, 'Context section dropped');
+        dropped.push(`${section.key}:${section.tokenEstimate}`);
         continue;
       }
 
@@ -470,23 +498,29 @@ export class ReasoningContextCollector {
         result.push(section);
         remaining -= section.tokenEstimate;
       } else if (section.priority <= 2) {
-        // Priority 1+2: truncate rather than drop
-        const maxChars = remaining * 4;
+        // Priority 1+2: truncate rather than drop (factor 3.5 consistent with tokenEstimate)
+        const maxChars = Math.floor(remaining * 3.5);
         const truncated = section.content.slice(0, maxChars) + '\n...(gekürzt)';
         result.push({
           ...section,
           content: truncated,
-          tokenEstimate: Math.ceil(truncated.length / 4),
+          tokenEstimate: Math.ceil(truncated.length / 3.5),
         });
-        this.logger?.debug({ key: section.key, originalTokens: section.tokenEstimate, truncatedTo: remaining }, 'Context section truncated');
+        budgetTruncated.push(`${section.key}:${section.tokenEstimate}→${remaining}`);
         remaining = 0;
       } else {
-        this.logger?.debug({ key: section.key, tokens: section.tokenEstimate, remaining, reason: 'priority3_over_budget' }, 'Context section dropped');
+        dropped.push(`${section.key}:${section.tokenEstimate}`);
       }
     }
 
-    // Log final context composition
-    this.logger?.info({ sections: result.map(s => `${s.key}:${s.tokenEstimate}`).join(', '), totalTokens: maxTokens - remaining, budget: maxTokens }, 'Context sections assembled');
+    // Log final context composition + what was dropped
+    this.logger?.info({
+      component: 'reasoning-collector',
+      sections: result.map(s => `${s.key}:${s.tokenEstimate}`).join(', '),
+      totalTokens: maxTokens - remaining, budget: maxTokens,
+      dropped: dropped.length > 0 ? dropped.join(', ') : undefined,
+      budgetTruncated: budgetTruncated.length > 0 ? budgetTruncated.join(', ') : undefined,
+    }, 'Context sections assembled');
 
     return result;
   }
@@ -1136,18 +1170,10 @@ export class ReasoningContextCollector {
         ),
       ]);
 
-      const elapsed = Date.now() - start;
-      if (!result.success) {
-        this.logger.warn({ skillName, error: result.error, elapsed }, 'ReasoningCollector: skill returned error');
-        return `(${skillName}: ${result.error})`;
-      }
-      const content = result.display ?? JSON.stringify(result.data);
-      if (skillName === 'email') {
-        this.logger.info({ skillName, elapsed, hasDisplay: !!result.display, displayLen: result.display?.length, dataType: typeof result.data, contentLen: content.length }, 'ReasoningCollector: email fetch result');
-      }
-      return content;
+      if (!result.success) return `(${skillName}: ${result.error})`;
+      return result.display ?? JSON.stringify(result.data);
     } catch (err) {
-      this.logger.warn({ err, skillName, elapsed: 'timeout-or-error' }, 'ReasoningCollector: skill fetch failed');
+      this.logger.warn({ err, skillName }, 'ReasoningCollector: skill fetch failed');
       return `(${skillName}-Abfrage fehlgeschlagen)`;
     }
   }

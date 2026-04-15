@@ -38,6 +38,13 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   logger: {
     level: 'info',
     pretty: true,
+    file: {
+      enabled: false,
+      path: './data/logs/alfred.log',
+      maxSize: '10m',
+      maxFiles: 10,
+      frequency: 'daily' as const,
+    },
   },
   security: {
     rulesPath: './config/rules',

@@ -1,4 +1,6 @@
 import pino from 'pino';
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { AuditEntry } from '@alfred/types';
 
 const auditRedactOpts = {
@@ -15,9 +17,20 @@ const auditRedactOpts = {
 export class AuditLogger {
   private logger: pino.Logger;
 
-  constructor(auditLogPath: string = './data/audit.log') {
-    const dest = pino.destination(auditLogPath);
-    this.logger = pino({ name: 'audit', redact: auditRedactOpts }, dest);
+  constructor(auditLogPath: string = './data/logs/audit.log') {
+    // Ensure directory exists
+    try { mkdirSync(dirname(auditLogPath), { recursive: true }); } catch { /* exists */ }
+
+    const transport = pino.transport({
+      target: 'pino-roll',
+      options: {
+        file: auditLogPath,
+        size: '10m',
+        frequency: 'daily',
+        limit: { count: 30 }, // Audit logs: 30 days retention
+      },
+    });
+    this.logger = pino({ name: 'audit', redact: auditRedactOpts }, transport);
   }
 
   log(entry: AuditEntry): void {

@@ -161,7 +161,7 @@ export class ReasoningEngine {
         .catch(err => this.logger.error({ err }, 'Reasoning tick unhandled error'))
         .finally(() => { tickRunning = false; });
     }, 60_000);
-    this.logger.info({ schedule: this.schedule, tier: this.tier }, 'Reasoning engine started');
+    this.logger.info({ schedule: this.schedule, tier: this.tier, nodeId: this.nodeId, budget: 3500 }, 'Reasoning engine started');
   }
 
   stop(): void {
@@ -392,7 +392,7 @@ ${this.buildTopicInstructions()}`;
         }
       }
 
-      this.logger.info('Reasoning pass starting');
+      this.logger.info({ nodeId: this.nodeId, schedule: this.schedule }, 'Reasoning pass starting');
       const startMs = Date.now();
 
       // PHASE 1: Collect context from all available data sources
