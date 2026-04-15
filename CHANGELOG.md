@@ -5,7 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.500] - 2026-04-15
+## [0.19.0-multi-ha.501] - 2026-04-15
+
+### Added
+- **WebUI: Log Viewer** (`/logs`) — Enterprise-Grade Log-Viewer im WebUI:
+  - **Application Logs:** Tabelle mit Level-Farben (INFO grün, WARN gelb, ERROR rot), Zeitstempel, Component, Message
+  - **Audit Logs:** Separater Tab für Security/Audit-Log
+  - **Filter:** Level-Filter (Trace→Fatal), Text-Suche (Message, Component, beliebiger JSON-Key), Enter zum Suchen
+  - **Live Tail:** SSE-basiertes Echtzeit-Streaming neuer Log-Zeilen mit Auto-Scroll
+  - **JSON-Expand:** Klick auf Zeile zeigt strukturierte Details (alle zusätzlichen Felder)
+  - **API:** `GET /api/logs/app?lines=200&level=info&filter=reasoning`, `GET /api/logs/app/stream` (SSE), `GET /api/logs/audit?lines=100`
+
+- **WebUI: Cluster & Operations Dashboard** (`/cluster`) — HA-Cluster-Übersicht und Operationsstatus:
+  - **Node-Übersicht:** Alle Cluster-Nodes mit Status (alive/dead), Uptime, Version, Hostname, Adapters. Aktueller Node markiert
+  - **Adapter Claims:** Tabelle aller Platform-Claims (Telegram, Discord etc.) mit Node-Zuordnung, Claimed/Expires Zeitstempel, Active/Expired Status
+  - **Reasoning Slots:** Letzte 20 Reasoning-Passes mit Slot-Key, ausführendem Node, Zeitstempel
+  - **Operations Status:** Reasoning Schedule, Backup Schedule
+  - **Single-Node-Kompatibel:** Zeigt synthetischen Node-Eintrag wenn kein Cluster aktiv
+  - **Auto-Refresh:** Alle 15 Sekunden
+  - **API:** `GET /api/cluster/health`
 
 ### Changed
 - **Reasoning: Email-Kontext erweitert — 15 Emails mit Preview statt 5** — Eigene `fetchEmailForReasoning()` Methode statt generischer `inbox` Action. Alle Emails (UNREAD, READ, REPLIED, AUTO) mit 80-Zeichen-Preview für Cross-Domain-Reasoning (Email-Inhalt + Kalender + KG-Personen = Zusammenhänge). Status-Tags (🔴📖✅ℹ️) zeigen dem LLM den Bearbeitungsstand. Laufende Nummern statt Graph-IDs (152 Zeichen/ID = untragbar). maxTokens 500, Pre-Truncation schneidet älteste Emails zuerst ab (~11 Emails passen)

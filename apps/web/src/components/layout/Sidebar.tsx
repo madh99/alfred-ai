@@ -12,6 +12,8 @@ const navItems = [
   { href: `${BASE}/cmdb/`, label: 'CMDB', icon: '🖥️' },
   { href: `${BASE}/itsm/`, label: 'ITSM', icon: '🔧' },
   { href: `${BASE}/docs/`, label: 'Docs', icon: '📄' },
+  { href: `${BASE}/logs/`, label: 'Logs', icon: '📋' },
+  { href: `${BASE}/cluster/`, label: 'Cluster', icon: '🔗' },
   { href: `${BASE}/settings/`, label: 'Settings', icon: '⚙️' },
 ];
 

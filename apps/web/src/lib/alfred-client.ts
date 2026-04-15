@@ -367,6 +367,75 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
     return res.json();
   }
+
+  // ── Log Viewer API ──
+
+  async fetchLogs(options?: { lines?: number; level?: string; filter?: string }): Promise<import('@/types/api').LogResponse> {
+    const params = new URLSearchParams();
+    if (options?.lines) params.set('lines', String(options.lines));
+    if (options?.level) params.set('level', options.level);
+    if (options?.filter) params.set('filter', options.filter);
+    const qs = params.toString() ? `?${params}` : '';
+    const res = await fetch(`${this.baseUrl}/api/logs/app${qs}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Logs: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async fetchAuditLogs(lines?: number): Promise<import('@/types/api').LogResponse> {
+    const qs = lines ? `?lines=${lines}` : '';
+    const res = await fetch(`${this.baseUrl}/api/logs/audit${qs}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`AuditLogs: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  streamLogs(
+    onLine: (entry: import('@/types/api').LogEntry) => void,
+    options?: { level?: string; filter?: string },
+  ): () => void {
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (options?.level) params.set('level', options.level);
+    if (options?.filter) params.set('filter', options.filter);
+    const qs = params.toString() ? `?${params}` : '';
+
+    (async () => {
+      try {
+        const res = await fetch(`${this.baseUrl}/api/logs/app/stream${qs}`, {
+          headers: this.authHeaders,
+          signal: controller.signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                onLine(JSON.parse(line.slice(6)));
+              } catch { /* skip malformed */ }
+            }
+          }
+        }
+      } catch { /* aborted or connection lost */ }
+    })();
+
+    return () => controller.abort();
+  }
+
+  // ── Cluster / HA Operations API ──
+
+  async fetchClusterHealth(): Promise<import('@/types/api').ClusterHealthData> {
+    const res = await fetch(`${this.baseUrl}/api/cluster/health`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Cluster: HTTP ${res.status}`);
+    return res.json();
+  }
 }
 
 export interface KGEntity {

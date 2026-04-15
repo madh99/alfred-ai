@@ -183,6 +183,19 @@ export class HttpAdapter extends MessagingAdapter {
   setItsmCallbacks(cbs: ItsmCallbacks): void { this.itsmCallbacks = cbs; }
   setDocsCallbacks(cbs: DocsCallbacks): void { this.docsCallbacks = cbs; }
 
+  // ── Log Viewer + Cluster Operations ────────────────────────
+  private logCallbacks?: {
+    readAppLog: (lines: number, level?: string, filter?: string) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string }>;
+    readAuditLog: (lines: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string }>;
+    streamAppLog: (res: http.ServerResponse, level?: string, filter?: string) => () => void;
+  };
+  private clusterCallbacks?: {
+    getHealth: () => Promise<Record<string, unknown>>;
+  };
+
+  setLogCallbacks(cbs: typeof HttpAdapter.prototype.logCallbacks): void { this.logCallbacks = cbs; }
+  setClusterCallbacks(cbs: typeof HttpAdapter.prototype.clusterCallbacks): void { this.clusterCallbacks = cbs; }
+
   async connect(): Promise<void> {
     this.status = 'connecting';
 
@@ -427,6 +440,16 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleKgUpdateEntity(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'PATCH') {
       this.handleKgUpdateRelation(req, res, url).catch(err => this.safeError(res, err));
+    // ── Log Viewer API ──
+    } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
+      this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/logs/app/stream' && req.method === 'GET') {
+      this.handleLogStream(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/logs/audit' && req.method === 'GET') {
+      this.handleLogAudit(req, res, url).catch(err => this.safeError(res, err));
+    // ── Cluster / HA Operations API ──
+    } else if (url.pathname === '/api/cluster/health' && req.method === 'GET') {
+      this.handleClusterHealth(req, res).catch(err => this.safeError(res, err));
     // ── CMDB API ──
     } else if (url.pathname === '/api/cmdb/assets' && req.method === 'GET') {
       this.handleCmdbRoute(req, res, async (cbs, userId) => {
@@ -1144,5 +1167,72 @@ export class HttpAdapter extends MessagingAdapter {
   private writeSseEvent(res: http.ServerResponse, event: string, data: Record<string, unknown>): void {
     if (res.writableEnded) return;
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  }
+
+  // ── Log Viewer Handlers ────────────────────────────────────
+
+  private async handleLogApp(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.logCallbacks) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Log viewer not configured' }));
+      return;
+    }
+    const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '200', 10) || 200, 5000);
+    const level = url.searchParams.get('level') ?? undefined;
+    const filter = url.searchParams.get('filter') ?? undefined;
+    const result = await this.logCallbacks.readAppLog(lines, level, filter);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleLogStream(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.logCallbacks) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Log streaming not configured' }));
+      return;
+    }
+    const level = url.searchParams.get('level') ?? undefined;
+    const filter = url.searchParams.get('filter') ?? undefined;
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': this.corsOrigin,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    res.flushHeaders();
+
+    const cleanup = this.logCallbacks.streamAppLog(res, level, filter);
+    res.on('close', cleanup);
+  }
+
+  private async handleLogAudit(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.logCallbacks) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Log viewer not configured' }));
+      return;
+    }
+    const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '100', 10) || 100, 2000);
+    const result = await this.logCallbacks.readAuditLog(lines);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // ── Cluster Health Handler ─────────────────────────────────
+
+  private async handleClusterHealth(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.clusterCallbacks) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ clusterEnabled: false, thisNodeId: 'single', nodes: [], claims: [], recentReasoningSlots: [], operations: {} }));
+      return;
+    }
+    const data = await this.clusterCallbacks.getHealth();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
   }
 }

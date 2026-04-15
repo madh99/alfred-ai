@@ -113,3 +113,78 @@ export interface HealthData {
   startedAt?: string;
   timestamp: string;
 }
+
+// ── Log Viewer ──────────────────────────────────────────────
+
+export interface LogEntry {
+  level: number;
+  time: number;
+  pid: number;
+  name?: string;
+  msg: string;
+  version?: string;
+  hostname?: string;
+  component?: string;
+  [key: string]: unknown;
+}
+
+export interface LogResponse {
+  lines: LogEntry[];
+  total: number;
+  file: string;
+}
+
+// ── Cluster / HA Operations ─────────────────────────────────
+
+export interface ClusterNode {
+  nodeId: string;
+  host: string;
+  lastSeenAt: string;
+  startedAt: string;
+  uptimeS: number;
+  adapters: string[];
+  version: string;
+  alive: boolean;
+}
+
+export interface AdapterClaim {
+  platform: string;
+  nodeId: string;
+  claimedAt: string;
+  expiresAt: string;
+  active: boolean;
+}
+
+export interface ReasoningSlotEntry {
+  slotKey: string;
+  nodeId: string;
+  claimedAt: string;
+}
+
+export interface OperationsStatus {
+  reasoning: {
+    schedule: string;
+    lastPass?: string;
+    nodeId?: string;
+  };
+  backup?: {
+    schedule: string;
+    lastRun?: string;
+  };
+  cmdbDiscovery?: {
+    lastRun?: string;
+    intervalHours?: number;
+  };
+  memoryConsolidation?: {
+    lastRun?: string;
+  };
+}
+
+export interface ClusterHealthData {
+  clusterEnabled: boolean;
+  thisNodeId: string;
+  nodes: ClusterNode[];
+  claims: AdapterClaim[];
+  recentReasoningSlots: ReasoningSlotEntry[];
+  operations: OperationsStatus;
+}

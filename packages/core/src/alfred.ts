@@ -2665,6 +2665,187 @@ export class Alfred {
       }
     }
 
+    // ── Log Viewer + Cluster Operations API ──────────────────
+    const logApiAdapter = this.adapters.get('api');
+    if (logApiAdapter && 'setLogCallbacks' in logApiAdapter) {
+      const logFilePath = this.config.logger.file?.path ?? process.env.ALFRED_LOG_FILE_PATH ?? './data/logs/alfred.log';
+      const auditLogPath = this.config.logger.auditLogPath ?? './data/logs/audit.log';
+      const fs = await import('node:fs');
+      const readline = await import('node:readline');
+
+      const PINO_LEVELS: Record<number, string> = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' };
+      const LEVEL_NUMS: Record<string, number> = { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 };
+
+      const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string) => {
+        // pino-roll appends .1, .2 etc. — find the most recent file
+        const candidates = [filePath];
+        for (let i = 1; i <= 10; i++) candidates.push(`${filePath}.${i}`);
+        let actualFile = '';
+        for (const c of candidates) {
+          try { fs.statSync(c); actualFile = c; break; } catch { /* next */ }
+        }
+        if (!actualFile) return { lines: [], total: 0, file: filePath };
+
+        const content = fs.readFileSync(actualFile, 'utf-8');
+        const rawLines = content.split('\n').filter(Boolean);
+        let parsed = rawLines.map(line => {
+          try { return JSON.parse(line); } catch { return null; }
+        }).filter(Boolean) as Array<Record<string, unknown>>;
+
+        if (levelFilter) {
+          const minLevel = LEVEL_NUMS[levelFilter] ?? 30;
+          parsed = parsed.filter(l => (l.level as number) >= minLevel);
+        }
+        if (textFilter) {
+          const lower = textFilter.toLowerCase();
+          parsed = parsed.filter(l => {
+            const msg = ((l.msg as string) ?? '').toLowerCase();
+            const comp = ((l.component as string) ?? '').toLowerCase();
+            return msg.includes(lower) || comp.includes(lower) || JSON.stringify(l).toLowerCase().includes(lower);
+          });
+        }
+
+        const total = parsed.length;
+        const lines = parsed.slice(-maxLines);
+        return { lines, total, file: actualFile };
+      };
+
+      (logApiAdapter as any).setLogCallbacks({
+        readAppLog: (lines: number, level?: string, filter?: string) =>
+          readLogFile(logFilePath, lines, level, filter),
+        readAuditLog: (lines: number) =>
+          readLogFile(auditLogPath, lines),
+        streamAppLog: (res: import('http').ServerResponse, level?: string, filter?: string) => {
+          // Find the current log file
+          let actualFile = logFilePath;
+          for (let i = 1; i <= 10; i++) {
+            const c = `${logFilePath}.${i}`;
+            try { fs.statSync(c); actualFile = c; break; } catch { /* next */ }
+          }
+
+          const minLevel = level ? (LEVEL_NUMS[level] ?? 30) : 0;
+          const lowerFilter = filter?.toLowerCase();
+
+          // Watch for changes and stream new lines
+          let lastSize = 0;
+          try { lastSize = fs.statSync(actualFile).size; } catch { /* new file */ }
+
+          const watcher = fs.watch(actualFile, () => {
+            try {
+              const stat = fs.statSync(actualFile);
+              if (stat.size <= lastSize) { lastSize = stat.size; return; }
+
+              const stream = fs.createReadStream(actualFile, { start: lastSize, encoding: 'utf-8' });
+              let buffer = '';
+              stream.on('data', (chunk: string | Buffer) => { buffer += String(chunk); });
+              stream.on('end', () => {
+                for (const line of buffer.split('\n').filter(Boolean)) {
+                  try {
+                    const parsed = JSON.parse(line);
+                    if (minLevel && (parsed.level as number) < minLevel) continue;
+                    if (lowerFilter) {
+                      const str = JSON.stringify(parsed).toLowerCase();
+                      if (!str.includes(lowerFilter)) continue;
+                    }
+                    if (!res.writableEnded) {
+                      res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+                    }
+                  } catch { /* skip malformed */ }
+                }
+                lastSize = stat.size;
+              });
+            } catch { /* file may have rotated */ }
+          });
+
+          return () => { watcher.close(); };
+        },
+      });
+    }
+
+    if (logApiAdapter && 'setClusterCallbacks' in logApiAdapter) {
+      const dbAdapter = this.database?.getAdapter();
+      const nodeId = this.config.cluster?.nodeId ?? 'single';
+      const clusterEnabled = this.config.cluster?.enabled === true;
+      const reasoningSchedule = this.config.reasoning?.schedule ?? 'hourly';
+      const startedAt = this.startedAt;
+
+      (logApiAdapter as any).setClusterCallbacks({
+        getHealth: async () => {
+          const nodes: Array<Record<string, unknown>> = [];
+          const claims: Array<Record<string, unknown>> = [];
+          const reasoningSlots: Array<Record<string, unknown>> = [];
+
+          if (dbAdapter) {
+            try {
+              const nodeRows = await dbAdapter.query('SELECT * FROM node_heartbeats ORDER BY last_seen_at DESC', []);
+              const now = Date.now();
+              for (const row of nodeRows as any[]) {
+                nodes.push({
+                  nodeId: row.node_id,
+                  host: row.host ?? '',
+                  lastSeenAt: row.last_seen_at,
+                  startedAt: row.started_at,
+                  uptimeS: row.uptime_s ?? 0,
+                  adapters: JSON.parse(row.adapters ?? '[]'),
+                  version: row.version ?? '',
+                  alive: (now - new Date(row.last_seen_at).getTime()) < 60_000,
+                });
+              }
+            } catch { /* table may not exist in SQLite mode */ }
+
+            try {
+              const claimRows = await dbAdapter.query('SELECT * FROM adapter_claims ORDER BY platform', []);
+              const now = new Date().toISOString();
+              for (const row of claimRows as any[]) {
+                claims.push({
+                  platform: row.platform,
+                  nodeId: row.node_id,
+                  claimedAt: row.claimed_at,
+                  expiresAt: row.expires_at,
+                  active: row.expires_at > now,
+                });
+              }
+            } catch { /* table may not exist */ }
+
+            try {
+              const slotRows = await dbAdapter.query(
+                'SELECT * FROM reasoning_slots ORDER BY claimed_at DESC LIMIT 20', [],
+              );
+              for (const row of slotRows as any[]) {
+                reasoningSlots.push({
+                  slotKey: row.slot_key,
+                  nodeId: row.node_id,
+                  claimedAt: row.claimed_at,
+                });
+              }
+            } catch { /* table may not exist */ }
+          }
+
+          // If single mode, create a synthetic node entry
+          if (!clusterEnabled && nodes.length === 0) {
+            const uptimeS = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000);
+            const adapterList = [...(this.adapters?.keys() ?? [])];
+            nodes.push({
+              nodeId, host: require('os').hostname(), lastSeenAt: new Date().toISOString(),
+              startedAt, uptimeS, adapters: adapterList, version: '', alive: true,
+            });
+          }
+
+          return {
+            clusterEnabled,
+            thisNodeId: nodeId,
+            nodes,
+            claims,
+            recentReasoningSlots: reasoningSlots,
+            operations: {
+              reasoning: { schedule: reasoningSchedule },
+              backup: this.config.backup?.schedule ? { schedule: this.config.backup.schedule } : undefined,
+            },
+          };
+        },
+      });
+    }
+
     // Startup cleanup — retain audit/summary/activity/usage data
     try {
       const cleaned = {
