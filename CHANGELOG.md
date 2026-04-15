@@ -5,10 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.499] - 2026-04-15
+## [0.19.0-multi-ha.500] - 2026-04-15
 
 ### Changed
-- **Reasoning: Email-Kontext erweitert — 15 Emails mit Preview statt 5** — Eigene `fetchEmailForReasoning()` Methode statt generischer `inbox` Action. Alle Emails (UNREAD, READ, REPLIED, AUTO) mit 80-Zeichen-Preview für Cross-Domain-Reasoning. Status-Tags (🔴📖✅ℹ️) zeigen dem LLM den Bearbeitungsstand. maxTokens 400→500, Pre-Truncation schneidet die ältesten Emails zuerst ab (~11 Emails passen in 500 Tokens)
+- **Reasoning: Email-Kontext erweitert — 15 Emails mit Preview statt 5** — Eigene `fetchEmailForReasoning()` Methode statt generischer `inbox` Action. Alle Emails (UNREAD, READ, REPLIED, AUTO) mit 80-Zeichen-Preview für Cross-Domain-Reasoning (Email-Inhalt + Kalender + KG-Personen = Zusammenhänge). Status-Tags (🔴📖✅ℹ️) zeigen dem LLM den Bearbeitungsstand. Laufende Nummern statt Graph-IDs (152 Zeichen/ID = untragbar). maxTokens 500, Pre-Truncation schneidet älteste Emails zuerst ab (~11 Emails passen)
 
 ## [0.19.0-multi-ha.497] - 2026-04-15
 
