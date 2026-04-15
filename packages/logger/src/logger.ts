@@ -62,10 +62,12 @@ export function createLogger(name: string, level?: string, options?: { version?:
   // Build transport targets
   const targets: pino.TransportTargetOptions[] = [];
 
-  // stdout transport: skip when file logging is active and stdout is detached (nohup)
-  // This prevents EIO crashes when the terminal is gone.
+  // stdout transport: skip when running detached (nohup/systemd) AND file logging is
+  // configured anywhere (check ENV directly — the core logger doesn't get the file config
+  // but still needs to skip stdout to avoid EIO crashes).
+  const globalFileEnabled = fileEnabled || process.env.ALFRED_LOG_FILE_ENABLED === 'true';
   const stdoutAvailable = isStdoutAvailable();
-  const skipStdout = fileEnabled && !process.stdout.isTTY;
+  const skipStdout = globalFileEnabled && !process.stdout.isTTY;
 
   if (!skipStdout && stdoutAvailable) {
     if (usePretty) {
