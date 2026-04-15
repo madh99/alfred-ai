@@ -130,10 +130,16 @@ export class ReasoningContextCollector {
       }),
     );
 
-    // Collect fulfilled results, skip failures
+    // Collect fulfilled results, skip failures — with diagnostic logging
     const sections: ReasoningSection[] = [];
-    for (const r of results) {
-      if (r.status === 'fulfilled' && r.value.content) {
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      const srcKey = sources[i]?.key ?? `unknown-${i}`;
+      if (r.status === 'rejected') {
+        this.logger.warn({ key: srcKey, reason: String(r.reason) }, 'ReasoningCollector: source REJECTED');
+      } else if (!r.value.content) {
+        this.logger.warn({ key: srcKey, contentType: typeof r.value.content, contentLen: 0 }, 'ReasoningCollector: source returned EMPTY content');
+      } else {
         sections.push(r.value);
       }
     }
@@ -272,7 +278,7 @@ export class ReasoningContextCollector {
     }
 
     const p2: Array<{ key: string; label: string; skill: string; input: Record<string, unknown>; maxTokens: number }> = [
-      { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', limit: 5 }, maxTokens: 250 },
+      { key: 'email', label: 'E-Mail Inbox', skill: 'email', input: { action: 'inbox', count: 5 }, maxTokens: 250 },
       { key: 'energy', label: 'Energiepreise', skill: 'energy_price', input: { action: 'current' }, maxTokens: 150 },
       { key: 'charger', label: 'Wallbox', skill: 'goe_charger', input: { action: 'status' }, maxTokens: 100 },
       { key: 'mstodo', label: 'Microsoft To Do', skill: 'microsoft_todo', input: { action: 'list_tasks' }, maxTokens: 200 },
@@ -1106,6 +1112,7 @@ export class ReasoningContextCollector {
         chatType: 'dm',
       });
 
+      const start = Date.now();
       // Timeout wrapper
       const result = await Promise.race([
         this.skillSandbox.execute(skill, input, context),
@@ -1114,10 +1121,18 @@ export class ReasoningContextCollector {
         ),
       ]);
 
-      if (!result.success) return `(${skillName}: ${result.error})`;
-      return result.display ?? JSON.stringify(result.data);
+      const elapsed = Date.now() - start;
+      if (!result.success) {
+        this.logger.warn({ skillName, error: result.error, elapsed }, 'ReasoningCollector: skill returned error');
+        return `(${skillName}: ${result.error})`;
+      }
+      const content = result.display ?? JSON.stringify(result.data);
+      if (skillName === 'email') {
+        this.logger.info({ skillName, elapsed, hasDisplay: !!result.display, displayLen: result.display?.length, dataType: typeof result.data, contentLen: content.length }, 'ReasoningCollector: email fetch result');
+      }
+      return content;
     } catch (err) {
-      this.logger.warn({ err, skillName }, 'ReasoningCollector: skill fetch failed');
+      this.logger.warn({ err, skillName, elapsed: 'timeout-or-error' }, 'ReasoningCollector: skill fetch failed');
       return `(${skillName}-Abfrage fehlgeschlagen)`;
     }
   }
