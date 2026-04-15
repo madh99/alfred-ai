@@ -440,7 +440,10 @@ export class ReasoningContextCollector {
     let remaining = maxTokens;
 
     for (const section of sorted) {
-      if (remaining <= 0) break;
+      if (remaining <= 0) {
+        this.logger?.debug({ key: section.key, tokens: section.tokenEstimate, reason: 'budget_exhausted' }, 'Context section dropped');
+        continue;
+      }
 
       if (section.tokenEstimate <= remaining) {
         result.push(section);
@@ -454,10 +457,15 @@ export class ReasoningContextCollector {
           content: truncated,
           tokenEstimate: Math.ceil(truncated.length / 4),
         });
+        this.logger?.debug({ key: section.key, originalTokens: section.tokenEstimate, truncatedTo: remaining }, 'Context section truncated');
         remaining = 0;
+      } else {
+        this.logger?.debug({ key: section.key, tokens: section.tokenEstimate, remaining, reason: 'priority3_over_budget' }, 'Context section dropped');
       }
-      // Priority 3: drop if over budget
     }
+
+    // Log final context composition
+    this.logger?.info({ sections: result.map(s => `${s.key}:${s.tokenEstimate}`).join(', '), totalTokens: maxTokens - remaining, budget: maxTokens }, 'Context sections assembled');
 
     return result;
   }
