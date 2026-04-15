@@ -120,9 +120,19 @@ export class ReasoningContextCollector {
       sources.map(async (src): Promise<ReasoningSection> => {
         let content = await src.fetch();
         // Enforce per-source maxTokens limit (prevents any single source from hogging budget)
-        const maxChars = src.maxTokens * 4;
+        // Factor 3.5 matches tokenEstimate calculation (content.length / 3.5) — see CHANGELOG v0.9.64
+        const maxChars = Math.floor(src.maxTokens * 3.5);
         if (content.length > maxChars) {
-          content = content.slice(0, maxChars) + '\n...(gekürzt)';
+          // Truncate at line boundaries to avoid cutting mid-entry
+          const lines = content.split('\n');
+          let charCount = 0;
+          const kept: string[] = [];
+          for (const line of lines) {
+            if (charCount + line.length + 1 > maxChars) break;
+            kept.push(line);
+            charCount += line.length + 1;
+          }
+          content = kept.join('\n') + '\n...(gekürzt)';
         }
         return {
           key: src.key,

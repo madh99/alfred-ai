@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.495] - 2026-04-15
+
+### Fixed
+- **Reasoning: Email verschwand aus Kontext — maxTokens pro Source nie erzwungen** — `maxTokens` in den SourceDefs war ein toter Wert: definiert aber nirgends durchgesetzt. `memories` lieferte 1744 Tokens (statt max 500), `smarthome` bis 1127 (statt max 400). Der fitToBudget-Algorithmus (3500 Token-Budget) füllte mit kleinen Sections auf und droppte Email (624 Tokens) weil kein Platz mehr war. Produktions-Logs bestätigen: Email erschien nur zufällig wenn wenige andere Sources aktiv waren. Fixes:
+  - **Pre-Truncation in `collect()`** — Content wird nach Fetch auf `Math.floor(maxTokens * 3.5)` Zeichen begrenzt. Faktor 3.5 konsistent mit Token-Schätzer (`content.length / 3.5`, etabliert seit v0.9.64). Zeilenweiser Cut (kein harter Schnitt mitten in Einträgen)
+  - **memories maxTokens 500→800** — Wichtigste P1-Source für Personalisierung. 11 von 25 Entries bleiben (höchste confidence zuerst, `getRecentForPrompt` sortiert nach `confidence DESC`)
+  - **email maxTokens 250→400** — 5 Emails mit Subject, Absender und Preview passen in 400 Tokens
+  - **email Parameter `limit`→`count`** — Email-Skill erwartet `count`, Collector schickte `limit` (wurde ignoriert, default 10 statt gewünschte 5)
+  - **Diagnostic-Logging** — `collect()` loggt REJECTED und EMPTY Sources. `fetchSkillData` loggt Timing und Email-Result-Details. Für Verifizierung nach Deploy
+
 ## [0.19.0-multi-ha.489] - 2026-04-14
 
 ### Added
