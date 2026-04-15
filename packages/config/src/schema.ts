@@ -459,6 +459,41 @@ export const LLMLinkingConfigSchema = z.object({
   maxEntitiesPerPass: z.number().optional(),
 });
 
+const ReflectionWatchesSchema = z.object({
+  staleAfterDays: z.coerce.number().optional(),
+  deleteAfterDays: z.coerce.number().optional(),
+  maxTriggersPerDay: z.coerce.number().optional(),
+  ignoredAlertsBeforePause: z.coerce.number().optional(),
+  failedActionsBeforeDisable: z.coerce.number().optional(),
+});
+
+const ReflectionAutonomySchema = z.object({
+  adjustParams: z.enum(['auto', 'proactive', 'confirm']).optional(),
+  deleteWatch: z.enum(['auto', 'proactive', 'confirm']).optional(),
+  createAutomation: z.enum(['auto', 'proactive', 'confirm']).optional(),
+  deactivate: z.enum(['auto', 'proactive', 'confirm']).optional(),
+});
+
+export const ReflectionConfigSchema = z.object({
+  enabled: z.coerce.boolean().optional(),
+  schedule: z.string().optional(),
+  watches: ReflectionWatchesSchema.optional(),
+  workflows: z.object({
+    staleAfterDays: z.coerce.number().optional(),
+    failedStepsBeforeSuggest: z.coerce.number().optional(),
+  }).optional(),
+  reminders: z.object({
+    repeatPatternDays: z.coerce.number().optional(),
+    quickDismissSeconds: z.coerce.number().optional(),
+  }).optional(),
+  conversation: z.object({
+    repeatQueryThreshold: z.coerce.number().optional(),
+    repeatSequenceThreshold: z.coerce.number().optional(),
+    analysisWindowDays: z.coerce.number().optional(),
+  }).optional(),
+  autonomy: ReflectionAutonomySchema.optional(),
+});
+
 export const ReasoningConfigSchema = z.object({
   enabled: z.boolean().optional(),
   schedule: z.enum(['morning_noon_evening', 'hourly', 'half_hourly']).optional(),
@@ -592,6 +627,7 @@ export const AlfredConfigSchema = z.object({
   marketplace: MarketplaceConfigSchema.optional(),
   briefing: BriefingConfigSchema.optional(),
   reasoning: ReasoningConfigSchema.optional(),
+  reflection: ReflectionConfigSchema.optional(),
   webhooks: z.array(WebhookConfigSchema).optional(),
   proxmoxBackup: ProxmoxBackupConfigSchema.optional(),
   mqtt: MqttConfigSchema.optional(),

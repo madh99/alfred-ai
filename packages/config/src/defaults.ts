@@ -58,4 +58,8 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   conversation: {
     maxHistoryMessages: 100,
   },
+  reflection: {
+    enabled: true,
+    schedule: '0 4 * * *',
+  },
 };

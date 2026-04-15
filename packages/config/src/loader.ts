@@ -211,6 +211,18 @@ const ENV_MAP: Record<string, string[]> = {
   ALFRED_REASONING_LLM_LINKING_PROVIDER: ['reasoning', 'llmLinking', 'provider'],
   ALFRED_REASONING_LLM_LINKING_MODEL: ['reasoning', 'llmLinking', 'model'],
   ALFRED_REASONING_LLM_LINKING_SCHEDULE: ['reasoning', 'llmLinking', 'schedule'],
+  // Reflection Engine
+  ALFRED_REFLECTION_ENABLED: ['reflection', 'enabled'],
+  ALFRED_REFLECTION_SCHEDULE: ['reflection', 'schedule'],
+  ALFRED_REFLECTION_WATCHES_STALE_AFTER_DAYS: ['reflection', 'watches', 'staleAfterDays'],
+  ALFRED_REFLECTION_WATCHES_DELETE_AFTER_DAYS: ['reflection', 'watches', 'deleteAfterDays'],
+  ALFRED_REFLECTION_WATCHES_MAX_TRIGGERS_PER_DAY: ['reflection', 'watches', 'maxTriggersPerDay'],
+  ALFRED_REFLECTION_WATCHES_IGNORED_ALERTS_BEFORE_PAUSE: ['reflection', 'watches', 'ignoredAlertsBeforePause'],
+  ALFRED_REFLECTION_WATCHES_FAILED_ACTIONS_BEFORE_DISABLE: ['reflection', 'watches', 'failedActionsBeforeDisable'],
+  ALFRED_REFLECTION_AUTONOMY_ADJUST_PARAMS: ['reflection', 'autonomy', 'adjustParams'],
+  ALFRED_REFLECTION_AUTONOMY_DELETE_WATCH: ['reflection', 'autonomy', 'deleteWatch'],
+  ALFRED_REFLECTION_AUTONOMY_CREATE_AUTOMATION: ['reflection', 'autonomy', 'createAutomation'],
+  ALFRED_REFLECTION_AUTONOMY_DEACTIVATE: ['reflection', 'autonomy', 'deactivate'],
   // Cloudflare
   ALFRED_CLOUDFLARE_API_TOKEN: ['cloudflare', 'apiToken'],
   // Nginx Proxy Manager

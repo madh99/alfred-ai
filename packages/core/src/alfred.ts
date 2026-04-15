@@ -78,6 +78,8 @@ import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
 import { ReasoningEngine } from './reasoning-engine.js';
 import { InsightTracker } from './insight-tracker.js';
+import { ReflectionEngine } from './reflection-engine.js';
+import { resolveReflectionConfig } from './reflection/index.js';
 
 /** Get ISO week number for a date. */
 function getISOWeek(date: Date): number {
@@ -101,11 +103,13 @@ export class Alfred {
   private readonly formatter = new ResponseFormatter();
   private userRepo!: UserRepository;
   private skillRegistry!: SkillRegistry;
+  private skillSandbox?: SkillSandbox;
   private mcpManager?: import('@alfred/skills').MCPManager;
   private calendarSkill?: CalendarSkill;
   private calendarWatcher?: CalendarWatcher;
   private todoWatcher?: TodoWatcher;
   private reasoningEngine?: ReasoningEngine;
+  private reflectionEngine?: ReflectionEngine;
   private usageRepo?: UsageRepository;
   private serviceUsageRepo?: ServiceUsageRepository;
   private auditRepo?: AuditRepository;
@@ -294,7 +298,7 @@ export class Alfred {
     this.logger.info('Conversation summarizer initialized');
 
     // 4. Initialize skills
-    const skillSandbox = new SkillSandbox(
+    const skillSandbox = this.skillSandbox = new SkillSandbox(
       this.logger.child({ component: 'sandbox' }),
     );
     const skillRegistry = this.skillRegistry = new SkillRegistry();
@@ -3002,6 +3006,36 @@ export class Alfred {
       }
     }
 
+    // ── Reflection Engine (self-optimization) ────────────────
+    if (this.config.reflection?.enabled !== false && this.watchRepo && this.memoryRepo && this.activityRepo && this.skillRegistry && this.skillSandbox) {
+      try {
+        const reflectionConfig = resolveReflectionConfig(this.config.reflection);
+        const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+          : this.config.discord?.enabled ? 'discord'
+          : this.config.whatsapp?.enabled ? 'whatsapp'
+          : 'api') as Platform;
+
+        this.reflectionEngine = new ReflectionEngine({
+          watchRepo: this.watchRepo,
+          memoryRepo: this.memoryRepo,
+          activityRepo: this.activityRepo,
+          skillRegistry: this.skillRegistry,
+          skillSandbox: this.skillSandbox,
+          llm: this.llmProvider,
+          adapters: this.adapters,
+          logger: this.logger.child({ component: 'reflection-engine' }),
+          defaultChatId: '',
+          defaultPlatform: ownerPlatform,
+          nodeId: this.config.cluster?.nodeId ?? 'single',
+          config: reflectionConfig,
+        }, this.database?.getAdapter());
+        this.reflectionEngine.start();
+        this.logger.info('Reflection engine initialized');
+      } catch (err) {
+        this.logger.warn({ err }, 'Reflection engine initialization failed');
+      }
+    }
+
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)
     if (this.clusterManager) {
       this.clusterMonitorTimer = setInterval(async () => {
@@ -3097,6 +3131,7 @@ export class Alfred {
       clearInterval(this.cmdbHealthCheckTimer);
       this.cmdbHealthCheckTimer = undefined;
     }
+    this.reflectionEngine?.stop();
 
     // Shutdown MCP servers
     if (this.mcpManager) {

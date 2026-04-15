@@ -50,3 +50,13 @@ export { KnowledgeGraphService } from './knowledge-graph.js';
 export { ActionFeedbackTracker } from './action-feedback-tracker.js';
 export { TemporalAnalyzer } from './active-learning/temporal-analyzer.js';
 export type { Trend, Anomaly, TemporalReport } from './active-learning/temporal-analyzer.js';
+export { ReflectionEngine } from './reflection-engine.js';
+export {
+  WatchReflector,
+  WorkflowReflector,
+  ReminderReflector,
+  ConversationReflector,
+  ActionExecutor,
+  resolveReflectionConfig,
+} from './reflection/index.js';
+export type { ReflectionResult, ReflectionConfig, ReflectorDeps } from './reflection/index.js';

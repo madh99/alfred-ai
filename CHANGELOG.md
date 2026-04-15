@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.503] - 2026-04-16
+
+### Added
+- **ReflectionEngine — Alfreds Selbstreflexion (Phase 1)** — Alfred evaluiert taeglich sein eigenes Verhalten und optimiert sich selbst:
+  - **WatchReflector** — Evaluiert alle aktiven Watches: stale Watches (>14 Tage ohne Trigger) bekommen laengeres Intervall (auto), Watches >30 Tage ohne Trigger werden geloescht (proactive + User informiert), zu haeufigesTriggern (>10x/Tag) erhoht Cooldown (auto), wiederholte Action-Fehler (>=3x) deaktiviert Watch (proactive)
+  - **WorkflowReflector** — Evaluiert Workflows: nie ausgefuehrte Workflows >30 Tage werden dem User gemeldet, wiederholte Step-Fehler (>=3x) erzeugen Verbesserungsvorschlag
+  - **ReminderReflector** — Erkennt erledigte Themen (insight_resolved Memories) und loescht zugehoerige Reminder automatisch. Erkennt wiederkehrende Reminder-Muster (3x gleicher Typ in 7 Tagen) und schlaegt Recurring-Reminder oder Watch vor
+  - **ConversationReflector** — Analysiert Chat-Patterns: wiederholte Skill-Sequenzen (>=3x in 7 Tagen) → Workflow-Vorschlag. Wiederholte Fragen (LLM-basierte Intent-Erkennung) → Automation-Vorschlag
+  - **ActionExecutor** — Fuehrt Reflexions-Ergebnisse nach Risk-Level aus: auto (leise), proactive (ausfuehren + User informieren), confirm (nur vorschlagen)
+  - **Konfigurierbar** — Alle Schwellwerte per Config/ENV anpassbar: `ALFRED_REFLECTION_ENABLED`, `ALFRED_REFLECTION_SCHEDULE`, `ALFRED_REFLECTION_WATCHES_STALE_AFTER_DAYS` etc.
+  - **HA-safe** — Distributed Dedup ueber reasoning_slots Tabelle (nur ein Node fuehrt Reflexion pro Tag aus)
+  - **Timer-Scheduling** — Default 4:00 AM taeglich (nach PatternAnalyzer 3:30, TemporalAnalyzer 4:00 Sunday)
+
 ## [0.19.0-multi-ha.502] - 2026-04-15
 
 ### Fixed

@@ -455,6 +455,37 @@ export interface ReasoningConfig {
   llmLinking?: LLMLinkingConfig;
 }
 
+export interface ReflectionConfig {
+  enabled?: boolean;
+  schedule?: string;
+  watches?: {
+    staleAfterDays?: number;
+    deleteAfterDays?: number;
+    maxTriggersPerDay?: number;
+    ignoredAlertsBeforePause?: number;
+    failedActionsBeforeDisable?: number;
+  };
+  workflows?: {
+    staleAfterDays?: number;
+    failedStepsBeforeSuggest?: number;
+  };
+  reminders?: {
+    repeatPatternDays?: number;
+    quickDismissSeconds?: number;
+  };
+  conversation?: {
+    repeatQueryThreshold?: number;
+    repeatSequenceThreshold?: number;
+    analysisWindowDays?: number;
+  };
+  autonomy?: {
+    adjustParams?: 'auto' | 'proactive' | 'confirm';
+    deleteWatch?: 'auto' | 'proactive' | 'confirm';
+    createAutomation?: 'auto' | 'proactive' | 'confirm';
+    deactivate?: 'auto' | 'proactive' | 'confirm';
+  };
+}
+
 export interface BriefingConfig {
   location?: string;
   homeAddress?: string;
@@ -861,6 +892,7 @@ export interface AlfredConfig {
   marketplace?: MarketplaceConfig;
   briefing?: BriefingConfig;
   reasoning?: ReasoningConfig;
+  reflection?: ReflectionConfig;
   webhooks?: WebhookConfig[];
   proxmoxBackup?: ProxmoxBackupConfig;
   mqtt?: MqttConfig;
