@@ -634,12 +634,30 @@ export class ReasoningContextCollector {
       }
     }
 
-    // Source 2: insight_resolved entries from Insight-Tracking section
+    // Source 2: [correction] type memories — user explicitly corrected Alfred
+    if (memorySection) {
+      for (const line of memorySection.content.split('\n')) {
+        if (/\[correction\]/i.test(line)) {
+          // Extract topic words from both key AND value
+          const keyMatch = line.match(/\]\s*([^:]+):/);
+          const valueText = line.replace(/^-\s*\[.*?\]\s*[^:]+:\s*/, '');
+          const topicWords = [
+            ...(keyMatch ? keyMatch[1].trim().split('_') : []),
+            ...valueText.toLowerCase().replace(/[^a-zäöüß0-9\s]/g, ' ').split(/\s+/),
+          ].filter(w => w.length >= 4).map(w => w.toLowerCase());
+          const unique = [...new Set(topicWords)].slice(0, 8);
+          if (unique.length > 0) {
+            resolvedTopicSets.push({ topicWords: unique, label: `KORREKTUR: ${valueText.slice(0, 150)}` });
+          }
+        }
+      }
+    }
+
+    // Source 3: insight_resolved entries from Insight-Tracking section
     const trackingSection = sections.find(s => s.key === 'insightTracking');
     if (trackingSection) {
       for (const line of trackingSection.content.split('\n')) {
         if (/BESTÄTIGT|resolved/i.test(line)) {
-          // Extract topic words from the insight text
           const textMatch = line.match(/:\s*(.+)$/);
           if (textMatch) {
             const topicWords = textMatch[1].toLowerCase()
