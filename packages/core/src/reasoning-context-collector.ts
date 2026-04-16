@@ -700,15 +700,29 @@ export class ReasoningContextCollector {
           }
         } catch { /* skip */ }
       }
-      // Limit to 25 entries, prioritizing: corrections FIRST, then patterns/connections, then rest
+      // Limit to 25 entries, prioritizing:
+      // 1. High-confidence (>=0.9) memories of ANY type — these are user-confirmed facts, corrections, important info
+      // 2. Corrections + preferences (any confidence) — user rules and corrections
+      // 3. Patterns + connections — behavioral insights
+      // 4. Rest — general memories
       const MAX = 25;
       if (memories.length > MAX) {
-        const corrections = memories.filter(m => m.type === 'correction' || m.type === 'preference');
+        const highConf = memories.filter(m => m.confidence >= 1.0 && !['pattern', 'connection'].includes(m.type));
+        const corrections = memories.filter(m => (m.type === 'correction' || m.type === 'preference') && m.confidence < 1.0);
         const patterns = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
-        const rest = memories.filter(m => !['correction', 'preference', 'pattern', 'connection'].includes(m.type));
+        const rest = memories.filter(m =>
+          m.confidence < 1.0 && !['correction', 'preference', 'pattern', 'connection'].includes(m.type)
+        );
+        // Deduplicate (a memory can match multiple categories)
+        const seen = new Set<string>();
+        const sorted: typeof memories = [];
+        for (const group of [highConf, corrections, patterns, rest]) {
+          for (const m of group) {
+            if (!seen.has(m.key)) { seen.add(m.key); sorted.push(m); }
+          }
+        }
         memories.length = 0;
-        memories.push(...corrections, ...patterns, ...rest);
-        memories.length = Math.min(memories.length, MAX);
+        memories.push(...sorted.slice(0, MAX));
       }
       if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
       return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');

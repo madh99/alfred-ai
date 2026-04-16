@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.517] - 2026-04-16
+## [0.19.0-multi-ha.518] - 2026-04-16
 
 ### Fixed
+- **Reasoning: Erledigte Themen wurden nicht als erledigt erkannt** — Wenn der User "ist bezahlt/erneuert" sagt, speichert Alfred das als `fact` (confidence 1.0). Facts mit confidence 1.0 wurden von der Memory-Priorisierung verdraengt. Fix: Memory-Priorisierung nach Confidence >= 1.0 (exakt user-bestaetigte) VOR patterns/connections. Corrections-Block bleibt nur fuer `[correction]` Type (keine Facts, zu hohes Risiko fuer false-positives)
+- **Reasoning: ACK-Wörter fuer Insight-Resolved erweitert** — "bezahlt", "erneuert", "aktualisiert", "gefixt", "gelöst", "behoben" triggern jetzt das insight_resolved System (vorher nur "danke/ok/erledigt/done"). "bereits" und "schon" bewusst NICHT aufgenommen (zu generisch, wuerden false-positives erzeugen)
 - **Reasoning: Corrections wurden aus Memory-Section verdraengt** — Die Memory-Priorisierung setzte patterns/connections VOR alle anderen Typen. Corrections (confidence 1.0) landeten in der Rest-Gruppe und wurden durch die 800-Token Pre-Truncation abgeschnitten. Der Corrections-Prompt-Block (v512) war leer weil keine `[correction]` Zeilen im truncated Output waren. Fix: Priorisierung jetzt: corrections/preferences ZUERST, dann patterns/connections, dann Rest. Diagnostic-Logs bestaetigen: `hasCorrection: false, memoryLines: 11, preview: [pattern]...`
 
 ## [0.19.0-multi-ha.515] - 2026-04-16

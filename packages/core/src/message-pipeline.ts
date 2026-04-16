@@ -1038,7 +1038,7 @@ export class MessagePipeline {
       //     mark the most recent insight_delivered as resolved (fire-and-forget)
       if (this.memoryRepo && masterUserId && message.text.length <= 80) {
         const msgLower = message.text.toLowerCase();
-        const ACK_WORDS = /\b(danke|ok|erledigt|gemacht|bestellt|done|passt|gut|alles klar|check|gekauft|gebucht|fertig|ja|thx|thanks)\b/;
+        const ACK_WORDS = /\b(danke|ok|erledigt|gemacht|bestellt|done|passt|gut|alles klar|check|gekauft|gebucht|fertig|ja|thx|thanks|bezahlt|erneuert|aktualisiert|gefixt|gelöst|behoben)\b/;
         if (ACK_WORDS.test(msgLower)) {
           // Check if the previous bot message was an insight (reasoning-generated messages)
           const lastBotMsg = history.filter(m => m.role === 'assistant').pop();
