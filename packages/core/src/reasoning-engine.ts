@@ -842,8 +842,8 @@ WICHTIG: Ladeplanung NUR 1-10h vor der Fahrt, NICHT Tage im Voraus. Das Ladefens
 
 SMART HOME / GERÄTE-AKTIONEN:
 - Entity-Namen in Home Assistant sind NICHT selbsterklärend. Ein Name wie "B_Garage" könnte ein Bewegungssensor, ein Schalter, ein Licht oder etwas anderes sein. NIEMALS die Funktion einer Entity aus dem Namen ableiten.
-- VOR jeder Write-Action (turn_on/off/toggle): Prüfe ob du eine Memory über diese Entity hast. Wenn NEIN → schlage als Confirmation vor, NICHT proaktiv ausführen.
-- NIEMALS call_service direkt verwenden — nutze turn_on, turn_off, toggle oder activate_scene. call_service erfordert domain+service Parameter die du nicht zuverlässig kennst.
+- VOR jeder Write-Action (turn_on/off/toggle/call_service): Prüfe ob du eine Memory über diese Entity hast. Wenn NEIN → schlage als Confirmation vor, NICHT proaktiv ausführen.
+- call_service ERFORDERT: domain (z.B. "climate", "cover", "light"), service (z.B. "set_temperature", "set_cover_position"), entityId, und optional serviceData. Domain kannst du aus der entityId ableiten: "light.wohnzimmer" → domain="light". NIEMALS call_service ohne domain+service verwenden.
 - Batterie-Level < 10% bei Sensoren (binary_sensor, sensor mit device_class battery) bedeutet typischerweise KNOPFZELLE/AKKUS des SENSORS LEER — NICHT die Hausbatterie/PV-Speicher. Unterscheide: Sensor-Batterie ≠ Hausbatterie ≠ Fahrzeug-Batterie.
 - ESS/PV-Überschuss-Systeme (Victron, SMA, Fronius etc.) regeln sich typischerweise automatisch. Manuelles Ein-/Ausschalten nur wenn der User es explizit verlangt.
 - ITSM Incidents: Prüfe Correction-Memories bevor du Severity zuweist. Wenn eine Korrektur sagt "nicht kritisch", erstelle KEINEN critical Incident dafür.
@@ -1410,10 +1410,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
                 await adapter.sendMessage(this.defaultChatId,
                   `\u26A1 **Proaktiv ausgeführt:** ${action.description}`);
               } else {
-                // Don't show technical error messages to user — just log them.
-                // User can't fix "Missing required domain parameter".
-                this.logger.warn({ action: action.description, error: result.error },
-                  'Reasoning: proactive action failed silently');
+                // Show user-friendly message + learning prompt instead of technical error
+                this.logger.warn({ action: action.description, error: result.error, skillName: action.skillName },
+                  'Reasoning: proactive action failed');
+                await adapter.sendMessage(this.defaultChatId,
+                  `\u26A0\uFE0F **Aktion nicht möglich:** ${action.description}\nIch konnte das nicht ausführen. Sag mir wie ich "${action.description}" umsetzen soll, dann merke ich es mir für nächstes Mal.`);
               }
             }
           }
@@ -1553,6 +1554,14 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             delete params[key];
           }
         }
+      }
+    }
+
+    // HA call_service: auto-derive domain from entityId if missing
+    if (action.skillName === 'homeassistant' && params.action === 'call_service') {
+      const eid = (params.entityId ?? params.entity_id ?? '') as string;
+      if (!params.domain && eid.includes('.')) {
+        params.domain = eid.split('.')[0];
       }
     }
 

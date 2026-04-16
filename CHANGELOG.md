@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.513] - 2026-04-16
+## [0.19.0-multi-ha.514] - 2026-04-16
 
 ### Fixed
+- **Reasoning: call_service richtig dokumentiert statt verboten** — Prompt erklaert jetzt die required Parameters (domain, service, entityId, serviceData). Domain wird automatisch aus entityId abgeleitet (`light.wohnzimmer` → domain=`light`). call_service ist die maechtigste HA-Action (Heizung, Rollos, Dimmer) — verbieten war falsch
+- **Reasoning: Fehlermeldungen verstaendlich + Lern-Aufforderung** — Statt technischer Dumps ("Missing required domain parameter") sieht der User: "Aktion nicht moeglich: [Beschreibung]. Sag mir wie ich das umsetzen soll, dann merke ich es mir." Alfred lernt aus der Antwort
 - **Reasoning: Reminder-Cancel Parameter-Fix** — Prompt-Beispiel zeigte `"id"` aber Skill erwartet `"reminderId"`. Normalisierung in processActions: `id→reminderId`, `delete→cancel`. Prompt-Beispiel korrigiert mit Hinweis auf 8-stellige Hex-ID aus Erinnerungen-Liste
 - **Reasoning: snake_case Konvertierung nur fuer camelCase-Skills** — Die pauschale snake_case→camelCase Konvertierung (v509) brach Skills die bewusst snake_case verwenden (watch: `skill_name`, itsm: `incident_id`). Fix: Konvertierung nur fuer `homeassistant`, `goe_charger`, `bmw`
 - **Reasoning: Fehlgeschlagene proaktive Actions leise loggen** — Technische Fehlermeldungen wie "Missing required domain parameter" werden nicht mehr dem User gezeigt (er kann nichts damit anfangen). Nur geloggt fuer Debugging
