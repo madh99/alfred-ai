@@ -360,7 +360,10 @@ CREATE TABLE IF NOT EXISTS workflow_chains (
   trigger_type TEXT NOT NULL DEFAULT 'manual',
   trigger_config TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT NOW(),
+  monitoring TEXT,
+  last_triggered_at TEXT,
+  guards TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_workflow_chains_user ON workflow_chains(user_id);
 CREATE INDEX IF NOT EXISTS idx_workflow_chains_chat ON workflow_chains(chat_id, platform);

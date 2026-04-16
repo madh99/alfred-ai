@@ -631,4 +631,14 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans(user_id, status)`, []);
     },
   },
+  {
+    version: 56,
+    description: 'Workflow automation — monitoring + last_triggered_at columns',
+    async up(db) {
+      // monitoring and last_triggered_at are new; trigger_config and trigger_type already exist
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS monitoring TEXT DEFAULT NULL`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS last_triggered_at TEXT DEFAULT NULL`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS guards TEXT DEFAULT NULL`, []);
+    },
+  },
 ];

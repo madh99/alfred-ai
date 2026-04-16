@@ -5,6 +5,19 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.504] - 2026-04-16
+
+### Added
+- **AutomationBuilder — Workflow als Automation-Plattform (Phase 2)** — Der bestehende Workflow-Skill wird zur vollwertigen n8n-Alternative. Jeder der 90+ Skills ist ein Node:
+  - **Persistente Trigger** — Workflows koennen periodisch oder event-basiert laufen: `cron` (Zeitplan), `interval` (alle N Minuten), `webhook` (externe HTTP-Calls), `watch` (Watch-Alert triggert Workflow), `mqtt` (geplant). Migration v56: `monitoring`, `last_triggered_at`, `guards` Spalten
+  - **Guard-Conditions** — Bedingungen die VOR dem Workflow-Start geprueft werden: `time_window` ("22:00-06:00"), `weekday` ("mon-fri"), `skill_condition` (Skill-Abfrage als Pre-Check, z.B. "nur wenn BMW SoC < 60%"). Workflow wird uebersprungen wenn Guard false
+  - **Script-Node** — Alfred generiert Python/Node.js/Bash Scripts und fuehrt sie als Workflow-Step aus. Code wird in `./data/scripts/` gespeichert. JSON-Output fliesst in nachfolgende Steps. Timeout konfigurierbar
+  - **DB-Query-Node** — SQL SELECT/INSERT/UPDATE/CREATE TABLE als Workflow-Step. Template-Referenzen in SQL (`{{steps.0.price}}`). Alfred kann eigene Tabellen fuer Automation-Daten erstellen
+  - **TriggerManager** — Orchestriert alle Trigger-Typen: pollt cron/interval jede 60s, empfaengt Webhook/Watch Events push-basiert. Guard-Evaluation vor jedem Start. Double-Fire Prevention
+  - **Natuerliche Sprach-Erstellung** — `create_from_prompt` Action: User beschreibt Automation in natuerlicher Sprache ("Wenn Strompreis < 15ct und BMW < 60%, starte Wallbox"), Alfred baut den Workflow via LLM. Dry-Run vor Aktivierung
+  - **Neue Workflow-Actions:** `create_from_prompt` (LLM-Parsing), `dry_run` (Workflow testen), `activate` (Trigger scharfschalten)
+  - **Self-Healing** via ReflectionEngine (Phase 1): Fehlgeschlagene Automationen werden erkannt, gemeldet, nach Schwellwert deaktiviert
+
 ## [0.19.0-multi-ha.503] - 2026-04-16
 
 ### Added

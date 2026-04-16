@@ -3,7 +3,7 @@ import { Skill } from '../skill.js';
 import type { WorkflowRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
-type WorkflowAction = 'create' | 'list' | 'run' | 'delete' | 'history';
+type WorkflowAction = 'create' | 'list' | 'run' | 'delete' | 'history' | 'create_from_prompt' | 'activate' | 'dry_run';
 
 /** Minimal interface to avoid circular dependency with @alfred/core */
 interface WorkflowRunnerInterface {
@@ -15,6 +15,18 @@ interface WorkflowRunnerInterface {
     stepResults: Array<{ skillName: string; success: boolean; data?: unknown; error?: string }>;
     error?: string;
   }>;
+}
+
+/** Minimal interface for PromptParser to avoid circular dependency */
+interface PromptParserInterface {
+  parse(userPrompt: string): Promise<{
+    name: string;
+    description: string;
+    triggerType: string;
+    triggerConfig?: Record<string, unknown>;
+    guards?: import('@alfred/types').WorkflowGuard[];
+    steps: import('@alfred/types').WorkflowStep[];
+  } | null>;
 }
 
 export class WorkflowSkill extends Skill {
@@ -34,7 +46,7 @@ export class WorkflowSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'run', 'delete', 'history'],
+          enum: ['create', 'list', 'run', 'delete', 'history', 'create_from_prompt', 'activate', 'dry_run'],
           description: 'Workflow action',
         },
         name: {
@@ -52,6 +64,18 @@ export class WorkflowSkill extends Skill {
           type: 'string',
           description: 'Workflow ID (for run/delete/history)',
         },
+        workflowId: {
+          type: 'string',
+          description: 'Alias for workflow_id (for activate/dry_run)',
+        },
+        prompt: {
+          type: 'string',
+          description: 'Natural language workflow description (for create_from_prompt)',
+        },
+        triggerData: {
+          type: 'object',
+          description: 'Optional trigger data (for dry_run)',
+        },
       },
       required: ['action'],
     },
@@ -59,6 +83,7 @@ export class WorkflowSkill extends Skill {
 
   // WorkflowRunner is set after construction (to avoid circular deps)
   private runner?: WorkflowRunnerInterface;
+  private promptParser?: PromptParserInterface;
 
   constructor(private readonly workflowRepo: WorkflowRepository) {
     super();
@@ -66,6 +91,10 @@ export class WorkflowSkill extends Skill {
 
   setRunner(runner: WorkflowRunnerInterface): void {
     this.runner = runner;
+  }
+
+  setPromptParser(parser: PromptParserInterface): void {
+    this.promptParser = parser;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -76,6 +105,9 @@ export class WorkflowSkill extends Skill {
       case 'run': return this.runWorkflow(input, context);
       case 'delete': return this.deleteWorkflow(input, context);
       case 'history': return this.getHistory(input);
+      case 'create_from_prompt': return this.createFromPrompt(input, context);
+      case 'activate': return this.activateWorkflow(input);
+      case 'dry_run': return this.dryRun(input, context);
       default:
         return { success: false, error: `Unknown action: "${String(action)}"` };
     }
@@ -110,16 +142,26 @@ export class WorkflowSkill extends Skill {
             return { success: false, error: `Step ${i}: "${branch}" must be null, "end", or a step index (0-${steps.length - 1})` };
           }
         }
+      } else if (s.type === 'script') {
+        // Script step validation
+        if (!s.code || typeof s.code !== 'string') return { success: false, error: `Step ${i}: missing code` };
+        if (!['python', 'node', 'bash'].includes(s.language)) return { success: false, error: `Step ${i}: language must be python|node|bash` };
+        if (!['stop', 'skip', 'retry'].includes(s.onError)) return { success: false, error: `Step ${i}: onError must be stop|skip|retry` };
+      } else if (s.type === 'db_query') {
+        // DB query step validation
+        if (!s.sql || typeof s.sql !== 'string') return { success: false, error: `Step ${i}: missing sql` };
+        if (!['stop', 'skip', 'retry'].includes(s.onError)) return { success: false, error: `Step ${i}: onError must be stop|skip|retry` };
       } else {
         // Action step validation (default)
-        if (!s.skillName) return { success: false, error: `Step ${i}: missing skillName` };
-        if (!s.inputMapping || typeof s.inputMapping !== 'object') {
+        const a = s as import('@alfred/types').WorkflowActionStep;
+        if (!a.skillName) return { success: false, error: `Step ${i}: missing skillName` };
+        if (!a.inputMapping || typeof a.inputMapping !== 'object') {
           return { success: false, error: `Step ${i}: missing inputMapping` };
         }
-        if (!['stop', 'skip', 'retry'].includes(s.onError)) {
+        if (!['stop', 'skip', 'retry'].includes(a.onError)) {
           return { success: false, error: `Step ${i}: onError must be stop|skip|retry` };
         }
-        if (s.jumpTo !== undefined && s.jumpTo !== 'end' && (typeof s.jumpTo !== 'number' || s.jumpTo < 0 || s.jumpTo >= steps.length)) {
+        if (a.jumpTo !== undefined && a.jumpTo !== 'end' && (typeof a.jumpTo !== 'number' || a.jumpTo < 0 || a.jumpTo >= steps.length)) {
           return { success: false, error: `Step ${i}: jumpTo must be "end" or a step index (0-${steps.length - 1})` };
         }
       }
@@ -232,6 +274,55 @@ export class WorkflowSkill extends Skill {
       success: true,
       data: executions,
       display: `Letzte Ausf\u00FChrungen:\n${lines.join('\n')}`,
+    };
+  }
+
+  private async createFromPrompt(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const prompt = input.prompt as string;
+    if (!prompt) return { success: false, error: 'prompt is required' };
+    if (!this.promptParser) return { success: false, error: 'Prompt parser not configured' };
+    const parsed = await this.promptParser.parse(prompt);
+    if (!parsed) return { success: false, error: 'Could not parse workflow from prompt. Try a more specific description.' };
+    // Create workflow but don't activate trigger — needs user confirmation
+    const workflow = await this.workflowRepo.create({
+      name: parsed.name,
+      userId: effectiveUserId(context),
+      chatId: context.chatId,
+      platform: context.platform,
+      steps: parsed.steps,
+      triggerType: (parsed.triggerType as any) ?? 'manual',
+      triggerConfig: parsed.triggerConfig,
+      guards: parsed.guards,
+      enabled: false, // Needs "activate" confirmation
+    });
+    const stepList = parsed.steps.map((s: any, i: number) => `  ${i + 1}. ${s.type ?? 'action'}: ${s.skillName ?? s.language ?? 'condition'}`).join('\n');
+    return {
+      success: true,
+      data: { workflowId: workflow.id, ...parsed },
+      display: `Workflow "${parsed.name}" erstellt:\n${parsed.description}\n\nTrigger: ${parsed.triggerType ?? 'manual'}\nSteps:\n${stepList}\n\nNoch NICHT aktiviert. Bestaetige mit: workflow activate ${workflow.id}`,
+    };
+  }
+
+  private async activateWorkflow(input: Record<string, unknown>): Promise<SkillResult> {
+    const wfId = input.workflowId as string ?? input.workflow_id as string ?? input.id as string;
+    if (!wfId) return { success: false, error: 'workflowId is required' };
+    await this.workflowRepo.update(wfId, { enabled: true });
+    return { success: true, data: { workflowId: wfId, activated: true }, display: `Workflow ${wfId} aktiviert — Trigger laeuft.` };
+  }
+
+  private async dryRun(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const wfId = input.workflowId as string ?? input.workflow_id as string ?? input.id as string;
+    if (!wfId) return { success: false, error: 'workflowId is required' };
+    if (!this.runner) return { success: false, error: 'WorkflowRunner not available' };
+    const wf = await this.workflowRepo.getById(wfId);
+    if (!wf) return { success: false, error: 'Workflow not found' };
+    // Execute workflow (full run — dry_run label for clarity)
+    const result = await this.runner.run(wf, context, input.triggerData as Record<string, unknown>);
+    const stepDisplay = result.stepResults.map((s, i) => `  ${i + 1}. ${s.skillName}: ${s.success ? 'OK' : 'FAIL'}${s.error ? ' — ' + s.error : ''}`).join('\n');
+    return {
+      success: true,
+      data: result,
+      display: `Workflow "${wf.name}" ausgefuehrt:\nStatus: ${result.status}\nSteps:\n${stepDisplay}`,
     };
   }
 }

@@ -1,11 +1,13 @@
 import type { Logger } from 'pino';
 import type { WorkflowRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
-import type { WorkflowChain, WorkflowActionStep, WorkflowConditionStep, SkillContext } from '@alfred/types';
+import type { WorkflowChain, WorkflowActionStep, WorkflowConditionStep, WorkflowScriptStep, WorkflowDbQueryStep, SkillContext } from '@alfred/types';
 import { resolveTemplatesInObject } from './template-resolver.js';
 import { evaluateWorkflowCondition } from './workflow-condition-evaluator.js';
 import type { ActivityLogger } from './activity-logger.js';
 import type { SkillHealthTracker } from './skill-health-tracker.js';
+import type { ScriptExecutor } from './workflow/script-executor.js';
+import type { DbQueryExecutor } from './workflow/db-query-executor.js';
 
 export interface WorkflowRunResult {
   executionId: string;
@@ -24,6 +26,8 @@ export class WorkflowRunner {
     private readonly logger: Logger,
     private readonly activityLogger?: ActivityLogger,
     private readonly healthTracker?: SkillHealthTracker,
+    private readonly scriptExecutor?: ScriptExecutor,
+    private readonly dbQueryExecutor?: DbQueryExecutor,
   ) {}
 
   async run(
@@ -98,6 +102,70 @@ export class WorkflowRunner {
           stepsCompleted: visitedCount,
           stepResults: JSON.stringify(stepResults),
         });
+        continue;
+      }
+
+      // ── Script step ────────────────────────────────────────────
+      if (step.type === 'script') {
+        const scriptStep = step as WorkflowScriptStep;
+        if (!this.scriptExecutor) {
+          const errMsg = 'Script executor not available';
+          if (scriptStep.onError === 'skip') { stepResults.push({ skillName: '__script__', success: false, error: errMsg }); currentIndex++; continue; }
+          const status = visitedCount > 1 ? 'partial' : 'failed';
+          await this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
+          return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
+        }
+        const result = await this.scriptExecutor.execute(
+          { language: scriptStep.language, code: scriptStep.code, timeout: scriptStep.timeout, outputFormat: scriptStep.outputFormat },
+          chain.id, currentIndex,
+        );
+        if (result.success) {
+          lastStepData = result.data;
+          stepResults.push({ skillName: '__script__', success: true, data: result.data });
+        } else {
+          stepResults.push({ skillName: '__script__', success: false, error: result.error });
+          if (scriptStep.onError === 'skip') { currentIndex++; continue; }
+          const status = visitedCount > 1 ? 'partial' : 'failed';
+          await this.finishExecution(execution.id, status, visitedCount, stepResults, result.error);
+          return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: result.error };
+        }
+        currentIndex++;
+        await this.workflowRepo.updateExecution(execution.id, { stepsCompleted: visitedCount, stepResults: JSON.stringify(stepResults) });
+        continue;
+      }
+
+      // ── DB Query step ──────────────────────────────────────────
+      if (step.type === 'db_query') {
+        const dbStep = step as WorkflowDbQueryStep;
+        if (!this.dbQueryExecutor) {
+          const errMsg = 'DB query executor not available';
+          if (dbStep.onError === 'skip') { stepResults.push({ skillName: '__db_query__', success: false, error: errMsg }); currentIndex++; continue; }
+          const status = visitedCount > 1 ? 'partial' : 'failed';
+          await this.finishExecution(execution.id, status, visitedCount, stepResults, errMsg);
+          return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: errMsg };
+        }
+        const templateCtx: Record<string, unknown> = { prev: lastStepData, steps: stepResults.map(r => r.data) };
+        if (initialData) templateCtx.trigger = initialData;
+        // Flatten template context for SQL template resolution
+        const flatCtx: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(templateCtx)) {
+          if (typeof v === 'object' && v !== null) {
+            for (const [k2, v2] of Object.entries(v as Record<string, unknown>)) { flatCtx[`${k}.${k2}`] = v2; }
+          } else { flatCtx[k] = v; }
+        }
+        const result = await this.dbQueryExecutor.execute({ sql: dbStep.sql, params: dbStep.params, createTable: dbStep.createTable }, flatCtx);
+        if (result.success) {
+          lastStepData = result.data;
+          stepResults.push({ skillName: '__db_query__', success: true, data: result.data });
+        } else {
+          stepResults.push({ skillName: '__db_query__', success: false, error: result.error });
+          if (dbStep.onError === 'skip') { currentIndex++; continue; }
+          const status = visitedCount > 1 ? 'partial' : 'failed';
+          await this.finishExecution(execution.id, status, visitedCount, stepResults, result.error);
+          return { executionId: execution.id, status, stepsCompleted: visitedCount, totalSteps: chain.steps.length, stepResults, error: result.error };
+        }
+        currentIndex++;
+        await this.workflowRepo.updateExecution(execution.id, { stepsCompleted: visitedCount, stepResults: JSON.stringify(stepResults) });
         continue;
       }
 

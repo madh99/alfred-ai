@@ -208,7 +208,42 @@ export interface WorkflowConditionStep {
   label?: string;
 }
 
-export type WorkflowStep = WorkflowActionStep | WorkflowConditionStep;
+export interface WorkflowScriptStep {
+  type: 'script';
+  language: 'python' | 'node' | 'bash';
+  code: string;
+  timeout?: number;        // ms, default 30000
+  outputFormat?: 'json' | 'text';
+  onError: 'stop' | 'skip' | 'retry';
+  maxRetries?: number;
+}
+
+export interface WorkflowDbQueryStep {
+  type: 'db_query';
+  sql: string;
+  params?: string[];
+  createTable?: boolean;   // HIGH_RISK if true
+  onError: 'stop' | 'skip' | 'retry';
+}
+
+export type WorkflowStep = WorkflowActionStep | WorkflowConditionStep | WorkflowScriptStep | WorkflowDbQueryStep;
+
+export interface WorkflowGuard {
+  type: 'time_window' | 'weekday' | 'skill_condition';
+  value?: string;
+  skillName?: string;
+  skillParams?: Record<string, unknown>;
+  field?: string;
+  operator?: string;
+  compareValue?: unknown;
+}
+
+export interface WorkflowMonitoring {
+  enabled: boolean;
+  notifyOnFailure: boolean;
+  notifyFirstNRuns: number;
+  autoDisableAfterFailures: number;
+}
 
 export interface WorkflowChain {
   id: string;
@@ -217,10 +252,13 @@ export interface WorkflowChain {
   chatId: string;
   platform: string;
   steps: WorkflowStep[];
-  triggerType: 'manual' | 'watch' | 'scheduled';
+  triggerType: 'manual' | 'watch' | 'scheduled' | 'cron' | 'interval' | 'webhook' | 'mqtt';
   triggerConfig?: Record<string, unknown>;
   enabled: boolean;
   createdAt: string;
+  monitoring?: WorkflowMonitoring;
+  guards?: WorkflowGuard[];
+  lastTriggeredAt?: string;
 }
 
 export interface WorkflowExecution {

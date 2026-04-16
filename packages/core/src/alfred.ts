@@ -76,6 +76,11 @@ import { TodoWatcher } from './todo-watcher.js';
 import { ActivityLogger } from './activity-logger.js';
 import { SkillHealthTracker } from './skill-health-tracker.js';
 import { WorkflowRunner } from './workflow-runner.js';
+import { ScriptExecutor } from './workflow/script-executor.js';
+import { DbQueryExecutor } from './workflow/db-query-executor.js';
+import { PromptParser } from './workflow/prompt-parser.js';
+import { TriggerManager } from './workflow/trigger-manager.js';
+import { GuardEvaluator } from './workflow/guard-evaluator.js';
 import { ReasoningEngine } from './reasoning-engine.js';
 import { InsightTracker } from './insight-tracker.js';
 import { ReflectionEngine } from './reflection-engine.js';
@@ -98,6 +103,7 @@ export class Alfred {
   private backgroundTaskRunner?: BackgroundTaskRunner;
   private proactiveScheduler?: ProactiveScheduler;
   private watchEngine?: WatchEngine;
+  private triggerManager?: TriggerManager;
   private confirmationQueue?: ConfirmationQueue;
   private readonly adapters: Map<Platform, MessagingAdapter> = new Map();
   private readonly formatter = new ResponseFormatter();
@@ -1808,6 +1814,15 @@ export class Alfred {
     const workflowRepo = new WorkflowRepository(adapter);
     const workflowSkill = new WorkflowSkill(workflowRepo);
     skillRegistry.register(workflowSkill);
+
+    const scriptExecutor = new ScriptExecutor(
+      './data/scripts',
+      this.logger.child({ component: 'script-executor' }),
+    );
+    const dbQueryExecutor = new DbQueryExecutor(
+      adapter,
+      this.logger.child({ component: 'db-query-executor' }),
+    );
     const workflowRunner = new WorkflowRunner(
       workflowRepo,
       skillRegistry,
@@ -1815,8 +1830,38 @@ export class Alfred {
       this.logger.child({ component: 'workflow-runner' }),
       activityLogger,
       skillHealthTracker,
+      scriptExecutor,
+      dbQueryExecutor,
     );
     workflowSkill.setRunner(workflowRunner);
+
+    const promptParser = new PromptParser(
+      llmProvider,
+      skillRegistry,
+      this.logger.child({ component: 'prompt-parser' }),
+    );
+    workflowSkill.setPromptParser(promptParser);
+
+    // 7f-ii. TriggerManager — evaluates cron/watch triggers for workflows
+    {
+      const guardEvaluator = new GuardEvaluator(skillRegistry, skillSandbox);
+      const triggerManager = new TriggerManager(
+        workflowRepo,
+        guardEvaluator,
+        async (wfId, triggerData) => {
+          const wf = await workflowRepo.getById(wfId);
+          if (!wf) return;
+          const { context } = await (await import('./context-factory.js')).buildSkillContext(
+            userRepo,
+            { userId: this.config.security?.ownerUserId ?? '', platform: 'api' as Platform, chatId: '' },
+          );
+          return workflowRunner.run(wf, context, triggerData);
+        },
+        this.logger.child({ component: 'trigger-manager' }),
+      );
+      triggerManager.start();
+      this.triggerManager = triggerManager;
+    }
 
     // 7g. Initialize reasoning engine — proactive cross-domain insights
     let insightTracker: InsightTracker | undefined;
@@ -1975,14 +2020,24 @@ export class Alfred {
       }
     }
 
-    // Wire watch events -> reasoning engine for event-triggered reasoning
-    if (this.reasoningEngine) {
+    // Wire watch events -> reasoning engine + trigger manager for event-triggered reasoning
+    {
+      const existingCallback = this.watchEngine.onWatchTriggered;
       this.watchEngine.onWatchTriggered = (name, value, data, skillName) => {
+        existingCallback?.(name, value, data, skillName);
+
+        // Forward to TriggerManager for watch-triggered workflows
+        if (this.triggerManager) {
+          this.triggerManager.onWatchTriggered(name, value).catch(() => {});
+        }
+
         // Skip event-reasoning for feed_reader watches — RSS articles are evaluated
         // in the scheduled hourly reasoning pass via the feeds section instead.
         if (skillName === 'feed_reader') return;
-        this.reasoningEngine!.triggerOnEvent('watch_alert', `Watch "${name}" ausgelöst: ${value}`, data)
-          .catch(err => this.logger.warn({ err }, 'Event-triggered reasoning failed'));
+        if (this.reasoningEngine) {
+          this.reasoningEngine.triggerOnEvent('watch_alert', `Watch "${name}" ausgelöst: ${value}`, data)
+            .catch(err => this.logger.warn({ err }, 'Event-triggered reasoning failed'));
+        }
       };
     }
 
@@ -3093,6 +3148,7 @@ export class Alfred {
     this.backgroundTaskRunner?.stop();
     this.proactiveScheduler?.stop();
     this.watchEngine?.stop();
+    this.triggerManager?.stop();
     this.confirmationQueue?.stop();
     this.calendarWatcher?.stop();
     this.todoWatcher?.stop();

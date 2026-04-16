@@ -9,13 +9,16 @@ export class WorkflowRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.adapter.execute(`
-      INSERT INTO workflow_chains (id, name, user_id, chat_id, platform, steps, trigger_type, trigger_config, enabled, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workflow_chains (id, name, user_id, chat_id, platform, steps, trigger_type, trigger_config, enabled, created_at, monitoring, last_triggered_at, guards)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id, chain.name, chain.userId, chain.chatId, chain.platform,
       JSON.stringify(chain.steps), chain.triggerType,
       chain.triggerConfig ? JSON.stringify(chain.triggerConfig) : null,
       chain.enabled ? 1 : 0, now,
+      chain.monitoring ? JSON.stringify(chain.monitoring) : null,
+      chain.lastTriggeredAt ?? null,
+      chain.guards ? JSON.stringify(chain.guards) : null,
     ]);
     return { ...chain, id, createdAt: now };
   }
@@ -96,6 +99,36 @@ export class WorkflowRepository {
     return rows.map(r => this.mapExecution(r));
   }
 
+  async listTriggered(): Promise<WorkflowChain[]> {
+    const rows = await this.adapter.query(
+      "SELECT * FROM workflow_chains WHERE enabled = 1 AND trigger_type != 'manual' ORDER BY created_at DESC",
+      [],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapChain(r));
+  }
+
+  async updateTriggerState(id: string, lastTriggeredAt: string): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE workflow_chains SET last_triggered_at = ? WHERE id = ?',
+      [lastTriggeredAt, id],
+    );
+  }
+
+  async update(id: string, updates: Partial<Pick<WorkflowChain, 'name' | 'enabled' | 'triggerType' | 'triggerConfig' | 'monitoring' | 'guards' | 'steps'>>): Promise<void> {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (updates.name !== undefined) { sets.push('name = ?'); values.push(updates.name); }
+    if (updates.enabled !== undefined) { sets.push('enabled = ?'); values.push(updates.enabled ? 1 : 0); }
+    if (updates.triggerType !== undefined) { sets.push('trigger_type = ?'); values.push(updates.triggerType); }
+    if (updates.triggerConfig !== undefined) { sets.push('trigger_config = ?'); values.push(JSON.stringify(updates.triggerConfig)); }
+    if (updates.monitoring !== undefined) { sets.push('monitoring = ?'); values.push(JSON.stringify(updates.monitoring)); }
+    if (updates.guards !== undefined) { sets.push('guards = ?'); values.push(JSON.stringify(updates.guards)); }
+    if (updates.steps !== undefined) { sets.push('steps = ?'); values.push(JSON.stringify(updates.steps)); }
+    if (sets.length === 0) return;
+    values.push(id);
+    await this.adapter.execute(`UPDATE workflow_chains SET ${sets.join(', ')} WHERE id = ?`, values);
+  }
+
   private mapChain(row: Record<string, unknown>): WorkflowChain {
     return {
       id: row.id as string,
@@ -108,6 +141,9 @@ export class WorkflowRepository {
       triggerConfig: row.trigger_config ? JSON.parse(row.trigger_config as string) : undefined,
       enabled: row.enabled === 1,
       createdAt: row.created_at as string,
+      monitoring: row.monitoring ? JSON.parse(row.monitoring as string) : undefined,
+      guards: row.guards ? JSON.parse(row.guards as string) : undefined,
+      lastTriggeredAt: row.last_triggered_at as string | undefined,
     };
   }
 
