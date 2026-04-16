@@ -2739,12 +2739,12 @@ export class Alfred {
       const listLogFiles = (filePath: string): Array<{ name: string; path: string; size: number; modified: string }> => {
         const files: Array<{ name: string; path: string; size: number; modified: string; mtime: number }> = [];
         // Scan directory for all log files matching the base name (numbered .1/.2 AND dated .2026-04-17)
-        const dir = require('node:path').dirname(filePath) as string;
-        const baseName = (filePath.split('/').pop() ?? filePath.split('\\').pop() ?? filePath);
+        const dir = path.dirname(filePath);
+        const baseName = path.basename(filePath);
         try {
           for (const entry of fs.readdirSync(dir)) {
             if (entry === baseName || entry.startsWith(baseName + '.')) {
-              const fullPath = require('node:path').join(dir, entry);
+              const fullPath = path.join(dir, entry);
               try {
                 const s = fs.statSync(fullPath);
                 if (s.isFile()) {
