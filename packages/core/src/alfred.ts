@@ -2738,13 +2738,22 @@ export class Alfred {
       /** List all available log files for a base path, sorted newest first. */
       const listLogFiles = (filePath: string): Array<{ name: string; path: string; size: number; modified: string }> => {
         const files: Array<{ name: string; path: string; size: number; modified: string; mtime: number }> = [];
-        for (const c of [filePath, ...Array.from({ length: 20 }, (_, i) => `${filePath}.${i + 1}`)]) {
-          try {
-            const s = fs.statSync(c);
-            const name = c.split('/').pop() ?? c.split('\\').pop() ?? c;
-            files.push({ name, path: c, size: s.size, modified: new Date(s.mtimeMs).toISOString(), mtime: s.mtimeMs });
-          } catch { /* skip */ }
-        }
+        // Scan directory for all log files matching the base name (numbered .1/.2 AND dated .2026-04-17)
+        const dir = require('node:path').dirname(filePath) as string;
+        const baseName = (filePath.split('/').pop() ?? filePath.split('\\').pop() ?? filePath);
+        try {
+          for (const entry of fs.readdirSync(dir)) {
+            if (entry === baseName || entry.startsWith(baseName + '.')) {
+              const fullPath = require('node:path').join(dir, entry);
+              try {
+                const s = fs.statSync(fullPath);
+                if (s.isFile()) {
+                  files.push({ name: entry, path: fullPath, size: s.size, modified: new Date(s.mtimeMs).toISOString(), mtime: s.mtimeMs });
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } catch { /* dir not found */ }
         files.sort((a, b) => b.mtime - a.mtime);
         return files.map(({ mtime: _, ...rest }) => rest);
       };
@@ -2786,12 +2795,9 @@ export class Alfred {
         readAuditLog: (lines: number, _level?: string, _filter?: string, fileIndex?: number) =>
           readLogFile(auditLogPath, lines, undefined, undefined, fileIndex),
         streamAppLog: (res: import('http').ServerResponse, level?: string, filter?: string) => {
-          // Find the current (newest) log file — highest mtime
-          let actualFile = logFilePath;
-          let newestMtime = 0;
-          for (const c of [logFilePath, ...Array.from({ length: 20 }, (_, i) => `${logFilePath}.${i + 1}`)]) {
-            try { const s = fs.statSync(c); if (s.mtimeMs > newestMtime) { newestMtime = s.mtimeMs; actualFile = c; } } catch { /* skip */ }
-          }
+          // Find the current (newest) log file via listLogFiles
+          const logFilesList = listLogFiles(logFilePath);
+          const actualFile = logFilesList.length > 0 ? logFilesList[0].path : logFilePath;
 
           const minLevel = level ? (LEVEL_NUMS[level] ?? 30) : 0;
           const lowerFilter = filter?.toLowerCase();

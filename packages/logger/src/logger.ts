@@ -102,6 +102,7 @@ export function createLogger(name: string, level?: string, options?: { version?:
         file: filePath,
         size: maxSize,
         frequency: frequency ?? undefined,
+        dateFormat: frequency === 'daily' ? 'yyyy-MM-dd' : frequency === 'hourly' ? 'yyyy-MM-dd-HH' : undefined,
         limit: { count: maxFiles },
       },
       level: logLevel,

@@ -27,6 +27,7 @@ export class AuditLogger {
         file: auditLogPath,
         size: '10m',
         frequency: 'daily',
+        dateFormat: 'yyyy-MM-dd',
         limit: { count: 30 }, // Audit logs: 30 days retention
       },
     });

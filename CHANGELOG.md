@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.520] - 2026-04-17
+## [0.19.0-multi-ha.521] - 2026-04-17
+
+### Fixed
+- **Logging: Log-Rotation mit Datum im Dateinamen** — pino-roll `dateFormat` Option aktiviert: `alfred.log.2026-04-17` statt `alfred.log.1`. Loesung fuer das Problem dass pino-roll bei Prozess-Neustarts die Nummerierung nicht korrekt fortfuehrt (schrieb in alte `.1` statt neue `.3` zu erstellen). Dateien mit Datum sind eindeutig und ueberleben Restarts. LogViewer: Datei-Suche per Directory-Scan statt nummeriertem Pattern (erkennt beide Formate). Audit-Logger ebenfalls umgestellt
 
 ### Changed
 - **Reasoning: Kontext-Aware Memory Retrieval** — Memories werden nicht mehr blind nach Confidence geladen sondern passend zum aktuellen Kontext. Zwei-Phasen-Collect: Phase 1 fetcht alle Sections ausser Memories parallel, Phase 2 extrahiert Keywords aus den Ergebnissen und sucht passende Memories. Wenn der Kalender "Kapfenberg" enthaelt, wird die Kapfenberg-Correction geladen. Wenn Email "Anthropic" enthaelt, wird der "bezahlt"-Fact geladen. Garantierte Slots: corrections(10) + preferences(5) + patterns(5). Kontext-Match fuellt dynamisch auf. maxTokens 1200. Latenz: +11ms pro Pass
