@@ -1000,6 +1000,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       if (collected.length > 0) return collected;
     }
 
+    // Approach 3: find all standalone JSON objects {...} in the text (Haiku sometimes
+    // outputs actions as inline JSON without code blocks or array wrapper).
+    const objectMatches = [...jsonText.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)];
+    if (objectMatches.length > 0) {
+      const collected: ProposedAction[] = [];
+      for (const m of objectMatches) {
+        collected.push(...this.parseSingleJsonExpression(m[0].trim()));
+      }
+      if (collected.length > 0) return collected;
+    }
+
     this.logger.warn('Reasoning: failed to parse actions JSON, ignoring');
     return [];
   }
