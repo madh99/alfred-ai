@@ -5,9 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.511] - 2026-04-16
+## [0.19.0-multi-ha.512] - 2026-04-16
 
 ### Fixed
+- **Reasoning: Corrections als harter Prompt-Block** — Correction-Memories werden nicht mehr nur als passive Zeilen im memories-Abschnitt mitgegeben sondern als eigener Abschnitt `=== KORREKTUREN (ABSOLUTER VORRANG) ===` direkt nach dem Datum, VOR allen Kontext-Sections. Jede Korrektur mit ❌-Prefix. Verhindert dass das LLM Corrections in einem langen Kontext uebersieht (Kapfenberg-Distanz-Bug)
+- **Reasoning: Token-Budget 3500 → 5000** — Mehr Kontext fuer das LLM. Memories, Emails, SmartHome, Feeds haben mehr Platz. Kostenerhöhung ~30% pro Pass (~$0.04 statt $0.03)
+- **Reasoning: Doppel-Insights nach Deferred-Flush** — Deferred Insights werden jetzt nach dem Flush mit `markSent()` markiert. Der nachfolgende Scheduled Pass erkennt sie als Duplikate und generiert sie nicht erneut
+- **Reasoning: call_service aus Prompt entfernt** — LLM soll nur turn_on/turn_off/toggle/activate_scene verwenden. call_service erfordert domain+service Parameter die das LLM nicht zuverlaessig kennt
 - **Reasoning: Halluzinierte Actions zeigten Fehlermeldung** — Schema-Validierung (ist die Action im Skill definiert?) wurde erst in `executeDirectly` geprüft, NACH der Entscheidung den User zu informieren. User sah "Proaktive Aktion fehlgeschlagen: Action view existiert nicht". Fix: Schema-Check jetzt VOR der Autonomie-Entscheidung. Halluzinierte Actions werden leise uebersprungen
 - **KG LLM-Linker Timeout 30s → 60s** — Bei grossen Knowledge Graphs (2000+ Entities) reichten 30 Sekunden nicht fuer den LLM-Call. Timeout auf 60s erhoeht
 

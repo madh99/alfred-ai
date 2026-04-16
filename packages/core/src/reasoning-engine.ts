@@ -368,6 +368,16 @@ ${this.buildTopicInstructions()}`;
                 } catch { /* no actions */ }
               }
               await this.deliveryScheduler.markDelivered(deferred.map(d => d.id));
+              // Mark deferred insight topics as "sent" so the upcoming scheduled pass
+              // recognizes them as duplicates and doesn't re-generate the same insights.
+              for (const d of deferred) {
+                if (d.message) {
+                  const lines = d.message.split('\n').filter((l: string) => l.trim().length > 20);
+                  for (const line of lines.slice(0, 10)) {
+                    try { await this.markSent(line); } catch { /* best effort */ }
+                  }
+                }
+              }
               this.logger.info({ count: deferred.length }, 'Deferred insights flushed (cross-node activity detected)');
             }
           }
@@ -578,8 +588,24 @@ ${this.buildTopicInstructions()}`;
 
   private formatSections(ctx: CollectedContext): string {
     const header = `=== Aktuelles Datum & Uhrzeit ===\n${ctx.dateTime}`;
+
+    // Extract correction memories and place them as a HARD BLOCK before all other sections.
+    // This ensures the LLM cannot ignore corrections buried in the memories section.
+    const memSection = ctx.sections.find(s => s.key === 'memories');
+    const corrections: string[] = [];
+    if (memSection) {
+      for (const line of memSection.content.split('\n')) {
+        if (/\[correction\]/i.test(line)) {
+          corrections.push(line.replace(/^-\s*\[correction\]\s*/, '').trim());
+        }
+      }
+    }
+    const correctionBlock = corrections.length > 0
+      ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===\nDiese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.\n${corrections.map(c => `❌ ${c}`).join('\n')}`
+      : '';
+
     const sections = ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
-    return `${header}\n\n${sections}`;
+    return `${header}${correctionBlock}\n\n${sections}`;
   }
 
   private formatEnrichedContext(enriched: Map<string, string>): string {
@@ -815,7 +841,8 @@ WICHTIG: Ladeplanung NUR 1-10h vor der Fahrt, NICHT Tage im Voraus. Das Ladefens
 
 SMART HOME / GERÄTE-AKTIONEN:
 - Entity-Namen in Home Assistant sind NICHT selbsterklärend. Ein Name wie "B_Garage" könnte ein Bewegungssensor, ein Schalter, ein Licht oder etwas anderes sein. NIEMALS die Funktion einer Entity aus dem Namen ableiten.
-- VOR jeder Write-Action (turn_on/off, call_service): Prüfe ob du eine Memory über diese Entity hast. Wenn NEIN → schlage als Confirmation vor, NICHT proaktiv ausführen.
+- VOR jeder Write-Action (turn_on/off/toggle): Prüfe ob du eine Memory über diese Entity hast. Wenn NEIN → schlage als Confirmation vor, NICHT proaktiv ausführen.
+- NIEMALS call_service direkt verwenden — nutze turn_on, turn_off, toggle oder activate_scene. call_service erfordert domain+service Parameter die du nicht zuverlässig kennst.
 - Batterie-Level < 10% bei Sensoren (binary_sensor, sensor mit device_class battery) bedeutet typischerweise KNOPFZELLE/AKKUS des SENSORS LEER — NICHT die Hausbatterie/PV-Speicher. Unterscheide: Sensor-Batterie ≠ Hausbatterie ≠ Fahrzeug-Batterie.
 - ESS/PV-Überschuss-Systeme (Victron, SMA, Fronius etc.) regeln sich typischerweise automatisch. Manuelles Ein-/Ausschalten nur wenn der User es explizit verlangt.
 - ITSM Incidents: Prüfe Correction-Memories bevor du Severity zuweist. Wenn eine Korrektur sagt "nicht kritisch", erstelle KEINEN critical Incident dafür.

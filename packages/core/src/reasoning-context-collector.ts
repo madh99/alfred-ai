@@ -48,7 +48,7 @@ interface SourceDef {
 // ── Constants ────────────────────────────────────────────────
 
 /** Total token budget for all data sections combined. */
-const TOTAL_TOKEN_BUDGET = 3500;
+const TOTAL_TOKEN_BUDGET = 5000;
 
 /** Timeout for individual skill data fetches (ms). */
 const SKILL_FETCH_TIMEOUT_MS = 5_000;
