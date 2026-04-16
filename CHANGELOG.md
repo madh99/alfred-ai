@@ -5,7 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.518] - 2026-04-16
+## [0.19.0-multi-ha.520] - 2026-04-17
+
+### Changed
+- **Reasoning: Kontext-Aware Memory Retrieval** — Memories werden nicht mehr blind nach Confidence geladen sondern passend zum aktuellen Kontext. Zwei-Phasen-Collect: Phase 1 fetcht alle Sections ausser Memories parallel, Phase 2 extrahiert Keywords aus den Ergebnissen und sucht passende Memories. Wenn der Kalender "Kapfenberg" enthaelt, wird die Kapfenberg-Correction geladen. Wenn Email "Anthropic" enthaelt, wird der "bezahlt"-Fact geladen. Garantierte Slots: corrections(10) + preferences(5) + patterns(5). Kontext-Match fuellt dynamisch auf. maxTokens 1200. Latenz: +11ms pro Pass
 
 ### Fixed
 - **Reasoning: Erledigte Themen wurden nicht als erledigt erkannt** — Wenn der User "ist bezahlt/erneuert" sagt, speichert Alfred das als `fact` (confidence 1.0). Facts mit confidence 1.0 wurden von der Memory-Priorisierung verdraengt. Fix: Memory-Priorisierung nach Confidence >= 1.0 (exakt user-bestaetigte) VOR patterns/connections. Corrections-Block bleibt nur fuer `[correction]` Type (keine Facts, zu hohes Risiko fuer false-positives)

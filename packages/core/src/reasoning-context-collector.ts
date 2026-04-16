@@ -113,54 +113,51 @@ export class ReasoningContextCollector {
       timeZone: tz,
     }) + ` (${tz})`;
 
-    const sources = this.buildSourceDefs(now);
+    const allSources = this.buildSourceDefs(now);
 
-    // Fetch all sources in parallel (Promise.allSettled = non-blocking)
+    // ── PHASE 1: Fetch all sources EXCEPT memories in parallel ───
+    // Memories are fetched in Phase 2 with context-awareness (keywords from Phase 1 results).
+    const memoriesIdx = allSources.findIndex(s => s.key === 'memories');
+    const memoriesDef = memoriesIdx >= 0 ? allSources.splice(memoriesIdx, 1)[0] : undefined;
+
     const fetchStart = Date.now();
     const truncations: string[] = [];
     const timings: Record<string, number> = {};
 
-    const results = await Promise.allSettled(
-      sources.map(async (src): Promise<ReasoningSection> => {
-        const t0 = Date.now();
-        let content = await src.fetch();
-        timings[src.key] = Date.now() - t0;
+    const fetchSection = async (src: typeof allSources[0]): Promise<ReasoningSection> => {
+      const t0 = Date.now();
+      let content = await src.fetch();
+      timings[src.key] = Date.now() - t0;
 
-        // Enforce per-source maxTokens limit (prevents any single source from hogging budget)
-        // Factor 3.5 matches tokenEstimate calculation (content.length / 3.5) — see CHANGELOG v0.9.64
-        const maxChars = Math.floor(src.maxTokens * 3.5);
-        if (content.length > maxChars) {
-          const originalTokens = Math.ceil(content.length / 3.5);
-          // Truncate at line boundaries to avoid cutting mid-entry
-          const lines = content.split('\n');
-          let charCount = 0;
-          const kept: string[] = [];
-          for (const line of lines) {
-            if (charCount + line.length + 1 > maxChars) break;
-            kept.push(line);
-            charCount += line.length + 1;
-          }
-          content = kept.join('\n') + '\n...(gekürzt)';
-          truncations.push(`${src.key}:${originalTokens}→${src.maxTokens}`);
+      const maxChars = Math.floor(src.maxTokens * 3.5);
+      if (content.length > maxChars) {
+        const originalTokens = Math.ceil(content.length / 3.5);
+        const lines = content.split('\n');
+        let charCount = 0;
+        const kept: string[] = [];
+        for (const line of lines) {
+          if (charCount + line.length + 1 > maxChars) break;
+          kept.push(line);
+          charCount += line.length + 1;
         }
-        return {
-          key: src.key,
-          label: src.label,
-          priority: src.priority,
-          content,
-          tokenEstimate: Math.ceil(content.length / 3.5),
-          changed: false, // set below
-        };
-      }),
-    );
+        content = kept.join('\n') + '\n...(gekürzt)';
+        truncations.push(`${src.key}:${originalTokens}→${src.maxTokens}`);
+      }
+      return {
+        key: src.key, label: src.label, priority: src.priority,
+        content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+      };
+    };
 
-    // Collect fulfilled results, skip failures
+    const phase1Results = await Promise.allSettled(allSources.map(fetchSection));
+
+    // Collect Phase 1 results
     const sections: ReasoningSection[] = [];
     const rejected: string[] = [];
     const empty: string[] = [];
-    for (let i = 0; i < results.length; i++) {
-      const r = results[i];
-      const srcKey = sources[i]?.key ?? `unknown-${i}`;
+    for (let i = 0; i < phase1Results.length; i++) {
+      const r = phase1Results[i];
+      const srcKey = allSources[i]?.key ?? `unknown-${i}`;
       if (r.status === 'rejected') {
         rejected.push(`${srcKey}: ${String(r.reason).slice(0, 100)}`);
       } else if (!r.value.content) {
@@ -176,7 +173,7 @@ export class ReasoningContextCollector {
     this.logger.info({
       component: 'reasoning-collector',
       fetchDurationMs: fetchDuration,
-      total: sources.length, fulfilled: sections.length,
+      total: allSources.length + (memoriesDef ? 1 : 0), fulfilled: sections.length,
       rejected: rejected.length, empty: empty.length,
       truncated: truncations.length > 0 ? truncations.join(', ') : undefined,
       slow: slowSources.length > 0 ? slowSources.join(', ') : undefined,
@@ -184,6 +181,33 @@ export class ReasoningContextCollector {
 
     if (rejected.length > 0) this.logger.warn({ rejected }, 'ReasoningCollector: sources rejected');
     if (empty.length > 0) this.logger.warn({ empty }, 'ReasoningCollector: sources returned empty content');
+
+    // ── PHASE 2: Context-aware memory fetch ──────────────────
+    // Extract keywords from Phase 1 sections, then fetch memories that match the current context.
+    if (memoriesDef) {
+      const contextKeywords = this.extractContextKeywords(sections);
+      const memoriesContent = await this.fetchMemoriesContextAware(contextKeywords);
+      if (memoriesContent) {
+        let content = memoriesContent;
+        const maxChars = Math.floor(memoriesDef.maxTokens * 3.5);
+        if (content.length > maxChars) {
+          const lines = content.split('\n');
+          let charCount = 0;
+          const kept: string[] = [];
+          for (const line of lines) {
+            if (charCount + line.length + 1 > maxChars) break;
+            kept.push(line);
+            charCount += line.length + 1;
+          }
+          content = kept.join('\n') + '\n...(gekürzt)';
+          truncations.push(`memories:${Math.ceil(memoriesContent.length / 3.5)}→${memoriesDef.maxTokens}`);
+        }
+        sections.push({
+          key: 'memories', label: memoriesDef.label, priority: memoriesDef.priority,
+          content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+        });
+      }
+    }
 
     // Change detection + error status annotation
     const changedSections: string[] = [];
@@ -688,6 +712,95 @@ export class ReasoningContextCollector {
     }
   }
 
+  // ── Context-Aware Memory Retrieval ────────────────────────
+
+  private static readonly STOP_WORDS = new Set([
+    'eine', 'einer', 'eines', 'einem', 'einen', 'dass', 'dies', 'diese', 'dieser',
+    'dieses', 'sind', 'wird', 'wurde', 'werden', 'haben', 'hatte', 'sein', 'seine',
+    'kann', 'nach', 'noch', 'auch', 'oder', 'aber', 'wenn', 'dann', 'nicht', 'kein',
+    'keine', 'keinen', 'mehr', 'alle', 'anderen', 'andere', 'anderer', 'anderes',
+    'the', 'and', 'for', 'with', 'from', 'that', 'this', 'have', 'has', 'was', 'were',
+    'info', 'status', 'data', 'error', 'true', 'false', 'null', 'none', 'undefined',
+    'aktuell', 'heute', 'morgen', 'gestern', 'gerade', 'bereits', 'etwa', 'circa',
+    'letzte', 'letzten', 'nächste', 'nächsten', 'keine', 'kein', 'nicht',
+  ]);
+
+  /** Extract top-N keywords from collected sections for context-aware memory retrieval. */
+  private extractContextKeywords(sections: ReasoningSection[]): string[] {
+    const wordCounts = new Map<string, number>();
+    for (const section of sections) {
+      const words = section.content.toLowerCase()
+        .replace(/[^a-zäöüß0-9\s_-]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length >= 4 && !ReasoningContextCollector.STOP_WORDS.has(w));
+      for (const word of words) {
+        wordCounts.set(word, (wordCounts.get(word) ?? 0) + 1);
+      }
+    }
+    return [...wordCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([word]) => word);
+  }
+
+  /** Fetch memories with context-awareness: guaranteed corrections/patterns + context-matched + recent fill. */
+  private async fetchMemoriesContextAware(contextKeywords: string[]): Promise<string> {
+    try {
+      const userId = this.resolvedUserId!;
+      const all = new Map<string, any>();
+
+      // 1. ALWAYS: Corrections (up to 10) — user rules, MUST be in context
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'correction', 10)) all.set(m.key, m);
+      } catch { /* skip */ }
+
+      // 2. ALWAYS: Preferences (up to 5) — user preferences
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'preference', 5)) {
+          if (!all.has(m.key)) all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 3. ALWAYS: Patterns (up to 5) — behavioral context
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'pattern', 5)) {
+          if (!all.has(m.key)) all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 4. CONTEXT-MATCH: Search memories matching current context keywords
+      if (contextKeywords.length > 0) {
+        try {
+          const searchQuery = contextKeywords.slice(0, 5).join(' ');
+          const matched = await this.memoryRepo.search(userId, searchQuery);
+          for (const m of matched) {
+            if (all.size >= 25) break;
+            if (!all.has(m.key)) all.set(m.key, m);
+          }
+        } catch { /* skip */ }
+      }
+
+      // 5. FILL remaining with highest-confidence most-recent memories
+      const MAX = 25;
+      if (all.size < MAX) {
+        try {
+          const recent = await this.memoryRepo.getRecentForPrompt(userId, MAX - all.size + 5);
+          for (const m of recent) {
+            if (all.size >= MAX) break;
+            if (!all.has(m.key)) all.set(m.key, m);
+          }
+        } catch { /* skip */ }
+      }
+
+      if (all.size === 0) return 'Keine gespeicherten Erinnerungen.';
+      return [...all.values()].map((m: any) => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+    } catch (err) {
+      this.logger.warn({ err }, 'ReasoningCollector: context-aware memory fetch failed');
+      return '(Memory-Abfrage fehlgeschlagen)';
+    }
+  }
+
+  /** Legacy fetch (used if context-aware not triggered). */
   private async fetchMemories(): Promise<string> {
     try {
       const userId = this.resolvedUserId!;
