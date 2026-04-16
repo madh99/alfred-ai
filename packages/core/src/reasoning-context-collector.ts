@@ -700,13 +700,15 @@ export class ReasoningContextCollector {
           }
         } catch { /* skip */ }
       }
-      // Limit to 25 entries, prioritizing pattern + connection
+      // Limit to 25 entries, prioritizing: corrections FIRST, then patterns/connections, then rest
       const MAX = 25;
       if (memories.length > MAX) {
-        const priority = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
-        const rest = memories.filter(m => m.type !== 'pattern' && m.type !== 'connection');
+        const corrections = memories.filter(m => m.type === 'correction' || m.type === 'preference');
+        const patterns = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
+        const rest = memories.filter(m => !['correction', 'preference', 'pattern', 'connection'].includes(m.type));
         memories.length = 0;
-        memories.push(...priority, ...rest.slice(0, MAX - priority.length));
+        memories.push(...corrections, ...patterns, ...rest);
+        memories.length = Math.min(memories.length, MAX);
       }
       if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
       return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.517] - 2026-04-16
+
+### Fixed
+- **Reasoning: Corrections wurden aus Memory-Section verdraengt** — Die Memory-Priorisierung setzte patterns/connections VOR alle anderen Typen. Corrections (confidence 1.0) landeten in der Rest-Gruppe und wurden durch die 800-Token Pre-Truncation abgeschnitten. Der Corrections-Prompt-Block (v512) war leer weil keine `[correction]` Zeilen im truncated Output waren. Fix: Priorisierung jetzt: corrections/preferences ZUERST, dann patterns/connections, dann Rest. Diagnostic-Logs bestaetigen: `hasCorrection: false, memoryLines: 11, preview: [pattern]...`
+
 ## [0.19.0-multi-ha.515] - 2026-04-16
 
 ### Fixed
