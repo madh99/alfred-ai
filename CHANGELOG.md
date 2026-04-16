@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.510] - 2026-04-16
+
+### Added
+- **Knowledge Gate fuer proaktive Aktionen** — Wissensbasierte Autonomie statt pauschaler Regeln:
+  - **Bekannte Entity → proaktiv handeln:** Wenn Alfred eine Memory ueber die Ziel-Entity hat und keine Warnung, fuehrt er die Action aus + informiert den User
+  - **Unbekannte Entity → fragen:** Wenn Alfred KEINE Memory ueber die Entity hat, wird die Action zur Confirmation downgraded. User-Antwort wird als Memory gespeichert → naechstes Mal proaktiv
+  - **Correction blockiert → reject:** Wenn eine Correction-Memory sagt "nicht steuern", "regelt sich selbst", "nicht kritisch" → Action wird blockiert, User sieht warum
+  - **Gated Skills:** homeassistant (write-actions: turn_on/off, call_service, create_automation etc.), goe_charger (start/stop_charging). Read-Actions bleiben ungegated
+  - **ITSM Correction-Check:** create_incident prüft Correction-Memories bevor Severity zugewiesen wird. "Nicht kritisch" → Incident wird blockiert
+  - **Generischer Prompt:** Smart-Home Entity-Namen NICHT aus Namen ableiten, Sensor-Batterie ≠ Hausbatterie ≠ Fahrzeug-Batterie, ESS regelt sich selbst, Infra-Probleme nicht pauschal als Cascade verknüpfen
+
 ## [0.19.0-multi-ha.509] - 2026-04-16
 
 ### Fixed

@@ -813,6 +813,14 @@ Wenn ein Termin mit Fahrt in den nächsten 24h ansteht:
    - Melde: "SoC reicht nicht. Schnelllader unterwegs einplanen (ca. 20min für 30%)"
 WICHTIG: Ladeplanung NUR 1-10h vor der Fahrt, NICHT Tage im Voraus. Das Ladefenster betrifft die VICTRON-HAUSBATTERIE NICHT den BMW — nutze den korrekten Smart-Home-Entity.
 
+SMART HOME / GERÄTE-AKTIONEN:
+- Entity-Namen in Home Assistant sind NICHT selbsterklärend. Ein Name wie "B_Garage" könnte ein Bewegungssensor, ein Schalter, ein Licht oder etwas anderes sein. NIEMALS die Funktion einer Entity aus dem Namen ableiten.
+- VOR jeder Write-Action (turn_on/off, call_service): Prüfe ob du eine Memory über diese Entity hast. Wenn NEIN → schlage als Confirmation vor, NICHT proaktiv ausführen.
+- Batterie-Level < 10% bei Sensoren (binary_sensor, sensor mit device_class battery) bedeutet typischerweise KNOPFZELLE/AKKUS des SENSORS LEER — NICHT die Hausbatterie/PV-Speicher. Unterscheide: Sensor-Batterie ≠ Hausbatterie ≠ Fahrzeug-Batterie.
+- ESS/PV-Überschuss-Systeme (Victron, SMA, Fronius etc.) regeln sich typischerweise automatisch. Manuelles Ein-/Ausschalten nur wenn der User es explizit verlangt.
+- ITSM Incidents: Prüfe Correction-Memories bevor du Severity zuweist. Wenn eine Korrektur sagt "nicht kritisch", erstelle KEINEN critical Incident dafür.
+- Verknüpfe Infrastruktur-Probleme (MikroTik, UniFi, Commvault) NICHT pauschal als "Cascade" wenn kein nachgewiesener Zusammenhang besteht. Zeitliche Überlappung allein ist kein Beweis für eine gemeinsame Ursache.
+
 E-MAIL INSIGHTS:
 - Die E-Mail-Inbox zeigt den Status jeder Mail: 🔴 UNREAD, 📖 READ, ✅ REPLIED, ℹ️ AUTO.
 - Emails mit ✅ REPLIED sind ERLEDIGT — NICHT als offenen Handlungsbedarf darstellen.
@@ -1269,6 +1277,24 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         } catch { /* proceed */ }
       }
 
+      // Correction-check for ITSM incidents: if a correction says "not critical", downgrade or skip
+      if (action.skillName === 'itsm' && action.skillParams?.action === 'create_incident') {
+        try {
+          const userId = this.resolvedOwnerUserId || this.defaultChatId;
+          const titleWords = (action.skillParams.title as string ?? '').toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+          const corrections = await this.memoryRepo.search(userId, titleWords.slice(0, 3).join(' '));
+          const relevant = corrections.filter(m => m.type === 'correction');
+          for (const mem of relevant) {
+            const shared = titleWords.filter(w => mem.value.toLowerCase().includes(w));
+            if (shared.length >= 2 && /nicht.*kritisch|not.*critical|kein.*handlungsbedarf|ignorier/i.test(mem.value)) {
+              this.logger.info({ action: action.description, correction: mem.key },
+                'Reasoning: ITSM incident blocked by correction memory');
+              continue;
+            }
+          }
+        } catch { /* proceed */ }
+      }
+
       if (await this.actionWasRecentlyProposed(action)) {
         // Allow re-proposal if the previous confirmation expired or was rejected
         const hash = this.actionHash(action);
@@ -1314,6 +1340,20 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             executeDirectly = isAuto;
             informUser = false;
             break;
+        }
+
+        // Knowledge Gate: check if we know enough about the target to act autonomously
+        if (executeDirectly && isProactive) {
+          const gate = await this.knowledgeGate(action);
+          if (gate === 'reject') {
+            this.logger.info({ action: action.description, gate: 'reject' }, 'Reasoning: knowledge gate rejected action');
+            continue;
+          }
+          if (gate === 'confirm') {
+            // Downgrade to confirmation — we don't know enough about this target
+            executeDirectly = false;
+            this.logger.info({ action: action.description, gate: 'confirm' }, 'Reasoning: knowledge gate → confirmation (unknown target)');
+          }
         }
 
         if (executeDirectly) {
@@ -1364,6 +1404,78 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       } catch (err) {
         this.logger.error({ err, action: action.description }, 'Reasoning: failed to process action');
       }
+    }
+  }
+
+  // ── Knowledge Gate ────────────────────────────────────────────
+
+  /** Write-actions on skills that control physical/external systems. */
+  private static readonly GATED_WRITE_ACTIONS: Record<string, Set<string>> = {
+    homeassistant: new Set(['turn_on', 'turn_off', 'toggle', 'call_service', 'create_automation', 'update_automation', 'delete_automation', 'create_script', 'run_script', 'create_scene']),
+    goe_charger: new Set(['start_charging', 'stop_charging', 'set_current']),
+  };
+
+  /**
+   * Knowledge Gate: check memories/corrections before allowing proactive execution.
+   * - 'proceed': Alfred knows the target, no warnings → execute
+   * - 'confirm': Alfred doesn't know the target → ask user first (and learn)
+   * - 'reject': A correction memory explicitly says "don't do this" → block
+   */
+  private async knowledgeGate(action: ProposedAction): Promise<'proceed' | 'confirm' | 'reject'> {
+    const gatedActions = ReasoningEngine.GATED_WRITE_ACTIONS[action.skillName];
+    const actionParam = action.skillParams?.action as string | undefined;
+    if (!gatedActions || !actionParam || !gatedActions.has(actionParam)) return 'proceed';
+
+    // Extract target identifier (entity_id, device, etc.)
+    const target = (action.skillParams?.entityId ?? action.skillParams?.entity_id
+      ?? action.skillParams?.device ?? action.skillParams?.entity ?? '') as string;
+    if (!target) return 'confirm'; // No target specified → ask
+
+    const userId = this.resolvedOwnerUserId || this.defaultChatId;
+
+    try {
+      // Check correction memories about this target or related topic
+      const targetShort = target.includes('.') ? target.split('.').pop()! : target;
+      const memories = await this.memoryRepo.search(userId, targetShort);
+      const corrections = memories.filter(m => m.type === 'correction');
+
+      // Check if any correction says "don't touch" / "not manual" / "regulates itself"
+      const BLOCK_PATTERNS = /nicht.*steuern|nicht.*manuell|regelt.*sich|finger.*weg|nicht.*ändern|lass.*das|nicht.*einschalten|nicht.*ausschalten|automatisch.*geregelt|nicht.*kritisch/i;
+      for (const mem of corrections) {
+        if (mem.value.toLowerCase().includes(targetShort.toLowerCase()) && BLOCK_PATTERNS.test(mem.value)) {
+          this.logger.info({ target, correction: mem.key, value: mem.value.slice(0, 100) },
+            'Knowledge gate: correction blocks this action');
+          return 'reject';
+        }
+      }
+
+      // Check description-level corrections (topic-based, not entity-specific)
+      const descWords = action.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+      for (const mem of corrections) {
+        const memWords = mem.value.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+        const shared = descWords.filter(w => memWords.some(mw => mw.includes(w)));
+        if (shared.length >= 3 && BLOCK_PATTERNS.test(mem.value)) {
+          this.logger.info({ target, correction: mem.key, sharedWords: shared },
+            'Knowledge gate: topic-level correction blocks this action');
+          return 'reject';
+        }
+      }
+
+      // Check if Alfred has ANY knowledge about this entity
+      const allKnowledge = memories.filter(m =>
+        m.value.toLowerCase().includes(targetShort.toLowerCase()) ||
+        m.key.toLowerCase().includes(targetShort.toLowerCase())
+      );
+      if (allKnowledge.length === 0) {
+        // Never heard of this entity → ask first, user response becomes memory for next time
+        return 'confirm';
+      }
+
+      // Known entity, no blocking corrections → proceed
+      return 'proceed';
+    } catch {
+      // On memory lookup error → be cautious, ask
+      return 'confirm';
     }
   }
 
