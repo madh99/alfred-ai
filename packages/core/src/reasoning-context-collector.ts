@@ -229,7 +229,7 @@ export class ReasoningContextCollector {
       { key: 'calendar', label: 'Kalender (nächste 48h)', priority: 1, maxTokens: 400, fetch: () => this.fetchCalendar(now) },
       { key: 'todos', label: 'Offene Todos', priority: 1, maxTokens: 300, fetch: () => this.fetchTodos() },
       { key: 'watches', label: 'Aktive Watches', priority: 1, maxTokens: 300, fetch: () => this.fetchWatches() },
-      { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 800, fetch: () => this.fetchMemories() },
+      { key: 'memories', label: 'User-Erinnerungen', priority: 1, maxTokens: 1200, fetch: () => this.fetchMemories() },
     );
 
     // Aktive Workflows (für Dedup — LLM sieht welche Workflows existieren)
@@ -690,42 +690,52 @@ export class ReasoningContextCollector {
 
   private async fetchMemories(): Promise<string> {
     try {
-      const memories = await this.memoryRepo.getRecentForPrompt(this.resolvedUserId!, 20);
-      const existingKeys = new Set(memories.map(m => m.key));
-      for (const type of ['pattern', 'connection'] as const) {
+      const userId = this.resolvedUserId!;
+      const all = new Map<string, any>();
+
+      // 1. CORRECTIONS — user corrections, MUST be in context (up to 10)
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'correction', 10)) {
+          all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 2. PREFERENCES — user rules (up to 5)
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'preference', 5)) {
+          if (!all.has(m.key)) all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 3. PATTERNS — behavioral context (up to 5)
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'pattern', 5)) {
+          if (!all.has(m.key)) all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 4. CONNECTIONS — cross-domain links (up to 3)
+      try {
+        for (const m of await this.memoryRepo.getByType(userId, 'connection', 3)) {
+          if (!all.has(m.key)) all.set(m.key, m);
+        }
+      } catch { /* skip */ }
+
+      // 5. FILL remaining slots with highest-confidence most-recent memories of any type
+      const MAX = 25;
+      const remaining = MAX - all.size;
+      if (remaining > 0) {
         try {
-          const typed = await this.memoryRepo.getByType(this.resolvedUserId!, type, 5);
-          for (const m of typed) {
-            if (!existingKeys.has(m.key)) { existingKeys.add(m.key); memories.push(m); }
+          const recent = await this.memoryRepo.getRecentForPrompt(userId, remaining + 10);
+          for (const m of recent) {
+            if (all.size >= MAX) break;
+            if (!all.has(m.key)) all.set(m.key, m);
           }
         } catch { /* skip */ }
       }
-      // Limit to 25 entries, prioritizing:
-      // 1. High-confidence (>=0.9) memories of ANY type — these are user-confirmed facts, corrections, important info
-      // 2. Corrections + preferences (any confidence) — user rules and corrections
-      // 3. Patterns + connections — behavioral insights
-      // 4. Rest — general memories
-      const MAX = 25;
-      if (memories.length > MAX) {
-        const highConf = memories.filter(m => m.confidence >= 1.0 && !['pattern', 'connection'].includes(m.type));
-        const corrections = memories.filter(m => (m.type === 'correction' || m.type === 'preference') && m.confidence < 1.0);
-        const patterns = memories.filter(m => m.type === 'pattern' || m.type === 'connection');
-        const rest = memories.filter(m =>
-          m.confidence < 1.0 && !['correction', 'preference', 'pattern', 'connection'].includes(m.type)
-        );
-        // Deduplicate (a memory can match multiple categories)
-        const seen = new Set<string>();
-        const sorted: typeof memories = [];
-        for (const group of [highConf, corrections, patterns, rest]) {
-          for (const m of group) {
-            if (!seen.has(m.key)) { seen.add(m.key); sorted.push(m); }
-          }
-        }
-        memories.length = 0;
-        memories.push(...sorted.slice(0, MAX));
-      }
-      if (memories.length === 0) return 'Keine gespeicherten Erinnerungen.';
-      return memories.map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+
+      if (all.size === 0) return 'Keine gespeicherten Erinnerungen.';
+      return [...all.values()].map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: memory fetch failed');
       return '(Memory-Abfrage fehlgeschlagen)';
