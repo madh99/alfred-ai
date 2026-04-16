@@ -5,7 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.510] - 2026-04-16
+## [0.19.0-multi-ha.511] - 2026-04-16
+
+### Fixed
+- **Reasoning: Halluzinierte Actions zeigten Fehlermeldung** — Schema-Validierung (ist die Action im Skill definiert?) wurde erst in `executeDirectly` geprüft, NACH der Entscheidung den User zu informieren. User sah "Proaktive Aktion fehlgeschlagen: Action view existiert nicht". Fix: Schema-Check jetzt VOR der Autonomie-Entscheidung. Halluzinierte Actions werden leise uebersprungen
+- **KG LLM-Linker Timeout 30s → 60s** — Bei grossen Knowledge Graphs (2000+ Entities) reichten 30 Sekunden nicht fuer den LLM-Call. Timeout auf 60s erhoeht
 
 ### Added
 - **Knowledge Gate fuer proaktive Aktionen** — Wissensbasierte Autonomie statt pauschaler Regeln:

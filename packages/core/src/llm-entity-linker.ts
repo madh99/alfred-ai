@@ -308,7 +308,7 @@ TRANSITIVE INFERENZ (wichtig!):
         max_tokens: 4096,
         response_format: { type: 'json_object' },
       }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(60_000),
     });
 
     if (!res.ok) {

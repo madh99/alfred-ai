@@ -1320,6 +1320,18 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       } catch { /* proceed without gating */ }
 
       try {
+        // Pre-check: validate action exists in skill schema BEFORE any execution decision
+        const preCheckSkill = this.skillRegistry.get(action.skillName);
+        if (preCheckSkill && action.skillParams?.action) {
+          const schema = preCheckSkill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
+          const validActions = schema?.properties?.action?.enum;
+          if (validActions && !validActions.includes(action.skillParams.action as string)) {
+            this.logger.warn({ skillName: action.skillName, action: action.skillParams.action, validActions: validActions.join(',') },
+              'Reasoning: hallucinated action rejected before execution');
+            continue; // Silently skip — user sees nothing
+          }
+        }
+
         const isAuto = ReasoningEngine.AUTO_SKILLS.has(action.skillName);
         const isProactive = ReasoningEngine.PROACTIVE_SKILLS.has(action.skillName);
 
