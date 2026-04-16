@@ -2735,16 +2735,26 @@ export class Alfred {
       const PINO_LEVELS: Record<number, string> = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' };
       const LEVEL_NUMS: Record<string, number> = { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 };
 
-      const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string) => {
-        // pino-roll appends .1, .2 etc. — highest number is the NEWEST (active) file
-        const candidates: Array<{ path: string; mtime: number }> = [];
+      /** List all available log files for a base path, sorted newest first. */
+      const listLogFiles = (filePath: string): Array<{ name: string; path: string; size: number; modified: string }> => {
+        const files: Array<{ name: string; path: string; size: number; modified: string; mtime: number }> = [];
         for (const c of [filePath, ...Array.from({ length: 20 }, (_, i) => `${filePath}.${i + 1}`)]) {
-          try { const s = fs.statSync(c); candidates.push({ path: c, mtime: s.mtimeMs }); } catch { /* skip */ }
+          try {
+            const s = fs.statSync(c);
+            const name = c.split('/').pop() ?? c.split('\\').pop() ?? c;
+            files.push({ name, path: c, size: s.size, modified: new Date(s.mtimeMs).toISOString(), mtime: s.mtimeMs });
+          } catch { /* skip */ }
         }
-        if (candidates.length === 0) return { lines: [], total: 0, file: filePath };
-        // Sort by mtime descending — newest first
-        candidates.sort((a, b) => b.mtime - a.mtime);
-        const actualFile = candidates[0].path;
+        files.sort((a, b) => b.mtime - a.mtime);
+        return files.map(({ mtime: _, ...rest }) => rest);
+      };
+
+      const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string, fileIndex?: number) => {
+        const allFiles = listLogFiles(filePath);
+        if (allFiles.length === 0) return { lines: [], total: 0, file: filePath, files: [] };
+        // fileIndex 0 = newest (default), 1 = second newest, etc.
+        const idx = Math.min(fileIndex ?? 0, allFiles.length - 1);
+        const actualFile = allFiles[idx].path;
 
         const content = fs.readFileSync(actualFile, 'utf-8');
         const rawLines = content.split('\n').filter(Boolean);
@@ -2767,14 +2777,14 @@ export class Alfred {
 
         const total = parsed.length;
         const lines = parsed.slice(-maxLines);
-        return { lines, total, file: actualFile };
+        return { lines, total, file: actualFile, files: allFiles };
       };
 
       (logApiAdapter as any).setLogCallbacks({
-        readAppLog: (lines: number, level?: string, filter?: string) =>
-          readLogFile(logFilePath, lines, level, filter),
-        readAuditLog: (lines: number) =>
-          readLogFile(auditLogPath, lines),
+        readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number) =>
+          readLogFile(logFilePath, lines, level, filter, fileIndex),
+        readAuditLog: (lines: number, _level?: string, _filter?: string, fileIndex?: number) =>
+          readLogFile(auditLogPath, lines, undefined, undefined, fileIndex),
         streamAppLog: (res: import('http').ServerResponse, level?: string, filter?: string) => {
           // Find the current (newest) log file — highest mtime
           let actualFile = logFilePath;

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
-import type { LogEntry } from '@/types/api';
+import type { LogEntry, LogFile } from '@/types/api';
 
 const LEVEL_NAMES: Record<number, string> = { 10: 'TRACE', 20: 'DEBUG', 30: 'INFO', 40: 'WARN', 50: 'ERROR', 60: 'FATAL' };
 const LEVEL_COLORS: Record<number, string> = {
@@ -32,6 +32,8 @@ export function LogViewerPage() {
   const [liveTail, setLiveTail] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [logFiles, setLogFiles] = useState<LogFile[]>([]);
+  const [selectedFileIdx, setSelectedFileIdx] = useState(0); // 0 = newest (current)
   const scrollRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
 
@@ -40,18 +42,20 @@ export function LogViewerPage() {
     setError(null);
     try {
       if (activeTab === 'app') {
-        const res = await client.fetchLogs({ lines: 500, level: levelFilter, filter: textFilter || undefined });
+        const res = await client.fetchLogs({ lines: 500, level: levelFilter, filter: textFilter || undefined, fileIndex: selectedFileIdx });
         setLogs(res.lines);
+        if (res.files) setLogFiles(res.files);
       } else {
-        const res = await client.fetchAuditLogs(200);
+        const res = await client.fetchAuditLogs(200, selectedFileIdx);
         setLogs(res.lines);
+        if (res.files) setLogFiles(res.files);
       }
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [client, activeTab, levelFilter, textFilter]);
+  }, [client, activeTab, levelFilter, textFilter, selectedFileIdx]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
@@ -100,6 +104,25 @@ export function LogViewerPage() {
           ))}
         </div>
 
+        {/* File Selector */}
+        {logFiles.length > 1 && (
+          <select
+            value={selectedFileIdx}
+            onChange={e => { setSelectedFileIdx(Number(e.target.value)); setLiveTail(false); }}
+            className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-300"
+          >
+            {logFiles.map((f, i) => {
+              const date = new Date(f.modified).toLocaleString('de-AT', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+              const sizeKb = Math.round(f.size / 1024);
+              return (
+                <option key={i} value={i}>
+                  {i === 0 ? `${f.name} (aktuell)` : `${f.name} (${date}, ${sizeKb}KB)`}
+                </option>
+              );
+            })}
+          </select>
+        )}
+
         {/* Level Filter */}
         {activeTab === 'app' && (
           <select
@@ -129,8 +152,8 @@ export function LogViewerPage() {
           Laden
         </button>
 
-        {/* Live Tail */}
-        {activeTab === 'app' && (
+        {/* Live Tail — only for current file */}
+        {activeTab === 'app' && selectedFileIdx === 0 && (
           <button
             onClick={() => setLiveTail(!liveTail)}
             className={clsx(

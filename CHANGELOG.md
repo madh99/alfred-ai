@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.506] - 2026-04-16
+## [0.19.0-multi-ha.507] - 2026-04-16
 
 ### Fixed
+- **WebUI LogViewer: Rotierte Logs jetzt anzeigbar** — Datei-Dropdown zeigt alle verfuegbaren Log-Dateien (sortiert nach Datum, neueste zuerst). Aktuelle Datei markiert mit "(aktuell)", aeltere zeigen Datum + Groesse. Live-Tail nur fuer aktuelle Datei. API: `?file=0` (neueste, default), `?file=1` (vorherige), etc. Betrifft Application Logs und Audit Logs
 - **WebUI LogViewer: Zeigte gestrige statt aktuelle Logs** — pino-roll nummeriert aufsteigend (.1=älteste, .2=neuere). Der LogViewer suchte die erste existierende Datei (.1) statt die neueste. Fix: Datei-Suche nach mtime sortiert (neueste zuerst). Betrifft sowohl Log-Lesen als auch Live-Tail Streaming
 - **Reasoning: Correction-Memories werden jetzt als gelöste Themen erkannt** — `annotateResolvedTopics` suchte nur nach Content-Keywords (erledigt, resolved, geklärt) aber ignorierte `[correction]` Type-Memories. Eine Correction mit "kein offener Konflikt zwischen Linus-Training und Noah-Abholung" wurde nicht erkannt weil der Text keins der Suchbegriffe enthielt. Fix: alle `[correction]`-Zeilen im Memory-Content werden erkannt, Topic-Words aus Key UND Value extrahiert und gegen Kalender/andere Sections gematcht. Annotation: `KORREKTUR: ... — NICHT als offenes Problem darstellen`
 

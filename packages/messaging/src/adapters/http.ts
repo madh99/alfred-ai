@@ -185,8 +185,8 @@ export class HttpAdapter extends MessagingAdapter {
 
   // ── Log Viewer + Cluster Operations ────────────────────────
   private logCallbacks?: {
-    readAppLog: (lines: number, level?: string, filter?: string) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string }>;
-    readAuditLog: (lines: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string }>;
+    readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string; files?: Array<{ name: string; size: number; modified: string }> }>;
+    readAuditLog: (lines: number, level?: string, filter?: string, fileIndex?: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string; files?: Array<{ name: string; size: number; modified: string }> }>;
     streamAppLog: (res: http.ServerResponse, level?: string, filter?: string) => () => void;
   };
   private clusterCallbacks?: {
@@ -1181,7 +1181,8 @@ export class HttpAdapter extends MessagingAdapter {
     const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '200', 10) || 200, 5000);
     const level = url.searchParams.get('level') ?? undefined;
     const filter = url.searchParams.get('filter') ?? undefined;
-    const result = await this.logCallbacks.readAppLog(lines, level, filter);
+    const fileIndex = url.searchParams.has('file') ? parseInt(url.searchParams.get('file')!, 10) || 0 : undefined;
+    const result = await this.logCallbacks.readAppLog(lines, level, filter, fileIndex);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
@@ -1217,7 +1218,8 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '100', 10) || 100, 2000);
-    const result = await this.logCallbacks.readAuditLog(lines);
+    const fileIndex = url.searchParams.has('file') ? parseInt(url.searchParams.get('file')!, 10) || 0 : undefined;
+    const result = await this.logCallbacks.readAuditLog(lines, undefined, undefined, fileIndex);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

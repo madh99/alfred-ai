@@ -370,19 +370,23 @@ export class AlfredClient {
 
   // ── Log Viewer API ──
 
-  async fetchLogs(options?: { lines?: number; level?: string; filter?: string }): Promise<import('@/types/api').LogResponse> {
+  async fetchLogs(options?: { lines?: number; level?: string; filter?: string; fileIndex?: number }): Promise<import('@/types/api').LogResponse> {
     const params = new URLSearchParams();
     if (options?.lines) params.set('lines', String(options.lines));
     if (options?.level) params.set('level', options.level);
     if (options?.filter) params.set('filter', options.filter);
+    if (options?.fileIndex !== undefined) params.set('file', String(options.fileIndex));
     const qs = params.toString() ? `?${params}` : '';
     const res = await fetch(`${this.baseUrl}/api/logs/app${qs}`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Logs: HTTP ${res.status}`);
     return res.json();
   }
 
-  async fetchAuditLogs(lines?: number): Promise<import('@/types/api').LogResponse> {
-    const qs = lines ? `?lines=${lines}` : '';
+  async fetchAuditLogs(lines?: number, fileIndex?: number): Promise<import('@/types/api').LogResponse> {
+    const params = new URLSearchParams();
+    if (lines) params.set('lines', String(lines));
+    if (fileIndex !== undefined) params.set('file', String(fileIndex));
+    const qs = params.toString() ? `?${params}` : '';
     const res = await fetch(`${this.baseUrl}/api/logs/audit${qs}`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`AuditLogs: HTTP ${res.status}`);
     return res.json();

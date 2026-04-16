@@ -128,10 +128,17 @@ export interface LogEntry {
   [key: string]: unknown;
 }
 
+export interface LogFile {
+  name: string;
+  size: number;
+  modified: string;
+}
+
 export interface LogResponse {
   lines: LogEntry[];
   total: number;
   file: string;
+  files?: LogFile[];
 }
 
 // ── Cluster / HA Operations ─────────────────────────────────
