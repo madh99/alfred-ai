@@ -1317,14 +1317,19 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
 
         if (executeDirectly) {
-          await this.executeDirectly(action);
+          const result = await this.executeDirectly(action);
           await this.markActionProposed(action);
 
           if (informUser) {
             const adapter = this.adapters.get(this.defaultPlatform);
             if (adapter) {
-              await adapter.sendMessage(this.defaultChatId,
-                `\u26A1 **Proaktiv ausgeführt:** ${action.description}`);
+              if (result.success) {
+                await adapter.sendMessage(this.defaultChatId,
+                  `\u26A1 **Proaktiv ausgeführt:** ${action.description}`);
+              } else {
+                await adapter.sendMessage(this.defaultChatId,
+                  `\u274C **Proaktive Aktion fehlgeschlagen:** ${action.description}\n${result.error ?? ''}`);
+              }
             }
           }
 
@@ -1362,9 +1367,9 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     }
   }
 
-  private async executeDirectly(action: ProposedAction): Promise<void> {
+  private async executeDirectly(action: ProposedAction): Promise<{ success: boolean; error?: string }> {
     const skill = this.skillRegistry.get(action.skillName);
-    if (!skill) return;
+    if (!skill) return { success: false, error: `Skill "${action.skillName}" nicht gefunden` };
 
     // Validate action against skill schema (prevent hallucinated actions)
     const actionParam = action.skillParams?.action as string | undefined;
@@ -1374,7 +1379,19 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       if (validActions && !validActions.includes(actionParam)) {
         this.logger.warn({ skillName: action.skillName, action: actionParam, validActions: validActions.join(',') },
           'Reasoning: hallucinated action rejected — not in skill schema');
-        return;
+        return { success: false, error: `Action "${actionParam}" existiert nicht` };
+      }
+    }
+
+    // Normalize snake_case → camelCase for skill params (LLM often uses entity_id instead of entityId)
+    const params = { ...action.skillParams };
+    for (const [key, value] of Object.entries(params)) {
+      if (key.includes('_')) {
+        const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+        if (!(camelKey in params)) {
+          params[camelKey] = value;
+          delete params[key];
+        }
       }
     }
 
@@ -1385,9 +1402,16 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         chatId: this.defaultChatId,
         chatType: 'dm',
       });
-      await this.skillSandbox.execute(skill, action.skillParams, context);
+      const result = await this.skillSandbox.execute(skill, params, context);
+      if (!result.success) {
+        this.logger.warn({ skillName: action.skillName, error: result.error }, 'Reasoning: direct action returned error');
+        return { success: false, error: result.error };
+      }
+      return { success: true };
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn({ err, action: action.description }, 'Reasoning: direct action execution failed');
+      return { success: false, error: msg };
     }
   }
 }

@@ -5,9 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.508] - 2026-04-16
+## [0.19.0-multi-ha.509] - 2026-04-16
 
 ### Fixed
+- **Reasoning: Proaktive Aktionen meldeten Erfolg bei Fehlschlag** — `executeDirectly` gab keinen Rueckgabewert, User bekam "Proaktiv ausgefuehrt" auch wenn die Action abgelehnt (halluzinierte Action) oder fehlgeschlagen war (falscher Parameter). Fix: `executeDirectly` gibt `{ success, error }` zurueck. Bei Fehler: "Proaktive Aktion fehlgeschlagen: ..." statt falscher Erfolgsmeldung
+- **Reasoning: snake_case → camelCase Konvertierung fuer Skill-Parameter** — LLM benutzt `entity_id` (snake_case), HA-Skill erwartet `entityId` (camelCase). Fix: automatische Konvertierung in `executeDirectly` vor Skill-Ausfuehrung. Betrifft alle proaktiven und autonomen Actions
 - **Reasoning: Actions-Parser Fallback fuer Haiku-Format** — Dritter Parsing-Ansatz: findet standalone JSON-Objekte im Text wenn weder Array-Parse noch Code-Block-Extraktion funktionieren. Haiku schreibt Actions manchmal als inline JSON ohne Code-Fences oder Array-Wrapper
 - **WebUI LogViewer: Rotierte Logs jetzt anzeigbar** — Datei-Dropdown zeigt alle verfuegbaren Log-Dateien (sortiert nach Datum, neueste zuerst). Aktuelle Datei markiert mit "(aktuell)", aeltere zeigen Datum + Groesse. Live-Tail nur fuer aktuelle Datei. API: `?file=0` (neueste, default), `?file=1` (vorherige), etc. Betrifft Application Logs und Audit Logs
 - **WebUI LogViewer: Zeigte gestrige statt aktuelle Logs** — pino-roll nummeriert aufsteigend (.1=älteste, .2=neuere). Der LogViewer suchte die erste existierende Datei (.1) statt die neueste. Fix: Datei-Suche nach mtime sortiert (neueste zuerst). Betrifft sowohl Log-Lesen als auch Live-Tail Streaming
