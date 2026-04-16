@@ -600,6 +600,14 @@ ${this.buildTopicInstructions()}`;
         }
       }
     }
+    if (corrections.length > 0) {
+      this.logger.info({ count: corrections.length, first: corrections[0]?.slice(0, 80) }, 'Reasoning: corrections extracted for prompt block');
+    } else if (memSection) {
+      // Debug: check why no corrections found
+      const hasCorrection = memSection.content.includes('[correction]');
+      this.logger.info({ hasCorrection, memoryLines: memSection.content.split('\n').length, preview: memSection.content.slice(0, 200) },
+        'Reasoning: no corrections found in memories section');
+    }
     const correctionBlock = corrections.length > 0
       ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===\nDiese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.\n${corrections.map(c => `❌ ${c}`).join('\n')}`
       : '';
