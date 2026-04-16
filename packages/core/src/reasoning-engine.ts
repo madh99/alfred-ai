@@ -1266,6 +1266,28 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         if (p.due && !p.triggerAt) { p.triggerAt = p.due; delete p.due; }
         // LLM uses "id" but skill expects "reminderId"
         if (p.id && !p.reminderId) { p.reminderId = p.id; delete p.id; }
+        // If cancel/delete without reminderId, try to find by description/time keyword match
+        if ((p.action === 'cancel' || p.action === 'delete') && !p.reminderId && this.adapter) {
+          try {
+            const uid = this.resolvedOwnerUserId || this.defaultChatId;
+            const pending = await this.adapter.query(
+              "SELECT id, message, trigger_at FROM reminders WHERE fired = 0 AND (user_id = ? OR chat_id = ?)",
+              [uid, this.defaultChatId],
+            ) as Array<{ id: string; message: string; trigger_at: string }>;
+            // Match by keywords from action description
+            const descWords = action.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
+            for (const r of pending) {
+              const rWords = `${r.message} ${r.trigger_at}`.toLowerCase().split(/\s+/).filter(w => w.length >= 3);
+              const shared = descWords.filter(w => rWords.some(rw => rw.includes(w)));
+              if (shared.length >= 2) {
+                p.reminderId = r.id.slice(0, 8);
+                this.logger.info({ reminderId: p.reminderId, description: action.description, message: r.message },
+                  'Reasoning: resolved reminder ID by keyword match');
+                break;
+              }
+            }
+          } catch { /* proceed without ID */ }
+        }
         // Fix triggerAt in past → set to tomorrow same time
         if (p.triggerAt && typeof p.triggerAt === 'string') {
           const parsed = new Date(p.triggerAt.replace('T', ' ').replace(/:\d{2}$/, '')); // strip seconds

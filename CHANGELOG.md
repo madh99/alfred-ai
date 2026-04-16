@@ -5,9 +5,10 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.514] - 2026-04-16
+## [0.19.0-multi-ha.515] - 2026-04-16
 
 ### Fixed
+- **Reasoning: Reminder-Cancel findet ID per Keyword-Match** — Wenn das LLM "Erinnerung 17:45 loeschen" vorschlaegt aber keine reminderId mitgibt, wird jetzt per Keyword-Match aus der Beschreibung der passende aktive Reminder gefunden. Sucht in pending Reminders nach >=2 gemeinsamen Woertern mit der Action-Description
 - **Reasoning: call_service richtig dokumentiert statt verboten** — Prompt erklaert jetzt die required Parameters (domain, service, entityId, serviceData). Domain wird automatisch aus entityId abgeleitet (`light.wohnzimmer` → domain=`light`). call_service ist die maechtigste HA-Action (Heizung, Rollos, Dimmer) — verbieten war falsch
 - **Reasoning: Fehlermeldungen verstaendlich + Lern-Aufforderung** — Statt technischer Dumps ("Missing required domain parameter") sieht der User: "Aktion nicht moeglich: [Beschreibung]. Sag mir wie ich das umsetzen soll, dann merke ich es mir." Alfred lernt aus der Antwort
 - **Reasoning: Reminder-Cancel Parameter-Fix** — Prompt-Beispiel zeigte `"id"` aber Skill erwartet `"reminderId"`. Normalisierung in processActions: `id→reminderId`, `delete→cancel`. Prompt-Beispiel korrigiert mit Hinweis auf 8-stellige Hex-ID aus Erinnerungen-Liste
