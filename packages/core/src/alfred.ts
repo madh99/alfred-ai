@@ -2736,14 +2736,15 @@ export class Alfred {
       const LEVEL_NUMS: Record<string, number> = { trace: 10, debug: 20, info: 30, warn: 40, error: 50, fatal: 60 };
 
       const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string) => {
-        // pino-roll appends .1, .2 etc. — find the most recent file
-        const candidates = [filePath];
-        for (let i = 1; i <= 10; i++) candidates.push(`${filePath}.${i}`);
-        let actualFile = '';
-        for (const c of candidates) {
-          try { fs.statSync(c); actualFile = c; break; } catch { /* next */ }
+        // pino-roll appends .1, .2 etc. — highest number is the NEWEST (active) file
+        const candidates: Array<{ path: string; mtime: number }> = [];
+        for (const c of [filePath, ...Array.from({ length: 20 }, (_, i) => `${filePath}.${i + 1}`)]) {
+          try { const s = fs.statSync(c); candidates.push({ path: c, mtime: s.mtimeMs }); } catch { /* skip */ }
         }
-        if (!actualFile) return { lines: [], total: 0, file: filePath };
+        if (candidates.length === 0) return { lines: [], total: 0, file: filePath };
+        // Sort by mtime descending — newest first
+        candidates.sort((a, b) => b.mtime - a.mtime);
+        const actualFile = candidates[0].path;
 
         const content = fs.readFileSync(actualFile, 'utf-8');
         const rawLines = content.split('\n').filter(Boolean);
@@ -2775,11 +2776,11 @@ export class Alfred {
         readAuditLog: (lines: number) =>
           readLogFile(auditLogPath, lines),
         streamAppLog: (res: import('http').ServerResponse, level?: string, filter?: string) => {
-          // Find the current log file
+          // Find the current (newest) log file — highest mtime
           let actualFile = logFilePath;
-          for (let i = 1; i <= 10; i++) {
-            const c = `${logFilePath}.${i}`;
-            try { fs.statSync(c); actualFile = c; break; } catch { /* next */ }
+          let newestMtime = 0;
+          for (const c of [logFilePath, ...Array.from({ length: 20 }, (_, i) => `${logFilePath}.${i + 1}`)]) {
+            try { const s = fs.statSync(c); if (s.mtimeMs > newestMtime) { newestMtime = s.mtimeMs; actualFile = c; } } catch { /* skip */ }
           }
 
           const minLevel = level ? (LEVEL_NUMS[level] ?? 30) : 0;
