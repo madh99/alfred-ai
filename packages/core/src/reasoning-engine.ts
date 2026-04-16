@@ -761,7 +761,8 @@ AKTIONSTYPEN:
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
 5. Erinnerung erstellen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
-5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","id":"a3f2c8e1"}}
+5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","reminderId":"a3f2c8e1"}}
+    WICHTIG: reminderId MUSS die exakte 8-stellige Hex-ID aus der Erinnerungen-Liste sein (z.B. "ef6e21fd"). NIEMALS erfinden!
     WICHTIG: id MUSS die exakte 8-stellige Hex-ID aus der Erinnerungen-Liste sein. NIEMALS erfinden!
 
 ${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
@@ -1260,8 +1261,11 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       if (action.skillName === 'reminder' && action.skillParams) {
         const p = action.skillParams;
         if (p.action === 'create') p.action = 'set';
+        if (p.action === 'delete') p.action = 'cancel';
         if (p.title && !p.message) { p.message = p.title; delete p.title; }
         if (p.due && !p.triggerAt) { p.triggerAt = p.due; delete p.due; }
+        // LLM uses "id" but skill expects "reminderId"
+        if (p.id && !p.reminderId) { p.reminderId = p.id; delete p.id; }
         // Fix triggerAt in past → set to tomorrow same time
         if (p.triggerAt && typeof p.triggerAt === 'string') {
           const parsed = new Date(p.triggerAt.replace('T', ' ').replace(/:\d{2}$/, '')); // strip seconds
@@ -1406,8 +1410,10 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
                 await adapter.sendMessage(this.defaultChatId,
                   `\u26A1 **Proaktiv ausgeführt:** ${action.description}`);
               } else {
-                await adapter.sendMessage(this.defaultChatId,
-                  `\u274C **Proaktive Aktion fehlgeschlagen:** ${action.description}\n${result.error ?? ''}`);
+                // Don't show technical error messages to user — just log them.
+                // User can't fix "Missing required domain parameter".
+                this.logger.warn({ action: action.description, error: result.error },
+                  'Reasoning: proactive action failed silently');
               }
             }
           }
@@ -1534,14 +1540,18 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       }
     }
 
-    // Normalize snake_case → camelCase for skill params (LLM often uses entity_id instead of entityId)
+    // Normalize snake_case → camelCase ONLY for skills that use camelCase params.
+    // Skills like watch, itsm use snake_case intentionally — don't convert those.
+    const CAMELCASE_SKILLS = new Set(['homeassistant', 'goe_charger', 'bmw']);
     const params = { ...action.skillParams };
-    for (const [key, value] of Object.entries(params)) {
-      if (key.includes('_')) {
-        const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
-        if (!(camelKey in params)) {
-          params[camelKey] = value;
-          delete params[key];
+    if (CAMELCASE_SKILLS.has(action.skillName)) {
+      for (const [key, value] of Object.entries(params)) {
+        if (key.includes('_') && key !== 'action') {
+          const camelKey = key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+          if (!(camelKey in params)) {
+            params[camelKey] = value;
+            delete params[key];
+          }
         }
       }
     }
