@@ -5,7 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.521] - 2026-04-17
+## [0.19.0-multi-ha.522] - 2026-04-17
+
+### Fixed
+- **Reasoning: Email-Chronologie im Prompt** — Neue Regel: Receipt/Invoice/Bestätigung NACH einer Fehler-Email (payment failed, error, suspended) bedeutet Problem GELÖST. Die neuere Email hat Vorrang. Verhindert dass das LLM "Zahlungsmethode aktualisieren" meldet obwohl eine Receipt-Email die Bezahlung beweist
+- **Chat: User-Bestätigungen als Correction speichern** — Wenn der User sagt "ist bezahlt/erledigt/gefixt" als Reaktion auf ein von Alfred gemeldetes Problem, speichert Alfred das jetzt als `type: correction` (nicht `fact`). Corrections landen im harten Korrekturen-Block des Reasoning-Prompts und werden nicht ignoriert
+- **Reasoning: AUTO-Emails bei Problem-Lösung beachten** — Receipt-Emails mit ℹ️ AUTO Status werden nicht mehr pauschal als "ignorieren" behandelt wenn sie ein vorheriges Problem lösen
 
 ### Fixed
 - **Logging: Log-Rotation mit Datum im Dateinamen** — pino-roll `dateFormat` Option aktiviert: `alfred.log.2026-04-17` statt `alfred.log.1`. Loesung fuer das Problem dass pino-roll bei Prozess-Neustarts die Nummerierung nicht korrekt fortfuehrt (schrieb in alte `.1` statt neue `.3` zu erstellen). Dateien mit Datum sind eindeutig und ueberleben Restarts. LogViewer: Datei-Suche per Directory-Scan statt nummeriertem Pattern (erkennt beide Formate). Audit-Logger ebenfalls umgestellt

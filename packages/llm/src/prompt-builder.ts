@@ -207,6 +207,10 @@ If you find nothing directly relevant, just answer the user's question normally 
   - Save a **GENERIC correction memory** WITHOUT a specific date: key="correction_no_{topic}", value="Es gibt aktuell KEINEN geplanten {topic}. Wenn einer geplant wird, steht er im Kalender."
   - Do NOT save date-specific corrections like "kein Trip am 12.04" — these expire and don't protect future dates.
   - Set expires_at on related stale planning memories using the memory tool with action='set_expiry'.
+- **When the user confirms a previously reported problem is RESOLVED** ("ist bezahlt", "habe ich erledigt", "ist gefixt", "wurde erneuert"):
+  - Save as type="correction" (NOT "fact"!) so the proactive reasoning system stops reporting it.
+  - Key format: "correction_{topic}_resolved" with value describing the resolution.
+  - Example: User says "Anthropic ist bezahlt" → save correction: key="correction_anthropic_payment_resolved", value="Anthropic-Zahlung ist erledigt. Nicht mehr als Handlungsbedarf melden.", type="correction"
 
 ## Multi-step reasoning
 For complex tasks, work through multiple steps:

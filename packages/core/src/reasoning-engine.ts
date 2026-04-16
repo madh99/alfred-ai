@@ -860,7 +860,8 @@ SMART HOME / GERÄTE-AKTIONEN:
 E-MAIL INSIGHTS:
 - Die E-Mail-Inbox zeigt den Status jeder Mail: 🔴 UNREAD, 📖 READ, ✅ REPLIED, ℹ️ AUTO.
 - Emails mit ✅ REPLIED sind ERLEDIGT — NICHT als offenen Handlungsbedarf darstellen.
-- Emails mit ℹ️ AUTO (no-reply@, notifications, CI/CD) sind automatische Benachrichtigungen — nur erwähnen wenn anomal oder sicherheitsrelevant.
+- Emails mit ℹ️ AUTO (no-reply@, notifications, CI/CD) sind automatische Benachrichtigungen — nur erwähnen wenn anomal oder sicherheitsrelevant. ABER: Receipt/Invoice/Bestätigungs-Emails sind IMMER relevant wenn sie ein vorheriges Problem lösen (z.B. "payment failed" gefolgt von "receipt" = GELÖST).
+- CHRONOLOGIE BEACHTEN: Wenn eine Fehler-Email (payment failed, error, suspended) von einer SPÄTEREN Bestätigungs-Email (receipt, invoice, confirmation, renewed) gefolgt wird → das Problem ist GELÖST. NICHT als Handlungsbedarf melden. Die NEUERE Email hat Vorrang.
 - Emails mit 📖 READ die KEIN ✅ REPLIED haben KÖNNTEN noch Antwort brauchen — aber prüfe den Betreff: Rechnungen, Bestätigungen, Newsletter brauchen keine Antwort.
 - Wenn du eine Email in einem früheren Insight bereits erwähnt hast (prüfe "Insight-Tracking" Section), erwähne sie NICHT erneut es sei denn der Status hat sich geändert (z.B. von UNREAD zu REPLIED).
 - NIEMALS eine Email als "unbeantwortet" oder "ausstehend" bezeichnen wenn sie ✅ REPLIED ist.
