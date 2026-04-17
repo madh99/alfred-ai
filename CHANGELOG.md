@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.543] - 2026-04-17
+
+### Fixed
+- **Deep Scan Docker Command** — `sudo -n` (non-interactive) Fallback, verhindert haengendes Password-Prompt
+
 ## [0.19.0-multi-ha.542] - 2026-04-17
 
 ### Fixed
