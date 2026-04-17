@@ -72,7 +72,7 @@ describe('ConfigLoader', () => {
   it('should propagate top-level apiKey to strong/fast tiers', () => {
     process.env['ALFRED_ANTHROPIC_API_KEY'] = 'sk-test-shared';
     process.env['ALFRED_LLM_STRONG_PROVIDER'] = 'anthropic';
-    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-20250514';
+    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-7';
     process.env['ALFRED_LLM_FAST_PROVIDER'] = 'anthropic';
     process.env['ALFRED_LLM_FAST_MODEL'] = 'claude-haiku-4-5-20251001';
 
@@ -86,7 +86,7 @@ describe('ConfigLoader', () => {
   it('should not overwrite tier-specific apiKey during propagation', () => {
     process.env['ALFRED_ANTHROPIC_API_KEY'] = 'sk-test-shared';
     process.env['ALFRED_LLM_STRONG_PROVIDER'] = 'anthropic';
-    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-20250514';
+    process.env['ALFRED_LLM_STRONG_MODEL'] = 'claude-opus-4-7';
     process.env['ALFRED_LLM_STRONG_API_KEY'] = 'sk-strong-own';
 
     const config = loader.loadConfig('./nonexistent-path/nonexistent.yml');

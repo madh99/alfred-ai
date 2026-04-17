@@ -28,7 +28,7 @@ export const DEFAULT_CONFIG: Record<string, unknown> = {
   },
   llm: {
     provider: 'anthropic',
-    model: 'claude-sonnet-4-20250514',
+    model: 'claude-sonnet-4-6',
     temperature: 0.7,
     maxTokens: 4096,
   },

@@ -44,12 +44,13 @@ const PROVIDERS: ProviderDef[] = [
   {
     name: 'anthropic',
     label: 'Anthropic (Claude) — recommended',
-    defaultModel: 'claude-sonnet-4-20250514',
+    defaultModel: 'claude-sonnet-4-6',
     envKeyName: 'ALFRED_ANTHROPIC_API_KEY',
     needsApiKey: true,
     models: [
-      { id: 'claude-sonnet-4-20250514', desc: 'Sonnet 4 — fast, smart, recommended' },
-      { id: 'claude-opus-4-20250514',   desc: 'Opus 4 — most capable, slower' },
+      { id: 'claude-sonnet-4-6',        desc: 'Sonnet 4.6 — fast, smart, recommended' },
+      { id: 'claude-opus-4-7',          desc: 'Opus 4.7 — most capable, agentic coding' },
+      { id: 'claude-opus-4-6',          desc: 'Opus 4.6 — capable, extended thinking' },
       { id: 'claude-haiku-4-5-20251001', desc: 'Haiku 4.5 — fastest, cheapest' },
     ],
   },
@@ -68,7 +69,7 @@ const PROVIDERS: ProviderDef[] = [
   {
     name: 'openrouter',
     label: 'OpenRouter (multiple providers)',
-    defaultModel: 'anthropic/claude-sonnet-4-20250514',
+    defaultModel: 'anthropic/claude-sonnet-4-6',
     envKeyName: 'ALFRED_OPENROUTER_API_KEY',
     needsApiKey: true,
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -568,7 +569,7 @@ export async function setupCommand(): Promise<void> {
 
     if (enableMultiModel) {
       const tierDefs: { key: string; label: string; hint: string; defaultModel: string }[] = [
-        { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-20250514' },
+        { key: 'strong', label: 'Strong', hint: 'complex reasoning, coding, long documents', defaultModel: 'claude-opus-4-7' },
         { key: 'fast', label: 'Fast', hint: 'quick responses, simple tasks', defaultModel: 'claude-haiku-4-5-20251001' },
         { key: 'embeddings', label: 'Embeddings', hint: 'semantic search & memory', defaultModel: 'text-embedding-3-small' },
         { key: 'local', label: 'Local', hint: 'offline fallback via Ollama', defaultModel: 'llama3.2' },

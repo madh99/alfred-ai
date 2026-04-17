@@ -9,7 +9,7 @@ describe('createLLMProvider', () => {
   it('should create AnthropicProvider', () => {
     const provider = createLLMProvider({
       provider: 'anthropic',
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       apiKey: 'test',
     });
     expect(provider).toBeInstanceOf(AnthropicProvider);

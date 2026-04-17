@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.538] - 2026-04-17
+
+### Changed
+- **Claude Opus 4.7 Support** — Neues Modell `claude-opus-4-7` (1M Context, 128k Output, $5/$25)
+- **Model-Defaults aktualisiert** — Default: `claude-sonnet-4-6`, Strong: `claude-opus-4-7` (deprecated `claude-sonnet-4-20250514`/`claude-opus-4-20250514` ersetzt)
+- **Pricing-Tabelle** — `claude-opus-4-7` + `claude-opus-4-1` Eintraege hinzugefuegt
+
 ## [0.19.0-multi-ha.537] - 2026-04-17
 
 ### Added
