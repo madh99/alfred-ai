@@ -146,6 +146,30 @@ export class ItsmSkill extends Skill {
     this.llmCallback = cb;
   }
 
+  /**
+   * Topologically sort components so parents are processed before children.
+   * Returns indices in parent-first order.
+   */
+  private topoSortComponents(components: Array<{ name: string; parentComponent?: string }>): number[] {
+    const nameToIdx = new Map(components.map((c, i) => [c.name, i]));
+    const visited = new Set<number>();
+    const order: number[] = [];
+
+    const visit = (idx: number) => {
+      if (visited.has(idx)) return;
+      visited.add(idx);
+      const parent = (components[idx] as any).parentComponent;
+      if (parent) {
+        const parentIdx = nameToIdx.get(parent);
+        if (parentIdx !== undefined) visit(parentIdx);
+      }
+      order.push(idx);
+    };
+
+    for (let i = 0; i < components.length; i++) visit(i);
+    return order;
+  }
+
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const action = input.action as Action;
     const userId = context.masterUserId || context.userId;
@@ -784,15 +808,33 @@ export class ItsmSkill extends Skill {
         }
       }
 
-      // Layer 2: Component health (assets + external URLs + dependent services)
+      // Layer 2: Component health (topologically sorted — parents first)
       const visited = new Set<string>(); // Circular dependency guard
-      for (let ci = 0; ci < updatedComponents.length; ci++) {
+      const sortOrder = this.topoSortComponents(updatedComponents);
+
+      for (const ci of sortOrder) {
         const comp = updatedComponents[ci];
         let compStatus: ServiceHealthStatus = 'healthy';
         let compReason = '';
 
+        // Check parent status first — if parent down, child is down
+        if ((comp as any).parentComponent) {
+          const parent = updatedComponents.find((c: any) => c.name === (comp as any).parentComponent);
+          if (parent?.healthStatus === 'down') {
+            compStatus = 'down';
+            compReason = `Parent ${parent.name} down`;
+            updatedComponents[ci] = { ...comp, healthStatus: compStatus, healthReason: compReason };
+            const impact = (comp as any).failureImpact ?? (comp.required ? 'down' : 'degraded');
+            if (impact === 'down') {
+              worstStatus = 'down'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`);
+            } else if (impact === 'degraded' && worstStatus !== 'down') {
+              worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`);
+            }
+            continue;
+          }
+        }
+
         if (comp.assetId) {
-          // Check CMDB asset status
           const asset = await this.cmdb.getAssetById(userId, comp.assetId);
           if (asset) {
             if (asset.status === 'inactive' || asset.status === 'decommissioned') {
@@ -804,7 +846,6 @@ export class ItsmSkill extends Skill {
             compStatus = 'unknown'; compReason = 'Asset nicht gefunden';
           }
         } else if (comp.serviceId && !visited.has(comp.serviceId)) {
-          // Check dependent service health (with circular guard)
           visited.add(comp.serviceId);
           const depSvc = await this.itsm.getServiceById(userId, comp.serviceId);
           if (depSvc) {
@@ -822,9 +863,11 @@ export class ItsmSkill extends Skill {
 
         updatedComponents[ci] = { ...comp, healthStatus: compStatus, healthReason: compReason || undefined };
 
+        // Determine service impact from failureImpact field or required flag
+        const impact = (comp as any).failureImpact ?? (comp.required ? 'down' : 'degraded');
         if (compStatus === 'down') {
-          if (comp.required) { worstStatus = 'down'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
-          else if (worstStatus !== 'down') { worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
+          if (impact === 'down') { worstStatus = 'down'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
+          else if (impact === 'degraded' && worstStatus !== 'down') { worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): DOWN — ${compReason}`); }
         } else if (compStatus === 'degraded' && worstStatus === 'healthy') {
           worstStatus = 'degraded'; reasons.push(`${comp.name} (${comp.role}): degraded — ${compReason}`);
         }
@@ -833,6 +876,44 @@ export class ItsmSkill extends Skill {
       // Aggregate and update
       const reason = reasons.length > 0 ? reasons.join('; ') : undefined;
       await this.itsm.updateServiceHealth(userId, svc.id, worstStatus, reason, updatedComponents.length > 0 ? updatedComponents : undefined);
+
+      // SLA event tracking
+      if (svc.sla?.enabled && svc.sla.monitoring.trackAvailability) {
+        try {
+          const openEvent = await this.itsm.getOpenSlaEvent(userId, 'service', svc.id);
+          const prevStatus = openEvent?.eventType ?? 'up';
+          const newStatus = worstStatus === 'healthy' ? 'up' : worstStatus;
+
+          if (prevStatus !== newStatus) {
+            if (openEvent) await this.itsm.closeSlaEvent(userId, 'service', svc.id, openEvent.eventType);
+            await this.itsm.createSlaEvent(userId, {
+              targetType: 'service', targetId: svc.id,
+              eventType: newStatus as any,
+              details: JSON.stringify({ reason, previousStatus: prevStatus }),
+            });
+
+            if (newStatus === 'down' && svc.sla.targets.availabilityPercent) {
+              const periodStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+              const periodEnd = new Date().toISOString();
+              const avail = await this.itsm.calculateAvailability(userId, 'service', svc.id, periodStart, periodEnd);
+              const target = svc.sla.targets.availabilityPercent;
+              const warning = svc.sla.monitoring.warningThresholdPercent ?? (target - 0.1);
+
+              if (avail.uptimePercent < target) {
+                await this.itsm.createSlaEvent(userId, {
+                  targetType: 'service', targetId: svc.id, eventType: 'breach',
+                  details: JSON.stringify({ target, actual: avail.uptimePercent, month: periodStart }),
+                });
+              } else if (avail.uptimePercent < warning) {
+                await this.itsm.createSlaEvent(userId, {
+                  targetType: 'service', targetId: svc.id, eventType: 'warning',
+                  details: JSON.stringify({ target, warning, actual: avail.uptimePercent, month: periodStart }),
+                });
+              }
+            }
+          }
+        } catch { /* SLA tracking non-critical */ }
+      }
 
       if (!results.some(r => r.name === svc.name)) {
         results.push({ name: svc.name, status: worstStatus, reason });
