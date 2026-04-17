@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.526] - 2026-04-17
+
+### Added
+- **Commvault Skill: Vollstaendiger Ausbau — 60 Actions, 8 Module** — Komplette CommServe-Administration per Chat. Gegen offizielle OpenAPI3 Spec (246 Endpoints) validiert:
+  - **Storage (12 Actions):** Alle Pool-Typen (Disk, Cloud, Local, HyperScale, Tape) + CRUD + DDB + Arrays + Backup Locations + Mount Content
+  - **Jobs (7):** Liste, Detail, Historie, Start/Stop/Retry, Browse Backup-Daten
+  - **Plans (8):** Server/Laptop Plans CRUD, Auto-Assignment Regeln, Entity-Zuweisung
+  - **Clients (8):** Clients, Server, Gruppen, Subclients, VMs, File Server, Retire
+  - **Media Agents (4):** Liste, Detail, DDB Media Agents, Installation
+  - **Alerts (8):** Triggered Alerts (List/Detail/Read/Pin/Delete/Notes), Definitionen, Typen
+  - **Commcell (12):** Operations Enable/Disable (9 Ops), Settings, Lizenz, Schedules, Replication, Failover, Recovery Targets, Anomalien
+  - **Monitoring (4):** Status, SLA Report, LLM-Analyse, Anomalien
+  - Modulare Architektur: `commvault/` Verzeichnis mit 8 separaten Dateien statt einer 786-Zeilen Datei
+  - HIGH_RISK Actions (Create/Delete/Retire/Failover/Enable/Disable) erfordern Confirmation
+
 ## [0.19.0-multi-ha.524] - 2026-04-17
 
 ### Fixed
