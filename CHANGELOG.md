@@ -5,9 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.522] - 2026-04-17
+## [0.19.0-multi-ha.524] - 2026-04-17
 
 ### Fixed
+- **Commvault API: Storage + Alerts gegen offizielle API-Doku korrigiert**
+  - **Storage Pool-Name:** `storagePoolEntity.storagePoolName` statt direkt `storagePoolName` (verschachtelt laut API-Docs)
+  - **Storage Free Space:** `totalFreeSpace` statt `freeCapacity` (falscher Feldname laut API-Docs)
+  - **Alerts Endpoint:** `GET /V4/Alert` statt `/AlertRule` — AlertRule listet Alert-DEFINITIONEN, nicht ausgeloeste Alerts. Fallback auf AlertRule wenn V4 nicht verfuegbar
+  - **Alert Severity:** String-basiert (`CRITICAL`, `MAJOR`, `INFORMATION`) statt numerisch (1, 2, 3) laut API-Docs
+  - **Alert Felder:** `info` statt `alertName`, `notes` statt `description`, `detectedTime` als Unix-Epoch
+  - Alle 6 betroffenen Code-Stellen korrigiert (getStorage, getAlerts, getStatus, getReport/analyze, pollAndReport, buildReasoningContext)
 - **Reasoning: Email-Chronologie im Prompt** — Neue Regel: Receipt/Invoice/Bestätigung NACH einer Fehler-Email (payment failed, error, suspended) bedeutet Problem GELÖST. Die neuere Email hat Vorrang. Verhindert dass das LLM "Zahlungsmethode aktualisieren" meldet obwohl eine Receipt-Email die Bezahlung beweist
 - **Chat: User-Bestätigungen als Correction speichern** — Wenn der User sagt "ist bezahlt/erledigt/gefixt" als Reaktion auf ein von Alfred gemeldetes Problem, speichert Alfred das jetzt als `type: correction` (nicht `fact`). Corrections landen im harten Korrekturen-Block des Reasoning-Prompts und werden nicht ignoriert
 - **Reasoning: AUTO-Emails bei Problem-Lösung beachten** — Receipt-Emails mit ℹ️ AUTO Status werden nicht mehr pauschal als "ignorieren" behandelt wenn sie ein vorheriges Problem lösen

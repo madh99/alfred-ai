@@ -175,7 +175,9 @@ export class CommvaultSkill extends Skill {
   private async getStatus(): Promise<SkillResult> {
     const [jobsData, alertsData, storageData] = await Promise.all([
       this.api<any>('GET', '/Job?completedJobLookupTime=86400&jobFilter=Backup'),
-      this.api<any>('GET', '/AlertRule').catch(() => ({ alertList: [] })),
+      this.api<any>('GET', '/V4/Alert').catch(() =>
+        this.api<any>('GET', '/AlertRule').catch(() => ({}))
+      ),
       this.api<any>('GET', '/StoragePool').catch(() => ({ storagePoolList: [] })),
     ]);
 
@@ -184,15 +186,19 @@ export class CommvaultSkill extends Skill {
     const running = jobs.filter((j: any) => j.jobSummary?.status === 'Running' || j.status === 'Running');
     const completed = jobs.filter((j: any) => j.jobSummary?.status === 'Completed' || j.status === 'Completed');
 
-    const alerts = alertsData.alertList ?? alertsData.alerts ?? [];
-    const criticalAlerts = alerts.filter((a: any) => a.severity === 1 || a.severity === 'Critical');
+    // V4 triggered alerts: { alertsTriggered, totalCount } OR legacy: { alertList }
+    const alerts = alertsData.alertsTriggered ?? alertsData.alertList ?? alertsData.alerts ?? [];
+    const criticalAlerts = alerts.filter((a: any) => {
+      const sev = typeof a.severity === 'string' ? a.severity.toUpperCase() : '';
+      return sev === 'CRITICAL' || a.severity === 1;
+    });
 
     const pools = storageData.storagePoolList ?? storageData.storagePools ?? [];
     const storageLines: string[] = [];
     for (const p of pools.slice(0, 5)) {
-      const name = p.storagePoolName ?? p.name ?? '?';
+      const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?';
       const totalGB = Math.round((p.totalCapacity ?? 0) / 1024 / 1024 / 1024);
-      const freeGB = Math.round((p.freeCapacity ?? 0) / 1024 / 1024 / 1024);
+      const freeGB = Math.round((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024 / 1024);
       const usedPct = totalGB > 0 ? Math.round(((totalGB - freeGB) / totalGB) * 100) : 0;
       const warn = usedPct >= (this.config.storage_warning_pct ?? 85) ? ' ⚠️' : '';
       storageLines.push(`  ${name}: ${usedPct}% belegt (${freeGB} GB frei)${warn}`);
@@ -352,14 +358,18 @@ export class CommvaultSkill extends Skill {
 
     const lines = ['## Commvault Storage', ''];
     for (const p of pools) {
-      const name = p.storagePoolName ?? p.name ?? '?';
-      const totalTB = ((p.totalCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
-      const freeTB = ((p.freeCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
-      const totalBytes = p.totalCapacity ?? 1;
-      const freeBytes = p.freeCapacity ?? 0;
-      const usedPct = Math.round(((totalBytes - freeBytes) / totalBytes) * 100);
+      // Pool name: nested in storagePoolEntity.storagePoolName (per API docs)
+      const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?';
+      const poolId = p.storagePoolEntity?.storagePoolId ?? p.storagePoolId ?? '';
+      // Capacity fields: totalCapacity + totalFreeSpace (per API docs, NOT freeCapacity)
+      const totalBytes = p.totalCapacity ?? 0;
+      const freeBytes = p.totalFreeSpace ?? p.freeCapacity ?? 0;
+      const totalTB = (totalBytes / 1024 / 1024 / 1024 / 1024).toFixed(1);
+      const freeTB = (freeBytes / 1024 / 1024 / 1024 / 1024).toFixed(1);
+      const usedPct = totalBytes > 0 ? Math.round(((totalBytes - freeBytes) / totalBytes) * 100) : 0;
+      const status = p.status ?? '';
       const warn = usedPct >= (this.config.storage_warning_pct ?? 85) ? ' ⚠️ WARNUNG' : '';
-      lines.push(`**${name}:**${warn}`);
+      lines.push(`**${name}**${poolId ? ` (ID: ${poolId})` : ''}${status ? ` [${status}]` : ''}${warn}:`);
       lines.push(`  ${usedPct}% belegt | ${freeTB} TB frei von ${totalTB} TB`);
     }
 
@@ -367,23 +377,48 @@ export class CommvaultSkill extends Skill {
   }
 
   private async getAlerts(input: Record<string, unknown>): Promise<SkillResult> {
-    const data = await this.api<any>('GET', '/AlertRule');
-    let alerts = data.alertList ?? data.alerts ?? [];
-    const severity = input.severity as string | undefined;
-    if (severity) {
-      const sevMap: Record<string, number[]> = { critical: [1], warning: [2], info: [3, 4] };
-      const sevNums = sevMap[severity.toLowerCase()] ?? [];
-      if (sevNums.length) alerts = alerts.filter((a: any) => sevNums.includes(a.severity));
+    // Use triggered alerts endpoint (not AlertRule which lists definitions)
+    let data: any;
+    try {
+      data = await this.api<any>('GET', '/V4/Alert');
+    } catch {
+      // Fallback to legacy endpoint if V4 not available
+      try { data = await this.api<any>('GET', '/AlertRule'); } catch { data = {}; }
     }
 
-    const lines = ['## Commvault Alerts', `${alerts.length} aktive Alerts`, ''];
-    for (const a of alerts.slice(0, 20)) {
-      const sev = a.severity === 1 ? '🔴' : a.severity === 2 ? '🟡' : '🔵';
-      const name = a.alertName ?? a.name ?? '?';
-      const desc = a.description ?? '';
-      lines.push(`${sev} **${name}**${desc ? ` — ${desc.slice(0, 100)}` : ''}`);
+    // V4 response: { alertsTriggered: [...], totalCount, unreadCount }
+    // Legacy response: { alertList: [...] }
+    let alerts = data.alertsTriggered ?? data.alertList ?? data.alerts ?? [];
+    const totalCount = data.totalCount ?? alerts.length;
+    const unreadCount = data.unreadCount ?? 0;
+
+    const severity = input.severity as string | undefined;
+    if (severity) {
+      const sevLower = severity.toLowerCase();
+      alerts = alerts.filter((a: any) => {
+        const s = typeof a.severity === 'string' ? a.severity.toLowerCase() : '';
+        if (sevLower === 'critical') return s === 'critical';
+        if (sevLower === 'warning' || sevLower === 'major') return s === 'major';
+        if (sevLower === 'info') return s === 'information';
+        return true;
+      });
     }
-    return { success: true, data: { count: alerts.length }, display: lines.join('\n') };
+
+    const lines = ['## Commvault Alerts', `${totalCount} gesamt, ${unreadCount} ungelesen`, ''];
+    for (const a of alerts.slice(0, 20)) {
+      // V4 severity is string: CRITICAL, MAJOR, INFORMATION
+      const sevStr = typeof a.severity === 'string' ? a.severity.toUpperCase() : '';
+      const sev = sevStr === 'CRITICAL' ? '🔴' : sevStr === 'MAJOR' ? '🟡' : '🔵';
+      // V4 uses "info" for alert name, legacy uses "alertName"
+      const name = a.info ?? a.alertName ?? a.name ?? '?';
+      const notes = a.notes ?? a.description ?? '';
+      const type = a.type ?? '';
+      const client = a.client?.name ?? '';
+      const time = a.detectedTime ? new Date(a.detectedTime * 1000).toLocaleString('de-AT') : '';
+      lines.push(`${sev} **${name}**${type ? ` [${type}]` : ''}${client ? ` (${client})` : ''}${time ? ` ${time}` : ''}`);
+      if (notes) lines.push(`  ${notes.slice(0, 120)}`);
+    }
+    return { success: true, data: { total: totalCount, unread: unreadCount, shown: Math.min(alerts.length, 20) }, display: lines.join('\n') };
   }
 
   private async getReport(input: Record<string, unknown>): Promise<SkillResult> {
@@ -455,9 +490,9 @@ export class CommvaultSkill extends Skill {
       const pools = storageData.storagePoolList ?? [];
       parts.push('STORAGE:');
       for (const p of pools) {
-        const name = p.storagePoolName ?? '?';
+        const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?';
         const totalTB = ((p.totalCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
-        const freeTB = ((p.freeCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
+        const freeTB = ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
         parts.push(`  - ${name}: ${freeTB} TB frei von ${totalTB} TB`);
       }
     }
@@ -648,10 +683,10 @@ export class CommvaultSkill extends Skill {
       const warnPct = this.config.storage_warning_pct ?? 85;
       for (const p of pools) {
         const total = p.totalCapacity ?? 1;
-        const free = p.freeCapacity ?? 0;
-        const usedPct = Math.round(((total - free) / total) * 100);
+        const free = p.totalFreeSpace ?? p.freeCapacity ?? 0;
+        const usedPct = total > 0 ? Math.round(((total - free) / total) * 100) : 0;
         if (usedPct >= warnPct) {
-          result.storageWarnings.push(`${p.storagePoolName ?? '?'}: ${usedPct}%`);
+          result.storageWarnings.push(`${p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?'}: ${usedPct}%`);
         }
       }
 
@@ -709,8 +744,8 @@ export class CommvaultSkill extends Skill {
       const warnPct = this.config.storage_warning_pct ?? 85;
       const warnings = pools.filter((p: any) => {
         const total = p.totalCapacity ?? 1;
-        const free = p.freeCapacity ?? 0;
-        return Math.round(((total - free) / total) * 100) >= warnPct;
+        const free = p.totalFreeSpace ?? p.freeCapacity ?? 0;
+        return total > 0 ? Math.round(((total - free) / total) * 100) >= warnPct : false;
       });
 
       const parts: string[] = [];
