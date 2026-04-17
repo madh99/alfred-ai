@@ -886,9 +886,10 @@ export class Alfred {
 
         // Wire SSH callback for deep system scans
         if (skillRegistry.has('shell')) {
-          infraDocsSkill.setSshCallback(async (host: string, command: string) => {
+          infraDocsSkill.setSshCallback(async (host: string, command: string, user?: string) => {
             const shellSkill = skillRegistry.get('shell')!;
-            const sshCmd = `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${this.config.infra?.sshUser ? this.config.infra.sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`;
+            const sshUser = user ?? this.config.infra?.sshUser;
+            const sshCmd = `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${sshUser ? sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`;
             const result = await skillSandbox.execute(shellSkill, { command: sshCmd }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
             if (!result.success) return '';
             const data = result.data as { stdout?: string } | undefined;

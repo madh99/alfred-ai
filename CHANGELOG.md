@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.558] - 2026-04-17
+
+### Fixed
+- **Deep Scan SSH-User** — SSH User wird jetzt intelligent ermittelt: expliziter `ssh_user` Parameter > Asset-Name-Erkennung (ubuntu/rocky/debian/fedora) > Config-Default. Cloud-Init VMs mit anderem User als Config-Default funktionieren jetzt
+
 ## [0.19.0-multi-ha.557] - 2026-04-17
 
 ### Fixed

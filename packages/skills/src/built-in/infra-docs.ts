@@ -57,6 +57,7 @@ export class InfraDocsSkill extends Skill {
         query: { type: 'string', description: 'Suchbegriff' },
         asset_id: { type: 'string', description: 'Asset ID oder Name' },
         deep_scan: { type: 'boolean', description: 'SSH Deep Scan — liest OS, Pakete, Services, Docker, Netzwerk direkt vom System. Setze auf true wenn User "deep scan", "vollstaendig", "detailliert", "komplett" sagt.' },
+        ssh_user: { type: 'string', description: 'SSH User fuer Deep Scan (default: aus infra config). Fuer Cloud-Init VMs: ubuntu, cloud-user, debian etc.' },
         runbook_id: { type: 'string', description: 'Runbook ID' },
         auto_generate: { type: 'boolean', description: 'LLM-generierter Inhalt' },
         scope: { type: 'string', enum: ['full', 'vlan', 'firewall', 'dns'] },
@@ -83,9 +84,19 @@ export class InfraDocsSkill extends Skill {
     this.llmCallback = cb;
   }
 
-  private sshCallback?: (host: string, command: string) => Promise<string>;
-  setSshCallback(cb: (host: string, command: string) => Promise<string>): void {
+  private sshCallback?: (host: string, command: string, user?: string) => Promise<string>;
+  setSshCallback(cb: (host: string, command: string, user?: string) => Promise<string>): void {
     this.sshCallback = cb;
+  }
+
+  /** Guess SSH user from asset name/attributes for Cloud-Init VMs. */
+  private guessSshUser(asset: import('@alfred/types').CmdbAsset): string | undefined {
+    const name = asset.name.toLowerCase();
+    if (name.includes('ubuntu') || (asset.attributes as any)?.os?.toLowerCase()?.includes('ubuntu')) return 'ubuntu';
+    if (name.includes('rocky') || name.includes('alma') || name.includes('centos')) return 'cloud-user';
+    if (name.includes('debian')) return 'debian';
+    if (name.includes('fedora')) return 'fedora';
+    return undefined; // fall back to config default
   }
 
   /** Persist a generated document to the archive (non-blocking, fire-and-forget). */
@@ -610,6 +621,8 @@ export class InfraDocsSkill extends Skill {
 
     // Deep scan: SSH into the VM to read OS, packages, services, network, docker
     let sshData = '';
+    // SSH user priority: explicit parameter > asset owner > Cloud-Init guess from name > config default
+    const sshUser = (input.ssh_user as string) ?? this.guessSshUser(asset);
     if (deepScan && this.sshCallback) {
       const host = asset.ipAddress ?? asset.hostname ?? asset.fqdn ?? asset.name;
       try {
@@ -631,7 +644,7 @@ export class InfraDocsSkill extends Skill {
         let dockerOutput = '';
         for (const [label, cmd] of Object.entries(commands)) {
           try {
-            const output = await this.sshCallback(host, cmd);
+            const output = await this.sshCallback(host, cmd, sshUser);
             if (output.trim()) {
               sections.push(`### ${label}\n\`\`\`\n${output.trim()}\n\`\`\``);
               if (label === 'Docker Container') dockerOutput = output.trim();
