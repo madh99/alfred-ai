@@ -564,8 +564,12 @@ export class Alfred {
     // 4f. Proxmox (optional)
     if (this.config.proxmox) {
       const { ProxmoxSkill } = await import('@alfred/skills');
-      skillRegistry.register(new ProxmoxSkill(this.config.proxmox));
-      this.logger.info({ baseUrl: this.config.proxmox.baseUrl }, 'Proxmox skill enabled');
+      const pxSkill = new ProxmoxSkill(this.config.proxmox);
+      // Auto-inject SSH key path for Cloud-Init on clone_vm/create_lxc
+      const sshKeyPath = this.config.infra?.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
+      pxSkill.setSshKeyPath(sshKeyPath);
+      skillRegistry.register(pxSkill);
+      this.logger.info({ baseUrl: this.config.proxmox.baseUrl, sshKeyPath }, 'Proxmox skill enabled');
     }
 
     // 4g. UniFi (optional)

@@ -1,4 +1,5 @@
 import type { SkillMetadata, SkillContext, SkillResult, ProxmoxConfig } from '@alfred/types';
+import { readFileSync } from 'node:fs';
 import { Skill } from '../skill.js';
 
 // ---------------------------------------------------------------------------
@@ -217,11 +218,15 @@ export class ProxmoxSkill extends Skill {
   private readonly config: ProxmoxConfig;
   private vmCache: { entries: VmEntry[]; ts: number } | null = null;
   private static readonly VM_CACHE_TTL = 30_000; // 30 seconds
+  private sshKeyPath?: string;
 
   constructor(config: ProxmoxConfig) {
     super();
     this.config = config;
   }
+
+  /** Set SSH key path for Cloud-Init auto-injection on clone_vm/create_lxc. */
+  setSshKeyPath(path: string): void { this.sshKeyPath = path; }
 
   // -----------------------------------------------------------------------
   // execute — main dispatch
@@ -924,7 +929,10 @@ export class ProxmoxSkill extends Skill {
     const gateway = input.gateway as string | undefined;
     const bridge = (input.bridge as string) ?? 'vmbr0';
     const vlanTag = input.vlan_tag as number | undefined;
-    const sshKey = input.ssh_public_key as string | undefined;
+    let sshKey = input.ssh_public_key as string | undefined;
+    if (!sshKey && this.sshKeyPath) {
+      try { sshKey = readFileSync(`${this.sshKeyPath}.pub`, 'utf-8').trim(); } catch { /* no key */ }
+    }
     const newVmid = input.new_vmid as number | undefined;
 
     // Find the template in available templates
@@ -979,7 +987,11 @@ export class ProxmoxSkill extends Skill {
     const newVmid = input.new_vmid as number | undefined;
     const ip = input.ip as string | undefined;
     const gateway = input.gateway as string | undefined;
-    const sshKey = input.ssh_public_key as string | undefined;
+    // SSH key: explicit > auto-read from sshKeyPath
+    let sshKey = input.ssh_public_key as string | undefined;
+    if (!sshKey && this.sshKeyPath) {
+      try { sshKey = readFileSync(`${this.sshKeyPath}.pub`, 'utf-8').trim(); } catch { /* no key */ }
+    }
     const bridge = input.bridge as string | undefined;
     const vlanTag = input.vlan_tag as number | undefined;
     const memory = input.memory as number | undefined;
@@ -1020,6 +1032,7 @@ export class ProxmoxSkill extends Skill {
     const configBody: Record<string, unknown> = {};
     if (ip) configBody.ipconfig0 = `ip=${ip}${gateway ? `,gw=${gateway}` : ''}`;
     if (sshKey) configBody.sshkeys = encodeURIComponent(sshKey);
+    console.log(`[proxmox-clone] Cloud-Init config: ip=${ip} sshKey=${sshKey ? sshKey.slice(0, 30) + '...' : 'NONE'} configKeys=${Object.keys(configBody)}`);
     if (memory) configBody.memory = memory;
     if (cores) configBody.cores = cores;
     if (bridge || vlanTag) {

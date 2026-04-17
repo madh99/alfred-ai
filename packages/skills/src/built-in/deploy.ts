@@ -403,11 +403,13 @@ export class DeploySkill extends Skill {
 
           // Read SSH public key
           let sshKey: string | undefined;
+          const keyPath = this.defaults.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
           try {
-            const keyPath = this.defaults.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
             sshKey = readFileSync(`${keyPath}.pub`, 'utf-8').trim();
-          } catch { /* no key */ }
-          if (!sshKey) steps.push('⚠️ Kein SSH Public Key gefunden — Cloud-Init ohne Key-Injection');
+            steps.push(`🔑 SSH Key geladen (${keyPath}.pub, ${sshKey.length} Zeichen)`);
+          } catch (err: any) {
+            steps.push(`⚠️ SSH Key nicht lesbar: ${keyPath}.pub — ${err.message}`);
+          }
 
           if (target === 'new_lxc') {
             const r = await this.proxmoxFn({

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.553] - 2026-04-17
+
+### Fixed
+- **Proxmox SSH Key Auto-Injection** — clone_vm und create_lxc lesen SSH Public Key automatisch aus `infra.sshKeyPath` Config. Vorher wurde der Key nur bei full_deploy injiziert, bei direktem clone_vm/create_lxc fehlte er
+
 ## [0.19.0-multi-ha.552] - 2026-04-17
 
 ### Added
