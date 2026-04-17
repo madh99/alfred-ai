@@ -808,12 +808,11 @@ export class Alfred {
         if (skillRegistry.has('shell')) {
           infraDocsSkill.setSshCallback(async (host: string, command: string) => {
             const shellSkill = skillRegistry.get('shell')!;
-            const result = await skillSandbox.execute(shellSkill, {
-              command: `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${this.config.infra?.sshUser ? this.config.infra.sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`,
-            }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
+            const sshCmd = `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${this.config.infra?.sshUser ? this.config.infra.sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`;
+            const result = await skillSandbox.execute(shellSkill, { command: sshCmd }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
+            const data = result.data as { stdout?: string; stderr?: string; exitCode?: number } | undefined;
+            console.log(`[ssh-cb] success=${result.success} exit=${data?.exitCode} stdout=${(data?.stdout ?? '').length}b stderr=${(data?.stderr ?? '').slice(0, 80)} cmd=${command.slice(0, 60)}`);
             if (!result.success) return '';
-            // Return raw stdout, not the formatted display (which includes "stdout:" prefix and "exit code:" suffix)
-            const data = result.data as { stdout?: string } | undefined;
             return data?.stdout ?? result.display ?? '';
           });
         }
