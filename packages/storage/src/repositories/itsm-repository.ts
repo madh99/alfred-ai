@@ -5,7 +5,7 @@ import type {
   IncidentSeverity, IncidentStatus,
   ServiceCategory, ServiceHealthStatus, ServiceCriticality,
   ChangeRequestType, ChangeRequestStatus,
-  CmdbEnvironment,
+  CmdbEnvironment, SlaEvent, SlaDefinition,
 } from '@alfred/types';
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -81,8 +81,24 @@ function rowToService(r: DbRow): CmdbService {
     maintenanceWindow: r.maintenance_window as string | undefined,
     tags: r.tags as string | undefined,
     failureModes: JSON.parse((r.failure_modes as string) ?? '[]'),
+    sla: (() => { try { return r.sla ? JSON.parse(r.sla as string) : undefined; } catch { return undefined; } })(),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
+  };
+}
+
+function rowToSlaEvent(r: DbRow): SlaEvent {
+  return {
+    id: r.id as string,
+    userId: r.user_id as string,
+    targetType: r.target_type as 'service' | 'asset',
+    targetId: r.target_id as string,
+    eventType: r.event_type as SlaEvent['eventType'],
+    startedAt: r.started_at as string,
+    endedAt: r.ended_at as string | undefined,
+    durationMinutes: r.duration_minutes as number | undefined,
+    details: r.details as string | undefined,
+    createdAt: r.created_at as string,
   };
 }
 
@@ -381,6 +397,7 @@ export class ItsmRepository {
     if (updates.assetIds) { fields.push(`asset_ids = ?`); params.push(JSON.stringify(updates.assetIds)); }
     if ((updates as any).components) { fields.push(`components = ?`); params.push(JSON.stringify((updates as any).components)); }
     if (updates.failureModes !== undefined) { fields.push('failure_modes = ?'); params.push(JSON.stringify(updates.failureModes)); }
+    if ((updates as any).sla !== undefined) { fields.push('sla = ?'); params.push(JSON.stringify((updates as any).sla)); }
     if (updates.lastHealthCheck) { fields.push(`last_health_check = ?`); params.push(updates.lastHealthCheck); }
 
     if (fields.length === 0) return existing;
@@ -505,6 +522,98 @@ export class ItsmRepository {
 
     await this.db.execute(`UPDATE cmdb_change_requests SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, params);
     return this.getChangeRequestById(userId, id);
+  }
+
+  // ── SLA Events ────────────────────────────────────────────
+
+  async createSlaEvent(userId: string, data: {
+    targetType: 'service' | 'asset';
+    targetId: string;
+    eventType: SlaEvent['eventType'];
+    details?: string;
+  }): Promise<SlaEvent> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `INSERT INTO sla_events (id, user_id, target_type, target_id, event_type, started_at, details, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, data.targetType, data.targetId, data.eventType, now, data.details ?? null, now],
+    );
+    return { id, userId, targetType: data.targetType, targetId: data.targetId, eventType: data.eventType, startedAt: now, details: data.details, createdAt: now };
+  }
+
+  async closeSlaEvent(userId: string, targetType: string, targetId: string, eventType: string): Promise<void> {
+    const now = new Date().toISOString();
+    const open = await this.db.queryOne(
+      `SELECT id, started_at FROM sla_events WHERE user_id = ? AND target_type = ? AND target_id = ? AND event_type = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      [userId, targetType, targetId, eventType],
+    );
+    if (open) {
+      const startMs = new Date(open.started_at as string).getTime();
+      const durationMinutes = (Date.now() - startMs) / 60_000;
+      await this.db.execute(
+        `UPDATE sla_events SET ended_at = ?, duration_minutes = ? WHERE id = ?`,
+        [now, Math.round(durationMinutes * 100) / 100, open.id],
+      );
+    }
+  }
+
+  async getOpenSlaEvent(userId: string, targetType: string, targetId: string): Promise<SlaEvent | null> {
+    const row = await this.db.queryOne(
+      `SELECT * FROM sla_events WHERE user_id = ? AND target_type = ? AND target_id = ? AND event_type IN ('up', 'down', 'degraded') AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`,
+      [userId, targetType, targetId],
+    );
+    return row ? rowToSlaEvent(row) : null;
+  }
+
+  async getSlaEvents(userId: string, targetType: string, targetId: string, since?: string, until?: string): Promise<SlaEvent[]> {
+    let sql = `SELECT * FROM sla_events WHERE user_id = ? AND target_type = ? AND target_id = ?`;
+    const params: unknown[] = [userId, targetType, targetId];
+    if (since) { sql += ` AND started_at >= ?`; params.push(since); }
+    if (until) { sql += ` AND (started_at <= ? OR ended_at IS NULL)`; params.push(until); }
+    sql += ` ORDER BY started_at DESC`;
+    const rows = await this.db.query(sql, params);
+    return rows.map(rowToSlaEvent);
+  }
+
+  async getSlaBreaches(userId: string, since?: string): Promise<SlaEvent[]> {
+    let sql = `SELECT * FROM sla_events WHERE user_id = ? AND event_type IN ('breach', 'warning')`;
+    const params: unknown[] = [userId];
+    if (since) { sql += ` AND started_at >= ?`; params.push(since); }
+    sql += ` ORDER BY started_at DESC LIMIT 50`;
+    const rows = await this.db.query(sql, params);
+    return rows.map(rowToSlaEvent);
+  }
+
+  async calculateAvailability(userId: string, targetType: string, targetId: string, periodStart: string, periodEnd: string): Promise<{
+    uptimePercent: number; downtimeMinutes: number; totalMinutes: number;
+  }> {
+    const startMs = new Date(periodStart).getTime();
+    const endMs = new Date(periodEnd).getTime();
+    const totalMinutes = (endMs - startMs) / 60_000;
+    if (totalMinutes <= 0) return { uptimePercent: 100, downtimeMinutes: 0, totalMinutes: 0 };
+
+    const rows = await this.db.query(
+      `SELECT started_at, ended_at, duration_minutes FROM sla_events
+       WHERE user_id = ? AND target_type = ? AND target_id = ? AND event_type = 'down'
+       AND started_at <= ? AND (ended_at >= ? OR ended_at IS NULL)
+       ORDER BY started_at`,
+      [userId, targetType, targetId, periodEnd, periodStart],
+    );
+
+    let downtimeMinutes = 0;
+    for (const r of rows) {
+      const evStart = Math.max(new Date(r.started_at as string).getTime(), startMs);
+      const evEnd = r.ended_at ? Math.min(new Date(r.ended_at as string).getTime(), endMs) : endMs;
+      downtimeMinutes += Math.max(0, (evEnd - evStart) / 60_000);
+    }
+
+    const uptimePercent = totalMinutes > 0 ? ((totalMinutes - downtimeMinutes) / totalMinutes) * 100 : 100;
+    return {
+      uptimePercent: Math.round(uptimePercent * 1000) / 1000,
+      downtimeMinutes: Math.round(downtimeMinutes * 100) / 100,
+      totalMinutes: Math.round(totalMinutes),
+    };
   }
 
   // ── Dashboard ──────────────────────────────────────────────
