@@ -725,6 +725,17 @@ export interface ServiceComponent {
   healthReason?: string;
 }
 
+export interface FailureMode {
+  name: string;
+  trigger: string;
+  affectedComponents: string[];
+  serviceImpact: 'down' | 'degraded';
+  cascadeEffects?: string[];
+  runbookId?: string;
+  sopId?: string;
+  estimatedRecoveryMinutes?: number;
+}
+
 export interface CmdbService {
   id: string;
   userId: string;
@@ -741,6 +752,7 @@ export interface CmdbService {
   dependencies: string[];
   assetIds: string[];
   components: ServiceComponent[];
+  failureModes?: FailureMode[];
   owner?: string;
   documentation?: string;
   slaNotes?: string;

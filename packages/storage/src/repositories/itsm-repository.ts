@@ -80,6 +80,7 @@ function rowToService(r: DbRow): CmdbService {
     slaNotes: r.sla_notes as string | undefined,
     maintenanceWindow: r.maintenance_window as string | undefined,
     tags: r.tags as string | undefined,
+    failureModes: JSON.parse((r.failure_modes as string) ?? '[]'),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -379,6 +380,7 @@ export class ItsmRepository {
     if (updates.dependencies) { fields.push(`dependencies = ?`); params.push(JSON.stringify(updates.dependencies)); }
     if (updates.assetIds) { fields.push(`asset_ids = ?`); params.push(JSON.stringify(updates.assetIds)); }
     if ((updates as any).components) { fields.push(`components = ?`); params.push(JSON.stringify((updates as any).components)); }
+    if (updates.failureModes !== undefined) { fields.push('failure_modes = ?'); params.push(JSON.stringify(updates.failureModes)); }
     if (updates.lastHealthCheck) { fields.push(`last_health_check = ?`); params.push(updates.lastHealthCheck); }
 
     if (fields.length === 0) return existing;
@@ -409,6 +411,11 @@ export class ItsmRepository {
     return rows.map(rowToService).filter(s =>
       s.assetIds.includes(assetId) || s.components.some(c => c.assetId === assetId),
     );
+  }
+
+  async deleteService(userId: string, id: string): Promise<boolean> {
+    const result = await this.db.execute('DELETE FROM cmdb_services WHERE id = ? AND user_id = ?', [id, userId]);
+    return result.changes > 0;
   }
 
   // ── Change Requests ────────────────────────────────────────

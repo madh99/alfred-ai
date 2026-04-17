@@ -272,3 +272,23 @@ export interface WorkflowExecution {
   startedAt: string;
   completedAt?: string;
 }
+
+export interface ServiceComponentExtended {
+  name: string;
+  role: string;
+  assetId?: string;
+  serviceId?: string;
+  externalUrl?: string;
+  required: boolean;
+  failureImpact: 'down' | 'degraded' | 'no_impact';
+  failureDescription?: string;
+  dependsOn?: string[];
+  ports?: number[];
+  protocol?: string;
+  dns?: string;
+  ip?: string;
+  healthCheckUrl?: string;
+  healthStatus?: string;
+  healthReason?: string;
+}
+

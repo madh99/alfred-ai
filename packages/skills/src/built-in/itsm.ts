@@ -3,11 +3,14 @@ import type { ItsmRepository, ProblemRepository } from '@alfred/storage';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
+type LlmCallback = (prompt: string, tier?: string) => Promise<string>;
+
 type Action =
   | 'create_incident' | 'update_incident' | 'list_incidents' | 'get_incident' | 'close_incident'
   | 'create_change_request' | 'update_change' | 'get_change' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
   | 'create_problem' | 'update_problem' | 'get_problem' | 'list_problems' | 'link_incident_to_problem' | 'unlink_incident_from_problem' | 'promote_to_problem' | 'create_fix_change' | 'mark_known_error' | 'detect_problem_patterns' | 'problem_dashboard'
-  | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard';
+  | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard'
+  | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -44,13 +47,19 @@ export class ItsmSkill extends Skill {
       '"remove_component" entfernt eine Komponente (service_id, component_name). ' +
       '"health_check" prüft Health aller Services (3-Layer: URL + Asset-Status + Dependencies). ' +
       '"impact_analysis" analysiert Auswirkungen bei Asset-Ausfall (asset_id). ' +
-      '"dashboard" zeigt ITSM-Übersicht.',
+      '"dashboard" zeigt ITSM-Übersicht. ' +
+      '"create_service_from_description" erstellt Service aus Freitext-Beschreibung per LLM (description). ' +
+      '"add_failure_mode" fuegt Failure-Mode zu Service hinzu (service_id, failure_mode_name, failure_trigger, affected_components, failure_impact, cascade_effects, recovery_minutes). ' +
+      '"remove_failure_mode" entfernt Failure-Mode (service_id, failure_mode_name). ' +
+      '"update_failure_mode" aktualisiert Failure-Mode (service_id, failure_mode_name + partielle Updates). ' +
+      '"service_impact_analysis" zeigt alle Services die ein Asset nutzen inkl. Failure-Modes (asset_id oder name). ' +
+      '"generate_service_docs" generiert Service-Doku + SOP per Failure-Mode im Hintergrund (service_id).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -98,6 +107,13 @@ export class ItsmSkill extends Skill {
         component_service_id: { type: 'string', description: 'Service-ID einer Service-Dependency' },
         component_external_url: { type: 'string', description: 'Externe URL (z.B. https://api.telegram.org)' },
         component_required: { type: 'boolean', description: 'true = Service down wenn Komponente down, false = degraded' },
+        // Failure Mode Management
+        failure_mode_name: { type: 'string', description: 'Name des Failure-Modes' },
+        failure_trigger: { type: 'string', description: 'Ausloeser des Failure-Modes' },
+        failure_impact: { type: 'string', enum: ['down', 'degraded'], description: 'Service-Impact bei Ausfall' },
+        affected_components: { type: 'array', items: { type: 'string' }, description: 'Betroffene Komponenten-Namen' },
+        cascade_effects: { type: 'array', items: { type: 'string' }, description: 'Kaskadierende Effekte' },
+        recovery_minutes: { type: 'number', description: 'Geschaetzte Recovery-Zeit in Minuten' },
         // Problem Management
         root_cause_description: { type: 'string' },
         root_cause_category: { type: 'string', enum: ['infrastructure', 'software', 'configuration', 'capacity', 'security', 'network', 'data', 'process', 'external', 'unknown'] },
@@ -117,12 +133,17 @@ export class ItsmSkill extends Skill {
   private readonly itsm: ItsmRepository;
   private readonly cmdb: CmdbRepository;
   private readonly problem?: ProblemRepository;
+  private llmCallback?: LlmCallback;
 
   constructor(itsmRepo: ItsmRepository, cmdbRepo: CmdbRepository, problemRepo?: ProblemRepository) {
     super();
     this.itsm = itsmRepo;
     this.cmdb = cmdbRepo;
     this.problem = problemRepo;
+  }
+
+  setLlmCallback(cb: LlmCallback): void {
+    this.llmCallback = cb;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -163,6 +184,12 @@ export class ItsmSkill extends Skill {
         case 'health_check': return await this.healthCheck(userId);
         case 'impact_analysis': return await this.impactAnalysis(userId, input.asset_id as string);
         case 'dashboard': return await this.dashboard(userId);
+        case 'create_service_from_description': return await this.createServiceFromDescription(userId, input);
+        case 'add_failure_mode': return await this.addFailureMode(userId, input);
+        case 'remove_failure_mode': return await this.removeFailureMode(userId, input);
+        case 'update_failure_mode': return await this.updateFailureMode(userId, input);
+        case 'service_impact_analysis': return await this.serviceImpactAnalysis(userId, input);
+        case 'generate_service_docs': return await this.generateServiceDocs(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${String(action)}` };
       }
     } catch (err: any) {
@@ -219,6 +246,29 @@ export class ItsmSkill extends Skill {
         if (runbooks.length > 0) {
           const suggestions = runbooks.map(r => `  📋 ${r.title} (v${r.version})`).join('\n');
           if (result.display) result.display += `\n\n**Passende Runbooks:**\n${suggestions}`;
+        }
+      }
+    } catch { /* non-critical */ }
+
+    // Service impact detection
+    try {
+      const affectedIds = input.affected_asset_ids as string[] ?? [];
+      if (affectedIds.length > 0) {
+        const impactedServices: { name: string; impact: string; criticality: string }[] = [];
+        for (const aid of affectedIds) {
+          const svcs = await this.itsm.getServicesForAsset(userId, aid);
+          for (const svc of svcs) {
+            const comp = svc.components.find(c => c.assetId === aid);
+            const impact = comp?.required !== false ? 'down' : 'degraded';
+            if (!impactedServices.some(s => s.name === svc.name)) {
+              impactedServices.push({ name: svc.name, impact, criticality: svc.criticality ?? 'medium' });
+            }
+          }
+        }
+        if (impactedServices.length > 0) {
+          const critIcon = (c: string) => ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[c] ?? '⚪');
+          const svcLines = impactedServices.map(s => `  ${critIcon(s.criticality)} **${s.name}** → ${s.impact}`).join('\n');
+          if (result.display) result.display += `\n\n**Betroffene Services (${impactedServices.length}):**\n${svcLines}`;
         }
       }
     } catch { /* non-critical */ }
@@ -870,5 +920,343 @@ export class ItsmSkill extends Skill {
     ].join('\n');
 
     return { success: true, data: db, display };
+  }
+
+  // ── Service Management (Extended) ─────────────────────────
+
+  private async createServiceFromDescription(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const description = input.description as string;
+    if (!description) return { success: false, error: 'description erforderlich' };
+    if (!this.llmCallback) return { success: false, error: 'LLM nicht verfügbar' };
+
+    // Ask LLM to parse the description into a service structure
+    const prompt = [
+      'Parse the following service description into a JSON structure.',
+      'Return ONLY valid JSON, no markdown fences, no explanation.',
+      'Schema:',
+      '{',
+      '  "name": "string",',
+      '  "description": "string",',
+      '  "category": "web_app|api|database|messaging|monitoring|infrastructure|other",',
+      '  "criticality": "critical|high|medium|low",',
+      '  "components": [{ "name": "string", "role": "database|cache|storage|compute|api|proxy|messaging|monitoring|dns|other", "required": true/false }],',
+      '  "failureModes": [{ "name": "string", "trigger": "string", "affectedComponents": ["comp-name"], "serviceImpact": "down|degraded", "cascadeEffects": ["string"], "estimatedRecoveryMinutes": number }]',
+      '}',
+      '',
+      'Service description:',
+      description,
+    ].join('\n');
+
+    const raw = await this.llmCallback(prompt, 'strong');
+    let parsed: any;
+    try {
+      // Strip markdown fences if present
+      const cleaned = raw.replace(/^```(?:json)?\s*/m, '').replace(/```\s*$/m, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return { success: false, error: `LLM-Antwort konnte nicht geparst werden: ${raw.slice(0, 200)}` };
+    }
+
+    // Match component names against CMDB assets
+    const allAssets = await this.cmdb.listAssets(userId, {});
+    const assetMap = new Map(allAssets.map(a => [a.name.toLowerCase(), a]));
+
+    const components: any[] = [];
+    const matchedAssetIds: string[] = [];
+    for (const comp of (parsed.components ?? [])) {
+      const matched = assetMap.get(comp.name?.toLowerCase());
+      const component: any = {
+        name: comp.name,
+        role: comp.role ?? 'other',
+        required: comp.required !== false,
+      };
+      if (matched) {
+        component.assetId = matched.id;
+        matchedAssetIds.push(matched.id);
+      }
+      components.push(component);
+    }
+
+    // Create the service
+    const svc = await this.itsm.createService(userId, {
+      name: parsed.name ?? 'Unnamed Service',
+      description: parsed.description,
+      category: parsed.category as any,
+      criticality: parsed.criticality as any,
+      assetIds: matchedAssetIds,
+    });
+
+    // Update with components and failure modes
+    await this.itsm.updateService(userId, svc.id, {
+      components,
+      failureModes: parsed.failureModes ?? [],
+    } as any);
+
+    // Fire-and-forget background doc generation
+    this.generateServiceDocsBackground(userId, svc.id).catch(() => {});
+
+    const compInfo = components.map(c => {
+      const linked = c.assetId ? ' ✅' : ' ⚠️';
+      return `  - ${c.name} (${c.role})${linked}`;
+    }).join('\n');
+    const fmCount = (parsed.failureModes ?? []).length;
+
+    const display = [
+      `📦 Service **${parsed.name}** erstellt aus Beschreibung — ID: ${svc.id}`,
+      '',
+      `**Komponenten (${components.length}):**`,
+      compInfo,
+      `✅ = CMDB-Asset verknüpft, ⚠️ = kein Match`,
+      '',
+      `**Failure Modes:** ${fmCount}`,
+      fmCount > 0 ? (parsed.failureModes as any[]).map((fm: any) => `  - ${fm.name} → ${fm.serviceImpact}`).join('\n') : '',
+      '',
+      '📝 Service-Dokumentation wird im Hintergrund generiert...',
+    ].filter(Boolean).join('\n');
+
+    return { success: true, data: { service: svc, parsed }, display };
+  }
+
+  private async addFailureMode(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    const name = input.failure_mode_name as string;
+    if (!serviceId) return { success: false, error: 'service_id erforderlich' };
+    if (!name) return { success: false, error: 'failure_mode_name erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    const failureModes = [...(svc.failureModes ?? [])];
+    if (failureModes.some(fm => fm.name === name)) {
+      return { success: false, error: `Failure-Mode "${name}" existiert bereits` };
+    }
+
+    failureModes.push({
+      name,
+      trigger: input.failure_trigger as string ?? '',
+      affectedComponents: input.affected_components as string[] ?? [],
+      serviceImpact: (input.failure_impact as 'down' | 'degraded') ?? 'degraded',
+      cascadeEffects: input.cascade_effects as string[] ?? undefined,
+      estimatedRecoveryMinutes: input.recovery_minutes as number ?? undefined,
+    });
+
+    await this.itsm.updateService(userId, serviceId, { failureModes } as any);
+    return { success: true, data: { failureMode: failureModes[failureModes.length - 1] }, display: `✅ Failure-Mode **${name}** zu Service **${svc.name}** hinzugefügt` };
+  }
+
+  private async removeFailureMode(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    const name = input.failure_mode_name as string;
+    if (!serviceId || !name) return { success: false, error: 'service_id und failure_mode_name erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    const before = svc.failureModes ?? [];
+    const failureModes = before.filter(fm => fm.name !== name);
+    if (failureModes.length === before.length) {
+      return { success: false, error: `Failure-Mode "${name}" nicht gefunden` };
+    }
+
+    await this.itsm.updateService(userId, serviceId, { failureModes } as any);
+    return { success: true, display: `✅ Failure-Mode **${name}** von Service **${svc.name}** entfernt` };
+  }
+
+  private async updateFailureMode(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    const name = input.failure_mode_name as string;
+    if (!serviceId || !name) return { success: false, error: 'service_id und failure_mode_name erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    let found = false;
+    const failureModes = (svc.failureModes ?? []).map(fm => {
+      if (fm.name !== name) return fm;
+      found = true;
+      return {
+        ...fm,
+        ...(input.failure_trigger !== undefined ? { trigger: input.failure_trigger as string } : {}),
+        ...(input.affected_components !== undefined ? { affectedComponents: input.affected_components as string[] } : {}),
+        ...(input.failure_impact !== undefined ? { serviceImpact: input.failure_impact as 'down' | 'degraded' } : {}),
+        ...(input.cascade_effects !== undefined ? { cascadeEffects: input.cascade_effects as string[] } : {}),
+        ...(input.recovery_minutes !== undefined ? { estimatedRecoveryMinutes: input.recovery_minutes as number } : {}),
+      };
+    });
+
+    if (!found) return { success: false, error: `Failure-Mode "${name}" nicht gefunden` };
+
+    await this.itsm.updateService(userId, serviceId, { failureModes } as any);
+    return { success: true, data: { failureModes }, display: `✅ Failure-Mode **${name}** aktualisiert` };
+  }
+
+  private async serviceImpactAnalysis(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    let assetId = input.asset_id as string | undefined;
+    const assetName = input.name as string | undefined;
+
+    // Resolve by name if no ID given
+    if (!assetId && assetName) {
+      const allAssets = await this.cmdb.listAssets(userId, { search: assetName });
+      const match = allAssets.find(a => a.name.toLowerCase() === assetName.toLowerCase())
+        ?? allAssets[0];
+      if (match) assetId = match.id;
+    }
+    if (!assetId) return { success: false, error: 'asset_id oder name erforderlich' };
+
+    const asset = await this.cmdb.getAssetById(userId, assetId);
+    if (!asset) return { success: false, error: `Asset ${assetId} nicht gefunden` };
+
+    // Find ALL services containing that asset
+    const services = await this.itsm.getServicesForAsset(userId, assetId);
+    if (services.length === 0) {
+      return { success: true, data: { asset, services: [] }, display: `## Service Impact: ${asset.name}\n\nKeine Services nutzen dieses Asset.` };
+    }
+
+    const svcDetails: string[] = [];
+    for (const svc of services) {
+      const comp = svc.components.find(c => c.assetId === assetId);
+      const compImpact = comp?.required !== false ? 'down' : 'degraded';
+      const critIcon = ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' } as Record<string, string>)[svc.criticality ?? 'medium'] ?? '⚪';
+
+      const lines: string[] = [
+        `### ${critIcon} ${svc.name} (${svc.criticality ?? 'medium'})`,
+        `**Component:** ${comp?.name ?? '—'} (${comp?.role ?? '—'}) → **${compImpact}**`,
+      ];
+
+      // Find matching failure modes
+      const matchingFMs = (svc.failureModes ?? []).filter(fm =>
+        fm.affectedComponents.some(ac =>
+          ac.toLowerCase() === (comp?.name ?? '').toLowerCase(),
+        ),
+      );
+
+      if (matchingFMs.length > 0) {
+        lines.push('**Failure Modes:**');
+        for (const fm of matchingFMs) {
+          lines.push(`  - **${fm.name}** (${fm.serviceImpact}) — Trigger: ${fm.trigger}`);
+          if (fm.cascadeEffects?.length) lines.push(`    Cascade: ${fm.cascadeEffects.join(', ')}`);
+          if (fm.estimatedRecoveryMinutes) lines.push(`    Recovery: ~${fm.estimatedRecoveryMinutes} Min`);
+        }
+      }
+
+      svcDetails.push(lines.join('\n'));
+    }
+
+    const display = [
+      `## Service Impact Analysis: ${asset.name} (${asset.assetType})`,
+      '',
+      `**${services.length} Service(s) betroffen:**`,
+      '',
+      ...svcDetails,
+    ].join('\n');
+
+    return { success: true, data: { asset, services }, display };
+  }
+
+  private async generateServiceDocs(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    if (!serviceId) return { success: false, error: 'service_id erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+    if (!this.llmCallback) return { success: false, error: 'LLM nicht verfügbar' };
+
+    // Start background generation
+    this.generateServiceDocsBackground(userId, serviceId).catch(() => {});
+
+    return { success: true, data: { serviceId }, display: `📝 Dokumentation für Service **${svc.name}** wird im Hintergrund generiert (Service-Doku + SOP pro Failure-Mode).` };
+  }
+
+  private async generateServiceDocsBackground(userId: string, serviceId: string): Promise<void> {
+    if (!this.llmCallback) return;
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return;
+
+    // Collect system docs from component assets
+    const componentDocs: string[] = [];
+    for (const comp of svc.components) {
+      if (!comp.assetId) continue;
+      try {
+        const docs = await this.cmdb.getDocumentsForEntity(userId, 'asset' as any, comp.assetId);
+        if (docs.length > 0) {
+          componentDocs.push(`### ${comp.name}\n${docs[0].content.slice(0, 1500)}`);
+        }
+      } catch { /* skip */ }
+    }
+
+    const contextBlock = componentDocs.length > 0
+      ? `\n\nKomponenten-Dokumentation:\n${componentDocs.join('\n\n')}`
+      : '';
+
+    // 1. Generate Service Documentation
+    const servicePrompt = [
+      `Erstelle eine Service-Dokumentation fuer: ${svc.name}`,
+      `Beschreibung: ${svc.description ?? '—'}`,
+      `Kategorie: ${svc.category ?? '—'} | Criticality: ${svc.criticality ?? 'medium'}`,
+      `Komponenten: ${svc.components.map(c => `${c.name} (${c.role}, ${c.required !== false ? 'required' : 'optional'})`).join(', ')}`,
+      `Dependencies: ${svc.dependencies.join(', ') || 'keine'}`,
+      svc.slaNotes ? `SLA: ${svc.slaNotes}` : '',
+      svc.maintenanceWindow ? `Maintenance Window: ${svc.maintenanceWindow}` : '',
+      contextBlock,
+      '',
+      'Erstelle eine vollstaendige Service-Dokumentation mit:',
+      '1. Uebersicht und Zweck',
+      '2. Architektur (Komponenten und deren Zusammenspiel)',
+      '3. Abhaengigkeiten',
+      '4. Monitoring und Health-Checks',
+      '5. Bekannte Risiken',
+      '6. Kontakt / Verantwortlich',
+      '',
+      'Schreibe in Markdown.',
+    ].filter(Boolean).join('\n');
+
+    try {
+      const serviceDoc = await this.llmCallback(servicePrompt, 'strong');
+      await this.cmdb.saveDocument(userId, {
+        docType: 'service_doc' as any,
+        title: `Service-Dok: ${svc.name}`,
+        content: serviceDoc,
+        linkedEntityType: 'service' as any,
+        linkedEntityId: serviceId,
+        generatedBy: 'itsm',
+      });
+    } catch { /* non-critical */ }
+
+    // 2. Generate SOP for each Failure Mode
+    for (const fm of (svc.failureModes ?? [])) {
+      try {
+        const sopPrompt = [
+          `Erstelle ein Standard Operating Procedure (SOP) fuer den Failure-Mode: "${fm.name}"`,
+          `Service: ${svc.name}`,
+          `Trigger: ${fm.trigger}`,
+          `Impact: ${fm.serviceImpact}`,
+          `Betroffene Komponenten: ${fm.affectedComponents.join(', ')}`,
+          fm.cascadeEffects?.length ? `Kaskaden-Effekte: ${fm.cascadeEffects.join(', ')}` : '',
+          fm.estimatedRecoveryMinutes ? `Geschaetzte Recovery: ${fm.estimatedRecoveryMinutes} Min` : '',
+          contextBlock,
+          '',
+          'Erstelle ein SOP mit:',
+          '1. Erkennung / Alarme',
+          '2. Sofortmassnahmen (erste 5 Minuten)',
+          '3. Diagnose-Schritte',
+          '4. Recovery-Prozedur',
+          '5. Verifikation',
+          '6. Post-Incident Aufgaben',
+          '',
+          'Schreibe in Markdown, nutze Checklisten.',
+        ].filter(Boolean).join('\n');
+
+        const sopDoc = await this.llmCallback(sopPrompt, 'strong');
+        await this.cmdb.saveDocument(userId, {
+          docType: 'runbook' as any,
+          title: `SOP: ${svc.name} — ${fm.name}`,
+          content: sopDoc,
+          linkedEntityType: 'service' as any,
+          linkedEntityId: serviceId,
+          generatedBy: 'itsm',
+        });
+      } catch { /* skip individual SOP failures */ }
+    }
   }
 }

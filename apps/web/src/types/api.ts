@@ -171,6 +171,31 @@ export interface DocDetail {
   createdAt: string;
 }
 
+// ── Service Management ──────────────────────────────────────
+
+export interface ServiceComponent {
+  name: string; role: string; assetId?: string; serviceId?: string;
+  externalUrl?: string; required: boolean; failureImpact: string;
+  failureDescription?: string; dependsOn?: string[]; ports?: number[];
+  protocol?: string; dns?: string; ip?: string;
+  healthCheckUrl?: string; healthStatus?: string; healthReason?: string;
+}
+
+export interface FailureMode {
+  name: string; trigger: string; affectedComponents: string[];
+  serviceImpact: string; cascadeEffects?: string[];
+  runbookId?: string; sopId?: string; estimatedRecoveryMinutes?: number;
+}
+
+export interface ServiceDetail {
+  id: string; name: string; description?: string; category?: string;
+  environment?: string; url?: string; healthStatus: string;
+  criticality?: string; components: ServiceComponent[];
+  failureModes: FailureMode[]; dependencies?: string[];
+  assetIds?: string[]; owner?: string; documentation?: string;
+  createdAt?: string; updatedAt?: string;
+}
+
 // ── Cluster / HA Operations ─────────────────────────────────
 
 export interface ClusterNode {

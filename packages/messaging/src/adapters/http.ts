@@ -78,6 +78,11 @@ export interface ItsmCallbacks {
   createFixChange: (userId: string, problemId: string, data: Record<string, unknown>) => Promise<any>;
   detectPatterns: (userId: string, data: Record<string, unknown>) => Promise<any>;
   getProblemDashboard: (userId: string) => Promise<any>;
+  // Service Management
+  getService: (userId: string, id: string) => Promise<any>;
+  deleteService: (userId: string, id: string) => Promise<boolean>;
+  getServicesForAsset: (userId: string, assetId: string) => Promise<any[]>;
+  generateDocs: (userId: string, serviceId: string) => Promise<any>;
 }
 
 export interface DocsCallbacks {
@@ -484,6 +489,53 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleCmdbRoute(req, res, (cbs, userId) => cbs.discover(userId));
     } else if (url.pathname === '/api/cmdb/stats' && req.method === 'GET') {
       this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getStats(userId));
+    // ── Services API ──
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/failure-modes\/[^/]+$/) && req.method === 'DELETE') {
+      const parts = url.pathname.split('/');
+      const svcId = parts[3];
+      const fmName = decodeURIComponent(parts[5]);
+      this.handleItsmRoute(req, res, async (cbs, userId) => {
+        const svc = await cbs.getService(userId, svcId);
+        if (!svc) return { error: 'Service not found' };
+        svc.failureModes = (svc.failureModes || []).filter((fm: any) => fm.name !== fmName);
+        return cbs.updateService(userId, svcId, { failure_modes: svc.failureModes });
+      });
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/failure-modes$/) && req.method === 'POST') {
+      const svcId = url.pathname.split('/')[3];
+      this.handleItsmBodyRoute(req, res, async (cbs, userId, body) => {
+        const svc = await cbs.getService(userId, svcId);
+        if (!svc) return { error: 'Service not found' };
+        const modes = svc.failureModes || [];
+        modes.push(body);
+        return cbs.updateService(userId, svcId, { failure_modes: modes });
+      });
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/impact$/) && req.method === 'GET') {
+      const svcId = url.pathname.split('/')[3];
+      this.handleItsmRoute(req, res, async (cbs, userId) => {
+        const svc = await cbs.getService(userId, svcId);
+        if (!svc) return { error: 'Service not found' };
+        const dependents = svc.dependencyMap?.downstream || [];
+        return { service: svc.name, impact: dependents, failureModes: svc.failureModes || [] };
+      });
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+\/generate-docs$/) && req.method === 'POST') {
+      const svcId = url.pathname.split('/')[3];
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.generateDocs(userId, svcId));
+    } else if (url.pathname === '/api/services' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listServices(userId, filters);
+      });
+    } else if (url.pathname === '/api/services' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.createService(userId, body));
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+$/) && req.method === 'GET') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getService(userId, id));
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+$/) && req.method === 'PATCH') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.updateService(userId, id, body));
+    } else if (url.pathname.match(/^\/api\/services\/[^/]+$/) && req.method === 'DELETE') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.deleteService(userId, id));
     // ── ITSM API ──
     } else if (url.pathname === '/api/itsm/incidents' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => {

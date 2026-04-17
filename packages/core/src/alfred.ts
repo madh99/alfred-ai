@@ -790,6 +790,13 @@ export class Alfred {
         const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo, problemRepo);
         const infraDocsSkill = new InfraDocsSkill(cmdbRepo, itsmRepo);
 
+        // Wire LLM callback for ITSM service description parsing + doc generation
+        itsmSkill.setLlmCallback(async (prompt: string, tier?: string) => {
+          if (!this.llmProvider) throw new Error('LLM nicht verfügbar');
+          const res = await this.llmProvider.complete({ messages: [{ role: 'user', content: prompt }], tier: (tier as any) ?? 'default', maxTokens: 3000 });
+          return res.content;
+        });
+
         // Wire LLM callback for runbook generation
         infraDocsSkill.setLlmCallback(async (prompt: string, tier?: string) => {
           if (!this.llmProvider) throw new Error('LLM nicht verfügbar');
@@ -2706,6 +2713,15 @@ export class Alfred {
             return { success: false, error: 'ITSM skill not registered' };
           },
           getDashboard: async (uid: string) => itsmRepo.getDashboard(await resolveUser(uid)),
+          // Service Management
+          getService: async (uid: string, id: string) => itsmRepo.getServiceById(await resolveUser(uid), id),
+          deleteService: async (uid: string, id: string) => itsmRepo.deleteService(await resolveUser(uid), id),
+          getServicesForAsset: async (uid: string, assetId: string) => itsmRepo.getServicesForAsset(await resolveUser(uid), assetId),
+          generateDocs: async (uid: string, serviceId: string) => {
+            const skill = this.skillRegistry?.get('infra_docs');
+            if (skill) return skill.execute({ action: 'generate_service_doc', service_id: serviceId }, { userId: await resolveUser(uid), masterUserId: await resolveUser(uid) } as any);
+            return { success: false, error: 'InfraDocs not available' };
+          },
           // Problem Management
           listProblems: async (uid: string, filters?: Record<string, unknown>) => problemRepo.listProblems(await resolveUser(uid), filters as any),
           getProblem: async (uid: string, id: string) => problemRepo.getProblemById(await resolveUser(uid), id),

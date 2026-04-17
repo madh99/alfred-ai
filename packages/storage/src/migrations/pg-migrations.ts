@@ -648,4 +648,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS runbook_id TEXT DEFAULT NULL', []);
     },
   },
+  {
+    version: 58,
+    description: 'Service Management — failure_modes column',
+    async up(db) {
+      await db.execute("ALTER TABLE cmdb_services ADD COLUMN IF NOT EXISTS failure_modes TEXT DEFAULT '[]'", []);
+    },
+  },
 ];

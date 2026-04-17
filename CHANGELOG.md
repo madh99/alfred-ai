@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.535] - 2026-04-17
+
+### Added
+- **Service Management System** — Vollstaendiges Service-Management mit Failure-Modes, Impact-Analyse und Auto-Dokumentation:
+  - **Service per Chat erstellen:** `create_service_from_description` — User beschreibt Service natuerlich ("Alfred HA Cluster: .91 ist DB, .92 node-a, .93 node-b"), LLM parst Komponenten + Failure-Modes, matcht CMDB-Assets
+  - **Failure-Mode CRUD:** `add_failure_mode`, `remove_failure_mode`, `update_failure_mode` — pro Service definierbar mit Trigger, Impact (down/degraded), Cascade-Effekte, Recovery-Zeit
+  - **Impact-Analyse:** `service_impact_analysis` — "Was passiert wenn .91 ausfaellt?" zeigt alle betroffenen Services mit Impact + Failure-Mode-SOPs
+  - **Auto-Doku:** `generate_service_docs` — Background-Generierung: Service-Doku + SOP pro Failure-Mode aus vorhandenen System-Dokus (Deep-Scan)
+  - **N:M Asset-Sharing:** Ein Asset kann in mehreren Services unterschiedliche Rollen/Impact haben (z.B. PostgreSQL: required fuer Alfred, optional fuer Monitoring)
+  - **ITSM-Integration:** create_incident erkennt automatisch Service-Impact und zeigt betroffene Services
+  - **WebUI /services:** Service-Liste mit Health-Status, ForceGraph2D Komponentengraph, Failure-Mode Editor, Linked Documents, 4-Schritt Erstellen-Wizard
+  - **9 API-Endpoints:** /api/services CRUD + failure-modes + impact + generate-docs
+  - **Migration v58:** failure_modes JSON-Spalte auf cmdb_services
+
 ## [0.19.0-multi-ha.529] - 2026-04-17
 
 ### Added

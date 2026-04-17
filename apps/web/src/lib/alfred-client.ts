@@ -476,6 +476,49 @@ export class AlfredClient {
 
   // ── Cluster / HA Operations API ──
 
+  // ── Service Management API ──
+
+  async fetchServices(): Promise<import('@/types/api').ServiceDetail[]> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Services: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async fetchService(id: string): Promise<import('@/types/api').ServiceDetail> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Service: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async createService(data: Record<string, unknown>): Promise<import('@/types/api').ServiceDetail> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`CreateService: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async updateService(id: string, data: Record<string, unknown>): Promise<import('@/types/api').ServiceDetail> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`UpdateService: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async deleteService(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
+  async fetchServiceImpact(id: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/${id}/impact`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Impact: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async generateServiceDocs(id: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/docs/generate`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ type: 'service_map', serviceId: id }) });
+    if (!res.ok) throw new Error(`GenDocs: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchClusterHealth(): Promise<import('@/types/api').ClusterHealthData> {
     const res = await fetch(`${this.baseUrl}/api/cluster/health`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Cluster: HTTP ${res.status}`);
