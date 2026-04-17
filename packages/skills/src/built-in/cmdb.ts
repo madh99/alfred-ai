@@ -1,4 +1,4 @@
-import type { SkillMetadata, SkillContext, SkillResult, CmdbAssetType, CmdbRelationType } from '@alfred/types';
+import type { SkillMetadata, SkillContext, SkillResult, CmdbAssetType, CmdbRelationType, CmdbLinkedEntityType } from '@alfred/types';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
@@ -7,7 +7,8 @@ type Action =
   | 'list_assets' | 'get_asset' | 'add_asset' | 'update_asset'
   | 'decommission_asset' | 'delete_asset'
   | 'add_relation' | 'remove_relation'
-  | 'search' | 'topology' | 'stats';
+  | 'search' | 'topology' | 'stats'
+  | 'asset_docs';
 
 interface DiscoveredAsset {
   name: string;
@@ -48,13 +49,14 @@ export class CmdbSkill extends Skill {
       '"remove_relation" löscht eine Beziehung (relation_id). ' +
       '"search" sucht Assets per Freitext (query). ' +
       '"topology" zeigt den Beziehungsgraph eines Assets (asset_id, depth). ' +
-      '"stats" zeigt CMDB-Statistiken.',
+      '"stats" zeigt CMDB-Statistiken. ' +
+      '"asset_docs" zeigt verknuepfte Dokumente fuer ein Asset oder Service (asset_id oder service_id).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['discover', 'discover_source', 'list_assets', 'get_asset', 'add_asset', 'update_asset', 'decommission_asset', 'delete_asset', 'add_relation', 'remove_relation', 'search', 'topology', 'stats'] },
+        action: { type: 'string', enum: ['discover', 'discover_source', 'list_assets', 'get_asset', 'add_asset', 'update_asset', 'decommission_asset', 'delete_asset', 'add_relation', 'remove_relation', 'search', 'topology', 'stats', 'asset_docs'] },
         source: { type: 'string', description: 'Discovery-Quelle für discover_source' },
         asset_type: { type: 'string' },
         status: { type: 'string' },
@@ -63,6 +65,7 @@ export class CmdbSkill extends Skill {
         search: { type: 'string' },
         tags: { type: 'string' },
         asset_id: { type: 'string' },
+        service_id: { type: 'string', description: 'Service-ID fuer asset_docs' },
         name: { type: 'string' },
         ip_address: { type: 'string' },
         hostname: { type: 'string' },
@@ -126,6 +129,7 @@ export class CmdbSkill extends Skill {
         case 'search': return await this.searchAssets(userId, input.query as string);
         case 'topology': return await this.getTopology(userId, input.asset_id as string, input.depth as number | undefined);
         case 'stats': return await this.getStats(userId);
+        case 'asset_docs': return await this.assetDocs(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${String(action)}` };
       }
     } catch (err: any) {
@@ -497,5 +501,15 @@ export class CmdbSkill extends Skill {
     ].join('\n');
 
     return { success: true, data: stats, display };
+  }
+
+  private async assetDocs(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const entityId = (input.asset_id ?? input.service_id) as string;
+    const entityType: CmdbLinkedEntityType = input.service_id ? 'service' : 'asset';
+    if (!entityId) return { success: false, error: 'asset_id oder service_id erforderlich' };
+    const docs = await this.repo.getDocumentsForEntity(userId, entityType, entityId);
+    if (docs.length === 0) return { success: true, data: { docs: [] }, display: 'Keine Dokumente fuer dieses Asset/Service.' };
+    const lines = docs.map(d => `- **${d.title}** [${d.docType}] v${d.version} (${d.createdAt?.slice(0, 10) ?? '—'})`);
+    return { success: true, data: { docs, count: docs.length }, display: `## Dokumente (${docs.length})\n${lines.join('\n')}` };
   }
 }

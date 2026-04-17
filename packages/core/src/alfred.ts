@@ -2653,6 +2653,14 @@ export class Alfred {
           getChanges: async (uid: string, assetId: string) => cmdbRepo.getChangesForAsset(await resolveUser(uid), assetId),
           listDocuments: async (uid: string, filters?: Record<string, unknown>) => cmdbRepo.listDocuments(await resolveUser(uid), filters as any),
           getDocument: async (uid: string, id: string) => cmdbRepo.getDocumentById(await resolveUser(uid), id),
+          getDocumentTree: async (uid: string) => cmdbRepo.getDocumentTree(await resolveUser(uid)),
+          saveDocument: async (uid: string, data: Record<string, unknown>) => cmdbRepo.saveDocument(await resolveUser(uid), data as any),
+          updateDocument: async (uid: string, id: string, data: Record<string, unknown>) => cmdbRepo.updateDocument(await resolveUser(uid), id, data as any),
+          deleteDocument: async (uid: string, id: string) => cmdbRepo.deleteDocument(await resolveUser(uid), id),
+          getDocumentVersions: async (uid: string, entityType: string, entityId: string, docType: string) =>
+            cmdbRepo.getDocumentVersions(await resolveUser(uid), entityType, entityId, docType),
+          searchDocuments: async (uid: string, query: string, filters?: Record<string, unknown>) =>
+            cmdbRepo.searchDocuments(await resolveUser(uid), query, filters as any),
         });
 
         (apiAdapter as any).setItsmCallbacks({

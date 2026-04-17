@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.528] - 2026-04-17
+
+### Added
+- **IT Documentation Platform (Phase A)** — InfraDocs Skill von 7 auf 25 Actions erweitert. Vollstaendiges Dokumentations-Management per Chat:
+  - **CRUD (6 Actions):** create_doc, get_doc, update_doc, delete_doc, list_docs, search_docs — Volltextsuche ueber Titel + Inhalt
+  - **Auto-Generate (4 Actions):** generate_system_doc (Asset-Scan via CMDB/Proxmox/Docker), generate_service_doc (Service + Komponenten), generate_network_doc (MikroTik/pfSense/Cloudflare/UniFi), generate_config_snapshot (Config-Dump)
+  - **Runbook Management (5 Actions):** create_runbook (manuell oder LLM-generiert aus Incident/Service-Kontext), get_runbook, update_runbook, suggest_runbook (Keyword-Match gegen Incidents), execute_runbook (Schritte als Workflow-Steps)
+  - **Versioning (3 Actions):** doc_versions (alle Versionen auflisten), doc_diff (zeilenweiser Vergleich), doc_revert (auf aeltere Version zuruecksetzen)
+  - **9 Dokumenttypen:** system_doc, service_doc, setup_guide, config_snapshot, runbook, sop, network_doc, policy, custom
+  - **ITSM Integration:** Auto-Suggest passende Runbooks bei Incident-Erstellung (Keyword-Match auf Titel + Symptoms)
+  - **CMDB Integration:** asset_docs Action — alle Dokumente fuer ein Asset/Service auflisten
+  - **API Endpoints (8 neu):** /api/docs/list, /api/docs/tree, /api/docs/search, /api/docs/{id}, /api/docs/{id}/versions, POST/PATCH/DELETE
+  - **DB Migration v57:** runbook_id Spalte auf cmdb_change_requests
+  - **Repository:** searchDocuments, getDocumentVersions, updateDocument, deleteDocument, getDocumentTree
+
 ## [0.19.0-multi-ha.526] - 2026-04-17
 
 ### Added

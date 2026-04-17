@@ -3,7 +3,16 @@ import type { CmdbRepository } from '@alfred/storage';
 import type { ItsmRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
-type Action = 'inventory_report' | 'topology_diagram' | 'service_map' | 'runbook' | 'change_log' | 'incident_report' | 'export';
+type Action =
+  | 'inventory_report' | 'topology_diagram' | 'service_map' | 'runbook' | 'change_log' | 'incident_report' | 'export'
+  // CRUD
+  | 'create_doc' | 'get_doc' | 'update_doc' | 'delete_doc' | 'list_docs' | 'search_docs'
+  // Auto-Generate
+  | 'generate_system_doc' | 'generate_service_doc' | 'generate_network_doc' | 'generate_config_snapshot'
+  // Runbook Management
+  | 'create_runbook' | 'get_runbook' | 'update_runbook' | 'suggest_runbook' | 'execute_runbook'
+  // Versioning
+  | 'doc_versions' | 'doc_diff' | 'doc_revert';
 
 type LlmCallback = (prompt: string, tier?: string) => Promise<string>;
 
@@ -12,25 +21,47 @@ export class InfraDocsSkill extends Skill {
     name: 'infra_docs',
     category: 'infrastructure',
     description:
-      'Infrastruktur-Dokumentation — Generiert Berichte und Diagramme aus CMDB/ITSM-Daten. ' +
-      '"inventory_report" erstellt ein vollständiges Asset-Inventar (Markdown). ' +
-      '"topology_diagram" generiert ein Netzwerk-Topologie-Diagramm (Mermaid). ' +
-      '"service_map" erstellt eine Service-Dependency-Map (Mermaid). ' +
-      '"runbook" generiert ein Runbook für einen Service via LLM (service_id). ' +
-      '"change_log" zeigt die Change-History für einen Zeitraum (since, limit). ' +
-      '"incident_report" erstellt ein Postmortem-Template für einen Incident (incident_id). ' +
-      '"export" exportiert die gesamte CMDB als JSON.',
+      'Infrastruktur-Dokumentation — Generiert, verwaltet und versioniert IT-Dokumentation aus CMDB/ITSM-Daten. ' +
+      'Reports: "inventory_report", "topology_diagram" (Mermaid), "service_map" (Mermaid), "change_log", "incident_report", "export". ' +
+      'CRUD: "create_doc", "get_doc", "update_doc", "delete_doc", "list_docs", "search_docs". ' +
+      'Auto-Generate: "generate_system_doc" (asset_id), "generate_service_doc" (service_id), "generate_network_doc" (scope), "generate_config_snapshot" (asset_id). ' +
+      'Runbooks: "create_runbook", "get_runbook", "update_runbook", "suggest_runbook", "execute_runbook". ' +
+      'Versioning: "doc_versions", "doc_diff" (version_a/version_b), "doc_revert" (target_version). ' +
+      '"runbook" generiert ein Runbook für einen Service via LLM (service_id).',
     riskLevel: 'read',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['inventory_report', 'topology_diagram', 'service_map', 'runbook', 'change_log', 'incident_report', 'export'] },
+        action: {
+          type: 'string',
+          enum: [
+            'inventory_report', 'topology_diagram', 'service_map', 'runbook', 'change_log', 'incident_report', 'export',
+            'create_doc', 'get_doc', 'update_doc', 'delete_doc', 'list_docs', 'search_docs',
+            'generate_system_doc', 'generate_service_doc', 'generate_network_doc', 'generate_config_snapshot',
+            'create_runbook', 'get_runbook', 'update_runbook', 'suggest_runbook', 'execute_runbook',
+            'doc_versions', 'doc_diff', 'doc_revert',
+          ],
+        },
         service_id: { type: 'string' },
         incident_id: { type: 'string' },
         since: { type: 'string', description: 'ISO Datum für change_log Filter' },
         limit: { type: 'number' },
         format: { type: 'string', enum: ['json', 'yaml'], description: 'Export-Format (default: json)' },
+        doc_id: { type: 'string', description: 'Document ID' },
+        doc_type: { type: 'string', enum: ['system_doc', 'service_doc', 'setup_guide', 'config_snapshot', 'runbook', 'sop', 'network_doc', 'policy', 'postmortem', 'custom'] },
+        title: { type: 'string', description: 'Dokument-Titel' },
+        content: { type: 'string', description: 'Dokument-Inhalt (Markdown)' },
+        linked_entity_type: { type: 'string', enum: ['asset', 'service', 'incident', 'change_request', 'problem'] },
+        linked_entity_id: { type: 'string' },
+        query: { type: 'string', description: 'Suchbegriff' },
+        asset_id: { type: 'string', description: 'Asset ID oder Name' },
+        runbook_id: { type: 'string', description: 'Runbook ID' },
+        auto_generate: { type: 'boolean', description: 'LLM-generierter Inhalt' },
+        scope: { type: 'string', enum: ['full', 'vlan', 'firewall', 'dns'] },
+        version_a: { type: 'number' },
+        version_b: { type: 'number' },
+        target_version: { type: 'number' },
       },
       required: ['action'],
     },
@@ -78,6 +109,28 @@ export class InfraDocsSkill extends Skill {
         case 'change_log': return await this.changeLog(userId, input.since as string, input.limit as number);
         case 'incident_report': return await this.incidentReport(userId, input.incident_id as string);
         case 'export': return await this.exportCmdb(userId, input.format as string);
+        // CRUD
+        case 'create_doc': return await this.createDoc(userId, input);
+        case 'get_doc': return await this.getDoc(userId, input);
+        case 'update_doc': return await this.updateDoc(userId, input);
+        case 'delete_doc': return await this.deleteDoc(userId, input);
+        case 'list_docs': return await this.listDocs(userId, input);
+        case 'search_docs': return await this.searchDocs(userId, input);
+        // Auto-Generate
+        case 'generate_system_doc': return await this.generateSystemDoc(userId, input);
+        case 'generate_service_doc': return await this.generateServiceDoc(userId, input);
+        case 'generate_network_doc': return await this.generateNetworkDoc(userId, input);
+        case 'generate_config_snapshot': return await this.generateConfigSnapshot(userId, input);
+        // Runbook Management
+        case 'create_runbook': return await this.createRunbook(userId, input);
+        case 'get_runbook': return await this.getRunbook(userId, input);
+        case 'update_runbook': return await this.updateRunbook(userId, input);
+        case 'suggest_runbook': return await this.suggestRunbook(userId, input);
+        case 'execute_runbook': return await this.executeRunbook(userId, input);
+        // Versioning
+        case 'doc_versions': return await this.docVersions(userId, input);
+        case 'doc_diff': return await this.docDiff(userId, input);
+        case 'doc_revert': return await this.docRevert(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${String(action)}` };
       }
     } catch (err: any) {
@@ -435,5 +488,600 @@ export class InfraDocsSkill extends Skill {
 
     const json = JSON.stringify(data, null, 2);
     return { success: true, data, display: `## CMDB Export (JSON)\n\n${assets.length} Assets, ${relations.length} Relationen, ${services.length} Services\n\nDaten im data-Feld verfügbar.` };
+  }
+
+  // ── CRUD ───────────────────────────────────────────────────
+
+  private async createDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const title = input.title as string;
+    const content = input.content as string;
+    const docType = (input.doc_type as string) || 'custom';
+    if (!title || !content) return { success: false, error: 'title und content erforderlich' };
+
+    const doc = await this.cmdb.saveDocument(userId, {
+      docType: docType as any,
+      title,
+      content,
+      format: (input.format as any) ?? 'markdown',
+      linkedEntityType: input.linked_entity_type as any,
+      linkedEntityId: input.linked_entity_id as string | undefined,
+      generatedBy: 'user',
+    });
+    return { success: true, data: doc, display: `Dokument erstellt: **${doc.title}** (ID: ${doc.id}, Version ${doc.version})` };
+  }
+
+  private async getDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = (input.doc_id ?? input.runbook_id) as string;
+    if (!docId) return { success: false, error: 'doc_id erforderlich' };
+
+    const doc = await this.cmdb.getDocumentById(userId, docId);
+    if (!doc) return { success: false, error: `Dokument ${docId} nicht gefunden` };
+    return { success: true, data: doc, display: `## ${doc.title}\n\n${doc.content}` };
+  }
+
+  private async updateDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = (input.doc_id ?? input.runbook_id) as string;
+    const content = input.content as string;
+    if (!docId || !content) return { success: false, error: 'doc_id und content erforderlich' };
+
+    const doc = await this.cmdb.updateDocument(userId, docId, {
+      title: input.title as string | undefined,
+      content,
+    });
+    if (!doc) return { success: false, error: `Dokument ${docId} nicht gefunden` };
+    return { success: true, data: doc, display: `Dokument aktualisiert: **${doc.title}** (Version ${doc.version})` };
+  }
+
+  private async deleteDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = input.doc_id as string;
+    if (!docId) return { success: false, error: 'doc_id erforderlich' };
+
+    const deleted = await this.cmdb.deleteDocument(userId, docId);
+    if (!deleted) return { success: false, error: `Dokument ${docId} nicht gefunden oder bereits gelöscht` };
+    return { success: true, display: `Dokument ${docId} gelöscht.` };
+  }
+
+  private async listDocs(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docs = await this.cmdb.listDocuments(userId, {
+      docType: input.doc_type as any,
+      entityType: input.linked_entity_type as any,
+      limit: (input.limit as number) ?? 50,
+    });
+
+    if (docs.length === 0) return { success: true, data: [], display: 'Keine Dokumente gefunden.' };
+
+    const lines = docs.map(d =>
+      `| ${d.id.slice(0, 8)}… | ${d.docType} | ${d.title} | v${d.version} | ${d.createdAt?.slice(0, 16)} |`,
+    );
+    const display = `## Dokumente (${docs.length})\n\n| ID | Typ | Titel | Version | Erstellt |\n|----|-----|-------|---------|----------|\n${lines.join('\n')}`;
+    return { success: true, data: docs, display };
+  }
+
+  private async searchDocs(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const query = input.query as string;
+    if (!query) return { success: false, error: 'query erforderlich' };
+
+    const docs = await this.cmdb.searchDocuments(userId, query, {
+      docType: input.doc_type as string | undefined,
+      limit: (input.limit as number) ?? 20,
+    });
+
+    if (docs.length === 0) return { success: true, data: [], display: `Keine Dokumente für "${query}" gefunden.` };
+
+    const lines = docs.map(d =>
+      `| ${d.id.slice(0, 8)}… | ${d.docType} | ${d.title} | v${d.version} |`,
+    );
+    const display = `## Suchergebnisse: "${query}" (${docs.length})\n\n| ID | Typ | Titel | Version |\n|----|-----|-------|---------|\n${lines.join('\n')}`;
+    return { success: true, data: docs, display };
+  }
+
+  // ── Auto-Generate ─────────────────────────────────────────
+
+  private async generateSystemDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const assetId = input.asset_id as string;
+    if (!assetId) return { success: false, error: 'asset_id erforderlich' };
+
+    const asset = await this.cmdb.getAssetById(userId, assetId);
+    if (!asset) return { success: false, error: `Asset ${assetId} nicht gefunden` };
+
+    const relations = await this.cmdb.getRelationsForAsset(userId, assetId);
+    const relatedAssets: string[] = [];
+    for (const r of relations) {
+      const otherId = r.sourceAssetId === assetId ? r.targetAssetId : r.sourceAssetId;
+      const other = await this.cmdb.getAssetById(userId, otherId);
+      if (other) relatedAssets.push(`- ${other.name} (${other.assetType}, ${r.relationType})`);
+    }
+
+    if (!this.llmCallback) {
+      // Fallback: generate a structured template without LLM
+      const doc = [
+        `# System-Dokumentation: ${asset.name}`,
+        '',
+        '## Übersicht',
+        `| Eigenschaft | Wert |`,
+        `|-------------|------|`,
+        `| **Typ** | ${asset.assetType} |`,
+        `| **IP** | ${asset.ipAddress ?? '—'} |`,
+        `| **Status** | ${asset.status} |`,
+        `| **Environment** | ${asset.environment ?? '—'} |`,
+        `| **OS** | ${(asset.attributes as any)?.os ?? '—'} |`,
+        `| **Owner** | ${asset.owner ?? '—'} |`,
+        `| **Quelle** | ${asset.sourceSkill ?? 'manual'} |`,
+        '',
+        '## Verbundene Systeme',
+        relatedAssets.length > 0 ? relatedAssets.join('\n') : '— keine —',
+        '',
+        '## Konfiguration',
+        '— manuell ergänzen —',
+        '',
+        '## Betriebshinweise',
+        '— manuell ergänzen —',
+      ].join('\n');
+      await this.persistDoc(userId, 'system_doc', `System-Dok: ${asset.name}`, doc, { linkedEntityType: 'asset', linkedEntityId: assetId });
+      return { success: true, data: { asset }, display: doc };
+    }
+
+    const prompt = [
+      'Erstelle eine vollständige System-Dokumentation auf Deutsch für folgendes Asset:',
+      '',
+      `## Asset: ${asset.name}`,
+      `Typ: ${asset.assetType}`,
+      `IP: ${asset.ipAddress ?? '—'}`,
+      `Status: ${asset.status}`,
+      `Environment: ${asset.environment ?? '—'}`,
+      `OS: ${(asset.attributes as any)?.os ?? '—'}`,
+      `Owner: ${asset.owner ?? '—'}`,
+      `Quelle: ${asset.sourceSkill ?? 'manual'}`,
+      asset.attributes ? `Attributes: ${JSON.stringify(asset.attributes).slice(0, 500)}` : '',
+      '',
+      '## Verbundene Systeme',
+      relatedAssets.length > 0 ? relatedAssets.join('\n') : '— keine —',
+      '',
+      'Erstelle Sektionen: Übersicht, Architektur, Netzwerk, Konfiguration, Monitoring, Betriebshinweise, Backup/Recovery.',
+    ].filter(Boolean).join('\n');
+
+    const generated = await this.llmCallback(prompt, 'strong');
+    await this.persistDoc(userId, 'system_doc', `System-Dok: ${asset.name}`, generated, { linkedEntityType: 'asset', linkedEntityId: assetId });
+    return { success: true, data: { asset }, display: `## System-Dokumentation: ${asset.name}\n\n${generated}` };
+  }
+
+  private async generateServiceDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const serviceId = input.service_id as string;
+    if (!serviceId) return { success: false, error: 'service_id erforderlich' };
+
+    const svc = await this.itsm.getServiceById(userId, serviceId);
+    if (!svc) return { success: false, error: `Service ${serviceId} nicht gefunden` };
+
+    const assetDetails: string[] = [];
+    for (const aid of svc.assetIds) {
+      const a = await this.cmdb.getAssetById(userId, aid);
+      if (a) assetDetails.push(`- ${a.name} (${a.assetType}, IP: ${a.ipAddress ?? '—'})`);
+    }
+
+    const depNames: string[] = [];
+    for (const depId of svc.dependencies) {
+      const dep = await this.itsm.getServiceById(userId, depId);
+      if (dep) depNames.push(dep.name);
+    }
+
+    if (!this.llmCallback) {
+      const doc = [
+        `# Service-Dokumentation: ${svc.name}`,
+        '',
+        `**Beschreibung:** ${svc.description ?? '—'}`,
+        `**Kategorie:** ${svc.category ?? '—'}`,
+        `**Criticality:** ${svc.criticality ?? '—'}`,
+        `**Health:** ${svc.healthStatus}`,
+        svc.url ? `**URL:** ${svc.url}` : '',
+        '',
+        '## Komponenten',
+        assetDetails.length > 0 ? assetDetails.join('\n') : '— keine registriert —',
+        '',
+        '## Abhängigkeiten',
+        depNames.length > 0 ? depNames.map(n => `- ${n}`).join('\n') : '— keine —',
+      ].filter(Boolean).join('\n');
+      await this.persistDoc(userId, 'service_doc', `Service-Dok: ${svc.name}`, doc, { linkedEntityType: 'service', linkedEntityId: serviceId });
+      return { success: true, data: { service: svc }, display: doc };
+    }
+
+    const prompt = [
+      'Erstelle eine vollständige Service-Dokumentation auf Deutsch:',
+      '',
+      `## Service: ${svc.name}`,
+      svc.description ? `Beschreibung: ${svc.description}` : '',
+      `Kategorie: ${svc.category ?? '—'}`,
+      `Criticality: ${svc.criticality ?? '—'}`,
+      `Health: ${svc.healthStatus}`,
+      svc.url ? `URL: ${svc.url}` : '',
+      svc.healthCheckUrl ? `Health-Check: ${svc.healthCheckUrl}` : '',
+      '',
+      '## Unterliegende Assets',
+      assetDetails.length > 0 ? assetDetails.join('\n') : '— keine registriert —',
+      '',
+      depNames.length > 0 ? `## Abhängigkeiten\n${depNames.map(n => `- ${n}`).join('\n')}` : '',
+      '',
+      'Erstelle Sektionen: Übersicht, Architektur, Komponenten, API/Endpunkte, Monitoring, SLA, Betrieb, Troubleshooting.',
+    ].filter(Boolean).join('\n');
+
+    const generated = await this.llmCallback(prompt, 'strong');
+    await this.persistDoc(userId, 'service_doc', `Service-Dok: ${svc.name}`, generated, { linkedEntityType: 'service', linkedEntityId: serviceId });
+    return { success: true, data: { service: svc }, display: `## Service-Dokumentation: ${svc.name}\n\n${generated}` };
+  }
+
+  private async generateNetworkDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const scope = (input.scope as string) || 'full';
+
+    // Load network-relevant assets
+    const allAssets = await this.cmdb.listAssets(userId);
+    const networkTypes = new Set(['network', 'network_device', 'firewall_rule', 'dns_record', 'proxy_host', 'server', 'vm', 'lxc']);
+    const scopeFilter: Record<string, Set<string>> = {
+      full: networkTypes,
+      vlan: new Set(['network', 'network_device', 'server', 'vm', 'lxc']),
+      firewall: new Set(['firewall_rule', 'network_device']),
+      dns: new Set(['dns_record', 'proxy_host']),
+    };
+    const allowed = scopeFilter[scope] ?? networkTypes;
+    const assets = allAssets.filter(a => allowed.has(a.assetType));
+
+    if (!this.llmCallback) {
+      const sections: string[] = [
+        `# Netzwerk-Dokumentation (Scope: ${scope})`,
+        '',
+        `${assets.length} relevante Assets gefunden.`,
+        '',
+      ];
+      const grouped = new Map<string, typeof assets>();
+      for (const a of assets) {
+        const list = grouped.get(a.assetType) || [];
+        list.push(a);
+        grouped.set(a.assetType, list);
+      }
+      for (const [type, items] of grouped) {
+        sections.push(`## ${type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}`);
+        for (const a of items) {
+          sections.push(`- ${a.name} — IP: ${a.ipAddress ?? '—'}, Status: ${a.status}`);
+        }
+        sections.push('');
+      }
+      const doc = sections.join('\n');
+      await this.persistDoc(userId, 'network_doc', `Netzwerk-Dok (${scope})`, doc);
+      return { success: true, data: { assetCount: assets.length, scope }, display: doc };
+    }
+
+    const assetSummary = assets.map(a =>
+      `- ${a.name} (${a.assetType}, IP: ${a.ipAddress ?? '—'}, Status: ${a.status})`,
+    ).join('\n');
+
+    const prompt = [
+      `Erstelle eine Netzwerk-Dokumentation auf Deutsch. Scope: ${scope}.`,
+      '',
+      '## Verfügbare Netzwerk-Assets',
+      assetSummary || '— keine —',
+      '',
+      'Erstelle Sektionen je nach Scope:',
+      scope === 'full' || scope === 'vlan' ? '- VLAN/Subnetz-Übersicht' : '',
+      scope === 'full' || scope === 'firewall' ? '- Firewall-Regeln und Sicherheitszonen' : '',
+      scope === 'full' || scope === 'dns' ? '- DNS-Konfiguration und Proxy-Hosts' : '',
+      '- Netzwerk-Topologie-Beschreibung',
+      '- Empfehlungen',
+    ].filter(Boolean).join('\n');
+
+    const generated = await this.llmCallback(prompt, 'strong');
+    await this.persistDoc(userId, 'network_doc', `Netzwerk-Dok (${scope})`, generated);
+    return { success: true, data: { assetCount: assets.length, scope }, display: `## Netzwerk-Dokumentation (${scope})\n\n${generated}` };
+  }
+
+  private async generateConfigSnapshot(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const assetId = input.asset_id as string;
+    if (!assetId) return { success: false, error: 'asset_id erforderlich' };
+
+    const asset = await this.cmdb.getAssetById(userId, assetId);
+    if (!asset) return { success: false, error: `Asset ${assetId} nicht gefunden` };
+
+    const relations = await this.cmdb.getRelationsForAsset(userId, assetId);
+    const snapshot = {
+      snapshotAt: new Date().toISOString(),
+      asset: {
+        id: asset.id,
+        name: asset.name,
+        type: asset.assetType,
+        ip: asset.ipAddress,
+        status: asset.status,
+        environment: asset.environment,
+        owner: asset.owner,
+        source: asset.sourceSkill,
+        attributes: asset.attributes,
+      },
+      relations: relations.map(r => ({
+        type: r.relationType,
+        sourceId: r.sourceAssetId,
+        targetId: r.targetAssetId,
+      })),
+    };
+
+    const content = JSON.stringify(snapshot, null, 2);
+    const doc = await this.cmdb.saveDocument(userId, {
+      docType: 'config_snapshot' as any,
+      title: `Config-Snapshot: ${asset.name} — ${snapshot.snapshotAt.slice(0, 16)}`,
+      content,
+      format: 'json' as any,
+      linkedEntityType: 'asset' as any,
+      linkedEntityId: assetId,
+      generatedBy: 'infra_docs',
+    });
+
+    return {
+      success: true,
+      data: { doc, snapshot },
+      display: `Config-Snapshot erstellt: **${asset.name}** (Version ${doc.version}, ID: ${doc.id})`,
+    };
+  }
+
+  // ── Runbook Management ────────────────────────────────────
+
+  private async createRunbook(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const title = input.title as string;
+    const serviceId = input.service_id as string;
+    const incidentId = input.incident_id as string;
+    const autoGenerate = input.auto_generate as boolean;
+
+    if (!title && !serviceId && !incidentId) {
+      return { success: false, error: 'title, service_id oder incident_id erforderlich' };
+    }
+
+    // If content is provided manually, save directly
+    if (input.content && !autoGenerate) {
+      const doc = await this.cmdb.saveDocument(userId, {
+        docType: 'runbook' as any,
+        title: title || 'Runbook',
+        content: input.content as string,
+        format: 'markdown' as any,
+        linkedEntityType: serviceId ? 'service' as any : incidentId ? 'incident' as any : undefined,
+        linkedEntityId: serviceId || incidentId || undefined,
+        generatedBy: 'user',
+      });
+      return { success: true, data: doc, display: `Runbook erstellt: **${doc.title}** (ID: ${doc.id})` };
+    }
+
+    // Auto-generate from context
+    if (!this.llmCallback) return { success: false, error: 'LLM nicht verfügbar für Auto-Generierung' };
+
+    let context = '';
+    let runbookTitle = title || 'Runbook';
+
+    if (serviceId) {
+      const svc = await this.itsm.getServiceById(userId, serviceId);
+      if (svc) {
+        runbookTitle = title || `Runbook: ${svc.name}`;
+        context = `Service: ${svc.name}\nBeschreibung: ${svc.description ?? '—'}\nCriticality: ${svc.criticality ?? '—'}`;
+      }
+    }
+
+    if (incidentId) {
+      const inc = await this.itsm.getIncidentById(userId, incidentId);
+      if (inc) {
+        runbookTitle = title || `Runbook: ${inc.title}`;
+        context += `\n\nIncident: ${inc.title}\nSeverity: ${inc.severity}\nRoot Cause: ${inc.rootCause ?? '—'}\nResolution: ${inc.resolution ?? '—'}`;
+      }
+    }
+
+    const prompt = [
+      'Erstelle ein operatives Runbook auf Deutsch basierend auf folgendem Kontext:',
+      '',
+      context,
+      '',
+      'Erstelle Sektionen: Voraussetzungen, Schritt-für-Schritt-Anleitung, Verifizierung, Rollback, Eskalation.',
+    ].join('\n');
+
+    const generated = await this.llmCallback(prompt, 'strong');
+    const doc = await this.cmdb.saveDocument(userId, {
+      docType: 'runbook' as any,
+      title: runbookTitle,
+      content: generated,
+      format: 'markdown' as any,
+      linkedEntityType: serviceId ? 'service' as any : incidentId ? 'incident' as any : undefined,
+      linkedEntityId: serviceId || incidentId || undefined,
+      generatedBy: 'llm',
+    });
+
+    return { success: true, data: doc, display: `## ${runbookTitle}\n\n${generated}` };
+  }
+
+  private async getRunbook(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    input.doc_id = input.doc_id ?? input.runbook_id;
+    return this.getDoc(userId, input);
+  }
+
+  private async updateRunbook(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    input.doc_id = input.doc_id ?? input.runbook_id;
+    return this.updateDoc(userId, input);
+  }
+
+  private async suggestRunbook(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const query = input.query as string;
+    const incidentId = input.incident_id as string;
+
+    let searchTerm = query || '';
+
+    // Enrich search from incident context
+    if (incidentId) {
+      const inc = await this.itsm.getIncidentById(userId, incidentId);
+      if (inc) {
+        const keywords = [inc.title, inc.symptoms, inc.rootCause].filter(Boolean).join(' ');
+        searchTerm = searchTerm ? `${searchTerm} ${keywords}` : keywords;
+      }
+    }
+
+    if (!searchTerm) return { success: false, error: 'query oder incident_id erforderlich' };
+
+    const docs = await this.cmdb.searchDocuments(userId, searchTerm, { docType: 'runbook', limit: 10 });
+
+    if (docs.length === 0) return { success: true, data: [], display: `Keine passenden Runbooks für "${searchTerm.slice(0, 50)}" gefunden.` };
+
+    const lines = docs.map(d =>
+      `| ${d.id.slice(0, 8)}… | ${d.title} | v${d.version} | ${d.createdAt?.slice(0, 16)} |`,
+    );
+    const display = `## Passende Runbooks (${docs.length})\n\n| ID | Titel | Version | Erstellt |\n|----|-------|---------|----------|\n${lines.join('\n')}`;
+    return { success: true, data: docs, display };
+  }
+
+  private async executeRunbook(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const runbookId = (input.runbook_id ?? input.doc_id) as string;
+    if (!runbookId) return { success: false, error: 'runbook_id erforderlich' };
+
+    const doc = await this.cmdb.getDocumentById(userId, runbookId);
+    if (!doc) return { success: false, error: `Runbook ${runbookId} nicht gefunden` };
+
+    // Parse steps from markdown content (look for numbered lists or ## headings)
+    const lines = doc.content.split('\n');
+    const steps: Array<{ step: number; title: string; description: string }> = [];
+    let currentStep = 0;
+    let currentTitle = '';
+    let currentDesc: string[] = [];
+
+    for (const line of lines) {
+      // Match numbered list items: "1. ", "2. " etc.
+      const numbered = line.match(/^(\d+)\.\s+(.+)/);
+      // Match step headings: "## Schritt 1:" or "### 1."
+      const heading = line.match(/^#{2,3}\s+(?:Schritt\s+)?(\d+)[.:\s]+(.+)/i);
+
+      if (numbered || heading) {
+        if (currentStep > 0) {
+          steps.push({ step: currentStep, title: currentTitle, description: currentDesc.join('\n').trim() });
+        }
+        currentStep = parseInt(numbered?.[1] ?? heading?.[1] ?? '0', 10);
+        currentTitle = (numbered?.[2] ?? heading?.[2] ?? '').trim();
+        currentDesc = [];
+      } else if (currentStep > 0 && line.trim()) {
+        currentDesc.push(line);
+      }
+    }
+    if (currentStep > 0) {
+      steps.push({ step: currentStep, title: currentTitle, description: currentDesc.join('\n').trim() });
+    }
+
+    if (steps.length === 0) {
+      return {
+        success: true,
+        data: { runbook: doc, steps: [], note: 'Keine strukturierten Schritte erkannt — Runbook als Freitext.' },
+        display: `## Runbook: ${doc.title}\n\nKeine strukturierten Schritte erkannt. Inhalt:\n\n${doc.content.slice(0, 2000)}`,
+      };
+    }
+
+    const stepList = steps.map(s => `${s.step}. **${s.title}**${s.description ? `\n   ${s.description.slice(0, 200)}` : ''}`).join('\n');
+    return {
+      success: true,
+      data: { runbook: doc, steps, totalSteps: steps.length },
+      display: `## Runbook ausführen: ${doc.title}\n\n${steps.length} Schritte erkannt:\n\n${stepList}\n\n_Hinweis: Automatische Ausführung via Workflow-Integration geplant._`,
+    };
+  }
+
+  // ── Versioning ────────────────────────────────────────────
+
+  private async docVersions(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = input.doc_id as string;
+    const entityType = input.linked_entity_type as string;
+    const entityId = input.linked_entity_id as string;
+    const docType = input.doc_type as string;
+
+    // If doc_id given, look up the document first to get entity info
+    if (docId) {
+      const doc = await this.cmdb.getDocumentById(userId, docId);
+      if (!doc) return { success: false, error: `Dokument ${docId} nicht gefunden` };
+      if (!doc.linkedEntityType || !doc.linkedEntityId) {
+        return { success: true, data: [doc], display: `Dokument hat keine Entity-Verknüpfung — nur Version ${doc.version} vorhanden.` };
+      }
+      const versions = await this.cmdb.getDocumentVersions(userId, doc.linkedEntityType, doc.linkedEntityId, doc.docType);
+      const lines = versions.map(v => `| v${v.version} | ${v.title} | ${v.createdAt?.slice(0, 16)} | ${v.id.slice(0, 8)}… |`);
+      const display = `## Versionen: ${doc.title}\n\n| Version | Titel | Erstellt | ID |\n|---------|-------|----------|----|\n${lines.join('\n')}`;
+      return { success: true, data: versions, display };
+    }
+
+    if (!entityType || !entityId || !docType) {
+      return { success: false, error: 'doc_id oder (linked_entity_type + linked_entity_id + doc_type) erforderlich' };
+    }
+
+    const versions = await this.cmdb.getDocumentVersions(userId, entityType, entityId, docType);
+    if (versions.length === 0) return { success: true, data: [], display: 'Keine Versionen gefunden.' };
+
+    const lines = versions.map(v => `| v${v.version} | ${v.title} | ${v.createdAt?.slice(0, 16)} | ${v.id.slice(0, 8)}… |`);
+    const display = `## Versionen (${versions.length})\n\n| Version | Titel | Erstellt | ID |\n|---------|-------|----------|----|\n${lines.join('\n')}`;
+    return { success: true, data: versions, display };
+  }
+
+  private async docDiff(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = input.doc_id as string;
+    const versionA = input.version_a as number;
+    const versionB = input.version_b as number;
+
+    if (!docId) return { success: false, error: 'doc_id erforderlich' };
+
+    // Get the document to find entity info
+    const doc = await this.cmdb.getDocumentById(userId, docId);
+    if (!doc) return { success: false, error: `Dokument ${docId} nicht gefunden` };
+    if (!doc.linkedEntityType || !doc.linkedEntityId) {
+      return { success: false, error: 'Dokument hat keine Entity-Verknüpfung — Versionsvergleich nicht möglich' };
+    }
+
+    const versions = await this.cmdb.getDocumentVersions(userId, doc.linkedEntityType, doc.linkedEntityId, doc.docType);
+    const docA = versions.find(v => v.version === (versionA ?? versions[versions.length - 1]?.version));
+    const docB = versions.find(v => v.version === (versionB ?? versions[0]?.version));
+
+    if (!docA || !docB) return { success: false, error: `Version(en) nicht gefunden. Verfügbar: ${versions.map(v => v.version).join(', ')}` };
+
+    // Simple line-based diff
+    const linesA = docA.content.split('\n');
+    const linesB = docB.content.split('\n');
+    const diffLines: string[] = [];
+    const maxLen = Math.max(linesA.length, linesB.length);
+
+    for (let i = 0; i < maxLen; i++) {
+      const a = linesA[i] ?? '';
+      const b = linesB[i] ?? '';
+      if (a !== b) {
+        if (a) diffLines.push(`- ${a}`);
+        if (b) diffLines.push(`+ ${b}`);
+      }
+    }
+
+    const display = diffLines.length > 0
+      ? `## Diff: v${docA.version} → v${docB.version}\n\n\`\`\`diff\n${diffLines.slice(0, 200).join('\n')}\n\`\`\``
+      : `Keine Unterschiede zwischen v${docA.version} und v${docB.version}.`;
+
+    return { success: true, data: { versionA: docA.version, versionB: docB.version, changes: diffLines.length }, display };
+  }
+
+  private async docRevert(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const docId = input.doc_id as string;
+    const targetVersion = input.target_version as number;
+
+    if (!docId || targetVersion == null) return { success: false, error: 'doc_id und target_version erforderlich' };
+
+    const doc = await this.cmdb.getDocumentById(userId, docId);
+    if (!doc) return { success: false, error: `Dokument ${docId} nicht gefunden` };
+    if (!doc.linkedEntityType || !doc.linkedEntityId) {
+      return { success: false, error: 'Dokument hat keine Entity-Verknüpfung — Revert nicht möglich' };
+    }
+
+    const versions = await this.cmdb.getDocumentVersions(userId, doc.linkedEntityType, doc.linkedEntityId, doc.docType);
+    const target = versions.find(v => v.version === targetVersion);
+    if (!target) return { success: false, error: `Version ${targetVersion} nicht gefunden. Verfügbar: ${versions.map(v => v.version).join(', ')}` };
+
+    // Create new version with content from target
+    const reverted = await this.cmdb.saveDocument(userId, {
+      docType: target.docType as any,
+      title: target.title,
+      content: target.content,
+      format: target.format as any,
+      linkedEntityType: target.linkedEntityType as any,
+      linkedEntityId: target.linkedEntityId ?? undefined,
+      generatedBy: 'revert',
+    });
+
+    return {
+      success: true,
+      data: reverted,
+      display: `Dokument auf Version ${targetVersion} zurückgesetzt → neue Version ${reverted.version} erstellt.`,
+    };
   }
 }

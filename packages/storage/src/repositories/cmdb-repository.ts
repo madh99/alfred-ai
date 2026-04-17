@@ -515,6 +515,77 @@ export class CmdbRepository {
     return row ? rowToDocument(row) : null;
   }
 
+  async searchDocuments(userId: string, query: string, filters?: { docType?: string; limit?: number }): Promise<CmdbDocument[]> {
+    const conditions = ['user_id = ?'];
+    const params: unknown[] = [userId];
+    if (query) {
+      conditions.push('(title LIKE ? OR content LIKE ?)');
+      const pattern = `%${query}%`;
+      params.push(pattern, pattern);
+    }
+    if (filters?.docType) {
+      conditions.push('doc_type = ?');
+      params.push(filters.docType);
+    }
+    const limit = Math.min(filters?.limit ?? 20, 100);
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_documents WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC LIMIT ?`,
+      [...params, limit],
+    );
+    return rows.map(rowToDocument);
+  }
+
+  async getDocumentVersions(userId: string, entityType: string, entityId: string, docType: string): Promise<CmdbDocument[]> {
+    const rows = await this.db.query(
+      'SELECT * FROM cmdb_documents WHERE user_id = ? AND linked_entity_type = ? AND linked_entity_id = ? AND doc_type = ? ORDER BY version DESC',
+      [userId, entityType, entityId, docType],
+    );
+    return rows.map(rowToDocument);
+  }
+
+  async updateDocument(userId: string, docId: string, updates: { title?: string; content: string }): Promise<CmdbDocument | null> {
+    const existing = await this.getDocumentById(userId, docId);
+    if (!existing) return null;
+    return this.saveDocument(userId, {
+      docType: existing.docType as any,
+      title: updates.title ?? existing.title,
+      content: updates.content,
+      format: existing.format as any,
+      linkedEntityType: existing.linkedEntityType as any,
+      linkedEntityId: existing.linkedEntityId ?? undefined,
+      generatedBy: 'infra_docs',
+    });
+  }
+
+  async deleteDocument(userId: string, docId: string): Promise<boolean> {
+    const result = await this.db.execute(
+      'DELETE FROM cmdb_documents WHERE id = ? AND user_id = ?', [docId, userId],
+    );
+    return result.changes > 0;
+  }
+
+  async getDocumentTree(userId: string): Promise<Record<string, any>> {
+    const docs = await this.listDocuments(userId, { limit: 500 });
+    const assets = await this.listAssets(userId, { status: 'active' });
+    const services = await this.db.query(
+      'SELECT id, name, category FROM cmdb_services WHERE user_id = ? ORDER BY name', [userId],
+    ) as any[];
+    return {
+      assets: assets.map(a => ({
+        id: a.id, name: a.name, type: a.assetType,
+        docs: docs.filter(d => d.linkedEntityType === 'asset' && d.linkedEntityId === a.id)
+          .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
+      })).filter(a => a.docs.length > 0),
+      services: services.map((s: any) => ({
+        id: s.id, name: s.name, category: s.category,
+        docs: docs.filter(d => d.linkedEntityType === 'service' && d.linkedEntityId === s.id)
+          .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
+      })).filter((s: any) => s.docs.length > 0),
+      unlinked: docs.filter(d => !d.linkedEntityType)
+        .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
+    };
+  }
+
   async pruneDocumentVersions(userId: string, maxVersions = 10): Promise<number> {
     // For each (doc_type, linked_entity_id), keep only the newest N versions
     const groups = await this.db.query(

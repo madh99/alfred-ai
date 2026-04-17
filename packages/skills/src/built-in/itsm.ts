@@ -209,7 +209,21 @@ export class ItsmSkill extends Skill {
 
     const sevIcon = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[inc.severity] ?? '⚪';
     const related = inc.relatedIncidentId ? ` (verwandt mit ${inc.relatedIncidentId.slice(0, 8)})` : '';
-    return { success: true, data: inc, display: `${sevIcon} Incident erstellt: **${inc.title}** (${inc.severity})${related} — ID: ${inc.id}` };
+    const result: SkillResult = { success: true, data: inc, display: `${sevIcon} Incident erstellt: **${inc.title}** (${inc.severity})${related} — ID: ${inc.id}` };
+
+    // Auto-suggest matching runbooks
+    try {
+      if (this.cmdb) {
+        const searchTerms = `${input.title ?? ''} ${input.symptoms ?? ''}`;
+        const runbooks = await this.cmdb.searchDocuments(userId, searchTerms, { docType: 'runbook', limit: 3 });
+        if (runbooks.length > 0) {
+          const suggestions = runbooks.map(r => `  📋 ${r.title} (v${r.version})`).join('\n');
+          if (result.display) result.display += `\n\n**Passende Runbooks:**\n${suggestions}`;
+        }
+      }
+    } catch { /* non-critical */ }
+
+    return result;
   }
 
   private async updateIncident(userId: string, input: Record<string, unknown>): Promise<SkillResult> {

@@ -47,6 +47,12 @@ export interface CmdbCallbacks {
   getChanges: (userId: string, assetId: string) => Promise<any[]>;
   listDocuments: (userId: string, filters?: Record<string, unknown>) => Promise<any[]>;
   getDocument: (userId: string, id: string) => Promise<any>;
+  getDocumentTree: (userId: string) => Promise<any>;
+  saveDocument: (userId: string, data: Record<string, unknown>) => Promise<any>;
+  updateDocument: (userId: string, id: string, data: Record<string, unknown>) => Promise<any>;
+  deleteDocument: (userId: string, id: string) => Promise<boolean>;
+  getDocumentVersions: (userId: string, entityType: string, entityId: string, docType: string) => Promise<any[]>;
+  searchDocuments: (userId: string, query: string, filters?: Record<string, unknown>) => Promise<any[]>;
 }
 
 export interface ItsmCallbacks {
@@ -550,6 +556,40 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDocsBodyRoute(req, res, (cbs, userId, body) => cbs.generate(userId, body.type as string, body));
     } else if (url.pathname === '/api/docs/export' && req.method === 'GET') {
       this.handleDocsRoute(req, res, (cbs, userId) => cbs.exportData(userId, url.searchParams.get('format') ?? undefined));
+    // ── Extended Docs API ──
+    } else if (url.pathname === '/api/docs/list' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => {
+        const filters = Object.fromEntries(url.searchParams.entries());
+        return cbs.listDocuments(userId, filters);
+      });
+    } else if (url.pathname === '/api/docs/tree' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getDocumentTree(userId));
+    } else if (url.pathname === '/api/docs/search' && req.method === 'GET') {
+      this.handleCmdbRoute(req, res, (cbs, userId) => {
+        const query = url.searchParams.get('q') ?? '';
+        const filters = Object.fromEntries(url.searchParams.entries());
+        delete filters.q;
+        return cbs.searchDocuments(userId, query, filters);
+      });
+    } else if (url.pathname === '/api/docs' && req.method === 'POST') {
+      this.handleCmdbBodyRoute(req, res, (cbs, userId, body) => cbs.saveDocument(userId, body));
+    } else if (url.pathname.match(/^\/api\/docs\/[^/]+\/versions$/) && req.method === 'GET') {
+      const parts = url.pathname.split('/');
+      const id = parts[3];
+      this.handleCmdbRoute(req, res, async (cbs, userId) => {
+        const doc = await cbs.getDocument(userId, id);
+        if (!doc) return { error: 'Document not found' };
+        return cbs.getDocumentVersions(userId, doc.linkedEntityType ?? '', doc.linkedEntityId ?? '', doc.docType);
+      });
+    } else if (url.pathname.startsWith('/api/docs/') && req.method === 'GET') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.getDocument(userId, id));
+    } else if (url.pathname.startsWith('/api/docs/') && req.method === 'PATCH') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbBodyRoute(req, res, (cbs, userId, body) => cbs.updateDocument(userId, id, body));
+    } else if (url.pathname.startsWith('/api/docs/') && req.method === 'DELETE') {
+      const id = url.pathname.split('/').pop()!;
+      this.handleCmdbRoute(req, res, (cbs, userId) => cbs.deleteDocument(userId, id));
     // ── Documents Archive API ──
     } else if (url.pathname === '/api/cmdb/documents' && req.method === 'GET') {
       this.handleCmdbRoute(req, res, (cbs, userId) => {

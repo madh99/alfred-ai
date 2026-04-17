@@ -641,4 +641,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS guards TEXT DEFAULT NULL`, []);
     },
   },
+  {
+    version: 57,
+    description: 'IT Documentation Platform — runbook_id on change_requests',
+    async up(db) {
+      await db.execute('ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS runbook_id TEXT DEFAULT NULL', []);
+    },
+  },
 ];
