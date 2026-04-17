@@ -146,13 +146,13 @@ export class CommvaultSkill extends Skill implements CommvaultApiClient {
         server_id: { type: 'number', description: 'Server ID (retire_server)' },
         // Media Agent params
         media_agent_id: { type: 'number', description: 'Media Agent ID (media_agent_detail)' },
-        hostNames: { type: 'array', description: 'Hostnamen fuer MA-Installation' },
+        hostNames: { type: 'array', items: { type: 'string' }, description: 'Hostnamen fuer MA-Installation' },
         username: { type: 'string', description: 'Username (install_media_agent)' },
         password: { type: 'string', description: 'Password (install_media_agent)' },
         os_type: { type: 'string', description: 'OS-Typ: WINDOWS, UNIX (install_media_agent)' },
         // Alert params
         alert_id: { type: 'number', description: 'Alert ID (alert_detail, read_alert, pin_alert, alert_note)' },
-        alert_ids: { type: 'array', description: 'Alert IDs (delete_alerts)' },
+        alert_ids: { type: 'array', items: { type: 'number' }, description: 'Alert IDs (delete_alerts)' },
         severity: { type: 'string', description: 'Severity Filter: critical, major, information' },
         notes: { type: 'string', description: 'Notiz-Text (alert_note)' },
         unread: { type: 'boolean', description: 'Als ungelesen markieren (read_alert)' },
