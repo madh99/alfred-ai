@@ -16,7 +16,7 @@ function sanitize(val: string): string {
 function validateHost(h: string): boolean { return /^[\w.\-:]+$/.test(h); }
 function validateName(n: string): boolean { return /^[\w.\-]+$/.test(n); }
 function validateBranch(b: string): boolean { return /^[\w.\-/]+$/.test(b); }
-function validateUrl(u: string): boolean { return /^https?:\/\/[\w.\-/:@]+$/.test(u); }
+function validateUrl(u: string): boolean { return /^(https?:\/\/[\w.\-/:@]+|[\w.\-]+@[\w.\-]+:[\w.\-/]+)$/.test(u); }
 
 /**
  * Deploy Skill — SSH-basiertes Deployment auf beliebigen Hosts.
