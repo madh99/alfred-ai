@@ -48,7 +48,7 @@ export class DeploySkill extends Skill {
         domain: { type: 'string', description: 'Domain für DNS + Reverse Proxy (für full_deploy, z.B. uboot.cc)' },
         public_ip: { type: 'string', description: 'Öffentliche IP für DNS A-Record (für full_deploy)' },
         network_name: { type: 'string', description: 'VLAN/Netzwerk-Name für IP-Vergabe bei new_lxc/new_vm (z.B. Default, Keller)' },
-        template: { type: 'string', description: 'Proxmox Template für new_lxc/new_vm (z.B. ubuntu-22.04, oder VMID 9000)' },
+        template: { type: 'string', description: 'Proxmox Template für new_lxc/new_vm (z.B. ubuntu-22.04, rocky-9, debian-12 für LXC; VMID 9000/9001 für VM). Cloud-Init User wird automatisch erkannt (ubuntu/rocky→cloud-user/debian/fedora)' },
         hostname: { type: 'string', description: 'Hostname für neue VM/LXC' },
         memory: { type: 'number', description: 'RAM in MB für neue VM/LXC (default: 2048)' },
         cores: { type: 'number', description: 'CPU Cores für neue VM/LXC (default: 2)' },
@@ -357,7 +357,7 @@ export class DeploySkill extends Skill {
     const target = (input.target as string) ?? 'existing';
     const runtime = (input.runtime as string) ?? this.defaults.runtime ?? 'node';
     const pm = (input.process_manager as string) ?? (runtime === 'docker' ? 'docker-compose' : this.defaults.processManager ?? 'pm2');
-    const user = (input.user as string) ?? this.defaults.sshUser ?? 'madh';
+    let user = (input.user as string) ?? this.defaults.sshUser ?? 'madh';
     const appPort = input.app_port as number | undefined;
     const steps: string[] = [];
 
@@ -389,12 +389,25 @@ export class DeploySkill extends Skill {
           const memory = (input.memory as number) ?? 2048;
           const cores = (input.cores as number) ?? 2;
 
+          // Detect Cloud-Init default user from template name
+          const templateLower = template.toLowerCase();
+          const cloudInitUser = input.user as string
+            ?? (templateLower.includes('rocky') || templateLower.includes('alma') || templateLower.includes('centos') ? 'cloud-user'
+              : templateLower.includes('debian') ? 'debian'
+              : templateLower.includes('fedora') ? 'fedora'
+              : target === 'new_lxc' ? 'root'  // LXC containers default to root
+              : 'ubuntu');  // Ubuntu Cloud-Init default
+          // Override user for SSH after creation
+          user = cloudInitUser;
+          steps.push(`👤 Cloud-Init User: ${cloudInitUser}`);
+
           // Read SSH public key
           let sshKey: string | undefined;
           try {
             const keyPath = this.defaults.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
             sshKey = readFileSync(`${keyPath}.pub`, 'utf-8').trim();
           } catch { /* no key */ }
+          if (!sshKey) steps.push('⚠️ Kein SSH Public Key gefunden — Cloud-Init ohne Key-Injection');
 
           if (target === 'new_lxc') {
             const r = await this.proxmoxFn({
@@ -406,7 +419,7 @@ export class DeploySkill extends Skill {
               steps.push(`❌ LXC-Erstellung fehlgeschlagen: ${r.error}`);
               return { success: false, error: 'LXC-Erstellung fehlgeschlagen', data: { steps } };
             }
-            steps.push(`📦 LXC "${hostname}" erstellt`);
+            steps.push(`📦 LXC "${hostname}" erstellt (Template: ${template})`);
           } else {
             const r = await this.proxmoxFn({
               action: 'clone_vm', template, hostname, memory, cores,
@@ -432,20 +445,40 @@ export class DeploySkill extends Skill {
             steps.push('❌ SSH nicht erreichbar nach 45s');
             return { success: false, error: `SSH zu ${host} nicht erreichbar`, data: { steps } };
           }
-          steps.push(`✅ Host ${host} erreichbar via SSH`);
+          steps.push(`✅ Host ${host} erreichbar via SSH (User: ${user})`);
+
+          // Detect OS family for package manager
+          const isRhel = templateLower.includes('rocky') || templateLower.includes('alma') || templateLower.includes('centos') || templateLower.includes('fedora') || templateLower.includes('rhel');
 
           // Setup runtime if needed
           if (runtime === 'node') {
-            const setup = await this.doSetupNode(host, user);
-            steps.push(setup.success ? '📦 Node.js + pm2 installiert' : `⚠️ Node-Setup: ${setup.display}`);
+            if (isRhel) {
+              await this.ssh(host, user, 'curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - && sudo dnf install -y nodejs && sudo npm install -g pm2 && sudo pm2 startup systemd -u $USER --hp $HOME').catch(() => {});
+              steps.push('📦 Node.js + pm2 installiert (dnf)');
+            } else {
+              const setup = await this.doSetupNode(host, user);
+              steps.push(setup.success ? '📦 Node.js + pm2 installiert' : `⚠️ Node-Setup: ${setup.display}`);
+            }
           } else if (runtime === 'python') {
-            const setup = await this.doSetupPython(host, user);
-            steps.push(setup.success ? '🐍 Python installiert' : `⚠️ Python-Setup: ${setup.display}`);
+            if (isRhel) {
+              await this.ssh(host, user, 'sudo dnf install -y python3 python3-pip').catch(() => {});
+              steps.push('🐍 Python installiert (dnf)');
+            } else {
+              const setup = await this.doSetupPython(host, user);
+              steps.push(setup.success ? '🐍 Python installiert' : `⚠️ Python-Setup: ${setup.display}`);
+            }
           } else if (runtime === 'docker' || pm === 'docker-compose') {
             await this.ssh(host, user, 'curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER').catch(() => {});
-            await this.ssh(host, user, 'sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose').catch(() => {});
+            if (isRhel) {
+              await this.ssh(host, user, 'sudo dnf install -y docker-compose-plugin').catch(() => {});
+            } else {
+              await this.ssh(host, user, 'sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose').catch(() => {});
+            }
             steps.push('🐳 Docker installiert');
           }
+
+          // Ensure docker group for Deep Scan (if Docker is on the system)
+          await this.ssh(host, user, 'id -nG | grep -q docker || sudo usermod -aG docker $USER 2>/dev/null').catch(() => {});
         }
       } else {
         // Existing host

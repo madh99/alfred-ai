@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.552] - 2026-04-17
+
+### Added
+- **Cloud-Init User-Erkennung** — Template-basierte automatische User-Erkennung fuer SSH nach VM-Erstellung:
+  - Ubuntu → `ubuntu`, Rocky/Alma/CentOS → `cloud-user`, Debian → `debian`, Fedora → `fedora`, LXC → `root`
+  - User kann per `user` Parameter ueberschrieben werden
+- **Multi-OS Template Support** — Rocky Linux, Alma, CentOS, Fedora neben Ubuntu/Debian:
+  - Paketmanager-Erkennung (apt vs dnf) fuer Node.js, Python, Docker Installation
+  - dnf-basiertes NodeSource Setup fuer RHEL-Familie
+- **SSH Key Warnung** — Hinweis wenn kein SSH Public Key fuer Cloud-Init gefunden wird
+- **Docker-Gruppe Auto-Setup** — Nach VM-Erstellung wird der Cloud-Init User automatisch zur docker-Gruppe hinzugefuegt (fuer Deep Scan)
+
 ## [0.19.0-multi-ha.551] - 2026-04-17
 
 ### Added
