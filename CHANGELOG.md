@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.539] - 2026-04-17
+
+### Fixed
+- **Service-Erstellung WebUI** — Komponenten, Failure-Modes und SLA werden jetzt beim Erstellen ueber den Wizard korrekt gespeichert (createService → updateService fuer JSON-Felder)
+
 ## [0.19.0-multi-ha.538] - 2026-04-17
 
 ### Changed

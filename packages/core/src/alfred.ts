@@ -2701,7 +2701,19 @@ export class Alfred {
             return itsmRepo.updateChangeRequest(await resolveUser(uid), id, mapped as any);
           },
           listServices: async (uid: string, filters?: Record<string, unknown>) => itsmRepo.listServices(await resolveUser(uid), filters as any),
-          createService: async (uid: string, data: Record<string, unknown>) => itsmRepo.createService(await resolveUser(uid), data as any),
+          createService: async (uid: string, data: Record<string, unknown>) => {
+            const userId = await resolveUser(uid);
+            const svc = await itsmRepo.createService(userId, data as any);
+            // Persist JSON fields that createService doesn't handle (components, failureModes, sla)
+            const jsonUpdates: Record<string, unknown> = {};
+            if (data.components) jsonUpdates.components = data.components;
+            if (data.failureModes) jsonUpdates.failureModes = data.failureModes;
+            if (data.sla) jsonUpdates.sla = data.sla;
+            if (Object.keys(jsonUpdates).length > 0) {
+              return itsmRepo.updateService(userId, svc.id, jsonUpdates as any) ?? svc;
+            }
+            return svc;
+          },
           updateService: async (uid: string, id: string, data: Record<string, unknown>) => {
             const mapped: Record<string, unknown> = {};
             for (const [k, v] of Object.entries(data)) mapped[k.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = v;
