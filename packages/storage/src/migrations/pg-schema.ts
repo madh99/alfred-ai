@@ -529,4 +529,19 @@ CREATE TABLE IF NOT EXISTS adapter_claims (
   claimed_at   TEXT NOT NULL,
   expires_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS sla_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  duration_minutes REAL,
+  details TEXT,
+  created_at TEXT NOT NULL DEFAULT (now()::text)
+);
+CREATE INDEX IF NOT EXISTS idx_sla_events_target ON sla_events(target_type, target_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_sla_events_type ON sla_events(event_type);
 `;

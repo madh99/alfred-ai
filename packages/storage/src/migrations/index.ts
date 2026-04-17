@@ -1326,4 +1326,28 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_plans_user_status ON plans(user_id, status)`);
     },
   },
+  {
+    version: 56,
+    description: 'SLA Management — sla columns + sla_events table',
+    up(db) {
+      try { db.exec(`ALTER TABLE cmdb_services ADD COLUMN sla TEXT DEFAULT NULL`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_assets ADD COLUMN sla TEXT DEFAULT NULL`); } catch { /* exists */ }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sla_events (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          target_type TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          duration_minutes REAL,
+          details TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_sla_events_target ON sla_events(target_type, target_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_sla_events_type ON sla_events(event_type);
+      `);
+    },
+  },
 ];
