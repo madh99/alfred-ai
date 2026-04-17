@@ -65,6 +65,7 @@ interface WizardComponent {
   ports?: string;
   dns?: string;
   ip?: string;
+  parentComponent?: string;  // NEW
 }
 
 interface WizardFailureMode {
@@ -135,7 +136,12 @@ export function ServicesPage() {
 
   const graphData = useMemo(() => {
     if (!selected) return { nodes: [], links: [] };
-    const nodes: GraphNode[] = selected.components.map((c, i) => ({
+
+    const parentNames = new Set(
+      selected.components.filter(c => c.parentComponent).map(c => c.parentComponent!),
+    );
+
+    const nodes: GraphNode[] = selected.components.map((c) => ({
       id: c.name,
       name: c.name,
       role: c.role,
@@ -143,11 +149,18 @@ export function ServicesPage() {
       healthStatus: c.healthStatus,
       required: c.required,
       color: HEALTH_COLORS[c.healthStatus ?? 'unknown'] ?? HEALTH_COLORS.unknown,
-      val: c.required ? 10 : 6,
+      val: parentNames.has(c.name) ? 15 : (c.parentComponent ? 5 : 10),
       component: c,
     }));
 
     const links: GraphLink[] = [];
+
+    for (const c of selected.components) {
+      if (c.parentComponent && nodes.some(n => n.id === c.parentComponent)) {
+        links.push({ source: c.parentComponent, target: c.name });
+      }
+    }
+
     for (const c of selected.components) {
       if (c.dependsOn) {
         for (const dep of c.dependsOn) {
@@ -306,25 +319,34 @@ export function ServicesPage() {
                       backgroundColor="#0a0a0a"
                       nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
                         const n = node as GraphNode;
-                        const r = n.required ? 10 : 6;
-                        // Circle
+                        const isParent = selected?.components.some(c => c.parentComponent === n.name);
+                        const isChild = !!n.component.parentComponent;
+                        const r = isParent ? 14 : isChild ? 5 : (n.required ? 10 : 6);
+
                         ctx.beginPath();
                         ctx.arc(node.x!, node.y!, r, 0, 2 * Math.PI);
                         ctx.fillStyle = n.color;
                         ctx.fill();
+
                         if (selectedComponent?.name === n.name) {
                           ctx.strokeStyle = '#fff';
                           ctx.lineWidth = 2;
                           ctx.stroke();
                         }
-                        // Label
+
+                        if (isParent) {
+                          ctx.strokeStyle = n.color;
+                          ctx.lineWidth = 2;
+                          ctx.stroke();
+                        }
+
                         if (globalScale > 0.6) {
                           const label = `${n.name}${n.ip ? '\n' + n.ip : ''}\n${n.role}`;
                           const lines = label.split('\n');
                           ctx.font = `${Math.max(3, 10 / globalScale)}px Sans-Serif`;
                           ctx.textAlign = 'center';
                           ctx.textBaseline = 'top';
-                          ctx.fillStyle = '#d1d5db';
+                          ctx.fillStyle = isChild ? '#9ca3af' : '#d1d5db';
                           lines.forEach((line, i) => {
                             ctx.fillText(line, node.x!, node.y! + r + 2 + i * (12 / globalScale));
                           });
@@ -423,6 +445,14 @@ export function ServicesPage() {
               </div>
             )}
 
+            {/* SLA */}
+            {selected.sla?.enabled && (
+              <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+                <h2 className="text-sm font-semibold text-gray-200 mb-3">SLA: {selected.sla.name}</h2>
+                <SlaSection client={client} serviceId={selected.id} sla={selected.sla} />
+              </div>
+            )}
+
             {/* Linked Documents */}
             {linkedDocs.length > 0 && (
               <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
@@ -463,6 +493,76 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div>
       <span className="text-gray-500">{label}: </span>
       <span className="text-gray-300">{value}</span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  SlaSection                                                         */
+/* ------------------------------------------------------------------ */
+
+function SlaSection({ client, serviceId, sla }: { client: any; serviceId: string; sla: import('@/types/api').SlaDefinition }) {
+  const [report, setReport] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    (async () => {
+      try {
+        const r = await client.getSlaReport('service', serviceId);
+        setReport(r.data ?? r);
+      } catch { /* ignore */ }
+      setLoading(false);
+    })();
+  }, [client, serviceId]);
+
+  if (loading) return <p className="text-xs text-gray-500 animate-pulse">SLA-Daten werden geladen...</p>;
+  if (!report) return <p className="text-xs text-gray-500">Keine SLA-Daten verfuegbar</p>;
+
+  const target = sla?.targets?.availabilityPercent ?? 99.9;
+  const actual = report.avail?.uptimePercent ?? 100;
+  const warning = sla?.monitoring?.warningThresholdPercent ?? (target - 0.1);
+  const barColor = actual >= target ? '#22c55e' : actual >= warning ? '#eab308' : '#ef4444';
+  const barWidth = Math.min(100, Math.max(0, actual));
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-4 text-xs">
+        <div>
+          <span className="text-gray-500">Verfuegbarkeit</span>
+          <p className="text-lg font-bold" style={{ color: barColor }}>{actual.toFixed(3)}%</p>
+        </div>
+        <div>
+          <span className="text-gray-500">Ziel</span>
+          <p className="text-lg font-bold text-gray-200">{target}%</p>
+        </div>
+        <div>
+          <span className="text-gray-500">Downtime</span>
+          <p className="text-lg font-bold text-gray-200">{(report.avail?.downtimeMinutes ?? 0).toFixed(1)} Min.</p>
+        </div>
+      </div>
+      <div className="w-full bg-[#1f1f1f] rounded-full h-2">
+        <div className="h-2 rounded-full transition-all" style={{ width: `${barWidth}%`, backgroundColor: barColor }} />
+      </div>
+      <div className="flex justify-between text-[10px] text-gray-500">
+        <span>0%</span>
+        <span>Ziel: {target}%</span>
+        <span>100%</span>
+      </div>
+      <p className="text-xs">
+        {report.compliant !== false ? (
+          <span className="text-green-400">✅ SLA eingehalten</span>
+        ) : (
+          <span className="text-red-400">❌ SLA-Verletzung!</span>
+        )}
+      </p>
+      {(sla?.targets?.mttrMinutes || sla?.targets?.responseTimeMinutes) && (
+        <div className="flex gap-4 text-xs text-gray-400">
+          {sla?.targets?.mttrMinutes && <span>MTTR: max {sla.targets.mttrMinutes} Min.</span>}
+          {sla?.targets?.responseTimeMinutes && <span>Response: max {sla.targets.responseTimeMinutes} Min.</span>}
+          {sla?.targets?.resolutionTimeMinutes && <span>Resolution: max {sla.targets.resolutionTimeMinutes} Min.</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -667,6 +767,18 @@ function CreateServiceDialog({ client, onClose, onCreated }: { client: any; onCl
                   />
                   Required
                 </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={(comp as any).parentComponent ?? ''}
+                    onChange={e => updateComponent(idx, { parentComponent: e.target.value || undefined } as any)}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none col-span-2"
+                  >
+                    <option value="">-- Uebergeordnete Komponente --</option>
+                    {components.filter((_, i) => i !== idx).filter(c => c.name).map(c => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
             ))}
             <div className="flex justify-between">
