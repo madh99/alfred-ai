@@ -577,12 +577,21 @@ export class InfraDocsSkill extends Skill {
 
   // ── Auto-Generate ─────────────────────────────────────────
 
-  private async generateSystemDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
-    const assetId = input.asset_id as string;
-    if (!assetId) return { success: false, error: 'asset_id erforderlich' };
+  private async resolveAsset(userId: string, input: Record<string, unknown>): Promise<any | null> {
+    const id = (input.asset_id ?? input.asset_name) as string;
+    if (!id) return null;
+    // Try by ID first (UUID), then by name
+    const byId = await this.cmdb.getAssetById(userId, id);
+    if (byId) return byId;
+    // Search by name (case-insensitive)
+    const all = await this.cmdb.listAssets(userId, {});
+    return all.find(a => a.name.toLowerCase() === id.toLowerCase()) ?? null;
+  }
 
-    const asset = await this.cmdb.getAssetById(userId, assetId);
-    if (!asset) return { success: false, error: `Asset ${assetId} nicht gefunden` };
+  private async generateSystemDoc(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const asset = await this.resolveAsset(userId, input);
+    if (!asset) return { success: false, error: `Asset "${input.asset_id ?? input.asset_name}" nicht gefunden` };
+    const assetId = asset.id;
 
     const relations = await this.cmdb.getRelationsForAsset(userId, assetId);
     const relatedAssets: string[] = [];
@@ -772,11 +781,9 @@ export class InfraDocsSkill extends Skill {
   }
 
   private async generateConfigSnapshot(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
-    const assetId = input.asset_id as string;
-    if (!assetId) return { success: false, error: 'asset_id erforderlich' };
-
-    const asset = await this.cmdb.getAssetById(userId, assetId);
-    if (!asset) return { success: false, error: `Asset ${assetId} nicht gefunden` };
+    const asset = await this.resolveAsset(userId, input);
+    if (!asset) return { success: false, error: `Asset "${input.asset_id ?? input.asset_name}" nicht gefunden` };
+    const assetId = asset.id;
 
     const relations = await this.cmdb.getRelationsForAsset(userId, assetId);
     const snapshot = {
