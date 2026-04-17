@@ -55,7 +55,8 @@ export class ShellSkill extends Skill {
       };
     }
 
-    // Block obviously dangerous shell patterns
+    // Block obviously dangerous shell patterns (skip check for SSH remote commands — they run on another host)
+    const isSshRemote = /^\s*ssh\s+/.test(command);
     const dangerous = [
       /\brm\s+-rf\s+\/(?:\s|$)/,        // rm -rf /
       /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+-[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*\s+-[a-zA-Z]*r)[a-zA-Z]*\s+\/(?:\s|$)/, // rm -r -f /
@@ -95,12 +96,14 @@ export class ShellSkill extends Skill {
       /\$\([^)]+\)/,                     // $() command substitution
       /\/bin\/\w+\s+-rf?\s+\//,          // absolute path to destructive commands
     ];
-    for (const pattern of dangerous) {
-      if (pattern.test(command)) {
-        return {
-          success: false,
-          error: 'Command blocked: potentially destructive system operation',
-        };
+    if (!isSshRemote) {
+      for (const pattern of dangerous) {
+        if (pattern.test(command)) {
+          return {
+            success: false,
+            error: 'Command blocked: potentially destructive system operation',
+          };
+        }
       }
     }
 

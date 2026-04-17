@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.557] - 2026-04-17
+
+### Fixed
+- **Shell-Skill: SSH Remote-Commands nicht mehr geblockt** — Dangerous-Pattern-Check wird fuer SSH-Befehle uebersprungen. Remote-Befehle (sudo, tee, systemctl) auf anderen Hosts sind keine lokale Gefahr. Vorher wurde z.B. `ssh host 'sudo systemctl restart docker'` als "destructive" abgewiesen
+
 ## [0.19.0-multi-ha.556] - 2026-04-17
 
 ### Added
