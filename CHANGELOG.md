@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.546] - 2026-04-17
+
+### Fixed
+- **CmdbRepository.updateAsset** — `sourceSkill` und `sourceId` Felder waren nicht in der Update-Map, konnten daher nicht aktualisiert werden. Deep Scan Container-Assets blieben deshalb auf source_skill=NULL
+
 ## [0.19.0-multi-ha.545] - 2026-04-17
 
 ### Fixed

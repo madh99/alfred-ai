@@ -217,6 +217,7 @@ export class CmdbRepository {
 
     const map: Record<string, string> = {
       name: 'name', assetType: 'asset_type', identifier: 'identifier',
+      sourceSkill: 'source_skill', sourceId: 'source_id',
       environment: 'environment', status: 'status', ipAddress: 'ip_address',
       hostname: 'hostname', fqdn: 'fqdn', location: 'location',
       owner: 'owner', purpose: 'purpose', tags: 'tags', notes: 'notes',
