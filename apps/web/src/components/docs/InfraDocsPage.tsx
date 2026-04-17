@@ -62,6 +62,10 @@ const GENERATOR_TYPES = [
   { key: 'service_map', label: 'Services', icon: '\u2699\uFE0F' },
   { key: 'change_log', label: 'Changes', icon: '\uD83D\uDCDD' },
   { key: 'export', label: 'Export', icon: '\uD83D\uDCE5' },
+  { key: 'generate_system_doc', label: 'System-Doku', icon: '\uD83D\uDDA5\uFE0F', needsAsset: true },
+  { key: 'generate_service_doc', label: 'Service-Doku', icon: '\u2699\uFE0F', needsService: true },
+  { key: 'generate_network_doc', label: 'Netzwerk-Doku', icon: '\uD83C\uDF10' },
+  { key: 'generate_config_snapshot', label: 'Config-Snapshot', icon: '\uD83D\uDCF8', needsAsset: true },
 ];
 
 type DocRef = { id: string; title: string; docType: string; version: number; createdAt: string };

@@ -573,16 +573,30 @@ export class CmdbRepository {
     return {
       assets: assets.map(a => ({
         id: a.id, name: a.name, type: a.assetType,
-        docs: docs.filter(d => d.linkedEntityType === 'asset' && d.linkedEntityId === a.id)
+        docs: docs.filter(d => d.linkedEntityType === 'asset' && (d.linkedEntityId === a.id || d.linkedEntityId === a.name))
           .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
       })).filter(a => a.docs.length > 0),
       services: services.map((s: any) => ({
         id: s.id, name: s.name, category: s.category,
-        docs: docs.filter(d => d.linkedEntityType === 'service' && d.linkedEntityId === s.id)
+        docs: docs.filter(d => d.linkedEntityType === 'service' && (d.linkedEntityId === s.id || d.linkedEntityId === s.name))
           .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
       })).filter((s: any) => s.docs.length > 0),
-      unlinked: docs.filter(d => !d.linkedEntityType)
-        .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt })),
+      // Track which docs are linked (by ID or name)
+      unlinked: (() => {
+        const linkedIds = new Set<string>();
+        for (const a of assets) {
+          for (const d of docs) {
+            if (d.linkedEntityType === 'asset' && (d.linkedEntityId === a.id || d.linkedEntityId === a.name)) linkedIds.add(d.id);
+          }
+        }
+        for (const s of services) {
+          for (const d of docs) {
+            if (d.linkedEntityType === 'service' && (d.linkedEntityId === (s as any).id || d.linkedEntityId === (s as any).name)) linkedIds.add(d.id);
+          }
+        }
+        return docs.filter(d => !linkedIds.has(d.id) && (!d.linkedEntityType || !d.linkedEntityId))
+          .map(d => ({ id: d.id, title: d.title, docType: d.docType, version: d.version, createdAt: d.createdAt }));
+      })(),
     };
   }
 
