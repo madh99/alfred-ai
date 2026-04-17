@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.544] - 2026-04-17
+
+### Fixed
+- **Deep Scan Docker Container-Parsing** — `docker ps` Output wird jetzt korrekt geparst (Space-Split statt nur Tab-Split), bestehende manuelle Assets werden aktualisiert statt Duplikate zu erstellen, `findAssetByName` Methode im CmdbRepository
+
 ## [0.19.0-multi-ha.543] - 2026-04-17
 
 ### Fixed

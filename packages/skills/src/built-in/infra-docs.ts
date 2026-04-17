@@ -645,24 +645,38 @@ export class InfraDocsSkill extends Skill {
           try {
             const lines = dockerOutput.split('\n').slice(1); // skip header
             for (const line of lines) {
+              if (!line.trim()) continue;
+              // docker ps table format uses variable spaces OR tabs between columns
               const parts = line.split(/\t+/).map(s => s.trim());
-              if (parts.length < 2 || !parts[0]) continue;
-              const containerName = parts[0];
-              const image = parts[1] ?? '';
-              const status = parts[2] ?? '';
-              const ports = parts[3] ?? '';
+              // If tab-split didn't work (single element), split by 2+ spaces
+              const cols = parts.length >= 2 ? parts : line.split(/\s{2,}/).map(s => s.trim());
+              if (cols.length < 2 || !cols[0]) continue;
+              const containerName = cols[0];
+              const image = cols[1] ?? '';
+              const status = cols[2] ?? '';
+              const ports = cols[3] ?? '';
               const isRunning = status.toLowerCase().startsWith('up');
-              await this.cmdb.upsertAsset(userId, {
-                name: containerName,
-                assetType: 'container' as any,
-                sourceSkill: 'deep_scan',
-                sourceId: `${assetId}:${containerName}`,
-                ipAddress: asset.ipAddress,
-                status: isRunning ? 'active' as any : 'inactive' as any,
-                attributes: { image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
-              });
+              // Check if a manual asset with the same name already exists — update it instead of creating duplicate
+              const existingByName = await this.cmdb.findAssetByName(userId, containerName, 'container' as any);
+              if (existingByName) {
+                await this.cmdb.updateAsset(userId, existingByName.id, {
+                  sourceSkill: 'deep_scan', sourceId: `${assetId}:${containerName}`,
+                  ipAddress: asset.ipAddress, status: isRunning ? 'active' as any : 'inactive' as any,
+                  attributes: { ...((existingByName.attributes as any) ?? {}), image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
+                } as any);
+              } else {
+                await this.cmdb.upsertAsset(userId, {
+                  name: containerName,
+                  assetType: 'container' as any,
+                  sourceSkill: 'deep_scan',
+                  sourceId: `${assetId}:${containerName}`,
+                  ipAddress: asset.ipAddress,
+                  status: isRunning ? 'active' as any : 'inactive' as any,
+                  attributes: { image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
+                });
+              }
               // Link container → host asset
-              const container = await this.cmdb.getAssetBySource(userId, 'deep_scan', `${assetId}:${containerName}`);
+              const container = existingByName ?? await this.cmdb.getAssetBySource(userId, 'deep_scan', `${assetId}:${containerName}`);
               if (container) {
                 await this.cmdb.upsertRelation(userId, container.id, assetId, 'runs_on' as any, true);
               }

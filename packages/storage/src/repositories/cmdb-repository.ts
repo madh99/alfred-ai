@@ -176,6 +176,15 @@ export class CmdbRepository {
     return row ? rowToAsset(row) : null;
   }
 
+  async findAssetByName(userId: string, name: string, assetType?: CmdbAssetType): Promise<CmdbAsset | null> {
+    const sql = assetType
+      ? `SELECT * FROM cmdb_assets WHERE user_id = ? AND name = ? AND asset_type = ? LIMIT 1`
+      : `SELECT * FROM cmdb_assets WHERE user_id = ? AND name = ? LIMIT 1`;
+    const params = assetType ? [userId, name, assetType] : [userId, name];
+    const row = await this.db.queryOne(sql, params);
+    return row ? rowToAsset(row) : null;
+  }
+
   async listAssets(userId: string, filters?: {
     assetType?: CmdbAssetType; status?: CmdbAssetStatus; environment?: CmdbEnvironment;
     sourceSkill?: string; search?: string; tags?: string;
