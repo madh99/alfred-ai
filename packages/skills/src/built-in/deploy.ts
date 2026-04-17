@@ -28,7 +28,7 @@ export class DeploySkill extends Skill {
     category: 'infrastructure',
     description:
       'SSH-basiertes Deployment + VM-Provisionierung. ' +
-      '"provision" erstellt eine neue VM/LXC aus Template, wartet auf SSH, installiert Runtime (node/python/docker). Braucht KEIN project/repo_url — nur hostname, template, IP. ' +
+      '"provision" erstellt eine neue VM/LXC aus Proxmox-Template, wartet auf SSH+Cloud-Init, installiert Runtime (node/python/docker), qemu-guest-agent, Docker-Gruppe. IMMER provision statt proxmox clone_vm verwenden wenn eine VM erstellt UND konfiguriert werden soll! Braucht: hostname, template (VMID), target (new_vm/new_lxc), runtime (docker/node/python). Optional: ip, gateway, memory, cores. ' +
       '"full_deploy" = provision + Code-Deployment + optional DNS/Proxy/Firewall. Braucht project + repo_url. ' +
       '"deploy" klont/pullt ein Git-Repo auf bestehendem Host, installiert Dependencies, baut und startet den Service. ' +
       '"status" zeigt den Service-Status (pm2/systemd). ' +
@@ -502,6 +502,14 @@ export class DeploySkill extends Skill {
 
           // Ensure docker group for Deep Scan (if Docker is on the system)
           await this.ssh(host, user, 'id -nG | grep -q docker || sudo usermod -aG docker $USER 2>/dev/null').catch(() => {});
+
+          // Install qemu-guest-agent for Proxmox integration
+          if (isRhel) {
+            await this.ssh(host, user, 'sudo dnf install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent').catch(() => {});
+          } else {
+            await this.ssh(host, user, 'sudo apt-get install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent').catch(() => {});
+          }
+          steps.push('📡 qemu-guest-agent installiert');
         }
       } else {
         // Existing host

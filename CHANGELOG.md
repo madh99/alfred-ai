@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.555] - 2026-04-17
+
+### Added
+- **qemu-guest-agent** — Wird bei jeder neuen VM/LXC automatisch installiert + aktiviert
+- **Provision Skill-Beschreibung** — Klarer formuliert damit LLM `deploy provision` statt `proxmox clone_vm` waehlt
+
 ## [0.19.0-multi-ha.554] - 2026-04-17
 
 ### Added
