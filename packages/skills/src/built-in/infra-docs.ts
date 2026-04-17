@@ -641,15 +641,18 @@ export class InfraDocsSkill extends Skill {
         if (sections.length > 0) sshData = '\n\n## Live-Daten (SSH Deep Scan)\n\n' + sections.join('\n\n');
 
         // Auto-register discovered Docker containers as CMDB assets
+        console.log(`[deep-scan] dockerOutput length=${dockerOutput.length}, first80=${JSON.stringify(dockerOutput.slice(0, 80))}`);
         if (dockerOutput && !dockerOutput.includes('(kein Docker)')) {
           try {
             const lines = dockerOutput.split('\n').slice(1); // skip header
+            console.log(`[deep-scan] Parsing ${lines.length} docker lines`);
             for (const line of lines) {
               if (!line.trim()) continue;
               // docker ps table format uses variable spaces OR tabs between columns
               const parts = line.split(/\t+/).map(s => s.trim());
               // If tab-split didn't work (single element), split by 2+ spaces
               const cols = parts.length >= 2 ? parts : line.split(/\s{2,}/).map(s => s.trim());
+              console.log(`[deep-scan] line cols=${cols.length}: ${JSON.stringify(cols.slice(0, 2))}`);
               if (cols.length < 2 || !cols[0]) continue;
               const containerName = cols[0];
               const image = cols[1] ?? '';
@@ -658,12 +661,14 @@ export class InfraDocsSkill extends Skill {
               const isRunning = status.toLowerCase().startsWith('up');
               // Check if a manual asset with the same name already exists — update it instead of creating duplicate
               const existingByName = await this.cmdb.findAssetByName(userId, containerName, 'container' as any);
+              console.log(`[deep-scan] container=${containerName} existingByName=${existingByName?.id ?? 'null'} image=${image}`);
               if (existingByName) {
                 await this.cmdb.updateAsset(userId, existingByName.id, {
                   sourceSkill: 'deep_scan', sourceId: `${assetId}:${containerName}`,
                   ipAddress: asset.ipAddress, status: isRunning ? 'active' as any : 'inactive' as any,
                   attributes: { ...((existingByName.attributes as any) ?? {}), image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
                 } as any);
+                console.log(`[deep-scan] updated existing asset ${existingByName.id}`);
               } else {
                 await this.cmdb.upsertAsset(userId, {
                   name: containerName,
@@ -674,6 +679,7 @@ export class InfraDocsSkill extends Skill {
                   status: isRunning ? 'active' as any : 'inactive' as any,
                   attributes: { image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
                 });
+                console.log(`[deep-scan] created new asset ${containerName}`);
               }
               // Link container → host asset
               const container = existingByName ?? await this.cmdb.getAssetBySource(userId, 'deep_scan', `${assetId}:${containerName}`);
