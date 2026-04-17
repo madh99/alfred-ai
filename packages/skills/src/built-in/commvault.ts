@@ -175,10 +175,12 @@ export class CommvaultSkill extends Skill {
   private async getStatus(): Promise<SkillResult> {
     const [jobsData, alertsData, storageData] = await Promise.all([
       this.api<any>('GET', '/Job?completedJobLookupTime=86400&jobFilter=Backup'),
-      this.api<any>('GET', '/V4/Alert').catch(() =>
+      this.api<any>('GET', '/V4/TriggeredAlerts').catch(() =>
         this.api<any>('GET', '/AlertRule').catch(() => ({}))
       ),
-      this.api<any>('GET', '/StoragePool').catch(() => ({ storagePoolList: [] })),
+      this.api<any>('GET', '/V4/Storage/Disk').catch(() =>
+        this.api<any>('GET', '/StoragePool').catch(() => ({}))
+      ),
     ]);
 
     const jobs = jobsData.jobs ?? jobsData.jobList ?? [];
@@ -186,20 +188,24 @@ export class CommvaultSkill extends Skill {
     const running = jobs.filter((j: any) => j.jobSummary?.status === 'Running' || j.status === 'Running');
     const completed = jobs.filter((j: any) => j.jobSummary?.status === 'Completed' || j.status === 'Completed');
 
-    // V4 triggered alerts: { alertsTriggered, totalCount } OR legacy: { alertList }
     const alerts = alertsData.alertsTriggered ?? alertsData.alertList ?? alertsData.alerts ?? [];
     const criticalAlerts = alerts.filter((a: any) => {
       const sev = typeof a.severity === 'string' ? a.severity.toUpperCase() : '';
       return sev === 'CRITICAL' || a.severity === 1;
     });
 
-    const pools = storageData.storagePoolList ?? storageData.storagePools ?? [];
+    // V4: { diskStorage: [{ name, capacity (MB), freeSpace (MB) }] }
+    // Legacy: { storagePoolList: [{ storagePoolEntity: { storagePoolName }, totalCapacity (bytes) }] }
+    const isV4Storage = !!storageData.diskStorage;
+    const pools = storageData.diskStorage ?? storageData.storagePoolList ?? storageData.storagePools ?? [];
     const storageLines: string[] = [];
     for (const p of pools.slice(0, 5)) {
-      const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?';
-      const totalGB = Math.round((p.totalCapacity ?? 0) / 1024 / 1024 / 1024);
-      const freeGB = Math.round((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024 / 1024);
-      const usedPct = totalGB > 0 ? Math.round(((totalGB - freeGB) / totalGB) * 100) : 0;
+      const name = isV4Storage ? (p.name ?? '?') : (p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?');
+      const totalMB = isV4Storage ? (p.capacity ?? 0) : ((p.totalCapacity ?? 0) / 1024 / 1024);
+      const freeMB = isV4Storage ? (p.freeSpace ?? 0) : ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024);
+      const totalGB = Math.round(totalMB / 1024);
+      const freeGB = Math.round(freeMB / 1024);
+      const usedPct = totalMB > 0 ? Math.round(((totalMB - freeMB) / totalMB) * 100) : 0;
       const warn = usedPct >= (this.config.storage_warning_pct ?? 85) ? ' ⚠️' : '';
       storageLines.push(`  ${name}: ${usedPct}% belegt (${freeGB} GB frei)${warn}`);
     }
@@ -353,24 +359,36 @@ export class CommvaultSkill extends Skill {
   }
 
   private async getStorage(): Promise<SkillResult> {
-    const data = await this.api<any>('GET', '/StoragePool');
-    const pools = data.storagePoolList ?? data.storagePools ?? [];
+    // V4 endpoint: /V4/Storage/Disk returns { diskStorage: [...] } with capacity in MB
+    // Fallback: legacy /StoragePool returns { storagePoolList: [...] } with capacity in bytes
+    let pools: any[] = [];
+    let isV4 = false;
+    try {
+      const v4Data = await this.api<any>('GET', '/V4/Storage/Disk');
+      pools = v4Data.diskStorage ?? [];
+      isV4 = pools.length > 0;
+    } catch { /* V4 not available */ }
+    if (!isV4) {
+      try {
+        const legacyData = await this.api<any>('GET', '/StoragePool');
+        pools = legacyData.storagePoolList ?? legacyData.storagePools ?? [];
+      } catch { /* skip */ }
+    }
 
     const lines = ['## Commvault Storage', ''];
     for (const p of pools) {
-      // Pool name: nested in storagePoolEntity.storagePoolName (per API docs)
-      const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?';
-      const poolId = p.storagePoolEntity?.storagePoolId ?? p.storagePoolId ?? '';
-      // Capacity fields: totalCapacity + totalFreeSpace (per API docs, NOT freeCapacity)
-      const totalBytes = p.totalCapacity ?? 0;
-      const freeBytes = p.totalFreeSpace ?? p.freeCapacity ?? 0;
-      const totalTB = (totalBytes / 1024 / 1024 / 1024 / 1024).toFixed(1);
-      const freeTB = (freeBytes / 1024 / 1024 / 1024 / 1024).toFixed(1);
-      const usedPct = totalBytes > 0 ? Math.round(((totalBytes - freeBytes) / totalBytes) * 100) : 0;
+      const name = isV4 ? (p.name ?? '?') : (p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? p.name ?? '?');
+      const poolId = isV4 ? (p.id ?? '') : (p.storagePoolEntity?.storagePoolId ?? '');
       const status = p.status ?? '';
+      // V4: capacity/freeSpace in MB. Legacy: totalCapacity/totalFreeSpace in bytes
+      const totalMB = isV4 ? (p.capacity ?? 0) : ((p.totalCapacity ?? 0) / 1024 / 1024);
+      const freeMB = isV4 ? (p.freeSpace ?? 0) : ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024);
+      const totalGB = (totalMB / 1024).toFixed(1);
+      const freeGB = (freeMB / 1024).toFixed(1);
+      const usedPct = totalMB > 0 ? Math.round(((totalMB - freeMB) / totalMB) * 100) : 0;
       const warn = usedPct >= (this.config.storage_warning_pct ?? 85) ? ' ⚠️ WARNUNG' : '';
       lines.push(`**${name}**${poolId ? ` (ID: ${poolId})` : ''}${status ? ` [${status}]` : ''}${warn}:`);
-      lines.push(`  ${usedPct}% belegt | ${freeTB} TB frei von ${totalTB} TB`);
+      lines.push(`  ${usedPct}% belegt | ${freeGB} GB frei von ${totalGB} GB`);
     }
 
     return { success: true, data: { pools: pools.length }, display: lines.join('\n') };
@@ -380,7 +398,7 @@ export class CommvaultSkill extends Skill {
     // Use triggered alerts endpoint (not AlertRule which lists definitions)
     let data: any;
     try {
-      data = await this.api<any>('GET', '/V4/Alert');
+      data = await this.api<any>('GET', '/V4/TriggeredAlerts');
     } catch {
       // Fallback to legacy endpoint if V4 not available
       try { data = await this.api<any>('GET', '/AlertRule'); } catch { data = {}; }
@@ -486,14 +504,15 @@ export class CommvaultSkill extends Skill {
     }
 
     if (focus === 'all' || focus === 'storage') {
-      const storageData = await this.api<any>('GET', '/StoragePool').catch(() => ({ storagePoolList: [] }));
-      const pools = storageData.storagePoolList ?? [];
+      let pools: any[] = []; let isV4S = false;
+      try { const d = await this.api<any>('GET', '/V4/Storage/Disk'); pools = d.diskStorage ?? []; isV4S = pools.length > 0; } catch { /* V4 N/A */ }
+      if (!isV4S) try { const d = await this.api<any>('GET', '/StoragePool'); pools = d.storagePoolList ?? []; } catch { /* skip */ }
       parts.push('STORAGE:');
       for (const p of pools) {
-        const name = p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?';
-        const totalTB = ((p.totalCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
-        const freeTB = ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024 / 1024 / 1024).toFixed(1);
-        parts.push(`  - ${name}: ${freeTB} TB frei von ${totalTB} TB`);
+        const name = isV4S ? (p.name ?? '?') : (p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?');
+        const totalGB = isV4S ? ((p.capacity ?? 0) / 1024).toFixed(1) : ((p.totalCapacity ?? 0) / 1024 / 1024 / 1024).toFixed(1);
+        const freeGB = isV4S ? ((p.freeSpace ?? 0) / 1024).toFixed(1) : ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024 / 1024).toFixed(1);
+        parts.push(`  - ${name}: ${freeGB} GB frei von ${totalGB} GB`);
       }
     }
 
@@ -677,16 +696,18 @@ export class CommvaultSkill extends Skill {
         }
       }
 
-      // 2. Storage warnings
-      const storageData = await this.api<any>('GET', '/StoragePool').catch(() => ({ storagePoolList: [] }));
-      const pools = storageData.storagePoolList ?? [];
+      // 2. Storage warnings (V4 first, legacy fallback)
+      let storagePoolsP: any[] = []; let isV4P = false;
+      try { const d = await this.api<any>('GET', '/V4/Storage/Disk'); storagePoolsP = d.diskStorage ?? []; isV4P = storagePoolsP.length > 0; } catch { /* V4 N/A */ }
+      if (!isV4P) try { const d = await this.api<any>('GET', '/StoragePool'); storagePoolsP = d.storagePoolList ?? []; } catch { /* skip */ }
       const warnPct = this.config.storage_warning_pct ?? 85;
-      for (const p of pools) {
-        const total = p.totalCapacity ?? 1;
-        const free = p.totalFreeSpace ?? p.freeCapacity ?? 0;
-        const usedPct = total > 0 ? Math.round(((total - free) / total) * 100) : 0;
+      for (const p of storagePoolsP) {
+        const totalMB = isV4P ? (p.capacity ?? 0) : ((p.totalCapacity ?? 0) / 1024 / 1024);
+        const freeMB = isV4P ? (p.freeSpace ?? 0) : ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024);
+        const usedPct = totalMB > 0 ? Math.round(((totalMB - freeMB) / totalMB) * 100) : 0;
         if (usedPct >= warnPct) {
-          result.storageWarnings.push(`${p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?'}: ${usedPct}%`);
+          const name = isV4P ? (p.name ?? '?') : (p.storagePoolEntity?.storagePoolName ?? p.storagePoolName ?? '?');
+          result.storageWarnings.push(`${name}: ${usedPct}%`);
         }
       }
 
@@ -733,19 +754,22 @@ export class CommvaultSkill extends Skill {
     try {
       const [jobsData, storageData] = await Promise.all([
         this.api<any>('GET', '/Job?completedJobLookupTime=86400&jobFilter=Backup').catch(() => ({ jobs: [] })),
-        this.api<any>('GET', '/StoragePool').catch(() => ({ storagePoolList: [] })),
+        this.api<any>('GET', '/V4/Storage/Disk').catch(() =>
+          this.api<any>('GET', '/StoragePool').catch(() => ({}))
+        ),
       ]);
 
       const jobs = jobsData.jobs ?? jobsData.jobList ?? [];
       const failed = jobs.filter((j: any) => (j.jobSummary?.status ?? j.status) === 'Failed');
       const running = jobs.filter((j: any) => (j.jobSummary?.status ?? j.status) === 'Running');
 
-      const pools = storageData.storagePoolList ?? [];
+      const isV4 = !!storageData.diskStorage;
+      const pools = storageData.diskStorage ?? storageData.storagePoolList ?? [];
       const warnPct = this.config.storage_warning_pct ?? 85;
       const warnings = pools.filter((p: any) => {
-        const total = p.totalCapacity ?? 1;
-        const free = p.totalFreeSpace ?? p.freeCapacity ?? 0;
-        return total > 0 ? Math.round(((total - free) / total) * 100) >= warnPct : false;
+        const totalMB = isV4 ? (p.capacity ?? 0) : ((p.totalCapacity ?? 0) / 1024 / 1024);
+        const freeMB = isV4 ? (p.freeSpace ?? 0) : ((p.totalFreeSpace ?? p.freeCapacity ?? 0) / 1024 / 1024);
+        return totalMB > 0 ? Math.round(((totalMB - freeMB) / totalMB) * 100) >= warnPct : false;
       });
 
       const parts: string[] = [];
