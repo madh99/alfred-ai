@@ -56,6 +56,7 @@ export class InfraDocsSkill extends Skill {
         linked_entity_id: { type: 'string' },
         query: { type: 'string', description: 'Suchbegriff' },
         asset_id: { type: 'string', description: 'Asset ID oder Name' },
+        deep_scan: { type: 'boolean', description: 'SSH Deep Scan — liest OS, Pakete, Services, Docker, Netzwerk direkt vom System' },
         runbook_id: { type: 'string', description: 'Runbook ID' },
         auto_generate: { type: 'boolean', description: 'LLM-generierter Inhalt' },
         scope: { type: 'string', enum: ['full', 'vlan', 'firewall', 'dns'] },
@@ -80,6 +81,11 @@ export class InfraDocsSkill extends Skill {
 
   setLlmCallback(cb: LlmCallback): void {
     this.llmCallback = cb;
+  }
+
+  private sshCallback?: (host: string, command: string) => Promise<string>;
+  setSshCallback(cb: (host: string, command: string) => Promise<string>): void {
+    this.sshCallback = cb;
   }
 
   /** Persist a generated document to the archive (non-blocking, fire-and-forget). */
@@ -592,6 +598,7 @@ export class InfraDocsSkill extends Skill {
     const asset = await this.resolveAsset(userId, input);
     if (!asset) return { success: false, error: `Asset "${input.asset_id ?? input.asset_name}" nicht gefunden` };
     const assetId = asset.id;
+    const deepScan = input.deep_scan === true || input.deep === true;
 
     const relations = await this.cmdb.getRelationsForAsset(userId, assetId);
     const relatedAssets: string[] = [];
@@ -599,6 +606,38 @@ export class InfraDocsSkill extends Skill {
       const otherId = r.sourceAssetId === assetId ? r.targetAssetId : r.sourceAssetId;
       const other = await this.cmdb.getAssetById(userId, otherId);
       if (other) relatedAssets.push(`- ${other.name} (${other.assetType}, ${r.relationType})`);
+    }
+
+    // Deep scan: SSH into the VM to read OS, packages, services, network, docker
+    let sshData = '';
+    if (deepScan && this.sshCallback) {
+      const host = asset.ipAddress ?? asset.hostname ?? asset.fqdn ?? asset.name;
+      try {
+        const commands: Record<string, string> = {
+          'OS': 'cat /etc/os-release 2>/dev/null | head -5',
+          'Hostname': 'hostname -f 2>/dev/null',
+          'IP-Adressen': 'ip -4 addr show 2>/dev/null | grep inet | grep -v 127.0.0.1',
+          'CPU': 'nproc 2>/dev/null && cat /proc/cpuinfo 2>/dev/null | grep "model name" | head -1',
+          'RAM': 'free -h 2>/dev/null | head -2',
+          'Disk': 'df -h 2>/dev/null | grep -E "^/dev|Filesystem"',
+          'Laufende Services': 'systemctl list-units --type=service --state=running --no-pager 2>/dev/null | head -30',
+          'Installierte Pakete (Top 30)': 'dpkg -l 2>/dev/null | tail -n +6 | head -30 || rpm -qa 2>/dev/null | sort | head -30',
+          'Docker Container': 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "(kein Docker)"',
+          'Offene Ports': 'ss -tlnp 2>/dev/null | head -20',
+          'Uptime': 'uptime 2>/dev/null',
+        };
+
+        const sections: string[] = [];
+        for (const [label, cmd] of Object.entries(commands)) {
+          try {
+            const output = await this.sshCallback(host, cmd);
+            if (output.trim()) sections.push(`### ${label}\n\`\`\`\n${output.trim()}\n\`\`\``);
+          } catch { /* skip individual command */ }
+        }
+        if (sections.length > 0) sshData = '\n\n## Live-Daten (SSH Deep Scan)\n\n' + sections.join('\n\n');
+      } catch {
+        sshData = '\n\n_SSH Deep Scan fehlgeschlagen — Host nicht erreichbar._';
+      }
     }
 
     if (!this.llmCallback) {
@@ -625,7 +664,8 @@ export class InfraDocsSkill extends Skill {
         '',
         '## Betriebshinweise',
         '— manuell ergänzen —',
-      ].join('\n');
+        sshData,
+      ].filter(Boolean).join('\n');
       await this.persistDoc(userId, 'system_doc', `System-Dok: ${asset.name}`, doc, { linkedEntityType: 'asset', linkedEntityId: assetId });
       return { success: true, data: { asset }, display: doc };
     }
@@ -646,7 +686,11 @@ export class InfraDocsSkill extends Skill {
       '## Verbundene Systeme',
       relatedAssets.length > 0 ? relatedAssets.join('\n') : '— keine —',
       '',
-      'Erstelle Sektionen: Übersicht, Architektur, Netzwerk, Konfiguration, Monitoring, Betriebshinweise, Backup/Recovery.',
+      sshData ? `\n## Live-Daten (vom System ausgelesen)\n${sshData}` : '',
+      '',
+      sshData
+        ? 'Erstelle eine VOLLSTÄNDIGE System-Dokumentation basierend auf den CMDB-Daten UND den Live-Daten. Sektionen: Übersicht, OS & Hardware, Netzwerk, Installierte Software, Laufende Services, Docker Container, Disk & Storage, Monitoring, Betriebshinweise, Backup/Recovery.'
+        : 'Erstelle Sektionen: Übersicht, Architektur, Netzwerk, Konfiguration, Monitoring, Betriebshinweise, Backup/Recovery.',
     ].filter(Boolean).join('\n');
 
     const generated = await this.llmCallback(prompt, 'strong');

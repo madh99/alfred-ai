@@ -797,6 +797,17 @@ export class Alfred {
           return res.content;
         });
 
+        // Wire SSH callback for deep system scans
+        if (skillRegistry.has('shell')) {
+          infraDocsSkill.setSshCallback(async (host: string, command: string) => {
+            const shellSkill = skillRegistry.get('shell')!;
+            const result = await skillSandbox.execute(shellSkill, {
+              command: `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${host} '${command.replace(/'/g, "'\\''")}'`,
+            }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
+            return result.success ? (result.display ?? String(result.data ?? '')) : '';
+          });
+        }
+
         // Wire discovery sources from registered infra skills
         const wrapSkillAsSource = (skillName: string, discoverFn: () => Promise<{ assets: any[]; relations: any[] }>) => {
           if (skillRegistry.has(skillName)) cmdbSkill.registerDiscoverySource(skillName, discoverFn);
