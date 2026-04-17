@@ -935,16 +935,23 @@ export class Alfred {
 
         wrapSkillAsSource('docker', async () => {
           const assets: any[] = [];
+          const relations: any[] = [];
+          const hostIp = this.config.docker?.host?.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
           try {
             const result = await skillSandbox.execute(skillRegistry.get('docker')!, { action: 'containers' }, {} as any);
             if (result.success && Array.isArray(result.data)) {
               for (const c of result.data) {
                 const name = (c.Names?.[0] ?? c.Id ?? '').replace(/^\//, '');
-                assets.push({ name, assetType: 'container', sourceSkill: 'docker', sourceId: (c.Id ?? '').slice(0, 12), status: c.State === 'running' ? 'active' : 'inactive', attributes: { image: c.Image, status: c.Status, ports: c.Ports, host_ip: this.config.docker?.host?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') } });
+                const sourceId = (c.Id ?? '').slice(0, 12);
+                assets.push({ name, assetType: 'container', sourceSkill: 'docker', sourceId, status: c.State === 'running' ? 'active' : 'inactive', ipAddress: hostIp, attributes: { image: c.Image, status: c.Status, ports: c.Ports, host_ip: hostIp } });
+                // Link container → host VM by IP match (resolved during CMDB upsert)
+                if (hostIp) {
+                  relations.push({ sourceKey: `docker:${sourceId}`, targetKey: `ip:${hostIp}`, relationType: 'runs_on' as const });
+                }
               }
             }
           } catch { /* skip */ }
-          return { assets, relations: [] };
+          return { assets, relations };
         });
 
         wrapSkillAsSource('unifi', async () => {

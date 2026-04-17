@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.541] - 2026-04-17
+
+### Added
+- **Deep Scan: Docker Container als CMDB-Assets** — SSH Deep Scan auf einer VM registriert entdeckte Docker Container automatisch als Assets (Typ: container) mit `runs_on` Relation zum Host
+- **Docker Discovery: runs_on Relation** — Docker Discovery Source erstellt jetzt `runs_on` Relationen (Container → Host-VM) per IP-Match
+
 ## [0.19.0-multi-ha.540] - 2026-04-17
 
 ### Added

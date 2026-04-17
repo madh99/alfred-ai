@@ -628,13 +628,47 @@ export class InfraDocsSkill extends Skill {
         };
 
         const sections: string[] = [];
+        let dockerOutput = '';
         for (const [label, cmd] of Object.entries(commands)) {
           try {
             const output = await this.sshCallback(host, cmd);
-            if (output.trim()) sections.push(`### ${label}\n\`\`\`\n${output.trim()}\n\`\`\``);
+            if (output.trim()) {
+              sections.push(`### ${label}\n\`\`\`\n${output.trim()}\n\`\`\``);
+              if (label === 'Docker Container') dockerOutput = output.trim();
+            }
           } catch { /* skip individual command */ }
         }
         if (sections.length > 0) sshData = '\n\n## Live-Daten (SSH Deep Scan)\n\n' + sections.join('\n\n');
+
+        // Auto-register discovered Docker containers as CMDB assets
+        if (dockerOutput && !dockerOutput.includes('(kein Docker)')) {
+          try {
+            const lines = dockerOutput.split('\n').slice(1); // skip header
+            for (const line of lines) {
+              const parts = line.split(/\t+/).map(s => s.trim());
+              if (parts.length < 2 || !parts[0]) continue;
+              const containerName = parts[0];
+              const image = parts[1] ?? '';
+              const status = parts[2] ?? '';
+              const ports = parts[3] ?? '';
+              const isRunning = status.toLowerCase().startsWith('up');
+              await this.cmdb.upsertAsset(userId, {
+                name: containerName,
+                assetType: 'container' as any,
+                sourceSkill: 'deep_scan',
+                sourceId: `${assetId}:${containerName}`,
+                ipAddress: asset.ipAddress,
+                status: isRunning ? 'active' as any : 'inactive' as any,
+                attributes: { image, status, ports, host_ip: asset.ipAddress, host_asset_id: assetId },
+              });
+              // Link container → host asset
+              const container = await this.cmdb.getAssetBySource(userId, 'deep_scan', `${assetId}:${containerName}`);
+              if (container) {
+                await this.cmdb.upsertRelation(userId, container.id, assetId, 'runs_on' as any, true);
+              }
+            }
+          } catch { /* non-critical — asset registration failed */ }
+        }
       } catch {
         sshData = '\n\n_SSH Deep Scan fehlgeschlagen — Host nicht erreichbar._';
       }
