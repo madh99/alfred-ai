@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-type Action = 'deploy' | 'full_deploy' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
+type Action = 'deploy' | 'full_deploy' | 'provision' | 'status' | 'logs' | 'stop' | 'start' | 'restart' | 'rollback' | 'setup_node' | 'setup_python';
 type SkillCallback = (input: Record<string, unknown>) => Promise<SkillResult>;
 
 /** Sanitize user input for safe SSH command interpolation. */
@@ -27,22 +27,24 @@ export class DeploySkill extends Skill {
     name: 'deploy',
     category: 'infrastructure',
     description:
-      'SSH-basiertes Deployment auf beliebigen Hosts. ' +
-      '"deploy" klont/pullt ein Git-Repo, installiert Dependencies, baut und startet den Service. ' +
+      'SSH-basiertes Deployment + VM-Provisionierung. ' +
+      '"provision" erstellt eine neue VM/LXC aus Template, wartet auf SSH, installiert Runtime (node/python/docker). Braucht KEIN project/repo_url — nur hostname, template, IP. ' +
+      '"full_deploy" = provision + Code-Deployment + optional DNS/Proxy/Firewall. Braucht project + repo_url. ' +
+      '"deploy" klont/pullt ein Git-Repo auf bestehendem Host, installiert Dependencies, baut und startet den Service. ' +
       '"status" zeigt den Service-Status (pm2/systemd). ' +
       '"logs" zeigt die letzten Log-Zeilen. ' +
       '"stop/start/restart" verwalten den Service. ' +
       '"rollback" setzt auf den vorherigen Commit zurück. ' +
       '"setup_node" installiert Node.js auf dem Zielhost. ' +
       '"setup_python" installiert Python + venv auf dem Zielhost. ' +
-      'Alle Actions brauchen host (IP/Hostname). Optional: user, port, project, repo_url, app_port, process_manager.',
+      'Template-Erkennung: ubuntu→User ubuntu, rocky/alma/centos→User cloud-user. SSH-Key wird automatisch injiziert.',
     riskLevel: 'admin',
     version: '1.0.0',
     timeoutMs: 300_000, // 5 min for deploy
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['deploy', 'full_deploy', 'status', 'logs', 'stop', 'start', 'restart', 'rollback', 'setup_node', 'setup_python'] },
+        action: { type: 'string', enum: ['deploy', 'full_deploy', 'provision', 'status', 'logs', 'stop', 'start', 'restart', 'rollback', 'setup_node', 'setup_python'] },
         host: { type: 'string', description: 'Ziel-IP oder Hostname (für deploy/status/logs etc. erforderlich, für full_deploy optional wenn target=new_lxc/new_vm)' },
         target: { type: 'string', description: 'Deployment-Ziel für full_deploy: existing (bestehendem Host), new_lxc (neue LXC erstellen), new_vm (VM aus Template klonen). Default: existing' },
         domain: { type: 'string', description: 'Domain für DNS + Reverse Proxy (für full_deploy, z.B. uboot.cc)' },
@@ -117,6 +119,7 @@ export class DeploySkill extends Skill {
     const action = input.action as Action;
 
     if (action === 'full_deploy') return this.fullDeploy(input);
+    if (action === 'provision') return this.provision(input);
 
     const host = input.host as string;
     if (!host) return { success: false, error: 'host ist erforderlich' };
@@ -351,6 +354,18 @@ export class DeploySkill extends Skill {
 
   // ── Full Deploy Orchestrator ──────────────────────────────────
 
+  /**
+   * Provision: Create VM/LXC + install runtime. No code deployment.
+   * Use for "erstelle eine VM mit Docker" without needing a project/repo.
+   */
+  private async provision(input: Record<string, unknown>): Promise<SkillResult> {
+    // Re-use fullDeploy but skip code deployment
+    const hostname = input.hostname as string;
+    if (!hostname) return { success: false, error: 'hostname erforderlich' };
+    // Set project=hostname so fullDeploy doesn't complain, but mark skip_deploy
+    return this.fullDeploy({ ...input, project: hostname, _skip_deploy: true });
+  }
+
   private async fullDeploy(input: Record<string, unknown>): Promise<SkillResult> {
     const project = input.project as string;
     const domain = input.domain as string | undefined;
@@ -435,19 +450,25 @@ export class DeploySkill extends Skill {
             steps.push(`📦 VM "${hostname}" geklont aus Template ${template}`);
           }
 
-          // Wait for VM to be ready via SSH
-          steps.push('⏳ Warte auf VM...');
-          await new Promise(r => setTimeout(r, 15_000));
-          let sshReady = await this.testSsh(host, user);
-          if (!sshReady) {
-            await new Promise(r => setTimeout(r, 30_000));
-            sshReady = await this.testSsh(host, user);
+          // Wait for VM to be ready via SSH (Cloud-Init needs 60-120s)
+          steps.push('⏳ Warte auf VM + Cloud-Init...');
+          let sshReady = false;
+          const sshStartTime = Date.now();
+          const sshTimeout = 180_000; // 3 minutes max
+          const sshInterval = 15_000; // check every 15s
+          await new Promise(r => setTimeout(r, 20_000)); // initial wait for boot
+          while (Date.now() - sshStartTime < sshTimeout) {
+            sshReady = await this.testSsh(host!, user);
+            if (sshReady) break;
+            await new Promise(r => setTimeout(r, sshInterval));
           }
           if (!sshReady) {
-            steps.push('❌ SSH nicht erreichbar nach 45s');
-            return { success: false, error: `SSH zu ${host} nicht erreichbar`, data: { steps } };
+            const waited = Math.round((Date.now() - sshStartTime) / 1000);
+            steps.push(`❌ SSH nicht erreichbar nach ${waited}s`);
+            return { success: false, error: `SSH zu ${user}@${host} nicht erreichbar nach ${waited}s — Cloud-Init ggf. nicht fertig`, data: { steps } };
           }
-          steps.push(`✅ Host ${host} erreichbar via SSH (User: ${user})`);
+          const waited = Math.round((Date.now() - sshStartTime) / 1000);
+          steps.push(`✅ Host ${host} erreichbar via SSH (User: ${user}, nach ${waited}s)`);
 
           // Detect OS family for package manager
           const isRhel = templateLower.includes('rocky') || templateLower.includes('alma') || templateLower.includes('centos') || templateLower.includes('fedora') || templateLower.includes('rhel');
@@ -488,11 +509,15 @@ export class DeploySkill extends Skill {
         steps.push(`🖥️ Bestehender Host: ${host}`);
       }
 
-      // ── STEP 2: Deploy Code ──
-      const deployResult = await this.doDeploy(host!, user, input, pm, runtime);
-      if (!deployResult.success) return { ...deployResult, data: { steps, ...(deployResult.data as Record<string, unknown> ?? {}) } };
-      const deploySteps = (deployResult.data as Record<string, unknown>)?.steps as string[] ?? [];
-      steps.push(...deploySteps);
+      // ── STEP 2: Deploy Code (skipped for provision-only) ──
+      if (input._skip_deploy) {
+        steps.push('✅ Provisionierung abgeschlossen (kein Code-Deploy)');
+      } else {
+        const deployResult = await this.doDeploy(host!, user, input, pm, runtime);
+        if (!deployResult.success) return { ...deployResult, data: { steps, ...(deployResult.data as Record<string, unknown> ?? {}) } };
+        const deploySteps = (deployResult.data as Record<string, unknown>)?.steps as string[] ?? [];
+        steps.push(...deploySteps);
+      }
 
       // ── STEP 3: Firewall ──
       if (!input.skip_firewall && appPort && !this.firewallFn) {

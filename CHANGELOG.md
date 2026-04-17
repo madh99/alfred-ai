@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.554] - 2026-04-17
+
+### Added
+- **Deploy `provision` Action** — VM/LXC erstellen + Runtime installieren ohne Code-Deploy. "Erstelle eine Ubuntu VM mit Docker" funktioniert jetzt ohne project/repo_url
+- **SSH Retry-Schleife** — Wartet bis zu 3 Minuten auf SSH (alle 15s prüfen) statt nur 45s. Cloud-Init braucht oft 60-120s
+
 ## [0.19.0-multi-ha.553] - 2026-04-17
 
 ### Fixed
