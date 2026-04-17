@@ -24,7 +24,7 @@ export class InfraDocsSkill extends Skill {
       'Infrastruktur-Dokumentation — Generiert, verwaltet und versioniert IT-Dokumentation aus CMDB/ITSM-Daten. ' +
       'Reports: "inventory_report", "topology_diagram" (Mermaid), "service_map" (Mermaid), "change_log", "incident_report", "export". ' +
       'CRUD: "create_doc", "get_doc", "update_doc", "delete_doc", "list_docs", "search_docs". ' +
-      'Auto-Generate: "generate_system_doc" (asset_id), "generate_service_doc" (service_id), "generate_network_doc" (scope), "generate_config_snapshot" (asset_id). ' +
+      'Auto-Generate: "generate_system_doc" (asset_id, deep_scan=true fuer SSH-Scan mit OS/Pakete/Services/Docker/Ports), "generate_service_doc" (service_id), "generate_network_doc" (scope), "generate_config_snapshot" (asset_id). Wenn der User "deep scan", "vollstaendig", "detailliert", "komplett" sagt → deep_scan=true setzen. ' +
       'Runbooks: "create_runbook", "get_runbook", "update_runbook", "suggest_runbook", "execute_runbook". ' +
       'Versioning: "doc_versions", "doc_diff" (version_a/version_b), "doc_revert" (target_version). ' +
       '"runbook" generiert ein Runbook für einen Service via LLM (service_id).',
@@ -56,7 +56,7 @@ export class InfraDocsSkill extends Skill {
         linked_entity_id: { type: 'string' },
         query: { type: 'string', description: 'Suchbegriff' },
         asset_id: { type: 'string', description: 'Asset ID oder Name' },
-        deep_scan: { type: 'boolean', description: 'SSH Deep Scan — liest OS, Pakete, Services, Docker, Netzwerk direkt vom System' },
+        deep_scan: { type: 'boolean', description: 'SSH Deep Scan — liest OS, Pakete, Services, Docker, Netzwerk direkt vom System. Setze auf true wenn User "deep scan", "vollstaendig", "detailliert", "komplett" sagt.' },
         runbook_id: { type: 'string', description: 'Runbook ID' },
         auto_generate: { type: 'boolean', description: 'LLM-generierter Inhalt' },
         scope: { type: 'string', enum: ['full', 'vlan', 'firewall', 'dns'] },
