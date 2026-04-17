@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.545] - 2026-04-17
+
+### Fixed
+- **Deep Scan SSH-Callback** — Gibt jetzt reinen stdout zurueck statt formatierten Shell-Output mit "stdout:" Prefix und "exit code:" Suffix. Das war der Grund warum Docker-Container nicht als Assets registriert wurden
+
 ## [0.19.0-multi-ha.544] - 2026-04-17
 
 ### Fixed

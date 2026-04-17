@@ -811,7 +811,10 @@ export class Alfred {
             const result = await skillSandbox.execute(shellSkill, {
               command: `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${this.config.infra?.sshUser ? this.config.infra.sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`,
             }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
-            return result.success ? (result.display ?? String(result.data ?? '')) : '';
+            if (!result.success) return '';
+            // Return raw stdout, not the formatted display (which includes "stdout:" prefix and "exit code:" suffix)
+            const data = result.data as { stdout?: string } | undefined;
+            return data?.stdout ?? result.display ?? '';
           });
         }
 
