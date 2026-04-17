@@ -3095,10 +3095,16 @@ export class Alfred {
           : this.config.whatsapp?.enabled ? 'whatsapp'
           : 'api') as Platform;
 
+        const reflectionAdapter = this.database?.getAdapter();
+        const reflectionCmdbRepo = this.config.cmdb?.enabled !== false && reflectionAdapter
+          ? new CmdbRepository(reflectionAdapter)
+          : undefined;
+
         this.reflectionEngine = new ReflectionEngine({
           watchRepo: this.watchRepo,
           memoryRepo: this.memoryRepo,
           activityRepo: this.activityRepo,
+          cmdbRepo: reflectionCmdbRepo,
           skillRegistry: this.skillRegistry,
           skillSandbox: this.skillSandbox,
           llm: this.llmProvider,

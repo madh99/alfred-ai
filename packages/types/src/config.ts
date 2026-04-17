@@ -478,6 +478,11 @@ export interface ReflectionConfig {
     repeatSequenceThreshold?: number;
     analysisWindowDays?: number;
   };
+  docs?: {
+    configSnapshotIntervalDays?: number;
+    staleDocWarningDays?: number;
+    runbookValidation?: boolean;
+  };
   autonomy?: {
     adjustParams?: 'auto' | 'proactive' | 'confirm';
     deleteWatch?: 'auto' | 'proactive' | 'confirm';

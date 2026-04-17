@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.529] - 2026-04-17
+
+### Added
+- **IT Documentation Platform (Phase B — WebUI)** — Vollstaendiger Dokumentations-Browser im WebUI:
+  - **Baumansicht:** Sidebar mit Assets, Services, und unverknuepften Dokumenten. Eingeklappt/Ausgeklappt per Klick. Doc-Count Badges
+  - **Dokument-Viewer:** Markdown-Rendering mit react-markdown + remark-gfm. Dark-Theme Syntax-Highlighting fuer Code-Bloecke, Tabellen, Listen
+  - **Inline-Editor:** Textarea + Live-Markdown-Preview Side-by-Side. Speichern erstellt neue Version
+  - **Versionen-Panel:** Alle Versionen mit Datum und Generator. Klick laedt aeltere Version
+  - **Erstellen-Dialog:** Dokumenttyp waehlen, Titel, optionale Entity-Verknuepfung, Markdown-Content
+  - **Suche:** Volltextsuche ueber alle Dokumente
+  - **Loeschen:** Mit Bestaetigungs-Schritt
+  - **Generator-Tab:** Bestehende Generate/Export Funktionalitaet bleibt erhalten
+  - **API Client:** 7 neue Methoden (fetchDocTree, fetchDoc, fetchDocVersions, createDoc, updateDoc, deleteDoc, searchDocs)
+
+- **IT Documentation Platform (Phase C — DocReflector)** — Monatliche automatische Dokumentations-Pflege:
+  - **Stale-Doc-Erkennung:** Dokumente aelter als 90 Tage → "Update empfohlen" Vorschlag
+  - **Runbook-Validierung:** Prueft ob verknuepfte Assets noch existieren. Geloeschte/decommissioned → Warnung
+  - **Config-Snapshot-Freshness:** Assets ohne aktuellen Config-Snapshot (>30 Tage) → Vorschlag
+  - **Konfigurierbar:** reflection.docs.configSnapshotIntervalDays, staleDocWarningDays, runbookValidation
+
 ## [0.19.0-multi-ha.528] - 2026-04-17
 
 ### Added

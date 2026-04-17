@@ -141,6 +141,36 @@ export interface LogResponse {
   files?: LogFile[];
 }
 
+// ── Infra Docs ────────────────────────────────────────────
+
+export interface DocTreeNode {
+  id: string;
+  name: string;
+  type?: string;
+  category?: string;
+  docs: Array<{ id: string; title: string; docType: string; version: number; createdAt: string }>;
+}
+
+export interface DocTree {
+  assets: DocTreeNode[];
+  services: DocTreeNode[];
+  unlinked: Array<{ id: string; title: string; docType: string; version: number; createdAt: string }>;
+}
+
+export interface DocDetail {
+  id: string;
+  userId: string;
+  docType: string;
+  title: string;
+  content: string;
+  format: string;
+  linkedEntityType?: string;
+  linkedEntityId?: string;
+  version: number;
+  generatedBy?: string;
+  createdAt: string;
+}
+
 // ── Cluster / HA Operations ─────────────────────────────────
 
 export interface ClusterNode {

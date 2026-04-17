@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { WatchRepository, MemoryRepository, ActivityRepository, WorkflowRepository } from '@alfred/storage';
+import type { WatchRepository, MemoryRepository, ActivityRepository, WorkflowRepository, CmdbRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
@@ -41,6 +41,11 @@ export interface ReflectionConfig {
     repeatSequenceThreshold?: number;
     analysisWindowDays?: number;
   };
+  docs?: {
+    configSnapshotIntervalDays?: number;
+    staleDocWarningDays?: number;
+    runbookValidation?: boolean;
+  };
   autonomy?: {
     adjustParams?: 'auto' | 'proactive' | 'confirm';
     deleteWatch?: 'auto' | 'proactive' | 'confirm';
@@ -54,6 +59,7 @@ export interface ReflectorDeps {
   workflowRepo?: WorkflowRepository;
   memoryRepo: MemoryRepository;
   activityRepo: ActivityRepository;
+  cmdbRepo?: CmdbRepository;
   skillRegistry: SkillRegistry;
   skillSandbox: SkillSandbox;
   llm: LLMProvider;
@@ -88,6 +94,11 @@ export function resolveReflectionConfig(partial?: ReflectionConfig): Required<Re
       repeatQueryThreshold: partial?.conversation?.repeatQueryThreshold ?? 3,
       repeatSequenceThreshold: partial?.conversation?.repeatSequenceThreshold ?? 3,
       analysisWindowDays: partial?.conversation?.analysisWindowDays ?? 7,
+    },
+    docs: {
+      configSnapshotIntervalDays: partial?.docs?.configSnapshotIntervalDays ?? 30,
+      staleDocWarningDays: partial?.docs?.staleDocWarningDays ?? 90,
+      runbookValidation: partial?.docs?.runbookValidation ?? true,
     },
     autonomy: {
       adjustParams: partial?.autonomy?.adjustParams ?? 'auto',

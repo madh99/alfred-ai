@@ -353,6 +353,47 @@ export class AlfredClient {
     return res.json();
   }
 
+  async fetchDocTree(): Promise<import('@/types/api').DocTree> {
+    const res = await fetch(`${this.baseUrl}/api/docs/tree`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Docs: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async fetchDoc(id: string): Promise<import('@/types/api').DocDetail> {
+    const res = await fetch(`${this.baseUrl}/api/docs/${id}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Doc: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async fetchDocVersions(id: string): Promise<import('@/types/api').DocDetail[]> {
+    const res = await fetch(`${this.baseUrl}/api/docs/${id}/versions`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Versions: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async createDoc(data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/docs`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`Create: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async updateDoc(id: string, data: Record<string, unknown>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/docs/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`Update: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async deleteDoc(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/docs/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
+  async searchDocs(query: string): Promise<import('@/types/api').DocDetail[]> {
+    const res = await fetch(`${this.baseUrl}/api/docs/search?q=${encodeURIComponent(query)}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Search: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ── Documents Archive API ──
 
   async cmdbListDocuments(filters?: Record<string, string>): Promise<any[]> {

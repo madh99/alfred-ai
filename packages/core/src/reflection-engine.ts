@@ -5,6 +5,7 @@ import { WatchReflector } from './reflection/watch-reflector.js';
 import { WorkflowReflector } from './reflection/workflow-reflector.js';
 import { ReminderReflector } from './reflection/reminder-reflector.js';
 import { ConversationReflector } from './reflection/conversation-reflector.js';
+import { DocReflector } from './reflection/doc-reflector.js';
 import { ActionExecutor } from './reflection/action-executor.js';
 import type { ReflectionResult } from './reflection/types.js';
 
@@ -14,6 +15,7 @@ export class ReflectionEngine {
   private readonly workflowReflector: WorkflowReflector;
   private readonly reminderReflector: ReminderReflector;
   private readonly conversationReflector: ConversationReflector;
+  private readonly docReflector: DocReflector;
   private readonly actionExecutor: ActionExecutor;
   private readonly config: ReflectorDeps['config'];
   private readonly nodeId: string;
@@ -57,6 +59,12 @@ export class ReflectionEngine {
       dbAdapter,
       deps.logger.child({ component: 'conversation-reflector' }),
       deps.config.conversation as Required<typeof deps.config.conversation>,
+    );
+
+    this.docReflector = new DocReflector(
+      deps.cmdbRepo,
+      deps.logger.child({ component: 'doc-reflector' }),
+      deps.config.docs as Required<typeof deps.config.docs>,
     );
 
     this.actionExecutor = new ActionExecutor(
@@ -126,10 +134,11 @@ export class ReflectionEngine {
       this.workflowReflector.reflect(userId),
       this.reminderReflector.reflect(userId),
       this.conversationReflector.reflect(userId),
+      this.docReflector.reflect(userId),
     ]);
 
     const results: ReflectionResult[] = [];
-    const reflectorNames = ['watch', 'workflow', 'reminder', 'conversation'];
+    const reflectorNames = ['watch', 'workflow', 'reminder', 'conversation', 'docs'];
 
     for (let i = 0; i < settled.length; i++) {
       const outcome = settled[i];
