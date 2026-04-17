@@ -519,6 +519,38 @@ export class AlfredClient {
     return res.json();
   }
 
+  // ── SLA Management API ──
+
+  async setSla(targetType: 'service' | 'asset', targetId: string, sla: import('@/types/api').SlaDefinition): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/sla/set`, {
+      method: 'POST',
+      headers: this.jsonHeaders,
+      body: JSON.stringify({ targetType, targetId, sla }),
+    });
+    if (!res.ok) throw new Error(`SetSLA: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async getSlaReport(targetType: 'service' | 'asset', targetId: string, period?: string): Promise<any> {
+    const params = period ? `?period=${period}` : '';
+    const res = await fetch(`${this.baseUrl}/api/sla/report/${targetType}/${targetId}${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`SLAReport: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async checkSlaCompliance(): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/sla/compliance`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`SLACompliance: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async getSlaBreaches(period?: string): Promise<any[]> {
+    const params = period ? `?period=${period}` : '';
+    const res = await fetch(`${this.baseUrl}/api/sla/breaches${params}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`SLABreaches: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchClusterHealth(): Promise<import('@/types/api').ClusterHealthData> {
     const res = await fetch(`${this.baseUrl}/api/cluster/health`, { headers: this.authHeaders });
     if (!res.ok) throw new Error(`Cluster: HTTP ${res.status}`);

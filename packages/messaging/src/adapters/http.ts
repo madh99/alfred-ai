@@ -83,6 +83,11 @@ export interface ItsmCallbacks {
   deleteService: (userId: string, id: string) => Promise<boolean>;
   getServicesForAsset: (userId: string, assetId: string) => Promise<any[]>;
   generateDocs: (userId: string, serviceId: string) => Promise<any>;
+  // SLA Management
+  setSla: (userId: string, targetType: string, targetId: string, sla: Record<string, unknown>) => Promise<any>;
+  getSlaReport: (userId: string, targetType: string, targetId: string, period?: string) => Promise<any>;
+  checkSlaCompliance: (userId: string) => Promise<any>;
+  getSlaBreaches: (userId: string, period?: string) => Promise<any[]>;
 }
 
 export interface DocsCallbacks {
@@ -536,6 +541,17 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.match(/^\/api\/services\/[^/]+$/) && req.method === 'DELETE') {
       const id = url.pathname.split('/').pop()!;
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.deleteService(userId, id));
+    } else if (url.pathname === '/api/sla/compliance' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.checkSlaCompliance(userId));
+    } else if (url.pathname === '/api/sla/breaches' && req.method === 'GET') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getSlaBreaches(userId, url.searchParams.get('period') ?? undefined));
+    } else if (url.pathname.match(/^\/api\/sla\/report\/(service|asset)\/[^/]+$/) && req.method === 'GET') {
+      const parts = url.pathname.split('/');
+      const targetType = parts[4];
+      const targetId = parts[5];
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.getSlaReport(userId, targetType, targetId, url.searchParams.get('period') ?? undefined));
+    } else if (url.pathname === '/api/sla/set' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.setSla(userId, body.targetType as string, body.targetId as string, body.sla as Record<string, unknown>));
     // ── ITSM API ──
     } else if (url.pathname === '/api/itsm/incidents' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => {

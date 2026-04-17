@@ -2740,6 +2740,33 @@ export class Alfred {
           },
           detectPatterns: async (uid: string, data: Record<string, unknown>) => problemRepo.detectPatterns(await resolveUser(uid), data as any),
           getProblemDashboard: async (uid: string) => problemRepo.getDashboard(await resolveUser(uid)),
+          // SLA Management
+          setSla: async (uid: string, targetType: string, targetId: string, sla: Record<string, unknown>) => {
+            const userId = await resolveUser(uid);
+            if (targetType === 'service') {
+              return itsmRepo.updateService(userId, targetId, { sla } as any);
+            } else {
+              return cmdbRepo.updateAsset(userId, targetId, { sla } as any);
+            }
+          },
+          getSlaReport: async (uid: string, targetType: string, targetId: string, period?: string) => {
+            const userId = await resolveUser(uid);
+            const itsmSkill = this.skillRegistry?.get('itsm');
+            if (itsmSkill) {
+              return itsmSkill.execute({ action: 'get_sla_report', sla_target_type: targetType, sla_target_id: targetId, sla_period: period }, { userId, masterUserId: userId } as any);
+            }
+            return { success: false, error: 'ITSM skill not registered' };
+          },
+          checkSlaCompliance: async (uid: string) => {
+            const userId = await resolveUser(uid);
+            const itsmSkill = this.skillRegistry?.get('itsm');
+            if (itsmSkill) return itsmSkill.execute({ action: 'check_sla_compliance' }, { userId, masterUserId: userId } as any);
+            return { success: false, error: 'ITSM skill not registered' };
+          },
+          getSlaBreaches: async (uid: string, period?: string) => {
+            const userId = await resolveUser(uid);
+            return itsmRepo.getSlaBreaches(userId, period ? new Date(period).toISOString() : undefined);
+          },
         });
 
         (apiAdapter as any).setDocsCallbacks({

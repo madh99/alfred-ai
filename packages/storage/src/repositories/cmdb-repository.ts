@@ -217,6 +217,7 @@ export class CmdbRepository {
       if (key in updates) { fields.push(`${col} = ?`); params.push((updates as any)[key] ?? null); }
     }
     if (updates.attributes) { fields.push(`attributes = ?`); params.push(JSON.stringify(updates.attributes)); }
+    if ((updates as any).sla !== undefined) { fields.push('sla = ?'); params.push(JSON.stringify((updates as any).sla)); }
 
     if (fields.length === 0) return existing;
 
