@@ -565,9 +565,85 @@ export class Alfred {
     if (this.config.proxmox) {
       const { ProxmoxSkill } = await import('@alfred/skills');
       const pxSkill = new ProxmoxSkill(this.config.proxmox);
-      // Auto-inject SSH key path for Cloud-Init on clone_vm/create_lxc
       const sshKeyPath = this.config.infra?.sshKeyPath ?? `${process.env['HOME'] ?? '/root'}/.ssh/id_ed25519`;
       pxSkill.setSshKeyPath(sshKeyPath);
+      pxSkill.setSshUser(this.config.infra?.sshUser ?? 'root');
+
+      // Post-provision callback: SSH wait + runtime install after clone_vm with runtime parameter
+      pxSkill.setPostProvisionCallback(async (host: string, user: string, runtime: string, isRhel: boolean) => {
+        const { execFile } = await import('node:child_process');
+        const { promisify } = await import('node:util');
+        const execFileAsync = promisify(execFile);
+        const steps: string[] = [];
+
+        const runSsh = async (cmd: string) => {
+          const { stdout } = await execFileAsync('ssh', [
+            '-i', sshKeyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
+            `${user}@${host}`, cmd,
+          ], { maxBuffer: 5 * 1024 * 1024, timeout: 300_000 });
+          return stdout.trim();
+        };
+
+        // Wait for SSH (Cloud-Init needs 60-120s)
+        steps.push('⏳ Warte auf SSH + Cloud-Init...');
+        let sshReady = false;
+        const startTime = Date.now();
+        await new Promise(r => setTimeout(r, 20_000)); // initial boot wait
+        while (Date.now() - startTime < 180_000) {
+          try { await runSsh('echo ok'); sshReady = true; break; } catch { /* retry */ }
+          await new Promise(r => setTimeout(r, 15_000));
+        }
+        if (!sshReady) {
+          steps.push(`❌ SSH nicht erreichbar nach ${Math.round((Date.now() - startTime) / 1000)}s`);
+          return steps;
+        }
+        steps.push(`✅ SSH erreichbar nach ${Math.round((Date.now() - startTime) / 1000)}s`);
+
+        // Install runtime
+        try {
+          if (runtime === 'docker') {
+            await runSsh('curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER');
+            if (isRhel) {
+              await runSsh('sudo dnf install -y docker-compose-plugin').catch(() => {});
+            } else {
+              await runSsh('sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose').catch(() => {});
+            }
+            steps.push('🐳 Docker + Docker Compose installiert');
+          } else if (runtime === 'node') {
+            if (isRhel) {
+              await runSsh('curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - && sudo dnf install -y nodejs && sudo npm install -g pm2');
+            } else {
+              await runSsh('curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs && sudo npm install -g pm2 && sudo pm2 startup systemd -u $USER --hp /home/$USER');
+            }
+            steps.push('📦 Node.js + pm2 installiert');
+          } else if (runtime === 'python') {
+            if (isRhel) {
+              await runSsh('sudo dnf install -y python3 python3-pip');
+            } else {
+              await runSsh('sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv');
+            }
+            steps.push('🐍 Python installiert');
+          }
+        } catch (err: any) {
+          steps.push(`⚠️ Runtime-Installation: ${err.message?.slice(0, 100)}`);
+        }
+
+        // qemu-guest-agent
+        try {
+          if (isRhel) {
+            await runSsh('sudo dnf install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent');
+          } else {
+            await runSsh('sudo apt-get install -y qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent');
+          }
+          steps.push('📡 qemu-guest-agent installiert');
+        } catch { steps.push('⚠️ qemu-guest-agent Installation fehlgeschlagen'); }
+
+        // docker group
+        try { await runSsh('id -nG | grep -q docker || sudo usermod -aG docker $USER 2>/dev/null'); } catch { /* ok */ }
+
+        return steps;
+      });
+
       skillRegistry.register(pxSkill);
       this.logger.info({ baseUrl: this.config.proxmox.baseUrl, sshKeyPath }, 'Proxmox skill enabled');
     }

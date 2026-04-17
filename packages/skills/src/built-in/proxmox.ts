@@ -94,8 +94,9 @@ export class ProxmoxSkill extends Skill {
     category: 'infrastructure',
     description:
       'Manage Proxmox VE virtual machines, containers, and cluster. ' +
-      'Use action "list_vms" to see VMs, "start_vm"/"shutdown_vm" to control them, ' +
-      '"cluster_status" for health, "create_snapshot" for backups.',
+      '"clone_vm" klont VM aus Template mit Cloud-Init (hostname, template=VMID, ip, gateway). Mit runtime=docker/node/python wird nach Erstellung automatisch SSH abgewartet und die Runtime + qemu-guest-agent installiert. ' +
+      '"create_lxc" erstellt LXC Container. ' +
+      '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
@@ -210,6 +211,11 @@ export class ProxmoxSkill extends Skill {
           type: 'number',
           description: 'VMID für neue VM (auto wenn nicht angegeben)',
         },
+        runtime: {
+          type: 'string',
+          enum: ['docker', 'node', 'python'],
+          description: 'Nach VM-Erstellung: Runtime installieren (docker, node, python). Installiert auch qemu-guest-agent. Wartet automatisch auf SSH.',
+        },
       },
       required: ['action'],
     },
@@ -219,6 +225,8 @@ export class ProxmoxSkill extends Skill {
   private vmCache: { entries: VmEntry[]; ts: number } | null = null;
   private static readonly VM_CACHE_TTL = 30_000; // 30 seconds
   private sshKeyPath?: string;
+  private sshUser?: string;
+  private postProvisionFn?: (host: string, user: string, runtime: string, isRhel: boolean) => Promise<string[]>;
 
   constructor(config: ProxmoxConfig) {
     super();
@@ -227,6 +235,14 @@ export class ProxmoxSkill extends Skill {
 
   /** Set SSH key path for Cloud-Init auto-injection on clone_vm/create_lxc. */
   setSshKeyPath(path: string): void { this.sshKeyPath = path; }
+
+  /** Set default SSH user for post-provision. */
+  setSshUser(user: string): void { this.sshUser = user; }
+
+  /** Set callback for post-provision runtime installation (SSH wait + install). */
+  setPostProvisionCallback(fn: (host: string, user: string, runtime: string, isRhel: boolean) => Promise<string[]>): void {
+    this.postProvisionFn = fn;
+  }
 
   // -----------------------------------------------------------------------
   // execute — main dispatch
@@ -1032,7 +1048,6 @@ export class ProxmoxSkill extends Skill {
     const configBody: Record<string, unknown> = {};
     if (ip) configBody.ipconfig0 = `ip=${ip}${gateway ? `,gw=${gateway}` : ''}`;
     if (sshKey) configBody.sshkeys = encodeURIComponent(sshKey);
-    console.log(`[proxmox-clone] Cloud-Init config: ip=${ip} sshKey=${sshKey ? sshKey.slice(0, 30) + '...' : 'NONE'} configKeys=${Object.keys(configBody)}`);
     if (memory) configBody.memory = memory;
     if (cores) configBody.cores = cores;
     if (bridge || vlanTag) {
@@ -1046,10 +1061,53 @@ export class ProxmoxSkill extends Skill {
       } catch { /* config apply failed — VM still usable but may need manual config */ }
     }
 
+    const steps: string[] = [
+      `✅ VM "${hostname}" (VMID ${assignedVmid}) geklont aus Template ${templateVmid}`,
+    ];
+    if (ip) steps.push(`- Cloud-Init IP: ${ip}`);
+    if (sshKey) steps.push('- SSH Key injiziert');
+
+    // Auto-start + runtime install if runtime parameter is set
+    const runtime = input.runtime as string | undefined;
+    if (runtime && ip) {
+      // Start the VM
+      try {
+        await this.post(`/nodes/${node}/qemu/${assignedVmid}/status/start`, {});
+        steps.push('🚀 VM gestartet');
+      } catch (err: any) {
+        steps.push(`⚠️ VM-Start fehlgeschlagen: ${err.message?.slice(0, 80)}`);
+      }
+
+      // Detect Cloud-Init user from template name
+      const tplLower = (hostname ?? template).toLowerCase();
+      const ciUser = (tplLower.includes('rocky') || tplLower.includes('alma') || tplLower.includes('centos')) ? 'cloud-user'
+        : tplLower.includes('debian') ? 'debian'
+        : tplLower.includes('fedora') ? 'fedora'
+        : 'ubuntu';
+      const isRhel = ciUser === 'cloud-user' || tplLower.includes('fedora');
+      steps.push(`👤 Cloud-Init User: ${ciUser}`);
+
+      // Post-provision: SSH wait + runtime install via callback
+      if (this.postProvisionFn) {
+        const host = ip.replace(/\/\d+$/, ''); // strip CIDR prefix
+        try {
+          const installSteps = await this.postProvisionFn(host, ciUser, runtime, isRhel);
+          steps.push(...installSteps);
+        } catch (err: any) {
+          steps.push(`⚠️ Post-Provision fehlgeschlagen: ${err.message?.slice(0, 100)}`);
+        }
+      } else {
+        steps.push(`⚠️ Runtime "${runtime}" gewünscht, aber Post-Provision Callback nicht verfügbar`);
+        steps.push(`Nächster Schritt: manuell SSH → ${runtime} installieren`);
+      }
+    } else if (!runtime) {
+      steps.push(`\nNächster Schritt: "proxmox start_vm vmid=${assignedVmid}"`);
+    }
+
     return {
       success: true,
-      data: { node, templateVmid, hostname, upid, clonedVmid: assignedVmid, ip },
-      display: `✅ VM "${hostname}" (VMID ${assignedVmid}) geklont aus Template ${templateVmid}\n${ip ? `- Cloud-Init IP: ${ip}` : ''}${sshKey ? '\n- SSH Key injiziert' : ''}\n\nNächster Schritt: "proxmox start_vm vmid=${assignedVmid}"`,
+      data: { node, templateVmid, hostname, upid, clonedVmid: assignedVmid, ip, steps },
+      display: steps.join('\n'),
     };
   }
 

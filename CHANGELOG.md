@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.556] - 2026-04-17
+
+### Added
+- **Proxmox clone_vm mit runtime Parameter** — `clone_vm` kann jetzt direkt nach VM-Erstellung Docker/Node/Python installieren. Kein Umweg ueber deploy Skill noetig. LLM muss nur `proxmox clone_vm runtime=docker` aufrufen. Ablauf: Clone → Cloud-Init → Start → SSH warten (3 Min.) → Runtime + qemu-guest-agent installieren
+- **Cloud-Init User-Erkennung** im Proxmox-Skill — ubuntu/rocky/debian/fedora automatisch
+
 ## [0.19.0-multi-ha.555] - 2026-04-17
 
 ### Added
