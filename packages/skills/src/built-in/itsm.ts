@@ -10,7 +10,8 @@ type Action =
   | 'create_change_request' | 'update_change' | 'get_change' | 'approve_change' | 'start_change' | 'complete_change' | 'rollback_change' | 'list_changes'
   | 'create_problem' | 'update_problem' | 'get_problem' | 'list_problems' | 'link_incident_to_problem' | 'unlink_incident_from_problem' | 'promote_to_problem' | 'create_fix_change' | 'mark_known_error' | 'detect_problem_patterns' | 'problem_dashboard'
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard'
-  | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs';
+  | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs'
+  | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -53,13 +54,17 @@ export class ItsmSkill extends Skill {
       '"remove_failure_mode" entfernt Failure-Mode (service_id, failure_mode_name). ' +
       '"update_failure_mode" aktualisiert Failure-Mode (service_id, failure_mode_name + partielle Updates). ' +
       '"service_impact_analysis" zeigt alle Services die ein Asset nutzen inkl. Failure-Modes (asset_id oder name). ' +
-      '"generate_service_docs" generiert Service-Doku + SOP per Failure-Mode im Hintergrund (service_id).',
+      '"generate_service_docs" generiert Service-Doku + SOP per Failure-Mode im Hintergrund (service_id). ' +
+      '"set_sla" setzt SLA auf Service oder Asset (sla_target_type, sla_target_id, sla_name, sla_availability, sla_mttr_minutes, sla_response_minutes, sla_resolution_minutes, sla_breach_alert). ' +
+      '"get_sla_report" zeigt SLA-Verfügbarkeits-Report (sla_target_type, sla_target_id, sla_period). ' +
+      '"check_sla_compliance" prüft alle aktiven SLAs auf Einhaltung. ' +
+      '"list_sla_breaches" listet SLA-Verletzungen (sla_period).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -114,6 +119,20 @@ export class ItsmSkill extends Skill {
         affected_components: { type: 'array', items: { type: 'string' }, description: 'Betroffene Komponenten-Namen' },
         cascade_effects: { type: 'array', items: { type: 'string' }, description: 'Kaskadierende Effekte' },
         recovery_minutes: { type: 'number', description: 'Geschaetzte Recovery-Zeit in Minuten' },
+        // SLA Management
+        sla_target_type: { type: 'string', enum: ['service', 'asset'], description: 'SLA auf Service oder Asset' },
+        sla_target_id: { type: 'string', description: 'ID des Service/Asset' },
+        sla_name: { type: 'string', description: 'Name des SLA (z.B. "Gold SLA")' },
+        sla_availability: { type: 'number', description: 'Verfügbarkeits-Ziel in Prozent (z.B. 99.9)' },
+        sla_mttr_minutes: { type: 'number', description: 'Max. Mean Time To Repair in Minuten' },
+        sla_response_minutes: { type: 'number', description: 'Max. Response-Zeit in Minuten' },
+        sla_resolution_minutes: { type: 'number', description: 'Max. Resolution-Zeit in Minuten' },
+        sla_breach_alert: { type: 'boolean', description: 'Alarm bei SLA-Verletzung (default: true)' },
+        sla_warning_threshold: { type: 'number', description: 'Warnschwelle in Prozent (z.B. 99.5 bei 99.9% Ziel)' },
+        sla_period: { type: 'string', description: 'Berichtszeitraum (z.B. "2026-04", default: aktueller Monat)' },
+        // Component Hierarchy
+        component_parent: { type: 'string', description: 'Name der übergeordneten Komponente (Hierarchie: VM → Container)' },
+        component_failure_impact: { type: 'string', enum: ['down', 'degraded', 'no_impact'], description: 'Service-Impact bei Komponentenausfall' },
         // Problem Management
         root_cause_description: { type: 'string' },
         root_cause_category: { type: 'string', enum: ['infrastructure', 'software', 'configuration', 'capacity', 'security', 'network', 'data', 'process', 'external', 'unknown'] },
@@ -214,6 +233,10 @@ export class ItsmSkill extends Skill {
         case 'update_failure_mode': return await this.updateFailureMode(userId, input);
         case 'service_impact_analysis': return await this.serviceImpactAnalysis(userId, input);
         case 'generate_service_docs': return await this.generateServiceDocs(userId, input);
+        case 'set_sla': return await this.setSla(userId, input);
+        case 'get_sla_report': return await this.getSlaReport(userId, input);
+        case 'check_sla_compliance': return await this.checkSlaCompliance(userId);
+        case 'list_sla_breaches': return await this.listSlaBreaches(userId, input);
         default: return { success: false, error: `Unbekannte Aktion: ${String(action)}` };
       }
     } catch (err: any) {
@@ -755,6 +778,26 @@ export class ItsmSkill extends Skill {
     if (input.component_asset_id) component.assetId = input.component_asset_id;
     if (input.component_service_id) component.serviceId = input.component_service_id;
     if (input.component_external_url) component.externalUrl = input.component_external_url;
+    if (input.component_parent) component.parentComponent = input.component_parent;
+    if (input.component_failure_impact) component.failureImpact = input.component_failure_impact;
+
+    // Validate parent exists and no circular reference
+    if (component.parentComponent) {
+      if (!svc.components.some((c: any) => c.name === component.parentComponent)) {
+        return { success: false, error: `Parent-Komponente "${component.parentComponent}" nicht gefunden im Service` };
+      }
+      let depth = 1;
+      let current = component.parentComponent;
+      while (current && depth <= 3) {
+        const parent = svc.components.find((c: any) => c.name === current);
+        if (!(parent as any)?.parentComponent) break;
+        current = (parent as any).parentComponent;
+        depth++;
+      }
+      if (depth > 3) {
+        return { success: false, error: 'Maximale Hierarchie-Tiefe (3 Ebenen) überschritten' };
+      }
+    }
 
     const components = [...svc.components, component];
     // Sync assetId into flat asset_ids for backward compat
@@ -1339,5 +1382,169 @@ export class ItsmSkill extends Skill {
         });
       } catch { /* skip individual SOP failures */ }
     }
+  }
+
+  // ── SLA Management ────────────────────────────────────────
+
+  private async setSla(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const targetType = input.sla_target_type as 'service' | 'asset';
+    const targetId = input.sla_target_id as string ?? input.service_id as string ?? input.asset_id as string;
+    if (!targetId) return { success: false, error: 'sla_target_id (oder service_id/asset_id) erforderlich' };
+    if (!targetType) return { success: false, error: 'sla_target_type erforderlich (service oder asset)' };
+
+    const sla: import('@alfred/types').SlaDefinition = {
+      name: (input.sla_name as string) ?? 'Standard SLA',
+      enabled: true,
+      targets: {
+        availabilityPercent: input.sla_availability as number | undefined,
+        mttrMinutes: input.sla_mttr_minutes as number | undefined,
+        responseTimeMinutes: input.sla_response_minutes as number | undefined,
+        resolutionTimeMinutes: input.sla_resolution_minutes as number | undefined,
+      },
+      monitoring: {
+        trackAvailability: true,
+        breachAlertEnabled: input.sla_breach_alert !== false,
+        warningThresholdPercent: input.sla_warning_threshold as number | undefined,
+      },
+    };
+
+    if (sla.targets.availabilityPercent) {
+      sla.targets.maxDowntimeMinutesPerMonth = Math.round((1 - sla.targets.availabilityPercent / 100) * 30 * 24 * 60 * 100) / 100;
+    }
+
+    if (targetType === 'service') {
+      const svc = await this.itsm.getServiceById(userId, targetId);
+      if (!svc) return { success: false, error: `Service ${targetId} nicht gefunden` };
+      await this.itsm.updateService(userId, targetId, { sla } as any);
+      return { success: true, data: sla, display: `✅ SLA **${sla.name}** auf Service **${svc.name}** gesetzt (${sla.targets.availabilityPercent ?? '—'}% Verfügbarkeit)` };
+    } else {
+      const asset = await this.cmdb.getAssetById(userId, targetId);
+      if (!asset) return { success: false, error: `Asset ${targetId} nicht gefunden` };
+      await this.cmdb.updateAsset(userId, targetId, { sla } as any);
+      return { success: true, data: sla, display: `✅ SLA **${sla.name}** auf Asset **${asset.name}** gesetzt (${sla.targets.availabilityPercent ?? '—'}% Verfügbarkeit)` };
+    }
+  }
+
+  private async getSlaReport(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const targetType = input.sla_target_type as 'service' | 'asset' ?? 'service';
+    const targetId = input.sla_target_id as string ?? input.service_id as string ?? input.asset_id as string;
+    if (!targetId) return { success: false, error: 'sla_target_id erforderlich' };
+
+    const periodStr = input.sla_period as string;
+    let periodStart: string;
+    let periodEnd: string;
+    if (periodStr && /^\d{4}-\d{2}$/.test(periodStr)) {
+      const [y, m] = periodStr.split('-').map(Number);
+      periodStart = new Date(y, m - 1, 1).toISOString();
+      periodEnd = new Date(y, m, 0, 23, 59, 59).toISOString();
+    } else {
+      const now = new Date();
+      periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      periodEnd = now.toISOString();
+    }
+
+    let targetName = targetId;
+    let sla: import('@alfred/types').SlaDefinition | undefined;
+
+    if (targetType === 'service') {
+      const svc = await this.itsm.getServiceById(userId, targetId);
+      if (!svc) return { success: false, error: `Service ${targetId} nicht gefunden` };
+      targetName = svc.name;
+      sla = svc.sla;
+    } else {
+      const asset = await this.cmdb.getAssetById(userId, targetId);
+      if (!asset) return { success: false, error: `Asset ${targetId} nicht gefunden` };
+      targetName = asset.name;
+      sla = (asset as any).sla;
+    }
+
+    const avail = await this.itsm.calculateAvailability(userId, targetType, targetId, periodStart, periodEnd);
+    const breaches = await this.itsm.getSlaEvents(userId, targetType, targetId, periodStart, periodEnd);
+    const breachEvents = breaches.filter(e => e.eventType === 'breach' || e.eventType === 'warning');
+
+    const target = sla?.targets?.availabilityPercent;
+    const compliant = target ? avail.uptimePercent >= target : true;
+
+    const display = [
+      `## SLA Report: ${targetName}`,
+      '',
+      sla ? `**SLA:** ${sla.name} (Ziel: ${target ?? '—'}%)` : '**SLA:** nicht konfiguriert',
+      '',
+      `**Zeitraum:** ${periodStart.slice(0, 10)} — ${periodEnd.slice(0, 10)}`,
+      `**Verfügbarkeit:** ${avail.uptimePercent.toFixed(3)}%`,
+      `**Downtime:** ${avail.downtimeMinutes.toFixed(1)} Min. von ${avail.totalMinutes} Min.`,
+      target ? `**Status:** ${compliant ? '✅ Compliant' : '❌ SLA BREACH'}` : '',
+      '',
+      breachEvents.length > 0 ? `**Breaches/Warnings:** ${breachEvents.length}` : '**Breaches:** keine',
+      ...breachEvents.slice(0, 5).map(e => {
+        const icon = e.eventType === 'breach' ? '🔴' : '🟡';
+        return `  ${icon} ${e.startedAt.slice(0, 16)} — ${e.eventType}`;
+      }),
+    ].filter(Boolean).join('\n');
+
+    return { success: true, data: { targetName, sla, avail, breachEvents, compliant }, display };
+  }
+
+  private async checkSlaCompliance(userId: string): Promise<SkillResult> {
+    const services = await this.itsm.listServices(userId);
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    const periodEnd = now.toISOString();
+
+    const results: { name: string; type: string; target: number; actual: number; compliant: boolean }[] = [];
+
+    for (const svc of services) {
+      if (!svc.sla?.enabled || !svc.sla.targets.availabilityPercent) continue;
+      const avail = await this.itsm.calculateAvailability(userId, 'service', svc.id, periodStart, periodEnd);
+      results.push({
+        name: svc.name,
+        type: 'service',
+        target: svc.sla.targets.availabilityPercent,
+        actual: avail.uptimePercent,
+        compliant: avail.uptimePercent >= svc.sla.targets.availabilityPercent,
+      });
+    }
+
+    const icon = (c: boolean) => c ? '✅' : '❌';
+    const lines = results.map(r =>
+      `| ${icon(r.compliant)} | ${r.name} | ${r.target}% | ${r.actual.toFixed(3)}% | ${r.compliant ? 'OK' : 'BREACH'} |`,
+    );
+
+    const breachCount = results.filter(r => !r.compliant).length;
+    const display = [
+      `## SLA Compliance Check`,
+      '',
+      results.length === 0 ? 'Keine aktiven SLAs konfiguriert.' : '',
+      results.length > 0 ? `| Status | Service | Ziel | Aktuell | Ergebnis |\n|--------|---------|------|---------|----------|\n${lines.join('\n')}` : '',
+      '',
+      breachCount > 0 ? `⚠️ **${breachCount} SLA-Verletzung(en)!**` : results.length > 0 ? '✅ Alle SLAs eingehalten' : '',
+    ].filter(Boolean).join('\n');
+
+    return { success: true, data: results, display };
+  }
+
+  private async listSlaBreaches(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const periodStr = input.sla_period as string;
+    let since: string | undefined;
+    if (periodStr && /^\d{4}-\d{2}$/.test(periodStr)) {
+      const [y, m] = periodStr.split('-').map(Number);
+      since = new Date(y, m - 1, 1).toISOString();
+    } else {
+      since = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+    }
+
+    const breaches = await this.itsm.getSlaBreaches(userId, since);
+    if (breaches.length === 0) {
+      return { success: true, data: [], display: '✅ Keine SLA-Verletzungen im Zeitraum.' };
+    }
+
+    const lines = breaches.map(b => {
+      const icon = b.eventType === 'breach' ? '🔴' : '🟡';
+      let detail = '';
+      try { const d = JSON.parse(b.details ?? '{}'); detail = ` — Ziel: ${d.target}%, Aktuell: ${d.actual?.toFixed(3)}%`; } catch { /* ignore */ }
+      return `${icon} ${b.startedAt.slice(0, 16)} [${b.targetType}:${b.targetId.slice(0, 8)}] ${b.eventType}${detail}`;
+    });
+
+    return { success: true, data: breaches, display: `## SLA Breaches\n\n${lines.join('\n')}` };
   }
 }
