@@ -622,7 +622,7 @@ export class InfraDocsSkill extends Skill {
           'Disk': 'df -h 2>/dev/null | grep -E "^/dev|Filesystem"',
           'Laufende Services': 'systemctl list-units --type=service --state=running --no-pager 2>/dev/null | head -30',
           'Installierte Pakete (Top 30)': 'dpkg -l 2>/dev/null | tail -n +6 | head -30 || rpm -qa 2>/dev/null | sort | head -30',
-          'Docker Container': 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || sudo -n docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "(kein Docker)"',
+          'Docker Container': 'docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || echo "(kein Docker)"',
           'Offene Ports': 'ss -tlnp 2>/dev/null | head -20',
           'Uptime': 'uptime 2>/dev/null',
         };

@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.549] - 2026-04-17
+
+### Fixed
+- **Deep Scan Docker** — `sudo` Fallback entfernt: Shell-Skill blockiert `sudo` als "dangerous pattern", wodurch der gesamte Docker-Command fehlschlug. Docker-Zugriff stattdessen ueber docker-Gruppenmitgliedschaft des SSH-Users
+
 ## [0.19.0-multi-ha.546] - 2026-04-17
 
 ### Fixed
