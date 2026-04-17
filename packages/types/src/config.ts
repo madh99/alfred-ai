@@ -650,6 +650,7 @@ export interface CmdbAsset {
   attributes: Record<string, unknown>;
   tags?: string;
   notes?: string;
+  sla?: SlaDefinition;
   discoveredAt?: string;
   lastSeenAt?: string;
   lastVerifiedAt?: string;
@@ -723,6 +724,8 @@ export interface ServiceComponent {
   required: boolean;
   healthStatus?: ServiceHealthStatus;
   healthReason?: string;
+  parentComponent?: string;
+  failureImpact?: 'down' | 'degraded' | 'no_impact';
 }
 
 export interface FailureMode {
@@ -734,6 +737,44 @@ export interface FailureMode {
   runbookId?: string;
   sopId?: string;
   estimatedRecoveryMinutes?: number;
+}
+
+export interface SlaTargets {
+  availabilityPercent?: number;
+  maxDowntimeMinutesPerMonth?: number;
+  mttrMinutes?: number;
+  responseTimeMinutes?: number;
+  resolutionTimeMinutes?: number;
+}
+
+export interface SlaMonitoring {
+  trackAvailability: boolean;
+  breachAlertEnabled: boolean;
+  warningThresholdPercent?: number;
+}
+
+export interface SlaDefinition {
+  name: string;
+  enabled: boolean;
+  targets: SlaTargets;
+  monitoring: SlaMonitoring;
+  escalation?: {
+    breachNotify?: string[];
+    warningNotify?: string[];
+  };
+}
+
+export interface SlaEvent {
+  id: string;
+  userId: string;
+  targetType: 'service' | 'asset';
+  targetId: string;
+  eventType: 'up' | 'down' | 'degraded' | 'breach' | 'warning';
+  startedAt: string;
+  endedAt?: string;
+  durationMinutes?: number;
+  details?: string;
+  createdAt: string;
 }
 
 export interface CmdbService {
@@ -756,6 +797,7 @@ export interface CmdbService {
   owner?: string;
   documentation?: string;
   slaNotes?: string;
+  sla?: SlaDefinition;
   maintenanceWindow?: string;
   tags?: string;
   createdAt: string;

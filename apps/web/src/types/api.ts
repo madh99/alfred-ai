@@ -179,6 +179,7 @@ export interface ServiceComponent {
   failureDescription?: string; dependsOn?: string[]; ports?: number[];
   protocol?: string; dns?: string; ip?: string;
   healthCheckUrl?: string; healthStatus?: string; healthReason?: string;
+  parentComponent?: string;
 }
 
 export interface FailureMode {
@@ -193,7 +194,47 @@ export interface ServiceDetail {
   criticality?: string; components: ServiceComponent[];
   failureModes: FailureMode[]; dependencies?: string[];
   assetIds?: string[]; owner?: string; documentation?: string;
-  createdAt?: string; updatedAt?: string;
+  sla?: SlaDefinition; createdAt?: string; updatedAt?: string;
+}
+
+export interface SlaTargets {
+  availabilityPercent?: number;
+  maxDowntimeMinutesPerMonth?: number;
+  mttrMinutes?: number;
+  responseTimeMinutes?: number;
+  resolutionTimeMinutes?: number;
+}
+
+export interface SlaDefinition {
+  name: string;
+  enabled: boolean;
+  targets: SlaTargets;
+  monitoring: { trackAvailability: boolean; breachAlertEnabled: boolean; warningThresholdPercent?: number };
+}
+
+export interface SlaEvent {
+  id: string;
+  targetType: 'service' | 'asset';
+  targetId: string;
+  eventType: string;
+  startedAt: string;
+  endedAt?: string;
+  durationMinutes?: number;
+  details?: string;
+}
+
+export interface SlaReport {
+  targetType: 'service' | 'asset';
+  targetId: string;
+  targetName: string;
+  sla: SlaDefinition;
+  periodStart: string;
+  periodEnd: string;
+  uptimePercent: number;
+  downtimeMinutes: number;
+  totalMinutes: number;
+  breaches: SlaEvent[];
+  compliant: boolean;
 }
 
 // ── Cluster / HA Operations ─────────────────────────────────
