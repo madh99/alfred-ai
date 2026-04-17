@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.537] - 2026-04-17
+
+### Added
+- **Hierarchische Komponenten** — Parent-Child Beziehungen fuer Service-Komponenten:
+  - `parentComponent` Feld: VM → Docker Container Hierarchie (max 3 Ebenen)
+  - `failureImpact` Feld: Expliziter Impact-Override (down/degraded/no_impact) pro Komponente
+  - Health-Check: Topologische Sortierung (Parents zuerst), automatische Propagation Parent→Kind
+  - Validierung: Zirkul. Referenzen + Max-Tiefe bei add_component
+  - WebUI: Hierarchischer Graph (grosse Parent-Nodes, kleine Children, gestrichelte Links)
+  - Wizard: Parent-Komponente im Erstellen-Dialog waehlbar
+- **SLA Management** — Optionale SLAs auf Service- und Asset-Ebene:
+  - `SlaDefinition` Interface: Availability-%, MTTR, Response/Resolution-Zeiten, Breach-Alerts
+  - `sla_events` Tabelle: Uptime/Downtime-Tracking, Breach/Warning Events
+  - Health-Check SLA-Tracking: Automatische Event-Erstellung bei Status-Aenderungen, Compliance-Pruefung
+  - 4 neue ITSM-Actions: `set_sla`, `get_sla_report`, `check_sla_compliance`, `list_sla_breaches`
+  - 4 API-Endpoints: /api/sla/set, /api/sla/report/:type/:id, /api/sla/compliance, /api/sla/breaches
+  - WebUI: SLA-Sektion mit Verfuegbarkeits-Balken, Compliance-Status, MTTR/Response-Targets
+  - Reasoning: SLA-Breaches im Context Collector fuer proaktive Benachrichtigung
+  - Migration v56 (SQLite) / v59 (PG): sla Spalten + sla_events Tabelle
+
 ## [0.19.0-multi-ha.535] - 2026-04-17
 
 ### Added
