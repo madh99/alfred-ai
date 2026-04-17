@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.550] - 2026-04-17
+
+### Fixed
+- **Deep Scan Docker Auto-Registration** — Vollstaendig funktional: SSH-Callback gibt reinen stdout, Space-Split Parser, updateAsset mit sourceSkill/sourceId, kein sudo (Shell-Skill Block). Diagnose-Logs entfernt
+
 ## [0.19.0-multi-ha.549] - 2026-04-17
 
 ### Fixed
