@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.540] - 2026-04-17
+
+### Added
+- **Service bearbeiten (WebUI)** — Vollstaendiger Edit-Dialog mit 4 Tabs:
+  - Grunddaten: Name, Beschreibung, Kritikalitaet, Environment, Owner, URL
+  - Komponenten: Hinzufuegen/Entfernen/Bearbeiten inkl. CMDB-Asset, parentComponent, failureImpact
+  - Failure Modes: CRUD mit betroffenen Komponenten (Checkbox), Trigger, Impact, Kaskadeneffekte
+  - SLA: Aktivieren/Deaktivieren, Verfuegbarkeit-%, MTTR, Response/Resolution-Zeiten, Breach-Alert
+
 ## [0.19.0-multi-ha.539] - 2026-04-17
 
 ### Fixed

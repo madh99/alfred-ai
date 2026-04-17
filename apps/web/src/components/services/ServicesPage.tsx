@@ -90,6 +90,7 @@ export function ServicesPage() {
   const [selectedComponent, setSelectedComponent] = useState<ServiceComponent | null>(null);
   const [expandedFailure, setExpandedFailure] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
   const [docGenerating, setDocGenerating] = useState(false);
   const [linkedDocs, setLinkedDocs] = useState<any[]>([]);
   const graphRef = useRef<any>(null);
@@ -292,6 +293,10 @@ export function ServicesPage() {
                     className="text-xs bg-purple-500/20 text-purple-400 px-3 py-1.5 rounded hover:bg-purple-500/30 disabled:opacity-50"
                   >{docGenerating ? 'Generiert...' : 'Doku generieren'}</button>
                   <button
+                    onClick={() => setShowEdit(true)}
+                    className="text-xs bg-blue-500/20 text-blue-400 px-3 py-1.5 rounded hover:bg-blue-500/30"
+                  >Bearbeiten</button>
+                  <button
                     onClick={handleDelete}
                     className="text-xs bg-red-500/20 text-red-400 px-3 py-1.5 rounded hover:bg-red-500/30"
                   >Loeschen</button>
@@ -478,6 +483,15 @@ export function ServicesPage() {
           client={client}
           onClose={() => setShowCreate(false)}
           onCreated={() => { setShowCreate(false); fetchServices(); }}
+        />
+      )}
+
+      {showEdit && selected && (
+        <EditServiceDialog
+          client={client}
+          service={selected}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => { setShowEdit(false); fetchServices(); }}
         />
       )}
     </div>
@@ -902,6 +916,385 @@ function CreateServiceDialog({ client, onClose, onCreated }: { client: any; onCl
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Edit Service Dialog                                                */
+/* ------------------------------------------------------------------ */
+
+function EditServiceDialog({ client, service, onClose, onSaved }: {
+  client: any;
+  service: import('@/types/api').ServiceDetail;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [tab, setTab] = useState<'basic' | 'components' | 'failures' | 'sla'>('basic');
+  const [saving, setSaving] = useState(false);
+
+  // Basic
+  const [name, setName] = useState(service.name);
+  const [description, setDescription] = useState(service.description ?? '');
+  const [criticality, setCriticality] = useState(service.criticality ?? 'medium');
+  const [owner, setOwner] = useState((service as any).owner ?? '');
+  const [url, setUrl] = useState(service.url ?? '');
+  const [environment, setEnvironment] = useState(service.environment ?? '');
+
+  // Components
+  const [components, setComponents] = useState<WizardComponent[]>(
+    service.components.map(c => ({
+      name: c.name,
+      role: c.role,
+      assetId: c.assetId,
+      required: c.required,
+      failureImpact: c.failureImpact ?? (c.required ? 'down' : 'degraded'),
+      failureDescription: c.failureDescription,
+      ports: c.ports?.join(', ') ?? '',
+      dns: c.dns ?? '',
+      ip: c.ip ?? '',
+      parentComponent: c.parentComponent,
+    })),
+  );
+
+  // Failure Modes
+  const [failureModes, setFailureModes] = useState<WizardFailureMode[]>(
+    (service.failureModes ?? []).map(fm => ({
+      name: fm.name,
+      trigger: fm.trigger,
+      affectedComponents: fm.affectedComponents,
+      serviceImpact: fm.serviceImpact,
+      cascadeEffects: fm.cascadeEffects?.join(', '),
+      estimatedRecoveryMinutes: fm.estimatedRecoveryMinutes,
+    })),
+  );
+
+  // SLA
+  const [slaEnabled, setSlaEnabled] = useState(service.sla?.enabled ?? false);
+  const [slaName, setSlaName] = useState(service.sla?.name ?? 'Standard SLA');
+  const [slaAvailability, setSlaAvailability] = useState(String(service.sla?.targets?.availabilityPercent ?? ''));
+  const [slaMttr, setSlaMttr] = useState(String(service.sla?.targets?.mttrMinutes ?? ''));
+  const [slaResponse, setSlaResponse] = useState(String(service.sla?.targets?.responseTimeMinutes ?? ''));
+  const [slaResolution, setSlaResolution] = useState(String(service.sla?.targets?.resolutionTimeMinutes ?? ''));
+  const [slaBreachAlert, setSlaBreachAlert] = useState(service.sla?.monitoring?.breachAlertEnabled ?? true);
+  const [slaWarning, setSlaWarning] = useState(String(service.sla?.monitoring?.warningThresholdPercent ?? ''));
+
+  // CMDB assets for component picker
+  const [cmdbAssets, setCmdbAssets] = useState<any[]>([]);
+  useEffect(() => {
+    (async () => {
+      try { setCmdbAssets(await client.cmdbListAssets()); } catch { /* ignore */ }
+    })();
+  }, [client]);
+
+  const addComponent = () => {
+    setComponents([...components, { name: '', role: 'backend', required: false, failureImpact: 'degraded' }]);
+  };
+  const updateComponent = (idx: number, patch: Partial<WizardComponent>) => {
+    setComponents(components.map((c, i) => i === idx ? { ...c, ...patch } : c));
+  };
+  const removeComponent = (idx: number) => {
+    setComponents(components.filter((_, i) => i !== idx));
+  };
+
+  const addFailureMode = () => {
+    setFailureModes([...failureModes, { name: '', trigger: '', affectedComponents: [], serviceImpact: 'degraded' }]);
+  };
+  const updateFailureMode = (idx: number, patch: Partial<WizardFailureMode>) => {
+    setFailureModes(failureModes.map((fm, i) => i === idx ? { ...fm, ...patch } : fm));
+  };
+  const removeFailureMode = (idx: number) => {
+    setFailureModes(failureModes.filter((_, i) => i !== idx));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const sla = slaEnabled ? {
+        name: slaName,
+        enabled: true,
+        targets: {
+          availabilityPercent: slaAvailability ? parseFloat(slaAvailability) : undefined,
+          mttrMinutes: slaMttr ? parseInt(slaMttr, 10) : undefined,
+          responseTimeMinutes: slaResponse ? parseInt(slaResponse, 10) : undefined,
+          resolutionTimeMinutes: slaResolution ? parseInt(slaResolution, 10) : undefined,
+        },
+        monitoring: {
+          trackAvailability: true,
+          breachAlertEnabled: slaBreachAlert,
+          warningThresholdPercent: slaWarning ? parseFloat(slaWarning) : undefined,
+        },
+      } : undefined;
+
+      await client.updateService(service.id, {
+        name,
+        description: description || undefined,
+        criticality,
+        owner: owner || undefined,
+        url: url || undefined,
+        environment: environment || undefined,
+        components: components.map(c => ({
+          ...c,
+          ports: c.ports ? c.ports.split(',').map((p: string) => parseInt(p.trim(), 10)).filter((n: number) => !isNaN(n)) : [],
+          parentComponent: c.parentComponent || undefined,
+        })),
+        failureModes: failureModes.map(fm => ({
+          ...fm,
+          cascadeEffects: fm.cascadeEffects ? fm.cascadeEffects.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
+        })),
+        sla: sla ?? null,
+      });
+      onSaved();
+    } catch (err) {
+      alert('Fehler: ' + (err as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const tabs = [
+    { key: 'basic' as const, label: 'Grunddaten' },
+    { key: 'components' as const, label: `Komponenten (${components.length})` },
+    { key: 'failures' as const, label: `Failure Modes (${failureModes.length})` },
+    { key: 'sla' as const, label: 'SLA' },
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+      <div
+        className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-[750px] max-h-[85vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-gray-200">Service bearbeiten: {service.name}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-300">X</button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 mb-6 border-b border-[#1f1f1f] pb-2">
+          {tabs.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={clsx(
+                'px-3 py-1.5 rounded-t text-xs transition-colors',
+                tab === t.key ? 'bg-blue-500/20 text-blue-400' : 'text-gray-500 hover:text-gray-300',
+              )}
+            >{t.label}</button>
+          ))}
+        </div>
+
+        {/* Tab: Basic */}
+        {tab === 'basic' && (
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Name *</label>
+              <input value={name} onChange={e => setName(e.target.value)}
+                className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-blue-500 outline-none" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 mb-1 block">Beschreibung</label>
+              <textarea value={description} onChange={e => setDescription(e.target.value)}
+                className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 focus:border-blue-500 outline-none h-20 resize-none" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Kritikalitaet</label>
+                <select value={criticality} onChange={e => setCriticality(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none">
+                  {CRITICALITY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Environment</label>
+                <select value={environment} onChange={e => setEnvironment(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none">
+                  <option value="">--</option>
+                  {['production', 'staging', 'development', 'test'].map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Owner</label>
+                <input value={owner} onChange={e => setOwner(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">URL</label>
+                <input value={url} onChange={e => setUrl(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab: Components */}
+        {tab === 'components' && (
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <button onClick={addComponent} className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded hover:bg-green-500/30">+ Komponente</button>
+            </div>
+            {components.length === 0 && <p className="text-xs text-gray-500">Keine Komponenten.</p>}
+            {components.map((comp, idx) => (
+              <div key={idx} className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500">Komponente {idx + 1}</span>
+                  <button onClick={() => removeComponent(idx)} className="text-xs text-red-400 hover:text-red-300">Entfernen</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={comp.name} onChange={e => updateComponent(idx, { name: e.target.value })} placeholder="Name"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <select value={comp.role} onChange={e => updateComponent(idx, { role: e.target.value })}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none">
+                    {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <select value={comp.assetId ?? ''} onChange={e => updateComponent(idx, { assetId: e.target.value || undefined })}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none">
+                    <option value="">-- CMDB Asset --</option>
+                    {cmdbAssets.map((a: any) => <option key={a.id} value={a.id}>{a.name} ({a.type})</option>)}
+                  </select>
+                  <select value={comp.failureImpact} onChange={e => updateComponent(idx, { failureImpact: e.target.value })}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none">
+                    {IMPACT_OPTIONS.map(i => <option key={i} value={i}>{i}</option>)}
+                  </select>
+                  <input value={comp.ip ?? ''} onChange={e => updateComponent(idx, { ip: e.target.value })} placeholder="IP"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <input value={comp.ports ?? ''} onChange={e => updateComponent(idx, { ports: e.target.value })} placeholder="Ports (z.B. 80,443)"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <input value={comp.dns ?? ''} onChange={e => updateComponent(idx, { dns: e.target.value })} placeholder="DNS"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <select value={(comp as any).parentComponent ?? ''} onChange={e => updateComponent(idx, { parentComponent: e.target.value || undefined } as any)}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none">
+                    <option value="">-- Uebergeordnete Komponente --</option>
+                    {components.filter((_, i) => i !== idx).filter(c => c.name).map(c => (
+                      <option key={c.name} value={c.name}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={comp.required} onChange={e => updateComponent(idx, { required: e.target.checked })} className="rounded" />
+                  Required
+                </label>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Tab: Failure Modes */}
+        {tab === 'failures' && (
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <button onClick={addFailureMode} className="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded hover:bg-green-500/30">+ Failure Mode</button>
+            </div>
+            {failureModes.length === 0 && <p className="text-xs text-gray-500">Keine Failure Modes definiert.</p>}
+            {failureModes.map((fm, idx) => (
+              <div key={idx} className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500">Failure Mode {idx + 1}</span>
+                  <button onClick={() => removeFailureMode(idx)} className="text-xs text-red-400 hover:text-red-300">Entfernen</button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input value={fm.name} onChange={e => updateFailureMode(idx, { name: e.target.value })} placeholder="Name"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <input value={fm.trigger} onChange={e => updateFailureMode(idx, { trigger: e.target.value })} placeholder="Trigger"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                  <select value={fm.serviceImpact} onChange={e => updateFailureMode(idx, { serviceImpact: e.target.value })}
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none">
+                    <option value="down">down</option>
+                    <option value="degraded">degraded</option>
+                  </select>
+                  <input value={fm.estimatedRecoveryMinutes ?? ''} onChange={e => updateFailureMode(idx, { estimatedRecoveryMinutes: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+                    placeholder="Recovery Min." type="number"
+                    className="bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Betroffene Komponenten</label>
+                  <div className="flex flex-wrap gap-2">
+                    {components.filter(c => c.name).map(c => (
+                      <label key={c.name} className="flex items-center gap-1 text-xs text-gray-400">
+                        <input type="checkbox" checked={fm.affectedComponents.includes(c.name)}
+                          onChange={e => {
+                            const newAff = e.target.checked
+                              ? [...fm.affectedComponents, c.name]
+                              : fm.affectedComponents.filter(n => n !== c.name);
+                            updateFailureMode(idx, { affectedComponents: newAff });
+                          }} className="rounded" />
+                        {c.name}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <input value={fm.cascadeEffects ?? ''} onChange={e => updateFailureMode(idx, { cascadeEffects: e.target.value })}
+                  placeholder="Kaskadeneffekte (kommagetrennt)"
+                  className="w-full bg-[#111111] border border-[#1f1f1f] rounded px-2 py-1 text-xs text-gray-200 outline-none" />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Tab: SLA */}
+        {tab === 'sla' && (
+          <div className="space-y-4">
+            <label className="flex items-center gap-2 text-sm text-gray-300">
+              <input type="checkbox" checked={slaEnabled} onChange={e => setSlaEnabled(e.target.checked)} className="rounded" />
+              SLA aktivieren
+            </label>
+            {slaEnabled && (
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">SLA Name</label>
+                  <input value={slaName} onChange={e => setSlaName(e.target.value)}
+                    className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Verfuegbarkeit (%)</label>
+                    <input value={slaAvailability} onChange={e => setSlaAvailability(e.target.value)} type="number" step="0.01" placeholder="99.9"
+                      className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Warnschwelle (%)</label>
+                    <input value={slaWarning} onChange={e => setSlaWarning(e.target.value)} type="number" step="0.01" placeholder="99.5"
+                      className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">MTTR (Min.)</label>
+                    <input value={slaMttr} onChange={e => setSlaMttr(e.target.value)} type="number" placeholder="30"
+                      className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Response (Min.)</label>
+                    <input value={slaResponse} onChange={e => setSlaResponse(e.target.value)} type="number" placeholder="15"
+                      className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Resolution (Min.)</label>
+                    <input value={slaResolution} onChange={e => setSlaResolution(e.target.value)} type="number" placeholder="240"
+                      className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg px-3 py-2 text-sm text-gray-200 outline-none" />
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={slaBreachAlert} onChange={e => setSlaBreachAlert(e.target.checked)} className="rounded" />
+                  Alarm bei SLA-Verletzung
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-[#1f1f1f]">
+          <button onClick={onClose} className="text-sm text-gray-400 hover:text-gray-200 px-4 py-2">Abbrechen</button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !name.trim()}
+            className="bg-blue-500/20 text-blue-400 px-4 py-2 rounded-lg text-sm hover:bg-blue-500/30 disabled:opacity-50"
+          >{saving ? 'Speichert...' : 'Speichern'}</button>
+        </div>
       </div>
     </div>
   );
