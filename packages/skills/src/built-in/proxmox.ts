@@ -216,6 +216,10 @@ export class ProxmoxSkill extends Skill {
           enum: ['docker', 'node', 'python'],
           description: 'Nach VM-Erstellung: Runtime installieren (docker, node, python). Installiert auch qemu-guest-agent. Wartet automatisch auf SSH.',
         },
+        docker_bridge_ip: {
+          type: 'string',
+          description: 'Docker Bridge IP (z.B. 192.168.248.1/24). Setzt daemon.json bip. Nur bei runtime=docker.',
+        },
       },
       required: ['action'],
     },
@@ -226,7 +230,7 @@ export class ProxmoxSkill extends Skill {
   private static readonly VM_CACHE_TTL = 30_000; // 30 seconds
   private sshKeyPath?: string;
   private sshUser?: string;
-  private postProvisionFn?: (host: string, user: string, runtime: string, isRhel: boolean) => Promise<string[]>;
+  private postProvisionFn?: (host: string, user: string, runtime: string, isRhel: boolean, opts?: { dockerBridgeIp?: string }) => Promise<string[]>;
 
   constructor(config: ProxmoxConfig) {
     super();
@@ -240,7 +244,7 @@ export class ProxmoxSkill extends Skill {
   setSshUser(user: string): void { this.sshUser = user; }
 
   /** Set callback for post-provision runtime installation (SSH wait + install). */
-  setPostProvisionCallback(fn: (host: string, user: string, runtime: string, isRhel: boolean) => Promise<string[]>): void {
+  setPostProvisionCallback(fn: (host: string, user: string, runtime: string, isRhel: boolean, opts?: { dockerBridgeIp?: string }) => Promise<string[]>): void {
     this.postProvisionFn = fn;
   }
 
@@ -1091,7 +1095,8 @@ export class ProxmoxSkill extends Skill {
       if (this.postProvisionFn) {
         const host = ip.replace(/\/\d+$/, ''); // strip CIDR prefix
         try {
-          const installSteps = await this.postProvisionFn(host, ciUser, runtime, isRhel);
+          const dockerBridgeIp = input.docker_bridge_ip as string | undefined;
+          const installSteps = await this.postProvisionFn(host, ciUser, runtime, isRhel, { dockerBridgeIp });
           steps.push(...installSteps);
         } catch (err: any) {
           steps.push(`⚠️ Post-Provision fehlgeschlagen: ${err.message?.slice(0, 100)}`);

@@ -570,7 +570,7 @@ export class Alfred {
       pxSkill.setSshUser(this.config.infra?.sshUser ?? 'root');
 
       // Post-provision callback: SSH wait + runtime install after clone_vm with runtime parameter
-      pxSkill.setPostProvisionCallback(async (host: string, user: string, runtime: string, isRhel: boolean) => {
+      pxSkill.setPostProvisionCallback(async (host: string, user: string, runtime: string, isRhel: boolean, opts?: { dockerBridgeIp?: string }) => {
         const { execFile } = await import('node:child_process');
         const { promisify } = await import('node:util');
         const execFileAsync = promisify(execFile);
@@ -609,6 +609,13 @@ export class Alfred {
               await runSsh('sudo apt-get install -y docker-compose-plugin || sudo apt-get install -y docker-compose').catch(() => {});
             }
             steps.push('🐳 Docker + Docker Compose installiert');
+            // Configure Docker Bridge IP if specified
+            if (opts?.dockerBridgeIp) {
+              try {
+                await runSsh(`echo '{"bip":"${opts.dockerBridgeIp}"}' | sudo tee /etc/docker/daemon.json && sudo systemctl restart docker`);
+                steps.push(`🌐 Docker Bridge: ${opts.dockerBridgeIp}`);
+              } catch { steps.push('⚠️ Docker Bridge IP Konfiguration fehlgeschlagen'); }
+            }
           } else if (runtime === 'node') {
             if (isRhel) {
               await runSsh('curl -fsSL https://rpm.nodesource.com/setup_22.x | sudo bash - && sudo dnf install -y nodejs && sudo npm install -g pm2');

@@ -5,7 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
-## [0.19.0-multi-ha.558] - 2026-04-17
+## [0.19.0-multi-ha.560] - 2026-04-18
+
+### Fixed
+- **Deploy Default-Branch** — Erkennt automatisch den Default-Branch (main/master/etc.) per `git ls-remote --symref` statt hardcoded `main`
+- **PM2 Start-Befehl** — `pm2 start npm --name X -- start` statt fehlerhaftem `pm2 start npm start --name X`
+- **Deploy SSH Git-URL** — `git@host:user/repo.git` Format wird akzeptiert
+
+### Added
+- **Docker Bridge IP bei Provision** — `clone_vm runtime=docker docker_bridge_ip=192.168.248.1/24` konfiguriert daemon.json automatisch
+
+## [0.19.0-multi-ha.558] - 2026-04-18
 
 ### Fixed
 - **Deep Scan SSH-User** — SSH User wird jetzt intelligent ermittelt: expliziter `ssh_user` Parameter > Asset-Name-Erkennung (ubuntu/rocky/debian/fedora) > Config-Default. Cloud-Init VMs mit anderem User als Config-Default funktionieren jetzt

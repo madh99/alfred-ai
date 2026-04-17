@@ -169,11 +169,11 @@ export class DeploySkill extends Skill {
   private async doDeploy(host: string, user: string, input: Record<string, unknown>, pm: string, runtime: string): Promise<SkillResult> {
     const project = sanitize(input.project as string ?? '');
     const repoUrl = input.repo_url ? sanitize(input.repo_url as string) : undefined;
-    const branch = sanitize((input.branch as string) ?? 'main');
+    let branch = input.branch ? sanitize(input.branch as string) : '';
     const appPort = input.app_port as number | undefined;
     if (!project || !validateName(project)) return { success: false, error: 'project erforderlich (nur Buchstaben, Zahlen, Bindestriche, Punkte)' };
     if (repoUrl && !validateUrl(repoUrl)) return { success: false, error: 'Ungültige repo_url' };
-    if (!validateBranch(branch)) return { success: false, error: 'Ungültiger Branch-Name' };
+    if (branch && !validateBranch(branch)) return { success: false, error: 'Ungültiger Branch-Name' };
     if (appPort !== undefined && (appPort < 1 || appPort > 65535)) return { success: false, error: 'app_port muss zwischen 1-65535 sein' };
 
     // 1. Test SSH
@@ -185,11 +185,24 @@ export class DeploySkill extends Skill {
 
     // 2. Clone or pull
     try {
-      const dirExists = await this.ssh(host, user, `test -d ${projectDir} && echo yes || echo no`);
+      const dirExists = await this.ssh(host, user, `test -d ${projectDir}/.git && echo yes || echo no`);
       if (dirExists === 'no' && repoUrl) {
+        // Auto-detect default branch if not specified
+        if (!branch) {
+          try {
+            const refs = await this.ssh(host, user, `git ls-remote --symref ${repoUrl} HEAD 2>/dev/null | head -1`);
+            const match = refs.match(/refs\/heads\/(\S+)/);
+            branch = match?.[1] ?? 'main';
+          } catch { branch = 'main'; }
+        }
         await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
-        steps.push(`📦 Geklont: ${repoUrl} → ${projectDir}`);
+        steps.push(`📦 Geklont: ${repoUrl} (Branch: ${branch})`);
       } else if (dirExists === 'yes') {
+        if (!branch) {
+          try {
+            branch = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse --abbrev-ref HEAD`)).trim() || 'main';
+          } catch { branch = 'main'; }
+        }
         await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
         steps.push(`📥 Gepullt: ${branch}`);
       } else {
@@ -227,13 +240,18 @@ export class DeploySkill extends Skill {
     const startCmd = (input.start_command as string) ?? (runtime === 'node' ? 'npm start' : runtime === 'python' ? 'python main.py' : '');
     try {
       if (pm === 'pm2') {
-        const portEnv = appPort ? `PORT=${appPort}` : '';
+        const portEnv = appPort ? `PORT=${appPort} ` : '';
         // Try restart first, if not running → start
         try {
           await this.ssh(host, user, `cd ${projectDir} && pm2 restart ${project}`);
           steps.push(`🔄 pm2 restart: ${project}`);
         } catch {
-          await this.ssh(host, user, `cd ${projectDir} && ${portEnv} pm2 start ${startCmd} --name ${project}`);
+          // pm2 start npm --name X -- start (correct format for npm start)
+          if (startCmd === 'npm start') {
+            await this.ssh(host, user, `cd ${projectDir} && ${portEnv}pm2 start npm --name ${project} -- start`);
+          } else {
+            await this.ssh(host, user, `cd ${projectDir} && ${portEnv}pm2 start ${startCmd} --name ${project}`);
+          }
           steps.push(`🚀 pm2 start: ${project}${appPort ? ` (Port ${appPort})` : ''}`);
         }
         // Save pm2 config for auto-start
