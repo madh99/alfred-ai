@@ -852,6 +852,10 @@ export class Alfred {
       if (skillRegistry.has('pfsense')) orchCallbacks.firewall = (i) => skillSandbox.execute(skillRegistry.get('pfsense')!, i, {} as any);
       if (skillRegistry.has('unifi')) orchCallbacks.unifi = (i) => skillSandbox.execute(skillRegistry.get('unifi')!, i, {} as any);
       deploySkill.setOrchestrationCallbacks(orchCallbacks);
+      // Wire forge config for auto-injecting Git tokens
+      if (this.config.codeAgents?.forge) {
+        deploySkill.setForgeConfig(this.config.codeAgents.forge);
+      }
       skillRegistry.register(deploySkill);
       this.logger.info('Deploy skill registered (with orchestration)');
 

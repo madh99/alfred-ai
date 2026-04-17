@@ -86,6 +86,7 @@ export class DeploySkill extends Skill {
   private unifiFn?: SkillCallback;
   private cmdbCallback?: (result: Record<string, unknown>) => Promise<void>;
   private postDeployCallback?: (host: string, project: string, userId: string) => Promise<void>;
+  private forgeConfig?: { github?: { token?: string }; gitlab?: { token?: string; baseUrl?: string } };
 
   setOrchestrationCallbacks(cbs: {
     proxmox?: SkillCallback;
@@ -108,6 +109,11 @@ export class DeploySkill extends Skill {
   /** Post-deploy: CMDB discovery + Deep Scan + Service creation (fire-and-forget). */
   setPostDeployCallback(cb: (host: string, project: string, userId: string) => Promise<void>): void {
     this.postDeployCallback = cb;
+  }
+
+  /** Set forge config for auto-injecting Git tokens into repo URLs. */
+  setForgeConfig(config: { github?: { token?: string }; gitlab?: { token?: string; baseUrl?: string } }): void {
+    this.forgeConfig = config;
   }
 
   constructor(defaults?: InfraDefaultsConfig) {
@@ -166,9 +172,26 @@ export class DeploySkill extends Skill {
     } catch { return false; }
   }
 
+  /** Inject forge token into Git URL if no auth is present. */
+  private injectGitToken(url: string): string {
+    if (!this.forgeConfig || !url.startsWith('http')) return url;
+    if (/^https?:\/\/[^@/]+@/.test(url)) return url; // already has auth
+    try {
+      const urlObj = new URL(url);
+      const token = this.forgeConfig.gitlab?.token ?? this.forgeConfig.github?.token;
+      if (token) {
+        urlObj.username = 'oauth2';
+        urlObj.password = token;
+        return urlObj.toString();
+      }
+    } catch { /* not a valid URL */ }
+    return url;
+  }
+
   private async doDeploy(host: string, user: string, input: Record<string, unknown>, pm: string, runtime: string): Promise<SkillResult> {
     const project = sanitize(input.project as string ?? '');
-    const repoUrl = input.repo_url ? sanitize(input.repo_url as string) : undefined;
+    const rawRepoUrl = input.repo_url ? sanitize(input.repo_url as string) : undefined;
+    const repoUrl = rawRepoUrl ? this.injectGitToken(rawRepoUrl) : undefined;
     let branch = input.branch ? sanitize(input.branch as string) : '';
     const appPort = input.app_port as number | undefined;
     if (!project || !validateName(project)) return { success: false, error: 'project erforderlich (nur Buchstaben, Zahlen, Bindestriche, Punkte)' };

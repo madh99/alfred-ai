@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.561] - 2026-04-18
+
+### Added
+- **Deploy: Auto Git-Token Injection** — Wenn ein GitLab/GitHub Token in der Forge-Config (ALFRED_GITLAB_TOKEN) vorhanden ist, wird er automatisch in HTTP Git-URLs injiziert. Kein manuelles Token in der repo_url noetig
+
 ## [0.19.0-multi-ha.560] - 2026-04-18
 
 ### Fixed
