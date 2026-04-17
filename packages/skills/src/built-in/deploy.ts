@@ -83,6 +83,7 @@ export class DeploySkill extends Skill {
   private firewallFn?: SkillCallback;
   private unifiFn?: SkillCallback;
   private cmdbCallback?: (result: Record<string, unknown>) => Promise<void>;
+  private postDeployCallback?: (host: string, project: string, userId: string) => Promise<void>;
 
   setOrchestrationCallbacks(cbs: {
     proxmox?: SkillCallback;
@@ -100,6 +101,11 @@ export class DeploySkill extends Skill {
 
   setCmdbCallback(cb: (result: Record<string, unknown>) => Promise<void>): void {
     this.cmdbCallback = cb;
+  }
+
+  /** Post-deploy: CMDB discovery + Deep Scan + Service creation (fire-and-forget). */
+  setPostDeployCallback(cb: (host: string, project: string, userId: string) => Promise<void>): void {
+    this.postDeployCallback = cb;
   }
 
   constructor(defaults?: InfraDefaultsConfig) {
@@ -524,6 +530,13 @@ export class DeploySkill extends Skill {
       // Notify CMDB about the deployment
       if (this.cmdbCallback) {
         try { await this.cmdbCallback({ host, project, domain, steps }); } catch { /* non-critical */ }
+      }
+
+      // Post-deploy: CMDB discovery + Deep Scan + Auto-Service (fire-and-forget)
+      if (this.postDeployCallback && host) {
+        const userId = ''; // resolved in callback
+        this.postDeployCallback(host, project, userId).catch(() => {});
+        steps.push('📋 Post-Deploy: CMDB Discovery + Deep Scan + Service-Erstellung gestartet');
       }
 
       return { success: true, data: { host, project, domain, steps }, display };

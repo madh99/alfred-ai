@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.551] - 2026-04-17
+
+### Added
+- **Post-Deploy Automation** — Nach `full_deploy` werden automatisch 3 Schritte ausgefuehrt (fire-and-forget):
+  1. CMDB Proxmox Discovery — VM/LXC als Asset registrieren
+  2. Deep Scan — System-Doku generieren + Docker Container als Assets registrieren
+  3. Service-Erstellung — LLM erstellt Service aus Projekt-Beschreibung mit erkannten Komponenten
+  - Ergebnis: Vom `full_deploy` bis zum vollstaendigen Service mit Doku — ein Befehl
+
 ## [0.19.0-multi-ha.550] - 2026-04-17
 
 ### Fixed

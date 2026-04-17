@@ -1131,6 +1131,44 @@ export class Alfred {
           } catch { /* non-critical */ }
         });
 
+        // Wire post-deploy callback: CMDB discovery + Deep Scan + Service creation
+        deploySkill.setPostDeployCallback?.(async (host: string, project: string) => {
+          try {
+            const userId = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+
+            // Step 1: CMDB Discovery — register VM/LXC as asset
+            const cmdbSkill = skillRegistry.get('cmdb');
+            if (cmdbSkill) {
+              await skillSandbox.execute(cmdbSkill, { action: 'discover_source', source: 'proxmox' }, { userId, masterUserId: userId } as any);
+              this.logger.info({ host, project }, 'Post-deploy: CMDB Proxmox discovery completed');
+            }
+
+            // Step 2: Find the asset by IP → Deep Scan for system docs + Docker container registration
+            const hostAsset = (await cmdbRepo.listAssets(userId, { search: host } as any))?.[0];
+            if (hostAsset) {
+              const docsSkill = skillRegistry.get('infra_docs');
+              if (docsSkill) {
+                await skillSandbox.execute(docsSkill, { action: 'generate_system_doc', asset_id: hostAsset.id, deep_scan: true }, { userId, masterUserId: userId } as any);
+                this.logger.info({ host, project, assetId: hostAsset.id }, 'Post-deploy: Deep Scan completed');
+              }
+
+              // Step 3: Auto-create service from project name + discovered components
+              const itsmSkill = skillRegistry.get('itsm');
+              if (itsmSkill) {
+                const description = `Service "${project}" deployed auf ${hostAsset.name} (${host}). ` +
+                  `Host-Asset: ${hostAsset.name}, IP: ${host}. ` +
+                  `Automatisch erstellt nach full_deploy.`;
+                await skillSandbox.execute(itsmSkill, { action: 'create_service_from_description', description }, { userId, masterUserId: userId } as any);
+                this.logger.info({ host, project }, 'Post-deploy: Service auto-created');
+              }
+            } else {
+              this.logger.warn({ host, project }, 'Post-deploy: Host asset not found in CMDB — skipping Deep Scan + Service');
+            }
+          } catch (err) {
+            this.logger.warn({ err, host: host, project }, 'Post-deploy callback failed');
+          }
+        });
+
         // Wire monitor alert → auto-incident creation with batch-aware dedup + linking
         if (this.config.cmdb?.autoIncidentFromMonitor !== false && skillRegistry.has('monitor')) {
           const origMonitor = skillRegistry.get('monitor')!;
