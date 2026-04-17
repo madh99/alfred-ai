@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.542] - 2026-04-17
+
+### Fixed
+- **Deep Scan Docker Command** — Fallback auf `sudo docker ps` wenn User keine Docker-Gruppenrechte hat
+
 ## [0.19.0-multi-ha.541] - 2026-04-17
 
 ### Added
