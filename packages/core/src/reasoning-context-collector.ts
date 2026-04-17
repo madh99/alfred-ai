@@ -480,6 +480,18 @@ export class ReasoningContextCollector {
                     if (probLines) parts.push(`Aktive Probleme:\n${probLines}`);
                   }
                 }
+
+                // SLA Breaches
+                {
+                  const slaRaw = await this.skillSandbox.execute(skill, { action: 'check_sla_compliance' }, {} as any);
+                  if (slaRaw.success && Array.isArray(slaRaw.data)) {
+                    const breaches = (slaRaw.data as any[]).filter((r: any) => !r.compliant);
+                    if (breaches.length > 0) {
+                      const slaLines = breaches.map((r: any) => `- ❌ ${r.name}: ${r.actual?.toFixed(3)}% (Ziel: ${r.target}%)`).join('\n');
+                      parts.push(`SLA-Verletzungen:\n${slaLines}`);
+                    }
+                  }
+                }
               }
             }
           } catch { /* skip */ }
