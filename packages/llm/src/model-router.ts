@@ -70,22 +70,41 @@ export class ModelRouter extends LLMProvider {
     return { provider: defaultProvider, resolvedTier: 'default' };
   }
 
+  /** Strip unpaired Unicode surrogates that cause JSON serialization errors in API requests. */
+  private sanitizeRequest(request: LLMRequest): LLMRequest {
+    const clean = (s: string | undefined): string | undefined => {
+      if (!s) return s;
+      // Remove lone surrogates (high without low, or low without high)
+      // eslint-disable-next-line no-control-regex
+      return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+    };
+    return {
+      ...request,
+      system: clean(request.system),
+      messages: request.messages.map(m => ({
+        ...m,
+        content: typeof m.content === 'string' ? (clean(m.content) ?? '') : m.content,
+      })),
+    };
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
-    const { provider, resolvedTier } = this.resolve(request.tier);
+    const sanitized = this.sanitizeRequest(request);
+    const { provider, resolvedTier } = this.resolve(sanitized.tier);
     const tierConfig = this.multiConfig[resolvedTier];
     this.logger?.debug(
-      { requestedTier: request.tier ?? 'default', resolvedTier, model: tierConfig?.model },
+      { requestedTier: sanitized.tier ?? 'default', resolvedTier, model: tierConfig?.model },
       'LLM routing request',
     );
     try {
-      return await this.executeComplete(provider, resolvedTier, request);
+      return await this.executeComplete(provider, resolvedTier, sanitized);
     } catch (err) {
       if (!this.isRetryableError(err)) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier },
         'Provider failed, attempting fallback',
       );
-      return this.completeWithFallback(request, resolvedTier, err);
+      return this.completeWithFallback(sanitized, resolvedTier, err);
     }
   }
 
