@@ -802,7 +802,7 @@ export class Alfred {
           infraDocsSkill.setSshCallback(async (host: string, command: string) => {
             const shellSkill = skillRegistry.get('shell')!;
             const result = await skillSandbox.execute(shellSkill, {
-              command: `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no ${host} '${command.replace(/'/g, "'\\''")}'`,
+              command: `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${this.config.infra?.sshUser ? this.config.infra.sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`,
             }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
             return result.success ? (result.display ?? String(result.data ?? '')) : '';
           });
