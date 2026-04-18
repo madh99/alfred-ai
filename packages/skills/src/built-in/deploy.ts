@@ -61,12 +61,12 @@ export class DeploySkill extends Skill {
         user: { type: 'string', description: 'SSH User (default: aus infra config)' },
         project: { type: 'string', description: 'Projektname (= Verzeichnisname + pm2/systemd Service-Name)' },
         repo_url: { type: 'string', description: 'Git-Repo URL zum Klonen (bei erstem Deploy)' },
-        branch: { type: 'string', description: 'Git Branch (default: main)' },
+        branch: { type: 'string', description: 'Git Branch (NICHT angeben wenn unklar — wird automatisch erkannt per git ls-remote)' },
         app_port: { type: 'number', description: 'Port auf dem die App läuft' },
         process_manager: { type: 'string', description: 'pm2, systemd oder docker-compose (default: aus infra config)' },
         runtime: { type: 'string', description: 'node, python oder static (default: aus infra config)' },
         build_command: { type: 'string', description: 'Custom Build-Befehl (default: npm run build)' },
-        install_command: { type: 'string', description: 'Custom Install-Befehl (default: npm install --production)' },
+        install_command: { type: 'string', description: 'Custom Install-Befehl (default: npm install)' },
         start_command: { type: 'string', description: 'Custom Start-Befehl (default: npm start)' },
         lines: { type: 'number', description: 'Anzahl Log-Zeilen für "logs" Action (default: 50)' },
         gateway: { type: 'string', description: 'Gateway-IP für neue VMs/LXCs (default: x.x.x.1)' },
@@ -238,7 +238,7 @@ export class DeploySkill extends Skill {
 
     // 3. Install dependencies
     const installCmd = (input.install_command as string)
-      ?? (runtime === 'node' ? 'npm install --production' : runtime === 'python' ? 'pip install -r requirements.txt' : '');
+      ?? (runtime === 'node' ? 'npm install' : runtime === 'python' ? 'pip install -r requirements.txt' : '');
     if (installCmd) {
       try {
         await this.ssh(host, user, `cd ${projectDir} && ${installCmd}`);
@@ -361,7 +361,7 @@ export class DeploySkill extends Skill {
     steps.push('⏪ Git: revert HEAD');
 
     if (runtime === 'node') {
-      await this.ssh(host, user, `cd ${projectDir} && npm install --production && npm run build --if-present`);
+      await this.ssh(host, user, `cd ${projectDir} && npm install && npm run build --if-present`);
       steps.push('📦 Rebuild');
     }
 
