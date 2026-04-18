@@ -371,6 +371,21 @@ export class ProjectAgentRunner {
       return;
     }
 
+    // Inject forge token into existing HTTP remote if no auth present
+    const existingHasAuth = /^https?:\/\/[^@/]+@/.test(remoteUrl);
+    if (!existingHasAuth && remoteUrl.startsWith('http') && this.forgeConfig) {
+      const token = this.forgeConfig.github?.token ?? this.forgeConfig.gitlab?.token;
+      if (token) {
+        try {
+          const urlObj = new URL(remoteUrl);
+          urlObj.username = 'oauth2';
+          urlObj.password = token;
+          await gitExec(['remote', 'set-url', 'origin', urlObj.toString()], cwd, runAsUser);
+          this.logger.info({ cwd }, 'Project agent: injected forge token into remote URL');
+        } catch { /* proceed without token */ }
+      }
+    }
+
     // Detect current branch
     let branch: string;
     try {
