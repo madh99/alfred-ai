@@ -578,7 +578,7 @@ export class Alfred {
 
         const runSsh = async (cmd: string) => {
           const { stdout } = await execFileAsync('ssh', [
-            '-i', sshKeyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'ConnectTimeout=10',
+            '-i', sshKeyPath, '-o', 'StrictHostKeyChecking=no', '-o', 'UserKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=10',
             `${user}@${host}`, cmd,
           ], { maxBuffer: 5 * 1024 * 1024, timeout: 300_000 });
           return stdout.trim();
@@ -900,7 +900,7 @@ export class Alfred {
           infraDocsSkill.setSshCallback(async (host: string, command: string, user?: string) => {
             const shellSkill = skillRegistry.get('shell')!;
             const sshUser = user ?? this.config.infra?.sshUser;
-            const sshCmd = `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${sshUser ? sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`;
+            const sshCmd = `ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${sshUser ? sshUser + '@' : ''}${host} '${command.replace(/'/g, "'\\''")}'`;
             const result = await skillSandbox.execute(shellSkill, { command: sshCmd }, { userId: '', platform: 'api', chatId: '', conversationId: '' } as any);
             if (!result.success) return '';
             const data = result.data as { stdout?: string } | undefined;

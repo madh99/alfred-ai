@@ -156,6 +156,7 @@ export class DeploySkill extends Skill {
     const { stdout, stderr } = await execFileAsync('ssh', [
       '-i', keyPath,
       '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
       '-o', 'ConnectTimeout=10',
       `${user}@${host}`,
       command,
