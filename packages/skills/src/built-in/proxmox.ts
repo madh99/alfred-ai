@@ -99,6 +99,7 @@ export class ProxmoxSkill extends Skill {
       '"list_vms" zeigt VMs, "start_vm"/"shutdown_vm" steuert sie, "cluster_status" für Health, "create_snapshot" für Backups.',
     riskLevel: 'write',
     version: '1.0.0',
+    timeoutMs: 600_000, // 10 min — clone + SSH wait + runtime install can take 5+ min
     inputSchema: {
       type: 'object',
       properties: {
