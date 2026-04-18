@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from 'pino';
 import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig } from '@alfred/types';
@@ -113,6 +113,9 @@ export class ProjectAgentRunner {
       // ── ENSURE GIT REPO EXISTS (before any phase commits) ──
       if (!existsSync(path.join(config.cwd, '.git'))) {
         try {
+          if (!existsSync(config.cwd)) {
+            mkdirSync(config.cwd, { recursive: true });
+          }
           await gitExec(['init'], config.cwd, runAsUser);
           this.logger.info({ cwd: config.cwd }, 'Project agent: git repo initialized');
         } catch (err) {
