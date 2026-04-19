@@ -222,6 +222,10 @@ export class DeploySkill extends Skill {
         await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
         steps.push(`📦 Geklont: ${repoUrl} (Branch: ${branch})`);
       } else if (dirExists === 'yes') {
+        // Update remote URL if repo_url provided (ensures token-injected URL is used)
+        if (repoUrl) {
+          try { await this.ssh(host, user, `cd ${projectDir} && git remote set-url origin '${repoUrl}'`); } catch { /* keep existing */ }
+        }
         if (!branch) {
           try {
             branch = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse --abbrev-ref HEAD`)).trim() || 'main';
