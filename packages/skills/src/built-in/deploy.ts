@@ -222,17 +222,28 @@ export class DeploySkill extends Skill {
         await this.ssh(host, user, `git clone --branch ${branch} ${repoUrl} ${projectDir}`);
         steps.push(`📦 Geklont: ${repoUrl} (Branch: ${branch})`);
       } else if (dirExists === 'yes') {
-        // Update remote URL if repo_url provided (ensures token-injected URL is used)
+        // Temporarily set remote URL with token for authenticated pull, then restore
+        let originalRemoteUrl: string | undefined;
         if (repoUrl) {
-          try { await this.ssh(host, user, `cd ${projectDir} && git remote set-url origin '${repoUrl}'`); } catch { /* keep existing */ }
+          try {
+            originalRemoteUrl = (await this.ssh(host, user, `cd ${projectDir} && git remote get-url origin`)).trim();
+            await this.ssh(host, user, `cd ${projectDir} && git remote set-url origin '${repoUrl}'`);
+          } catch { /* keep existing */ }
         }
         if (!branch) {
           try {
             branch = (await this.ssh(host, user, `cd ${projectDir} && git rev-parse --abbrev-ref HEAD`)).trim() || 'main';
           } catch { branch = 'main'; }
         }
-        await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
-        steps.push(`📥 Gepullt: ${branch}`);
+        try {
+          await this.ssh(host, user, `cd ${projectDir} && git fetch origin && git checkout ${branch} && git pull origin ${branch}`);
+          steps.push(`📥 Gepullt: ${branch}`);
+        } finally {
+          // Restore original remote URL (remove token from .git/config)
+          if (originalRemoteUrl) {
+            try { await this.ssh(host, user, `cd ${projectDir} && git remote set-url origin '${originalRemoteUrl}'`); } catch { /* best effort */ }
+          }
+        }
       } else {
         return { success: false, error: `Projekt ${projectDir} existiert nicht und keine repo_url angegeben` };
       }
