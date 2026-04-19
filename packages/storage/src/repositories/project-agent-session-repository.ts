@@ -85,14 +85,13 @@ export class ProjectAgentSessionRepository {
 
   async getCompletedByCwd(cwd: string): Promise<Array<{ goal: string; milestones: string[] }>> {
     const rows = await this.adapter.query(
-      `SELECT goal, milestones FROM project_agent_sessions WHERE cwd = ? AND current_phase = 'done' ORDER BY updated_at DESC LIMIT 10`,
+      `SELECT goal, milestones FROM project_agent_sessions WHERE cwd = ? AND current_phase = 'done' ORDER BY updated_at DESC LIMIT 3`,
       [cwd],
     ) as Array<{ goal: string; milestones: string }>;
-    return rows.map(r => {
-      let milestones: string[] = [];
-      try { milestones = JSON.parse(r.milestones); } catch { /* empty */ }
-      return { goal: r.goal, milestones };
-    });
+    return rows.map(r => ({
+      goal: r.goal.slice(0, 200),
+      milestones: [],  // omit milestones — goals are sufficient context and keep prompt short
+    }));
   }
 
   private mapRow(row: Record<string, unknown>): ProjectAgentSession {
