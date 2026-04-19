@@ -45,6 +45,7 @@ export async function createProjectPlan(
     });
 
     const text = response.content;
+    console.log(`[project-planner] LLM response (${text.length} chars): ${text.slice(0, 300)}`);
 
     // Extract JSON from response (may be wrapped in markdown code block)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -58,9 +59,12 @@ export async function createProjectPlan(
         };
       }
     }
-  } catch { /* fallback below */ }
+  } catch (err) {
+    console.error('[project-planner] Plan generation failed, using fallback:', err instanceof Error ? err.message : String(err));
+  }
 
   // Fallback: single-phase plan
+  console.log('[project-planner] FALLBACK: single-phase plan');
   return {
     phases: [`Implementiere: ${goal}`],
     buildStrategy: 'npm install && npm run build',
