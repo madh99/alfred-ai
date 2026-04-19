@@ -133,6 +133,16 @@ Actions:
       return { success: false, error: `Unknown agent "${agentName}". Available: ${[...this.agents.keys()].join(', ')}` };
     }
 
+    // Check if a session is already running for this cwd
+    const existing = await this.sessionRepo.findActiveByCwd(cwd);
+    if (existing) {
+      return {
+        success: false,
+        error: `In "${cwd}" läuft bereits ein Project Agent (Task: ${existing.taskId}, Phase: ${existing.currentPhase}). ` +
+          `Stoppe ihn zuerst mit action=stop, task_id=${existing.taskId}.`,
+      };
+    }
+
     // Resolve build/test commands from input, template, or defaults
     const template = this.config.templates?.find(t => t.name === input.template);
     const buildCommands = (input.buildCommands as string[]) ?? template?.buildCommands ?? ['npm install', 'npm run build'];
@@ -154,7 +164,9 @@ Actions:
     };
 
     // Fire-and-forget: start the runner loop asynchronously
-    this.runner.run(session.taskId, config, context.platform, context.chatId).catch(() => {});
+    this.runner.run(session.taskId, config, context.platform, context.chatId).catch((err) => {
+      console.error('[project-agent] Runner failed:', err);
+    });
 
     return {
       success: true,

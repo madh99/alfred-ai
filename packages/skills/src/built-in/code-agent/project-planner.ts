@@ -12,7 +12,7 @@ Regeln:
 - Jede Phase ist ein konkreter, ausführbarer Schritt (z.B. "Projekt-Setup mit package.json und tsconfig", nicht "Planung")
 - Phasen sind in der Reihenfolge der Abhängigkeiten sortiert
 - Jede Phase sollte in 5-15 Minuten von einem Code-Agent umsetzbar sein
-- Max 8 Phasen — komplexe Projekte in größere Schritte zusammenfassen
+- Wähle so viele Phasen wie nötig für die Aufgabe — einfache Projekte 2-4, mittlere 5-8, komplexe 9-15
 - Build-Strategie: welche Commands zum Validieren (z.B. "npm install && npm run build")
 
 Antworte als JSON:
@@ -25,12 +25,20 @@ Antworte als JSON:
 export async function createProjectPlan(
   goal: string,
   llm: LLMProvider,
+  previousSessions?: Array<{ goal: string; milestones: string[] }>,
 ): Promise<ProjectPlan> {
   try {
+    const historyBlock = previousSessions && previousSessions.length > 0
+      ? '\n\nVorherige Sessions in diesem Verzeichnis (bereits erledigt — NICHT wiederholen):\n' +
+        previousSessions.map((s, i) =>
+          `  ${i + 1}. Ziel: ${s.goal}\n     Milestones: ${s.milestones.join(', ') || '—'}`
+        ).join('\n')
+      : '';
+
     const response = await llm.complete({
       system: PLANNING_PROMPT,
       messages: [
-        { role: 'user', content: goal },
+        { role: 'user', content: goal + historyBlock },
       ],
       maxTokens: 1024,
       temperature: 0.3,

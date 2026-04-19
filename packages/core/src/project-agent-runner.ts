@@ -101,7 +101,8 @@ export class ProjectAgentRunner {
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
       await this.sendProgress(platform, chatId, '📋 Erstelle Projekt-Plan...');
 
-      const plan = await createProjectPlan(config.goal, this.llm);
+      const previousSessions = await this.sessionRepo.getCompletedByCwd(config.cwd).catch(() => []);
+      const plan = await createProjectPlan(config.goal, this.llm, previousSessions);
       await this.sendProgress(platform, chatId,
         `📋 Plan erstellt: ${plan.phases.length} Phasen\n${plan.phases.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
       state.milestonesReached.push('Plan erstellt');
@@ -137,13 +138,6 @@ export class ProjectAgentRunner {
           return;
         }
 
-        // Check for stop signal in inbox
-        const messages = await drainInterjections(sessionId);
-        if (messages.includes('__STOP__')) {
-          await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt nach Phase ${phaseIdx}/${plan.phases.length}.`);
-          return;
-        }
-
         state.projectIteration = phaseIdx + 1;
         state.projectPhase = 'coding';
         state.consecutiveFixFailures = 0;
@@ -151,6 +145,13 @@ export class ProjectAgentRunner {
         await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
         const phase = plan.phases[phaseIdx];
+
+        // Drain interjections before each coding step (per-iteration, not per-phase)
+        const messages = await drainInterjections(sessionId);
+        if (messages.includes('__STOP__')) {
+          await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt vor Phase ${phaseIdx + 1}/${plan.phases.length}.`);
+          return;
+        }
         const userMessages = messages.filter(m => m !== '__STOP__');
 
         const prompt = this.assemblePrompt(config.goal, phase, state, userMessages);
@@ -208,10 +209,19 @@ export class ProjectAgentRunner {
           // ── FIXING ──
           state.projectPhase = 'fixing';
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+
+          // Drain interjections before fix step
+          const fixMessages = await drainInterjections(sessionId);
+          if (fixMessages.includes('__STOP__')) {
+            await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt während Fix-Versuch.`);
+            return;
+          }
+          const fixUserMessages = fixMessages.filter(m => m !== '__STOP__');
+
           await this.sendProgress(platform, chatId,
             `🔧 Fix-Versuch ${fixAttempt + 1}/${config.maxFixAttempts}...`);
 
-          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}`;
+          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
           const fixResult = await executeAgent(agentDef, fixPrompt, {
             cwd: config.cwd,
             onProgress: (status) => {

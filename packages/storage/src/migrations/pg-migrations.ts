@@ -679,4 +679,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute("CREATE INDEX IF NOT EXISTS idx_sla_events_type ON sla_events(event_type)", []);
     },
   },
+  {
+    version: 60,
+    description: 'Project Agent — interjections consumed column',
+    async up(db) {
+      await db.execute('ALTER TABLE project_agent_interjections ADD COLUMN IF NOT EXISTS consumed INTEGER NOT NULL DEFAULT 0', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_interjections_consumed ON project_agent_interjections(task_id, consumed)', []);
+    },
+  },
 ];

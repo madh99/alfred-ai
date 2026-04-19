@@ -10,6 +10,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 ### Added
 - **Deploy: Auto Git-Token Injection** — Wenn ein GitLab/GitHub Token in der Forge-Config (ALFRED_GITLAB_TOKEN) vorhanden ist, wird er automatisch in HTTP Git-URLs injiziert. Kein manuelles Token in der repo_url noetig
 
+## [0.19.0-multi-ha.568] - 2026-04-19
+
+### Added
+- **Project Agent: Session History** — Planner bekommt vorherige Sessions (Goal + Milestones) als Kontext, baut auf bestehender Arbeit auf statt blind zu starten
+- **Project Agent: Already-Running Check** — Neue Session wird abgelehnt wenn fuer dasselbe Verzeichnis bereits ein Agent laeuft
+- **Project Agent: Interjections per Iteration** — User-Nachrichten werden vor jedem Coding- und Fix-Step verarbeitet statt nur einmal pro Phase
+- **Project Agent: Consumed statt Delete** — Interjections werden als consumed markiert statt geloescht (Migration v57 SQLite / v60 PG)
+- **Project Agent: Dynamische Phasen** — LLM entscheidet selbst ueber Phasenanzahl (2-4 einfach, 5-8 mittel, 9-15 komplex) statt fixes "Max 8"
+- **Project Agent: Runner-Fehler geloggt** — Fehler werden per console.error ausgegeben statt verschluckt
+
 ## [0.19.0-multi-ha.560] - 2026-04-18
 
 ### Fixed

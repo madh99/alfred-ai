@@ -75,6 +75,26 @@ export class ProjectAgentSessionRepository {
     );
   }
 
+  async findActiveByCwd(cwd: string): Promise<ProjectAgentSession | undefined> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM project_agent_sessions WHERE cwd = ? AND current_phase != 'done' ORDER BY created_at DESC LIMIT 1`,
+      [cwd],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
+  async getCompletedByCwd(cwd: string): Promise<Array<{ goal: string; milestones: string[] }>> {
+    const rows = await this.adapter.query(
+      `SELECT goal, milestones FROM project_agent_sessions WHERE cwd = ? AND current_phase = 'done' ORDER BY updated_at DESC LIMIT 10`,
+      [cwd],
+    ) as Array<{ goal: string; milestones: string }>;
+    return rows.map(r => {
+      let milestones: string[] = [];
+      try { milestones = JSON.parse(r.milestones); } catch { /* empty */ }
+      return { goal: r.goal, milestones };
+    });
+  }
+
   private mapRow(row: Record<string, unknown>): ProjectAgentSession {
     let milestones: string[] = [];
     try { milestones = JSON.parse(row.milestones as string); } catch { /* empty */ }

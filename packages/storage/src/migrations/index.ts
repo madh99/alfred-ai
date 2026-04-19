@@ -1350,4 +1350,12 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 57,
+    description: 'Project Agent — interjections consumed column',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_agent_interjections ADD COLUMN consumed INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_consumed ON project_agent_interjections(task_id, consumed)`);
+    },
+  },
 ];

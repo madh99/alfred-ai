@@ -4,6 +4,7 @@ export interface Interjection {
   id: number;
   taskId: string;
   message: string;
+  consumed: boolean;
   createdAt: string;
 }
 
@@ -19,7 +20,7 @@ export class ProjectAgentInterjectionRepository {
 
   async drain(taskId: string): Promise<string[]> {
     const rows = await this.adapter.query(
-      'SELECT id, message FROM project_agent_interjections WHERE task_id = ? ORDER BY id',
+      'SELECT id, message FROM project_agent_interjections WHERE task_id = ? AND consumed = 0 ORDER BY id',
       [taskId],
     ) as Array<{ id: number; message: string }>;
 
@@ -27,7 +28,7 @@ export class ProjectAgentInterjectionRepository {
 
     const ids = rows.map(r => r.id);
     await this.adapter.execute(
-      `DELETE FROM project_agent_interjections WHERE id IN (${ids.map(() => '?').join(',')})`,
+      `UPDATE project_agent_interjections SET consumed = 1 WHERE id IN (${ids.map(() => '?').join(',')})`,
       ids,
     );
 
