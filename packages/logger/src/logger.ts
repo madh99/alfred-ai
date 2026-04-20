@@ -88,8 +88,7 @@ export function createLogger(name: string, level?: string, options?: { version?:
   if (fileEnabled) {
     const filePath = fileConf?.path ?? process.env.ALFRED_LOG_FILE_PATH ?? './data/logs/alfred.log';
     const maxSize = fileConf?.maxSize ?? process.env.ALFRED_LOG_FILE_MAX_SIZE ?? '10m';
-    const maxFiles = fileConf?.maxFiles ?? (Number(process.env.ALFRED_LOG_FILE_MAX_FILES) || 10);
-    const frequency = fileConf?.frequency ?? (process.env.ALFRED_LOG_FILE_FREQUENCY as 'daily' | 'hourly' | undefined) ?? 'daily';
+    const maxFiles = fileConf?.maxFiles ?? (Number(process.env.ALFRED_LOG_FILE_MAX_FILES) || 30);
 
     // Ensure directory exists (sync, runs once at startup)
     try {
@@ -101,8 +100,6 @@ export function createLogger(name: string, level?: string, options?: { version?:
       options: {
         file: filePath,
         size: maxSize,
-        frequency: frequency ?? undefined,
-        dateFormat: frequency === 'daily' ? 'yyyy-MM-dd' : frequency === 'hourly' ? 'yyyy-MM-dd-HH' : undefined,
         limit: { count: maxFiles },
       },
       level: logLevel,
