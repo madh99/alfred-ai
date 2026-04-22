@@ -1408,10 +1408,13 @@ export class KnowledgeGraphService {
         ];
         const isOtherPersonHome = OTHER_HOME_MARKERS.some(m => keyLower.includes(m));
         const isHome = !isOtherPersonHome && (keyLower.includes('heim') || keyLower.includes('home'));
+        // Only SET isHome to true, never overwrite true→false
+        const homeAttr: Record<string, unknown> = {};
+        if (isHome) homeAttr.isHome = true;
         // Known locations (dynamic)
         for (const city of this.getKnownLocations()) {
           if (value.includes(city)) {
-            await this.kgRepo.upsertEntity(userId, city, 'location', { isHome }, 'memories');
+            await this.kgRepo.upsertEntity(userId, city, 'location', homeAttr, 'memories');
           }
         }
         // PLZ pattern: "3033 Altlengbach", "80331 München"
@@ -1421,7 +1424,7 @@ export class KnowledgeGraphService {
           const city = plzMatch[2];
           if (!this.knownLocationsLower.has(city.toLowerCase())) {
             this.registerLocation(city);
-            await this.kgRepo.upsertEntity(userId, city, 'location', { isHome, detectedBy: 'plz_pattern' }, 'memories');
+            await this.kgRepo.upsertEntity(userId, city, 'location', { ...homeAttr, detectedBy: 'plz_pattern' }, 'memories');
           }
         }
       }
@@ -2011,8 +2014,12 @@ export class KnowledgeGraphService {
             const isWork = hasWorkWord && !hasNegation;
             // Address: use the matching sentence (compact), NOT the whole memory blob
             const addressSnippet = citySentence.trim().slice(0, 200);
-            await this.kgRepo.upsertEntity(userId, city, 'location',
-              { isHome, isWork, address: addressSnippet }, 'memories');
+            // Only SET isHome/isWork to true, never overwrite true→false
+            // (prevents a routing-context memory from resetting a correctly set home)
+            const attrs: Record<string, unknown> = { address: addressSnippet };
+            if (isHome) attrs.isHome = true;
+            if (isWork) attrs.isWork = true;
+            await this.kgRepo.upsertEntity(userId, city, 'location', attrs, 'memories');
           }
         }
       }
