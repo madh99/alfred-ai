@@ -1399,7 +1399,15 @@ export class KnowledgeGraphService {
 
       // Extract addresses as locations (dynamic list + PLZ pattern)
       if (keyLower.includes('adress') || keyLower.includes('address') || keyLower.includes('heim') || keyLower.includes('home')) {
-        const isHome = keyLower.includes('heim') || keyLower.includes('home');
+        // Only set isHome if the memory is about the USER's own home, not someone else's
+        const OTHER_HOME_MARKERS = [
+          'mutter', 'vater', 'eltern', 'schwester', 'bruder', 'freund', 'freundin',
+          'oma', 'opa', 'grossmutter', 'grossvater', 'großmutter', 'großvater',
+          'tante', 'onkel', 'cousin', 'cousine', 'schwager', 'schwägerin',
+          'kollege', 'kollegin', 'chef', 'nachbar', 'partner', 'frau', 'mann',
+        ];
+        const isOtherPersonHome = OTHER_HOME_MARKERS.some(m => keyLower.includes(m));
+        const isHome = !isOtherPersonHome && (keyLower.includes('heim') || keyLower.includes('home'));
         // Known locations (dynamic)
         for (const city of this.getKnownLocations()) {
           if (value.includes(city)) {

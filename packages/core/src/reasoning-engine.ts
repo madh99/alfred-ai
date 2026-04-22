@@ -52,6 +52,38 @@ function isNoInsights(text: string): boolean {
   return false;
 }
 
+interface ScanResult {
+  hasInsights: boolean;
+  items: Array<{ summary: string; urgency: 'urgent' | 'high' | 'normal' | 'low' }>;
+}
+
+function parseScanResponse(text: string): ScanResult {
+  if (!text || text.length < 10) return { hasInsights: false, items: [] };
+
+  // Try JSON first
+  try {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (typeof parsed.hasInsights === 'boolean') {
+        return {
+          hasInsights: parsed.hasInsights,
+          items: Array.isArray(parsed.items) ? parsed.items : [],
+        };
+      }
+    }
+  } catch { /* fallback to text analysis */ }
+
+  // Fallback: check for no-insight markers in text
+  const upper = text.toUpperCase();
+  if (upper.includes('KEINE_INSIGHTS') || upper.includes('KEINE NEUEN INSIGHTS') || upper.includes('KEINE INSIGHTS')) {
+    return { hasInsights: false, items: [] };
+  }
+
+  // Has text content → treat as unstructured insights with normal urgency
+  return { hasInsights: true, items: [{ summary: text, urgency: 'normal' }] };
+}
+
 type ReasoningActionType = 'execute_skill' | 'create_reminder' | 'execute_plan';
 
 interface ProposedAction {
@@ -421,8 +453,10 @@ ${this.buildTopicInstructions()}`;
       const scanDurationMs = Date.now() - startMs;
       this.logger.debug({ response: scanText.slice(0, 500), durationMs: scanDurationMs }, 'Reasoning scan response');
 
-      if (isNoInsights(scanText)) {
-        this.logger.info({ durationMs: scanDurationMs, response: scanText.slice(0, 200) }, 'Reasoning pass: no insights (scan)');
+      const scanResult = parseScanResponse(scanText);
+
+      if (!scanResult.hasInsights || scanResult.items.length === 0) {
+        this.logger.info({ durationMs: scanDurationMs }, 'Reasoning pass: no insights (scan)');
         this.activityLogger?.logScheduledExec({
           actionId: 'reasoning-engine', actionName: 'Reasoning Engine',
           platform: this.defaultPlatform, chatId: this.defaultChatId,
@@ -431,18 +465,33 @@ ${this.buildTopicInstructions()}`;
         return;
       }
 
+      // Urgency-Gate: only proceed with urgent/high items for immediate delivery
+      const urgentItems = scanResult.items.filter(i => i.urgency === 'urgent' || i.urgency === 'high');
+      const normalItems = scanResult.items.filter(i => i.urgency === 'normal');
+      // low items are dropped entirely (routine status)
+
+      if (urgentItems.length === 0 && normalItems.length === 0) {
+        this.logger.info({ durationMs: scanDurationMs }, 'Reasoning pass: only low-urgency items, skipping');
+        return;
+      }
+
+      // Build findings string from scan items for the detail pass
+      const findings = urgentItems.length > 0
+        ? urgentItems.map(i => `- [${i.urgency.toUpperCase()}] ${i.summary}`).join('\n')
+        : normalItems.map(i => `- ${i.summary}`).join('\n');
+
       // PHASE 2b: Extract topics for enrichment
-      const { findings, topics } = this.extractTopics(scanText);
+      const { findings: extractedFindings, topics } = this.extractTopics(findings);
 
       let enrichedContext = new Map<string, string>();
       if (topics.length > 0) {
         this.logger.info({ topics: topics.map(t => t.topic) }, 'Reasoning: enriching topics');
         enrichedContext = await this.collector.enrichTopics(topics);
-        this.logger.debug({ enriched: [...enrichedContext.keys()] }, 'Reasoning: enrichment complete');
       }
 
-      // PHASE 3: Detail-Pass — elaborate on findings with enriched context
-      const detailPrompt = this.buildDetailPrompt(context, findings, enrichedContext);
+      // PHASE 3: Detail-Pass — only for urgent/high items (normal items are logged but not sent immediately)
+      const detailFindings = urgentItems.length > 0 ? findings : extractedFindings;
+      const detailPrompt = this.buildDetailPrompt(context, detailFindings, enrichedContext);
       const detailResponse = await this.llm.complete({
         messages: [{ role: 'user', content: detailPrompt }],
         maxTokens: MAX_OUTPUT_TOKENS,
@@ -453,7 +502,9 @@ ${this.buildTopicInstructions()}`;
       const durationMs = Date.now() - startMs;
       this.logger.debug({ response: text.slice(0, 500), durationMs }, 'Reasoning detail response');
 
-      if (isNoInsights(text)) {
+      // Check if detail response is empty/no-insights
+      const upperText = text.toUpperCase();
+      if (!text || text.length < 20 || upperText.includes('KEINE_INSIGHTS') || upperText.includes('KEINE NEUEN INSIGHTS')) {
         this.logger.info({ durationMs }, 'Reasoning pass: no insights (detail)');
         return;
       }
@@ -470,8 +521,19 @@ ${this.buildTopicInstructions()}`;
         return;
       }
 
-      // Determine urgency from actions (highest wins)
-      const urgency = this.resolveUrgency(parsed.actions);
+      // Determine urgency — use scan urgency as baseline, override with action urgency if higher
+      const actionUrgency = this.resolveUrgency(parsed.actions);
+      const scanUrgency = urgentItems.length > 0 ? (urgentItems.some(i => i.urgency === 'urgent') ? 'urgent' : 'high') : 'normal';
+      const urgencyOrder: Record<string, number> = { urgent: 3, high: 2, normal: 1, low: 0 };
+      const urgency = urgencyOrder[actionUrgency] >= urgencyOrder[scanUrgency] ? actionUrgency : scanUrgency;
+
+      // If only normal urgency and no urgent items, log but don't send (daily digest concept)
+      if (urgency === 'normal' && urgentItems.length === 0) {
+        this.logger.info({ durationMs, insights: newInsights.length, urgency }, 'Reasoning pass: normal urgency — deferred (not sent)');
+        // Mark as sent to prevent re-detection
+        for (const insight of newInsights) await this.markSent(insight);
+        return;
+      }
 
       // Smart delivery: check if user is active, defer if not
       await this.deliverOrDefer(newInsights, parsed.actions, urgency, durationMs);
@@ -691,18 +753,27 @@ ${changedInfo}
 
 ${this.formatSections(ctx)}
 
-Antworte mit KEINE_INSIGHTS wenn:
-- Nichts Relevantes aus den Daten hervorgeht
-- Nur Routine-Status ohne Auffälligkeiten ("alles läuft", "Backup ok", "Batterie stabil")
+Antworte NUR als JSON:
+{
+  "hasInsights": false
+}
 
-Antworte mit Stichpunkten wenn:
-- Handlungsbedarf besteht (Fehler, Konflikte, überfällige Aufgaben)
-- ODER relevante Information die zum User-Kontext passt (RSS-Artikel zu KG-Entities/Portfolio/Interessen, Preisänderungen, Nachrichten die Geräte/Projekte/Personen betreffen)
+ODER wenn Auffälligkeiten:
+{
+  "hasInsights": true,
+  "items": [
+    {"summary": "BMW SoC 3%, Termin in 2h", "urgency": "urgent"},
+    {"summary": "Relevanter RSS-Artikel zu KI", "urgency": "normal"}
+  ]
+}
 
-Bei relevanten RSS-Artikeln: Titel UND URL mitsenden.
-Max 3 Stichpunkte. Qualität vor Quantität.
+Urgency-Stufen:
+- "urgent": Sofort handeln (Ausfall, Sicherheit, < 24h Deadline, kritischer Fehler)
+- "high": Zeitnah relevant (< 48h, wichtige Änderung)
+- "normal": Wissenswert (RSS, Trends, Optimierung) — wird gesammelt, nicht sofort gemeldet
+- "low": Routine-Status — wird NICHT gemeldet
 
-${this.buildTopicInstructions()}`;
+KEIN Freitext, KEIN Markdown, NUR JSON.`;
   }
 
   private buildDetailPrompt(ctx: CollectedContext, scanFindings: string, enrichedContext?: Map<string, string>): string {
@@ -736,6 +807,8 @@ REGELN:
 - KEINE generischen Tipps, KEINE Bewertung des Nutzerverhaltens
 - Jeder Insight: 1-2 Sätze, konkret und actionable, auf Deutsch
 - Priorisiert nach Dringlichkeit
+- FAKTEN-REGEL: Nenne KEINE Zahlen, Entfernungen, Preise, Zeitangaben oder Statistiken die nicht WÖRTLICH in den bereitgestellten Daten stehen. Wenn du keine exakte Zahl aus den Daten hast, sage "nicht verfügbar" oder lass die Angabe weg. NIEMALS Entfernungen zwischen Orten schätzen — nur nennen wenn aus Routing-Daten vorhanden.
+- ZEIT-REGEL FÜR MEMORIES: Memories können relative Zeitangaben enthalten ("morgen", "nächste Woche", "gestern"). Diese beziehen sich auf den ERSTELLUNGSZEITPUNKT des Memorys, NICHT auf heute. Prüfe das Memory-Datum gegen das aktuelle Datum bevor du "morgen" oder "heute" in einem Insight verwendest.
 
 QUALITÄTSREGELN:
 - Alle Domains DÜRFEN kombiniert werden — aber verwechsle nicht verschiedene Dinge!

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.575] - 2026-04-17
+
+### Improved
+- **Reasoning: Strukturierter Scan** — Scan-Pass antwortet als JSON mit Urgency-Stufen (urgent/high/normal/low) statt Freitext
+- **Reasoning: Urgency-Gate** — Nur urgent/high Items werden sofort gesendet, normal wird deferred, low wird verworfen
+- **Reasoning: Anti-Halluzination** — Fakten-Regel im Detail-Prompt: keine geschaetzten Zahlen/Entfernungen/Preise
+- **Reasoning: Memory-Zeitaufloesung** — Relative Zeitangaben in Memories werden gegen Erstellungsdatum geprueft
+- **KG: isHome Guard** — `isHome` wird nur fuer User-eigene Adressen gesetzt, nicht fuer Adressen von Familienmitgliedern/Freunden
+
 ## [0.19.0-multi-ha.561] - 2026-04-18
 
 ### Added
