@@ -8,6 +8,7 @@ interface LLMRelation {
   source: string;
   target: string;
   type: string;
+  confidence?: number;
   reason?: string;
 }
 
@@ -35,21 +36,25 @@ interface LLMLinkingResult {
   corrections?: LLMCorrection[];
 }
 
-// Known relation types: accepted at full strength (0.5).
-// The LLM MAY propose new types not in this set — those are accepted at lower strength (0.3).
-const KNOWN_RELATION_TYPES = new Set([
-  // Core relations
-  'relates_to', 'mentioned_with', 'used_for', 'caused_by', 'depends_on', 'part_of',
-  'prepares_for', 'relevant_to', 'located_at', 'works_at', 'parent_of',
-  'spouse', 'sibling', 'family', 'grandparent_of', 'aunt_uncle_of',
-  'knows', 'owns', 'monitors', 'affects', 'plays_at', 'same_as',
-  // Code-used types (extractors, cross-extractor, memories)
-  'involves', 'sent', 'available_at', 'charges_at', 'home_location',
-  'affects_cost', 'works_with', 'neighbor_of', 'has_pattern',
-  'prefers', 'dislikes', 'neutral_on',
-  // Activity/interest/skill relations
-  'practices', 'interested_in', 'skilled_at', 'hobby_of',
-  'teaches', 'coaches', 'studies', 'subscribes_to',
+const ALLOWED_RELATION_TYPES = new Set([
+  // Person relationships
+  'spouse', 'sibling', 'parent_of', 'child_of', 'family', 'grandparent_of', 'aunt_uncle_of',
+  'knows', 'friend', 'colleague',
+  // Person → Organization
+  'works_at', 'member_of', 'customer_of',
+  // Person/Org → Location
+  'located_at', 'home_location',
+  // General semantic
+  'owns', 'uses', 'monitors', 'subscribes_to', 'prefers', 'dislikes',
+  'part_of', 'depends_on', 'same_as',
+  // Activity
+  'plays_at', 'practices', 'teaches', 'coaches', 'studies',
+  // Causal/temporal
+  'caused_by', 'prepares_for', 'affects',
+  // Events
+  'involves', 'relevant_to',
+  // Generic (fallback)
+  'mentioned_with', 'relates_to',
 ]);
 
 const VALID_ENTITY_TYPES = new Set([
@@ -223,68 +228,65 @@ export class LLMEntityLinker {
     const childEntities = all.filter(e => e.entityType === 'person' && /^(sohn|tochter)\s/i.test(e.name));
     const childNames = childEntities.map(e => `"${e.name}"`).join(', ');
 
-    return `Du bist ein Knowledge-Graph-Analyst. Analysiere die NEUEN/GEÄNDERTEN Entities und finde semantische Zusammenhänge. Prüfe auch ob BESTEHENDE RELATIONEN noch korrekt sind.
+    return `Du bist ein Knowledge-Graph-Analyst. Du verknüpfst Wissen wie ein aufmerksamer menschlicher Assistent.
 
-WICHTIG — IDENTITÄT:
-- "User" ist der Hauptbenutzer${userRealName ? ` (Realname: ${userRealName})` : ''}. Alle persönlichen Relationen (owns, works_at, monitors, prefers, dislikes, uses, subscribes_to) gehören zum "User" — NICHT zu seinen Kindern oder anderen Familienmitgliedern.
-${childNames ? `- Kinder des Users: ${childNames}. Diese sind EIGENSTÄNDIGE Personen. Sie besitzen NICHT die Dinge des Users (Cryptos, Fahrzeuge, Wallbox etc.). Verwechsle sie NICHT mit dem User.` : ''}
-- Entities mit ähnlichem Nachnamen sind NICHT dieselbe Person. "Linus Dohnal" ≠ "Markus Dohnal".${docContext ? `\n\nDOKUMENT-KONTEXT (Inhalt von gespeicherten Dokumenten):${docContext}` : ''}
+WIE EIN MENSCH DENKEN — BEISPIELE:
+
+RICHTIG:
+- Chat: "War heute beim Dr. Steindl in der Viktor Kaplan Straße" → Dr. Steindl ist eine Person (Arzt). Viktor Kaplan Straße ist der Praxis-Ort. NICHT die Wohnadresse des Users.
+- Kalender: "Termin bei Dr. Steindl, Viktor Kaplan Straße 12" → Event located_at Viktor Kaplan Straße 12. Dr. Steindl involves Event.
+- Memory: "Mutter wohnt in Eichgraben" → Maria Dohnal located_at Eichgraben. NICHT User located_at Eichgraben.
+- Chat: "Noah spielt bei SV Altlengbach" → Noah plays_at SV Altlengbach.
+
+FALSCH:
+- Termin-Adresse → User wohnt dort (Termin-Ort ≠ Wohnadresse!)
+- Person same_as Location (Typ-Verwechslung!)
+- "könnte in Verbindung stehen" → Spekulation, nicht speichern
+- Dr. Steindl als Location anlegen (ist eine Person!)
+
+IDENTITÄT:
+- "User" ist der Hauptbenutzer${userRealName ? ` (Realname: ${userRealName})` : ''}.
+${childNames ? `- Kinder: ${childNames}. EIGENSTÄNDIGE Personen, besitzen NICHT die Dinge des Users.` : ''}
+- Gleicher Nachname ≠ gleiche Person.
+${docContext ? `\nDOKUMENT-KONTEXT:${docContext}` : ''}
 
 NEUE/GEÄNDERTE ENTITIES:
 ${changedList}
 
-ALLE BESTEHENDEN ENTITIES:
+ALLE ENTITIES:
 ${allList}
 
 BESTEHENDE RELATIONEN (Top 50):
 ${relList}
 
-Antworte NUR als JSON-Objekt mit diesen 5 optionalen Arrays:
-
+Antworte NUR als JSON:
 {
-  "relations": [
-    {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Kurze Begründung"}
-  ],
-  "weaken": [
-    {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Warum veraltet/falsch"}
-  ],
-  "remove": [
-    {"source": "Entity-Name A", "target": "Entity-Name B", "type": "relation_type", "reason": "Warum komplett falsch"}
-  ],
-  "newEntities": [
-    {"name": "Neuer Name", "type": "entity_type", "attributes": {"key": "value"}, "reason": "Warum erstellen"}
-  ],
-  "corrections": [
-    {"name": "Bestehender Name", "currentType": "alter_typ", "newType": "neuer_typ oder gleicher_typ bei reinem Attribut-Update", "newName": "optional — neuer Name falls Entity-Name falsch ist", "attributes": {"key": "value"}, "reason": "Warum ändern/anreichern"}
-  ]
+  "relations": [{"source": "A", "target": "B", "type": "relation_type", "confidence": 0.9, "reason": "Begründung"}],
+  "weaken": [{"source": "A", "target": "B", "type": "type", "reason": "Warum veraltet"}],
+  "remove": [{"source": "A", "target": "B", "type": "type", "reason": "Warum falsch"}],
+  "newEntities": [{"name": "Name", "type": "entity_type", "attributes": {}, "reason": "Warum"}],
+  "corrections": [{"name": "Name", "currentType": "type", "newType": "type", "attributes": {"key": "val"}, "reason": "Warum"}]
 }
 
+ERLAUBTE RELATION-TYPEN (NUR diese verwenden!):
+spouse, sibling, parent_of, child_of, family, grandparent_of, aunt_uncle_of, knows, friend, colleague, works_at, member_of, customer_of, located_at, home_location, owns, uses, monitors, subscribes_to, prefers, dislikes, part_of, depends_on, same_as, plays_at, practices, teaches, coaches, studies, caused_by, prepares_for, affects, involves, relevant_to, mentioned_with, relates_to
+
 REGELN:
-- Nur ECHTE semantische Zusammenhänge, KEINE Spekulation
-- Relation-Typen (bevorzugt): mentioned_with, used_for, caused_by, depends_on, part_of, prepares_for, relevant_to, located_at, works_at, parent_of, spouse, sibling, family, grandparent_of, aunt_uncle_of, knows, owns, monitors, affects, plays_at, practices, interested_in, skilled_at, involves, prefers, dislikes, teaches, coaches, subscribes_to
-- Du DARFST auch neue Relation-Typen erstellen wenn kein bestehender passt — englisch, snake_case, 3-30 Zeichen (z.B. "trains_at", "manages", "lives_near"). Neue Types starten mit niedrigerer Konfidenz.
+- Nur ECHTE Zusammenhänge, KEINE Spekulation
+- confidence: 0.0-1.0. Nur >= 0.7 wird gespeichert. "wohnt laut Memory" = 0.9. "könnte" = 0.3.
+- KEINE neuen Relation-Typen erfinden
+- same_as NUR zwischen GLEICHEM Entity-Typ (Person↔Person, Location↔Location)
+- Adresse in Termin/Arztbesuch/Ladung = Termin-Ort, NICHT Wohnadresse
+- Nur "wohnt in/lebt in" = Wohnadresse (located_at/home_location)
 - Entity-Typen: person, location, item, vehicle, event, organization, metric
-- "weaken": nutze wenn eine bestehende Relation wahrscheinlich veraltet ist (z.B. alter Arbeitgeber, alte Adresse) — Strength wird halbiert
-- "remove": nutze NUR wenn eine Relation eindeutig falsch ist (z.B. falsche Person-Zuordnung, offensichtlicher Extraktionsfehler)
-- Prüfe die BESTEHENDEN RELATIONEN — gibt es widersprüchliche oder veraltete?
-- Nicht wiederholen was offensichtlich ist (gleicher Name = gleiche Entity)
-- KEINE Relations vorschlagen die in BESTEHENDE RELATIONEN schon existieren
-- KEINE Relations zwischen zwei Organisationen außer "same_as" (gleiche Firma, anderer Name) oder "part_of" (Tochtergesellschaft). Organisationen die zufällig im selben Graph sind haben KEINE Beziehung zueinander!
-- newEntities: nur wenn eine wichtige Entity fehlt die aus dem Kontext klar hervorgeht
-- KEINE Entities erstellen die offensichtlich eine bereits existierende Entity unter anderem Namen beschreiben (z.B. wenn "User" einen Realnamen hat, keine separate Entity für diesen Namen erstellen — stattdessen zur User-Entity verlinken)
-- Wenn eine Entity einen Realnamen-Attribut hat, betrachte diesen als Alias — Referenzen zu diesem Namen gehören zur existierenden Entity
-- KEINE Entities für Attribute wie Geburtsdatum, Staatsbürgerschaft, Alter, Adresse, Telefonnummer — diese gehören als Attribute auf die Person-Entity via "corrections" (gleicher Typ, nur attributes setzen). Beispiel: Mutter wohnt in Eichgraben → corrections: {"name":"Maria Dohnal","currentType":"person","newType":"person","attributes":{"livesIn":"Eichgraben"}} UND relation: Maria Dohnal→lives_in→Eichgraben UND newEntity Eichgraben (location) falls nicht vorhanden
-- corrections: nur wenn der aktuelle Typ eindeutig falsch ist
+- corrections: NUR Attribute ändern, NICHT den Entity-Typ. newType MUSS gleich currentType sein.
+- KEINE Entities für Attribute (Geburtsdatum, Telefon → als Attribute auf Person via corrections)
+- Wenn nichts zu tun: {"relations":[],"weaken":[],"remove":[],"newEntities":[],"corrections":[]}
 
-TRANSITIVE INFERENZ (wichtig!):
-- Wenn A parent_of B und A spouse C → C ist auch parent_of B
-- Wenn A family(mother) B und B parent_of C → A ist grandparent_of C
-- Wenn A parent_of B und A parent_of C → B und C sind siblings
-- Wenn ein "Freund" eine Ehefrau hat → Freund spouse Ehefrau
-- Wenn jemand bei einer Firma arbeitet → Person works_at Organization
-- Prüfe ob bestehende Entities falsch typisiert sind
-
-- Wenn nichts zu tun: {"relations":[],"weaken":[],"remove":[],"newEntities":[],"corrections":[]}`;
+TRANSITIVE INFERENZ:
+- A parent_of B und A spouse C → C parent_of B
+- A parent_of B und A parent_of C → B sibling C
+- Person arbeitet bei Firma → works_at Organization`;
   }
 
   private async callLLM(prompt: string, model: string): Promise<LLMLinkingResult> {
@@ -366,11 +368,16 @@ TRANSITIVE INFERENZ (wichtig!):
 
     // 1. Apply new relations (with type validation)
     for (const rel of (result.relations ?? []).slice(0, 20)) {
-      // Validate relation type format (must be snake_case, 3-30 chars)
-      if (!rel.type || !/^[a-z][a-z_]{2,29}$/.test(rel.type)) continue;
+      if (!rel.type || !ALLOWED_RELATION_TYPES.has(rel.type)) continue;
       const source = entityByName.get(rel.source.toLowerCase());
       const target = entityByName.get(rel.target.toLowerCase());
       if (!source || !target || source.id === target.id) continue;
+      // Confidence gate: skip low-confidence relations
+      const confidence = typeof rel.confidence === 'number' ? rel.confidence : 0.5;
+      if (confidence < 0.7) {
+        this.logger.debug({ source: rel.source, target: rel.target, type: rel.type, confidence }, 'LLM linker: low confidence, skipped');
+        continue;
+      }
       // Strict validation: prevent common LLM hallucinations
       if (rel.type === 'works_at') {
         if (target.entityType !== 'organization') continue;
@@ -398,6 +405,21 @@ TRANSITIVE INFERENZ (wichtig!):
         if (!source.sources.includes('memories') || !target.sources.includes('memories')) continue;
       }
       if (rel.type === 'located_at' && target.entityType !== 'location') continue;
+      // Person → Location: only accept if reason explicitly mentions living/residing
+      if (rel.type === 'located_at' && source.entityType === 'person' && source.name === 'User') {
+        const reasonLower = (rel.reason ?? '').toLowerCase();
+        if (!reasonLower.includes('wohnt') && !reasonLower.includes('lebt') && !reasonLower.includes('adresse') && !reasonLower.includes('zuhause') && !reasonLower.includes('home')) {
+          this.logger.debug({ source: rel.source, target: rel.target, reason: rel.reason }, 'LLM linker: User located_at rejected (no residence indicator in reason)');
+          continue;
+        }
+      }
+      // home_location: same guard
+      if (rel.type === 'home_location' && source.entityType === 'person' && source.name === 'User') {
+        const reasonLower = (rel.reason ?? '').toLowerCase();
+        if (!reasonLower.includes('wohnt') && !reasonLower.includes('lebt') && !reasonLower.includes('adresse') && !reasonLower.includes('zuhause') && !reasonLower.includes('home')) {
+          continue;
+        }
+      }
       // same_as between persons: only if names are genuinely the same person (alias, nickname, etc.)
       // NOT just same surname — "Linus Dohnal" != "Markus Dohnal"
       if (rel.type === 'same_as' && source.entityType === 'person' && target.entityType === 'person') {
@@ -410,15 +432,13 @@ TRANSITIVE INFERENZ (wichtig!):
           continue; // Different persons with same surname — skip
         }
       }
+      // same_as only between same entity types
+      if (rel.type === 'same_as' && source.entityType !== target.entityType) continue;
       // Org↔Org: only allow same_as and part_of — never relates_to, used_for, etc.
       if (source.entityType === 'organization' && target.entityType === 'organization' && !['same_as', 'part_of'].includes(rel.type)) continue;
       // Skip relations between items that are clearly HA entities (LED, Switch, AP, etc.)
       if (source.entityType === 'item' && target.entityType === 'item' && source.sources.includes('smarthome') && target.sources.includes('smarthome')) continue;
-      const relation = await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
-      // New/unknown relation types start weaker (0.3) — they need confirmation to grow
-      if (!KNOWN_RELATION_TYPES.has(rel.type) && relation.strength >= 0.5) {
-        await this.kgRepo.updateRelationStrength(relation.id, 0.3);
-      }
+      await this.kgRepo.upsertRelation(userId, source.id, target.id, rel.type, rel.reason?.slice(0, 100), 'llm_linking');
       stats.relations++;
     }
 
@@ -426,7 +446,13 @@ TRANSITIVE INFERENZ (wichtig!):
     //    common German words like "Zuhause", "Verbindungsprobleme" as entities)
     for (const ne of (result.newEntities ?? []).slice(0, 5)) {
       if (!VALID_ENTITY_TYPES.has(ne.type)) continue;
-      if (entityByName.has(ne.name.toLowerCase())) continue; // already exists
+      if (entityByName.has(ne.name.toLowerCase())) {
+        const existing = entityByName.get(ne.name.toLowerCase())!;
+        if (existing.entityType !== ne.type) {
+          this.logger.debug({ name: ne.name, existingType: existing.entityType, proposedType: ne.type }, 'LLM linker: entity exists with different type, creation rejected');
+        }
+        continue;
+      }
       if (this.isBlacklistedEntityName(ne.name)) {
         this.logger.debug({ name: ne.name, type: ne.type }, 'LLM linker: skipped blacklisted entity name');
         continue;
@@ -446,11 +472,15 @@ TRANSITIVE INFERENZ (wichtig!):
       const existing = entityByName.get(corr.name.toLowerCase());
       if (!existing) continue;
 
-      // Type correction
-      if (VALID_ENTITY_TYPES.has(corr.newType) && existing.entityType === corr.currentType && corr.newType !== corr.currentType) {
-        const mergedAttrs = { ...existing.attributes, ...(corr.attributes ?? {}) };
-        await this.kgRepo.updateEntityType(existing.id, corr.newType, mergedAttrs);
-        stats.corrections++;
+      // Type correction — entity types are immutable, only attributes can be changed
+      if (corr.newType !== corr.currentType) {
+        this.logger.debug({ name: corr.name, currentType: corr.currentType, newType: corr.newType }, 'LLM linker: entity type change rejected (immutable)');
+        // Still apply attributes if provided
+        if (corr.attributes && Object.keys(corr.attributes).length > 0) {
+          const mergedAttrs = { ...existing.attributes, ...corr.attributes };
+          await this.kgRepo.upsertEntity(userId, existing.name, existing.entityType as any, mergedAttrs, existing.sources[0] ?? 'llm_linking');
+          stats.corrections++;
+        }
       } else if (corr.attributes && Object.keys(corr.attributes).length > 0) {
         // Attribute enrichment without type change (e.g., add birthday, livesIn, employer to a person)
         const mergedAttrs = { ...existing.attributes, ...corr.attributes };
