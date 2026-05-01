@@ -138,6 +138,8 @@ export class HttpAdapter extends MessagingAdapter {
   private knowledgeGraphDeleteRelationFn?: (relationId: string) => Promise<boolean>;
   private knowledgeGraphUpdateEntityFn?: (entityId: string, data: Record<string, unknown>) => Promise<boolean>;
   private knowledgeGraphUpdateRelationFn?: (relationId: string, data: Record<string, unknown>) => Promise<boolean>;
+  private memoriesListFn?: (filter?: { type?: string }) => Promise<any[]>;
+  private memoriesDeleteFn?: (memoryId: string) => Promise<boolean>;
   private cmdbCallbacks?: CmdbCallbacks;
   private itsmCallbacks?: ItsmCallbacks;
   private docsCallbacks?: DocsCallbacks;
@@ -193,6 +195,14 @@ export class HttpAdapter extends MessagingAdapter {
     this.knowledgeGraphDeleteRelationFn = opts.deleteRelation;
     this.knowledgeGraphUpdateEntityFn = opts.updateEntity;
     this.knowledgeGraphUpdateRelationFn = opts.updateRelation;
+  }
+
+  setMemoryCallbacks(opts: {
+    list: (filter?: { type?: string }) => Promise<any[]>;
+    delete: (memoryId: string) => Promise<boolean>;
+  }): void {
+    this.memoriesListFn = opts.list;
+    this.memoriesDeleteFn = opts.delete;
   }
 
   setCmdbCallbacks(cbs: CmdbCallbacks): void { this.cmdbCallbacks = cbs; }
@@ -456,6 +466,11 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleKgUpdateEntity(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/knowledge-graph/relation/') && req.method === 'PATCH') {
       this.handleKgUpdateRelation(req, res, url).catch(err => this.safeError(res, err));
+    // ── Memories API (corrections viewer) ──
+    } else if (url.pathname === '/api/memories' && req.method === 'GET') {
+      this.handleMemoriesList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/memories/') && req.method === 'DELETE') {
+      this.handleMemoriesDelete(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -961,6 +976,28 @@ export class HttpAdapter extends MessagingAdapter {
     const body = await this.readBody(req);
     const data = JSON.parse(body);
     const ok = await this.knowledgeGraphUpdateRelationFn(relationId, data);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleMemoriesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.memoriesListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const type = url.searchParams.get('type') ?? undefined;
+    const list = await this.memoriesListFn(type ? { type } : undefined);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ memories: list }));
+  }
+
+  private async handleMemoriesDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.memoriesDeleteFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const memoryId = url.pathname.split('/').pop()!;
+    const ok = await this.memoriesDeleteFn(memoryId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

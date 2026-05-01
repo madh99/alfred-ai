@@ -2759,6 +2759,33 @@ export class Alfred {
         });
         this.logger.info('Knowledge Graph API registered');
       }
+
+      // Memory API for the Corrections viewer (list + delete)
+      if (apiAdapter && this.memoryRepo && 'setMemoryCallbacks' in apiAdapter) {
+        const memRepoForApi = this.memoryRepo;
+        const dbAdapterForMem = dbAdapter;
+        (apiAdapter as any).setMemoryCallbacks({
+          list: async (filter?: { type?: string }) => {
+            try {
+              const ownerId = this.config.security?.ownerUserId ?? '';
+              const user = await this.userRepo!.findOrCreate('telegram' as any, ownerId);
+              const resolvedId = user.masterUserId ?? user.id;
+              if (filter?.type) {
+                return await memRepoForApi.getByType(resolvedId, filter.type as any, 200);
+              }
+              return await memRepoForApi.getAllForUser(resolvedId);
+            } catch (err) {
+              this.logger.warn({ err }, 'Memories API list failed');
+              return [];
+            }
+          },
+          delete: async (memoryId: string) => {
+            const result = await dbAdapterForMem.execute('DELETE FROM memories WHERE id = ?', [memoryId]);
+            return result.changes > 0;
+          },
+        });
+        this.logger.info('Memories API registered');
+      }
     }
 
     // Wire CMDB/ITSM/Docs API on HTTP adapter (only when CMDB skills are registered)

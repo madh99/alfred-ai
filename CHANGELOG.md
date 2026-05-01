@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.584] - 2026-05-01
+
+### Added
+- **WebUI: Memories-Seite** (`/alfred/memories/`) — Liste aller User-Memories mit Status-Badges (AKTIV/RESOLVED/EXPIRED/ABGELAUFEN), Type-Filter (correction/preference/fact/entity/general/pattern), Volltext-Suche, manuellem Löschen. Zeigt erfasst/aktualisiert/Quelle/Konfidenz/relevant_until/expires_at/source_event_refs pro Eintrag
+- **API: GET /api/memories** und **DELETE /api/memories/:id** — neue Endpoints im HTTP-Adapter mit Auth-Check, optional `?type=correction` Filter
+
 ## [0.19.0-multi-ha.583] - 2026-05-01
 
 ### Added

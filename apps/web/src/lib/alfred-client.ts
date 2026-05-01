@@ -143,6 +143,26 @@ export class AlfredClient {
     return data.success;
   }
 
+  async fetchMemories(type?: string): Promise<MemoryEntry[]> {
+    const url = type ? `${this.baseUrl}/api/memories?type=${encodeURIComponent(type)}` : `${this.baseUrl}/api/memories`;
+    const res = await fetch(url, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch memories: ${res.status}`);
+    const data = await res.json();
+    return data.memories ?? [];
+  }
+
+  async deleteMemory(memoryId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/memories/${memoryId}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
       method: 'PATCH',
@@ -584,4 +604,20 @@ export interface KGRelation {
   firstSeenAt: string;
   lastSeenAt: string;
   mentionCount: number;
+}
+
+export interface MemoryEntry {
+  id: string;
+  userId: string;
+  key: string;
+  value: string;
+  category: string;
+  type: string;
+  confidence: number;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string | null;
+  relevantUntil?: string | null;
+  sourceEventRefs?: string[] | null;
 }
