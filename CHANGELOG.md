@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.585] - 2026-05-01
+
+### Fixed
+- **Reasoning: Insights mit absolut-annotierten Datumsangaben** — Insights vom LLM laufen jetzt ebenfalls durch `resolveRelativeDates()` bevor sie an den User geschickt werden. Bisher wurde nur Memory-Save-Path resolved; Insights mit "morgen 07:00" oder "in 3 Tagen" gingen unannotated raus. Jetzt: idempotente Annotation beim Versand → "morgen (=2026-05-02) 07:00"
+- **Reasoning Detail-Prompt: ABSOLUTE-DATEN-REGEL** — Explizite Pflicht-Regel mit Beispielen FALSCH/RICHTIG fuer LLM-Insight-Output. NIEMALS "morgen/heute/uebermorgen/in X Tagen/Montag/etc.", IMMER "Wochentag DD.MM. HH:MM". Sprache muss tagunabhaengig verstaendlich sein.
+
 ## [0.19.0-multi-ha.584] - 2026-05-01
 
 ### Added
