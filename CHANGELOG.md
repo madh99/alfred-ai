@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.586] - 2026-05-01
+
+### Fixed (rollback + correction von v585)
+- **Reasoning: Resolver-Pipeline aus deliverOrDefer ENTFERNT** — Der v585-Patch annotierte Datums-Phrasen in LLM-Insight-Output mit `(=YYYY-MM-DD)` basierend auf "now". Das war FALSCH: wenn der LLM "morgen" halluziniert hat (echter Termin Tage entfernt), zementierte die Annotation das halluzinierte Datum programmatisch. Insights verlassen den Reasoning-Pass jetzt unverändert.
+- **Reasoning: ABSOLUTE-DATEN-REGEL korrigiert** — Statt fabrizierter Beispiele jetzt klare Anweisung: KOPIERE Datum WÖRTLICH aus Quelle (Calendar/Memory/Korrektur), berechne NICHT selbst. Pflicht-Cross-Check: steht GENAU dieses Datum in der Calendar- oder Memory-Section? Wenn nicht → Datum komplett weglassen.
+
 ## [0.19.0-multi-ha.585] - 2026-05-01
 
 ### Fixed

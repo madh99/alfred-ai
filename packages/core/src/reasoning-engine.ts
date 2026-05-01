@@ -834,13 +834,13 @@ REGELN:
 - Priorisiert nach Dringlichkeit
 - FAKTEN-REGEL: Nenne KEINE Zahlen, Entfernungen, Preise, Zeitangaben oder Statistiken die nicht WÖRTLICH in den bereitgestellten Daten stehen. Wenn du keine exakte Zahl aus den Daten hast, sage "nicht verfügbar" oder lass die Angabe weg. NIEMALS Entfernungen zwischen Orten schätzen — nur nennen wenn aus Routing-Daten vorhanden.
 - ZEIT-REGEL FÜR MEMORIES: Memories können relative Zeitangaben enthalten ("morgen", "nächste Woche", "gestern"). Diese beziehen sich auf den ERSTELLUNGSZEITPUNKT des Memorys, NICHT auf heute. Prüfe das Memory-Datum gegen das aktuelle Datum bevor du "morgen" oder "heute" in einem Insight verwendest.
-- ABSOLUTE-DATEN-REGEL FÜR INSIGHTS (PFLICHT): Wenn DU einen Insight schreibst, NIEMALS relative Zeitangaben wie "morgen", "heute", "übermorgen", "nächste Woche", "in 3 Tagen", "Montag", "Dienstag" verwenden. IMMER absolute Daten im Format "Wochentag DD.MM." oder "DD.MM. HH:MM". Insights bleiben tagelang sichtbar in Chats und müssen ohne Tagesbezug verständlich sein.
-  - FALSCH: "BMW-Abholung morgen 07:00"
-  - RICHTIG: "BMW-Abholung Samstag 02.05. 07:00"
-  - FALSCH: "Termin am Montag 14:00"
-  - RICHTIG: "Termin Mo 04.05. 14:00"
-  - FALSCH: "in 3 Tagen Reminder"
-  - RICHTIG: "Reminder am Mo 04.05."
+- ABSOLUTE-DATEN-REGEL FÜR INSIGHTS (PFLICHT): Wenn DU einen Insight schreibst:
+  1. NIEMALS Datums-Wörter selbst BERECHNEN ("morgen" = heute+1, "Montag" = nächster Wochentag, etc.). Du machst dabei systematisch Fehler.
+  2. KOPIERE das Datum WÖRTLICH aus der QUELLE — das nächste Kalender-Event, das passende Memory, oder die explizite Korrektur zum Thema.
+  3. Format im Insight: "Wochentag DD.MM. HH:MM" (z.B. "Mo 04.05. 07:00") — direkt aus der Quelle übernommen.
+  4. NIEMALS "morgen", "heute", "übermorgen", "in X Tagen", oder allein stehende Wochentage ohne Datum verwenden — Insights werden tagelang gespeichert und sind ohne Tagesbezug zu lesen.
+  5. Wenn KEIN konkretes Datum in der Quelle steht: KEINE Datums-Aussage. Lieber "siehe Memory bmw_pickup_appointment" als ein erfundenes "morgen".
+  6. PRÜFUNG vor jedem Insight mit Datum: Steht GENAU dieses Datum so in der "Kalender (nächste 48h)" Section ODER in einem Memory der "User-Erinnerungen" Section? Wenn nicht: Datum WEGLASSEN.
 
 QUALITÄTSREGELN:
 - Alle Domains DÜRFEN kombiniert werden — aber verwechsle nicht verschiedene Dinge!
@@ -1309,18 +1309,17 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     insights: string[], actions: ProposedAction[],
     urgency: 'urgent' | 'high' | 'normal' | 'low', durationMs?: number,
   ): Promise<void> {
-    // POST-PROCESS: resolve relative date phrases in LLM-generated insight text.
-    // The LLM occasionally writes "morgen 07:00" or "in 3 Tagen" despite prompt rules —
-    // we annotate the absolute date so the message is unambiguous when re-read days later.
-    // resolveRelativeDates is idempotent, anchored on `now` (insight-creation time).
-    const { resolveRelativeDates } = await import('@alfred/skills');
-    const tz = this.userTimezone;
-    const annotatedInsights = insights.map(text => resolveRelativeDates(text, new Date(), tz));
+    // NOTE: We deliberately do NOT run resolveRelativeDates() over LLM insight output here.
+    // If the LLM writes "morgen" but the actual event is 3 days away (per Calendar/Memory),
+    // resolving "morgen" to today+1 would PROGRAMMATICALLY CEMENT the hallucinated date.
+    // The fix for hallucinated dates lives in the prompt rule — see ABSOLUTE-DATEN-REGEL —
+    // which forbids the LLM from computing dates itself and requires it to copy from
+    // the relevant Calendar/Memory entry verbatim.
 
     // Build message
     let message = '';
-    if (annotatedInsights.length > 0) {
-      message = `\u{1F4A1} **Alfred Insights**\n\n${annotatedInsights.join('\n\n')}`;
+    if (insights.length > 0) {
+      message = `\u{1F4A1} **Alfred Insights**\n\n${insights.join('\n\n')}`;
       if (actions.length > 0) {
         const actionLines = actions.slice(0, 5).map(a => `\u26A1 ${a.description}`);
         message += `\n\n**Vorgeschlagene Aktionen:**\n${actionLines.join('\n')}`;
