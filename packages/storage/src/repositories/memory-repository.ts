@@ -34,6 +34,19 @@ export interface MemoryEntry {
   createdAt: string;
   updatedAt: string;
   expiresAt?: string | null;
+  /**
+   * Date until which this memory is semantically valid. Used by reasoning engine
+   * to filter stale temporal corrections from the prompt block — past `relevant_until`,
+   * the memory is rendered as "(abgelaufen)" or skipped, but NOT hard-deleted (kept
+   * for historical context).
+   */
+  relevantUntil?: string | null;
+  /**
+   * For `_resolved` corrections: list of source-event identifiers this correction
+   * resolves (e.g. ["invoice:INV-2026-04-001", "email:msg-id-abc"]). Future insights
+   * matching the same topic but with DIFFERENT refs are NOT blocked by this correction.
+   */
+  sourceEventRefs?: string[] | null;
 }
 
 export class MemoryRepository {
@@ -267,7 +280,44 @@ export class MemoryRepository {
     return rows.map((row) => this.mapRow(row));
   }
 
+  /** Update relevant_until for a memory (used by save-time temporal extraction). */
+  async setRelevantUntil(userId: string, key: string, relevantUntil: string | null): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE memories SET relevant_until = ? WHERE user_id = ? AND key = ?',
+      [relevantUntil, userId, key],
+    );
+  }
+
+  /** Update source_event_refs (JSON-encoded array) for a memory. */
+  async setSourceEventRefs(userId: string, key: string, refs: string[] | null): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE memories SET source_event_refs = ? WHERE user_id = ? AND key = ?',
+      [refs && refs.length > 0 ? JSON.stringify(refs) : null, userId, key],
+    );
+  }
+
+  /** Update value (for migration that re-resolves relative dates). */
+  async updateValue(userId: string, key: string, value: string): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE memories SET value = ? WHERE user_id = ? AND key = ?',
+      [value, userId, key],
+    );
+  }
+
+  /** Iterate all memories for a user — used by migrations & cleanup tasks. */
+  async getAllForUser(userId: string): Promise<MemoryEntry[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC',
+      [userId],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   private mapRow(row: Record<string, unknown>): MemoryEntry {
+    let sourceEventRefs: string[] | null = null;
+    if (row.source_event_refs) {
+      try { sourceEventRefs = JSON.parse(row.source_event_refs as string); } catch { sourceEventRefs = null; }
+    }
     return {
       id: row.id as string,
       userId: row.user_id as string,
@@ -282,6 +332,8 @@ export class MemoryRepository {
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
       expiresAt: (row.expires_at as string) ?? null,
+      relevantUntil: (row.relevant_until as string) ?? null,
+      sourceEventRefs,
     };
   }
 }

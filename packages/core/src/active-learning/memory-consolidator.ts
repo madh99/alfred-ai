@@ -2,6 +2,9 @@ import type { Logger } from 'pino';
 import type { LLMProvider } from '@alfred/llm';
 import type { MemoryRepository, MemoryEntry, EmbeddingRepository } from '@alfred/storage';
 import type { EmbeddingService } from '../embedding-service.js';
+import { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from '@alfred/skills';
+
+const MIGRATION_MARKER_KEY = '_alfred_internal_migration_v582_dates_done';
 
 const MERGE_PROMPT = `You are a memory consolidation system. Merge these similar memories into one concise entry.
 
@@ -27,6 +30,76 @@ export class MemoryConsolidator {
 
   /** Set optional embedding service for semantic similarity grouping. */
   setEmbeddingService(svc: EmbeddingService): void { this.embeddingService = svc; }
+
+  /**
+   * One-shot migration: backfill `relevant_until`, `source_event_refs`, and re-resolve
+   * relative-date phrases on legacy memories that were stored before the resolver landed.
+   *
+   * Idempotent: marker memory `_alfred_internal_migration_v582_dates_done` prevents re-runs.
+   * Safe to call on every startup — bails out early if already done.
+   *
+   * Anchor for date resolution: each memory's own `updated_at` (= last write time of the text).
+   */
+  async migrateLegacyMemoriesV582(userId: string, timezone?: string): Promise<{ resolved: number; relevantUntilSet: number; refsSet: number; resolvedExpirySet: number }> {
+    const stats = { resolved: 0, relevantUntilSet: 0, refsSet: 0, resolvedExpirySet: 0 };
+
+    try {
+      const marker = await this.memoryRepo.recall(userId, MIGRATION_MARKER_KEY);
+      if (marker) return stats; // already migrated
+
+      const all = await this.memoryRepo.getAllForUser(userId);
+      for (const m of all) {
+        if (m.key === MIGRATION_MARKER_KEY) continue;
+
+        // 1. Re-resolve relative-date phrases against memory's own updated_at
+        const updatedDate = m.updatedAt ? new Date(m.updatedAt) : new Date();
+        const newValue = resolveRelativeDates(m.value, updatedDate, timezone);
+        if (newValue !== m.value) {
+          await this.memoryRepo.updateValue(m.userId, m.key, newValue);
+          stats.resolved++;
+        }
+
+        // 2. Extract relevant_until from the (now annotated) value
+        if (!m.relevantUntil) {
+          const ru = extractRelevantUntil(newValue);
+          if (ru) {
+            await this.memoryRepo.setRelevantUntil(m.userId, m.key, `${ru}T23:59:59Z`);
+            stats.relevantUntilSet++;
+          }
+        }
+
+        // 3. Extract source_event_refs from the value
+        if (!m.sourceEventRefs || m.sourceEventRefs.length === 0) {
+          const refs = extractSourceEventRefs(newValue);
+          if (refs.length > 0) {
+            await this.memoryRepo.setSourceEventRefs(m.userId, m.key, refs);
+            stats.refsSet++;
+          }
+        }
+
+        // 4. Auto-expiry for legacy `_resolved` corrections without expires_at: 30 days from now
+        //    (giving them a sane lifetime rather than retroactive expiry).
+        if (m.type === 'correction' && m.key.endsWith('_resolved') && !m.expiresAt) {
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          await this.memoryRepo.setExpiry(m.userId, m.key, expiresAt);
+          stats.resolvedExpirySet++;
+        }
+      }
+
+      // Set marker so we never run again
+      await this.memoryRepo.saveWithMetadata(
+        userId, MIGRATION_MARKER_KEY,
+        new Date().toISOString(),
+        'system', 'general', 1.0, 'auto',
+      );
+
+      this.logger.info({ userId, ...stats }, 'Legacy memory migration v582 completed');
+    } catch (err) {
+      this.logger.warn({ err, userId }, 'Legacy memory migration v582 failed (will retry on next start)');
+    }
+
+    return stats;
+  }
 
   /**
    * Run consolidation for a user:
@@ -55,6 +128,44 @@ export class MemoryConsolidator {
       }
     } catch (err) {
       this.logger.error({ err }, 'Failed to delete stale memories');
+    }
+
+    // 1a. Pair-cleanup: when a `_resolved` correction exists, delete its original counterpart.
+    //     Two-stage matching: exact-prefix first, fallback to keyword overlap (≥3 shared, ≥5 chars).
+    try {
+      const corrections = await this.memoryRepo.getByType(userId, 'correction', 100);
+      const resolved = corrections.filter(c => c.key.endsWith('_resolved'));
+      if (resolved.length > 0) {
+        for (const r of resolved) {
+          // Stage 1: exact prefix match — strip "_resolved" from key
+          const expectedOriginalKey = r.key.slice(0, -'_resolved'.length);
+          const exactMatch = corrections.find(c => c.key === expectedOriginalKey);
+          if (exactMatch) {
+            await this.memoryRepo.deleteByIds([exactMatch.id], userId);
+            if (this.embeddingRepo) await this.embeddingRepo.delete('memory', exactMatch.id, userId).catch(() => {});
+            deleted++;
+            this.logger.info({ userId, resolved: r.key, deleted: exactMatch.key }, 'Pair-cleanup: deleted original correction (exact match)');
+            continue;
+          }
+          // Stage 2: keyword overlap on key tokens (≥3 shared, ≥5 chars)
+          const rTokens = r.key.replace(/_resolved$/, '').split('_').filter(t => t.length >= 5);
+          if (rTokens.length < 3) continue; // not enough specificity for safe match
+          for (const c of corrections) {
+            if (c.id === r.id || c.key.endsWith('_resolved')) continue;
+            const cTokens = c.key.split('_').filter(t => t.length >= 5);
+            const shared = rTokens.filter(t => cTokens.includes(t));
+            if (shared.length >= 3) {
+              await this.memoryRepo.deleteByIds([c.id], userId);
+              if (this.embeddingRepo) await this.embeddingRepo.delete('memory', c.id, userId).catch(() => {});
+              deleted++;
+              this.logger.info({ userId, resolved: r.key, deleted: c.key, shared }, 'Pair-cleanup: deleted original correction (keyword match)');
+              break;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.error({ err }, 'Failed to run correction pair-cleanup');
     }
 
     // 1b. Delete low-confidence rule memories older than 30 days

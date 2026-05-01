@@ -513,7 +513,13 @@ ${this.buildTopicInstructions()}`;
       const parsed = this.parseReasoningResponse(text);
       const newInsights: string[] = [];
       for (const insight of parsed.insights) {
-        if (!await this.wasRecentlySent(insight)) newInsights.push(insight);
+        if (await this.wasRecentlySent(insight)) continue;
+        // Resolved-correction backup-gate: log if an insight slips through that could be
+        // construed as overlapping with a `_resolved` correction. Default = pass (we trust
+        // the LLM to follow the prompt rule about new vs. old refs). Programmatic check
+        // here is for visibility/audit, not blocking.
+        await this.auditResolvedCorrectionOverlap(insight).catch(() => { /* non-critical */ });
+        newInsights.push(insight);
       }
 
       if (newInsights.length === 0 && parsed.actions.length === 0) {
@@ -653,27 +659,44 @@ ${this.buildTopicInstructions()}`;
 
     // Extract correction memories and place them as a HARD BLOCK before all other sections.
     // This ensures the LLM cannot ignore corrections buried in the memories section.
-    // The line format is: "- [correction] key (erfasst YYYY-MM-DD): value" — we keep the
-    // erfasst-date so the LLM can correctly interpret relative time phrases.
+    // Filter expired corrections (relevant_until past) — they remain in DB for history
+    // but should not block today's reasoning.
     const memSection = ctx.sections.find(s => s.key === 'memories');
     const corrections: string[] = [];
     if (memSection) {
       for (const line of memSection.content.split('\n')) {
-        if (/\[correction\]/i.test(line)) {
-          corrections.push(line.replace(/^-\s*\[correction\]\s*/, '').trim());
-        }
+        if (!/\[correction\]/i.test(line)) continue;
+        // Skip lines marked "abgelaufen seit ..." — these are temporal corrections
+        // whose validity window has passed.
+        if (/abgelaufen seit/i.test(line)) continue;
+        corrections.push(line.replace(/^-\s*\[correction\]\s*/, '').trim());
       }
     }
     if (corrections.length > 0) {
       this.logger.info({ count: corrections.length, first: corrections[0]?.slice(0, 80) }, 'Reasoning: corrections extracted for prompt block');
     } else if (memSection) {
-      // Debug: check why no corrections found
       const hasCorrection = memSection.content.includes('[correction]');
       this.logger.info({ hasCorrection, memoryLines: memSection.content.split('\n').length, preview: memSection.content.slice(0, 200) },
         'Reasoning: no corrections found in memories section');
     }
     const correctionBlock = corrections.length > 0
-      ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===\nDiese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.\nDas "(erfasst YYYY-MM-DD)" zeigt wann die Korrektur gespeichert wurde — relative Zeitangaben in der Korrektur ("morgen", "Montag", "nächste Woche") beziehen sich auf dieses Datum, NICHT auf heute. Absolute Daten in "(=YYYY-MM-DD)" sind die bereits aufgelösten Werte.\n${corrections.map(c => `❌ ${c}`).join('\n')}`
+      ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===
+Diese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.
+
+ZEITLICHE GÜLTIGKEIT:
+- "(erfasst YYYY-MM-DD)" zeigt wann die Korrektur gespeichert wurde. Relative Zeitangaben ("morgen", "Montag") beziehen sich auf DIESES Datum, nicht auf heute.
+- "(gültig bis YYYY-MM-DD)" definiert den Gültigkeitszeitraum. Nach diesem Datum gilt die Korrektur NICHT mehr.
+- Korrekturen mit Suffix "_resolved" und "(betrifft: <refs>)" gelten NUR fuer die genannten Vorgaenge.
+
+VORGANGS-GÜLTIGKEIT BEI _resolved KORREKTUREN:
+Wenn eine Korrektur "betrifft: invoice:INV-X, date:Y, email:Z" anzeigt, blockt sie NUR diese spezifischen Vorgaenge. Wenn du einen NEUEN Vorgang siehst (neue Rechnungsnummer, neueres Datum, neue Email-ID), ist dieser ein EIGENER Vorgang — die Korrektur blockt ihn NICHT, du musst ihn als Insight melden.
+
+Beispiel:
+- Korrektur: "Anthropic ist bezahlt (erfasst 2026-04-05; betrifft: invoice:INV-2026-04-001)"
+- NEUE Email: "Invoice INV-2026-05-001 due"
+- → INV-2026-05-001 ist NICHT in "betrifft" → Insight erstellen, Korrektur greift nicht.
+
+${corrections.map(c => `❌ ${c}`).join('\n')}`
       : '';
 
     const sections = ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');
@@ -1221,6 +1244,50 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     // Default: proactive — PROACTIVE_SKILLS (reminder, todo, note, calendar, homeassistant)
     // are auto-executed with user notification. HIGH_RISK skills still require confirmation.
     return 'proactive';
+  }
+
+  /**
+   * Audit hook for the `_resolved` correction bypass. If an insight overlaps with a
+   * resolved correction's topic but contains DIFFERENT source-event-refs, that's the
+   * intended bypass case (new invoice, new event, etc.) — log it for visibility.
+   * If it overlaps AND has the SAME refs, the LLM may have erroneously bypassed —
+   * log a warning. Does NOT block insights either way (failsafe = let through).
+   */
+  private async auditResolvedCorrectionOverlap(insightText: string): Promise<void> {
+    if (!this.memoryRepo || !this.resolvedOwnerUserId) return;
+    try {
+      const corrections = await this.memoryRepo.getByType(this.resolvedOwnerUserId, 'correction', 50);
+      const resolved = corrections.filter(c => c.key.endsWith('_resolved'));
+      if (resolved.length === 0) return;
+
+      const { extractSourceEventRefs } = await import('@alfred/skills');
+      const insightRefs = new Set(extractSourceEventRefs(insightText));
+      const insightWords = new Set(insightText.toLowerCase().split(/\s+/).filter(w => w.length >= 5));
+
+      for (const corr of resolved) {
+        // Topic overlap heuristic: ≥2 keywords from key match insight text
+        const keyTokens = corr.key.replace(/_resolved$/, '').split('_').filter(t => t.length >= 5);
+        const overlap = keyTokens.filter(t => insightWords.has(t.toLowerCase()));
+        if (overlap.length < 2) continue;
+
+        const corrRefs = new Set(corr.sourceEventRefs ?? []);
+        const sharedRefs = [...insightRefs].filter(r => corrRefs.has(r));
+        const newRefs = [...insightRefs].filter(r => !corrRefs.has(r));
+
+        if (newRefs.length > 0 && sharedRefs.length === 0) {
+          this.logger.info({
+            insight: insightText.slice(0, 120), correction: corr.key,
+            newRefs, corrRefs: [...corrRefs],
+          }, 'Resolved-correction bypass: new event refs detected, insight is for a different instance');
+        } else if (sharedRefs.length > 0 && newRefs.length === 0) {
+          this.logger.warn({
+            insight: insightText.slice(0, 120), correction: corr.key,
+            sharedRefs,
+          }, 'Resolved-correction overlap: insight refs match resolved correction — LLM may have erroneously bypassed');
+        }
+        // (Other cases: no refs at all → ambiguous, no log; mixed → benign)
+      }
+    } catch { /* non-critical */ }
   }
 
   private resolveUrgency(actions: ProposedAction[]): 'urgent' | 'high' | 'normal' | 'low' {

@@ -188,3 +188,52 @@ export function resolveRelativeDates(text: string, now: Date = new Date(), timez
 
   return out;
 }
+
+/**
+ * Extract the latest date (YYYY-MM-DD) from a memory value's `(=YYYY-MM-DD)` annotations.
+ * Returns the MAXIMUM date — a memory remains relevant until ALL its referenced dates pass.
+ *
+ * Returns undefined if no annotated dates are present.
+ */
+export function extractRelevantUntil(text: string): string | undefined {
+  const matches = [...text.matchAll(/\(=(\d{4}-\d{2}-\d{2})\)/g)];
+  if (matches.length === 0) return undefined;
+  const dates = matches.map(m => m[1]).sort();
+  return dates[dates.length - 1]; // ISO dates sort lexicographically
+}
+
+/**
+ * Extract source-event identifiers from text. Heuristic patterns for common ID formats:
+ * - Invoice numbers: INV-2026-04-001, RE-12345, RG2026-001
+ * - Email message-ids in angle brackets: <abc@example.com>
+ * - ISO dates: 2026-04-15 (used as fallback ref)
+ * - Calendar/event ids prefixed with "evt:" / "event:"
+ *
+ * Returns prefixed refs like "invoice:INV-...", "email:msg-id", "date:2026-04-15".
+ */
+export function extractSourceEventRefs(text: string): string[] {
+  if (!text) return [];
+  const refs = new Set<string>();
+
+  // Invoice/Receipt numbers (German + English)
+  for (const m of text.matchAll(/\b(?:INV|RE|RG|RECH|INVOICE|RECEIPT)[-\s]?(\d{2,4}[-\s]?\d{2,5}[-\s]?\d{0,5})\b/gi)) {
+    refs.add(`invoice:${m[0].replace(/\s+/g, '').toUpperCase()}`);
+  }
+
+  // Email message-ids: <foo@bar.com>
+  for (const m of text.matchAll(/<([^>\s]+@[^>\s]+)>/g)) {
+    refs.add(`email:${m[1]}`);
+  }
+
+  // Calendar/event explicit refs
+  for (const m of text.matchAll(/\b(?:evt|event|cal|kal):([\w-]{4,})\b/gi)) {
+    refs.add(`event:${m[1]}`);
+  }
+
+  // ISO dates as last-resort identifier (helps "Email vom 2026-04-15" match itself later)
+  for (const m of text.matchAll(/\b(\d{4}-\d{2}-\d{2})\b/g)) {
+    refs.add(`date:${m[1]}`);
+  }
+
+  return [...refs];
+}

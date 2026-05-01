@@ -2,7 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { MemoryRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
-import { resolveRelativeDates } from '../relative-date-resolver.js';
+import { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from '../relative-date-resolver.js';
 
 interface EmbeddingServiceLike {
   embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<string | undefined>;
@@ -53,6 +53,17 @@ export class MemorySkill extends Skill {
         confirm: {
           type: 'boolean',
           description: 'Set to true to confirm deletion of protected (entity/fact) memories',
+        },
+        source_event_refs: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'When saving a "_resolved" correction, identify WHAT specific event(s) you are resolving. ' +
+            'Use prefixed identifiers: ["invoice:INV-2026-04-001"] for invoices, ' +
+            '["email:msg-id"] for emails, ["date:2026-04-15"] when only date is known, ' +
+            '["topic:anthropic_payment:2026-04-05"] when no specific identifier exists. ' +
+            'A FUTURE event with a DIFFERENT identifier will NOT be blocked by this correction. ' +
+            'Optional but strongly recommended for "_resolved" corrections.',
         },
       },
       required: ['action'],
@@ -131,23 +142,42 @@ export class MemorySkill extends Skill {
     // would re-resolve to a new "next Monday" on every future read.
     const resolvedValue = resolveRelativeDates(value, new Date(), context.timezone);
 
+    const userId = effectiveUserId(context);
     const entry = await this.memoryRepo.saveWithMetadata(
-      effectiveUserId(context),
-      key,
-      resolvedValue,
-      category ?? 'general',
-      type,
-      1.0,
-      'manual',
+      userId, key, resolvedValue, category ?? 'general', type, 1.0, 'manual',
     );
+
+    // Set relevant_until from the latest annotated date in the value.
+    // Memory remains semantically valid until that date passes.
+    const relevantUntil = extractRelevantUntil(resolvedValue);
+    if (relevantUntil) {
+      // relevant_until is a calendar date (end-of-day) — pin to 23:59 UTC of that day
+      await this.memoryRepo.setRelevantUntil(userId, key, `${relevantUntil}T23:59:59Z`);
+    }
+
+    // Set source_event_refs:
+    // 1. Explicit param from caller (LLM provides for _resolved corrections)
+    // 2. Auto-extracted from value text (invoice numbers, email-ids, dates)
+    const explicitRefs = Array.isArray(input.source_event_refs)
+      ? (input.source_event_refs as unknown[]).filter(r => typeof r === 'string') as string[]
+      : [];
+    const autoRefs = extractSourceEventRefs(resolvedValue);
+    const allRefs = [...new Set([...explicitRefs, ...autoRefs])];
+    if (allRefs.length > 0) {
+      await this.memoryRepo.setSourceEventRefs(userId, key, allRefs);
+    }
+
+    // Auto-expiry for _resolved corrections: 30 days. Hard delete after that —
+    // resolved facts go stale (next billing cycle, next planning round, etc.).
+    if (type === 'correction' && key.endsWith('_resolved')) {
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await this.memoryRepo.setExpiry(userId, key, expiresAt);
+    }
 
     // Auto-embed for semantic search
     if (this.embeddingService) {
       this.embeddingService.embedAndStore(
-        effectiveUserId(context),
-        `${key}: ${resolvedValue}`,
-        'memory',
-        key,
+        userId, `${key}: ${resolvedValue}`, 'memory', key,
       ).catch(() => { /* non-critical */ });
     }
 

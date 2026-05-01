@@ -687,4 +687,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_interjections_consumed ON project_agent_interjections(task_id, consumed)', []);
     },
   },
+  {
+    version: 61,
+    description: 'Memories — relevant_until + source_event_refs columns for correction lifecycle',
+    async up(db) {
+      await db.execute('ALTER TABLE memories ADD COLUMN IF NOT EXISTS relevant_until TEXT', []);
+      await db.execute('ALTER TABLE memories ADD COLUMN IF NOT EXISTS source_event_refs TEXT', []);
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_memories_relevant_until ON memories(user_id, relevant_until) WHERE relevant_until IS NOT NULL', []);
+    },
+  },
 ];

@@ -3167,6 +3167,23 @@ export class Alfred {
         consolidator.setEmbeddingRepo(embRepo);
       }
       const userRepoRef = this.userRepo;
+
+      // ── One-shot legacy migration v582 ────────────────────────────────────
+      // Backfill relevant_until / source_event_refs and re-resolve relative-date
+      // phrases against each memory's updated_at. Idempotent (marker-protected).
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const users = await userRepoRef.listAll();
+        for (const user of users) {
+          const result = await consolidator.migrateLegacyMemoriesV582(user.id, tz);
+          if (result.resolved > 0 || result.relevantUntilSet > 0 || result.refsSet > 0 || result.resolvedExpirySet > 0) {
+            this.logger.info({ userId: user.id, ...result }, 'Legacy memory migration v582 applied');
+          }
+        }
+      } catch (err) {
+        this.logger.warn({ err }, 'Legacy memory migration v582 startup hook failed');
+      }
+
       let lastConsolidationDay = '';
       this.memoryConsolidatorTimer = setInterval(async () => {
         const now = new Date();

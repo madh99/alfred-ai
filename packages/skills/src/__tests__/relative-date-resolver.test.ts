@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveRelativeDates } from '../relative-date-resolver.js';
+import { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from '../relative-date-resolver.js';
 
 // All tests anchor on a fixed "now" so the assertions are stable.
 // Wednesday, 2026-04-22 12:00 UTC.
@@ -109,6 +109,46 @@ describe('resolveRelativeDates', () => {
       const out = resolveRelativeDates(text, NOW, TZ);
       expect(out).toBe('Montag (=2026-04-27) anrufen, Dienstag (=2026-04-28) bestätigen');
       expect(resolveRelativeDates(out, NOW, TZ)).toBe(out);
+    });
+  });
+
+  describe('extractRelevantUntil', () => {
+    it('returns undefined when no annotation', () => {
+      expect(extractRelevantUntil('Anthropic ist bezahlt')).toBeUndefined();
+    });
+
+    it('extracts single date', () => {
+      expect(extractRelevantUntil('warte bis Montag (=2026-04-27)')).toBe('2026-04-27');
+    });
+
+    it('returns max date when multiple', () => {
+      expect(extractRelevantUntil('Montag (=2026-04-27) oder Donnerstag (=2026-04-30)')).toBe('2026-04-30');
+    });
+  });
+
+  describe('extractSourceEventRefs', () => {
+    it('extracts invoice numbers', () => {
+      const refs = extractSourceEventRefs('Anthropic-Zahlung erledigt für Rechnung INV-2026-04-001');
+      expect(refs).toContain('invoice:INV-2026-04-001');
+    });
+
+    it('extracts email message-ids', () => {
+      const refs = extractSourceEventRefs('Email <abc-123@anthropic.com> behandelt');
+      expect(refs).toContain('email:abc-123@anthropic.com');
+    });
+
+    it('extracts ISO dates', () => {
+      const refs = extractSourceEventRefs('Email vom 2026-04-15 erledigt');
+      expect(refs).toContain('date:2026-04-15');
+    });
+
+    it('returns empty for plain text', () => {
+      expect(extractSourceEventRefs('Anthropic ist bezahlt')).toEqual([]);
+    });
+
+    it('deduplicates refs', () => {
+      const refs = extractSourceEventRefs('INV-2026-04-001 INV-2026-04-001');
+      expect(refs.filter(r => r === 'invoice:INV-2026-04-001').length).toBe(1);
     });
   });
 

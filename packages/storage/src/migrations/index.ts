@@ -1358,4 +1358,13 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_interjections_consumed ON project_agent_interjections(task_id, consumed)`);
     },
   },
+  {
+    version: 58,
+    description: 'Memories — relevant_until + source_event_refs columns for correction lifecycle',
+    up(db) {
+      try { db.exec(`ALTER TABLE memories ADD COLUMN relevant_until TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE memories ADD COLUMN source_event_refs TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_relevant_until ON memories(user_id, relevant_until) WHERE relevant_until IS NOT NULL`);
+    },
+  },
 ];

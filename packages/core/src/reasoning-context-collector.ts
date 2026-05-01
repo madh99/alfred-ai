@@ -20,13 +20,34 @@ import { buildSkillContext } from './context-factory.js';
 // ── Helpers ──────────────────────────────────────────────────
 
 /**
- * Render a memory line for the LLM prompt — includes the creation date so the LLM
- * can correctly interpret relative phrases ("morgen", "Montag") that may have leaked
- * past the resolveRelativeDates pre-processor.
+ * Render a memory line for the LLM prompt. Includes:
+ * - `(erfasst YYYY-MM-DD)` — creation date, so relative phrases ("morgen", "Montag")
+ *   can be interpreted against the right anchor.
+ * - `(gültig bis YYYY-MM-DD)` — for corrections with a temporal validity window.
+ *   Past this date, the correction is rendered with "(abgelaufen)" marker so the
+ *   LLM knows it's no longer in effect.
+ * - `(betrifft: <refs>)` — for `_resolved` corrections, lists the specific events
+ *   this correction resolves. New events with DIFFERENT refs are NOT blocked by it.
  */
-function formatMemoryLine(m: { type?: string; key: string; value: string; createdAt?: string }): string {
-  const created = m.createdAt ? ` (erfasst ${m.createdAt.slice(0, 10)})` : '';
-  return `- [${m.type ?? 'general'}] ${m.key}${created}: ${m.value}`;
+function formatMemoryLine(m: {
+  type?: string; key: string; value: string;
+  createdAt?: string; relevantUntil?: string | null; sourceEventRefs?: string[] | null;
+}): string {
+  const annotations: string[] = [];
+  if (m.createdAt) annotations.push(`erfasst ${m.createdAt.slice(0, 10)}`);
+
+  if (m.relevantUntil) {
+    const validUntilDate = m.relevantUntil.slice(0, 10);
+    const isPast = m.relevantUntil < new Date().toISOString();
+    annotations.push(isPast ? `abgelaufen seit ${validUntilDate}` : `gültig bis ${validUntilDate}`);
+  }
+
+  if (m.sourceEventRefs && m.sourceEventRefs.length > 0) {
+    annotations.push(`betrifft: ${m.sourceEventRefs.slice(0, 5).join(', ')}`);
+  }
+
+  const annPart = annotations.length > 0 ? ` (${annotations.join('; ')})` : '';
+  return `- [${m.type ?? 'general'}] ${m.key}${annPart}: ${m.value}`;
 }
 
 // ── Types ────────────────────────────────────────────────────

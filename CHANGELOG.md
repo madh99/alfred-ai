@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.583] - 2026-05-01
+
+### Added
+- **Memory: `relevant_until` Spalte** — Migration v58 (SQLite) + v61 (PG). Korrekturen mit temporalen Ausdruecken bekommen automatisch ein Gueltigkeitsdatum (max. aus allen `(=YYYY-MM-DD)` Annotations im Wert). Nach Ablauf werden sie aus dem Korrektur-Block des Reasoning-Prompts gefiltert, bleiben aber in der DB als historische Referenz.
+- **Memory: `source_event_refs` Spalte** — Selbe Migration. `_resolved`-Korrekturen bekommen entweder vom LLM uebergebene oder automatisch extrahierte Source-Identifier (Rechnungsnummern, Email-IDs, ISO-Daten). Damit blockiert eine Korrektur "Anthropic ist bezahlt (betrifft: invoice:INV-2026-04-001)" eine NEUE Rechnung INV-2026-05-001 NICHT mehr.
+- **Reasoning: Korrektur-Block mit Vorgangs-Gueltigkeit** — Detail-Prompt erklaert dem LLM dass `_resolved` Korrekturen NUR die in "betrifft: ..." gelisteten Vorgaenge blockieren. Neue Vorgaenge mit anderen Refs sind eigene Insights.
+- **Reasoning: Backup-Audit-Hook** — `auditResolvedCorrectionOverlap()` loggt wenn Insights mit `_resolved` Korrekturen ueberlappen — als Audit-Trail, ohne Insights zu blockieren (failsafe = durchlassen).
+- **Helpers: `extractRelevantUntil()` und `extractSourceEventRefs()`** — neue Util-Funktionen mit 8 Vitests. Erkennen Rechnungsnummern (INV-/RE-/RG-), Email-Message-IDs (`<msg@host>`), Calendar-Refs (`evt:xxx`), ISO-Daten.
+
+### Fixed
+- **Memory: Auto-Expiry fuer `_resolved` Korrekturen** — Beim Save automatisch `expires_at = +30 Tage`. Bestehende `_resolved` ohne Expiry bekommen via Migration nachgeholt.
+- **Memory-Skill: `source_event_refs` Input-Parameter** — LLM kann beim Save explizit angeben welche Vorgaenge geloest werden. Auto-Extraction aus Wert als Fallback.
+- **Reasoning-Collector: Memory-Render mit Annotations** — `(erfasst YYYY-MM-DD; gültig bis YYYY-MM-DD; betrifft: refs)` werden in jede Memory-Zeile geschrieben. Abgelaufene Korrekturen markiert mit "abgelaufen seit YYYY-MM-DD" und vom Reasoning-Engine geskippt.
+- **MemoryConsolidator: Pair-Cleanup** — Wenn `correction_x_resolved` existiert, wird das Original `correction_x` automatisch geloescht. Zweistufig: exakter Prefix-Match zuerst, Fallback auf Keyword-Overlap (≥3 Token, ≥5 Zeichen).
+- **MemoryConsolidator: Legacy-Migration v582** — Einmalig beim Startup, idempotent via Marker-Memory `_alfred_internal_migration_v582_dates_done`. Resolvet bestehende relative Datumsangaben gegen jeweiliges `updated_at`, fuellt `relevant_until` und `source_event_refs` nach.
+
 ## [0.19.0-multi-ha.582] - 2026-05-01
 
 ### Fixed
