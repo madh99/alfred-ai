@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.582] - 2026-05-01
+
+### Fixed
+- **KG: Self-referenzielle Pseudo-Entities geblockt** — Memory-Keys mit Prefix `connection_*`, `kg_connection_*`, `insight_*`, `pattern_*`, `temporal_*`, `action_feedback_*`, `llm_usage_*` werden in `extractFromMemories` und `syncMemoryEntities` ignoriert. Vorher wurden Alfreds eigene Cross-Domain-Reflektion-Memories als event-Entities ins KG zurueckgefuettert (115 Pseudo-Entities mit ~400 Junk-Relationen)
+- **KG: Asymmetrie-Guard fuer Relations** — `kg_relations.upsertRelation` lehnt inverse Richtung asymmetrischer Relationen ab (parent_of, child_of, works_at, plays_at, member_of, employs, caused_by, depends_on, part_of, owns u.a.). Wenn `User parent_of Sohn` existiert, wird `Sohn parent_of User` blockiert
+- **KG: Type-Validierung fuer Relations** — Neuer zentraler Helper `validateRelationTypes()` prueft Source/Target-Type-Kompatibilitaet pro Relation: parent_of nur Person-Person, works_at nur Person-Organization, located_at nur any-Location, same_as nur gleiche Typen. Genutzt vom LLM-Linker und global aufrufbar
+- **KG: Markdown-Sanitization bei Text-Extraktion** — `sanitizeEntityName()` entfernt `**`, `__`, Backticks und trailing punctuation vor Entity-Erstellung. Verhindert Pollution durch fettgedruckte Insight-Fragmente wie "Gerichtsentscheidung**" oder "Treffen Sonntag**"
+
+### Cleanup (DB)
+- 115 `connection_*` / `kg_connection_*` event-Entities geloescht (mit 395 Junk-Relationen)
+- 2 Markdown-pollutierte Entities geloescht
+- 12 falsche `parent_of`-Relationen mit Sohn/Tochter als Source geloescht
+- 4 falsche `parent_of`-Relationen Maria Dohnal → Enkel geloescht (sollte grandparent_of sein)
+- 221 `connection_*` Memory-Eintraege geloescht (Quelle der Selbstrekursion)
+- KG-Relations: 1225 → 815 (~33% Junk eliminiert)
+
 ## [0.19.0-multi-ha.581] - 2026-05-01
 
 ### Fixed

@@ -284,7 +284,24 @@ export class KnowledgeGraphRepository {
   // ── Relation CRUD ───────────────────────────────────────────
 
   /**
+   * Relations that are inherently asymmetric: A→B implies B→A is INVALID.
+   * Single source of truth for the entire codebase. Mirrors the export in
+   * `@alfred/core/knowledge-graph.ts`.
+   */
+  private static readonly ASYMMETRIC_RELATIONS = new Set([
+    'parent_of', 'child_of', 'grandparent_of', 'aunt_uncle_of', 'niece_nephew_of',
+    'works_at', 'plays_at', 'member_of', 'customer_of', 'employs',
+    'caused_by', 'depends_on', 'part_of', 'owns', 'teaches', 'coaches', 'studies',
+    'subscribes_to', 'monitors',
+  ]);
+
+  /**
    * UPSERT relation: creates new or updates existing (strength+0.1, mention_count++).
+   *
+   * For asymmetric relation types (see ASYMMETRIC_RELATIONS), checks if the inverse
+   * relation already exists — if so, REJECTS the new one and returns the inverse instead.
+   * This prevents semantically nonsense pairs like "User → parent_of → Sohn"
+   * coexisting with "Sohn → parent_of → User".
    */
   async upsertRelation(
     userId: string, sourceId: string, targetId: string,
@@ -292,6 +309,19 @@ export class KnowledgeGraphRepository {
   ): Promise<KGRelation> {
     const now = new Date().toISOString();
     const id = randomUUID();
+
+    // Asymmetric guard: if the inverse direction already exists, reject this one.
+    if (KnowledgeGraphRepository.ASYMMETRIC_RELATIONS.has(relationType) && sourceId !== targetId) {
+      const inverse = await this.adapter.queryOne(
+        'SELECT * FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?',
+        [userId, targetId, sourceId, relationType],
+      ) as Record<string, unknown> | undefined;
+      if (inverse) {
+        // Inverse exists — return it instead of creating the (semantically wrong) reverse.
+        // The caller's strength/context update is silently dropped.
+        return this.mapRelation(inverse);
+      }
+    }
 
     const existing = await this.adapter.queryOne(
       'SELECT id FROM kg_relations WHERE user_id = ? AND source_entity_id = ? AND target_entity_id = ? AND relation_type = ?',

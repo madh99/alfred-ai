@@ -1,6 +1,7 @@
 import type { Logger } from 'pino';
 import type { KnowledgeGraphRepository, KGEntity } from '@alfred/storage';
 import type { LLMLinkingConfig } from '@alfred/types';
+import { validateRelationTypes } from './knowledge-graph.js';
 
 type UsageCallback = (service: string, model: string, inputTokens: number, outputTokens: number) => void;
 
@@ -372,6 +373,12 @@ TRANSITIVE INFERENZ:
       const source = entityByName.get(rel.source.toLowerCase());
       const target = entityByName.get(rel.target.toLowerCase());
       if (!source || !target || source.id === target.id) continue;
+      // Central type compatibility check (e.g. parent_of requires both persons).
+      // Catches type-pair errors before LLM-specific guards below.
+      if (!validateRelationTypes(source.entityType, target.entityType, rel.type)) {
+        this.logger.debug({ source: rel.source, srcType: source.entityType, target: rel.target, tgtType: target.entityType, type: rel.type }, 'LLM linker: type mismatch, skipped');
+        continue;
+      }
       // Confidence gate: skip low-confidence relations
       const confidence = typeof rel.confidence === 'number' ? rel.confidence : 0.5;
       if (confidence < 0.7) {

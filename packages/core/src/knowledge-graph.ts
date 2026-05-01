@@ -29,6 +29,87 @@ const DISTANCE_TABLE: Record<string, Record<string, number>> = {
   'salzburg': { 'innsbruck': 185, 'klagenfurt': 210 },
 };
 
+/**
+ * Memory-key prefixes that are Alfred's INTERNAL state (cross-domain notes, insight tracking,
+ * pattern aggregations, telemetry). These must NEVER be re-extracted as KG entities — doing
+ * so creates self-referential pseudo-entities ("connection_kapfenberg_bmw_charging_plan")
+ * that pollute the graph with hundreds of garbage relations.
+ */
+const INTERNAL_MEMORY_KEY_PREFIXES = /^(kg_connection_|kg_|insight_|pattern_|temporal_|action_feedback_|connection_|llm_usage_|service_usage_)/i;
+
+/**
+ * Relations that are inherently asymmetric — A→B implies B→A is INVALID.
+ * If parent_of(A,B) exists, parent_of(B,A) must be rejected (would mean A is both
+ * parent and child of B, semantically impossible).
+ */
+const ASYMMETRIC_RELATIONS = new Set([
+  'parent_of', 'child_of', 'grandparent_of', 'aunt_uncle_of', 'niece_nephew_of',
+  'works_at', 'plays_at', 'member_of', 'customer_of', 'employs',
+  'caused_by', 'depends_on', 'part_of', 'owns', 'teaches', 'coaches', 'studies',
+  'subscribes_to', 'monitors',
+]);
+
+/**
+ * Strip Markdown decorations and trailing punctuation from a candidate entity name.
+ * Returns null if the cleaned name is too short (< 2 chars).
+ *
+ * Examples:
+ *   "Gerichtsentscheidung**" → "Gerichtsentscheidung"
+ *   "**Treffen Sonntag**"    → "Treffen Sonntag"
+ *   "Purkersdorf:"           → "Purkersdorf"
+ *   "**"                     → null (empty after strip)
+ */
+export function sanitizeEntityName(raw: string): string | null {
+  if (!raw) return null;
+  let s = raw;
+  // Strip markdown decorations: **bold**, __italic__, `code`, *emphasis*
+  s = s.replace(/\*+|_{2,}|`+/g, '');
+  // Strip trailing punctuation (commas, colons, semicolons, periods, exclamations)
+  s = s.replace(/[.,!?:;]+$/g, '');
+  s = s.trim();
+  if (s.length < 2) return null;
+  return s;
+}
+
+/**
+ * Validate that source/target entity types are compatible with the relation type.
+ * Returns true if the type combination is allowed; false if it should be rejected.
+ *
+ * Used by all KG paths (LLM linker, memory sync, family inference, text extraction)
+ * to prevent semantic nonsense like "User works_at Gerichtsentscheidung" (target is
+ * not an organization).
+ */
+export function validateRelationTypes(srcType: string, tgtType: string, relationType: string): boolean {
+  switch (relationType) {
+    case 'parent_of':
+    case 'child_of':
+    case 'spouse':
+    case 'sibling':
+    case 'family':
+    case 'grandparent_of':
+    case 'aunt_uncle_of':
+    case 'niece_nephew_of':
+    case 'friend':
+    case 'colleague':
+    case 'neighbor_of':
+      return srcType === 'person' && tgtType === 'person';
+    case 'works_at':
+    case 'plays_at':
+    case 'member_of':
+    case 'customer_of':
+      return srcType === 'person' && tgtType === 'organization';
+    case 'employs':
+      return srcType === 'organization' && tgtType === 'person';
+    case 'located_at':
+    case 'home_location':
+      return tgtType === 'location';
+    case 'same_as':
+      return srcType === tgtType;
+    default:
+      return true; // unknown relation types pass through (knows, mentioned_with, uses, etc.)
+  }
+}
+
 /** Person extraction patterns (German prepositions + capitalized name). */
 const PERSON_PATTERNS = [
   /\bmit\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)?)/g,
@@ -1390,11 +1471,14 @@ export class KnowledgeGraphService {
   }
 
   private async extractFromMemories(userId: string, content: string): Promise<void> {
-    // Format: "- [type] key: value"
-    const re = /^-\s+\[(\w+)\]\s+(.+?):\s+(.+)$/gm;
+    // Format: "- [type] key: value" (or with "(erfasst YYYY-MM-DD)" annotation)
+    const re = /^-\s+\[(\w+)\]\s+(.+?)(?:\s+\(erfasst\s+[\d-]+\))?:\s+(.+)$/gm;
     let match;
     while ((match = re.exec(content)) !== null) {
       const [, type, key, value] = match;
+      // Skip Alfred's internal reflective memory keys — re-extracting them creates
+      // self-referential pseudo-entities that pollute the graph.
+      if (INTERNAL_MEMORY_KEY_PREFIXES.test(key)) continue;
       const keyLower = key.toLowerCase();
 
       // Extract addresses as locations (dynamic list + PLZ pattern)
@@ -1765,6 +1849,7 @@ export class KnowledgeGraphService {
 
       const entityMems = await this.memoryRepo.getByType(userId, 'entity', 30);
       for (const mem of entityMems) {
+        if (INTERNAL_MEMORY_KEY_PREFIXES.test(mem.key)) continue;
         // Strip punctuation, split on comma/parens/period, take first segment
         const raw = mem.value.split(/[,(.!?]/)[0].replace(/[:\d]/g, '').trim();
         const words = raw.split(/\s+/).filter(w => /^[A-ZÄÖÜ]/.test(w));
@@ -1846,6 +1931,7 @@ export class KnowledgeGraphService {
       //   user_birthday → User gets birthday attribute
       const allMems0 = await this.memoryRepo.getRecentForPrompt(userId, 100);
       for (const mem of allMems0) {
+        if (INTERNAL_MEMORY_KEY_PREFIXES.test(mem.key)) continue;
         const k = mem.key.toLowerCase();
         // child_*_full_name → find matching person entity and set fullName
         if (k.match(/^child_\w+_full_name$/)) {
@@ -1881,6 +1967,7 @@ export class KnowledgeGraphService {
       const allMems = await this.memoryRepo.getRecentForPrompt(userId, 50);
       const keyPersons = new Map<string, { entity: KGEntity; prefix: string }>(); // "bernhard" → entity
       for (const mem of allMems) {
+        if (INTERNAL_MEMORY_KEY_PREFIXES.test(mem.key)) continue;
         const k = mem.key.toLowerCase();
         for (const prefix of PERSON_KEY_PREFIXES) {
           if (!k.startsWith(prefix)) continue;
@@ -1946,6 +2033,7 @@ export class KnowledgeGraphService {
       // 2. Memory relationships → KG person entities + relations
       const relMems = await this.memoryRepo.getByType(userId, 'relationship', 30);
       for (const mem of relMems) {
+        if (INTERNAL_MEMORY_KEY_PREFIXES.test(mem.key)) continue;
         for (const pattern of PERSON_PATTERNS) {
           pattern.lastIndex = 0;
           const m = pattern.exec(mem.value);
@@ -2219,13 +2307,16 @@ export class KnowledgeGraphService {
       let match;
       while ((match = pattern.exec(content)) !== null) {
         const rawName = match[1].trim();
-        if (rawName.length < 3) continue;
+        // Strip markdown decorations & trailing punctuation BEFORE classification.
+        // Otherwise "Gerichtsentscheidung**" gets stored verbatim as an organization.
+        const cleanName = sanitizeEntityName(rawName);
+        if (!cleanName || cleanName.length < 3) continue;
 
         // Determine entity type by checking multiple signals
-        const entityType = this.classifyEntityName(rawName);
+        const entityType = this.classifyEntityName(cleanName);
         if (!entityType) continue; // filtered out (invalid name)
 
-        await this.kgRepo.upsertEntity(userId, rawName, entityType as any, {}, sectionKey);
+        await this.kgRepo.upsertEntity(userId, cleanName, entityType as any, {}, sectionKey);
       }
     }
   }
