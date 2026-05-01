@@ -2,6 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { ReminderRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
+import { resolveRelativeDates } from '../relative-date-resolver.js';
 
 type ReminderAction = 'set' | 'list' | 'cancel' | 'delete';
 
@@ -101,6 +102,10 @@ export class ReminderSkill extends Skill {
       };
     }
 
+    // Pin relative date expressions in the displayed message to absolute dates so the
+    // text remains unambiguous when re-rendered later (triggerAt is already absolute).
+    const resolvedMessage = resolveRelativeDates(message, new Date(), context.timezone);
+
     let triggerAt: Date;
 
     if (triggerAtStr && typeof triggerAtStr === 'string') {
@@ -133,7 +138,7 @@ export class ReminderSkill extends Skill {
       effectiveUserId(context),
       context.platform,
       context.chatId,
-      message,
+      resolvedMessage,
       triggerAt,
     );
 
@@ -147,8 +152,8 @@ export class ReminderSkill extends Skill {
 
     return {
       success: true,
-      data: { reminderId: entry.id, message, triggerAt: entry.triggerAt },
-      display: `Reminder set (${entry.id}): "${message}" at ${timeLabel} (in ${mins} min)`,
+      data: { reminderId: entry.id, message: resolvedMessage, triggerAt: entry.triggerAt },
+      display: `Reminder set (${entry.id}): "${resolvedMessage}" at ${timeLabel} (in ${mins} min)`,
     };
   }
 

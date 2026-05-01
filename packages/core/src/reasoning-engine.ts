@@ -653,6 +653,8 @@ ${this.buildTopicInstructions()}`;
 
     // Extract correction memories and place them as a HARD BLOCK before all other sections.
     // This ensures the LLM cannot ignore corrections buried in the memories section.
+    // The line format is: "- [correction] key (erfasst YYYY-MM-DD): value" — we keep the
+    // erfasst-date so the LLM can correctly interpret relative time phrases.
     const memSection = ctx.sections.find(s => s.key === 'memories');
     const corrections: string[] = [];
     if (memSection) {
@@ -671,7 +673,7 @@ ${this.buildTopicInstructions()}`;
         'Reasoning: no corrections found in memories section');
     }
     const correctionBlock = corrections.length > 0
-      ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===\nDiese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.\n${corrections.map(c => `❌ ${c}`).join('\n')}`
+      ? `\n\n=== KORREKTUREN (ABSOLUTER VORRANG — MÜSSEN BEACHTET WERDEN) ===\nDiese Korrekturen stammen direkt vom User. Sie überschreiben JEDE eigene Annahme oder Berechnung.\nDas "(erfasst YYYY-MM-DD)" zeigt wann die Korrektur gespeichert wurde — relative Zeitangaben in der Korrektur ("morgen", "Montag", "nächste Woche") beziehen sich auf dieses Datum, NICHT auf heute. Absolute Daten in "(=YYYY-MM-DD)" sind die bereits aufgelösten Werte.\n${corrections.map(c => `❌ ${c}`).join('\n')}`
       : '';
 
     const sections = ctx.sections.map(s => `=== ${s.label} ===\n${s.content}`).join('\n\n');

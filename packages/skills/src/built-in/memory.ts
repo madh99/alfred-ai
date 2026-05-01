@@ -2,6 +2,7 @@ import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
 import type { MemoryRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
+import { resolveRelativeDates } from '../relative-date-resolver.js';
 
 interface EmbeddingServiceLike {
   embedAndStore(userId: string, content: string, sourceType: string, sourceId: string): Promise<string | undefined>;
@@ -126,10 +127,14 @@ export class MemorySkill extends Skill {
       };
     }
 
+    // Pin relative date expressions to absolute dates BEFORE storing — otherwise "Montag"
+    // would re-resolve to a new "next Monday" on every future read.
+    const resolvedValue = resolveRelativeDates(value, new Date(), context.timezone);
+
     const entry = await this.memoryRepo.saveWithMetadata(
       effectiveUserId(context),
       key,
-      value,
+      resolvedValue,
       category ?? 'general',
       type,
       1.0,
@@ -140,7 +145,7 @@ export class MemorySkill extends Skill {
     if (this.embeddingService) {
       this.embeddingService.embedAndStore(
         effectiveUserId(context),
-        `${key}: ${value}`,
+        `${key}: ${resolvedValue}`,
         'memory',
         key,
       ).catch(() => { /* non-critical */ });
@@ -149,7 +154,7 @@ export class MemorySkill extends Skill {
     return {
       success: true,
       data: entry,
-      display: `Remembered "${key}" = "${value}" (category: ${entry.category})`,
+      display: `Remembered "${key}" = "${resolvedValue}" (category: ${entry.category})`,
     };
   }
 

@@ -17,6 +17,18 @@ import type {
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
 
+// ── Helpers ──────────────────────────────────────────────────
+
+/**
+ * Render a memory line for the LLM prompt — includes the creation date so the LLM
+ * can correctly interpret relative phrases ("morgen", "Montag") that may have leaked
+ * past the resolveRelativeDates pre-processor.
+ */
+function formatMemoryLine(m: { type?: string; key: string; value: string; createdAt?: string }): string {
+  const created = m.createdAt ? ` (erfasst ${m.createdAt.slice(0, 10)})` : '';
+  return `- [${m.type ?? 'general'}] ${m.key}${created}: ${m.value}`;
+}
+
 // ── Types ────────────────────────────────────────────────────
 
 export interface ReasoningSection {
@@ -805,7 +817,7 @@ export class ReasoningContextCollector {
       }
 
       if (all.size === 0) return 'Keine gespeicherten Erinnerungen.';
-      return [...all.values()].map((m: any) => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+      return [...all.values()].map((m: any) => formatMemoryLine(m)).join('\n');
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: context-aware memory fetch failed');
       return '(Memory-Abfrage fehlgeschlagen)';
@@ -860,7 +872,7 @@ export class ReasoningContextCollector {
       }
 
       if (all.size === 0) return 'Keine gespeicherten Erinnerungen.';
-      return [...all.values()].map(m => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+      return [...all.values()].map(m => formatMemoryLine(m)).join('\n');
     } catch (err) {
       this.logger.warn({ err }, 'ReasoningCollector: memory fetch failed');
       return '(Memory-Abfrage fehlgeschlagen)';

@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.579] - 2026-05-01
+
+### Fixed
+- **Memory/Reminder: Relative Zeitangaben werden beim Speichern aufgeloest** — Ausdruecke wie "morgen", "Montag", "naechste Woche", "in 3 Tagen" werden zum Speicherzeitpunkt zu absoluten Datumsangaben annotiert (z.B. "warte bis Montag (=2026-04-27)"). Damit wandert "Montag" nicht mehr mit dem aktuellen Datum mit, und Korrekturen bleiben semantisch stabil ueber Tage hinweg
+- **Reasoning: Memory-Erfassungsdatum im Prompt** — Memories und Korrekturen werden mit "(erfasst YYYY-MM-DD)" annotiert. Das LLM kann relative Zeitangaben jetzt korrekt gegen das Erstellungsdatum aufloesen, statt jeden Pass aus heutiger Sicht neu zu interpretieren
+- **Reasoning: Korrektur-Block mit Zeit-Hinweis** — Der Hard-Block fuer Korrekturen erklaert dem LLM explizit, dass relative Zeitangaben sich auf das erfasste-Datum beziehen, nicht auf heute
+
+### Added
+- **Skills: relative-date-resolver** — Neue Util-Funktion `resolveRelativeDates()` mit 21 Tests: Wochentage (DE/EN), heute/morgen/gestern, in X Tagen/Wochen/Monaten, naechste Woche/Monat/Jahr. Idempotent, Unicode-aware Boundaries fuer Umlaute
+
 ## [0.19.0-multi-ha.575] - 2026-04-17
 
 ### Improved
