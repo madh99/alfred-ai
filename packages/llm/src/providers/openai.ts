@@ -30,14 +30,18 @@ export class OpenAIProvider extends LLMProvider {
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
+    const reasoningEffort = this.reasoningEffortParam(request.reasoningEffort);
 
-    const params: OpenAI.ChatCompletionCreateParams = {
+    // SDK v4.104 only types 'low'|'medium'|'high'; 'none'/'xhigh' (gpt-5.5) are accepted
+    // by the API but not yet in the SDK's enum — cast to bypass narrow typing.
+    const params = {
       model: this.config.model,
       ...this.tokenLimitParam(request.maxTokens),
       temperature: this.safeTemperature(request.temperature),
       messages,
       ...(tools ? { tools } : {}),
-    };
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    } as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming;
 
     const response = await this.client.chat.completions.create(params);
 
@@ -47,15 +51,19 @@ export class OpenAIProvider extends LLMProvider {
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
+    const reasoningEffort = this.reasoningEffortParam(request.reasoningEffort);
 
-    const stream = await this.client.chat.completions.create({
+    const params = {
       model: this.config.model,
       ...this.tokenLimitParam(request.maxTokens),
       temperature: this.safeTemperature(request.temperature),
       messages,
       ...(tools ? { tools } : {}),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       stream: true,
-    });
+    } as unknown as OpenAI.ChatCompletionCreateParamsStreaming;
+
+    const stream = await this.client.chat.completions.create(params);
 
     let currentToolCallId: string | undefined;
     let currentToolCallName: string | undefined;
@@ -188,11 +196,23 @@ export class OpenAIProvider extends LLMProvider {
 
   /**
    * Detect OpenAI reasoning models that use different API parameters.
-   * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1 — but NOT gpt-5.2+
-   * (gpt-5.2 restored support for temperature and is a "chat" model).
+   * Matches o1*, o3*, o4*, gpt-5, gpt-5.0, gpt-5.1, gpt-5.5 — but NOT gpt-5.2/5.3/5.4
+   * (gpt-5.2 restored support for temperature and is a "chat" model;
+   *  gpt-5.5 is a frontier reasoning model with reasoning_effort).
    */
   private isReasoningModel(): boolean {
-    return /^(o[1-9]|gpt-5($|[.-][01]))/.test(this.config.model);
+    return /^(o[1-9]|gpt-5($|[.-][015]))/.test(this.config.model);
+  }
+
+  /**
+   * Returns the reasoning_effort value to send to the OpenAI API.
+   * Only reasoning models (gpt-5.5, o-series) accept this parameter — for chat models
+   * we omit it entirely, otherwise the API rejects the call.
+   */
+  protected reasoningEffortParam(requested?: 'none' | 'low' | 'medium' | 'high' | 'xhigh'): string | undefined {
+    if (!requested) return undefined;
+    if (!this.isReasoningModel()) return undefined;
+    return requested;
   }
 
   /**

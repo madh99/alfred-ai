@@ -39,6 +39,7 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
   'claude-':                      { maxInputTokens: 1_000_000, maxOutputTokens: 64_000 },
 
   // OpenAI — GPT-5.x / GPT-4.1 / GPT-4o / o-series
+  'gpt-5.5':                      { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.4':                      { maxInputTokens: 1_050_000, maxOutputTokens: 128_000 },
   'gpt-5.4-mini':                 { maxInputTokens: 400_000,   maxOutputTokens: 128_000 },
   'gpt-5.4-nano':                 { maxInputTokens: 400_000,   maxOutputTokens: 128_000 },

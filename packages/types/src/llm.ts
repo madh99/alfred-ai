@@ -61,6 +61,16 @@ export interface LLMRequest {
   maxTokens?: number;
   temperature?: number;
   tier?: ModelTier;
+  /**
+   * Reasoning depth for reasoning-capable models (gpt-5.5, o-series).
+   * Ignored by chat models and non-OpenAI providers.
+   * - `none`: no internal reasoning (fastest, cheapest)
+   * - `low`: minimal reasoning
+   * - `medium`: default
+   * - `high`: deep reasoning
+   * - `xhigh`: maximum reasoning (slowest, most expensive)
+   */
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 export interface LLMResponse {

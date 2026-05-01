@@ -5,6 +5,17 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.580] - 2026-05-01
+
+### Added
+- **OpenAI: GPT-5.5 Support** — Frontier-Reasoning-Modell mit 1.05M Context und 128k Output Token. Pricing $5/$30/$0.50 per 1M (Input/Output/Cache-Read), >272K Tokens 2x/1.5x Multiplikator. Knowledge Cutoff 2025-12-01
+- **LLM: `reasoning_effort` Parameter** — Optionales `reasoningEffort` Feld auf `LLMRequest` (`none`/`low`/`medium`/`high`/`xhigh`). Steuert Tiefe interner Reasoning-Tokens bei Reasoning-Modellen (gpt-5.5, o-series). Andere Modelle ignorieren den Parameter
+- **Model-Router: Tier-Default-Effort** — Automatisches Effort-Mapping je Tier: `fast=low`, `default=medium`, `strong=high`. Spart Output-Tokens bei Reasoning-Modellen ohne Code-Anpassungen in Skills
+
+### Fixed
+- **OpenAI Provider: Reasoning-Model-Erkennung** — Regex erweitert um gpt-5.5 (matched jetzt o1-9, gpt-5/5.0/5.1/5.5; chat-Modelle gpt-5.2/5.3/5.4 weiterhin mit Temperature)
+- **Token-Costs: Long-Prompt-Multiplikator** — gpt-5.5 Input >272K Tokens wird mit 2x Input und 1.5x Output abgerechnet (offizielle OpenAI-Preisstaffelung)
+
 ## [0.19.0-multi-ha.579] - 2026-05-01
 
 ### Fixed

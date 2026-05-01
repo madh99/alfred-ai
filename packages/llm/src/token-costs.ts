@@ -18,6 +18,7 @@ export interface ModelPricing {
  */
 const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   // ── OpenAI ──────────────────────────────────────────────────
+  ['gpt-5.5',         { input: 5.00, output: 30.00, cacheRead: 0.50 }],
   ['gpt-5.4-nano',    { input: 0.20, output: 1.25,  cacheRead: 0.02 }],
   ['gpt-5.4-mini',    { input: 0.75, output: 4.50,  cacheRead: 0.075 }],
   ['gpt-5.4',         { input: 2.50, output: 15.00, cacheRead: 0.25 }],
@@ -94,6 +95,20 @@ export function getModelPricing(model: string): ModelPricing | undefined {
 }
 
 /**
+ * Long-prompt multipliers — some models charge a premium when the prompt exceeds a
+ * threshold. Returns { input: 1, output: 1 } when no multiplier applies.
+ *
+ * gpt-5.5: prompts >272K tokens incur 2x input and 1.5x output pricing.
+ */
+function longPromptMultiplier(model: string, inputTokens: number): { input: number; output: number } {
+  const lower = model.toLowerCase();
+  if (lower.startsWith('gpt-5.5') && inputTokens > 272_000) {
+    return { input: 2.0, output: 1.5 };
+  }
+  return { input: 1.0, output: 1.0 };
+}
+
+/**
  * Calculate the cost (USD) for a single LLM call.
  * Returns 0 for unknown models.
  */
@@ -102,6 +117,7 @@ export function calculateCost(model: string, usage: LLMUsage): number {
   if (!pricing) return 0;
 
   const m = 1_000_000; // per-million divisor
+  const mult = longPromptMultiplier(model, usage.inputTokens);
   let cost = 0;
 
   // Cache read tokens are charged at cacheRead rate instead of input rate
@@ -109,14 +125,14 @@ export function calculateCost(model: string, usage: LLMUsage): number {
   const cacheWrite = usage.cacheCreationTokens ?? 0;
   const regularInput = Math.max(0, usage.inputTokens - cacheRead);
 
-  cost += (regularInput / m) * pricing.input;
-  cost += (usage.outputTokens / m) * pricing.output;
+  cost += (regularInput / m) * pricing.input * mult.input;
+  cost += (usage.outputTokens / m) * pricing.output * mult.output;
 
   if (cacheRead > 0 && pricing.cacheRead) {
-    cost += (cacheRead / m) * pricing.cacheRead;
+    cost += (cacheRead / m) * pricing.cacheRead * mult.input;
   }
   if (cacheWrite > 0 && pricing.cacheWrite) {
-    cost += (cacheWrite / m) * pricing.cacheWrite;
+    cost += (cacheWrite / m) * pricing.cacheWrite * mult.input;
   }
 
   return cost;

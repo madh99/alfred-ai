@@ -13,6 +13,19 @@ import type { TokenCostSummary, UsagePersistFn } from './token-costs.js';
 
 const TIERS: ModelTier[] = ['default', 'strong', 'fast', 'embeddings', 'local'];
 
+/**
+ * Default reasoning_effort per tier — only applied when the underlying model is a
+ * reasoning model (gpt-5.5, o-series). Chat models and non-OpenAI providers ignore it.
+ *
+ * Rationale: reasoning tokens are billed as output ($30/M for gpt-5.5), so calls that
+ * don't need deep thinking should use 'low' to save real money.
+ */
+const TIER_DEFAULT_EFFORT: Partial<Record<ModelTier, 'none' | 'low' | 'medium' | 'high' | 'xhigh'>> = {
+  fast: 'low',
+  default: 'medium',
+  strong: 'high',
+};
+
 /** Minimal logger interface to avoid hard pino dependency. */
 interface RouterLogger {
   info(obj: Record<string, unknown>, msg: string): void;
@@ -88,23 +101,32 @@ export class ModelRouter extends LLMProvider {
     };
   }
 
+  /** Apply the tier's default reasoning_effort if the caller didn't set one explicitly. */
+  private withTierEffort(request: LLMRequest, tier: ModelTier): LLMRequest {
+    if (request.reasoningEffort) return request;
+    const tierEffort = TIER_DEFAULT_EFFORT[tier];
+    if (!tierEffort) return request;
+    return { ...request, reasoningEffort: tierEffort };
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const sanitized = this.sanitizeRequest(request);
     const { provider, resolvedTier } = this.resolve(sanitized.tier);
     const tierConfig = this.multiConfig[resolvedTier];
+    const withEffort = this.withTierEffort(sanitized, resolvedTier);
     this.logger?.debug(
       { requestedTier: sanitized.tier ?? 'default', resolvedTier, model: tierConfig?.model },
       'LLM routing request',
     );
     try {
-      return await this.executeComplete(provider, resolvedTier, sanitized);
+      return await this.executeComplete(provider, resolvedTier, withEffort);
     } catch (err) {
       if (!this.isRetryableError(err)) throw err;
       this.logger?.warn(
         { err, tier: resolvedTier },
         'Provider failed, attempting fallback',
       );
-      return this.completeWithFallback(sanitized, resolvedTier, err);
+      return this.completeWithFallback(withEffort, resolvedTier, err);
     }
   }
 
@@ -160,9 +182,10 @@ export class ModelRouter extends LLMProvider {
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
     const { provider, resolvedTier } = this.resolve(request.tier);
+    const withEffort = this.withTierEffort(request, resolvedTier);
     let hasYielded = false;
     try {
-      for await (const event of provider.stream(request)) {
+      for await (const event of provider.stream(withEffort)) {
         hasYielded = true;
         yield event;
       }
@@ -179,7 +202,7 @@ export class ModelRouter extends LLMProvider {
         if (!fbProvider) continue;
         try {
           this.logger?.info({ tier }, 'Stream fallback to tier');
-          yield* fbProvider.stream(request);
+          yield* fbProvider.stream(this.withTierEffort(request, tier));
           return;
         } catch {
           continue;
