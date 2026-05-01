@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.581] - 2026-05-01
+
+### Fixed
+- **OpenAI gpt-5.5: Tools + reasoning_effort Incompatibility** — chat/completions Endpoint akzeptiert bei gpt-5.5 nicht beides gleichzeitig (API verlangt /v1/responses). Wenn Tools im Request, wird reasoning_effort weggelassen → gpt-5.5 nutzt Default-Effort (medium). Tool-lose Calls (z.B. Reasoning-Engine Scan-Pass) behalten den Effort-Parameter
+
 ## [0.19.0-multi-ha.580] - 2026-05-01
 
 ### Added

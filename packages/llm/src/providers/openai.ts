@@ -30,7 +30,10 @@ export class OpenAIProvider extends LLMProvider {
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
-    const reasoningEffort = this.reasoningEffortParam(request.reasoningEffort);
+    // gpt-5.5 limitation: chat/completions does NOT accept reasoning_effort + tools
+    // simultaneously — would need /v1/responses endpoint. When tools are present we
+    // drop the effort parameter and let the API use its default (medium).
+    const reasoningEffort = tools ? undefined : this.reasoningEffortParam(request.reasoningEffort);
 
     // SDK v4.104 only types 'low'|'medium'|'high'; 'none'/'xhigh' (gpt-5.5) are accepted
     // by the API but not yet in the SDK's enum — cast to bypass narrow typing.
@@ -51,7 +54,8 @@ export class OpenAIProvider extends LLMProvider {
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
     const messages = this.mapMessages(request.messages, request.system);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
-    const reasoningEffort = this.reasoningEffortParam(request.reasoningEffort);
+    // Same gpt-5.5 chat/completions tool+effort incompatibility — see complete().
+    const reasoningEffort = tools ? undefined : this.reasoningEffortParam(request.reasoningEffort);
 
     const params = {
       model: this.config.model,
