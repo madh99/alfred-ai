@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeEntityName, validateRelationTypes } from '../knowledge-graph.js';
+import { sanitizeEntityName, validateRelationTypes, describesOtherPersonsHome } from '../knowledge-graph.js';
 
 describe('sanitizeEntityName', () => {
   it('strips trailing markdown bold', () => {
@@ -118,6 +118,70 @@ describe('validateRelationTypes', () => {
       expect(validateRelationTypes('person', 'item', 'knows')).toBe(true);
       expect(validateRelationTypes('event', 'organization', 'mentioned_with')).toBe(true);
       expect(validateRelationTypes('person', 'item', 'uses')).toBe(true);
+    });
+  });
+});
+
+describe('describesOtherPersonsHome', () => {
+  describe('positive matches (other person)', () => {
+    it('detects mother/Mutter', () => {
+      expect(describesOtherPersonsHome('Mutter wohnt in Eichgraben')).toBe(true);
+      expect(describesOtherPersonsHome('mother lives in Vienna')).toBe(true);
+    });
+
+    it('detects father/Vater', () => {
+      expect(describesOtherPersonsHome('Vater wohnt in Linz')).toBe(true);
+      expect(describesOtherPersonsHome('father lives in Berlin')).toBe(true);
+    });
+
+    it('detects siblings', () => {
+      expect(describesOtherPersonsHome('Schwester Elisabeth')).toBe(true);
+      expect(describesOtherPersonsHome('Bruder ist in München')).toBe(true);
+    });
+
+    it('detects friends and colleagues', () => {
+      expect(describesOtherPersonsHome('Freund Bernhard wohnt in Wien')).toBe(true);
+      expect(describesOtherPersonsHome('Kollege ist in Tulln')).toBe(true);
+    });
+
+    it('detects grandparents (with and without umlaut)', () => {
+      expect(describesOtherPersonsHome('Oma in Salzburg')).toBe(true);
+      expect(describesOtherPersonsHome('Großmutter wohnt in Graz')).toBe(true);
+      expect(describesOtherPersonsHome('grossmutter in Hamburg')).toBe(true);
+    });
+
+    it('detects neighbor / partner / spouse', () => {
+      expect(describesOtherPersonsHome('Nachbar wohnt nebenan')).toBe(true);
+      expect(describesOtherPersonsHome('Partner wohnt in Innsbruck')).toBe(true);
+      expect(describesOtherPersonsHome('wife lives in Berlin')).toBe(true);
+    });
+  });
+
+  describe('negative matches (user\'s own home)', () => {
+    it('plain user address has no marker', () => {
+      expect(describesOtherPersonsHome('User wohnt in 3033 Altlengbach')).toBe(false);
+      expect(describesOtherPersonsHome('Adresse: Alleestraße 6, 3033 Altlengbach')).toBe(false);
+    });
+
+    it('home/work words alone do not trigger', () => {
+      expect(describesOtherPersonsHome('home address')).toBe(false);
+      expect(describesOtherPersonsHome('Büro in Wien')).toBe(false);
+    });
+  });
+
+  describe('regression: the actual production bug', () => {
+    it('mother address memory value triggers marker', () => {
+      const value = 'Maria Dohnal (Mutter) wohnt in Adalbert Stifter Straße 4, 3032 Eichgraben.';
+      expect(describesOtherPersonsHome(value)).toBe(true);
+    });
+
+    it('mother key alone triggers marker', () => {
+      expect(describesOtherPersonsHome('mother_address_eichgraben')).toBe(true);
+    });
+
+    it('routing description with home reference does not trigger', () => {
+      const value = 'Route: Vienna office → Linz → Altlengbach (~80 km outbound)';
+      expect(describesOtherPersonsHome(value)).toBe(false);
     });
   });
 });

@@ -38,6 +38,40 @@ const DISTANCE_TABLE: Record<string, Record<string, number>> = {
 const INTERNAL_MEMORY_KEY_PREFIXES = /^(kg_connection_|kg_|insight_|pattern_|temporal_|action_feedback_|connection_|llm_usage_|service_usage_)/i;
 
 /**
+ * Markers that indicate a memory describes ANOTHER PERSON's home/location, not the user's own.
+ * Used to prevent setting `isHome=true` on a location that is e.g. the mother's address.
+ *
+ * Checked against BOTH the memory key AND the relevant value sentence — a key like
+ * "address_3032" might miss the marker, but the value "Mutter wohnt in 3032 Eichgraben"
+ * contains it clearly.
+ */
+const OTHER_HOME_MARKERS = [
+  'mutter', 'mother', 'vater', 'father', 'eltern', 'parents',
+  'schwester', 'sister', 'bruder', 'brother',
+  'freund', 'freundin', 'friend',
+  'oma', 'opa', 'grossmutter', 'grossvater', 'großmutter', 'großvater',
+  'grandma', 'grandpa', 'grandmother', 'grandfather',
+  'tante', 'onkel', 'aunt', 'uncle',
+  'cousin', 'cousine',
+  'schwager', 'schwägerin',
+  'kollege', 'kollegin', 'colleague',
+  'chef', 'boss', 'nachbar', 'neighbor',
+  'partner', 'frau', 'mann', 'wife', 'husband',
+];
+
+/**
+ * Returns true if the given text references another person's home/location, NOT the user's own.
+ * Heuristic: contains a family/relationship marker (mother, father, friend, etc.).
+ *
+ * Used by both `extractFromMemories` and `syncMemoryEntities` to prevent isHome=true
+ * from being set on locations that belong to the user's mother, friend, etc.
+ */
+export function describesOtherPersonsHome(text: string): boolean {
+  const lower = text.toLowerCase();
+  return OTHER_HOME_MARKERS.some(m => lower.includes(m));
+}
+
+/**
  * Relations that are inherently asymmetric — A→B implies B→A is INVALID.
  * If parent_of(A,B) exists, parent_of(B,A) must be rejected (would mean A is both
  * parent and child of B, semantically impossible).
@@ -1353,7 +1387,36 @@ export class KnowledgeGraphService {
           }
         } catch { /* non-critical */ }
 
-        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned }, 'KG maintenance completed');
+        // Clear stale isHome/isWork on locations whose sole evidence references another
+        // person (mother/father/friend/...). These flags were set by older code paths
+        // before describesOtherPersonsHome() existed — once set, the "only-set-true"
+        // policy never cleared them. This cleanup unsets them where wrong.
+        let staleHomeCleared = 0;
+        try {
+          const locs = await this.kgRepo.getEntitiesByType(userId, 'location');
+          for (const loc of locs) {
+            const attrs = (loc.attributes ?? {}) as Record<string, unknown>;
+            const addressText = String(attrs.address ?? '');
+            const otherHome = describesOtherPersonsHome(addressText);
+            const isHomeFlag = attrs.isHome === true;
+            const isUserHomeFlag = attrs.isUserHome === true;
+            // Only clear if address evidence points to other person AND we never observed
+            // a positive isUserHome=true signal from a User-specific memory.
+            if (otherHome && isHomeFlag && !isUserHomeFlag) {
+              const cleaned = { ...attrs };
+              delete cleaned.isHome;
+              delete cleaned.isWork;
+              await this.kgRepo.setEntityAttributes(loc.id, cleaned);
+              staleHomeCleared++;
+              this.logger.info({ location: loc.name, addressText: addressText.slice(0, 80) },
+                'KG maintenance: cleared stale isHome on other-person location');
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'KG maintenance: stale isHome cleanup failed');
+        }
+
+        this.logger.info({ decayed, prunedEntities, prunedRelations, prunedEvents, mergedDupes, phantomsMerged, orgsMerged, typeConflictsResolved, invalidPersonsCleaned, staleHomeCleared }, 'KG maintenance completed');
       }
     } catch (err) {
       this.logger.warn({ err }, 'KG maintenance failed');
@@ -1483,25 +1546,18 @@ export class KnowledgeGraphService {
 
       // Extract addresses as locations (dynamic list + PLZ pattern)
       if (keyLower.includes('adress') || keyLower.includes('address') || keyLower.includes('heim') || keyLower.includes('home')) {
-        // Only set isHome if the memory is about the USER's own home, not someone else's
-        const OTHER_HOME_MARKERS = [
-          'mutter', 'mother', 'vater', 'father', 'eltern', 'parents',
-          'schwester', 'sister', 'bruder', 'brother',
-          'freund', 'freundin', 'friend',
-          'oma', 'opa', 'grossmutter', 'grossvater', 'großmutter', 'großvater',
-          'grandma', 'grandpa', 'grandmother', 'grandfather',
-          'tante', 'onkel', 'aunt', 'uncle',
-          'cousin', 'cousine',
-          'schwager', 'schwägerin',
-          'kollege', 'kollegin', 'colleague',
-          'chef', 'boss', 'nachbar', 'neighbor',
-          'partner', 'frau', 'mann', 'wife', 'husband',
-        ];
-        const isOtherPersonHome = OTHER_HOME_MARKERS.some(m => keyLower.includes(m));
+        // Check BOTH key and value for "other person" markers — a key like "address_3032"
+        // might miss "mother", but the value "Mutter wohnt in 3032 Eichgraben" catches it.
+        const isOtherPersonHome = describesOtherPersonsHome(key) || describesOtherPersonsHome(value);
         const isHome = !isOtherPersonHome && (keyLower.includes('heim') || keyLower.includes('home'));
-        // Only SET isHome to true, never overwrite true→false
+        // `isUserHome` is the STRICT flag used by the cross-extractor to find the user's
+        // canonical home location. Only set it when the source unambiguously refers to
+        // the user (no family/friend markers).
         const homeAttr: Record<string, unknown> = {};
-        if (isHome) homeAttr.isHome = true;
+        if (isHome) {
+          homeAttr.isHome = true;
+          homeAttr.isUserHome = true;
+        }
         // Known locations (dynamic)
         for (const city of this.getKnownLocations()) {
           if (value.includes(city)) {
@@ -1746,10 +1802,32 @@ export class KnowledgeGraphService {
       const batteries = items.filter(i => /batter|victron|speicher|akku/i.test(i.normalizedName) && i.sources.includes('smarthome'));
       const cryptoItems = items.filter(i => i.sources.includes('crypto'));
       const feedArticles = events.filter(e => e.attributes?.type === 'feed_article');
-      // Pick home location: prefer highest confidence among isHome=true, exclude isWork=true
-      const homeLocation = locations
-        .filter(l => l.attributes?.isHome === true && l.attributes?.isWork !== true)
-        .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+      // Pick the user's canonical home location.
+      //
+      // Strategy (most-specific first):
+      //   1. Locations with `isUserHome=true` (only set when memory unambiguously refers
+      //      to the user — not "mother wohnt in X").
+      //   2. Locations with `isHome=true` AND no "other-person" marker in their stored
+      //      address attribute (legacy fallback for entries written before isUserHome existed).
+      //
+      // A location with `isWork=true` is NOT excluded here: many users have home + office
+      // in the same city (e.g. Wien). We rely on the explicit `isUserHome` signal instead.
+      //
+      // When multiple candidates remain: log a warning and pick the one with the EARLIEST
+      // firstSeenAt — the original memory is the canonical source of truth.
+      const userHomeCandidates = locations.filter(l => l.attributes?.isUserHome === true);
+      const legacyHomeCandidates = locations.filter(l =>
+        l.attributes?.isHome === true
+        && l.attributes?.isUserHome !== true
+        && !describesOtherPersonsHome(String(l.attributes?.address ?? ''))
+      );
+      const homeLocations = userHomeCandidates.length > 0 ? userHomeCandidates : legacyHomeCandidates;
+      if (homeLocations.length > 1) {
+        this.logger.warn({ candidates: homeLocations.map(l => l.name) },
+          'KG cross-extractor: multiple user-home candidates — picking earliest firstSeenAt');
+      }
+      const homeLocation = homeLocations
+        .sort((a, b) => (a.firstSeenAt ?? '').localeCompare(b.firstSeenAt ?? ''))[0];
       const energyMetric = metrics.find(m => m.normalizedName === 'strompreis');
 
       // Rule 1: Vehicle ↔ Charger
@@ -2105,14 +2183,23 @@ export class KnowledgeGraphService {
             const hasHomeWord = /heim|home|wohn|zuhause|privat/i.test(lower);
             const hasWorkWord = /büro|office|arbeit|firma|work/i.test(lower);
             const hasNegation = /nicht|kein|never|no\s|!=|niemals/i.test(lower);
-            const isHome = hasHomeWord && !hasNegation;
-            const isWork = hasWorkWord && !hasNegation;
+            // CRITICAL: check if the sentence/key/whole-value references another person's
+            // home (mother, father, friend, etc.). Without this guard, "Mutter wohnt in
+            // 3032 Eichgraben" would set isHome=true on Eichgraben.
+            const isOtherPersonHome = describesOtherPersonsHome(citySentence)
+              || describesOtherPersonsHome(fact.key)
+              || describesOtherPersonsHome(fact.value);
+            const isHome = hasHomeWord && !hasNegation && !isOtherPersonHome;
+            const isWork = hasWorkWord && !hasNegation && !isOtherPersonHome;
             // Address: use the matching sentence (compact), NOT the whole memory blob
             const addressSnippet = citySentence.trim().slice(0, 200);
-            // Only SET isHome/isWork to true, never overwrite true→false
+            // Only SET isHome/isWork/isUserHome to true, never overwrite true→false
             // (prevents a routing-context memory from resetting a correctly set home)
             const attrs: Record<string, unknown> = { address: addressSnippet };
-            if (isHome) attrs.isHome = true;
+            if (isHome) {
+              attrs.isHome = true;
+              attrs.isUserHome = true;
+            }
             if (isWork) attrs.isWork = true;
             await this.kgRepo.upsertEntity(userId, city, 'location', attrs, 'memories');
           }

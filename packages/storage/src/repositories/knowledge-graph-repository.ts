@@ -437,6 +437,18 @@ export class KnowledgeGraphRepository {
     }
   }
 
+  /**
+   * Replace entity attributes wholesale (last_seen_at bumped).
+   * Used by cleanup tasks that need to UNSET attributes (e.g. clear isHome=true on a
+   * location whose only memory source describes another person's home).
+   */
+  async setEntityAttributes(id: string, attributes: Record<string, unknown>): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE kg_entities SET attributes = ?, last_seen_at = ? WHERE id = ?',
+      [JSON.stringify(attributes), new Date().toISOString(), id],
+    );
+  }
+
   async renameEntity(id: string, newName: string): Promise<boolean> {
     try {
       await this.adapter.execute(

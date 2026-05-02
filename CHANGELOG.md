@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.588] - 2026-05-02
+
+### Fixed
+- **KG: isHome-Persistenz-Bug — Eichgraben & Co.** — Locations wie Eichgraben (Mutter), Bisamberg (Drittort), Linz (Reise) und Wien (Office) hatten `isHome=true` aus Pre-v578-Zeiten gesetzt. Das "nur setzen, nie loeschen"-Pattern verhinderte automatische Korrektur. Cross-Extractor sortierte nach Confidence und linkte Smart-Home-Items, BMW, Wallbox an die FALSCHE Home-Location (typisch Eichgraben statt Altlengbach). Multi-Layer-Fix:
+  1. **`describesOtherPersonsHome()` Helper** in beide Extraction-Pfade (extractFromMemories + syncMemoryEntities) — checkt KEY und VALUE auf Marker (mother/mutter/freund/etc.)
+  2. **Neues Attribut `isUserHome=true`** — strikter Anker, nur bei eindeutig User-bezogenen Memories gesetzt. Cross-Extractor nutzt isUserHome (Fallback isHome ohne Other-Person-Marker im Address-Text)
+  3. **Konflikt-Auflösung** — bei mehreren Kandidaten Warning + älteste firstSeenAt gewinnt
+  4. **Maintenance-Cleanup** — taeglicher KG-Maintenance-Lauf clearrt isHome auf Locations deren Address-Attribut Other-Person-Marker enthaelt UND kein isUserHome=true gesetzt ist
+- **KG-Repository: `setEntityAttributes()`** — neue Methode fuer wholesale-Update von Entity-Attributen (vorher nur additiv via upsertEntity moeglich)
+
+### DB-Cleanup (one-shot, durchgeführt auf .91 Postgres)
+- isHome geloescht auf: Eichgraben, Bisamberg, Linz, Wien (Wien behaelt isWork=true)
+- isWork geloescht auf: Altlengbach
+- isUserHome=true gesetzt auf: Altlengbach (kanonischer User-Home-Anker)
+- 50 falsche cross-extractor Relations geloescht (home_location/located_at zu Eichgraben/Bisamberg/Linz/Wien)
+
+### Added
+- 13 neue Vitests fuer `describesOtherPersonsHome()` inkl. Regression-Test fuer den Eichgraben-Bug
+
 ## [0.19.0-multi-ha.587] - 2026-05-02
 
 ### Fixed
