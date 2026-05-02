@@ -24,6 +24,20 @@ export class ConfirmationRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /**
+   * Look up confirmation by ID regardless of status. Used by the message pipeline to
+   * give the user a meaningful response when an inline button is pressed for an action
+   * that has already been resolved (approved/rejected/expired) — instead of falling
+   * through to the LLM with a confusing "no matching action" reply.
+   */
+  async getByIdAnyStatus(id: string): Promise<PendingConfirmation | undefined> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM pending_confirmations WHERE id = ?`,
+      [id],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   async findAllPending(chatId: string, platform: string): Promise<PendingConfirmation[]> {
     const rows = await this.adapter.query(
       `SELECT * FROM pending_confirmations WHERE chat_id = ? AND platform = ? AND status = 'pending' ORDER BY created_at DESC`,

@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.587] - 2026-05-02
+
+### Fixed
+- **Confirmation-Queue: Falsche Auto-Resolve-Heuristik (Mismatch-Bug)** — Wenn der User eine ITSM-Incident-Bestätigung approvte, wurden andere ITSM-Incidents mit nur 2 gemeinsamen Generic-Wörtern (z.B. "ITSM", "dokumentieren") faelschlich als 'expired' markiert. Druckte beim spaeteren Klick auf den 2. Inline-Button "keine zugehoerige offene Aktion" und LLM-Fallback. Behoben durch Topic-Key-basierte Deduplication (siehe `computeTopicKey()`).
+- **Confirmation-Queue: Klare Fehlermeldung bei stale Inline-Buttons** — Wenn die Callback-ID auf eine bereits resolvte Bestaetigung zeigt (approved/rejected/expired), antwortet das System jetzt explizit ("ℹ️ Diese Aktion wurde bereits freigegeben am ...") statt durchzufallen zum LLM. Neue Repo-Methode `getByIdAnyStatus()`.
+
+### Changed
+- **Confirmation-Queue: Topic-Key-Algorithmus** — `computeTopicKey()` extrahiert kanonisches Topic-Signal pro Bestaetigung. Per-Skill-Regeln: ITSM nutzt `skill_params.title`, Workflow/Watch nutzen `name`, Reminder nutzt erste 8 Worte der Message, generischer Fallback nutzt sortierte Description-Tokens. Auto-Resolve dedupliziert nur bei exaktem Topic-Key-Match.
+
+### Added
+- 10 Vitests fuer `computeTopicKey` inkl. Regression-Test fuer den UniFi/Commvault-Bug.
+
 ## [0.19.0-multi-ha.586] - 2026-05-01
 
 ### Fixed (rollback + correction von v585)

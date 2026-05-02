@@ -2,9 +2,48 @@ import type { Logger } from 'pino';
 import type { ConfirmationRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
-import type { Platform, SkillContext } from '@alfred/types';
+import type { Platform, SkillContext, PendingConfirmation } from '@alfred/types';
 import type { ActivityLogger } from './activity-logger.js';
 import type { FeedbackService } from './feedback/feedback-service.js';
+
+/**
+ * Compute a canonical "topic key" for a pending confirmation.
+ * Two confirmations are considered the SAME TOPIC iff their topic keys match.
+ *
+ * Per-skill rules use skill_params (the most reliable signal):
+ * - itsm.create_incident / create_problem → params.title
+ * - itsm.create_change_request → params.title
+ * - workflow.create / watch.create → params.name
+ * - reminder.set → first 8 words of params.message
+ * - Generic fallback → first 8 lowercase words ≥4 chars from description
+ *
+ * Returns null when no usable signal is available (caller should NOT auto-dedup).
+ */
+export function computeTopicKey(c: PendingConfirmation): string | null {
+  const skill = c.skillName;
+  const action = (c.skillParams?.action as string | undefined) ?? '';
+  const params = c.skillParams ?? {};
+
+  // Skill-specific reliable signals
+  if (skill === 'itsm' && (action === 'create_incident' || action === 'create_problem' || action === 'create_change_request')) {
+    const title = (params.title as string | undefined)?.trim().toLowerCase();
+    if (title) return `${skill}:${action}:${title}`;
+  }
+  if ((skill === 'workflow' || skill === 'watch') && action === 'create') {
+    const name = (params.name as string | undefined)?.trim().toLowerCase();
+    if (name) return `${skill}:${action}:${name}`;
+  }
+  if (skill === 'reminder' && action === 'set') {
+    const msg = (params.message as string | undefined)?.trim().toLowerCase() ?? '';
+    const sig = msg.split(/\s+/).slice(0, 8).join(' ');
+    if (sig.length >= 5) return `${skill}:${action}:${sig}`;
+  }
+
+  // Generic fallback: description signature
+  const descSig = c.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4).slice(0, 8).sort().join(' ');
+  if (descSig.length >= 5) return `${skill}:${action}:desc:${descSig}`;
+  return null;
+}
 
 export class ConfirmationQueue {
   private expireTimer: ReturnType<typeof setInterval> | null = null;
@@ -126,26 +165,50 @@ export class ConfirmationQueue {
     const pending = callbackMatch
       ? await this.confirmRepo.getById(callbackMatch[1])
       : await this.confirmRepo.findPending(chatId, platform);
-    if (!pending) return false;
 
     const adapter = this.adapters.get(platform as Platform);
+
+    // Fix B — Better fallback when callback ID exists but isn't pending anymore.
+    // Look up the confirmation regardless of status and tell the user explicitly what
+    // happened, instead of falling through to the LLM with a confusing "no matching action".
+    if (!pending && callbackMatch) {
+      const stale = await this.confirmRepo.getByIdAnyStatus(callbackMatch[1]);
+      if (stale && adapter) {
+        const statusLabel: Record<string, string> = {
+          approved: 'bereits freigegeben',
+          rejected: 'bereits abgelehnt',
+          expired: 'inzwischen abgelaufen oder durch eine andere Bestätigung erledigt',
+        };
+        const label = statusLabel[stale.status] ?? `bereits abgeschlossen (${stale.status})`;
+        const when = stale.resolvedAt ? ` (${stale.resolvedAt.slice(0, 16).replace('T', ' ')})` : '';
+        await adapter.sendMessage(chatId, `ℹ️ Diese Aktion wurde ${label}${when}: ${stale.description}`);
+        return true; // consumed — don't fall through to LLM
+      }
+      return false;
+    }
+    if (!pending) return false;
 
     if (isYes) {
       await this.confirmRepo.resolve(pending.id, 'approved');
 
-      // Auto-resolve other pending confirmations for the same skill+topic (prevent "expired" noise)
-      // Only resolve if descriptions share keywords (not ALL same-skill confirmations)
+      // Fix A + C — Auto-resolve other pending confirmations only when the TOPIC KEY matches
+      // exactly. The topic key is computed from skill_params (title/name/message) where
+      // available, with a strict description-signature fallback. This prevents
+      // "ITSM Incident A" and "ITSM Incident B" (different incidents) from collapsing
+      // into one just because their descriptions share generic words like "ITSM" and
+      // "dokumentieren".
       try {
-        const allPending = await this.confirmRepo.findAllPending(chatId, platform);
-        const approvedWords = new Set(pending.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4));
-        for (const other of allPending) {
-          if (other.id === pending.id) continue;
-          if (other.skillName !== pending.skillName) continue;
-          // Check if descriptions share ≥2 significant words (same topic)
-          const otherWords = other.description.toLowerCase().split(/\s+/).filter(w => w.length >= 4);
-          const shared = otherWords.filter(w => approvedWords.has(w)).length;
-          if (shared >= 2) {
-            await this.confirmRepo.resolve(other.id, 'expired');
+        const approvedTopic = computeTopicKey(pending);
+        if (approvedTopic) {
+          const allPending = await this.confirmRepo.findAllPending(chatId, platform);
+          for (const other of allPending) {
+            if (other.id === pending.id) continue;
+            const otherTopic = computeTopicKey(other);
+            if (otherTopic && otherTopic === approvedTopic) {
+              await this.confirmRepo.resolve(other.id, 'expired');
+              this.logger.info({ resolved: other.id, by: pending.id, topic: approvedTopic },
+                'Auto-resolved sibling confirmation (same topic key)');
+            }
           }
         }
       } catch { /* best effort */ }
