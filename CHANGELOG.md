@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.589] - 2026-05-02
+
+### Added — ITSM-Lifecycle-Aktivierung (5 Patches)
+
+#### Patch B: Asset-Linking bei Auto-Incident
+- Monitor-Wrapper resolved jetzt `affectedAssetIds` aus dem Alert-Message-Text gegen alle bekannten CMDB-Asset-Namen (Wortgrenzen-Match). Fuellt die zuvor leere `affected_asset_ids`-Spalte und macht die Asset-Cluster-Erkennung in Pattern-Detection lebendig.
+
+#### Patch A: Pattern-Detection automatisch
+- Nach jedem Auto-Incident-Batch laeuft `problemRepo.detectPatterns(windowDays:14, minIncidents:3)` automatisch
+- Fuer jeden detektierten Cluster ohne `existingProblemId` wird eine Confirmation an den User enqueueed: "Pattern erkannt: 4 Incidents zu git-server. Soll ich Problem-Ticket erstellen?"
+- Dedup ueber `overlapsBatch`: nur Pattern wo NEUE Incidents involviert sind werden vorgeschlagen — nicht jeden Monitor-Run wieder
+- Max 3 Pattern-Vorschlaege pro Batch, 24h Confirmation-Timeout
+
+#### Patch C: Recurrence-Stats im Reasoning-Context
+- Reasoning-Collector zeigt jetzt zusaetzlich zu "Aktive Incidents" und "Kuerzlich geloest" eine neue Section: "Wiederkehrende Incident-Muster (Problem-Kandidaten)"
+- Gruppiert Incidents der letzten 14 Tage nach normalisiertem Titel (Zahlen/Prozente entfernt)
+- Beispiel: "git-server RAM usage: 8× in 14d (1 offen, 7 geloest) → Problem-Kandidat"
+- LLM sieht damit Recurrence direkt im Prompt — kann fundiert `create_problem` vorschlagen
+
+#### Patch D: Auto-Change-Vorschlag bei Resolution
+- ITSM-Skill-Wrapper detektiert Incident-Transitions zu `resolved`/`closed` mit substantiellen `root_cause` UND `resolution` (≥20 Zeichen each)
+- Workaround-Heuristik: Resolution mit "workaround/temporary/temporaer/kurzfristig/notfall/manuell.*neustart" wird ausgefiltert (das sind Quick-Fixes, keine Change-Kandidaten)
+- Bei echtem Permanent-Fix: Confirmation enqueueed "Permanenten Fix als Change-Request anlegen?"
+- Pre-fillt Change-Request mit Root-Cause + Resolution-Text aus Incident
+
+#### Patch E: Weekly Service-Discovery
+- Sonntag 4 AM (zusammen mit Temporal-Analyzer): durchlaeuft alle `active` Assets vom Typ server/vm/lxc/container/application/service
+- Erstellt Service-Eintrag fuer jedes Asset, das noch in keinem existierenden Service als `assetIds` referenziert ist
+- Asset-Type → Service-Category Mapping (server/vm/lxc → infrastructure, container/application → application)
+- Environment → Criticality Mapping (production → high, sonst medium)
+
+### Added
+- 8 neue Vitests: 3 fuer Recurrence-Grouping (Patch C), 5 fuer Auto-Change-Suggestion-Gate (Patch D)
+
+### Storage
+- Neue Repo-Methode `KnowledgeGraphRepository.setEntityAttributes()` (aus v588 — wholesale-Update)
+
 ## [0.19.0-multi-ha.588] - 2026-05-02
 
 ### Fixed

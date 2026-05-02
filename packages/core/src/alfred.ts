@@ -1277,6 +1277,18 @@ export class Alfred {
               if (alerts.length > 0) {
                 // Track first incident per source within this batch for relatedIncidentId linking
                 const batchFirstBySource = new Map<string, string>();
+                // Track new incident IDs created in this batch so we can run pattern-detection afterwards
+                const newIncidentIds: string[] = [];
+
+                // Patch B: pre-load asset name index for O(1) lookup during the loop.
+                // Used to populate `affectedAssetIds` on each created incident, which makes
+                // pattern-detection clustering by asset work (`problem-repository.detectPatterns`).
+                const allAssets = await cmdbRepo.listAssets(userId);
+                const assetByLowerName = new Map<string, string>(); // normalized name → asset.id
+                for (const a of allAssets) {
+                  if (a.name) assetByLowerName.set(a.name.toLowerCase(), a.id);
+                  if (a.hostname) assetByLowerName.set(a.hostname.toLowerCase(), a.id);
+                }
 
                 for (const alert of alerts) {
                   try {
@@ -1284,6 +1296,19 @@ export class Alfred {
                     const GENERIC_ALERT_WORDS = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'warning', 'health', 'check', 'entities', 'unavailable', 'subsystem', 'battery', 'settings', 'offline', 'online']);
                     const keywords = alert.message.split(/[\s"()]+/).filter(w => w.length >= 4 && !GENERIC_ALERT_WORDS.has(w.toLowerCase())).map(w => w.toLowerCase());
                     const severity = alert.message.toLowerCase().includes('offline') || alert.message.toLowerCase().includes('critical') ? 'critical' as const : alert.message.toLowerCase().includes('high') || alert.message.toLowerCase().includes('cpu') ? 'high' as const : 'medium' as const;
+
+                    // Patch B: resolve affected assets by scanning alert message for known asset names.
+                    // This finally populates `affected_asset_ids` so pattern-detection can cluster
+                    // recurring incidents on the same asset (e.g. 8× "git-server RAM" → Problem).
+                    const messageLower = alert.message.toLowerCase();
+                    const matchedAssetIds = new Set<string>();
+                    for (const [name, id] of assetByLowerName) {
+                      // Word-boundary match to avoid "git" matching "github" etc.
+                      if (name.length >= 3 && new RegExp(`\\b${name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`).test(messageLower)) {
+                        matchedAssetIds.add(id);
+                      }
+                    }
+                    const affectedAssetIds = [...matchedAssetIds];
 
                     // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
                     const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
@@ -1306,10 +1331,52 @@ export class Alfred {
                       symptoms: alert.message,
                       detectedBy: 'monitor',
                       relatedIncidentId: relatedId,
+                      affectedAssetIds,
                     });
 
                     if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
+                    newIncidentIds.push(newInc.id);
                   } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
+                }
+
+                // Patch A: run pattern detection if we created NEW incidents in this batch.
+                // For each new pattern (cluster ≥3 incidents without existing problem),
+                // enqueue a confirmation suggesting `create_problem`. User decides whether
+                // to formalize. Skips clusters that already have a linked problem.
+                if (newIncidentIds.length > 0 && this.confirmationQueue) {
+                  try {
+                    const patterns = await problemRepo.detectPatterns(userId, { windowDays: 14, minIncidents: 3 });
+                    for (const p of patterns.slice(0, 3)) {
+                      if (p.existingProblemId) continue; // already a problem
+                      // Only suggest if at least one of the cluster's incidents was just created
+                      // (prevents repeatedly proposing the same pattern every monitor run)
+                      const overlapsBatch = p.incidentIds.some(id => newIncidentIds.includes(id));
+                      if (!overlapsBatch) continue;
+                      const title = `Wiederkehrende Incidents: ${p.keywordCluster.slice(0, 4).join(', ') || 'unbenannt'} (${p.incidentCount}× in ${Math.ceil((Date.now() - new Date(p.firstSeen).getTime()) / 86400000)}d)`;
+                      const description = `Pattern erkannt: ${p.incidentCount} ähnliche Incidents [${p.keywordCluster.slice(0, 5).join(', ')}]. Problem-Ticket erstellen für Root-Cause-Analyse?`;
+                      const ownerPlatformForPattern = (this.config.telegram?.enabled ? 'telegram'
+                        : this.config.discord?.enabled ? 'discord'
+                        : this.config.whatsapp?.enabled ? 'whatsapp'
+                        : 'api');
+                      await this.confirmationQueue.enqueue({
+                        chatId: this.config.security?.ownerUserId ?? '',
+                        platform: ownerPlatformForPattern,
+                        source: 'reasoning',
+                        sourceId: `itsm-pattern-${p.patternKey}`,
+                        description,
+                        skillName: 'itsm',
+                        skillParams: {
+                          action: 'create_problem',
+                          title,
+                          priority: p.incidentCount >= 5 ? 'high' : 'medium',
+                          linked_incident_ids: p.incidentIds,
+                          symptoms: p.keywordCluster.join(', '),
+                        },
+                        timeoutMinutes: 24 * 60, // 24h to decide
+                      });
+                      this.logger.info({ pattern: p.patternKey, incidentCount: p.incidentCount }, 'ITSM pattern-detection: problem-creation suggested');
+                    }
+                  } catch (err) { this.logger.warn({ err: (err as Error).message }, 'Pattern-detection failed'); }
                 }
                 // After all incidents processed, trigger service health re-evaluation
                 try {
@@ -1442,6 +1509,57 @@ export class Alfred {
             }).filter(r => r.sourceEntityName && r.targetEntityName);
             await this.kgServiceRef.syncFromCmdb(uid, allAssets, relMapped);
           });
+        }
+
+        // Patch D: wrap ITSM skill to suggest a Change-Request when an incident transitions
+        // to resolved/closed with a clear root_cause + resolution. Permanent fixes belong in
+        // a Change-Request workflow — not buried in incident notes.
+        {
+          const origItsmExecute = itsmSkill.execute.bind(itsmSkill);
+          itsmSkill.execute = async (input: Record<string, unknown>, ctx: any) => {
+            const result = await origItsmExecute(input, ctx);
+            try {
+              const isResolveAction = input.action === 'update_incident' || input.action === 'close_incident';
+              const newStatus = (input.status as string | undefined) ?? '';
+              const becomesResolved = isResolveAction && (newStatus === 'resolved' || newStatus === 'closed');
+              const rootCause = (input.root_cause as string | undefined) ?? '';
+              const resolution = (input.resolution as string | undefined) ?? '';
+              const isManualWorkaround = /workaround|temporary|tempor[äa]r|kurzfristig|notfall|manuell.*neustart/i.test(resolution);
+              if (
+                result.success && becomesResolved
+                && rootCause.length >= 20 && resolution.length >= 20
+                && !isManualWorkaround
+                && this.confirmationQueue
+              ) {
+                const incident = (result.data as { id?: string; title?: string }) ?? {};
+                const incTitle = incident.title ?? '(unbenannt)';
+                const incId = incident.id ?? '';
+                const ownerPlatformForChange = (this.config.telegram?.enabled ? 'telegram'
+                  : this.config.discord?.enabled ? 'discord'
+                  : this.config.whatsapp?.enabled ? 'whatsapp'
+                  : 'api');
+                await this.confirmationQueue.enqueue({
+                  chatId: this.config.security?.ownerUserId ?? '',
+                  platform: ownerPlatformForChange,
+                  source: 'reasoning',
+                  sourceId: `itsm-fix-change-${incId.slice(0, 8)}`,
+                  description: `Permanenten Fix als Change-Request anlegen für: ${incTitle.slice(0, 80)}?`,
+                  skillName: 'itsm',
+                  skillParams: {
+                    action: 'create_change_request',
+                    title: `Fix: ${incTitle.slice(0, 100)}`,
+                    type: 'normal',
+                    risk_level: 'medium',
+                    description: `Root Cause: ${rootCause}\n\nLösung im Incident: ${resolution}\n\nUrsprünglicher Incident: ${incId}`,
+                    related_incident_id: incId,
+                  },
+                  timeoutMinutes: 24 * 60,
+                });
+                this.logger.info({ incidentId: incId, title: incTitle.slice(0, 60) }, 'ITSM auto-change suggestion enqueued');
+              }
+            } catch (err) { this.logger.debug({ err: (err as Error).message }, 'ITSM auto-change-suggestion hook failed'); }
+            return result;
+          };
         }
 
         skillRegistry.register(cmdbSkill);
@@ -3329,6 +3447,65 @@ export class Alfred {
             }
           } catch (err) {
             this.logger.warn({ err }, 'Temporal analysis failed');
+          }
+
+          // Patch E: weekly Service-Discovery from CMDB Assets.
+          // Derives Service entries from server/vm/lxc/container/application assets so that
+          // ITSM impact-analysis, SLA tracking, and health rollup have meaningful Service
+          // objects. Idempotent: skips assets that already have a matching Service.
+          try {
+            if (this.config.cmdb?.enabled !== false && this.database) {
+              const dbAdapter = this.database.getAdapter();
+              const { CmdbRepository, ItsmRepository } = await import('@alfred/storage');
+              const cmdbRepoSD = new CmdbRepository(dbAdapter);
+              const itsmRepoSD = new ItsmRepository(dbAdapter);
+
+              const ownerProfileSD = this.userRepo
+                ? await this.userRepo.findOrCreate('telegram' as any, this.config.security?.ownerUserId ?? '')
+                : undefined;
+              const userIdSD = ownerProfileSD?.masterUserId ?? ownerProfileSD?.id ?? this.config.security?.ownerUserId ?? '';
+              if (userIdSD) {
+                const allAssets = await cmdbRepoSD.listAssets(userIdSD);
+                const serviceCandidates = allAssets.filter(a =>
+                  ['server', 'vm', 'lxc', 'container', 'application', 'service'].includes(a.assetType)
+                  && a.status === 'active'
+                );
+                const existingServices = await itsmRepoSD.listServices(userIdSD);
+                const existingServiceAssetIds = new Set<string>();
+                for (const s of existingServices) {
+                  for (const aid of s.assetIds ?? []) existingServiceAssetIds.add(aid);
+                }
+
+                let createdServices = 0;
+                for (const asset of serviceCandidates) {
+                  if (existingServiceAssetIds.has(asset.id)) continue; // already covered
+                  // Map asset type → service category
+                  const category = ['server', 'vm', 'lxc'].includes(asset.assetType) ? 'infrastructure'
+                    : asset.assetType === 'container' ? 'application'
+                    : asset.assetType === 'application' ? 'application'
+                    : 'infrastructure';
+                  // Map asset criticality from environment (prod = high, others = medium)
+                  const criticality = asset.environment === 'production' ? 'high' : 'medium';
+                  try {
+                    await itsmRepoSD.createService(userIdSD, {
+                      name: `${asset.name} Service`,
+                      description: `Automatisch abgeleitet aus CMDB-Asset (${asset.assetType}). ${asset.purpose ?? ''}`.trim(),
+                      category: category as any,
+                      environment: asset.environment as any,
+                      criticality: criticality as any,
+                      assetIds: [asset.id],
+                      tags: 'auto-discovered',
+                    });
+                    createdServices++;
+                  } catch { /* dup name → skip */ }
+                }
+                if (createdServices > 0) {
+                  this.logger.info({ createdServices, totalAssets: allAssets.length }, 'Weekly service-discovery completed');
+                }
+              }
+            }
+          } catch (err) {
+            this.logger.warn({ err }, 'Weekly service-discovery failed');
           }
         }, 60 * 60_000); // Check every hour, only acts on Sunday 4 AM
       }

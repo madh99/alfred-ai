@@ -462,7 +462,7 @@ export class ReasoningContextCollector {
                   // Single fetch: all incidents, then filter by status in code
                   const allRaw = await this.skillSandbox.execute(skill, { action: 'list_incidents' }, {} as any);
                   if (allRaw.success && Array.isArray(allRaw.data)) {
-                    const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string; resolution?: string }>;
+                    const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string; createdAt?: string; resolution?: string }>;
                     const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
                     const active = allInc.filter(i => activeStatuses.has(i.status));
                     const activeLines = active.slice(0, 15)
@@ -485,6 +485,38 @@ export class ReasoningContextCollector {
                         return `- [${i.id.slice(0, 8)}] ${i.title}${tag}`;
                       });
                     if (recent.length > 0) parts.push(`Kürzlich gelöst (24h):\n${recent.join('\n')}`);
+
+                    // Patch C: Recurrence-Stats — group incidents by title-prefix (until first
+                    // digit/percent/colon-tail) and show recurring patterns. Lets the LLM see
+                    // "git-server RAM usage: 8× in 12d (5 resolved, 3 open)" instead of just
+                    // 1-3 individual incidents — enabling create_problem suggestions when 3+
+                    // of the same kind exist anywhere in history.
+                    const fourteenDaysAgo = Date.now() - 14 * 24 * 60 * 60 * 1000;
+                    const recentInc = allInc.filter(i => {
+                      const t = i.createdAt ? new Date(i.createdAt).getTime() : 0;
+                      return t > fourteenDaysAgo && i.status !== 'cancelled';
+                    });
+                    const groups = new Map<string, { total: number; open: number; resolved: number; sample: string }>();
+                    for (const i of recentInc) {
+                      // Normalize title: strip percentages, numbers, IPs, IDs to find recurring pattern
+                      const norm = i.title
+                        .replace(/\d+(?:[.,]\d+)?%/g, '')        // 95.1%
+                        .replace(/\b\d+\b/g, '')                  // pure numbers
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .toLowerCase();
+                      const g = groups.get(norm) ?? { total: 0, open: 0, resolved: 0, sample: i.title };
+                      g.total++;
+                      if (activeStatuses.has(i.status)) g.open++;
+                      if (i.status === 'resolved' || i.status === 'closed') g.resolved++;
+                      groups.set(norm, g);
+                    }
+                    const recurring = [...groups.values()]
+                      .filter(g => g.total >= 3)
+                      .sort((a, b) => b.total - a.total)
+                      .slice(0, 5)
+                      .map(g => `- ${g.sample.slice(0, 80)}: ${g.total}× in 14d (${g.open} offen, ${g.resolved} gelöst) → Problem-Kandidat`);
+                    if (recurring.length > 0) parts.push(`Wiederkehrende Incident-Muster (Problem-Kandidaten):\n${recurring.join('\n')}`);
                   }
                 }
                 {
