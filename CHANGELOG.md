@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.599] - 2026-05-18
+
+### Added — Projects T2: Reasoning-Engine sieht aktive Projekte
+
+Alfred kann nun seine Project-Container im Reasoning-Loop nutzen. Mit v597+v598 hatte Alfred zwar bereits persistente Projekt-Daten, aber die Reasoning-Engine kannte sie nicht — Insights konnten weder auf Projekte verweisen noch Stale-Projekte aufgreifen. v599 schließt die Lücke.
+
+#### Neue Section "Aktive Projekte" (`reasoning-context-collector.ts`)
+Wird im Reasoning-Context-Collector als Priority-2 Section angezeigt, **nur** wenn aktive Projekte existieren (sonst skip = Token-Ersparnis):
+- Top 5 aktive Projekte mit Name + Aktivitätsdatum + Open-Items-Counter
+- **Stale-Block** (>30 Tage inaktiv) → Kandidaten für Archivierung-Frage
+- **Überfällige Open-Items** (priority + Projekt-Bezug, max 5)
+- Inline-Hinweis für LLM zur Nutzung
+
+#### Prompt-Regel-Erweiterung (`reasoning-engine.ts`)
+Neuer Block "AKTIVE PROJEKTE NUTZEN" mit Verhaltensregeln:
+- Bei thematischem Match: Projekt explizit referenzieren ("gehört zu Landingpage-Projekt, 3 offene Punkte")
+- Stale-Projekte (>30d): Max 1 Confirmation-Vorschlag pro Insight-Lauf — nicht mehrere gleichzeitig anbieten
+- Überfällige Open-Items nur bei passender Tageszeit oder Themenkontext erwähnen
+- Open-Items immer mit Projekt-Bezug behandeln, nicht als generische Todos
+
+#### Wiring
+- `ProjectRepository` neuer optionaler Constructor-Param in `ReasoningContextCollector` + `ReasoningEngine`
+- `alfred.ts` reicht `this.projectRepo` an `ReasoningEngine` durch
+- Engine erzeugt Collector intern mit `projectRepo` → kein extra Wiring nötig
+
+### Roadmap
+- T3 (v600): Health-Monitoring per Project (Git/Build/Deploy Probes, per-Project konfigurierbar)
+
 ## [0.19.0-multi-ha.598] - 2026-05-18
 
 ### Added — Projects T4: Delegate + Code-Agent Lifecycle-Coverage

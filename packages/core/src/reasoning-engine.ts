@@ -158,6 +158,7 @@ export class ReasoningEngine {
     private readonly userTimezone?: string,
     private readonly conversationRepo?: import('@alfred/storage').ConversationRepository,
     private readonly runbookRepo?: import('@alfred/storage').RunbookRepository,
+    private readonly projectRepo?: import('@alfred/storage').ProjectRepository,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -172,7 +173,7 @@ export class ReasoningEngine {
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
       this.defaultLocation, this.logger, this.workflowRepo,
       bmwTelematicRepo, noteRepo, reminderRepoRef, documentRepo,
-      tz, this.conversationRepo, this.runbookRepo,
+      tz, this.conversationRepo, this.runbookRepo, this.projectRepo,
     );
 
     // Smart delivery timing
@@ -980,7 +981,13 @@ FOLLOW-UP:
 ERFAHRUNG / RUNBOOKS NUTZEN:
 - Wenn die Section "Erfahrungen & Runbooks" Treffer zeigt UND dein Insight ein thematisch passendes Problem/Vorhaben adressiert: referenziere das Runbook explizit ("Wir hatten das schonmal — Runbook [a1b2c3d4]: ..."). Spart dem User das Neu-Durchdenken.
 - Wenn KEIN passendes Runbook existiert aber gerade ein konkretes Problem GELÖST wurde: erwähne dass aus diesem Chat ein Runbook entstehen wird (passiert automatisch nach 30min Ruhe via Reflection — User muss nichts tun).
-- Verifizierte Runbooks (✓) bevorzugen — Drafts sind nicht validiert.`;
+- Verifizierte Runbooks (✓) bevorzugen — Drafts sind nicht validiert.
+
+AKTIVE PROJEKTE NUTZEN:
+- Wenn die Section "Aktive Projekte" Treffer zeigt UND dein Insight thematisch passt: referenziere das Projekt explizit ("Das gehört zu deinem Landingpage-Relaunch-Projekt, dort sind noch 3 offene Punkte"). Hilft dem User die Arbeit zu kontextualisieren.
+- Stale-Projekte (>30d inaktiv): Wenn du einen passenden Anlass hast (Themenwechsel, ruhige Zeit beim User), generiere höchstens 1 Insight als Confirmation-Vorschlag: "Projekt X liegt seit 35 Tagen — archivieren oder fortsetzen?". NICHT mehrere Stale-Projekte gleichzeitig anbieten.
+- Überfällige Open-Items: Nur dann erwähnen wenn das aktuelle Thema oder die Tageszeit (z.B. Wochenbeginn) dazu passt. NICHT als reine Listen-Erinnerung im jedem Insight.
+- Open-Items haben Projekt-Bezug — NICHT als generische Todos behandeln. Bei Aktivierung als Reminder: verweise auf das Projekt.`;
   }
 
   private buildEventDetailPrompt(

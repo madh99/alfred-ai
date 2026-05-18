@@ -15,6 +15,7 @@ import type {
   DocumentRepository,
   ConversationRepository,
   RunbookRepository,
+  ProjectRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -124,6 +125,7 @@ export class ReasoningContextCollector {
     private readonly userTimezone?: string,
     private readonly conversationRepo?: ConversationRepository,
     private readonly runbookRepo?: RunbookRepository,
+    private readonly projectRepo?: ProjectRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -309,6 +311,74 @@ export class ReasoningContextCollector {
         }
       } catch (err) {
         this.logger.debug({ err }, 'Generic runbook-match section failed (non-critical)');
+      }
+    }
+
+    // ── PHASE 2d: Active Projects section (v599) ──────────────────
+    // Project containers Alfred has been working on. Hidden when no active projects.
+    // Surfaces open items and stale projects so the LLM can reference them in insights
+    // ("Project X has been quiet for 5 weeks — archive it or follow up?").
+    if (this.projectRepo) {
+      try {
+        const userId = await this.getEffectiveUserId();
+        if (userId) {
+          const projects = await this.projectRepo.list(userId, { status: 'active', limit: 10 });
+          if (projects.length > 0) {
+            const lines: string[] = [];
+            const staleLines: string[] = [];
+            const now = Date.now();
+            const STALE_DAYS = 30;
+
+            // Gather open items once across all active projects for budget reasons
+            const openItems = await this.projectRepo.listOpenItems(userId, { status: 'open', limit: 50 });
+            const openByProject = new Map<string, number>();
+            for (const it of openItems) {
+              openByProject.set(it.projectId, (openByProject.get(it.projectId) ?? 0) + 1);
+            }
+
+            for (const p of projects.slice(0, 5)) {
+              const ageDays = Math.floor((now - new Date(p.lastActiveAt).getTime()) / (24 * 60 * 60 * 1000));
+              const ageStr = ageDays === 0 ? 'heute' : ageDays === 1 ? 'gestern' : `vor ${ageDays}d`;
+              const oc = openByProject.get(p.id) ?? 0;
+              const ocStr = oc > 0 ? ` — ${oc} offene Punkte` : '';
+              lines.push(`- **${p.name.slice(0, 60)}** (${ageStr})${ocStr}`);
+              if (ageDays >= STALE_DAYS) {
+                staleLines.push(`- **${p.name.slice(0, 60)}** — seit ${ageDays} Tagen keine Aktivität`);
+              }
+            }
+
+            // Top overdue / unscheduled open items across all active projects
+            const overdueOrUnscheduled = openItems
+              .filter(it => !it.dueAt || new Date(it.dueAt).getTime() < now)
+              .sort((a, b) => (a.priority === 'high' ? 0 : 2) - (b.priority === 'high' ? 0 : 2))
+              .slice(0, 5);
+            const itemLines: string[] = [];
+            if (overdueOrUnscheduled.length > 0) {
+              const projectNames = new Map(projects.map(p => [p.id, p.name]));
+              for (const it of overdueOrUnscheduled) {
+                const icon = it.priority === 'high' ? '🔴' : it.priority === 'low' ? '⚪' : '🟡';
+                const pname = projectNames.get(it.projectId)?.slice(0, 30) ?? '?';
+                itemLines.push(`${icon} ${it.title.slice(0, 80)} [${pname}]`);
+              }
+            }
+
+            const parts: string[] = [`Aktive Projekte (${projects.length}):`, ...lines];
+            if (staleLines.length > 0) {
+              parts.push('', '**Stale (>30d inaktiv):**', ...staleLines);
+            }
+            if (itemLines.length > 0) {
+              parts.push('', 'Offene Punkte (überfällig oder ohne Datum):', ...itemLines);
+            }
+            parts.push('', 'Hinweis: Wenn das aktuelle Thema zu einem dieser Projekte passt, referenziere es im Insight. Stale-Projekte sind Kandidaten für Archivierung-Frage oder Follow-up.');
+            const content = parts.join('\n');
+            sections.push({
+              key: 'projects', label: 'Aktive Projekte', priority: 2,
+              content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'Active-projects section failed (non-critical)');
       }
     }
 

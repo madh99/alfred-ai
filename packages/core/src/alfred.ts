@@ -2432,6 +2432,7 @@ export class Alfred {
           userTimezone,
           conversationRepo,
           this.runbookRepo,
+          this.projectRepo,
         );
       }
     }
