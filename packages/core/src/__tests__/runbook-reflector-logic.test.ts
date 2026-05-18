@@ -142,3 +142,41 @@ describe('Trigger B — Project-Agent-Runbook gate', () => {
     expect(shouldSuggestProjectAgentRunbook(true, 5)).toBe(true);
   });
 });
+
+/**
+ * v592 — Trigger C triage logic widened: total ≥6 AND (tool-msgs ≥1 OR assistant-msgs ≥3).
+ * Mirrors the SQL HAVING clause in ChatSessionRunbookReflector.tick().
+ */
+function passesTriage(totalMessages: number, toolMessages: number, assistantMessages: number, minMessages = 6): boolean {
+  if (totalMessages < minMessages) return false;
+  return toolMessages >= 1 || assistantMessages >= 3;
+}
+
+describe('v592 Trigger C — widened triage', () => {
+  it('passes pure-conversation problem-solving (no tool calls)', () => {
+    // Bewerbungs-Brainstorming: 4 user, 4 assistant, 0 tool — 8 total
+    expect(passesTriage(8, 0, 4)).toBe(true);
+  });
+
+  it('passes infra-debugging (tool calls present)', () => {
+    // BMW-Debug: 3 user, 2 assistant, 5 tool — 10 total
+    expect(passesTriage(10, 5, 2)).toBe(true);
+  });
+
+  it('skips too-short conversation (< 6 msgs)', () => {
+    expect(passesTriage(5, 1, 2)).toBe(false);
+  });
+
+  it('skips long conversation without engagement (no tool + few assistant)', () => {
+    // Random user-only ramble (rare but possible): 8 user, 2 assistant, 0 tool
+    expect(passesTriage(10, 0, 2)).toBe(false);
+  });
+
+  it('passes boundary case: exactly 6 msgs with 3 assistant', () => {
+    expect(passesTriage(6, 0, 3)).toBe(true);
+  });
+
+  it('passes single tool-call even with 1 assistant', () => {
+    expect(passesTriage(7, 1, 1)).toBe(true);
+  });
+});

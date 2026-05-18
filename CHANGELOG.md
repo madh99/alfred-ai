@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.592] - 2026-05-03
+
+### Changed — Runbooks generisch wie Hermes-Style Erfahrungsgedächtnis
+
+v591 hatte Runbooks zu eng auf Infra/Technik fokussiert. v592 macht sie zum allgemeinen Erfahrungsgedächtnis für JEDE Art von Aufgabe/Problem/Entscheidung — von Bewerbungs-Strukturierung über Sonntag-Logistik bis Server-Debug.
+
+#### B1 — Trigger-C Triage gelockert
+`ChatSessionRunbookReflector.tick()`:
+- Schwelle `MIN_MESSAGES` von 10 → **6**
+- Bedingung von `tool_msgs ≥ 1` → **`tool_msgs ≥ 1 OR assistant_msgs ≥ 3`**
+- Reines Konversations-Problemlösen (Bewerbung formulieren, Logistik planen) qualifiziert jetzt
+
+#### B2 — Generische Runbook-Section im Reasoning-Collector
+Neue Section "Erfahrungen & Runbooks" (priority 2) — unabhängig von ITSM:
+- Läuft für jeden Reasoning-Pass mit meaningful keywords im Context
+- Matched gegen alle Runbooks (verified+draft) per title+symptom+tags
+- Verifizierte mit ✓ markiert, Drafts mit ·
+- Verbirgt sich wenn keine Treffer → keine Token-Verschwendung
+
+#### B3 — Skill-Category korrigiert
+`RunbookSkill.category` von `'infrastructure'` → **`'core'`**. Description aktualisiert: explizit erwähnt dass Runbooks Themen-übergreifend sind (technische Probleme, Logistik, Bewerbungen, Family-Planung, Recherche).
+
+#### B4 — LLM-Prompt erweitert (Trigger C)
+`ChatSessionRunbookReflector` Prompt:
+- Explizite Themenliste in der Anweisung: Bewerbungen, Logistik, Konzepte, Entscheidungen, Recherche
+- Tags-Regel: 2-5 thematische Tags in Kleinschreibung (bewerbung/logistik/familie/bmw/etc.)
+- Klarstellung: Tags kennzeichnen Thema, NICHT Aktion
+
+#### B5 — Reasoning-Prompt-Hinweis
+Detail-Prompt erweitert um Abschnitt "ERFAHRUNG / RUNBOOKS NUTZEN":
+- Wenn Runbook-Section Treffer zeigt UND Insight thematisch passt → explizit referenzieren
+- Wenn aktuell gerade Problem gelöst wird → erwähnen dass Runbook automatisch entsteht
+- Verifizierte (✓) bevorzugen
+
+### Tests
+- 6 neue Vitests für widened triage (passt Bewerbungs-Brainstorming durch, blockt Ramble-only-Sessions)
+
 ## [0.19.0-multi-ha.591] - 2026-05-03
 
 ### Added — Runbook-System (inspired by Hermes-Agent)

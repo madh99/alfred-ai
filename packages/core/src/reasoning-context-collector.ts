@@ -281,6 +281,37 @@ export class ReasoningContextCollector {
       }
     }
 
+    // ── PHASE 2c: Generic Runbook-Match section (v592) ────────────
+    // Independent of ITSM. Surfaces relevant past experience for ANY current topic
+    // (Bewerbung, Logistik, BMW, Familie, etc.). Searches verified+draft runbooks
+    // against the same meaningful keywords used for chat-history. Hidden when no
+    // useful matches — saves prompt tokens.
+    if (this.runbookRepo) {
+      try {
+        const userId = await this.getEffectiveUserId();
+        const contextKeywords = this.extractContextKeywords(sections);
+        const queryTerms = contextKeywords.filter(k => k.length >= 5).slice(0, 5);
+        if (userId && queryTerms.length > 0) {
+          // findMatching uses keyword-overlap on title+symptom+tags — works across topics
+          const matches = await this.runbookRepo.findMatching(userId, queryTerms.join(' '), 4);
+          if (matches.length > 0) {
+            const lines = matches.map(rb => {
+              const status = rb.status === 'verified' ? '✓' : '·';
+              const tagsSuffix = rb.tags.length > 0 ? ` [${rb.tags.slice(0, 3).join(', ')}]` : '';
+              return `- ${status} [${rb.id.slice(0, 8)}] ${rb.title.slice(0, 70)}${tagsSuffix} (${rb.usageCount}× verwendet)`;
+            });
+            const content = `Relevante Erfahrungen aus früheren Aufgaben (Runbooks zum aktuellen Thema):\n${lines.join('\n')}\n\nHinweis: Wenn ein Runbook passt → mit \`runbook get\` den vollständigen Steps abrufen und referenzieren.`;
+            sections.push({
+              key: 'runbooks', label: 'Erfahrungen & Runbooks', priority: 2,
+              content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'Generic runbook-match section failed (non-critical)');
+      }
+    }
+
     // Change detection + error status annotation
     const changedSections: string[] = [];
     for (const section of sections) {

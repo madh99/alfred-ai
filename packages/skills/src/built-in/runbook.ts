@@ -21,12 +21,15 @@ type RunbookAction =
 export class RunbookSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'runbook',
-    category: 'infrastructure',
+    category: 'core',
     description:
-      'Manage captured operational procedures (runbooks). Use "list" to browse, "get" by ID, ' +
-      '"find_matching" to search by symptom text, "create" to define a new procedure manually, ' +
-      '"update" to refine, "mark_verified" once tested, "mark_deprecated" when obsolete. ' +
-      'Runbooks are also auto-created from successful incident resolutions and project sessions.',
+      'Captured experience — wie haben wir Aufgaben/Probleme/Entscheidungen früher gelöst. ' +
+      'Generelles Erfahrungsgedächtnis, NICHT nur für Infrastruktur. Themen: technische Probleme, ' +
+      'Logistik, Bewerbungen, Family-Planung, Recherche-Ergebnisse — alles was beim nächsten Mal ' +
+      'wieder hilft. Actions: "list" zum Browsen, "get" by ID, "find_matching" nach Stichwort/Tag, ' +
+      '"create" manuell, "update" zum Verfeinern, "mark_verified" wenn validiert, "mark_deprecated" ' +
+      'wenn überholt. Auto-Erstellung aus erfolgreichen Incidents, Project-Agent-Sessions und ' +
+      'Chat-Sessions mit erkanntem Problemlösungs-Muster.',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {

@@ -975,7 +975,12 @@ E-MAIL INSIGHTS:
 
 FOLLOW-UP:
 - Prüfe die "Insight-Tracking" Section. Wenn ein Insight als OFFEN markiert ist und >24h alt, prüfe ob ein Follow-up Reminder sinnvoll ist (z.B. "Hast du das Geschenk für Bernhard schon besorgt?").
-- Erstelle KEINEN Follow-up für rein informative Insights (Wetter, Strompreis, Status-Updates).`;
+- Erstelle KEINEN Follow-up für rein informative Insights (Wetter, Strompreis, Status-Updates).
+
+ERFAHRUNG / RUNBOOKS NUTZEN:
+- Wenn die Section "Erfahrungen & Runbooks" Treffer zeigt UND dein Insight ein thematisch passendes Problem/Vorhaben adressiert: referenziere das Runbook explizit ("Wir hatten das schonmal — Runbook [a1b2c3d4]: ..."). Spart dem User das Neu-Durchdenken.
+- Wenn KEIN passendes Runbook existiert aber gerade ein konkretes Problem GELÖST wurde: erwähne dass aus diesem Chat ein Runbook entstehen wird (passiert automatisch nach 30min Ruhe via Reflection — User muss nichts tun).
+- Verifizierte Runbooks (✓) bevorzugen — Drafts sind nicht validiert.`;
   }
 
   private buildEventDetailPrompt(

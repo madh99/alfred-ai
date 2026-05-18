@@ -21,7 +21,12 @@ import type { ConfirmationQueue } from '../confirmation-queue.js';
 export class ChatSessionRunbookReflector {
   private timer?: ReturnType<typeof setInterval>;
   private static readonly QUIET_MINUTES = 30;
-  private static readonly MIN_MESSAGES = 10;
+  /**
+   * Minimum message count for a session to even be considered.
+   * Lowered from 10 → 6 in v592 so shorter problem-solving conversations (e.g.
+   * "wie strukturieren wir das Vorgehen für X") aren't ignored.
+   */
+  private static readonly MIN_MESSAGES = 6;
   private static readonly POLL_INTERVAL_MS = 5 * 60 * 1000;
   private static readonly MARKER_PREFIX = '_internal_runbook_processed:';
 
@@ -55,21 +60,29 @@ export class ChatSessionRunbookReflector {
   /** Main loop — find quiet conversations, triage, extract runbook candidates. */
   async tick(): Promise<void> {
     const cutoffIso = new Date(Date.now() - ChatSessionRunbookReflector.QUIET_MINUTES * 60_000).toISOString();
-    // Find conversations where the latest message is older than the cutoff and the message
-    // count exceeds the threshold. We also require at least one 'tool' role message.
+    // Find quiet sessions worth analyzing. v592 triage:
+    //   total_msgs ≥ MIN_MESSAGES AND (tool_msgs ≥ 1 OR assistant_msgs ≥ 3)
+    //
+    // The OR-branch lets pure-conversation problem-solving qualify (e.g. drafting an
+    // application letter, planning Sunday logistics) — sessions where Alfred answered
+    // substantively but didn't invoke a skill. Previously these were filtered out.
     const candidates = await this.adapter.query(
       `SELECT c.id AS conversation_id, c.user_id, c.platform, c.chat_id,
               MAX(m.created_at) AS last_message_at,
               COUNT(m.id) AS message_count,
-              SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) AS tool_messages
+              SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) AS tool_messages,
+              SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) AS assistant_messages
        FROM conversations c
        JOIN messages m ON m.conversation_id = c.id
        GROUP BY c.id, c.user_id, c.platform, c.chat_id
        HAVING MAX(m.created_at) < ?
          AND COUNT(m.id) >= ?
-         AND SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) >= 1`,
+         AND (
+           SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) >= 1
+           OR SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) >= 3
+         )`,
       [cutoffIso, ChatSessionRunbookReflector.MIN_MESSAGES],
-    ) as Array<{ conversation_id: string; user_id: string; last_message_at: string; message_count: number; tool_messages: number }>;
+    ) as Array<{ conversation_id: string; user_id: string; last_message_at: string; message_count: number; tool_messages: number; assistant_messages: number }>;
 
     for (const c of candidates) {
       try {
@@ -106,7 +119,14 @@ export class ChatSessionRunbookReflector {
       return `[${role}] ${content}`;
     }).join('\n');
 
-    const prompt = `Du analysierst einen Chat-Verlauf zwischen User und Assistant. Prüfe ob hier ein Problem gelöst wurde dessen Lösung als Runbook (Schritt-für-Schritt-Anleitung) festgehalten werden sollte.
+    const prompt = `Du analysierst einen Chat-Verlauf zwischen User und Assistant. Prüfe ob hier eine Aufgabe, ein Problem oder eine Entscheidung erfolgreich bearbeitet wurde — egal in welchem Bereich. Ziel: das gewonnene Wissen für künftige ähnliche Situationen festhalten ("so haben wir's letztes Mal gemacht").
+
+WICHTIG: Runbooks sind NICHT nur für Infrastruktur/Technik. Sie sind generelles Erfahrungsgedächtnis. Beispielthemen:
+- Technische Probleme ("BMW MQTT reconnect", "Server-RAM-Cleanup")
+- Organisatorische Logistik ("Sonntag-Match + BMW-Laden parallel planen")
+- Konzeptionelle Aufgaben ("Bewerbung strukturieren", "Geburtstag organisieren")
+- Recherche- oder Entscheidungs-Ketten ("welche Option für X — Pro/Contra → Entscheidung")
+- Wissen das beim nächsten Mal sofort hilft
 
 CHAT:
 ${transcript}
@@ -115,20 +135,25 @@ Antworte ausschließlich mit gültigem JSON (keine Markdown-Codeblöcke, kein Fr
 {
   "is_runbook_candidate": true|false,
   "confidence": 0.0-1.0,
-  "title": "kurzer Titel (max 80 Zeichen)",
-  "symptom": "ein Satz: wann tritt das auf",
-  "cause": "ein Satz: die Wurzel-Ursache (falls bekannt, sonst leer)",
+  "title": "kurzer Titel (max 80 Zeichen) — beschreibend, NICHT 'Chat vom 03.05.'",
+  "symptom": "ein Satz: wann/in welcher Situation greift das Wissen?",
+  "cause": "ein Satz: warum entsteht die Situation / was ist der Kern? (falls anwendbar, sonst leer)",
   "steps": ["Schritt 1", "Schritt 2", ...],
-  "verification": "wie prüft man dass es funktioniert hat",
-  "rollback": "wie macht man's rückgängig (falls anwendbar, sonst leer)",
-  "tags": ["tag1", "tag2"]
+  "verification": "wie erkennt man dass es funktioniert hat (falls anwendbar)",
+  "rollback": "wie korrigiert man falls es schiefgeht (NUR bei riskanten/reversiblen Aktionen, sonst leer)",
+  "tags": ["thema1", "thema2", "thema3"]
 }
 
+TAGS-REGEL (wichtig für Wiederauffinden):
+- 2-5 prägnante Themen-Tags in Kleinschreibung, deutsche oder englische Begriffe
+- Beispiele: "bewerbung", "logistik", "familie", "bmw", "netzwerk", "kinder", "schule", "finanzen", "geburtstag", "reise"
+- Tags sollen das Thema kennzeichnen, NICHT die Aktion ("anrufen" → nein; "werkstatt" → ja)
+
 Confidence-Skala:
-- 0.9-1.0: glasklare Problem→Lösung-Kette, allgemein anwendbar
-- 0.7-0.9: Lösung erkennbar, aber session-spezifische Details
-- 0.5-0.7: möglicherweise hilfreich, aber unklar
-- < 0.5: keine echte Lösung erkennbar → is_runbook_candidate: false
+- 0.9-1.0: glasklare Aufgabe/Problem → Lösung-Kette, klar wiederverwendbar
+- 0.7-0.9: gute Lösung, aber teils session-spezifische Details
+- 0.5-0.7: möglicherweise hilfreich, aber Lösung nicht eindeutig
+- < 0.5: keine konkrete Erkenntnis/Lösung erkennbar → is_runbook_candidate: false
 
 Wenn is_runbook_candidate false ist, alle anderen Felder dürfen leer sein.`;
 
