@@ -156,6 +156,7 @@ export class ReasoningEngine {
     private readonly reminderRepoRef?: import('@alfred/storage').ReminderRepository,
     private readonly documentRepo?: import('@alfred/storage').DocumentRepository,
     private readonly userTimezone?: string,
+    private readonly conversationRepo?: import('@alfred/storage').ConversationRepository,
   ) {
     this.enabled = config?.enabled !== false;
     this.schedule = config?.schedule ?? 'hourly';
@@ -170,7 +171,7 @@ export class ReasoningEngine {
       this.feedbackRepo, this.defaultChatId, this.defaultPlatform,
       this.defaultLocation, this.logger, this.workflowRepo,
       bmwTelematicRepo, noteRepo, reminderRepoRef, documentRepo,
-      tz,
+      tz, this.conversationRepo,
     );
 
     // Smart delivery timing

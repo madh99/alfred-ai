@@ -696,4 +696,35 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute('CREATE INDEX IF NOT EXISTS idx_memories_relevant_until ON memories(user_id, relevant_until) WHERE relevant_until IS NOT NULL', []);
     },
   },
+  {
+    version: 62,
+    description: 'Messages — tsvector full-text search column with auto-update trigger',
+    async up(db) {
+      // German+English text search config: 'simple' tokenizes without stemming
+      // (better recall for technical terms); 'german' would stem aggressively.
+      // We pick 'simple' for predictability — searches for "BMW" find "BMW", not stems.
+      await db.execute(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS content_tsv tsvector`, []);
+      await db.execute(`
+        UPDATE messages SET content_tsv = to_tsvector('simple', coalesce(content, ''))
+        WHERE content_tsv IS NULL
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_messages_content_tsv ON messages USING gin(content_tsv)`, []);
+      // Trigger keeps the column in sync without app-level effort
+      await db.execute(`
+        CREATE OR REPLACE FUNCTION messages_tsv_update() RETURNS trigger AS $$
+        BEGIN
+          NEW.content_tsv := to_tsvector('simple', coalesce(NEW.content, ''));
+          RETURN NEW;
+        END
+        $$ LANGUAGE plpgsql
+      `, []);
+      // Drop+create to ensure trigger is current
+      await db.execute(`DROP TRIGGER IF EXISTS messages_tsv_trigger ON messages`, []);
+      await db.execute(`
+        CREATE TRIGGER messages_tsv_trigger
+        BEFORE INSERT OR UPDATE OF content ON messages
+        FOR EACH ROW EXECUTE FUNCTION messages_tsv_update()
+      `, []);
+    },
+  },
 ];

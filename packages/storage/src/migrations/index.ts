@@ -1367,4 +1367,48 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memories_relevant_until ON memories(user_id, relevant_until) WHERE relevant_until IS NOT NULL`);
     },
   },
+  {
+    version: 59,
+    description: 'Messages — FTS5 full-text search index with auto-sync triggers',
+    up(db) {
+      // FTS5 virtual table — content-less external-content mode so the data lives in
+      // `messages` and FTS only stores the inverted index. Saves space + keeps writes
+      // atomic via the triggers below.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+          content,
+          conversation_id UNINDEXED,
+          role UNINDEXED,
+          content='messages',
+          content_rowid='rowid',
+          tokenize='unicode61 remove_diacritics 2'
+        );
+      `);
+      // Backfill existing rows
+      db.exec(`INSERT INTO messages_fts(rowid, content, conversation_id, role)
+               SELECT rowid, content, conversation_id, role FROM messages
+               WHERE rowid NOT IN (SELECT rowid FROM messages_fts)`);
+      // Keep FTS in sync on INSERT/UPDATE/DELETE
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+          INSERT INTO messages_fts(rowid, content, conversation_id, role)
+          VALUES (new.rowid, new.content, new.conversation_id, new.role);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content, conversation_id, role)
+          VALUES ('delete', old.rowid, old.content, old.conversation_id, old.role);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content, conversation_id, role)
+          VALUES ('delete', old.rowid, old.content, old.conversation_id, old.role);
+          INSERT INTO messages_fts(rowid, content, conversation_id, role)
+          VALUES (new.rowid, new.content, new.conversation_id, new.role);
+        END;
+      `);
+    },
+  },
 ];

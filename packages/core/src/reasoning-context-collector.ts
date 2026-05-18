@@ -13,6 +13,7 @@ import type {
   NoteRepository,
   ReminderRepository,
   DocumentRepository,
+  ConversationRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -120,6 +121,7 @@ export class ReasoningContextCollector {
     private readonly reminderRepo?: ReminderRepository,
     private readonly documentRepo?: DocumentRepository,
     private readonly userTimezone?: string,
+    private readonly conversationRepo?: ConversationRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -239,6 +241,41 @@ export class ReasoningContextCollector {
           key: 'memories', label: memoriesDef.label, priority: memoriesDef.priority,
           content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
         });
+      }
+    }
+
+    // ── PHASE 2b: Opt-in chat-history FTS section ────────────────
+    // Only runs when:
+    //   1. ConversationRepository is wired (production setup)
+    //   2. There is at least one meaningful context keyword (proper noun, domain term)
+    //      → avoids spending tokens when no topic stands out
+    //   3. The search returns actual matches (skip empty)
+    if (this.conversationRepo) {
+      try {
+        const userId = await this.getEffectiveUserId();
+        const contextKeywords = this.extractContextKeywords(sections);
+        // Only meaningful capitalized / multi-word terms (heuristic for proper nouns)
+        const meaningful = contextKeywords.filter(k => k.length >= 5).slice(0, 3);
+        if (userId && meaningful.length > 0) {
+          const query = meaningful.join(' OR ');
+          const results = await this.conversationRepo.searchMessages(userId, query, {
+            limit: 5, roles: ['user', 'assistant', 'tool'], timeDecay: true,
+          });
+          if (results.length > 0) {
+            const lines = results.map(r => {
+              const when = r.createdAt?.slice(0, 10) ?? '';
+              const snippet = r.content.length > 140 ? `${r.content.slice(0, 140)}…` : r.content;
+              return `- [${when} ${r.role}] ${snippet.replace(/\n/g, ' ')}`;
+            });
+            const content = `Relevante frühere Konversationen (FTS-Match auf "${meaningful.join(', ')}"):\n${lines.join('\n')}`;
+            sections.push({
+              key: 'chatHistory', label: 'Frühere Konversationen', priority: 3,
+              content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'Chat-history FTS section failed (non-critical)');
       }
     }
 

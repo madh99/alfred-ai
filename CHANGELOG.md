@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.590] - 2026-05-02
+
+### Added — Full-Text Chat History Search (inspired by Hermes-Agent)
+
+- **DB-Migrations v59 (SQLite FTS5) + v62 (PG tsvector)** — `messages_fts` virtuelle FTS5-Tabelle mit Auto-Sync-Triggern (Insert/Update/Delete) bzw. `content_tsv` GIN-indexed Spalte mit Update-Trigger. Tokenizer: `unicode61 remove_diacritics 2` (SQLite) / `simple` (PG) — keine Stemming, "BMW" matched exakt "BMW".
+- **`ConversationRepository.searchMessages()`** — backend-agnostische FTS-Search mit Cross-Conversation-Recall (User sieht NUR seine eigenen Conversations dank Join auf `conversations.user_id`). Time-decay: 30-Tage-Halbwertszeit, neuere Treffer gewinnen bei gleichem Relevanz-Score. SQLite re-rankt in App-Code, PG nativ via `ts_rank * exp(...)`.
+- **Neuer Skill `chat_history`** — Action `search` mit `query`, `limit` (default 10, max 50), `since_days` (optional), `roles` (default user+assistant+tool). LLM kann explizit Historie abfragen wenn "wann haben wir mal über X gesprochen?".
+- **Opt-in Reasoning-Collector-Section** — `chatHistory` Section läuft nur wenn ≥1 meaningful keyword aus dem aktuellen Context vorliegt UND FTS-Treffer existieren. Spart Tokens bei No-Context-Passes, liefert Wert wenn relevant.
+
+### Roles indexed
+- `user` — was du geschrieben hast
+- `assistant` — was Alfred geantwortet hat
+- `tool` — Skill-Display-Outputs (BMW SoC, Strompreis-Snapshots, etc.) sind damit auch durchsuchbar
+
 ## [0.19.0-multi-ha.589] - 2026-05-02
 
 ### Added — ITSM-Lifecycle-Aktivierung (5 Patches)

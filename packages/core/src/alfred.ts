@@ -328,6 +328,12 @@ export class Alfred {
     this.memorySkillRef = memorySkill;
     skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
 
+    // Full-text chat history search (FTS5 / tsvector, migration v59/v62)
+    {
+      const { ChatHistorySkill } = await import('@alfred/skills');
+      skillRegistry.register(new ChatHistorySkill(conversationRepo));
+    }
+
     // 3b. Brainstorming skill
     {
       const { BrainstormingSkill } = await import('@alfred/skills');
@@ -2223,6 +2229,7 @@ export class Alfred {
           this.reminderRepo,
           documentRepo,
           userTimezone,
+          conversationRepo,
         );
       }
     }

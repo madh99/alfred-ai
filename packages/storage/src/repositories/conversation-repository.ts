@@ -102,6 +102,101 @@ export class ConversationRepository {
     return result.changes;
   }
 
+  /**
+   * Full-text search across all messages of a user (across ALL their conversations).
+   *
+   * Joins messages → conversations to filter by user_id, so a user cannot see another
+   * user's chat history. Returns matches ranked by FTS score with optional time-decay
+   * (newer messages weighted higher).
+   *
+   * Backend-specific:
+   *   - SQLite: uses FTS5 virtual table `messages_fts` with `bm25()` scoring
+   *   - Postgres: uses `tsvector` column + `ts_rank` scoring
+   */
+  async searchMessages(
+    userId: string,
+    query: string,
+    opts?: { limit?: number; roles?: Array<'user' | 'assistant' | 'system' | 'tool'>; sinceDays?: number; timeDecay?: boolean },
+  ): Promise<Array<{ id: string; conversationId: string; role: string; content: string; createdAt: string; score: number; platform: string; chatId: string }>> {
+    const limit = opts?.limit ?? 20;
+    const roles = opts?.roles ?? ['user', 'assistant'];
+    const placeholders = roles.map(() => '?').join(',');
+    const sinceCutoff = opts?.sinceDays
+      ? new Date(Date.now() - opts.sinceDays * 24 * 60 * 60_000).toISOString()
+      : null;
+    const decay = opts?.timeDecay ?? true;
+
+    if (this.adapter.type === 'postgres') {
+      // Postgres: ts_rank with optional exponential time-decay multiplier
+      // Decay factor: exp(-age_days / 30) — recent messages weight ~1, 30d-old ~0.37, 90d ~0.05
+      const rankExpr = decay
+        ? `ts_rank(content_tsv, plainto_tsquery('simple', ?)) * exp(-EXTRACT(EPOCH FROM (now() - m.created_at::timestamptz)) / (30.0 * 86400))`
+        : `ts_rank(content_tsv, plainto_tsquery('simple', ?))`;
+      const sinceClause = sinceCutoff ? ` AND m.created_at >= ?` : '';
+      const params: unknown[] = [query, query]; // rankExpr + plainto_tsquery
+      params.push(...roles);
+      if (sinceCutoff) params.push(sinceCutoff);
+      params.push(userId, limit);
+      const sql = `
+        SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,
+               ${rankExpr} AS score, c.platform, c.chat_id
+        FROM messages m
+        JOIN conversations c ON c.id = m.conversation_id
+        WHERE content_tsv @@ plainto_tsquery('simple', ?)
+          AND m.role IN (${placeholders})
+          ${sinceClause}
+          AND c.user_id = ?
+        ORDER BY score DESC, m.created_at DESC
+        LIMIT ?
+      `;
+      const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
+      return rows.map(r => ({
+        id: r.id as string, conversationId: r.conversation_id as string,
+        role: r.role as string, content: r.content as string, createdAt: r.created_at as string,
+        score: Number(r.score ?? 0), platform: r.platform as string, chatId: r.chat_id as string,
+      }));
+    }
+
+    // SQLite: bm25 scoring (lower = better), so negate for "higher = better" semantics.
+    // Time-decay implemented in app code below since SQLite has limited date arithmetic.
+    const sinceClause = sinceCutoff ? ` AND m.created_at >= ?` : '';
+    const params: unknown[] = [query];
+    params.push(...roles);
+    if (sinceCutoff) params.push(sinceCutoff);
+    params.push(userId, Math.min(limit * 3, 200)); // over-fetch for re-ranking
+    const sql = `
+      SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,
+             bm25(messages_fts) AS bm25_score, c.platform, c.chat_id
+      FROM messages_fts
+      JOIN messages m ON m.rowid = messages_fts.rowid
+      JOIN conversations c ON c.id = m.conversation_id
+      WHERE messages_fts MATCH ?
+        AND m.role IN (${placeholders})
+        ${sinceClause}
+        AND c.user_id = ?
+      ORDER BY bm25_score ASC
+      LIMIT ?
+    `;
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
+    const now = Date.now();
+    const scored = rows.map(r => {
+      const bm25 = Number(r.bm25_score ?? 0);
+      const baseScore = -bm25; // negate: now higher is better
+      let score = baseScore;
+      if (decay) {
+        const ageDays = (now - new Date(r.created_at as string).getTime()) / 86_400_000;
+        score = baseScore * Math.exp(-ageDays / 30);
+      }
+      return {
+        id: r.id as string, conversationId: r.conversation_id as string,
+        role: r.role as string, content: r.content as string, createdAt: r.created_at as string,
+        score, platform: r.platform as string, chatId: r.chat_id as string,
+      };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.slice(0, limit);
+  }
+
   private mapRow(row: Record<string, string>): Conversation {
     return {
       id: row.id,
