@@ -295,6 +295,39 @@ export class WatchRepository {
       threadId: row.thread_id as string | undefined,
       quietHoursStart: (row.quiet_hours_start as string) ?? null,
       quietHoursEnd: (row.quiet_hours_end as string) ?? null,
+      consecutiveFailures: typeof row.consecutive_failures === 'number' ? row.consecutive_failures : 0,
+      lastRepairAt: row.last_repair_at as string | undefined,
     };
+  }
+
+  /**
+   * Increment failure counter and return the new value. Used by the watch-engine to
+   * decide whether to trigger auto-repair (at 3) or auto-disable (at 6).
+   */
+  async incrementFailures(id: string): Promise<number> {
+    await this.adapter.execute(
+      `UPDATE watches SET consecutive_failures = consecutive_failures + 1 WHERE id = ?`,
+      [id],
+    );
+    const row = await this.adapter.queryOne(
+      `SELECT consecutive_failures FROM watches WHERE id = ?`, [id],
+    ) as { consecutive_failures: number } | undefined;
+    return row?.consecutive_failures ?? 0;
+  }
+
+  /** Reset the failure counter after a successful poll. */
+  async resetFailures(id: string): Promise<void> {
+    await this.adapter.execute(
+      `UPDATE watches SET consecutive_failures = 0 WHERE id = ?`,
+      [id],
+    );
+  }
+
+  /** Mark a repair attempt timestamp (used to track repair history + prevent rapid re-attempts). */
+  async markRepairAttempted(id: string): Promise<void> {
+    await this.adapter.execute(
+      `UPDATE watches SET last_repair_at = ? WHERE id = ?`,
+      [new Date().toISOString(), id],
+    );
   }
 }

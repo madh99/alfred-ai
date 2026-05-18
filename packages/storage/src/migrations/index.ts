@@ -1412,6 +1412,16 @@ export const MIGRATIONS: Migration[] = [
     },
   },
   {
+    version: 61,
+    description: 'Watches + scheduled_actions — consecutive_failures counter for auto-repair',
+    up(db) {
+      try { db.exec(`ALTER TABLE watches ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE watches ADD COLUMN last_repair_at TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE scheduled_actions ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE scheduled_actions ADD COLUMN last_repair_at TEXT`); } catch { /* exists */ }
+    },
+  },
+  {
     version: 60,
     description: 'Runbooks — captured operational procedures from incidents/sessions/chats',
     up(db) {

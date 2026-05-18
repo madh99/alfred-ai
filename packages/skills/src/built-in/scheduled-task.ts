@@ -63,7 +63,10 @@ export class ScheduledTaskSkill extends Skill {
     },
   };
 
-  constructor(private readonly actionRepo: ScheduledActionRepository) {
+  constructor(
+    private readonly actionRepo: ScheduledActionRepository,
+    private readonly skillRegistry?: import('../skill-registry.js').SkillRegistry,
+  ) {
     super();
   }
 
@@ -133,6 +136,13 @@ export class ScheduledTaskSkill extends Skill {
     }
     if ((!skillName || typeof skillName !== 'string') && !promptTemplate) {
       return { success: false, error: 'Missing required field "skill_name" (or "prompt_template") for create action' };
+    }
+
+    // v595: validate skill_input.action against target skill's enum (prevents hallucinated actions)
+    if (skillName && skillInput && this.skillRegistry) {
+      const { validateSkillAction } = await import('../validate-skill-action.js');
+      const check = validateSkillAction(this.skillRegistry, skillName, skillInput);
+      if (!check.ok) return { success: false, error: check.error };
     }
 
     // Validate schedule_value based on type

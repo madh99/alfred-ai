@@ -5,6 +5,48 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.595] - 2026-05-18
+
+### Added — Hallucinated-Action Schutz + Watch-Auto-Repair
+
+Bug-Befund: alle 6 enabled Watches hatten LLM-halluzinierte Action-Namen (`list_entities`, `get_state`, `get_entity_state`, `check_job_runtime` — keine davon existiert in den jeweiligen Skill-Enums). Watches wurden trotzdem erstellt, da Watch-Skill nur `required` Felder pruefte, nicht den Action-Wert gegen das Enum. Ergebnis: alle Watches feuerten nie, nur stille WARN-Logs.
+
+#### Schicht 1 — Action-Enum-Validator (zentral)
+`@alfred/skills` neuer Helper `validateSkillAction(registry, skillName, params)`:
+- Prueft `params.action` gegen `inputSchema.properties.action.enum` des Ziel-Skills
+- Liefert `ok: false` mit `error: "Skill X hat keine action Y. Valid: [...]"` 
+- Pass-through wenn Skill kein Action-Enum hat (free-form Skills) oder Registry undefined ist
+
+Wird genutzt in 4 Create-Pfaden:
+- `WatchSkill.createWatch` — verhindert Bestandsfehler-Wiederholung
+- `ScheduledTaskSkill.createAction` — `skill_input.action` validiert
+- `BackgroundTaskSkill.scheduleTask` — `skill_input.action` validiert
+- `WorkflowSkill.createWorkflow` — pro action-step
+
+Skills brauchen jetzt optional `skillRegistry` im Constructor (in `alfred.ts` durchgereicht).
+
+#### Schicht 2 — DB-Cleanup
+6 broken Watches via `DELETE FROM watches WHERE id IN (...)` entfernt. User legt bei Bedarf neu an — LLM kann jetzt keine kaputten mehr erzeugen (Schicht 1 fängt's ab).
+
+#### Schicht 3 — Watch-Auto-Repair
+Migration v61 (SQLite) + v64 (PG): neue Spalten `watches.consecutive_failures` + `watches.last_repair_at` (sowie für `scheduled_actions`).
+
+WatchEngine-Erweiterungen:
+- Bei jedem fehlgeschlagenen Poll: `consecutive_failures++`
+- Bei erfolgreichem Poll: `consecutive_failures = 0`
+- Bei `consecutive_failures == 3`: **Auto-Repair-Versuch** über LLM
+  - Prompt enthält: Watch-Name, current Params, Fehlertext, Liste valider Actions aus Schema
+  - LLM antwortet strukturiert mit `can_repair`, `reason`, `corrected_params`
+  - Bei `can_repair: true` → neue Params werden geschrieben + sofortiges Retry
+  - Retry erfolgreich → `consecutive_failures = 0`, Watch ist geheilt
+  - Retry erneut fehlgeschlagen → neue Params bleiben (LLM's beste Vermutung), Zähler steigt weiter
+- Bei `consecutive_failures >= 6`: **Auto-Disable** + einmalige Telegram-Info-Message ("Watch X disabled. Korrigiere im WebUI oder mit watch-Skill.")
+
+`WatchRepository`: neue Methoden `incrementFailures(id)`, `resetFailures(id)`, `markRepairAttempted(id)`. `Watch`-Type erhält `consecutiveFailures?: number`, `lastRepairAt?: string`.
+
+### Tests
+8 neue Vitests für `validateSkillAction` inkl. Regression-Tests für die 4 konkreten Halluzinationen (`list_entities`, `get_state`, `get_entity_state`, `check_job_runtime`).
+
 ## [0.19.0-multi-ha.594] - 2026-05-18
 
 ### Fixed — Runbook-Reflector Cold-Start-Flood (kritisch)

@@ -85,7 +85,10 @@ export class WorkflowSkill extends Skill {
   private runner?: WorkflowRunnerInterface;
   private promptParser?: PromptParserInterface;
 
-  constructor(private readonly workflowRepo: WorkflowRepository) {
+  constructor(
+    private readonly workflowRepo: WorkflowRepository,
+    private readonly skillRegistry?: import('../skill-registry.js').SkillRegistry,
+  ) {
     super();
   }
 
@@ -163,6 +166,12 @@ export class WorkflowSkill extends Skill {
         }
         if (a.jumpTo !== undefined && a.jumpTo !== 'end' && (typeof a.jumpTo !== 'number' || a.jumpTo < 0 || a.jumpTo >= steps.length)) {
           return { success: false, error: `Step ${i}: jumpTo must be "end" or a step index (0-${steps.length - 1})` };
+        }
+        // v595: validate inputMapping.action against target skill's enum
+        if (this.skillRegistry) {
+          const { validateSkillAction } = await import('../validate-skill-action.js');
+          const check = validateSkillAction(this.skillRegistry, a.skillName, a.inputMapping as Record<string, unknown>);
+          if (!check.ok) return { success: false, error: `Step ${i}: ${check.error}` };
         }
       }
     }

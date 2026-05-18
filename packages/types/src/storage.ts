@@ -147,6 +147,10 @@ export interface Watch {
   threadId?: string;
   quietHoursStart?: string | null;
   quietHoursEnd?: string | null;
+  /** Consecutive poll failures — drives auto-repair trigger (3) and auto-disable (6). */
+  consecutiveFailures?: number;
+  /** When the last LLM-driven auto-repair was attempted on this watch's params. */
+  lastRepairAt?: string;
 }
 
 export interface PendingConfirmation {

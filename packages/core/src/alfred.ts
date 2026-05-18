@@ -430,9 +430,9 @@ export class Alfred {
     skillRegistry.register(new ProfileSkill(userRepo));
     const crossPlatformSkill = new CrossPlatformSkill(userRepo, linkTokenRepo, this.adapters, (platform, userId) => conversationRepo.findByPlatformAndUser(platform, userId));
     skillRegistry.register(crossPlatformSkill);
-    const backgroundTaskSkill = new BackgroundTaskSkill(backgroundTaskRepo);
+    const backgroundTaskSkill = new BackgroundTaskSkill(backgroundTaskRepo, skillRegistry);
     skillRegistry.register(backgroundTaskSkill);
-    skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo));
+    skillRegistry.register(new ScheduledTaskSkill(scheduledActionRepo, skillRegistry));
 
     // 4a. Document intelligence
     const documentRepo = new DocumentRepository(adapter);
@@ -2169,7 +2169,7 @@ export class Alfred {
 
     // 7f. Initialize workflow chains
     const workflowRepo = new WorkflowRepository(adapter);
-    const workflowSkill = new WorkflowSkill(workflowRepo);
+    const workflowSkill = new WorkflowSkill(workflowRepo, skillRegistry);
     skillRegistry.register(workflowSkill);
 
     const scriptExecutor = new ScriptExecutor(

@@ -247,7 +247,7 @@ export class WatchSkill extends Skill {
       return { success: false, error: `Chained watch "${triggerWatchId}" does not exist` };
     }
 
-    // Validate skill_params against target skill's required fields
+    // Validate skill_params against target skill's required fields + action enum
     if (this.skillRegistry) {
       const targetSkill = this.skillRegistry.get(skillName);
       if (!targetSkill) {
@@ -264,6 +264,14 @@ export class WatchSkill extends Skill {
               `Expected: ${JSON.stringify(schema.required)}`,
           };
         }
+      }
+      // v595: action-enum validation — prevents LLM-hallucinated actions like
+      // "list_entities" / "get_state" / "check_job_runtime" from being persisted
+      // into long-lived watch configs that then fail on every poll.
+      const { validateSkillAction } = await import('../validate-skill-action.js');
+      const actionCheck = validateSkillAction(this.skillRegistry, skillName, skillParams);
+      if (!actionCheck.ok) {
+        return { success: false, error: actionCheck.error };
       }
     }
 

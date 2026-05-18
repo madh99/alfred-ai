@@ -199,10 +199,21 @@ export class WatchEngine {
       await this.skillHealthTracker?.recordFailure(watch.skillName, result.error ?? 'Watch poll failed');
       await this.watchRepo.updateActionError(watch.id, `Poll failed: ${result.error ?? 'unknown'}`);
       await this.watchRepo.updateAfterCheck(watch.id, { lastCheckedAt: now, lastValue: watch.lastValue });
+
+      // v595: auto-repair sequence — at 3 consecutive failures, try to LLM-fix the params.
+      // At 6 (= repair didn't help), disable the watch and notify the user once.
+      const failCount = await this.watchRepo.incrementFailures(watch.id);
+      if (failCount === 3) {
+        await this.attemptAutoRepair(watch, result.error ?? 'unknown error');
+      } else if (failCount >= 6) {
+        await this.autoDisableWatch(watch, result.error ?? 'unknown error');
+      }
       return;
     }
-    // Clear previous poll error on success
+    // Clear previous poll error on success — also resets failure counter so a recovered
+    // watch is treated as healthy again.
     await this.watchRepo.updateActionError(watch.id, null);
+    await this.watchRepo.resetFailures(watch.id);
 
     await this.skillHealthTracker?.recordSuccess(watch.skillName);
 
@@ -502,6 +513,132 @@ export class WatchEngine {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * v595: Auto-Repair. Triggered at 3 consecutive failures. Asks the LLM with
+   * (skill schema's valid actions + current params + error) to propose corrected
+   * params. Apply-and-retry: if the retry succeeds, the new params are kept and the
+   * failure counter is reset. If the retry also fails, the new params stay (LLM's best
+   * guess) and the watch continues normal poll — at 6 fails total auto-disable kicks in.
+   */
+  private async attemptAutoRepair(watch: Watch, errorMessage: string): Promise<void> {
+    if (!this.llmProvider) {
+      this.logger.debug({ watchId: watch.id }, 'Auto-repair: no LLM provider — skip');
+      return;
+    }
+    const skill = this.skillRegistry.get(watch.skillName);
+    if (!skill) {
+      this.logger.debug({ watchId: watch.id, skillName: watch.skillName }, 'Auto-repair: skill not found');
+      return;
+    }
+    const schema = skill.metadata.inputSchema as { properties?: Record<string, { enum?: string[]; description?: string; type?: string }>; required?: string[] } | undefined;
+    const validActions = schema?.properties?.action?.enum ?? [];
+
+    const prompt = `Eine Alfred-Watch schlägt seit 3 Versuchen mit demselben Fehler fehl. Schlage korrigierte Parameter vor.
+
+WATCH:
+  Name: ${watch.name}
+  Skill: ${watch.skillName}
+  Aktuelle Params: ${JSON.stringify(watch.skillParams)}
+  Fehler: ${errorMessage}
+
+VERFÜGBARE ACTIONS für Skill "${watch.skillName}":
+${validActions.length > 0 ? validActions.map(a => `  - ${a}`).join('\n') : '  (kein action-enum vorhanden)'}
+
+PARAMS-SCHEMA:
+${schema ? JSON.stringify(schema.properties, null, 2).slice(0, 1500) : '(kein schema)'}
+
+Antworte ausschließlich mit gültigem JSON (kein Freitext, keine Codeblöcke):
+{
+  "can_repair": true|false,
+  "reason": "kurzer Grund — z.B. 'action list_entities existiert nicht, korrekt ist states'",
+  "corrected_params": { ... vollständige neue Params ... }
+}
+
+Wenn der Fehler NICHT durch Parameter-Korrektur lösbar ist (z.B. Skill kennt das Konzept gar nicht): can_repair=false, corrected_params kann leer bleiben.`;
+
+    let parsed: { can_repair?: boolean; reason?: string; corrected_params?: Record<string, unknown> } = {};
+    try {
+      const response = await this.llmProvider.complete({
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: 800, temperature: 0.1, tier: 'default',
+      });
+      const text = response.content.trim();
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+    } catch (err) {
+      this.logger.warn({ err, watchId: watch.id }, 'Auto-repair LLM call failed');
+      await this.watchRepo.markRepairAttempted(watch.id);
+      return;
+    }
+
+    if (!parsed.can_repair || !parsed.corrected_params || typeof parsed.corrected_params !== 'object') {
+      this.logger.info({ watchId: watch.id, reason: parsed.reason }, 'Auto-repair: LLM declined to repair');
+      await this.watchRepo.markRepairAttempted(watch.id);
+      return;
+    }
+
+    // Apply correction
+    const oldParams = watch.skillParams;
+    const newParams = parsed.corrected_params;
+    await this.watchRepo.updateSkillParams(watch.id, newParams);
+    await this.watchRepo.markRepairAttempted(watch.id);
+    this.logger.info({ watchId: watch.id, reason: parsed.reason, old: oldParams, new: newParams }, 'Auto-repair: applied LLM-suggested params');
+
+    // Test-retry immediately. If it succeeds: reset failure counter. If it fails: keep
+    // new params (best guess) but failure counter keeps climbing — will hit auto-disable at 6.
+    watch.skillParams = newParams;
+    const retrySkill = this.skillRegistry.get(watch.skillName);
+    if (retrySkill) {
+      try {
+        const userCtx = await this.buildSkillContext(watch);
+        const retryResult = await this.skillSandbox.execute(retrySkill, newParams, userCtx);
+        if (retryResult.success) {
+          this.logger.info({ watchId: watch.id }, 'Auto-repair: retry succeeded — failure counter reset');
+          await this.watchRepo.resetFailures(watch.id);
+          await this.watchRepo.updateActionError(watch.id, null);
+        } else {
+          this.logger.warn({ watchId: watch.id, error: retryResult.error }, 'Auto-repair: retry still fails — will auto-disable on continued failures');
+        }
+      } catch (err) {
+        this.logger.warn({ err, watchId: watch.id }, 'Auto-repair: retry threw');
+      }
+    }
+  }
+
+  /**
+   * v595: Auto-disable at 6 consecutive failures (3 before repair + 3 after).
+   * Sends a one-shot Telegram info-message so the user knows to check the WebUI —
+   * not a confirmation popup, just informational.
+   */
+  private async autoDisableWatch(watch: Watch, errorMessage: string): Promise<void> {
+    await this.watchRepo.toggle(watch.id, false);
+    this.logger.warn({ watchId: watch.id, name: watch.name, errorMessage }, 'Auto-disabled watch after 6 consecutive failures');
+
+    // Best-effort user notification (info-only, no confirmation needed)
+    const adapter = this.adapters?.get(watch.platform as Platform);
+    if (adapter) {
+      const msg = `ℹ️ Watch **${watch.name}** wurde nach 6 fehlgeschlagenen Versuchen deaktiviert.\n`
+        + `Fehler: ${errorMessage.slice(0, 200)}\n`
+        + `Watch-ID: \`${watch.id.slice(0, 8)}\`\n\n`
+        + `Auto-Repair-Versuch hat nicht geholfen. Korrigiere im WebUI oder mit dem watch-Skill.`;
+      try {
+        await adapter.sendMessage(watch.chatId, msg);
+      } catch { /* non-critical */ }
+    }
+  }
+
+  /**
+   * Helper for auto-repair retry — builds a minimal SkillContext for sandbox execution.
+   */
+  private async buildSkillContext(watch: Watch): Promise<import('@alfred/types').SkillContext> {
+    return {
+      userId: watch.userId ?? watch.chatId,
+      platform: watch.platform as Platform,
+      chatId: watch.chatId,
+      chatType: 'dm',
+    } as import('@alfred/types').SkillContext;
   }
 
   /**

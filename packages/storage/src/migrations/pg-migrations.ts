@@ -728,6 +728,16 @@ export const PG_MIGRATIONS: PgMigration[] = [
     },
   },
   {
+    version: 64,
+    description: 'Watches + scheduled_actions — consecutive_failures counter for auto-repair',
+    async up(db) {
+      await db.execute(`ALTER TABLE watches ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0`, []);
+      await db.execute(`ALTER TABLE watches ADD COLUMN IF NOT EXISTS last_repair_at TEXT`, []);
+      await db.execute(`ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0`, []);
+      await db.execute(`ALTER TABLE scheduled_actions ADD COLUMN IF NOT EXISTS last_repair_at TEXT`, []);
+    },
+  },
+  {
     version: 63,
     description: 'Runbooks — captured operational procedures from incidents/sessions/chats',
     async up(db) {

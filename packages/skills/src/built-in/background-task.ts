@@ -64,7 +64,10 @@ export class BackgroundTaskSkill extends Skill {
 
   private persistentRunner?: PersistentRunnerInterface;
 
-  constructor(private readonly taskRepo: BackgroundTaskRepository) {
+  constructor(
+    private readonly taskRepo: BackgroundTaskRepository,
+    private readonly skillRegistry?: import('../skill-registry.js').SkillRegistry,
+  ) {
     super();
   }
 
@@ -127,6 +130,13 @@ export class BackgroundTaskSkill extends Skill {
     }
     if (!skillName || typeof skillName !== 'string') {
       return { success: false, error: 'Missing required field "skill_name" for schedule action' };
+    }
+
+    // v595: validate skill_input.action against target skill's enum (prevents hallucinated actions)
+    if (skillInput && this.skillRegistry) {
+      const { validateSkillAction } = await import('../validate-skill-action.js');
+      const check = validateSkillAction(this.skillRegistry, skillName, skillInput);
+      if (!check.ok) return { success: false, error: check.error };
     }
 
     const task = await this.taskRepo.create(
