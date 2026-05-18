@@ -35,9 +35,17 @@ export interface ProjectAgentConfig {
   buildTimeoutMs: number;
 }
 
+export type ProjectAgentCompletionCallback = (
+  sessionId: string,
+  config: { goal: string; cwd: string },
+  state: { milestonesReached: string[]; totalFilesChanged: number; projectIteration: number },
+  success: boolean,
+) => Promise<void>;
+
 export class ProjectAgentRunner {
   private lastProgressAt = 0;
   private readonly throttleMs = 30_000;
+  private completionCallback?: ProjectAgentCompletionCallback;
 
   constructor(
     private readonly agents: Map<string, CodeAgentDefinitionConfig>,
@@ -47,6 +55,11 @@ export class ProjectAgentRunner {
     private readonly logger: Logger,
     private readonly forgeConfig?: ForgeConfig,
   ) {}
+
+  /** Called when a session completes (success or failure). Set by alfred.ts for runbook capture. */
+  setCompletionCallback(cb: ProjectAgentCompletionCallback): void {
+    this.completionCallback = cb;
+  }
 
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
     const config: ProjectAgentConfig = {
@@ -268,12 +281,30 @@ export class ProjectAgentRunner {
         `${state.projectIteration} Phasen, ${state.totalFilesChanged} Dateien geändert.\n` +
         `Milestones: ${state.milestonesReached.join(', ')}`);
 
+      // Trigger B: notify runbook hook on successful completion
+      if (this.completionCallback) {
+        try {
+          await this.completionCallback(sessionId,
+            { goal: config.goal, cwd: config.cwd },
+            { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
+            true);
+        } catch (err) { this.logger.debug({ err }, 'Project-agent completion callback failed'); }
+      }
+
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error({ err, sessionId }, 'Project agent failed');
       state.projectPhase = 'done';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
       await this.sendProgress(platform, chatId, `💥 Project Agent Fehler: ${msg}`);
+      if (this.completionCallback) {
+        try {
+          await this.completionCallback(sessionId,
+            { goal: config.goal, cwd: config.cwd },
+            { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
+            false);
+        } catch (cbErr) { this.logger.debug({ err: cbErr }, 'Project-agent completion callback (failure path) failed'); }
+      }
     } finally {
       removeAbortController(sessionId);
     }

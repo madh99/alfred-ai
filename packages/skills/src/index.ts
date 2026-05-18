@@ -16,6 +16,7 @@ export { WeatherSkill } from './built-in/weather.js';
 export { ShellSkill } from './built-in/shell.js';
 export { MemorySkill } from './built-in/memory.js';
 export { ChatHistorySkill } from './built-in/chat-history.js';
+export { RunbookSkill } from './built-in/runbook.js';
 export { DelegateSkill } from './built-in/delegate.js';
 export { EmailSkill, createEmailProvider, EmailProvider } from './built-in/email/index.js';
 export type { EmailMessage, EmailDetail, EmailAttachment } from './built-in/email/index.js';

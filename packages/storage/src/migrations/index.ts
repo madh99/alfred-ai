@@ -1411,4 +1411,34 @@ export const MIGRATIONS: Migration[] = [
       `);
     },
   },
+  {
+    version: 60,
+    description: 'Runbooks — captured operational procedures from incidents/sessions/chats',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS runbooks (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          symptom TEXT,
+          cause TEXT,
+          steps TEXT NOT NULL,
+          verification TEXT,
+          rollback TEXT,
+          source_type TEXT,
+          source_id TEXT,
+          asset_ids TEXT,
+          tags TEXT,
+          confidence REAL NOT NULL DEFAULT 0.7,
+          usage_count INTEGER NOT NULL DEFAULT 0,
+          last_used_at TEXT,
+          status TEXT NOT NULL DEFAULT 'draft',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_runbooks_user_status ON runbooks(user_id, status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_runbooks_source ON runbooks(source_type, source_id)`);
+    },
+  },
 ];

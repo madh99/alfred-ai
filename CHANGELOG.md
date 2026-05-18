@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.591] - 2026-05-03
+
+### Added — Runbook-System (inspired by Hermes-Agent)
+
+Operational Runbooks (Symptom → Cause → Steps → Verification → Rollback) werden automatisch aus erfolgreichen Problemlösungen erfasst — drei unabhängige Trigger:
+
+- **DB-Migrations v60 (SQLite) + v63 (PG)** — `runbooks` Tabelle mit source_type/source_id Tracking, asset_ids, tags, confidence, usage_count, status (draft/verified/deprecated)
+- **`RunbookRepository`** — CRUD + `findMatching(symptomText)` Keyword-Overlap-Search + `findBySource()` Dedup + `incrementUsage()` für Statistik
+- **`RunbookSkill`** — Actions: list/get/create/update/delete/mark_verified/mark_deprecated/find_matching. Render-Format mit Markdown (Symptom/Ursache/Schritte/Verifikation/Rollback)
+
+#### Trigger A — ITSM-Incident-Resolution
+ITSM-Wrapper aus v589 erweitert: wenn `update_incident` mit `status=resolved/closed` UND substantieller `root_cause` + `resolution` → zusätzlich zum Change-Request-Vorschlag jetzt auch Runbook-Vorschlag via ConfirmationQueue. Dedup über `findBySource('itsm_incident', incidentId)`.
+
+#### Trigger B — Project-Agent-Session-Completion
+`ProjectAgentRunner.setCompletionCallback()` neu. Bei erfolgreichem Abschluss mit ≥3 Milestones → Runbook-Vorschlag mit Milestones als Steps. Dedup über `findBySource('project_agent', sessionId)`.
+
+#### Trigger C — Chat-Session-Reflection
+Neuer `ChatSessionRunbookReflector` (in `core/reflection/`). Polls alle 5min:
+- Findet "ruhige" Conversations (≥30min seit letzter Message)
+- Triage: ≥10 Messages UND ≥1 Tool-Call (skill-display als role='tool')
+- LLM-Call (default tier, ~1500 Token, temp 0.2) extrahiert strukturiertes JSON mit Confidence
+- **Confidence ≥0.8** → ConfirmationQueue an User
+- **0.5 ≤ Confidence <0.8** → Auto-Save als Status 'draft' (User reviewt später via WebUI)
+- **Confidence <0.5** → Skip
+- Dedup-Marker `_internal_runbook_processed:<conv>:<msg>` mit 30-Tage-Expiry verhindert Re-Analyse
+
+#### Reasoning-Collector Integration
+Bei aktiven Incidents in der ITSM-Section: für jeden Incident werden über `findMatching()` passende Runbooks gesucht (Keyword-Overlap auf title+symptom+tags). Treffer werden als neue Section "Passende Runbooks für aktive Incidents" gerendert. Verifizierte Runbooks mit ✓ markiert. Damit schließt sich der Lern-Loop: Erfahrene Lösungen werden bei neuen Vorkommnissen automatisch im Prompt zitiert.
+
+### Added
+- 17 neue Vitests für Confidence-Routing und Trigger-A/B-Gates
+
+### Nächste Stufe (v592 geplant): Auto-Skill-Creation
+Hybride Detection (mechanisch + LLM-Naming) für Skill-Sequenzen, die als Workflows aus wiederholten Mustern abgeleitet werden — wird in eigenem Release vorbereitet wenn Runbook-Funktion in Production kalibriert.
+
 ## [0.19.0-multi-ha.590] - 2026-05-02
 
 ### Added — Full-Text Chat History Search (inspired by Hermes-Agent)

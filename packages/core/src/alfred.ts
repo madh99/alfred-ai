@@ -116,12 +116,14 @@ export class Alfred {
   private todoWatcher?: TodoWatcher;
   private reasoningEngine?: ReasoningEngine;
   private reflectionEngine?: ReflectionEngine;
+  private chatSessionRunbookReflector?: import('./reflection/chat-session-runbook-reflector.js').ChatSessionRunbookReflector;
   private usageRepo?: UsageRepository;
   private serviceUsageRepo?: ServiceUsageRepository;
   private auditRepo?: AuditRepository;
   private summaryRepo?: SummaryRepository;
   private activityRepo?: ActivityRepository;
   private memoryRepo?: MemoryRepository;
+  private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
@@ -563,6 +565,45 @@ export class Alfred {
       );
       projectAgentSkill.setRunner(projectRunner);
 
+      // Trigger B: on successful project-agent completion with ≥3 milestones,
+      // suggest creating a runbook from the captured steps. Deferred lookup via
+      // `this.runbookRepo` because CMDB block runs after this point.
+      projectRunner.setCompletionCallback(async (sessionId, cfg, state, success) => {
+        if (!success || state.milestonesReached.length < 3) return;
+        if (!this.runbookRepo || !this.confirmationQueue) return;
+        try {
+          const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          if (!userId) return;
+          // Avoid duplicate suggestion if a runbook already exists for this session
+          const existing = await this.runbookRepo.findBySource(userId, 'project_agent', sessionId);
+          if (existing) return;
+          const ownerPlatformForRb = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.discord?.enabled ? 'discord'
+            : this.config.whatsapp?.enabled ? 'whatsapp'
+            : 'api');
+          await this.confirmationQueue.enqueue({
+            chatId: this.config.security?.ownerUserId ?? '',
+            platform: ownerPlatformForRb,
+            source: 'reasoning',
+            sourceId: `runbook-from-project-${sessionId.slice(0, 8)}`,
+            description: `Runbook aus Project-Agent-Session erstellen: "${cfg.goal.slice(0, 80)}"?`,
+            skillName: 'runbook',
+            skillParams: {
+              action: 'create',
+              title: `Projekt: ${cfg.goal.slice(0, 100)}`,
+              symptom: `Initialer Goal: ${cfg.goal}`,
+              steps: state.milestonesReached,
+              source_type: 'project_agent',
+              source_id: sessionId,
+              status: 'draft',
+              tags: ['project-agent', 'auto'],
+            },
+            timeoutMinutes: 24 * 60,
+          });
+          this.logger.info({ sessionId, milestones: state.milestonesReached.length }, 'Project-agent runbook suggestion enqueued');
+        } catch (err) { this.logger.debug({ err }, 'Runbook suggestion (project-agent) failed'); }
+      });
+
       skillRegistry.register(projectAgentSkill);
       this.logger.info('Project agent skill enabled');
     }
@@ -879,13 +920,16 @@ export class Alfred {
         const itsmRepo = new ItsmRepository(adapter);
         itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        const { ProblemRepository } = await import('@alfred/storage');
+        const { ProblemRepository, RunbookRepository } = await import('@alfred/storage');
         const problemRepo = new ProblemRepository(adapter);
+        const runbookRepo = new RunbookRepository(adapter);
+        this.runbookRepo = runbookRepo;
 
-        const { CmdbSkill, ItsmSkill, InfraDocsSkill } = await import('@alfred/skills');
+        const { CmdbSkill, ItsmSkill, InfraDocsSkill, RunbookSkill } = await import('@alfred/skills');
         const cmdbSkill = new CmdbSkill(cmdbRepo, this.config.cmdb?.staleThresholdDays ?? 7);
         const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo, problemRepo);
         const infraDocsSkill = new InfraDocsSkill(cmdbRepo, itsmRepo);
+        const runbookSkill = new RunbookSkill(runbookRepo);
 
         // Wire LLM callback for ITSM service description parsing + doc generation
         itsmSkill.setLlmCallback(async (prompt: string, tier?: string) => {
@@ -1562,6 +1606,38 @@ export class Alfred {
                   timeoutMinutes: 24 * 60,
                 });
                 this.logger.info({ incidentId: incId, title: incTitle.slice(0, 60) }, 'ITSM auto-change suggestion enqueued');
+
+                // Trigger A: also suggest a Runbook from this resolution — dedup check first
+                // so we don't enqueue both if user already created a runbook for this incident.
+                try {
+                  const rbUserId = (ctx?.masterUserId as string | undefined) ?? (ctx?.userId as string | undefined) ?? this.ownerMasterUserId ?? '';
+                  if (!rbUserId) throw new Error('no user for runbook lookup');
+                  const existing = await runbookRepo.findBySource(rbUserId, 'itsm_incident', incId);
+                  if (!existing) {
+                    await this.confirmationQueue.enqueue({
+                      chatId: this.config.security?.ownerUserId ?? '',
+                      platform: ownerPlatformForChange,
+                      source: 'reasoning',
+                      sourceId: `runbook-from-incident-${incId.slice(0, 8)}`,
+                      description: `Runbook aus Incident-Lösung erstellen: "${incTitle.slice(0, 80)}"?`,
+                      skillName: 'runbook',
+                      skillParams: {
+                        action: 'create',
+                        title: incTitle.slice(0, 120),
+                        symptom: (input.symptoms as string | undefined) ?? incTitle,
+                        cause: rootCause,
+                        // LLM-side we let it formulate the steps; we pre-fill with the resolution text
+                        // split by line as a starting point. User can refine.
+                        steps: resolution.split(/\n+/).filter(s => s.trim().length > 0),
+                        source_type: 'itsm_incident',
+                        source_id: incId,
+                        status: 'draft',
+                      },
+                      timeoutMinutes: 24 * 60,
+                    });
+                    this.logger.info({ incidentId: incId }, 'ITSM auto-runbook suggestion enqueued');
+                  }
+                } catch (err) { this.logger.debug({ err: (err as Error).message }, 'Auto-runbook suggestion failed'); }
               }
             } catch (err) { this.logger.debug({ err: (err as Error).message }, 'ITSM auto-change-suggestion hook failed'); }
             return result;
@@ -1571,6 +1647,7 @@ export class Alfred {
         skillRegistry.register(cmdbSkill);
         skillRegistry.register(itsmSkill);
         skillRegistry.register(infraDocsSkill);
+        skillRegistry.register(runbookSkill);
 
         // Schedule periodic auto-discovery
         const discoveryIntervalH = this.config.cmdb?.autoDiscoveryIntervalHours ?? 24;
@@ -2230,6 +2307,7 @@ export class Alfred {
           documentRepo,
           userTimezone,
           conversationRepo,
+          this.runbookRepo,
         );
       }
     }
@@ -3551,6 +3629,37 @@ export class Alfred {
         this.logger.info('Reflection engine initialized');
       } catch (err) {
         this.logger.warn({ err }, 'Reflection engine initialization failed');
+      }
+    }
+
+    // Trigger C: Chat-session runbook reflector — polls every 5 min for "quiet" sessions
+    // (≥30min no activity, ≥10 messages, ≥1 tool-call) and asks LLM to extract a runbook.
+    // High-confidence (≥0.8) goes to ConfirmationQueue; 0.5-0.8 auto-saves as draft.
+    if (
+      this.runbookRepo
+      && this.memoryRepo
+      && this.confirmationQueue
+      && this.database
+      && this.llmProvider
+    ) {
+      try {
+        const { ChatSessionRunbookReflector } = await import('./reflection/chat-session-runbook-reflector.js');
+        const { ConversationRepository: ConvRepoForRb } = await import('@alfred/storage');
+        const dbAdapter = this.database.getAdapter();
+        const convRepoForRb = new ConvRepoForRb(dbAdapter);
+        const ownerPlatformForRb = (this.config.telegram?.enabled ? 'telegram'
+          : this.config.discord?.enabled ? 'discord'
+          : this.config.whatsapp?.enabled ? 'whatsapp'
+          : 'api');
+        this.chatSessionRunbookReflector = new ChatSessionRunbookReflector(
+          dbAdapter, convRepoForRb, this.runbookRepo, this.memoryRepo,
+          this.confirmationQueue, this.llmProvider, this.logger.child({ component: 'runbook-reflector' }),
+          ownerPlatformForRb, this.config.security?.ownerUserId ?? '',
+        );
+        this.chatSessionRunbookReflector.start();
+        this.logger.info('Chat-session runbook reflector started');
+      } catch (err) {
+        this.logger.warn({ err }, 'Chat-session runbook reflector init failed');
       }
     }
 

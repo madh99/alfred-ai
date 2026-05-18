@@ -14,6 +14,7 @@ import type {
   ReminderRepository,
   DocumentRepository,
   ConversationRepository,
+  RunbookRepository,
 } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox, CalendarProvider } from '@alfred/skills';
 import { buildSkillContext } from './context-factory.js';
@@ -122,6 +123,7 @@ export class ReasoningContextCollector {
     private readonly documentRepo?: DocumentRepository,
     private readonly userTimezone?: string,
     private readonly conversationRepo?: ConversationRepository,
+    private readonly runbookRepo?: RunbookRepository,
   ) {}
 
   /** Get the effective user ID for memory lookups (resolves master_user_id once, cached). */
@@ -509,6 +511,28 @@ export class ReasoningContextCollector {
                         return line;
                       }).join('\n');
                     if (activeLines) parts.push(`Aktive Incidents:\n${activeLines}`);
+
+                    // Runbook-Match: for each active incident, find matching runbooks via
+                    // keyword overlap on title/symptom. Surfaces past solutions for current
+                    // problems — closes the learning loop. Verified runbooks ranked higher.
+                    if (this.runbookRepo && active.length > 0) {
+                      try {
+                        const uid = await this.getEffectiveUserId();
+                        if (uid) {
+                          const matchLines: string[] = [];
+                          for (const inc of active.slice(0, 8)) {
+                            const rbs = await this.runbookRepo.findMatching(uid, inc.title, 2);
+                            for (const rb of rbs) {
+                              const status = rb.status === 'verified' ? '✓' : '·';
+                              matchLines.push(`- [${inc.id.slice(0, 8)}] ${inc.title.slice(0, 45)} → ${status} Runbook [${rb.id.slice(0, 8)}] ${rb.title.slice(0, 50)} (${rb.usageCount}× verwendet)`);
+                            }
+                          }
+                          if (matchLines.length > 0) {
+                            parts.push(`Passende Runbooks für aktive Incidents (frühere Lösungen):\n${matchLines.slice(0, 10).join('\n')}`);
+                          }
+                        }
+                      } catch { /* non-critical */ }
+                    }
 
                     // Recently resolved (last 24h) so LLM doesn't re-create.
                     // Auto-resolved incidents get a distinct tag so the LLM can mention them proactively.
