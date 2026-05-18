@@ -124,6 +124,8 @@ export class Alfred {
   private activityRepo?: ActivityRepository;
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
+  private projectRepo?: import('@alfred/storage').ProjectRepository;
+  private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
@@ -541,6 +543,29 @@ export class Alfred {
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
     }
 
+    // 4e1. Projects — long-lived containers for project-agent / code-agent / delegate sessions.
+    // Registered BEFORE the project-agent block so its completion-callback can reference
+    // this.projectManager lazily (callback fires later when projectManager is in place).
+    if (this.config.projects?.enabled !== false) {
+      const { ProjectRepository } = await import('@alfred/storage');
+      const { ProjectManager } = await import('./projects/project-manager.js');
+      const { SessionSummarizer } = await import('./projects/session-summarizer.js');
+      const projectRepo = new ProjectRepository(adapter);
+      const summarizer = new SessionSummarizer(llmProvider, this.config.projects?.summarizerLlmTier ?? 'strong');
+      const projectManager = new ProjectManager(
+        projectRepo,
+        summarizer,
+        this.logger.child({ component: 'project-manager' }),
+        this.config.projects?.autoBindByCwd ?? true,
+      );
+      this.projectRepo = projectRepo;
+      this.projectManager = projectManager;
+
+      const { ProjectSkill } = await import('@alfred/skills');
+      skillRegistry.register(new ProjectSkill(projectRepo));
+      this.logger.info('Projects skill + manager enabled');
+    }
+
     // 4e2. Project agent (optional, requires code agents)
     if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
       const { ProjectAgentSkill, setInterjectionRepo } = await import('@alfred/skills');
@@ -565,10 +590,30 @@ export class Alfred {
       );
       projectAgentSkill.setRunner(projectRunner);
 
-      // Trigger B: on successful project-agent completion with ≥3 milestones,
-      // suggest creating a runbook from the captured steps. Deferred lookup via
-      // `this.runbookRepo` because CMDB block runs after this point.
+      // On every project-agent completion (success OR failure): hand the session over to
+      // the ProjectManager so it auto-binds to a long-lived Project, runs the LLM
+      // summarizer, and persists open items + decisions. This is what gives Alfred
+      // post-session awareness ("what happened in project X, what's still open").
       projectRunner.setCompletionCallback(async (sessionId, cfg, state, success) => {
+        if (this.projectManager) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            if (userId) {
+              await this.projectManager.finishSession({
+                userId,
+                sessionType: 'project_agent',
+                sourceId: sessionId,
+                goal: cfg.goal,
+                cwd: cfg.cwd,
+                milestones: state.milestonesReached,
+                totalFilesChanged: state.totalFilesChanged,
+                success,
+              });
+            }
+          } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
+        }
+
+        // Trigger B (existing): on success with ≥3 milestones, propose a runbook.
         if (!success || state.milestonesReached.length < 3) return;
         if (!this.runbookRepo || !this.confirmationQueue) return;
         try {

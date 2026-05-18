@@ -767,4 +767,74 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_runbooks_source ON runbooks(source_type, source_id)`, []);
     },
   },
+  {
+    version: 65,
+    description: 'Projects — long-lived containers for project-agent/code-agent/delegate sessions + open items + decisions',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          slug TEXT NOT NULL,
+          description TEXT,
+          cwd TEXT,
+          repo_url TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          health_mode TEXT NOT NULL DEFAULT 'full',
+          tags TEXT,
+          created_at TEXT NOT NULL,
+          last_active_at TEXT NOT NULL,
+          next_check_at TEXT,
+          UNIQUE(user_id, slug)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_user_status ON projects(user_id, status)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_cwd ON projects(cwd)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_sessions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          session_type TEXT NOT NULL,
+          source_id TEXT,
+          summary_json TEXT,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_sessions_project ON project_sessions(project_id, started_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_sessions_source ON project_sessions(session_type, source_id)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_open_items (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          session_id TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          priority TEXT NOT NULL DEFAULT 'normal',
+          status TEXT NOT NULL DEFAULT 'open',
+          due_at TEXT,
+          created_at TEXT NOT NULL,
+          resolved_at TEXT,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_open_items_project_status ON project_open_items(project_id, status)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_decisions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          session_id TEXT,
+          title TEXT NOT NULL,
+          choice TEXT NOT NULL,
+          rationale TEXT,
+          alternatives_considered TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_decisions_project ON project_decisions(project_id, created_at DESC)`, []);
+    },
+  },
 ];

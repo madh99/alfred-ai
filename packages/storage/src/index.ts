@@ -68,3 +68,8 @@ export { ItsmRepository } from './repositories/itsm-repository.js';
 export { ProblemRepository } from './repositories/problem-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';
+export { ProjectRepository } from './repositories/project-repository.js';
+export type {
+  Project, ProjectStatus, ProjectHealthMode, ProjectSession, ProjectSessionType, ProjectSessionSummary,
+  ProjectOpenItem, OpenItemStatus, OpenItemPriority, ProjectDecision,
+} from './repositories/project-repository.js';

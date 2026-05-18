@@ -887,6 +887,14 @@ export interface CmdbDocument {
   createdAt: string;
 }
 
+export interface ProjectsConfig {
+  enabled?: boolean;
+  summarizerLlmTier?: 'default' | 'strong';
+  autoBindByCwd?: boolean;
+  orphanDelegateThresholdToolCalls?: number;
+  orphanDelegateThresholdMinutes?: number;
+}
+
 export interface CmdbConfig {
   enabled?: boolean;
   autoDiscoveryIntervalHours?: number;
@@ -960,6 +968,7 @@ export interface AlfredConfig {
   pfsense?: PfSenseConfig;
   infra?: InfraDefaultsConfig;
   cmdb?: CmdbConfig;
+  projects?: ProjectsConfig;
   backup?: BackupConfig;
   commvault?: CommvaultConfig;
   mikrotik?: MikroTikConfig;

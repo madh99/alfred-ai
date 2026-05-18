@@ -565,6 +565,14 @@ export const InfraDefaultsConfigSchema = z.object({
   runtime: z.enum(['node', 'python', 'static']).optional(),
 });
 
+export const ProjectsConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  summarizerLlmTier: z.enum(['default', 'strong']).optional(),
+  autoBindByCwd: z.boolean().optional(),
+  orphanDelegateThresholdToolCalls: z.number().optional(),
+  orphanDelegateThresholdMinutes: z.number().optional(),
+});
+
 export const CmdbConfigSchema = z.object({
   enabled: z.boolean().optional(),
   autoDiscoveryIntervalHours: z.number().optional(),
@@ -636,6 +644,7 @@ export const AlfredConfigSchema = z.object({
   pfsense: PfSenseConfigSchema.optional(),
   infra: InfraDefaultsConfigSchema.optional(),
   cmdb: CmdbConfigSchema.optional(),
+  projects: ProjectsConfigSchema.optional(),
   backup: z.object({
     enabled: z.coerce.boolean().default(false),
     schedule: z.string().default('0 3 * * *'),

@@ -5,6 +5,50 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.597] - 2026-05-18
+
+### Added — Projects (T1 Foundation)
+
+Langlebige Projekt-Container über project-agent / code-agent / delegate / chat Sessions. Alfred hatte bisher keinen Zustand jenseits der einzelnen Session — abgeschlossene Projekte waren nach Session-Ende unsichtbar für Reasoning und Chat. Diese Schicht schließt die Lücke.
+
+#### Schema (Migration v62 SQLite / v65 PostgreSQL)
+- **projects**: id, user_id, name, slug (unique pro user), description, cwd, repo_url, status (active/paused/completed/maintenance/archived), health_mode (full/minimal/off), tags, created_at, last_active_at, next_check_at
+- **project_sessions**: bindet einzelne Session-Quellen (project_agent / code_agent / delegate / chat) an ein Project, hält `summary_json` mit LLM-extrahierten Erkenntnissen
+- **project_open_items**: TODOs / Follow-ups aus Sessions, mit priority + status + due_at
+- **project_decisions**: Architektur- und Stack-Entscheidungen + Rationale
+
+#### LLM Session-Summarizer (`packages/core/src/projects/session-summarizer.ts`)
+- Strict-JSON-Output: `what_was_done`, `key_decisions`, `files_touched`, `open_items`, `status`, `next_check_in_days`
+- Default-Tier `strong`, konfigurierbar via `config.projects.summarizerLlmTier`
+- Robust gegen LLM-Halluzination: ungültige Felder werden gedroppt, leere Titel skipped, Arrays auf Safe-Limits geclamped (max 5 decisions, max 8 open items, max 20 files)
+- Fallback bei Parse-Fehler: deterministische Minimal-Summary aus Milestones
+
+#### ProjectManager (`packages/core/src/projects/project-manager.ts`)
+- `attachSession()`: Auto-Find oder -Create per cwd-Match (konfigurierbar via `autoBindByCwd`)
+- `finishSession()`: ruft Summarizer, persistiert Open-Items + Decisions, setzt `next_check_at` basierend auf LLM-Vorschlag
+- Wird vom Project-Agent-Completion-Callback aufgerufen (success UND failure-Pfad)
+
+#### Project Skill (`packages/skills/src/built-in/project.ts`)
+Actions: `list`, `get`, `create`, `rename`, `set_status`, `set_health_mode`, `list_open_items`, `add_open_item`, `resolve_open_item`, `list_sessions`, `list_decisions`, `archive`
+- Per-Project Health-Mode konfigurierbar per Chat ("Alfred, schalt Projekt X auf minimal")
+- Slug-basierte Auflösung (`get my-project-name`) + 8-char hex prefix match
+- Verifizierte Owner-only Zugriffe via masterUserId
+
+#### Config (`config.projects`)
+- `enabled` (default true)
+- `summarizerLlmTier`: 'default' | 'strong' (default 'strong')
+- `autoBindByCwd` (default true)
+- `orphanDelegateThresholdToolCalls` (für T4 vorbereitet)
+- `orphanDelegateThresholdMinutes` (für T4 vorbereitet)
+
+### Tests
+- 9 neue Vitests in `session-summarizer.test.ts`: Parsing well-formed JSON, Markdown-Fences-Stripping, Unparseable-Output Null-Return, next_check_in_days Clamping, invalid-priority Default, empty-title Filter, Array-Capping, Status-Inferenz aus input.success, LLM-Throw → null
+
+### Roadmap
+- T4 (v598): Delegate + Subagent Lifecycle-Coverage
+- T2 (v599): Reasoning-Engine Active-Projects Context-Integration
+- T3 (v600): Health-Monitoring per Project (Git/Build/Deploy Probes)
+
 ## [0.19.0-multi-ha.596] - 2026-05-18
 
 ### Added — Mistral Medium 3.5 Support inkl. Prompt-Caching
