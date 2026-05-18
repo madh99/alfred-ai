@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.594] - 2026-05-18
+
+### Fixed — Runbook-Reflector Cold-Start-Flood (kritisch)
+
+v593-Deploy produzierte 28 pending Confirmations + 3 Auto-Drafts beim ersten Reflector-Lauf, alle für nur 1-2 Conversations (Beispiel: 10 Confirmations zum gleichen "aWATTar-Rechnungen" Thema mit minimal variierendem LLM-Output).
+
+Root Causes:
+1. Marker an `last_message_id` gekoppelt — neue Tool-Messages während laufender Analyse → Marker-Mismatch → Re-Analyse derselben Session
+2. Kein Concurrency-Guard auf `tick()` — überlappende LLM-Calls möglich
+3. Kein Cold-Start-Backfill — alle historischen quiet Sessions wurden auf einmal analysiert
+4. Confidence-Threshold 0.8 zu niedrig — minimale Variationen lösten je eine Confirmation aus
+
+Sechs Fixes in `ChatSessionRunbookReflector`:
+
+- **R1** Marker per `conversation_id` (nicht `+last_message_id`), TTL = 24h. Re-Analyse erst am nächsten Tag bei substantieller Conversation-Erweiterung möglich
+- **R2** Concurrency-Guard `tickRunning`: läuft ein Tick noch, wird der nächste geskipped
+- **R3** Per-Tick-Limit: max 3 LLM-Extractions pro Polling-Iteration. Backlog wird über mehrere Ticks abgebaut
+- **R4** Session-Age-Window-Filter: nur Sessions mit `last_message_at` ≤7 Tage werden überhaupt betrachtet. Alte Conversations werden ignoriert
+- **R5** Cold-Start-Backfill (one-shot per User): beim ersten Reflector-Run für einen User werden ALLE existing qualifying Conversations als "processed" markiert OHNE LLM-Call. Marker `_internal_runbook_reflector_backfilled` verhindert Re-Backfill
+- **R6** Confidence-Thresholds verschärft: `≥0.9` für Confirmation (vorher 0.8), `0.65-0.9` als Auto-Draft (vorher 0.5-0.8), `<0.65` skip
+
+### DB-Cleanup
+- 28 pending Runbook-Confirmations auf `status='expired'` gesetzt (Produktion)
+- 3 Auto-Drafts bleiben in `runbooks` Tabelle — über `/alfred/runbooks/` reviewbar
+
+### Tests
+- 34 Tests insgesamt (vorher 27): +9 für aktualisierte Confidence-Routing, Window-Filter, Per-Tick-Limit
+
 ## [0.19.0-multi-ha.593] - 2026-05-03
 
 ### Added — Runbook-WebUI + Chat-Pipeline-Integration

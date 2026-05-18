@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 
 /**
  * Confidence routing logic mirrors ChatSessionRunbookReflector.processCandidate().
- * Pure function for testability — the reflector applies these thresholds directly.
+ * v594 thresholds: ≥0.9 confirmation, 0.65-0.9 auto-draft, <0.65 skip.
  */
 function routeByConfidence(parsed: {
   is_runbook_candidate?: boolean;
@@ -13,49 +13,53 @@ function routeByConfidence(parsed: {
   const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
   const isCandidate = parsed.is_runbook_candidate === true;
   const hasMinimumStructure = Boolean(parsed.title) && Array.isArray(parsed.steps) && parsed.steps.length >= 2;
+  const DRAFT_THRESHOLD = 0.65;
+  const CONFIRM_THRESHOLD = 0.9;
 
-  if (!isCandidate || !hasMinimumStructure || confidence < 0.5) return 'skip';
-  if (confidence >= 0.8) return 'confirmation';
+  if (!isCandidate || !hasMinimumStructure || confidence < DRAFT_THRESHOLD) return 'skip';
+  if (confidence >= CONFIRM_THRESHOLD) return 'confirmation';
   return 'auto-draft';
 }
 
-describe('Runbook-Reflector confidence routing', () => {
+describe('Runbook-Reflector confidence routing (v594 thresholds)', () => {
   it('skips when not flagged as candidate', () => {
-    expect(routeByConfidence({ is_runbook_candidate: false, confidence: 0.9, title: 'X', steps: ['a', 'b'] }))
+    expect(routeByConfidence({ is_runbook_candidate: false, confidence: 0.95, title: 'X', steps: ['a', 'b'] }))
       .toBe('skip');
   });
 
-  it('skips low confidence (<0.5)', () => {
+  it('skips below 0.65 threshold', () => {
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.6, title: 'X', steps: ['a', 'b'] }))
+      .toBe('skip');
     expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.4, title: 'X', steps: ['a', 'b'] }))
       .toBe('skip');
   });
 
   it('skips when steps fewer than 2', () => {
-    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.9, title: 'X', steps: ['only one'] }))
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.95, title: 'X', steps: ['only one'] }))
       .toBe('skip');
   });
 
   it('skips when no title', () => {
-    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.9, steps: ['a', 'b'] }))
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.95, steps: ['a', 'b'] }))
       .toBe('skip');
   });
 
-  it('auto-drafts at 0.5 confidence', () => {
-    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.5, title: 'X', steps: ['a', 'b'] }))
+  it('auto-drafts at 0.65 boundary', () => {
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.65, title: 'X', steps: ['a', 'b'] }))
       .toBe('auto-draft');
   });
 
-  it('auto-drafts at 0.79 confidence', () => {
-    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.79, title: 'X', steps: ['a', 'b'] }))
+  it('auto-drafts at 0.89 (just below confirmation)', () => {
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.89, title: 'X', steps: ['a', 'b'] }))
       .toBe('auto-draft');
   });
 
-  it('enqueues confirmation at 0.8 confidence (boundary)', () => {
-    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.8, title: 'X', steps: ['a', 'b'] }))
+  it('enqueues confirmation at 0.9 boundary', () => {
+    expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.9, title: 'X', steps: ['a', 'b'] }))
       .toBe('confirmation');
   });
 
-  it('enqueues confirmation at 0.95 confidence', () => {
+  it('enqueues confirmation at 0.95', () => {
     expect(routeByConfidence({ is_runbook_candidate: true, confidence: 0.95, title: 'X', steps: ['a', 'b', 'c'] }))
       .toBe('confirmation');
   });
@@ -63,6 +67,58 @@ describe('Runbook-Reflector confidence routing', () => {
   it('handles missing confidence (treated as 0)', () => {
     expect(routeByConfidence({ is_runbook_candidate: true, title: 'X', steps: ['a', 'b'] }))
       .toBe('skip');
+  });
+});
+
+/**
+ * Window filter (R4): only analyze sessions where last_message_at is within SESSION_AGE_DAYS.
+ */
+function passesWindowFilter(lastMessageAtIso: string, ageDays = 7, now = Date.now()): boolean {
+  const cutoff = now - ageDays * 24 * 60 * 60_000;
+  return new Date(lastMessageAtIso).getTime() >= cutoff;
+}
+
+describe('v594 R4 — Session-age window filter', () => {
+  const NOW = new Date('2026-05-18T10:00:00Z').getTime();
+
+  it('passes session from 3 days ago', () => {
+    expect(passesWindowFilter('2026-05-15T08:00:00Z', 7, NOW)).toBe(true);
+  });
+
+  it('passes session at the 7-day boundary', () => {
+    expect(passesWindowFilter('2026-05-11T10:00:00Z', 7, NOW)).toBe(true);
+  });
+
+  it('blocks session from 8 days ago', () => {
+    expect(passesWindowFilter('2026-05-10T08:00:00Z', 7, NOW)).toBe(false);
+  });
+
+  it('blocks ancient session (30 days)', () => {
+    expect(passesWindowFilter('2026-04-18T10:00:00Z', 7, NOW)).toBe(false);
+  });
+});
+
+/**
+ * Per-tick cap (R3): never produce more than MAX_CANDIDATES_PER_TICK LLM-extractions.
+ */
+function applyTickLimit<T>(candidates: T[], max = 3): T[] {
+  return candidates.slice(0, max);
+}
+
+describe('v594 R3 — Per-tick LLM-call cap', () => {
+  it('caps 16-element backlog to 3', () => {
+    const backlog = Array.from({ length: 16 }, (_, i) => `session-${i}`);
+    const limited = applyTickLimit(backlog, 3);
+    expect(limited).toHaveLength(3);
+    expect(limited[0]).toBe('session-0');
+  });
+
+  it('returns all when below cap', () => {
+    expect(applyTickLimit(['a', 'b'], 3)).toEqual(['a', 'b']);
+  });
+
+  it('returns empty unchanged', () => {
+    expect(applyTickLimit([], 3)).toEqual([]);
   });
 });
 

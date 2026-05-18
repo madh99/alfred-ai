@@ -20,6 +20,7 @@ import type { ConfirmationQueue } from '../confirmation-queue.js';
  */
 export class ChatSessionRunbookReflector {
   private timer?: ReturnType<typeof setInterval>;
+  private tickRunning = false; // R2: concurrency guard
   private static readonly QUIET_MINUTES = 30;
   /**
    * Minimum message count for a session to even be considered.
@@ -29,6 +30,17 @@ export class ChatSessionRunbookReflector {
   private static readonly MIN_MESSAGES = 6;
   private static readonly POLL_INTERVAL_MS = 5 * 60 * 1000;
   private static readonly MARKER_PREFIX = '_internal_runbook_processed:';
+  /** R5: marker that initial backfill has been applied (one-shot per user). */
+  private static readonly BACKFILL_MARKER = '_internal_runbook_reflector_backfilled';
+  /** R3: max LLM-extractions per tick — prevents flood even on cold-start backlog. */
+  private static readonly MAX_CANDIDATES_PER_TICK = 3;
+  /** R4: only analyze sessions whose last message is within this window. */
+  private static readonly SESSION_AGE_DAYS = 7;
+  /** R1: TTL of the "processed" marker — one full day before allowing re-analysis. */
+  private static readonly MARKER_TTL_MS = 24 * 60 * 60 * 1000;
+  /** R6: confidence thresholds for routing. */
+  private static readonly CONFIRM_THRESHOLD = 0.9;
+  private static readonly DRAFT_THRESHOLD = 0.65;
 
   constructor(
     private readonly adapter: AsyncDbAdapter,
@@ -45,7 +57,15 @@ export class ChatSessionRunbookReflector {
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
-      this.tick().catch(err => this.logger.warn({ err }, 'Runbook-reflector tick failed'));
+      // R2: skip tick if previous one is still running (LLM calls can be slow)
+      if (this.tickRunning) {
+        this.logger.debug('Runbook-reflector: previous tick still running, skipping');
+        return;
+      }
+      this.tickRunning = true;
+      this.tick()
+        .catch(err => this.logger.warn({ err }, 'Runbook-reflector tick failed'))
+        .finally(() => { this.tickRunning = false; });
     }, ChatSessionRunbookReflector.POLL_INTERVAL_MS);
     this.logger.info('Chat-session runbook reflector started');
   }
@@ -59,13 +79,13 @@ export class ChatSessionRunbookReflector {
 
   /** Main loop — find quiet conversations, triage, extract runbook candidates. */
   async tick(): Promise<void> {
-    const cutoffIso = new Date(Date.now() - ChatSessionRunbookReflector.QUIET_MINUTES * 60_000).toISOString();
-    // Find quiet sessions worth analyzing. v592 triage:
-    //   total_msgs ≥ MIN_MESSAGES AND (tool_msgs ≥ 1 OR assistant_msgs ≥ 3)
-    //
-    // The OR-branch lets pure-conversation problem-solving qualify (e.g. drafting an
-    // application letter, planning Sunday logistics) — sessions where Alfred answered
-    // substantively but didn't invoke a skill. Previously these were filtered out.
+    const now = Date.now();
+    const cutoffIso = new Date(now - ChatSessionRunbookReflector.QUIET_MINUTES * 60_000).toISOString();
+    // R4: only analyze recent sessions — older ones are unlikely to yield useful runbooks
+    // and were the main source of the cold-start flood (v592→v593 deploy produced 28 pending
+    // confirmations from historical conversations).
+    const minLastMessageIso = new Date(now - ChatSessionRunbookReflector.SESSION_AGE_DAYS * 24 * 60 * 60_000).toISOString();
+
     const candidates = await this.adapter.query(
       `SELECT c.id AS conversation_id, c.user_id, c.platform, c.chat_id,
               MAX(m.created_at) AS last_message_at,
@@ -76,15 +96,57 @@ export class ChatSessionRunbookReflector {
        JOIN messages m ON m.conversation_id = c.id
        GROUP BY c.id, c.user_id, c.platform, c.chat_id
        HAVING MAX(m.created_at) < ?
+         AND MAX(m.created_at) >= ?
          AND COUNT(m.id) >= ?
          AND (
            SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) >= 1
            OR SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) >= 3
-         )`,
-      [cutoffIso, ChatSessionRunbookReflector.MIN_MESSAGES],
+         )
+       ORDER BY MAX(m.created_at) DESC`,
+      [cutoffIso, minLastMessageIso, ChatSessionRunbookReflector.MIN_MESSAGES],
     ) as Array<{ conversation_id: string; user_id: string; last_message_at: string; message_count: number; tool_messages: number; assistant_messages: number }>;
 
-    for (const c of candidates) {
+    if (candidates.length === 0) return;
+    this.logger.debug({ count: candidates.length }, 'Runbook-reflector: candidates found');
+
+    // R5: per-user one-shot backfill — first encounter of a user marks ALL their existing
+    // qualifying conversations as already-processed, WITHOUT running LLM extraction. Only
+    // sessions that become quiet AFTER the backfill timestamp will be analyzed normally.
+    // This prevents the cold-start flood that produced 28 stacked confirmations.
+    const userIds = [...new Set(candidates.map(c => c.user_id))];
+    const backfilledUsers = new Set<string>();
+    for (const userId of userIds) {
+      const marker = await this.memoryRepo.recall(userId, ChatSessionRunbookReflector.BACKFILL_MARKER);
+      if (!marker) {
+        const userConversations = candidates.filter(c => c.user_id === userId);
+        let backfilled = 0;
+        for (const c of userConversations) {
+          await this.markProcessed(userId, `${ChatSessionRunbookReflector.MARKER_PREFIX}${c.conversation_id}`);
+          backfilled++;
+        }
+        // Set the backfill marker (no TTL — backfill is one-shot per user lifetime)
+        try {
+          await this.memoryRepo.saveWithMetadata(
+            userId, ChatSessionRunbookReflector.BACKFILL_MARKER,
+            new Date().toISOString(), 'system', 'general', 1.0, 'auto',
+          );
+        } catch { /* non-critical */ }
+        backfilledUsers.add(userId);
+        this.logger.info({ userId, backfilled }, 'Runbook-reflector: first-run backfill — marked existing quiet conversations as processed without LLM analysis');
+      }
+    }
+
+    // After backfill: anything in `backfilledUsers` is now "marked", skip those candidates
+    // this tick — next tick (after 5min) will pick up any that have new messages since.
+    const remaining = candidates.filter(c => !backfilledUsers.has(c.user_id));
+
+    // R3: per-tick limit — at most MAX_CANDIDATES_PER_TICK LLM-extractions to prevent flood
+    const limited = remaining.slice(0, ChatSessionRunbookReflector.MAX_CANDIDATES_PER_TICK);
+    if (remaining.length > limited.length) {
+      this.logger.debug({ skipped: remaining.length - limited.length }, 'Runbook-reflector: throttled (remaining candidates will be picked up next tick)');
+    }
+
+    for (const c of limited) {
       try {
         await this.processCandidate(c.conversation_id, c.user_id, c.last_message_at);
       } catch (err) {
@@ -93,17 +155,14 @@ export class ChatSessionRunbookReflector {
     }
   }
 
-  private async processCandidate(conversationId: string, userId: string, lastMessageAt: string): Promise<void> {
-    // Lookup last_message_id for dedup marker (so editing a message doesn't trigger re-extraction)
-    const lastMsg = await this.adapter.queryOne(
-      `SELECT id FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1`,
-      [conversationId],
-    ) as { id: string } | undefined;
-    if (!lastMsg) return;
-
-    const markerKey = `${ChatSessionRunbookReflector.MARKER_PREFIX}${conversationId}:${lastMsg.id}`;
+  private async processCandidate(conversationId: string, userId: string, _lastMessageAt: string): Promise<void> {
+    // R1: marker is per-conversation (no message-id suffix). This makes the marker stable
+    // even when new messages arrive during/after LLM analysis. The marker is auto-expired
+    // by `markProcessed()` after MARKER_TTL_MS (24h), allowing a fresh analysis the next
+    // day if the conversation grew further.
+    const markerKey = `${ChatSessionRunbookReflector.MARKER_PREFIX}${conversationId}`;
     const existing = await this.memoryRepo.recall(userId, markerKey);
-    if (existing) return; // already processed
+    if (existing) return; // already processed within the TTL window
 
     // Fetch the session transcript (last 50 messages — enough context, bounded cost)
     const msgs = await this.conversationRepo.getMessages(conversationId, 50);
@@ -176,7 +235,7 @@ Wenn is_runbook_candidate false ist, alle anderen Felder dürfen leer sein.`;
     const isCandidate = parsed.is_runbook_candidate === true;
     const hasMinimumStructure = Boolean(parsed.title) && Array.isArray(parsed.steps) && parsed.steps.length >= 2;
 
-    if (!isCandidate || !hasMinimumStructure || confidence < 0.5) {
+    if (!isCandidate || !hasMinimumStructure || confidence < ChatSessionRunbookReflector.DRAFT_THRESHOLD) {
       await this.markProcessed(userId, markerKey);
       return;
     }
@@ -188,7 +247,7 @@ Wenn is_runbook_candidate false ist, alle anderen Felder dürfen leer sein.`;
       return;
     }
 
-    if (confidence >= 0.8) {
+    if (confidence >= ChatSessionRunbookReflector.CONFIRM_THRESHOLD) {
       // High-confidence: send to user for approval
       await this.confirmationQueue.enqueue({
         chatId: this.ownerChatId,
@@ -241,8 +300,10 @@ Wenn is_runbook_candidate false ist, alle anderen Felder dürfen leer sein.`;
   private async markProcessed(userId: string, key: string): Promise<void> {
     try {
       await this.memoryRepo.saveWithMetadata(userId, key, new Date().toISOString(), 'system', 'general', 1.0, 'auto');
-      // Auto-expire the marker after 30 days — keeps memory table from growing forever
-      const expiry = new Date(Date.now() + 30 * 24 * 60 * 60_000).toISOString();
+      // R1: 24h TTL — allow re-analysis the next day if the conversation has substantial
+      // new content. Memory cleanup-expired removes the marker after this, then the
+      // conversation can be analyzed again on next quiet→active→quiet cycle.
+      const expiry = new Date(Date.now() + ChatSessionRunbookReflector.MARKER_TTL_MS).toISOString();
       await this.memoryRepo.setExpiry(userId, key, expiry);
     } catch { /* non-critical */ }
   }
