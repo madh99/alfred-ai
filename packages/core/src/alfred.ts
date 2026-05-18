@@ -2432,6 +2432,11 @@ export class Alfred {
       this.pipeline.setReasoningEngine(this.reasoningEngine);
     }
 
+    // Wire runbook-repo so chat-pipeline can inject matching Runbooks into system prompt
+    if (this.runbookRepo) {
+      this.pipeline.setRunbookRepo(this.runbookRepo);
+    }
+
     // 7a2. Wire optional moderation service into pipeline
     if (this.config.security?.moderation?.enabled) {
       const modConfig = this.config.security.moderation;
@@ -2988,6 +2993,53 @@ export class Alfred {
           },
         });
         this.logger.info('Memories API registered');
+      }
+
+      // Wire Runbook API on HTTP adapter
+      if (apiAdapter && this.runbookRepo && 'setRunbookCallbacks' in apiAdapter) {
+        const rbRepo = this.runbookRepo;
+        const resolveOwner = async () => {
+          const ownerId = this.config.security?.ownerUserId ?? '';
+          try {
+            const user = await this.userRepo!.findOrCreate('telegram' as any, ownerId);
+            return user.masterUserId ?? user.id;
+          } catch {
+            return ownerId;
+          }
+        };
+        (apiAdapter as any).setRunbookCallbacks({
+          list: async (filter?: { status?: string; sourceType?: string }) => {
+            try {
+              const uid = await resolveOwner();
+              return await rbRepo.list(uid, filter as any);
+            } catch (err) {
+              this.logger.warn({ err }, 'Runbook API list failed');
+              return [];
+            }
+          },
+          get: async (id: string) => {
+            try {
+              const uid = await resolveOwner();
+              return await rbRepo.getById(uid, id);
+            } catch { return null; }
+          },
+          update: async (id: string, patch: Record<string, unknown>) => {
+            try {
+              const uid = await resolveOwner();
+              return await rbRepo.update(uid, id, patch as any);
+            } catch (err) {
+              this.logger.warn({ err }, 'Runbook API update failed');
+              return null;
+            }
+          },
+          delete: async (id: string) => {
+            try {
+              const uid = await resolveOwner();
+              return await rbRepo.delete(uid, id);
+            } catch { return false; }
+          },
+        });
+        this.logger.info('Runbook API registered');
       }
     }
 

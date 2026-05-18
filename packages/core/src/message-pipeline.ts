@@ -180,6 +180,7 @@ export class MessagePipeline {
   private moderationService?: import('@alfred/security').ModerationService;
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
   private kgService?: import('./knowledge-graph.js').KnowledgeGraphService;
+  private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -238,6 +239,10 @@ export class MessagePipeline {
 
   setKnowledgeGraphService(service: import('./knowledge-graph.js').KnowledgeGraphService): void {
     this.kgService = service;
+  }
+
+  setRunbookRepo(repo: import('@alfred/storage').RunbookRepository): void {
+    this.runbookRepo = repo;
   }
 
   setModerationService(service: import('@alfred/security').ModerationService): void {
@@ -725,6 +730,23 @@ export class MessagePipeline {
             }
           }
         } catch { /* non-critical — chat works without ITSM context */ }
+      }
+
+      // Inject matching Runbooks (Hermes-style experience memory) — find runbooks whose
+      // title/symptom/tags match keywords in the current user message. Lets the LLM
+      // reference past solutions instead of re-deriving them every time.
+      if (this.runbookRepo && message.text && baseContext.masterUserId) {
+        try {
+          const rbs = await this.runbookRepo.findMatching(baseContext.masterUserId, message.text, 4);
+          if (rbs.length > 0) {
+            const lines = rbs.map(rb => {
+              const tag = rb.status === 'verified' ? '✓ verified' : '· draft';
+              const tagsSuffix = rb.tags.length > 0 ? ` [${rb.tags.slice(0, 3).join(', ')}]` : '';
+              return `- ${tag} [${rb.id.slice(0, 8)}] **${rb.title}**${tagsSuffix} (${rb.usageCount}× verwendet)`;
+            });
+            system += `\n\n## Passende Runbooks (frühere Erfahrungen)\nWenn die User-Anfrage thematisch zu einem dieser Runbooks passt, referenziere es konkret. Volltext via \`runbook get\` mit der 8-stelligen ID. ✓ verifizierte bevorzugen.\n${lines.join('\n')}`;
+          }
+        } catch { /* non-critical */ }
       }
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"

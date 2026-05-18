@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.593] - 2026-05-03
+
+### Added — Runbook-WebUI + Chat-Pipeline-Integration
+
+v591/v592 hatten Runbooks erstellt, ABER:
+- Drafts aus Trigger C waren ohne Browser unsichtbar
+- Chat-Pipeline nutzte Runbooks NICHT (nur Reasoning-Engine)
+
+v593 schließt beide Lücken.
+
+#### W1 — WebUI `/alfred/runbooks/`
+- Sidebar-Eintrag "Runbooks" mit 📖-Icon
+- Liste links mit Status-Badge (draft/verified/deprecated) + Quelle (ITSM/Project/Chat/Manual) + Tags
+- Detail-Pane rechts mit Symptom/Ursache/Schritte/Verifikation/Rollback
+- Filter: Status, Quelle, Volltext-Suche (Titel/Symptom/Tags)
+- Aktionen: ✓ Verifizieren, Deprecate, Löschen
+- Inline-Editor: alle Felder bearbeitbar inkl. Schritte (eine pro Zeile) und Tags
+
+#### W2 — API-Endpoints
+- `GET /api/runbooks?status=...&source_type=...`
+- `GET /api/runbooks/:id`
+- `PATCH /api/runbooks/:id` (mit JSON-Body)
+- `DELETE /api/runbooks/:id`
+- HttpAdapter: `setRunbookCallbacks()` (auth-checked)
+
+#### W3 — Chat-Pipeline Runbook-Injection (KRITISCH!)
+Vorher: Chat-Handler ignorierte Runbooks komplett. Wenn der User fragte "wie hatten wir das letztes Mal gemacht?" sah der LLM keine Runbooks.
+
+Jetzt: `MessagePipeline.handleMessage()` ruft `runbookRepo.findMatching(message.text)` und injiziert passende Runbooks als System-Prompt-Section "Passende Runbooks (frühere Erfahrungen)". Mit Hinweis: "Wenn die User-Anfrage thematisch passt, referenziere konkret. Volltext via `runbook get` mit der 8-stelligen ID."
+
+Damit konsumiert Alfred Runbooks JETZT überall:
+- Proaktive Insights (Reasoning-Engine, v591+v592)
+- Direkter Chat (Chat-Pipeline, v593)
+- LLM-explizit via `runbook` skill (immer)
+
+#### W4 — Tests
+4 neue Vitests für W3-Gate (insgesamt 27 in der Runbook-Test-Suite).
+
 ## [0.19.0-multi-ha.592] - 2026-05-03
 
 ### Changed — Runbooks generisch wie Hermes-Style Erfahrungsgedächtnis

@@ -152,6 +152,36 @@ function passesTriage(totalMessages: number, toolMessages: number, assistantMess
   return toolMessages >= 1 || assistantMessages >= 3;
 }
 
+/**
+ * Mirrors the W3 chat-pipeline gate: runbook injection requires the runbookRepo
+ * to be wired AND a non-empty user message AND a resolved masterUserId.
+ */
+function shouldInjectRunbooksInChat(opts: {
+  hasRepo: boolean;
+  messageText: string | undefined;
+  masterUserId: string | undefined;
+}): boolean {
+  return opts.hasRepo && Boolean(opts.messageText) && Boolean(opts.masterUserId);
+}
+
+describe('v592.1 W3 — Chat-pipeline runbook gate', () => {
+  it('injects when all three signals present', () => {
+    expect(shouldInjectRunbooksInChat({ hasRepo: true, messageText: 'wie hatten wir das letzte Mal gemacht?', masterUserId: 'abc-123' })).toBe(true);
+  });
+
+  it('skips without repo wiring (CMDB disabled)', () => {
+    expect(shouldInjectRunbooksInChat({ hasRepo: false, messageText: 'hi', masterUserId: 'abc' })).toBe(false);
+  });
+
+  it('skips on empty user message (unlikely but defensive)', () => {
+    expect(shouldInjectRunbooksInChat({ hasRepo: true, messageText: '', masterUserId: 'abc' })).toBe(false);
+  });
+
+  it('skips when user-resolution failed', () => {
+    expect(shouldInjectRunbooksInChat({ hasRepo: true, messageText: 'hi', masterUserId: undefined })).toBe(false);
+  });
+});
+
 describe('v592 Trigger C — widened triage', () => {
   it('passes pure-conversation problem-solving (no tool calls)', () => {
     // Bewerbungs-Brainstorming: 4 user, 4 assistant, 0 tool — 8 total

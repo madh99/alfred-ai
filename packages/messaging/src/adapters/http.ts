@@ -205,6 +205,23 @@ export class HttpAdapter extends MessagingAdapter {
     this.memoriesDeleteFn = opts.delete;
   }
 
+  private runbooksListFn?: (filter?: { status?: string; sourceType?: string }) => Promise<any[]>;
+  private runbooksGetFn?: (id: string) => Promise<any | null>;
+  private runbooksUpdateFn?: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
+  private runbooksDeleteFn?: (id: string) => Promise<boolean>;
+
+  setRunbookCallbacks(opts: {
+    list: (filter?: { status?: string; sourceType?: string }) => Promise<any[]>;
+    get: (id: string) => Promise<any | null>;
+    update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
+    delete: (id: string) => Promise<boolean>;
+  }): void {
+    this.runbooksListFn = opts.list;
+    this.runbooksGetFn = opts.get;
+    this.runbooksUpdateFn = opts.update;
+    this.runbooksDeleteFn = opts.delete;
+  }
+
   setCmdbCallbacks(cbs: CmdbCallbacks): void { this.cmdbCallbacks = cbs; }
   setItsmCallbacks(cbs: ItsmCallbacks): void { this.itsmCallbacks = cbs; }
   setDocsCallbacks(cbs: DocsCallbacks): void { this.docsCallbacks = cbs; }
@@ -471,6 +488,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMemoriesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/memories/') && req.method === 'DELETE') {
       this.handleMemoriesDelete(req, res, url).catch(err => this.safeError(res, err));
+    // ── Runbooks API (browse drafts + manage) ──
+    } else if (url.pathname === '/api/runbooks' && req.method === 'GET') {
+      this.handleRunbooksList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/runbooks/') && req.method === 'GET') {
+      this.handleRunbooksGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/runbooks/') && req.method === 'PATCH') {
+      this.handleRunbooksUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/runbooks/') && req.method === 'DELETE') {
+      this.handleRunbooksDelete(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -998,6 +1024,58 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const memoryId = url.pathname.split('/').pop()!;
     const ok = await this.memoriesDeleteFn(memoryId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── Runbooks API handlers ──
+  private async handleRunbooksList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.runbooksListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const status = url.searchParams.get('status') ?? undefined;
+    const sourceType = url.searchParams.get('source_type') ?? undefined;
+    const list = await this.runbooksListFn({ status, sourceType });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ runbooks: list }));
+  }
+
+  private async handleRunbooksGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.runbooksGetFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const id = url.pathname.split('/').pop()!;
+    const rb = await this.runbooksGetFn(id);
+    if (!rb) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ runbook: rb }));
+  }
+
+  private async handleRunbooksUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.runbooksUpdateFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let patch: Record<string, unknown>;
+    try { patch = JSON.parse(body); }
+    catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const updated = await this.runbooksUpdateFn(id, patch);
+    if (!updated) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ runbook: updated }));
+  }
+
+  private async handleRunbooksDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.runbooksDeleteFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.runbooksDeleteFn(id);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

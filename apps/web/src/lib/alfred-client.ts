@@ -163,6 +163,49 @@ export class AlfredClient {
     return data.success;
   }
 
+  async fetchRunbooks(filter?: { status?: string; sourceType?: string }): Promise<Runbook[]> {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.sourceType) params.set('source_type', filter.sourceType);
+    const url = `${this.baseUrl}/api/runbooks${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch runbooks: ${res.status}`);
+    const data = await res.json();
+    return data.runbooks ?? [];
+  }
+
+  async fetchRunbook(id: string): Promise<Runbook | null> {
+    const res = await fetch(`${this.baseUrl}/api/runbooks/${id}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.runbook ?? null;
+  }
+
+  async updateRunbook(id: string, patch: Record<string, unknown>): Promise<Runbook | null> {
+    const res = await fetch(`${this.baseUrl}/api/runbooks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.runbook ?? null;
+  }
+
+  async deleteRunbook(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/runbooks/${id}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
       method: 'PATCH',
@@ -620,4 +663,25 @@ export interface MemoryEntry {
   expiresAt?: string | null;
   relevantUntil?: string | null;
   sourceEventRefs?: string[] | null;
+}
+
+export interface Runbook {
+  id: string;
+  userId: string;
+  title: string;
+  symptom?: string;
+  cause?: string;
+  steps: string[];
+  verification?: string;
+  rollback?: string;
+  sourceType?: 'itsm_incident' | 'project_agent' | 'chat_session' | 'manual';
+  sourceId?: string;
+  assetIds: string[];
+  tags: string[];
+  confidence: number;
+  usageCount: number;
+  lastUsedAt?: string;
+  status: 'draft' | 'verified' | 'deprecated';
+  createdAt: string;
+  updatedAt: string;
 }
