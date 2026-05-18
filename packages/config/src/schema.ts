@@ -571,6 +571,9 @@ export const ProjectsConfigSchema = z.object({
   autoBindByCwd: z.boolean().optional(),
   orphanDelegateThresholdToolCalls: z.number().optional(),
   orphanDelegateThresholdMinutes: z.number().optional(),
+  healthCheckEnabled: z.boolean().optional(),
+  healthCheckIntervalHours: z.number().optional(),
+  healthProbeTimeoutMs: z.number().optional(),
 });
 
 export const CmdbConfigSchema = z.object({

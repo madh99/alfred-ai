@@ -6,6 +6,18 @@ export type ProjectHealthMode = 'full' | 'minimal' | 'off';
 export type ProjectSessionType = 'project_agent' | 'code_agent' | 'delegate' | 'chat';
 export type OpenItemStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type OpenItemPriority = 'low' | 'normal' | 'high';
+export type HealthProbe = 'git' | 'build' | 'deps' | 'http';
+export type HealthStatus = 'ok' | 'warning' | 'error' | 'skipped';
+
+export interface ProjectHealthEntry {
+  id: string;
+  projectId: string;
+  probe: HealthProbe;
+  status: HealthStatus;
+  details?: string;
+  durationMs: number;
+  checkedAt: string;
+}
 
 export interface Project {
   id: string;
@@ -365,5 +377,64 @@ export class ProjectRepository {
       [projectId, limit],
     ) as Record<string, unknown>[];
     return rows.map(rowToDecision);
+  }
+
+  // ── Health Log ──────────────────────────────────────────────────────────
+
+  async recordHealth(projectId: string, input: { probe: HealthProbe; status: HealthStatus; details?: string; durationMs?: number }): Promise<ProjectHealthEntry> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await this.adapter.execute(
+      `INSERT INTO project_health_log (id, project_id, probe, status, details, duration_ms, checked_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, projectId, input.probe, input.status, input.details ?? null, input.durationMs ?? 0, now],
+    );
+    return {
+      id, projectId, probe: input.probe, status: input.status,
+      details: input.details, durationMs: input.durationMs ?? 0, checkedAt: now,
+    };
+  }
+
+  async getLatestHealth(projectId: string, probe: HealthProbe): Promise<ProjectHealthEntry | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM project_health_log WHERE project_id = ? AND probe = ? ORDER BY checked_at DESC LIMIT 1`,
+      [projectId, probe],
+    ) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: row.id as string,
+      projectId: row.project_id as string,
+      probe: row.probe as HealthProbe,
+      status: row.status as HealthStatus,
+      details: (row.details as string | null) ?? undefined,
+      durationMs: Number(row.duration_ms ?? 0),
+      checkedAt: row.checked_at as string,
+    };
+  }
+
+  async listHealthLog(projectId: string, limit = 100): Promise<ProjectHealthEntry[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_health_log WHERE project_id = ? ORDER BY checked_at DESC LIMIT ?`,
+      [projectId, limit],
+    ) as Record<string, unknown>[];
+    return rows.map(row => ({
+      id: row.id as string,
+      projectId: row.project_id as string,
+      probe: row.probe as HealthProbe,
+      status: row.status as HealthStatus,
+      details: (row.details as string | null) ?? undefined,
+      durationMs: Number(row.duration_ms ?? 0),
+      checkedAt: row.checked_at as string,
+    }));
+  }
+
+  /** Get the most recent entry per probe — used for the dashboard summary. */
+  async getCurrentHealthSummary(projectId: string): Promise<Partial<Record<HealthProbe, ProjectHealthEntry>>> {
+    const out: Partial<Record<HealthProbe, ProjectHealthEntry>> = {};
+    for (const probe of ['git', 'build', 'deps', 'http'] as HealthProbe[]) {
+      const latest = await this.getLatestHealth(projectId, probe);
+      if (latest) out[probe] = latest;
+    }
+    return out;
   }
 }

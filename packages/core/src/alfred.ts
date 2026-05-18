@@ -126,6 +126,7 @@ export class Alfred {
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
+  private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
@@ -640,6 +641,55 @@ export class Alfred {
             }
           } catch (err) { this.logger.debug({ err }, 'code-agent completion → project-manager failed'); }
         });
+      }
+
+      // T3 — Health Monitor (background task)
+      if (this.config.projects?.healthCheckEnabled !== false) {
+        const { HealthMonitor } = await import('./projects/health-monitor.js');
+        const healthMonitor = new HealthMonitor(
+          projectRepo,
+          () => this.ownerMasterUserId ?? this.config.security?.ownerUserId,
+          this.logger.child({ component: 'project-health-monitor' }),
+          {
+            intervalHours: this.config.projects?.healthCheckIntervalHours,
+            probeTimeoutMs: this.config.projects?.healthProbeTimeoutMs,
+          },
+        );
+
+        // On degradation: enqueue a confirmation so the user can decide
+        // whether to delegate a repair (e.g. via code-agent).
+        healthMonitor.onStatusChange(async (event) => {
+          if (!this.confirmationQueue) return;
+          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          if (!ownerUid) return;
+          const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.discord?.enabled ? 'discord'
+            : this.config.whatsapp?.enabled ? 'whatsapp'
+            : 'api');
+          const suggestion = event.probe === 'build'
+            ? `Build von Projekt "${event.project.name}" ist kaputt (${event.from} → ${event.to}). Code-Agent zur Reparatur starten?`
+            : event.probe === 'deps'
+            ? `Dependencies von "${event.project.name}" sind veraltet. Updates prüfen?`
+            : event.probe === 'http'
+            ? `Deploy-URL von "${event.project.name}" antwortet nicht mehr (${event.from} → ${event.to}). Prüfen?`
+            : `Health-Probe "${event.probe}" für "${event.project.name}" hat sich verschlechtert (${event.from} → ${event.to}).`;
+          try {
+            await this.confirmationQueue.enqueue({
+              chatId: this.config.security?.ownerUserId ?? '',
+              platform: ownerPlatform,
+              source: 'reasoning',
+              sourceId: `project-health-${event.project.id}-${event.probe}-${Date.now()}`,
+              description: suggestion,
+              skillName: 'project',
+              skillParams: { action: 'get', project_id: event.project.id },
+              timeoutMinutes: 24 * 60,
+            });
+          } catch (err) { this.logger.debug({ err }, 'project-health confirmation enqueue failed'); }
+        });
+
+        healthMonitor.start();
+        this.projectHealthMonitor = healthMonitor;
+        this.logger.info({ intervalHours: this.config.projects?.healthCheckIntervalHours ?? 6 }, 'Project HealthMonitor started');
       }
 
       this.logger.info('Projects skill + manager enabled (T4 delegate + code-agent hooks active)');
@@ -3902,6 +3952,7 @@ export class Alfred {
     this.calendarWatcher?.stop();
     this.todoWatcher?.stop();
     this.reasoningEngine?.stop();
+    this.projectHealthMonitor?.stop();
     this.adapterClaimManager?.stop();
     this.clusterManager?.stopPgHeartbeat();
     if (this.healthCheckTimer) {

@@ -72,4 +72,5 @@ export { ProjectRepository } from './repositories/project-repository.js';
 export type {
   Project, ProjectStatus, ProjectHealthMode, ProjectSession, ProjectSessionType, ProjectSessionSummary,
   ProjectOpenItem, OpenItemStatus, OpenItemPriority, ProjectDecision,
+  ProjectHealthEntry, HealthProbe, HealthStatus,
 } from './repositories/project-repository.js';

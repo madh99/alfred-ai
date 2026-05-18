@@ -837,4 +837,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_decisions_project ON project_decisions(project_id, created_at DESC)`, []);
     },
   },
+  {
+    version: 66,
+    description: 'Projects — health-check log for git/build/deps/http probes per project',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_health_log (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          probe TEXT NOT NULL,
+          status TEXT NOT NULL,
+          details TEXT,
+          duration_ms INTEGER NOT NULL DEFAULT 0,
+          checked_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_health_log_project ON project_health_log(project_id, checked_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_health_log_probe ON project_health_log(project_id, probe, checked_at DESC)`, []);
+    },
+  },
 ];

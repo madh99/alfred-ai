@@ -893,6 +893,9 @@ export interface ProjectsConfig {
   autoBindByCwd?: boolean;
   orphanDelegateThresholdToolCalls?: number;
   orphanDelegateThresholdMinutes?: number;
+  healthCheckEnabled?: boolean;
+  healthCheckIntervalHours?: number;
+  healthProbeTimeoutMs?: number;
 }
 
 export interface CmdbConfig {

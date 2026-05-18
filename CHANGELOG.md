@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.600] - 2026-05-18
+
+### Added — Projects T3: Health-Monitoring per Projekt
+
+Alfred prüft jetzt periodisch den Gesundheitszustand seiner aktiven Projekte. Schließt die Projects-Foundation ab — Alfred kann nicht nur Sessions tracken (T1+T4) und Projekte im Reasoning referenzieren (T2), sondern auch eigenständig erkennen wenn ein Projekt-Build kaputt geht, Dependencies veralten oder eine Deploy-URL ausfällt.
+
+#### Schema (Migration v63 SQLite / v66 PG)
+- **project_health_log**: id, project_id, probe, status (ok/warning/error/skipped), details, duration_ms, checked_at
+- Indizes auf (project_id, checked_at) + (project_id, probe, checked_at)
+
+#### Probes (`packages/core/src/projects/probes/`)
+- **git-probe**: existiert .git? Branch + Last-Commit lesbar? Commit-Age. `ok` bei <30d, `warning` bei >30d, `error` bei fehlender Repo, `skipped` ohne cwd
+- **build-probe**: Auto-Detection (pnpm/npm/yarn/cargo/python), Non-Destructive Check (`tsc --noEmit`, `cargo check`, `compileall`). 90s Default-Timeout, `warning` bei Timeout (inconclusive)
+- **deps-probe**: `npm outdated --json --depth=0` für direkte Dependencies (Transitive Churn ist Noise). 30s Timeout
+- **http-probe**: HEAD-Request auf `repoUrl` (nur http/https, skips ssh/file/git+ssh). `ok` 2xx, `warning` 3xx-4xx, `error` 5xx/timeout
+
+#### HealthMonitor (`packages/core/src/projects/health-monitor.ts`)
+- Background-Task mit konfigurierbarem Intervall (default 6h, min 15min)
+- Iteriert active + maintenance Projekte des Owners
+- Respektiert `project.healthMode`: `off` skip, `minimal` nur git, `full` alle 4 Probes
+- Persistiert jedes Ergebnis in `project_health_log`
+- Detection von **Status-Degradation**: ok→warning, ok→error, warning→error → triggert StatusChangeListener
+- Concurrency-Schutz: überlappende Cycles werden geskipped
+
+#### Status-Change-Confirmation (`alfred.ts`)
+Bei Degradation wird automatisch ein Confirmation-Queue-Eintrag erzeugt mit probe-spezifischer Beschreibung:
+- `build`: "Build von Projekt X ist kaputt — Code-Agent zur Reparatur starten?"
+- `deps`: "Dependencies von X sind veraltet. Updates prüfen?"
+- `http`: "Deploy-URL von X antwortet nicht mehr. Prüfen?"
+- skillName = 'project', skillParams = `{ action: 'get', project_id }` → User kann direkt nachschauen
+- Timeout 24h, Source `reasoning`
+
+#### Config (`config.projects`)
+- `healthCheckEnabled` (default true)
+- `healthCheckIntervalHours` (default 6)
+- `healthProbeTimeoutMs` (default je-Probe 15-90s)
+
+#### Per-Chat-Steuerung (bereits in v597)
+- `Alfred, schalt Health-Mode für Projekt X auf minimal` → ProjectSkill `set_health_mode`
+- `Alfred, schalt Health komplett für Y aus` → `set_health_mode off`
+
+### Tests
+- 9 neue Vitests für `isDegradation` (Status-Übergangslogik)
+- 5 neue Vitests für `gitProbe` (lokale tmp-Repo Setup, deterministisch)
+- 29/29 project-tests gesamt grün
+
+### Roadmap-Abschluss
+T1 (v597) + T4 (v598) + T2 (v599) + T3 (v600) sind alle released. Die Projects-Foundation ist damit komplett: Alfred sieht alles was in project-agent/code-agent/delegate-Sessions passiert, hält Open-Items+Decisions+History, referenziert Projekte im Reasoning und wartet sie via Health-Probes.
+
 ## [0.19.0-multi-ha.599] - 2026-05-18
 
 ### Added — Projects T2: Reasoning-Engine sieht aktive Projekte
