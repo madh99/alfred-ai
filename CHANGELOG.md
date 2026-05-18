@@ -5,6 +5,40 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.596] - 2026-05-18
+
+### Added — Mistral Medium 3.5 Support inkl. Prompt-Caching
+
+Mistral hat im April 2026 Mistral Medium 3.5 veröffentlicht (frontier-class multimodal, 256k context, $1.5/$7.5 per 1M tokens). Mistral hat zusätzlich Prompt-Caching im API (`prompt_cache_key` parameter) — opt-in, cached tokens = 10% des Input-Preises.
+
+#### P1 — Pricing-Eintrag (token-costs.ts)
+- Neue Zeile **vor** generic `mistral-medium`: `'mistral-medium-3-5'` mit `{ input: 1.50, output: 7.50, cacheRead: 0.15 }`
+- Prefix-Match findet 3.5 zuerst — Aliase `mistral-medium-3-5` und `mistral-medium-3-5-26-04` werden korrekt zugeordnet
+- Verhindert Silent-Pricing-Drift wenn `mistral-medium-latest` auf 3.5 zeigt (kosten wären sonst 4× unterschätzt)
+
+#### P2 — Context-Window (provider.ts)
+- Neue Zeile `'mistral-medium-3-5': { maxInputTokens: 256_000, maxOutputTokens: 131_072 }`
+- 256k Input (doppelt von 3.0/3.1)
+- Output konservativ auf 131k (Mistral-Docs spezifizieren nicht explizit, lieber Standard)
+
+#### P3 — Setup-Wizard (setup.ts)
+- Neue Option `mistral-medium-3-5-26-04` (datiertes Snapshot — deterministisch, kein Auto-Upgrade-Risiko)
+- Beschreibung von `mistral-medium-latest` aktualisiert mit Hinweis "auto-upgrades on release (pricing may shift)"
+
+#### P4 — Prompt-Caching aktiviert (mistral.ts + openai.ts)
+- Neuer `protected extraRequestParams(request)` Hook in OpenAIProvider — subclasses können Body-Felder einfügen
+- MistralProvider überschreibt: setzt `prompt_cache_key` aus stabiler SHA-256 Hash über (system + tools) — NUR für `mistral-medium-3-5*` Modelle
+- Konservativer Scope: andere Mistral-Modelle (small, large, magistral, ministral, codestral, embed) bleiben unverändert da Mistral-Docs Caching-Support für die nicht explizit dokumentieren
+- Cache-Key 32 hex chars (128 bits), identische system+tools → identischer Key → Cache-Hit → 90% Ersparnis auf Input-Tokens
+
+### Tests
+- 19 neue Vitests in `mistral.test.ts`:
+  - Pricing-Match: 3.5-spezifisch + 3.0/3.1 generic unverändert + mistral-medium-3 (v3.0) korrekt
+  - Context-Window: 256k für 3.5, 131k für andere
+  - Cache-Scoping: nur 3.5-Modelle, andere ausgeschlossen
+  - Key-Stabilität: gleicher input → gleicher key, system-Änderung → neuer key, tools-Änderung → neuer key
+  - extraRequestParams-Hook: emits `prompt_cache_key` nur wenn berechtigt
+
 ## [0.19.0-multi-ha.595] - 2026-05-18
 
 ### Added — Hallucinated-Action Schutz + Watch-Auto-Repair

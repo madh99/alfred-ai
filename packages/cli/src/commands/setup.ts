@@ -110,9 +110,10 @@ const PROVIDERS: ProviderDef[] = [
     envKeyName: 'ALFRED_MISTRAL_API_KEY',
     needsApiKey: true,
     models: [
-      { id: 'mistral-small-latest',    desc: 'Small 3.2 — fast, 128k context, best value' },
-      { id: 'mistral-medium-latest',   desc: 'Medium 3.1 — balanced, 128k context' },
-      { id: 'mistral-large-latest',    desc: 'Large 3 — flagship, 256k context' },
+      { id: 'mistral-small-latest',     desc: 'Small 3.2 — fast, 128k context, best value' },
+      { id: 'mistral-medium-3-5-26-04', desc: 'Medium 3.5 — frontier multimodal, 256k context, prompt caching ($1.5/$7.5/1M)' },
+      { id: 'mistral-medium-latest',    desc: 'Medium latest — auto-upgrades on release (pricing may shift)' },
+      { id: 'mistral-large-latest',     desc: 'Large 3 — flagship, 256k context' },
       { id: 'codestral-latest',        desc: 'Codestral — code-optimized, 256k context' },
       { id: 'magistral-medium-latest', desc: 'Magistral Medium — reasoning, 40k context' },
       { id: 'magistral-small-latest',  desc: 'Magistral Small — reasoning (light), 40k context' },

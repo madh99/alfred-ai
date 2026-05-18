@@ -68,6 +68,10 @@ const PRICING_TABLE: [pattern: string, pricing: ModelPricing][] = [
   ['ministral-8b',            { input: 0.15, output: 0.15 }],
   ['ministral-14b',           { input: 0.20, output: 0.20 }],
   ['mistral-large',           { input: 0.50, output: 1.50, cacheRead: 0.05 }],
+  // Mistral Medium 3.5 (April 2026) — 256k context, frontier multimodal.
+  // Cached input billed at 10% of standard input (Mistral API doc: "Cached tokens are billed at 10%").
+  // Must come BEFORE generic 'mistral-medium' so prefix-match catches the more specific entry first.
+  ['mistral-medium-3-5',      { input: 1.50, output: 7.50, cacheRead: 0.15 }],
   ['mistral-medium',          { input: 0.40, output: 2.00, cacheRead: 0.04 }],
   ['mistral-small',           { input: 0.15, output: 0.60, cacheRead: 0.015 }],
   ['mistral-moderation',      { input: 0.10, output: 0 }],

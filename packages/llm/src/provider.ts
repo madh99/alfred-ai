@@ -72,6 +72,8 @@ const KNOWN_CONTEXT_WINDOWS: Record<string, ContextWindow> = {
 
   // Mistral AI
   'mistral-large':                { maxInputTokens: 256_000, maxOutputTokens: 256_000 },
+  // Mistral Medium 3.5 — must come BEFORE generic 'mistral-medium' so prefix-match catches it
+  'mistral-medium-3-5':           { maxInputTokens: 256_000, maxOutputTokens: 131_072 },
   'mistral-medium':               { maxInputTokens: 131_072, maxOutputTokens: 131_072 },
   'mistral-small':                { maxInputTokens: 256_000, maxOutputTokens: 256_000 },
   'codestral':                    { maxInputTokens: 256_000, maxOutputTokens: 256_000 },

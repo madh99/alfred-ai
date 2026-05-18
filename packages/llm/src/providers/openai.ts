@@ -44,11 +44,21 @@ export class OpenAIProvider extends LLMProvider {
       messages,
       ...(tools ? { tools } : {}),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...this.extraRequestParams(request),
     } as unknown as OpenAI.ChatCompletionCreateParamsNonStreaming;
 
     const response = await this.client.chat.completions.create(params);
 
     return this.mapResponse(response);
+  }
+
+  /**
+   * Hook for subclasses to inject provider-specific extra params into chat completion
+   * requests (e.g. Mistral's `prompt_cache_key`). The OpenAI SDK passes unknown fields
+   * through in the request body. Default: no extras.
+   */
+  protected extraRequestParams(_request: LLMRequest): Record<string, unknown> {
+    return {};
   }
 
   async *stream(request: LLMRequest): AsyncIterable<LLMStreamEvent> {
@@ -64,6 +74,7 @@ export class OpenAIProvider extends LLMProvider {
       messages,
       ...(tools ? { tools } : {}),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+      ...this.extraRequestParams(request),
       stream: true,
     } as unknown as OpenAI.ChatCompletionCreateParamsStreaming;
 
