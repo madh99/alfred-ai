@@ -112,6 +112,7 @@ export class ProjectSkill extends Skill {
     const sessions = await this.repo.listSessions(project.id, 10);
     const openItems = await this.repo.listOpenItems(userId, { projectId: project.id, status: 'open' });
     const decisions = await this.repo.listDecisions(project.id, 10);
+    const healthSummary = await this.repo.getCurrentHealthSummary(project.id);
 
     const sessionLines = sessions.map(s => {
       const what = s.summary?.whatWasDone ? ` — ${s.summary.whatWasDone.slice(0, 120)}` : '';
@@ -119,14 +120,26 @@ export class ProjectSkill extends Skill {
     });
     const openLines = openItems.map(it => `  - ${this.priorityIcon(it.priority)} ${it.title}`);
     const decLines = decisions.slice(0, 5).map(d => `  - ${d.choice}${d.rationale ? ` — _${d.rationale.slice(0, 80)}_` : ''}`);
+    const healthLines: string[] = [];
+    for (const probe of ['git', 'build', 'deps', 'http'] as const) {
+      const entry = healthSummary[probe];
+      if (!entry) continue;
+      const icon = entry.status === 'ok' ? '✓' : entry.status === 'warning' ? '⚠' : entry.status === 'error' ? '✗' : '·';
+      const ageStr = this.relativeTime(entry.checkedAt);
+      const detail = entry.details ? ` — ${entry.details.slice(0, 100)}` : '';
+      healthLines.push(`  - ${icon} **${probe}** (${entry.status}, ${ageStr})${detail}`);
+    }
 
     const display = `## ${project.name}
-- Status: **${project.status}** · Health: ${project.healthMode}
+- Status: **${project.status}** · Health-Mode: ${project.healthMode}
 - ID: \`${project.id}\`
 - ${project.cwd ? `CWD: \`${project.cwd}\`` : 'CWD: —'}
 - ${project.repoUrl ? `Repo: ${project.repoUrl}` : 'Repo: —'}
 - Last active: ${this.relativeTime(project.lastActiveAt)}
 ${project.description ? `\n${project.description}\n` : ''}
+### Letzte Health-Checks
+${healthLines.join('\n') || '  _noch keine Probes gelaufen_'}
+
 ### Letzte Sessions (${sessions.length})
 ${sessionLines.join('\n') || '  _keine_'}
 
@@ -136,7 +149,7 @@ ${openLines.join('\n') || '  _keine_'}
 ### Entscheidungen (${decisions.length})
 ${decLines.join('\n') || '  _keine_'}`;
 
-    return { success: true, data: { project, sessions, openItems, decisions }, display };
+    return { success: true, data: { project, sessions, openItems, decisions, health: healthSummary }, display };
   }
 
   private async createProject(userId: string, input: Record<string, unknown>): Promise<SkillResult> {

@@ -222,6 +222,21 @@ export class HttpAdapter extends MessagingAdapter {
     this.runbooksDeleteFn = opts.delete;
   }
 
+  private projectsCallbacks?: {
+    list: (filter?: { status?: string }) => Promise<any[]>;
+    get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
+    create: (input: Record<string, unknown>) => Promise<any>;
+    update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
+    archive: (id: string) => Promise<boolean>;
+    addOpenItem: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
+    updateOpenItem: (itemId: string, status: string) => Promise<boolean>;
+    listHealthLog: (id: string, limit: number) => Promise<any[]>;
+  };
+
+  setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
+    this.projectsCallbacks = cbs;
+  }
+
   setCmdbCallbacks(cbs: CmdbCallbacks): void { this.cmdbCallbacks = cbs; }
   setItsmCallbacks(cbs: ItsmCallbacks): void { this.itsmCallbacks = cbs; }
   setDocsCallbacks(cbs: DocsCallbacks): void { this.docsCallbacks = cbs; }
@@ -497,6 +512,23 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleRunbooksUpdate(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/runbooks/') && req.method === 'DELETE') {
       this.handleRunbooksDelete(req, res, url).catch(err => this.safeError(res, err));
+    // ── Projects API ──
+    } else if (url.pathname === '/api/projects' && req.method === 'GET') {
+      this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects' && req.method === 'POST') {
+      this.handleProjectsCreate(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'GET') {
+      this.handleProjectsGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleProjectsUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleProjectsArchive(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/open-items$/) && req.method === 'POST') {
+      this.handleProjectsAddOpenItem(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/open-items\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleProjectsUpdateOpenItem(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-log$/) && req.method === 'GET') {
+      this.handleProjectsHealthLog(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -1078,6 +1110,99 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.runbooksDeleteFn(id);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── Projects API handlers ──
+  private async handleProjectsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const status = url.searchParams.get('status') ?? undefined;
+    const list = await this.projectsCallbacks.list({ status });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ projects: list }));
+  }
+
+  private async handleProjectsGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const detail = await this.projectsCallbacks.get(id);
+    if (!detail) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(detail));
+  }
+
+  private async handleProjectsCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let input: Record<string, unknown>;
+    try { input = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!input.name) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'name required' })); return; }
+    const project = await this.projectsCallbacks.create(input);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ project }));
+  }
+
+  private async handleProjectsUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let patch: Record<string, unknown>;
+    try { patch = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const project = await this.projectsCallbacks.update(id, patch);
+    if (!project) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ project }));
+  }
+
+  private async handleProjectsArchive(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.projectsCallbacks.archive(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleProjectsAddOpenItem(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let input: Record<string, unknown>;
+    try { input = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!input.title) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title required' })); return; }
+    const item = await this.projectsCallbacks.addOpenItem(projectId, input);
+    if (!item) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ item }));
+  }
+
+  private async handleProjectsUpdateOpenItem(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const itemId = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let patch: { status?: string };
+    try { patch = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!patch.status) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'status required' })); return; }
+    const ok = await this.projectsCallbacks.updateOpenItem(itemId, patch.status);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleProjectsHealthLog(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const limit = Number(url.searchParams.get('limit') ?? '100');
+    const entries = await this.projectsCallbacks.listHealthLog(projectId, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ entries }));
   }
 
   // ── CMDB/ITSM/Docs generic handlers ──

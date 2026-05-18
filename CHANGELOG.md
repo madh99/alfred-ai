@@ -5,6 +5,52 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.601] - 2026-05-18
+
+### Added — Projects WebUI + Health-Detail im Chat
+
+Frontend-Page für die in v597-v600 etablierte Projects-Foundation. Plus den fehlenden Health-Detail im `project get` Skill-Output.
+
+#### Health-Detail in `project get` (`packages/skills/src/built-in/project.ts`)
+- Neue Section "Letzte Health-Checks" im Display
+- Pro Probe (git/build/deps/http): Icon (✓/⚠/✗/·), Status, relative Zeit, gekürzte Details
+- Datenquelle: `getCurrentHealthSummary()` aus dem Repo
+- Returns `health` jetzt zusätzlich im `result.data`
+
+#### Projects API (`packages/messaging/src/adapters/http.ts`)
+Neue Endpoints mit Bearer-Auth:
+- `GET /api/projects?status=...` — Liste
+- `GET /api/projects/:id` — Detail mit sessions + openItems + decisions + health-summary
+- `POST /api/projects` — Anlegen (name + optionale description/cwd/repoUrl/tags)
+- `PATCH /api/projects/:id` — Update (name/status/healthMode/description/cwd/repoUrl/tags)
+- `DELETE /api/projects/:id` — Archive (setzt status=archived, kein Hard-Delete)
+- `POST /api/projects/:id/open-items` — Open-Item hinzufügen
+- `PATCH /api/projects/open-items/:itemId` — Status ändern (open/in_progress/done/cancelled)
+- `GET /api/projects/:id/health-log?limit=100` — Health-Log-History
+
+Wiring in `alfred.ts` via `setProjectsCallbacks()` Pattern (analog Runbook-API).
+
+#### WebUI Page `/alfred/projects` (`apps/web/src/components/projects/ProjectsPage.tsx`)
+- Sidebar-Eintrag 🗂️ zwischen Runbooks und CMDB
+- Master/Detail-Layout:
+  - Liste: Status + Health-Mode-Badge, Name, cwd, Last-Activity
+  - Filter: status (active/paused/maintenance/completed/archived/all) + Suchfeld
+- Detail-View:
+  - Inline-Edit für Name (Bleistift-Icon)
+  - Status-Switcher (4 Buttons) + Health-Mode-Switcher (3 Buttons)
+  - Health-Checks-Section: 4 Probes mit Icon + relative Zeit + Details
+  - Open-Items mit Quick-Resolve-Checkbox + Inline-Add (Title + Priority-Dropdown)
+  - Sessions-Liste mit Type-Badge + Status-Color + whatWasDone-Snippet
+  - Decisions-Liste mit Choice + Rationale-Italic
+  - Archive-Button (rot)
+- Create-Modal mit name/description/cwd/repoUrl
+
+#### Type-Exports (`apps/web/src/lib/alfred-client.ts`)
+- `Project`, `ProjectStatus`, `ProjectHealthMode`, `ProjectSession`, `ProjectOpenItem`, `ProjectDecision`, `ProjectHealthEntry`, `ProjectDetail`, `HealthProbe`, `HealthStatus`
+
+### Tests
+- 29/29 project-tests stabil
+
 ## [0.19.0-multi-ha.600] - 2026-05-18
 
 ### Added — Projects T3: Health-Monitoring per Projekt

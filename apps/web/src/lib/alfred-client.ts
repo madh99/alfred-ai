@@ -206,6 +206,84 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── Projects API ──
+  async fetchProjects(filter?: { status?: string }): Promise<Project[]> {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    const url = `${this.baseUrl}/api/projects${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Failed to fetch projects: ${res.status}`);
+    const data = await res.json();
+    return data.projects ?? [];
+  }
+
+  async fetchProject(id: string): Promise<ProjectDetail | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
+  async createProject(input: { name: string; description?: string; cwd?: string; repoUrl?: string; tags?: string[] }): Promise<Project | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.project ?? null;
+  }
+
+  async updateProject(id: string, patch: Record<string, unknown>): Promise<Project | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.project ?? null;
+  }
+
+  async archiveProject(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
+  async addProjectOpenItem(projectId: string, input: { title: string; description?: string; priority?: string }): Promise<ProjectOpenItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/open-items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.item ?? null;
+  }
+
+  async updateProjectOpenItem(itemId: string, status: 'open' | 'in_progress' | 'done' | 'cancelled'): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/open-items/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
+  async fetchProjectHealthLog(id: string, limit = 100): Promise<ProjectHealthEntry[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${id}/health-log?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.entries ?? [];
+  }
+
   async updateKgRelation(relationId: string, updates: Record<string, unknown>): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/knowledge-graph/relation/${relationId}`, {
       method: 'PATCH',
@@ -684,4 +762,84 @@ export interface Runbook {
   status: 'draft' | 'verified' | 'deprecated';
   createdAt: string;
   updatedAt: string;
+}
+
+export type ProjectStatus = 'active' | 'paused' | 'completed' | 'maintenance' | 'archived';
+export type ProjectHealthMode = 'full' | 'minimal' | 'off';
+export type HealthProbe = 'git' | 'build' | 'deps' | 'http';
+export type HealthStatus = 'ok' | 'warning' | 'error' | 'skipped';
+
+export interface Project {
+  id: string;
+  userId: string;
+  name: string;
+  slug: string;
+  description?: string;
+  cwd?: string;
+  repoUrl?: string;
+  status: ProjectStatus;
+  healthMode: ProjectHealthMode;
+  tags: string[];
+  createdAt: string;
+  lastActiveAt: string;
+  nextCheckAt?: string;
+}
+
+export interface ProjectSession {
+  id: string;
+  projectId: string;
+  sessionType: 'project_agent' | 'code_agent' | 'delegate' | 'chat';
+  sourceId?: string;
+  summary?: {
+    whatWasDone?: string;
+    keyDecisions?: Array<{ choice: string; rationale?: string }>;
+    filesTouched?: string[];
+    openItems?: Array<{ title: string; priority?: string; description?: string }>;
+    status?: 'success' | 'failed' | 'partial';
+    nextCheckInDays?: number;
+  };
+  startedAt: string;
+  endedAt?: string;
+}
+
+export interface ProjectOpenItem {
+  id: string;
+  projectId: string;
+  sessionId?: string;
+  title: string;
+  description?: string;
+  priority: 'low' | 'normal' | 'high';
+  status: 'open' | 'in_progress' | 'done' | 'cancelled';
+  dueAt?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface ProjectDecision {
+  id: string;
+  projectId: string;
+  sessionId?: string;
+  title: string;
+  choice: string;
+  rationale?: string;
+  alternativesConsidered?: string;
+  createdAt: string;
+}
+
+export interface ProjectHealthEntry {
+  id: string;
+  projectId: string;
+  probe: HealthProbe;
+  status: HealthStatus;
+  details?: string;
+  durationMs: number;
+  checkedAt: string;
+}
+
+export interface ProjectDetail {
+  project: Project;
+  sessions: ProjectSession[];
+  openItems: ProjectOpenItem[];
+  decisions: ProjectDecision[];
+  health: Partial<Record<HealthProbe, ProjectHealthEntry>>;
 }

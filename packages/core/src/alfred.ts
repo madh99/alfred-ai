@@ -3216,6 +3216,81 @@ export class Alfred {
         });
         this.logger.info('Runbook API registered');
       }
+
+      // Wire Projects API on HTTP adapter
+      if (apiAdapter && this.projectRepo && 'setProjectsCallbacks' in apiAdapter) {
+        const projRepo = this.projectRepo;
+        const resolveOwnerProj = async (): Promise<string> => {
+          const ownerId = this.config.security?.ownerUserId ?? '';
+          try {
+            const user = await this.userRepo!.findOrCreate('telegram' as any, ownerId);
+            return user.masterUserId ?? user.id;
+          } catch { return ownerId; }
+        };
+        (apiAdapter as any).setProjectsCallbacks({
+          list: async (filter?: { status?: string }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              return await projRepo.list(uid, filter as any);
+            } catch (err) { this.logger.warn({ err }, 'Projects API list failed'); return []; }
+          },
+          get: async (id: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return null;
+              const [sessions, openItems, decisions, health] = await Promise.all([
+                projRepo.listSessions(project.id, 50),
+                projRepo.listOpenItems(uid, { projectId: project.id, limit: 200 }),
+                projRepo.listDecisions(project.id, 50),
+                projRepo.getCurrentHealthSummary(project.id),
+              ]);
+              return { project, sessions, openItems, decisions, health };
+            } catch (err) { this.logger.warn({ err }, 'Projects API get failed'); return null; }
+          },
+          create: async (input: Record<string, unknown>) => {
+            try {
+              const uid = await resolveOwnerProj();
+              return await projRepo.create(uid, input as any);
+            } catch (err) { this.logger.warn({ err }, 'Projects API create failed'); return null; }
+          },
+          update: async (id: string, patch: Record<string, unknown>) => {
+            try {
+              const uid = await resolveOwnerProj();
+              return await projRepo.update(uid, id, patch as any);
+            } catch (err) { this.logger.warn({ err }, 'Projects API update failed'); return null; }
+          },
+          archive: async (id: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const updated = await projRepo.update(uid, id, { status: 'archived' });
+              return !!updated;
+            } catch { return false; }
+          },
+          addOpenItem: async (projectId: string, input: Record<string, unknown>) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return null;
+              return await projRepo.addOpenItem(project.id, input as any);
+            } catch (err) { this.logger.warn({ err }, 'Projects API addOpenItem failed'); return null; }
+          },
+          updateOpenItem: async (itemId: string, status: string) => {
+            try {
+              return await projRepo.updateOpenItemStatus(itemId, status as any);
+            } catch { return false; }
+          },
+          listHealthLog: async (id: string, limit: number) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return [];
+              return await projRepo.listHealthLog(project.id, limit);
+            } catch { return []; }
+          },
+        });
+        this.logger.info('Projects API registered');
+      }
     }
 
     // Wire CMDB/ITSM/Docs API on HTTP adapter (only when CMDB skills are registered)
