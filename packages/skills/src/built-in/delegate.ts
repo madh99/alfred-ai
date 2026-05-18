@@ -25,6 +25,24 @@ const MAX_ALLOWED_ITERATIONS = 25;
  */
 const INITIAL_TIMEOUT_MS = 120_000; // 2 minutes
 
+export interface DelegateSessionInfo {
+  task: string;
+  context: { masterUserId?: string; userId: string; chatId: string; platform: string };
+  toolCalls: number;
+  filesChanged: number;
+  durationMs: number;
+  iterations: number;
+  success: boolean;
+  finalResponse?: string;
+  toolNames: string[];
+}
+
+/** Heuristic — which tool calls count as file writes? Used by the metrics tracker. */
+const FILE_WRITE_TOOLS = new Set([
+  'file', 'shell', 'code_sandbox', 'code_agent', 'project_agent',
+  'document', 'onedrive', 'screenshot', 'image_generate', 'tts',
+]);
+
 export class DelegateSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'delegate',
@@ -60,6 +78,7 @@ export class DelegateSkill extends Skill {
   };
 
   private onProgress?: ProgressCallback;
+  private onSessionCompletion?: (info: DelegateSessionInfo) => void | Promise<void>;
 
   constructor(
     private readonly llm: LLMProvider,
@@ -77,6 +96,15 @@ export class DelegateSkill extends Skill {
    */
   setProgressCallback(cb: ProgressCallback): void {
     this.onProgress = cb;
+  }
+
+  /**
+   * Set a callback invoked after each delegate execution finishes (success or fail).
+   * Used by the Project-Manager to capture substantial sessions for post-session
+   * awareness. Receives raw metrics — caller applies threshold logic.
+   */
+  setSessionCompletionCallback(cb: (info: DelegateSessionInfo) => void | Promise<void>): void {
+    this.onSessionCompletion = cb;
   }
 
   /**
@@ -159,8 +187,37 @@ export class DelegateSkill extends Skill {
       startIteration = 0;
     }
 
+    const sessionStartedAt = Date.now();
+    let totalToolCalls = 0;
+    let totalFileWrites = 0;
+    const toolNamesSeen = new Set<string>();
+    let lastResponseContent = '';
+
+    const emitCompletion = (success: boolean, iteration: number): void => {
+      if (!this.onSessionCompletion) return;
+      try {
+        const info: DelegateSessionInfo = {
+          task,
+          context: {
+            masterUserId: context.masterUserId,
+            userId: context.userId,
+            chatId: context.chatId,
+            platform: context.platform,
+          },
+          toolCalls: totalToolCalls,
+          filesChanged: totalFileWrites,
+          durationMs: Date.now() - sessionStartedAt,
+          iterations: iteration,
+          success,
+          finalResponse: lastResponseContent || undefined,
+          toolNames: [...toolNamesSeen],
+        };
+        void Promise.resolve(this.onSessionCompletion(info)).catch(() => undefined);
+      } catch { /* swallow — completion hook must not break delegate */ }
+    };
+
+    let iteration = startIteration;
     try {
-      let iteration = startIteration;
       let totalInputTokens = 0;
       let totalOutputTokens = 0;
 
@@ -175,6 +232,8 @@ export class DelegateSkill extends Skill {
             dataStore: Object.fromEntries(dataStore),
           });
           tracker.ping('done', { iteration, maxIterations });
+          // Pause is not a "completion" — skip the project-manager hook so paused
+          // sessions don't get summarized as orphans mid-flight.
           return {
             success: true,
             data: {
@@ -202,6 +261,8 @@ export class DelegateSkill extends Skill {
 
         tracker.ping('processing', { iteration, maxIterations });
 
+        lastResponseContent = response.content || lastResponseContent;
+
         // No tool calls or max iterations — we're done
         if (
           !response.toolCalls ||
@@ -209,6 +270,7 @@ export class DelegateSkill extends Skill {
           iteration >= maxIterations
         ) {
           tracker.ping('done', { iteration, maxIterations });
+          emitCompletion(true, iteration);
           return {
             success: true,
             data: {
@@ -241,6 +303,9 @@ export class DelegateSkill extends Skill {
         const toolResultBlocks: LLMContentBlock[] = [];
         for (const toolCall of response.toolCalls) {
           tracker.ping('tool_call', { iteration, maxIterations, tool: toolCall.name });
+          totalToolCalls += 1;
+          toolNamesSeen.add(toolCall.name);
+          if (FILE_WRITE_TOOLS.has(toolCall.name)) totalFileWrites += 1;
 
           // Resolve data-store references for code_sandbox
           let execInput = toolCall.input;
@@ -290,6 +355,7 @@ export class DelegateSkill extends Skill {
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
+      emitCompletion(false, iteration);
       return {
         success: false,
         error: `Sub-agent failed: ${errorMessage}`,

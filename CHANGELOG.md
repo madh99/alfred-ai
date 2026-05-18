@@ -5,6 +5,53 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.598] - 2026-05-18
+
+### Added — Projects T4: Delegate + Code-Agent Lifecycle-Coverage
+
+Mit v597 hat Alfred persistente Projekt-Container bekommen, aber bisher nur Project-Agent-Sessions automatisch hineingespeist. v598 erweitert die Lifecycle-Coverage auf Delegate-Calls und Code-Agent-Runs/Orchestrations.
+
+#### Threshold-Gate (`session-thresholds.ts`)
+Eine Session zählt als "substantiell" und wird persistiert wenn **mindestens eine** der folgenden Bedingungen erfüllt ist:
+- `toolCalls >= 5` (default, konfigurierbar via `config.projects.orphanDelegateThresholdToolCalls`)
+- `filesChanged >= 1` (jede beobachtete File-Modifikation)
+- `durationMs >= 3 * 60_000` (default, konfigurierbar via `config.projects.orphanDelegateThresholdMinutes`)
+
+Triviale Lookups (1-2 Tool-Calls, keine Files, <3min) werden ignoriert — keine Pollution der Projektliste.
+
+#### DelegateSkill (`delegate.ts`)
+- `setSessionCompletionCallback(cb)` — neuer Setter, wird von alfred.ts beim Initialisieren des Project-Managers gesetzt
+- Tracking pro execute(): `toolCalls`, `filesChanged` (Heuristik via FILE_WRITE_TOOLS-Set), `durationMs`, `iterations`, `toolNames` Set, `finalResponse`
+- Callback emit auf success-Pfad und error-Pfad (NICHT auf pause — paused sessions sollen nicht als orphan summarized werden)
+- Type-Export: `DelegateSessionInfo`
+
+#### CodeAgentSkill (`code-agent-skill.ts`)
+- `setSessionCompletionCallback(cb)` — gleicher Pattern
+- `run`-Action: emit mit `modifiedFiles.length` aus dem `executeAgent`-Result (mtime-Diff)
+- `orchestrate`-Action: emit mit `allModifiedFiles.length` + `totalDurationMs` + `summary` als finalOutput
+- Callback emit auf success und error in beiden Actions
+- Type-Export: `CodeAgentSessionInfo`
+
+#### ProjectManager (`project-manager.ts`)
+- Neue Methode `ensureMiscBucket(userId)`: Find-or-create ein einzelnes "Misc"-Projekt für orphan-Sessions ohne cwd-Bezug
+- Neue Methode `finishOrphanSession(...)`: hängt orphan-Sessions an Misc-Bucket statt pro Goal ein neues Projekt zu erzeugen
+- Standard `finishSession(...)` wird weiterhin für cwd-basierte Auto-Bindung verwendet (Code-Agent mit cwd, Project-Agent)
+
+#### Wiring (`alfred.ts`)
+- DelegateSkill-Ref + CodeAgentSkill-Ref werden in Klassen-Properties gehalten
+- Im Projects-Block werden beide Callbacks gesetzt — Threshold-Check, dann ProjectManager-Routing:
+  - Delegate (kein cwd) → `finishOrphanSession` → Misc-Bucket
+  - CodeAgent.run mit cwd → `finishSession` → cwd-basiertes Projekt
+  - CodeAgent.run ohne cwd → `finishOrphanSession` → Misc-Bucket
+  - CodeAgent.orchestrate mit cwd → `finishSession` → cwd-basiertes Projekt
+
+### Tests
+- 6 neue Vitests in `session-thresholds.test.ts`: trivial-skip, tool-calls-threshold, file-change-trigger, duration-trigger, custom-thresholds, any-criterion
+
+### Roadmap
+- T2 (v599): Reasoning-Engine Active-Projects Context-Integration
+- T3 (v600): Health-Monitoring per Project mit Git/Build/Deploy Probes
+
 ## [0.19.0-multi-ha.597] - 2026-05-18
 
 ### Added — Projects (T1 Foundation)

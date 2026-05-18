@@ -126,6 +126,8 @@ export class Alfred {
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
+  private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
+  private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
   private scheduledActionRepo?: ScheduledActionRepository;
   private skillHealthRepo?: SkillHealthRepository;
@@ -330,7 +332,9 @@ export class Alfred {
     const memorySkill = new MemorySkill(memoryRepo, embeddingService);
     skillRegistry.register(memorySkill);
     this.memorySkillRef = memorySkill;
-    skillRegistry.register(new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager));
+    const delegateSkill = new DelegateSkill(llmProvider, skillRegistry, skillSandbox, securityManager);
+    skillRegistry.register(delegateSkill);
+    this.delegateSkillRef = delegateSkill;
 
     // Full-text chat history search (FTS5 / tsvector, migration v59/v62)
     {
@@ -536,10 +540,12 @@ export class Alfred {
     // 4e. Code agents (optional, requires explicit enable)
     if (this.config.codeAgents?.enabled) {
       const { CodeAgentSkill } = await import('@alfred/skills');
-      skillRegistry.register(new CodeAgentSkill(
+      const codeAgentSkill = new CodeAgentSkill(
         { agents: this.config.codeAgents.agents, forge: this.config.codeAgents.forge },
         llmProvider,
-      ));
+      );
+      skillRegistry.register(codeAgentSkill);
+      this.codeAgentSkillRef = codeAgentSkill;
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
     }
 
@@ -563,7 +569,80 @@ export class Alfred {
 
       const { ProjectSkill } = await import('@alfred/skills');
       skillRegistry.register(new ProjectSkill(projectRepo));
-      this.logger.info('Projects skill + manager enabled');
+
+      // T4 wiring — Delegate + Code-Agent Lifecycle into the Project-Manager.
+      // Threshold gate prevents trivial single-tool-call sessions from polluting
+      // the project list. CodeAgent sessions auto-bind by cwd; Delegate sessions
+      // (no cwd) route into the Misc-bucket.
+      const { isSubstantialSession } = await import('./projects/session-thresholds.js');
+      const thresholdConfig = {
+        toolCallsThreshold: this.config.projects?.orphanDelegateThresholdToolCalls,
+        minutesThreshold: this.config.projects?.orphanDelegateThresholdMinutes,
+      };
+
+      if (this.delegateSkillRef) {
+        this.delegateSkillRef.setSessionCompletionCallback(async (info) => {
+          if (!isSubstantialSession({
+            toolCalls: info.toolCalls, filesChanged: info.filesChanged, durationMs: info.durationMs,
+          }, thresholdConfig)) {
+            return;
+          }
+          const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          if (!userId) return;
+          try {
+            await projectManager.finishOrphanSession({
+              userId,
+              sessionType: 'delegate',
+              sourceId: `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              goal: info.task,
+              success: info.success,
+              transcript: info.finalResponse,
+              totalFilesChanged: info.filesChanged,
+            });
+          } catch (err) { this.logger.debug({ err }, 'delegate completion → project-manager failed'); }
+        });
+      }
+
+      if (this.codeAgentSkillRef) {
+        this.codeAgentSkillRef.setSessionCompletionCallback(async (info) => {
+          if (!isSubstantialSession({
+            toolCalls: info.toolCalls, filesChanged: info.filesChanged, durationMs: info.durationMs,
+          }, thresholdConfig)) {
+            return;
+          }
+          const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          if (!userId) return;
+          try {
+            if (info.cwd) {
+              // cwd present → standard auto-bind by cwd (creates or joins a project)
+              await projectManager.finishSession({
+                userId,
+                sessionType: 'code_agent',
+                sourceId: `code-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                goal: info.agentOrTask,
+                cwd: info.cwd,
+                success: info.success,
+                transcript: info.finalOutput,
+                files: info.modifiedFiles,
+                totalFilesChanged: info.filesChanged,
+              });
+            } else {
+              await projectManager.finishOrphanSession({
+                userId,
+                sessionType: 'code_agent',
+                sourceId: `code-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                goal: info.agentOrTask,
+                success: info.success,
+                transcript: info.finalOutput,
+                files: info.modifiedFiles,
+                totalFilesChanged: info.filesChanged,
+              });
+            }
+          } catch (err) { this.logger.debug({ err }, 'code-agent completion → project-manager failed'); }
+        });
+      }
+
+      this.logger.info('Projects skill + manager enabled (T4 delegate + code-agent hooks active)');
     }
 
     // 4e2. Project agent (optional, requires code agents)

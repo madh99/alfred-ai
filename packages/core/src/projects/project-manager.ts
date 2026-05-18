@@ -144,6 +144,73 @@ export class ProjectManager {
     });
   }
 
+  /**
+   * Find-or-create the single "Misc" project bucket for orphan sessions
+   * (delegate calls without cwd, ad-hoc code-agent runs etc.).
+   * Single project per user — sessions stack up there instead of polluting
+   * the project list with one project per ad-hoc task.
+   */
+  async ensureMiscBucket(userId: string): Promise<Project> {
+    const existing = await this.repo.getBySlug(userId, 'misc');
+    if (existing) return existing;
+    return this.repo.create(userId, {
+      name: 'Misc',
+      description: 'Sammel-Bucket für Delegate/Code-Agent Sessions ohne expliziten Projekt-Kontext.',
+      status: 'active',
+      tags: ['system'],
+    });
+  }
+
+  /**
+   * Convenience: attach + finalize an orphan session in the Misc bucket.
+   * The standard finishSession() goes via attachSession() which auto-creates per cwd —
+   * for orphans we deliberately route to the single misc-bucket instead.
+   */
+  async finishOrphanSession(params: Omit<FinishSessionParams, 'cwd'>): Promise<void> {
+    try {
+      const misc = await this.ensureMiscBucket(params.userId);
+      let session = await this.repo.findSessionBySource(params.sessionType, params.sourceId);
+      if (!session) {
+        session = await this.repo.createSession(misc.id, {
+          sessionType: params.sessionType,
+          sourceId: params.sourceId,
+        });
+      }
+      await this.repo.touch(misc.id);
+
+      let summary = await this.summarizer.summarize({
+        goal: params.goal,
+        sessionType: params.sessionType,
+        milestones: params.milestones,
+        totalFilesChanged: params.totalFilesChanged,
+        success: params.success,
+        transcript: params.transcript,
+        files: params.files,
+      }).catch(() => null);
+      if (!summary) {
+        summary = {
+          whatWasDone: params.milestones?.join('; ').slice(0, 600) ?? `Orphan ${params.sessionType}-Session.`,
+          status: params.success === true ? 'success' : params.success === false ? 'failed' : 'partial',
+        };
+      }
+      await this.repo.updateSessionSummary(session.id, summary, new Date().toISOString());
+
+      if (summary.openItems && summary.openItems.length > 0) {
+        for (const item of summary.openItems) {
+          await this.repo.addOpenItem(misc.id, {
+            title: item.title, description: item.description,
+            priority: item.priority ?? 'normal', sessionId: session.id,
+          });
+        }
+      }
+      this.logger.info({
+        projectId: misc.id, sourceId: params.sourceId, sessionType: params.sessionType,
+      }, 'project-manager: orphan session attached to misc bucket');
+    } catch (err) {
+      this.logger.warn({ err, sourceId: params.sourceId }, 'project-manager: finishOrphanSession failed');
+    }
+  }
+
   private fallbackSummary(params: FinishSessionParams): ProjectSessionSummary {
     const what = params.milestones && params.milestones.length > 0
       ? `Erreichte Meilensteine: ${params.milestones.slice(0, 5).join('; ')}`

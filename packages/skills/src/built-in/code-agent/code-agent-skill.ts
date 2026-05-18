@@ -15,6 +15,19 @@ export interface CodeAgentSkillConfig {
   forge?: ForgeConfig;
 }
 
+export interface CodeAgentSessionInfo {
+  action: 'run' | 'orchestrate';
+  agentOrTask: string;          // agent name for "run", task text for "orchestrate"
+  cwd?: string;
+  context: { masterUserId?: string; userId: string; chatId: string; platform: string };
+  toolCalls: number;            // for run: 1 (single agent); for orchestrate: subtask count
+  filesChanged: number;
+  modifiedFiles: string[];
+  durationMs: number;
+  success: boolean;
+  finalOutput?: string;
+}
+
 export class CodeAgentSkill extends Skill {
   readonly metadata: SkillMetadata = {
     name: 'code_agent',
@@ -93,6 +106,7 @@ export class CodeAgentSkill extends Skill {
 
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
   private readonly forgeConfig?: ForgeConfig;
+  private onSessionCompletion?: (info: CodeAgentSessionInfo) => void | Promise<void>;
 
   constructor(
     config: CodeAgentSkillConfig,
@@ -101,6 +115,21 @@ export class CodeAgentSkill extends Skill {
     super();
     this.agents = new Map(config.agents.map((a) => [a.name, a]));
     this.forgeConfig = config.forge;
+  }
+
+  /**
+   * Set a callback invoked after each "run"/"orchestrate" finishes (success or fail).
+   * Used by the Project-Manager to capture substantial sessions for post-session awareness.
+   */
+  setSessionCompletionCallback(cb: (info: CodeAgentSessionInfo) => void | Promise<void>): void {
+    this.onSessionCompletion = cb;
+  }
+
+  private emitCompletion(info: CodeAgentSessionInfo): void {
+    if (!this.onSessionCompletion) return;
+    try {
+      void Promise.resolve(this.onSessionCompletion(info)).catch(() => undefined);
+    } catch { /* swallow */ }
   }
 
   async execute(
@@ -179,6 +208,22 @@ export class CodeAgentSkill extends Skill {
       onProgress: context.onProgress,
     });
 
+    this.emitCompletion({
+      action: 'run',
+      agentOrTask: prompt,
+      cwd: cwd ?? agentDef.cwd,
+      context: {
+        masterUserId: context.masterUserId, userId: context.userId,
+        chatId: context.chatId, platform: context.platform,
+      },
+      toolCalls: 1,
+      filesChanged: result.modifiedFiles.length,
+      modifiedFiles: result.modifiedFiles,
+      durationMs: result.durationMs,
+      success: result.exitCode === 0,
+      finalOutput: (result.stdout || result.stderr).slice(0, 4000),
+    });
+
     const parts: string[] = [];
     if (result.stdout) parts.push(`**stdout:**\n\`\`\`\n${result.stdout}\n\`\`\``);
     if (result.stderr) parts.push(`**stderr:**\n\`\`\`\n${result.stderr}\n\`\`\``);
@@ -246,6 +291,9 @@ export class CodeAgentSkill extends Skill {
     const prTitle = typeof input.prTitle === 'string' ? input.prTitle : undefined;
     const baseBranch = typeof input.baseBranch === 'string' ? input.baseBranch : undefined;
 
+    const orchestrateStartedAt = Date.now();
+    const cwd = typeof input.cwd === 'string' ? input.cwd : undefined;
+
     try {
       if (useGit) {
         const result: GitOrchestrationResult = await orchestrateWithGit(
@@ -258,8 +306,25 @@ export class CodeAgentSkill extends Skill {
             forge: this.forgeConfig,
             prTitle,
             baseBranch,
+            cwd,
           },
         );
+        const hasFailures = result.subtaskResults.some(r => r.execution.exitCode !== 0);
+        this.emitCompletion({
+          action: 'orchestrate',
+          agentOrTask: task,
+          cwd,
+          context: {
+            masterUserId: context.masterUserId, userId: context.userId,
+            chatId: context.chatId, platform: context.platform,
+          },
+          toolCalls: result.subtaskResults.length,
+          filesChanged: result.allModifiedFiles.length,
+          modifiedFiles: result.allModifiedFiles,
+          durationMs: result.totalDurationMs ?? (Date.now() - orchestrateStartedAt),
+          success: !hasFailures,
+          finalOutput: result.summary?.slice(0, 4000),
+        });
         return this.formatGitOrchestrationResult(result);
       }
 
@@ -273,9 +338,38 @@ export class CodeAgentSkill extends Skill {
         },
       );
 
+      const hasFailures = result.subtaskResults.some(r => r.execution.exitCode !== 0);
+      this.emitCompletion({
+        action: 'orchestrate',
+        agentOrTask: task,
+        cwd,
+        context: {
+          masterUserId: context.masterUserId, userId: context.userId,
+          chatId: context.chatId, platform: context.platform,
+        },
+        toolCalls: result.subtaskResults.length,
+        filesChanged: result.allModifiedFiles.length,
+        modifiedFiles: result.allModifiedFiles,
+        durationMs: result.totalDurationMs ?? (Date.now() - orchestrateStartedAt),
+        success: !hasFailures,
+        finalOutput: result.summary?.slice(0, 4000),
+      });
       return this.formatOrchestrationResult(result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      this.emitCompletion({
+        action: 'orchestrate',
+        agentOrTask: task,
+        cwd,
+        context: {
+          masterUserId: context.masterUserId, userId: context.userId,
+          chatId: context.chatId, platform: context.platform,
+        },
+        toolCalls: 0, filesChanged: 0, modifiedFiles: [],
+        durationMs: Date.now() - orchestrateStartedAt,
+        success: false,
+        finalOutput: message.slice(0, 4000),
+      });
       return { success: false, error: `Orchestration failed: ${message}` };
     }
   }
