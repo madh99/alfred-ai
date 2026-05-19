@@ -44,8 +44,14 @@ async function tryGeneratePlan(
   if (jsonMatch) {
     const parsed = JSON.parse(jsonMatch[0]);
     if (Array.isArray(parsed.phases) && parsed.phases.length > 0) {
+      // L7 (v604) — strip redundant "Phase X:" prefixes from phase strings.
+      // The runner already prepends "Phase X/N:" itself, so the planner's
+      // "Phase X: ..." created the ugly "Phase 1/13: Phase 1: ..." doubling.
+      const normalizedPhases = parsed.phases.map((p: string) =>
+        typeof p === 'string' ? p.replace(/^\s*Phase\s+\d+\s*[:\-—]\s*/i, '').trim() : p,
+      );
       return {
-        phases: parsed.phases,
+        phases: normalizedPhases,
         buildStrategy: parsed.buildStrategy ?? 'npm install && npm run build',
         estimatedIterations: parsed.estimatedIterations ?? parsed.phases.length,
       };

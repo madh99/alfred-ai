@@ -56,8 +56,20 @@ export class ProjectManager {
     return { project, session };
   }
 
-  /** Called when a session finishes — runs the summarizer and persists the structured outcome. */
+  /** Called when a session finishes — runs the summarizer and persists the structured outcome.
+   *
+   * v604 L9: when the session failed AND produced no file changes, we skip the
+   * auto-create. The old behavior left "active" Projects in the DB for total-
+   * failure runs (alpbyte-games 19.05.) — those then show up in the project
+   * list, get health-probed every 6h, and pollute the reasoning context.
+   */
   async finishSession(params: FinishSessionParams): Promise<void> {
+    if (params.success === false && (params.totalFilesChanged ?? 0) === 0) {
+      this.logger.info({
+        sourceId: params.sourceId, sessionType: params.sessionType, goal: params.goal.slice(0, 80),
+      }, 'project-manager: skipping auto-create (session failed without changes)');
+      return;
+    }
     try {
       const { project, session } = await this.attachSession({
         userId: params.userId,
@@ -168,6 +180,13 @@ export class ProjectManager {
    * for orphans we deliberately route to the single misc-bucket instead.
    */
   async finishOrphanSession(params: Omit<FinishSessionParams, 'cwd'>): Promise<void> {
+    // v604 L9 — skip orphan-bucket-attach when the session failed with 0 files
+    if (params.success === false && (params.totalFilesChanged ?? 0) === 0) {
+      this.logger.info({
+        sourceId: params.sourceId, sessionType: params.sessionType,
+      }, 'project-manager: skipping misc-bucket attach (orphan session failed without changes)');
+      return;
+    }
     try {
       const misc = await this.ensureMiscBucket(params.userId);
       let session = await this.repo.findSessionBySource(params.sessionType, params.sourceId);

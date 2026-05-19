@@ -128,6 +128,7 @@ export class Alfred {
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
+  private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
@@ -815,6 +816,9 @@ export class Alfred {
         this.config.codeAgents.forge,
       );
       projectAgentSkill.setRunner(projectRunner);
+      // v604 L8 — file-store is initialized later in init(), so we hold a ref
+      // here and inject it once available.
+      this.projectAgentRunnerRef = projectRunner;
 
       // On every project-agent completion (success OR failure): hand the session over to
       // the ProjectManager so it auto-binds to a long-lived Project, runs the LLM
@@ -2283,6 +2287,12 @@ export class Alfred {
       const { createFileStore } = await import('@alfred/storage');
       fileStore = createFileStore(this.config.fileStore);
       this.logger.info({ backend: this.config.fileStore.backend }, 'File store initialized');
+    }
+    // v604 L8 — inject file-store into project-agent-runner if both are present.
+    // Enables asset-bridge (chat-attached files become uploads/ in cwd).
+    if (fileStore && this.projectAgentRunnerRef) {
+      this.projectAgentRunnerRef.setFileStore(fileStore);
+      this.logger.info('Project-agent runner connected to file-store for asset-bridge');
     }
 
     // 6. Create conversation manager and pipeline

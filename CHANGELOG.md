@@ -5,6 +5,75 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.604] - 2026-05-19
+
+### Added — Project-Agent Robustheit (Reaktion auf alpbyte-games Total-Failure)
+
+Adressiert die 10 in der Analyse vom 19.05. (alpbyte-games) identifizierten Probleme. Behebt das Phänomen "13 Phasen laufen ergebnislos mit immer derselben Permission-Fehlermeldung, am Ende sagt Alfred trotzdem 🎉 fertig".
+
+#### L1 — Pre-Flight cwd-Reachability-Check (`project-agent-runner.ts`)
+- Vor Phase 1: `sudo -n -u <runAsUser> test -d <cwd> && test -w <cwd>`
+- Bei Fehler: sofortiger Abbruch mit klarer Diagnose
+- Verhindert 52 ergebnislose subprocess-Calls bei nicht traversierbarem cwd (Klassiker: cwd unter `/root/` während Agent als `madh` läuft, /root ist drwx------)
+
+#### L2 — Fail-Fast nach 3 konsekutiven Total-Failure-Phasen
+- Neuer Counter `consecutiveCompletePhaseFailures` — bricht ab wenn 3 Phasen in Folge weder gebaut noch Dateien produziert haben
+- Reset bei jedem Fortschritt (build pass oder Files geändert)
+- 13×4-Phase-Versuche werden zu max. 3×4 → 75% weniger LLM-Spam, schnellere User-Antwort
+
+#### L3 — Honest success-Flag im Completion-Callback
+- Vorher: hardcoded `success=true` nach Loop-Ende, egal ob irgendwas funktionierte
+- Jetzt: `overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed`
+- Beseitigt die "🎉 fertig"-Lüge bei 0/13 erfolgreichen Phasen
+
+#### L4 — Smart cwd-Default (`project-agent-skill.ts`)
+- Wenn Agent als non-root User läuft (`sudo -u X`) UND cwd unter `/root/` → automatisch nach `/home/X/projects/<slug>` umleiten
+- Warnung im Display: "cwd wurde umgeleitet weil ..."
+- Verhindert Wiederholung der gleichen Konfig-Falle
+
+#### L5 — Intelligenter Error-Extractor (`error-extractor.ts`)
+- Ersetzt `combinedOutput.slice(-500)` (chopte oft den echten Fehler ab)
+- Sucht nach Error-Markern (EACCES, ENOENT, ENOSPC, ETIMEDOUT, TS-Compile, etc.) und captured 3 Zeilen vor + 5 nach
+- Pattern-Recognizer übersetzt npm/build/python errors in user-freundliche Diagnose
+  - Spezialfall: EACCES + Pfad unter `/root/` → "Permission denied: ... Code-Agent läuft als non-root User. Lösung: Pfad auf /home/<user>/... wechseln"
+  - npm registry unreachable, disk full, missing module, TS compile error, generic exit-code
+- 10 Vitests grün
+
+#### L6 — Ehrliche End-Message
+- Nur 🎉 bei `overallSuccess=true`
+- Sonst ❌ mit Diagnose: "X/N Phasen versucht, Y Dateien geändert. Abgebrochen nach 3 ergebnislosen Phasen in Folge. **Diagnose:** ... **Letzter Build-Output:** ..."
+- Git-Push wird nur bei success ausgeführt
+
+#### L7 — Phase-Prefix-Cleanup (`project-planner.ts`)
+- Planner-Output wird normalisiert: `"Phase 1: ..."` Strings werden zu `"..."` getrimmt (Regex `/^\s*Phase\s+\d+\s*[:\-—]\s*/i`)
+- Eliminiert das hässliche `"Phase 1/13: Phase 1: Projektverzeichnis anlegen"` Doppel-Prefix
+
+#### L8 — FileStore-Asset-Bridge (`asset-bridge.ts`)
+- Beim Project-Agent-Start: Goal-Text wird nach File-Store-Keys gescannt (Pattern: `<userId>/<timestamp>_<filename>.<ext>`)
+- Gefundene Dateien werden in `<cwd>/uploads/<cleanname>` kopiert
+- Goal-Text wird automatisch mit konkreten Pfaden umgeschrieben — der Code-Agent sieht `uploads/logo.MP4` statt opaque store-key
+- Filename-Cleanup: Timestamp-Prefix entfernt, Kollisions-Counter
+- chown auf uploads/ damit runAsUser lesen darf
+- 9 Vitests grün
+
+#### L9 — ProjectManager kein Auto-Project bei Total-Failure
+- `finishSession()` und `finishOrphanSession()` skippen jetzt wenn `success=false` UND `totalFilesChanged=0`
+- Verhindert dass tote Sessions als `status='active'` Projects landen
+- Verhindert dass Health-Monitor alle 6h fehlgeschlagene Projekte probt
+- Verhindert dass Reasoning-Context den Misc-Bucket mit Müll füllt
+
+#### L10 — alpbyte-games Cleanup (operativ)
+- Project `3baa458b-f351-40ca-9b2c-6055e4d3da84` auf status='archived' gesetzt
+- Leeres `/root/alpbyte-games` Verzeichnis entfernt
+
+### Tests
+- 19 neue Vitests (10 error-extractor + 9 asset-bridge)
+- Bestehende Tests: alle stabil
+
+### Backward-Compatibility
+- Alle Änderungen additiv. Bestehende project_agent_sessions unverändert.
+- Smart-cwd nur aktiv wenn agent-config `sudo -u X` Pattern hat — root-Agents nicht betroffen.
+
 ## [0.19.0-multi-ha.603] - 2026-05-19
 
 ### Added — Logger-Fixes, AuditLogger-Verkabelung, systemd-Service-Unit

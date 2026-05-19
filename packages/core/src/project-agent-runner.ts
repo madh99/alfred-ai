@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,8 @@ import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController } from '@alfred/skills';
+import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject } from '@alfred/skills';
+import type { FileStore } from '@alfred/storage';
 
 const execFileAsync = promisify(execFile);
 
@@ -46,6 +47,13 @@ export class ProjectAgentRunner {
   private lastProgressAt = 0;
   private readonly throttleMs = 30_000;
   private completionCallback?: ProjectAgentCompletionCallback;
+  /** Optional file-store for asset-bridging (v604 L8). */
+  private fileStore?: FileStore;
+
+  /** Injected by alfred.ts when a file-store is configured. */
+  setFileStore(fs: FileStore): void {
+    this.fileStore = fs;
+  }
 
   constructor(
     private readonly agents: Map<string, CodeAgentDefinitionConfig>,
@@ -105,6 +113,15 @@ export class ProjectAgentRunner {
     };
 
     let lastBuildActuallyPassed = false;
+    // L2 (v604) — global counter for consecutive phases that produced 0 files AND no
+    // build pass. After 3 such phases in a row we abort instead of slogging through
+    // all 13. Counter resets to 0 on any phase that produced files or passed build.
+    let consecutiveCompletePhaseFailures = 0;
+    const MAX_CONSECUTIVE_PHASE_FAILURES = 3;
+    // L3 (v604) — track if ANY phase actually changed files. Used to compute the
+    // honest success-flag at completion time. The old runner emitted success=true
+    // unconditionally after the loop ended, even with 0 file changes.
+    let anyPhaseProducedFiles = false;
 
     try {
       await this.sendProgress(platform, chatId, `🚀 Project Agent gestartet: ${config.goal}`);
@@ -123,6 +140,71 @@ export class ProjectAgentRunner {
 
       const startTime = Date.now();
       const maxDurationMs = config.maxDurationHours * 60 * 60 * 1000;
+
+      // ── L1 (v604) PRE-FLIGHT: cwd reachability check ─────────────────────
+      // When the code-agent runs as a different user (e.g. sudo -u madh) we have
+      // to verify that user can actually traverse into cwd. A common pitfall is
+      // cwd=/root/xyz which is root-owned even after chown — /root itself has
+      // drwx------ so non-root users get EACCES on every npm/build call.
+      if (runAsUser) {
+        try {
+          if (!existsSync(config.cwd)) {
+            mkdirSync(config.cwd, { recursive: true });
+            try { execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, config.cwd], { timeout: 5000 }); }
+            catch { /* best effort */ }
+          }
+          const probe = await this.probeCwdReachable(config.cwd, runAsUser);
+          if (!probe.ok) {
+            const msg = `❌ Pre-Flight Check fehlgeschlagen: User "${runAsUser}" kann \`${config.cwd}\` nicht erreichen.\n\n` +
+              `Detail: ${probe.reason}\n\n` +
+              `Ursache: Code-Agent läuft als "${runAsUser}", aber der Pfad ist nicht traversierbar oder beschreibbar für diesen User. ` +
+              `Häufiger Grund: cwd liegt unter /root/ (drwx------) — wähle einen Pfad unter /home/${runAsUser}/.`;
+            await this.sendProgress(platform, chatId, msg);
+            this.logger.error({ cwd: config.cwd, runAsUser, reason: probe.reason }, 'Project agent: cwd pre-flight failed');
+            state.projectPhase = 'done';
+            await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+            if (this.completionCallback) {
+              try {
+                await this.completionCallback(sessionId,
+                  { goal: config.goal, cwd: config.cwd },
+                  { milestonesReached: state.milestonesReached, totalFilesChanged: 0, projectIteration: 0 },
+                  false);
+              } catch { /* swallow */ }
+            }
+            return;
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'Pre-Flight probe threw — continuing optimistically');
+        }
+      }
+
+      // ── L8 (v604) STAGE ATTACHED ASSETS ─────────────────────────────────
+      // If the goal references file-store keys (typical pattern when user
+      // attached a file in chat), copy them into <cwd>/uploads/ so the agent
+      // can actually read them. The goal text gets rewritten with concrete
+      // relative paths replacing the opaque keys.
+      if (this.fileStore) {
+        try {
+          // No requestingUserId — runner operates system-wide; access check is
+          // implicit because only the configured owner triggers project-agent.
+          const stage = await stageAssetsForProject(config.goal, config.cwd, this.fileStore);
+          if (stage.staged.length > 0) {
+            await this.sendProgress(platform, chatId,
+              `📎 ${stage.staged.length} angehängte Datei(en) nach uploads/ kopiert: ${stage.staged.map(a => a.relativePath).join(', ')}`);
+            config.goal = stage.rewrittenGoal; // agents now see usable paths
+            // re-chown so agent-user can read the staged files
+            if (runAsUser) {
+              try { execFileSync('chown', ['-R', `${runAsUser}:${runAsUser}`, path.join(config.cwd, 'uploads')], { timeout: 5000 }); }
+              catch { /* best effort */ }
+            }
+          }
+          if (stage.errors.length > 0) {
+            this.logger.warn({ errors: stage.errors }, 'Asset-bridge: some files failed to stage');
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'Asset-bridge: non-critical failure');
+        }
+      }
 
       // ── ENSURE GIT REPO EXISTS (before any phase commits) ──
       if (!existsSync(path.join(config.cwd, '.git'))) {
@@ -155,6 +237,7 @@ export class ProjectAgentRunner {
         state.projectPhase = 'coding';
         state.consecutiveFixFailures = 0;
         lastBuildActuallyPassed = false;
+        const filesBeforePhase = state.totalFilesChanged;
         await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
         const phase = plan.phases[phaseIdx];
@@ -210,9 +293,12 @@ export class ProjectAgentRunner {
           // Build failed
           state.consecutiveFixFailures++;
           if (fixAttempt >= config.maxFixAttempts) {
+            // L5 (v604) — intelligent error extraction instead of blind .slice(-500)
+            const extracted = extractBuildError(buildResult.combinedOutput);
             await this.sendProgress(platform, chatId,
-              `❌ Build failed nach ${config.maxFixAttempts} Fix-Versuchen.\n` +
-              `Letzter Fehler:\n${buildResult.combinedOutput.slice(-500)}\n` +
+              `❌ Build failed nach ${config.maxFixAttempts} Fix-Versuchen.\n\n` +
+              `${extracted.recognized ? '**Diagnose:**\n' + extracted.summary + '\n\n' : ''}` +
+              `**Kontext:**\n\`\`\`\n${extracted.contextSnippet}\n\`\`\`\n` +
               `Sende "interject" mit Hinweisen oder "stop" zum Abbrechen.`);
             state.projectPhase = 'awaiting_user';
             await this.updateSession(sessionId, state, lastBuildActuallyPassed);
@@ -267,27 +353,74 @@ export class ProjectAgentRunner {
           await this.sessionRepo.addMilestone(sessionId, milestone);
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
         }
+
+        // L2 (v604) — track per-phase success for fail-fast
+        const phaseFilesDelta = state.totalFilesChanged - filesBeforePhase;
+        if (buildPassed) {
+          consecutiveCompletePhaseFailures = 0;
+          anyPhaseProducedFiles = true;
+        } else if (phaseFilesDelta === 0) {
+          // No build pass AND no file changes from this phase → it contributed nothing
+          consecutiveCompletePhaseFailures++;
+          if (consecutiveCompletePhaseFailures >= MAX_CONSECUTIVE_PHASE_FAILURES) {
+            const extracted = extractBuildError(state.lastBuildOutput ?? '');
+            await this.sendProgress(platform, chatId,
+              `⚠️ Abbruch: ${MAX_CONSECUTIVE_PHASE_FAILURES} Phasen in Folge haben weder gebaut noch Dateien produziert.\n\n` +
+              `${extracted.recognized ? '**Diagnose:** ' + extracted.summary + '\n\n' : ''}` +
+              `**Kontext:**\n\`\`\`\n${extracted.contextSnippet}\n\`\`\``);
+            this.logger.warn({
+              sessionId, phasesAttempted: phaseIdx + 1, totalPhases: plan.phases.length,
+              errorCode: extracted.code,
+            }, 'Project agent: fail-fast triggered');
+            break;
+          }
+        } else {
+          // Build failed but at least some files changed → reset counter (progress)
+          consecutiveCompletePhaseFailures = 0;
+          anyPhaseProducedFiles = true;
+        }
       }
 
       // ── DONE ──
       state.projectPhase = 'done';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
-      // ── GIT PUSH ──
-      await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+      // L3 (v604) — honest success-flag: only true if build actually passed AT LEAST
+      // ONCE and files were modified. Replaces the old hardcoded `success=true` after
+      // the for-loop that lied about total-failure runs (alpbyte-games 19.05.).
+      const overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed;
 
-      await this.sendProgress(platform, chatId,
-        `🎉 Project Agent fertig!\n` +
-        `${state.projectIteration} Phasen, ${state.totalFilesChanged} Dateien geändert.\n` +
-        `Milestones: ${state.milestonesReached.join(', ')}`);
+      // ── GIT PUSH ── (only on success — pushing an empty repo is just noise)
+      if (overallSuccess) {
+        await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+      }
 
-      // Trigger B: notify runbook hook on successful completion
+      // L6 (v604) — honest end-message: don't celebrate failures
+      if (overallSuccess) {
+        await this.sendProgress(platform, chatId,
+          `🎉 Project Agent fertig!\n` +
+          `${state.projectIteration} Phasen, ${state.totalFilesChanged} Dateien geändert.\n` +
+          `Milestones: ${state.milestonesReached.join(', ')}`);
+      } else {
+        const failedReason = consecutiveCompletePhaseFailures >= MAX_CONSECUTIVE_PHASE_FAILURES
+          ? `Abgebrochen nach ${consecutiveCompletePhaseFailures} ergebnislosen Phasen in Folge`
+          : `${plan.phases.length - state.projectIteration} Phasen nicht durchlaufen, kein erfolgreicher Build`;
+        const extracted = state.lastBuildOutput ? extractBuildError(state.lastBuildOutput) : null;
+        await this.sendProgress(platform, chatId,
+          `❌ Project Agent fehlgeschlagen.\n` +
+          `${state.projectIteration}/${plan.phases.length} Phasen versucht, ${state.totalFilesChanged} Dateien geändert.\n` +
+          `${failedReason}.\n\n` +
+          (extracted?.recognized ? `**Diagnose:** ${extracted.summary}\n` : '') +
+          (extracted ? `**Letzter Build-Output:**\n\`\`\`\n${extracted.contextSnippet}\n\`\`\`` : ''));
+      }
+
+      // Trigger B: completion callback with honest success-flag
       if (this.completionCallback) {
         try {
           await this.completionCallback(sessionId,
             { goal: config.goal, cwd: config.cwd },
             { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
-            true);
+            overallSuccess);
         } catch (err) { this.logger.debug({ err }, 'Project-agent completion callback failed'); }
       }
 
@@ -307,6 +440,28 @@ export class ProjectAgentRunner {
       }
     } finally {
       removeAbortController(sessionId);
+    }
+  }
+
+  /**
+   * L1 (v604) — probe whether the code-agent's runAsUser can traverse into AND
+   * write into cwd. Returns ok=true if both checks pass.
+   *
+   * Linux pitfall this addresses: a directory can be chown'd to user X, but if
+   * its parent has no 'x' permission for others (e.g. /root drwx------), X
+   * still can't traverse to it. npm install then fails with EACCES on every call.
+   */
+  private async probeCwdReachable(cwd: string, runAsUser: string): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const enter = await execFileAsync('sudo', ['-n', '-u', runAsUser, 'test', '-d', cwd], { timeout: 5000 })
+        .then(() => ({ ok: true })).catch(() => ({ ok: false }));
+      if (!enter.ok) return { ok: false, reason: `cannot enter ${cwd} (Parent-Verzeichnis nicht traversierbar)` };
+      const write = await execFileAsync('sudo', ['-n', '-u', runAsUser, 'test', '-w', cwd], { timeout: 5000 })
+        .then(() => ({ ok: true })).catch(() => ({ ok: false }));
+      if (!write.ok) return { ok: false, reason: `cannot write into ${cwd} (Schreibrechte fehlen)` };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: `probe error: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
 

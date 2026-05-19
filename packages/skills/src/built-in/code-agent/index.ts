@@ -13,3 +13,7 @@ export { validateBuild } from './build-validator.js';
 export type { BuildValidationResult, CommandResult } from './build-validator.js';
 export { createProjectPlan } from './project-planner.js';
 export type { ProjectPlan } from './project-planner.js';
+export { extractBuildError } from './error-extractor.js';
+export type { ExtractedError } from './error-extractor.js';
+export { stageAssetsForProject, findAssetKeys } from './asset-bridge.js';
+export type { ExtractedAsset, StageAssetsResult } from './asset-bridge.js';

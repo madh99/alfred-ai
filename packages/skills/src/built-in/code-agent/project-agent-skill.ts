@@ -121,7 +121,7 @@ Actions:
 
   private async startProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
     const goal = input.goal as string | undefined;
-    const cwd = input.cwd as string | undefined;
+    let cwd = input.cwd as string | undefined;
     const agentName = (input.agent as string) ?? [...this.agents.keys()][0];
 
     if (!goal) return { success: false, error: 'Missing required field "goal"' };
@@ -131,6 +131,21 @@ Actions:
     const agentDef = this.agents.get(agentName);
     if (!agentDef) {
       return { success: false, error: `Unknown agent "${agentName}". Available: ${[...this.agents.keys()].join(', ')}` };
+    }
+
+    // L4 (v604) — Smart cwd-Default: when the chosen agent runs as a different
+    // (non-root) user via `sudo -u X`, a cwd under /root/ creates an unreachable
+    // path (parent /root is drwx------ → traversal blocked → constant EACCES).
+    // We auto-rewrite to /home/X/projects/<last-segment> and surface a hint.
+    const runAsUser = (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1])
+      ? agentDef.argsTemplate[1]
+      : undefined;
+    let cwdRewriteHint: string | undefined;
+    if (runAsUser && runAsUser !== 'root' && /^\/root(\/|$)/.test(cwd)) {
+      const lastSegment = cwd.replace(/\/+$/, '').split('/').pop() || 'project';
+      const newCwd = `/home/${runAsUser}/projects/${lastSegment}`;
+      cwdRewriteHint = `Hinweis: cwd \`${cwd}\` wurde automatisch auf \`${newCwd}\` umgeleitet, weil Agent "${agentName}" als User "${runAsUser}" läuft und /root nicht traversierbar ist.`;
+      cwd = newCwd;
     }
 
     // Check if a session is already running for this cwd
@@ -170,12 +185,13 @@ Actions:
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
+        (cwdRewriteHint ? `\n⚠️ ${cwdRewriteHint}\n` : '') +
         `Fortschritt wird via Chat gemeldet.`,
     };
   }
