@@ -140,6 +140,8 @@ export class HttpAdapter extends MessagingAdapter {
   private knowledgeGraphUpdateRelationFn?: (relationId: string, data: Record<string, unknown>) => Promise<boolean>;
   private memoriesListFn?: (filter?: { type?: string }) => Promise<any[]>;
   private memoriesDeleteFn?: (memoryId: string) => Promise<boolean>;
+  /** v606 K6 — patch the memory type (for UI-driven reclassification). */
+  private memoriesUpdateTypeFn?: (memoryId: string, type: string) => Promise<boolean>;
   private cmdbCallbacks?: CmdbCallbacks;
   private itsmCallbacks?: ItsmCallbacks;
   private docsCallbacks?: DocsCallbacks;
@@ -200,9 +202,12 @@ export class HttpAdapter extends MessagingAdapter {
   setMemoryCallbacks(opts: {
     list: (filter?: { type?: string }) => Promise<any[]>;
     delete: (memoryId: string) => Promise<boolean>;
+    /** v606 K6 — optional type-update callback (e.g. UI reclassification). */
+    updateType?: (memoryId: string, type: string) => Promise<boolean>;
   }): void {
     this.memoriesListFn = opts.list;
     this.memoriesDeleteFn = opts.delete;
+    this.memoriesUpdateTypeFn = opts.updateType;
   }
 
   private runbooksListFn?: (filter?: { status?: string; sourceType?: string }) => Promise<any[]>;
@@ -503,6 +508,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleMemoriesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/memories/') && req.method === 'DELETE') {
       this.handleMemoriesDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.startsWith('/api/memories/') && req.method === 'PATCH') {
+      this.handleMemoriesUpdateType(req, res, url).catch(err => this.safeError(res, err));
     // ── Runbooks API (browse drafts + manage) ──
     } else if (url.pathname === '/api/runbooks' && req.method === 'GET') {
       this.handleRunbooksList(req, res, url).catch(err => this.safeError(res, err));
@@ -1056,6 +1063,29 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const memoryId = url.pathname.split('/').pop()!;
     const ok = await this.memoriesDeleteFn(memoryId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleMemoriesUpdateType(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.memoriesUpdateTypeFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const memoryId = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let parsed: { type?: string };
+    try { parsed = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!parsed.type || typeof parsed.type !== 'string') {
+      res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'type required' })); return;
+    }
+    const allowedTypes = new Set(['correction', 'preference', 'fact', 'entity', 'general', 'pattern']);
+    if (!allowedTypes.has(parsed.type)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: `invalid type, allowed: ${[...allowedTypes].join(', ')}` }));
+      return;
+    }
+    const ok = await this.memoriesUpdateTypeFn(memoryId, parsed.type);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

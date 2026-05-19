@@ -2443,6 +2443,22 @@ export class Alfred {
       this.logger.child({ component: 'feedback' }),
     );
     feedbackService.setLLM(llmProvider);
+    // v606 K4 — embedding-based dedup for new corrections/preferences/rules.
+    // Uses llmProvider.embed() directly (returns { embedding: number[] }).
+    if (llmProvider.supportsEmbeddings()) {
+      feedbackService.setEmbeddingService(llmProvider);
+    }
+    // v606 K5 — one-shot migration of existing feedback:correction memories.
+    // Re-classifies via LLM and routes to correct memory-type (or deletes).
+    // Gated by an internal marker memory so it runs at most once per user.
+    setTimeout(() => {
+      const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+      if (ownerUid) {
+        feedbackService.migrateCorrectionMemories(ownerUid)
+          .then(stats => this.logger.info({ ...stats }, 'Feedback: correction-migration completed'))
+          .catch(err => this.logger.debug({ err }, 'Feedback: correction-migration failed (non-critical)'));
+      }
+    }, 30_000); // delay so init completes first
     this.confirmationQueue.setFeedbackService(feedbackService);
     if (activeLearning) {
       activeLearning.setFeedbackService(feedbackService);
@@ -3329,6 +3345,10 @@ export class Alfred {
           delete: async (memoryId: string) => {
             const result = await dbAdapterForMem.execute('DELETE FROM memories WHERE id = ?', [memoryId]);
             return result.changes > 0;
+          },
+          // v606 K6 — type-patch for WebUI reclassification
+          updateType: async (memoryId: string, type: string) => {
+            return await memRepoForApi.updateType(memoryId, type);
           },
         });
         this.logger.info('Memories API registered');

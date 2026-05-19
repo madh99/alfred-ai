@@ -261,6 +261,31 @@ export class MemoryRepository {
   }
 
   /**
+   * v606 K6 — change the memory type (e.g. manual UI-driven reclassification
+   * of a falsely-categorized correction). Returns true if a row was updated.
+   */
+  async updateType(memoryId: string, type: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'UPDATE memories SET type = ?, updated_at = ? WHERE id = ?',
+      [type, new Date().toISOString(), memoryId],
+    );
+    return result.changes > 0;
+  }
+
+  /**
+   * v606 K4 — bump updatedAt without changing content. Used by the dedup
+   * pathway to "refresh" an existing near-identical memory instead of creating
+   * a near-duplicate row.
+   */
+  async touch(userId: string, key: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'UPDATE memories SET updated_at = ? WHERE user_id = ? AND key = ?',
+      [new Date().toISOString(), userId, key],
+    );
+    return result.changes > 0;
+  }
+
+  /**
    * Adjust the confidence of a memory by a delta (clamped to [0, 1]).
    */
   async updateConfidence(id: string, delta: number): Promise<void> {

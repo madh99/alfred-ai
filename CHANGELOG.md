@@ -5,6 +5,73 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.606] - 2026-05-19
+
+### Added — Memory-Hygiene: Correction-Klassifikation + Deduplication (K1-K6 Voll-Variante)
+
+Adressiert die in der Analyse vom 19.05. (Batterie-Memory falsch als correction) identifizierten 6 Wurzel-Probleme. Vorher landete jede Nachricht mit "in Zukunft" oder "nur wenn" pauschal als correction-memory mit 90% Konfidenz — auch Fragen, Doku und Runbooks.
+
+#### K1 — Pattern-Match enger (`correction-signal-scanner.ts`)
+- Sentence-Start-Anker `(?:^|[\n.!?]\s*)` für Pattern wie "in zukunft", "ab jetzt", "nur wenn", "schwellenwert ändern"
+- Verhindert Match in deskriptiven Texten ("Wir hatten überlegt das in zukunft anders zu lösen")
+- Direkte Korrekturen ("nein das ist falsch", "ich meinte") bleiben unverändert (kein Anker, immer Trigger)
+- 16 Vitests grün (echte Korrekturen + False-Positive-Beispiele aus Live-DB)
+
+#### K2 — LLM-Validierung nach Pattern-Match (`feedback-service.ts`)
+- Nach `scanCorrectionSignal: high` läuft `classifyMessage()` mit fast-Tier-LLM
+- Strict-JSON-Output: `intent: 'correction' | 'preference' | 'rule' | 'skip'`
+- Bei `intent === 'skip'` → memory wird NICHT gespeichert
+- LLM-Call ~50 Tokens, sub-Cent. Bei LLM-Fehler: konservativer Fallback auf `correction`
+
+#### K3 — Type-Routing (`feedback-service.ts`)
+- LLM-Klassifikation routet zum richtigen Memory-Type:
+  - `correction` → type='correction', confidence 0.9 (echte Falsch-Aktion-Korrektur)
+  - `preference` → type='preference', confidence 0.85 (Verhaltensregel für Zukunft)
+  - `rule` → type='general', confidence 0.85 (Runbook/prozedurale Anweisung)
+  - `skip` → kein Save
+- Vorher: alles als `correction` 0.9 hardcoded
+
+#### K4 — Embedding-basierte Deduplication (`feedback-service.ts`, `memory-repository.ts`)
+- Vor Save: `tryDeduplicate()` holt bestehende memories desselben Types
+- Berechnet Cosine-Similarity zwischen neuer und bestehenden values via `llm.embed()`
+- Bei similarity > 0.85: `memoryRepo.touch()` aktualisiert nur `updated_at`, keine neue Row
+- `MemoryRepository.touch(userId, key)` neue Methode
+- Verhindert dass derselbe Inhalt (z.B. das Batterie-Runbook) bei wiederholter Eingabe N-mal als Row in DB landet
+
+#### K5 — Migration alter Einträge (`feedback-service.migrateCorrectionMemories()`)
+- One-shot Maintenance bei Alfred-Start (30s delay)
+- Liest alle memories mit key-prefix `feedback:correction:` (sowohl type='correction' als auch type='feedback')
+- Reklassifiziert jeden via `classifyMessage()` → updated type oder löscht bei `intent='skip'`
+- Marker-Memory `_internal_correction_migration_done` verhindert Wiederholung
+- Stats werden gelogged: reclassified, deleted, unchanged, skipped
+
+#### K6 — WebUI Type-Editor (`MemoriesPage.tsx`, alfred-client, HttpAdapter)
+- Memory-Type-Badge wird zum `<select>` Dropdown auf der Memories-Page
+- Direkte Type-Änderung per Klick: 'correction', 'preference', 'fact', 'entity', 'general', 'pattern'
+- Neue API-Route: `PATCH /api/memories/:id` mit `{ type }` body
+- `MemoryRepository.updateType(memoryId, type)` neue Methode
+- `HttpAdapter.setMemoryCallbacks()` erweitert um `updateType`
+- `AlfredClient.updateMemoryType()` neue Client-Methode
+- Validierung: type muss in erlaubter Liste sein (nicht beliebig)
+
+### Wie K1-K6 zusammenwirken (Defense-in-Depth)
+1. K1 filtert offensichtlich-nicht-Korrekturen schon im Regex aus (kein LLM-Call) — günstig
+2. K2 wenn doch durchgekommen: LLM macht das Final-Cut → `skip` falls keine Korrektur
+3. K3 falls Korrektur-artig: routet zum richtigen Type, nicht pauschal correction
+4. K4 falls neuer Eintrag identisch zu existierendem: refresh statt duplicate
+5. K5 räumt alte Falsch-Klassifikationen einmal sauber auf (einmal beim ersten Start)
+6. K6 lässt den User manuell nachjustieren falls die ML-Pipeline daneben liegt
+
+### Tests
+- 16 neue Vitests für `correction-signal-scanner` (5 echte Korrekturen, 5 False-Positives aus Live-DB, 3 Anker-Tests, 1 Min-Length, 2 mixed)
+- Bestehende Tests stabil
+
+### Backward-Compatibility
+- API additiv (alle Setter optional, neue Routes parallel zu alten)
+- Bestehende memories unverändert bis K5 sie reklassifiziert
+- Ohne `embeddingService`-Wiring: dedup übersprungen (Verhalten wie v605)
+- Ohne `llm`-Wiring: classifyMessage fällt auf `correction` zurück (Verhalten wie v605)
+
 ## [0.19.0-multi-ha.605] - 2026-05-19
 
 ### Added — Project-Agent Anti-Hallucination (Reaktion auf "interject auf tote Session" 17:21)

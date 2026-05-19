@@ -163,6 +163,18 @@ export class AlfredClient {
     return data.success;
   }
 
+  /** v606 K6 — patch the memory type (for manual reclassification in the UI). */
+  async updateMemoryType(memoryId: string, type: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/memories/${memoryId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ type }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   async fetchRunbooks(filter?: { status?: string; sourceType?: string }): Promise<Runbook[]> {
     const params = new URLSearchParams();
     if (filter?.status) params.set('status', filter.status);

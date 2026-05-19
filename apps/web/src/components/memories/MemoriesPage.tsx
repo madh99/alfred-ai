@@ -59,6 +59,18 @@ export function MemoriesPage() {
     }
   }
 
+  // v606 K6 — change a memory's type (e.g. reclassify falsely-saved corrections)
+  async function handleTypeChange(m: MemoryEntry, newType: string) {
+    if (!client) return;
+    if (newType === m.type) return;
+    const ok = await client.updateMemoryType(m.id, newType);
+    if (ok) {
+      setMemories(prev => prev.map(x => x.id === m.id ? { ...x, type: newType } : x));
+    } else {
+      alert('Type-Update fehlgeschlagen.');
+    }
+  }
+
   const now = new Date().toISOString();
   const visible = memories
     .filter(m => showExpired || !((m.expiresAt && m.expiresAt < now) || (m.relevantUntil && m.relevantUntil < now)))
@@ -133,9 +145,16 @@ export function MemoriesPage() {
                   <span className={`px-2 py-0.5 text-[10px] uppercase font-mono rounded border ${status.color}`}>
                     {status.label}
                   </span>
-                  <span className="px-2 py-0.5 text-[10px] uppercase font-mono rounded bg-[#222] text-gray-500 border border-[#2a2a2a]">
-                    {m.type}
-                  </span>
+                  <select
+                    value={m.type}
+                    onChange={e => handleTypeChange(m, e.target.value)}
+                    className="px-2 py-0.5 text-[10px] uppercase font-mono rounded bg-[#222] text-gray-300 border border-[#2a2a2a] hover:border-blue-500/50 focus:border-blue-500 focus:outline-none cursor-pointer"
+                    title="Memory-Typ ändern"
+                  >
+                    {TYPE_ORDER.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
                   <code className="text-sm text-blue-400 font-mono break-all">{m.key}</code>
                 </div>
                 <button
