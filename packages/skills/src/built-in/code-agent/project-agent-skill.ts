@@ -79,44 +79,7 @@ export function removeAbortController(sessionId: string): void {
 }
 
 export class ProjectAgentSkill extends Skill {
-  readonly metadata: SkillMetadata = {
-    name: 'project_agent',
-    category: 'automation',
-    description: `Autonomous coding agent that creates and develops software projects end-to-end. Runs indefinitely until the goal is reached.
-Actions:
-- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use, e.g. "claude-code"), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs")
-- status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
-- interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
-- stop: Stop a running project agent. Params: task_id`,
-    riskLevel: 'admin',
-    version: '1.0.0',
-    timeoutMs: 30_000,
-    inputSchema: {
-      type: 'object',
-      properties: {
-        action: {
-          type: 'string',
-          enum: ['start', 'status', 'interject', 'stop'],
-          description: 'Project agent action',
-        },
-        goal: { type: 'string', description: 'What to build (for start)' },
-        cwd: { type: 'string', description: 'Working directory for the project (for start)' },
-        agent: { type: 'string', description: 'Code agent to use, e.g. "claude-code" or "codex" (for start)' },
-        buildCommands: {
-          type: 'array', items: { type: 'string' },
-          description: 'Commands to validate build (for start). Default: ["npm install", "npm run build"]',
-        },
-        testCommands: {
-          type: 'array', items: { type: 'string' },
-          description: 'Commands to run tests (for start). Default: ["npm test"]',
-        },
-        template: { type: 'string', description: 'Project template name (for start, optional)' },
-        task_id: { type: 'string', description: 'Task ID (for status/interject/stop)' },
-        message: { type: 'string', description: 'Message to inject (for interject)' },
-      },
-      required: ['action'],
-    },
-  };
+  readonly metadata: SkillMetadata;
 
   private readonly agents: Map<string, CodeAgentDefinitionConfig>;
   private readonly config: ProjectAgentsConfig;
@@ -131,6 +94,59 @@ Actions:
     super();
     this.config = config;
     this.agents = new Map(config.agents.map(a => [a.name, a]));
+
+    // v611 — Build metadata at construction so the agent-enum reflects the actually
+    // configured code agents instead of hardcoded "claude-code". Before this fix the
+    // LLM had no way to know other agents existed and the input-schema rejected nothing,
+    // so a typoed name only failed deep in the runner with 'Unknown agent'.
+    const agentNames = [...this.agents.keys()];
+    const defaultAgent = agentNames[0] ?? '';
+    const agentList = agentNames.length > 0 ? agentNames.join(', ') : '(none configured)';
+    this.metadata = {
+      name: 'project_agent',
+      category: 'automation',
+      description: `Autonomous coding agent that creates and develops software projects end-to-end. Runs indefinitely until the goal is reached.
+Actions:
+- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs")
+- status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
+- interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
+- stop: Stop a running project agent. Params: task_id`,
+      riskLevel: 'admin',
+      version: '1.0.0',
+      timeoutMs: 30_000,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['start', 'status', 'interject', 'stop'],
+            description: 'Project agent action',
+          },
+          goal: { type: 'string', description: 'What to build (for start)' },
+          cwd: { type: 'string', description: 'Working directory for the project (for start)' },
+          agent: agentNames.length > 0 ? {
+            type: 'string',
+            enum: agentNames,
+            description: `Code agent to use (for start). Available: ${agentList}. Default: ${defaultAgent}. Omit to use default.`,
+          } : {
+            type: 'string',
+            description: 'Code agent to use (for start). No agents configured.',
+          },
+          buildCommands: {
+            type: 'array', items: { type: 'string' },
+            description: 'Commands to validate build (for start). Default: ["npm install", "npm run build"]',
+          },
+          testCommands: {
+            type: 'array', items: { type: 'string' },
+            description: 'Commands to run tests (for start). Default: ["npm test"]',
+          },
+          template: { type: 'string', description: 'Project template name (for start, optional)' },
+          task_id: { type: 'string', description: 'Task ID (for status/interject/stop)' },
+          message: { type: 'string', description: 'Message to inject (for interject)' },
+        },
+        required: ['action'],
+      },
+    };
   }
 
   setRunner(runner: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> }): void {

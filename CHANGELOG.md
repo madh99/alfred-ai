@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.611] - 2026-05-20
+
+### Fixed — Midnight-Crash auf beiden Cluster-Nodes (pino-roll v2 → v4) + Agent-Auswahl im Project-Agent
+
+Behebt einen reproduzierbaren Cluster-weiten Crash und macht das vom Project-Agent verwendete Coding-Tool endlich vom User/LLM auswählbar.
+
+#### Root Cause: pino-roll Version-Mismatch (Cluster-Crash bei 2026-05-20T00:00 UTC)
+
+Am 2026-05-20 um 00:00:00 UTC sind beide Alfred-Cluster-Nodes (.92 + .93) gleichzeitig ausgefallen. Die Telegram-Notification, die WebUI und der laufende Project-Agent (139874aa, alpbyte-games HTTPS/Cookie-Banner-Erweiterung, Phase 12/15) brachen ab.
+
+Die direkte Source-Diff-Analyse zwischen den beiden installierten pino-roll-Versionen ergab:
+
+- `packages/cli/package.json` deklarierte `"pino-roll": "^2.0.1"` → installiert wurde **v2.2.0**
+- `packages/logger/package.json` deklarierte `"pino-roll": "^4.0.0"` → erwartete v4-API
+- Die CLI als Entry-Point gewinnt im Bundle → v2.2.0 wurde tatsächlich geladen
+- v2.2.0 ruft im `roll()`-Callback `createSymlink()` **async ohne await/catch** auf und hat **kein try/catch** um `destination.reopen()`
+- v4.0.0 ersetzt das durch sync `createSymlinkSync` + umschließendes try/catch + `isClosing`-Race-Guard + Error-Emit über `destination.emit('error', ...)`
+
+Bei der täglichen Rotation um Mitternacht UTC warf v2.2.0 eine Exception, die ungefangen den Worker-Thread crashte → Main-Thread bekam uncaughtException → graceful shutdown auf beiden Nodes. Diagnostik scheiterte zusätzlich daran, dass der CLI-Handler `logger.fatal({ error: err }, ...)` benutzte; pino's `stdSerializers.err` greift nur beim Schlüssel `err`, daher serialisierte der Error als `{}` ohne Stack-Trace.
+
+**Fix:**
+- `packages/cli/package.json` von `"pino-roll": "^2.0.1"` auf `"^4.0.0"` gehoben — konsistent zur logger-Package-Erwartung
+- `packages/logger/src/logger.ts` registriert explizit `serializers: { err, error: stdSerializers.err }` damit künftige uncaughtExceptions/unhandledRejections mit Stack-Trace geloggt werden
+- `packages/cli/src/commands/start.ts` + `apps/alfred/src/graceful-shutdown.ts`: `logger.fatal({ error }, ...)` → `logger.fatal({ err }, ...)` (oder `{ err: reason }`), nutzt pino's std-err-Serializer
+- pnpm-lock.yaml verifiziert: ausschließlich pino-roll@4.0.0, keine v2-Referenzen mehr
+
+#### Agent-Auswahl im Project-Agent (v611-light, H1)
+
+Beobachtung: Es waren `claude-code`, `codex` und `mistral-vibe` in der `default.yml` konfiguriert. Der Project-Agent verwendete aber immer claude-code, weil:
+- `project-agent-skill.ts:160` wählte bei fehlendem `agent`-Parameter `[...this.agents.keys()][0]` (erster in der Map)
+- Das Input-Schema hatte kein `enum` der erlaubten Agent-Namen — das LLM wusste nicht welche überhaupt verfügbar sind
+- Die `description` erwähnte nur `claude-code` und `codex` als Beispiel, `mistral-vibe` war komplett unsichtbar
+
+**Fix in `packages/skills/src/built-in/code-agent/project-agent-skill.ts`:**
+- `metadata` wird jetzt im Konstruktor gebaut (nicht mehr als statischer Property-Initializer)
+- `inputSchema.properties.agent.enum` wird aus `this.agents.keys()` befüllt
+- `description` listet alle verfügbaren Agents auf und benennt den Default explizit
+- Die übergeordnete Skill-`description` enthält ebenfalls die Liste
+
+Damit kann das LLM (oder du explizit per Telegram "starte project_agent für X mit agent=codex") jeden konfigurierten Agent wählen. Schema-Validation lehnt Typos früh ab statt sie deep im Runner als "Unknown agent" zu produzieren.
+
+#### Bewusst NICHT in v611
+
+- Auto-Selection per Phase durch das Planning-LLM (was als "H3" diskutiert wurde). Begründung: die Agents sind General-Purpose-Coding-Tools, es gibt keine objektive Faktenbasis ("vibe ist gut für CSS, codex für Algorithmen" wäre erfunden). Ehrliche Auto-Selection bräuchte gemessene Erfolgsraten über viele Runs — Cold-Start-Problem. Wird wieder aufgegriffen wenn ausreichend Datenbasis existiert.
+- systemd unit mit `Restart=on-failure` als zusätzliches Sicherheitsnetz. Mit dem v4-Fix sollte das nicht mehr nötig sein, aber wenn der Crash erneut auftritt wäre das die nächste Eskalationsstufe.
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- Skills-Tests 188 passed
+- pnpm-lock.yaml: pino-roll@4.0.0 zwei Referenzen, pino-roll@2 null Referenzen
+- Project-Agent-Session 139874aa bleibt nach Restart als "running" mit current_phase=coding stehen — recoverInterrupted ignoriert sie (kein agentState/persistent-task), muss bei Bedarf manuell neu gestartet werden
+
 ## [0.19.0-multi-ha.610] - 2026-05-19
 
 ### Fixed + Added — Recovery-UX + Activity-Log + Auto-Deploy-Vorschlag

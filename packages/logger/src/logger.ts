@@ -49,6 +49,15 @@ export function createLogger(name: string, level?: string, options?: { version?:
     name,
     level: logLevel,
     redact: redactOpts,
+    // v611 — without explicit serializers, pino renders Error objects as `{}`
+    // because Error.message/stack are non-enumerable and JSON.stringify skips
+    // them. We register the standard err-serializer under BOTH `err` (canonical)
+    // and `error` (we use this name in some legacy call sites) so future
+    // uncaughtExceptions/unhandledRejections actually log their stack trace.
+    serializers: {
+      err: pino.stdSerializers.err,
+      error: pino.stdSerializers.err,
+    },
   };
 
   // Inject version as a base binding so every log line includes it

@@ -28,12 +28,13 @@ export function setupGracefulShutdown(alfred: Alfred, logger: Logger): void {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   process.on('uncaughtException', (error) => {
-    logger.fatal({ error }, 'Uncaught exception');
+    // v611 — `err` key triggers pino stdSerializer; previously `error` was serialized as {}
+    logger.fatal({ err: error }, 'Uncaught exception');
     void shutdown('uncaughtException').catch(() => process.exit(1));
   });
 
   process.on('unhandledRejection', (reason) => {
-    logger.fatal({ reason }, 'Unhandled rejection');
+    logger.fatal({ err: reason }, 'Unhandled rejection');
     void shutdown('unhandledRejection').catch(() => process.exit(1));
   });
 }

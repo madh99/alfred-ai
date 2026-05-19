@@ -47,12 +47,16 @@ export async function startCommand(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
   process.on('uncaughtException', (err) => {
-    logger.fatal({ error: err }, 'Uncaught exception');
+    // v611 — use `err` key so pino's stdSerializers.err captures stack trace.
+    // Previously this used `{ error: err }` which serialized as `{}` because
+    // Error properties are non-enumerable. Cost us a real diagnosis when the
+    // pino-roll@2 midnight crash hit alfred on 2026-05-20T00:00 UTC.
+    logger.fatal({ err }, 'Uncaught exception');
     shutdown('uncaughtException');
   });
 
   process.on('unhandledRejection', (reason) => {
-    logger.fatal({ reason }, 'Unhandled rejection');
+    logger.fatal({ err: reason }, 'Unhandled rejection');
     shutdown('unhandledRejection');
   });
 
