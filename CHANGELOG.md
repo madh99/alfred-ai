@@ -5,6 +5,49 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.603] - 2026-05-19
+
+### Added — Logger-Fixes, AuditLogger-Verkabelung, systemd-Service-Unit
+
+Adressiert die in der Analyse vom 19.05. identifizierten Logging- und Start-Probleme. Keine Code-Änderungen an Projects/Workflows in dieser Version — die laufen noch im Test seit v602.
+
+#### L4 — `frequency` + `dateFormat` an pino-roll durchreichen (`logger.ts`)
+- Vorher: `frequency` war im `LogFileConfig` Interface deklariert, aber **nicht** an pino-roll weitergegeben → Daily-Rotation lief nie, obwohl als Default dokumentiert
+- Jetzt: `frequency` (default `'daily'`) und `dateFormat` (default `'yyyy-MM-dd'`) werden korrekt in die pino-roll-Optionen injiziert
+- ENV-Overrides: `ALFRED_LOG_FILE_FREQUENCY` (`daily` / `hourly` / `null`), `ALFRED_LOG_FILE_DATE_FORMAT`
+- Konfigurierbar pro Config-Datei via `logger.file.frequency`
+
+#### L7 — Stabile `tail -F`-Datei via Symlink (pino-roll v2 → v4)
+- pino-roll Upgrade `^2.0.1` → `^4.0.0` (`mkdir: true`, `symlink: true` Optionen)
+- pino-roll v4 erzeugt automatisch einen Symlink mit dem Basename (`alfred.log`) zur aktuellen rotierten Datei (`alfred.log.2026-05-19`)
+- `tail -F /root/alfred/data/logs/alfred.log` folgt damit der aktiven Datei auch über Tages-Rotation hinweg
+- Gleiche Behandlung für `audit.log` (AuditLogger)
+- Eliminiert das beobachtete Phänomen "es gibt kein alfred.log, nur .1 .2 .3 .4 .5"
+
+#### L5 — AuditLogger initialisieren + verkabeln
+- Vorher: `AuditLogger`-Klasse existierte in `@alfred/logger` aber wurde **nie instanziiert** → keine `audit.log`-Datei vorhanden trotz `auditLogPath` in config
+- Jetzt: `alfred.ts` (Schritt 2 Init) erstellt `AuditLogger` mit dem aus `config.logger.auditLogPath` geladenen Pfad und übergibt ihn als zweite Senke an `SecurityManager`
+- `SecurityManager` schreibt jede Audit-Entry sowohl in die `audit_log`-Tabelle (DB-backed, für UI-Query) als auch in die rotierende Datei (file-backed, für tail+Archivierung)
+- Fehler im File-Sink werden geswallowed — DB-Audit bleibt im Vordergrund-Pfad
+- Neue Interface `AuditFileSink` im `@alfred/security` für lose Kopplung
+
+#### L2 — systemd-Service-Unit (`packaging/systemd/alfred.service`)
+- Neue Service-Definition mit `Type=simple`, `Restart=on-failure`, sauberen `StandardOutput=journal`/`StandardError=journal` Streams
+- Setzt `NODE_ENV=production` (eliminiert pino-pretty in stdout-Pfaden)
+- Setzt `ALFRED_LOG_FILE_ENABLED=true` und `ALFRED_LOG_FILE_PATH` deterministisch
+- `StartLimitBurst=5` über 5 Minuten — verhindert Crash-Loop-Schleifen
+- Ausführliche Install-Doku in `packaging/systemd/README.md` inkl. Migration von `nohup`-Setup
+- **Löst das Doppel-Start-Problem dauerhaft**: systemd setzt stdin/stdout/stderr **vor** dem exec auf journald-Sockets — kein TTY-Übergangszustand, kein EIO
+
+#### Backward-Compatibility
+- Bestehende Setups (nohup) laufen weiter unverändert — systemd-Unit ist additiv, kein Zwang zum Umstieg
+- Existing rotated log-files (`alfred.log.1`, `alfred.log.2026-04-17.1`, etc.) bleiben liegen — pino-roll v4 startet seine eigene Rotation parallel
+- Empfehlung: nach Umstieg alte Files manuell archivieren
+
+### Wichtig für Deployment
+- **Manuelle Migration**: nach Update auf v603 läuft die existierende `nohup`-Variante weiter, aber empfohlen ist Umstieg auf systemd (siehe `packaging/systemd/README.md`)
+- Bei Migration: alten `nohup`-Prozess stoppen, dann `sudo systemctl enable alfred --now`
+
 ## [0.19.0-multi-ha.602] - 2026-05-19
 
 ### Added — Auto-Workflow-Creation + Cluster-Fixes + ITSM-Verlinkung

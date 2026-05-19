@@ -89,19 +89,39 @@ export function createLogger(name: string, level?: string, options?: { version?:
     const filePath = fileConf?.path ?? process.env.ALFRED_LOG_FILE_PATH ?? './data/logs/alfred.log';
     const maxSize = fileConf?.maxSize ?? process.env.ALFRED_LOG_FILE_MAX_SIZE ?? '10m';
     const maxFiles = fileConf?.maxFiles ?? (Number(process.env.ALFRED_LOG_FILE_MAX_FILES) || 30);
+    // v603 — pass `frequency` and `dateFormat` to pino-roll. Previously declared in
+    // LogFileConfig but not forwarded, which meant rotation was size-only despite
+    // daily being the documented default. Result: mixed numeric + dated file names
+    // in the wild. Daily default keeps files predictable (one per day) and
+    // co-operates with size-based rotation when daily files exceed maxSize.
+    const envFreq = process.env.ALFRED_LOG_FILE_FREQUENCY;
+    const frequency: 'daily' | 'hourly' | null = fileConf?.frequency
+      ?? (envFreq === 'daily' || envFreq === 'hourly' ? envFreq as 'daily' | 'hourly' : envFreq === 'null' ? null : 'daily');
+    const dateFormat = process.env.ALFRED_LOG_FILE_DATE_FORMAT ?? 'yyyy-MM-dd';
 
     // Ensure directory exists (sync, runs once at startup)
     try {
       mkdirSync(dirname(filePath), { recursive: true });
     } catch { /* directory may already exist */ }
 
+    const pinoRollOptions: Record<string, unknown> = {
+      file: filePath,
+      size: maxSize,
+      limit: { count: maxFiles },
+      mkdir: true,
+      // v603 (pino-roll v4) — creates a stable symlink at <basename> pointing
+      // to the active rotated file. Lets you `tail -F alfred.log` regardless
+      // of date-suffix rotation.
+      symlink: true,
+    };
+    if (frequency) {
+      pinoRollOptions.frequency = frequency;
+      pinoRollOptions.dateFormat = dateFormat;
+    }
+
     targets.push({
       target: 'pino-roll',
-      options: {
-        file: filePath,
-        size: maxSize,
-        limit: { count: maxFiles },
-      },
+      options: pinoRollOptions,
       level: logLevel,
     });
   }

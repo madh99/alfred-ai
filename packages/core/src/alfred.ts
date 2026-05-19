@@ -207,10 +207,23 @@ export class Alfred {
     const ruleEngine = new RuleEngine();
     const rules = this.loadSecurityRules();
     ruleEngine.loadRules(rules);
+    // v603 — file-based audit sink (rotates daily, configurable path via
+    // logger.auditLogPath). Wires alongside the DB-backed AuditRepository so
+    // every security evaluation gets tail-able + queryable.
+    let auditFileSink: import('@alfred/logger').AuditLogger | undefined;
+    try {
+      const { AuditLogger } = await import('@alfred/logger');
+      const auditPath = this.config.logger.auditLogPath ?? './data/logs/audit.log';
+      auditFileSink = new AuditLogger(auditPath);
+      this.logger.info({ path: auditPath }, 'File-based audit logger initialized');
+    } catch (err) {
+      this.logger.warn({ err }, 'File-based audit logger init failed — DB-audit still active');
+    }
     const securityManager = new SecurityManager(
       ruleEngine,
       auditRepo,
       this.logger.child({ component: 'security' }),
+      auditFileSink,
     );
     this.logger.info({ ruleCount: rules.length }, 'Security engine initialized');
 

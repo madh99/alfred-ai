@@ -1,0 +1,43 @@
+[Unit]
+Description=Alfred — Personal AI Assistant
+Documentation=https://github.com/madh99/alfred-ai
+After=network-online.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/alfred
+EnvironmentFile=/root/alfred/.env
+Environment=NODE_ENV=production
+Environment=ALFRED_LOG_FILE_ENABLED=true
+Environment=ALFRED_LOG_FILE_PATH=/root/alfred/data/logs/alfred.log
+
+ExecStart=/usr/bin/alfred start
+
+# stdout/stderr go to journal (no race with nohup, no detached-terminal EIO)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alfred
+
+# Restart on crash, but back off if it keeps failing
+Restart=on-failure
+RestartSec=5s
+StartLimitInterval=300s
+StartLimitBurst=5
+
+# Graceful shutdown — Alfred has its own SIGTERM handler that calls alfred.stop()
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+
+# Resource limits (adjust if needed)
+LimitNOFILE=65536
+
+# Optional hardening — uncomment after first successful boot if desired
+# NoNewPrivileges=true
+# ProtectSystem=full
+# ProtectHome=read-only
+# PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -29,6 +29,8 @@ export class AuditLogger {
         frequency: 'daily',
         dateFormat: 'yyyy-MM-dd',
         limit: { count: 30 }, // Audit logs: 30 days retention
+        mkdir: true,
+        symlink: true,
       },
     });
     this.logger = pino({ name: 'audit', redact: auditRedactOpts }, transport);
