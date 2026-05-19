@@ -79,6 +79,27 @@ function redactSecrets(content: string): string {
   result = result.replace(SECRET_PATTERNS[1], '[REDACTED_TOKEN]');
   return result;
 }
+
+/**
+ * v610 G7 — redact secret-shaped keys from a structured skill-input record
+ * before persisting it to activity_log.details. Mirrors the redaction list
+ * in skill-sandbox.ts. Returns a shallow-copied object; nested values are
+ * stringified only if they are objects whose JSON contains secret patterns.
+ */
+const SECRET_KEY_NAMES = new Set([
+  'password', 'secret', 'token', 'apiKey', 'api_key', 'accessToken',
+  'refreshToken', 'clientSecret', 'access_token', 'refresh_token',
+  'client_secret', 'private_key', 'privateKey',
+]);
+function redactInputSecrets(input: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!input || typeof input !== 'object') return input;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    if (SECRET_KEY_NAMES.has(k)) { out[k] = '[REDACTED]'; continue; }
+    out[k] = v;
+  }
+  return out;
+}
 const MAX_CONTINUATION_ROUNDS = 3; // Max continuation rounds when LLM hits max_tokens
 const TOKEN_BUDGET_RATIO = 0.85; // Use at most 85% of input window for context
 
@@ -1503,6 +1524,7 @@ export class MessagePipeline {
         this.activityLogger?.logSkillExec({
           userId: context.userId, platform: context.platform, chatId: context.chatId,
           skillName: toolCall.name, outcome: 'denied', error: evaluation.reason,
+          details: redactInputSecrets(toolCall.input as Record<string, unknown>),
         });
         return {
           content: `Access denied: ${evaluation.reason}`,
@@ -1540,10 +1562,15 @@ export class MessagePipeline {
       const execStart = Date.now();
       try {
         const result = await this.skillSandbox.execute(skill, toolCall.input, execContext, undefined, tracker);
+        // v610 G7 — persist skill input as activity-log details so downstream
+        // reasoning sources (v608 F8 "Recent Deploys", SkillFailureReflector)
+        // can actually find host/project/cwd. Secrets are redacted up-front.
+        const safeDetails = redactInputSecrets(toolCall.input as Record<string, unknown>);
         this.activityLogger?.logSkillExec({
           userId: context.userId, platform: context.platform, chatId: context.chatId,
           skillName: toolCall.name, outcome: result.success ? 'success' : 'error',
           durationMs: Date.now() - execStart, error: result.error,
+          details: safeDetails,
         });
         // Record skill health
         if (this.skillHealthTracker) {
@@ -1587,6 +1614,7 @@ export class MessagePipeline {
           userId: context.userId, platform: context.platform, chatId: context.chatId,
           skillName: toolCall.name, outcome: 'error',
           durationMs: Date.now() - execStart, error: errorMsg,
+          details: redactInputSecrets(toolCall.input as Record<string, unknown>),
         });
         this.skillHealthTracker?.recordFailure(toolCall.name, errorMsg);
         throw err;

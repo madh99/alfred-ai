@@ -843,15 +843,19 @@ export class Alfred {
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
         }
 
-        // Trigger B (existing): on success with ≥3 milestones, propose a runbook.
-        if (!success || state.milestonesReached.length < 3) return;
-        if (!this.runbookRepo || !this.confirmationQueue) return;
+        // v610 G5 — On failure, neither runbook nor deploy proposal makes sense.
+        // We keep the runbook gated additionally by milestone-count, but the
+        // deploy-suggestion does NOT need many milestones — just a green build.
+        if (!success) return;
+
+        // Trigger B (existing): with ≥3 milestones, propose a runbook.
+        if (state.milestonesReached.length >= 3 && this.runbookRepo && this.confirmationQueue) {
         try {
           const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
-          if (!userId) return;
+          if (!userId) { /* skip runbook */ } else {
           // Avoid duplicate suggestion if a runbook already exists for this session
           const existing = await this.runbookRepo.findBySource(userId, 'project_agent', sessionId);
-          if (existing) return;
+          if (existing) { /* skip runbook */ } else {
           const ownerPlatformForRb = (this.config.telegram?.enabled ? 'telegram'
             : this.config.discord?.enabled ? 'discord'
             : this.config.whatsapp?.enabled ? 'whatsapp'
@@ -888,7 +892,72 @@ export class Alfred {
             timeoutMinutes: 24 * 60,
           });
           this.logger.info({ sessionId, milestones: state.milestonesReached.length, title: rbTitle }, 'Project-agent runbook suggestion enqueued');
+          }}
         } catch (err) { this.logger.debug({ err }, 'Runbook suggestion (project-agent) failed'); }
+        }
+
+        // v610 G5 — Auto-Deploy-Suggestion: if the project just completed
+        // a successful build AND we have a remembered deploy-target for the
+        // same project (from v609 V2 auto-memory), propose redeploying.
+        // Without this the user has to manually re-state host/port/user/pm
+        // every time after a project-agent run. The suggestion is opt-in via
+        // the existing ConfirmationQueue, so the user keeps full control.
+        if (success && this.memoryRepo && this.confirmationQueue) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            if (!userId) return;
+            const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
+            if (!projectName) return;
+            // Find latest deploy memory for this project
+            const memHits = await this.memoryRepo.search(userId, `deploy_${projectName}_`);
+            // Filter to deployment-category memories only and keep the most recent
+            const deployMems = memHits.filter(m =>
+              m.category === 'deployment' && m.key.startsWith(`deploy_${projectName}_`),
+            ).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+            const lastDeploy = deployMems[0];
+            if (!lastDeploy) return;
+            // Parse host/user/port/pm from the structured value string.
+            // Format (from deploy.ts): "Deployed X → HOST (user=U, runtime=R, pm=P, port=N, ...)"
+            const v = lastDeploy.value;
+            const hostMatch = v.match(/→\s*([\w.-]+)\s*\(/);
+            const userMatch = v.match(/user=([^,)]+)/);
+            const portMatch = v.match(/port=(\d+)/);
+            const pmMatch = v.match(/pm=([^,)]+)/);
+            const runtimeMatch = v.match(/runtime=([^,)]+)/);
+            if (!hostMatch) return;
+            const host = hostMatch[1];
+            const deployUser = userMatch?.[1] ?? 'root';
+            const port = portMatch ? Number(portMatch[1]) : undefined;
+            const pm = pmMatch?.[1];
+            const runtime = runtimeMatch?.[1];
+            // Avoid stacking suggestions for the same session
+            const dedupSourceId = `auto-deploy-from-project-${sessionId.slice(0, 8)}`;
+            const ownerPlatformForDp = (this.config.telegram?.enabled ? 'telegram'
+              : this.config.discord?.enabled ? 'discord'
+              : this.config.whatsapp?.enabled ? 'whatsapp'
+              : 'api');
+            const skillParams: Record<string, unknown> = {
+              action: 'deploy',
+              host,
+              user: deployUser,
+              project: projectName,
+            };
+            if (port !== undefined) skillParams.app_port = port;
+            if (pm) skillParams.process_manager = pm;
+            if (runtime) skillParams.runtime = runtime;
+            await this.confirmationQueue.enqueue({
+              chatId: this.config.security?.ownerUserId ?? '',
+              platform: ownerPlatformForDp,
+              source: 'reasoning',
+              sourceId: dedupSourceId,
+              description: `Project Agent fertig — auch nach \`${host}\`${port ? `:${port}` : ''} (user \`${deployUser}\`${pm ? `, pm ${pm}` : ''}) deployen wie letztes Mal?`,
+              skillName: 'deploy',
+              skillParams,
+              timeoutMinutes: 60,
+            });
+            this.logger.info({ sessionId, host, projectName, port }, 'Project-agent auto-deploy suggestion enqueued');
+          } catch (err) { this.logger.debug({ err }, 'Auto-deploy suggestion (project-agent) failed'); }
+        }
       });
 
       skillRegistry.register(projectAgentSkill);

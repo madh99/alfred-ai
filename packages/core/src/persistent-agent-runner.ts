@@ -36,7 +36,19 @@ export class PersistentAgentRunner {
           // No checkpoint data — mark as failed
           await this.taskRepo.updateStatus(task.id, 'failed', undefined, 'Process restarted without checkpoint');
           this.logger.warn({ taskId: task.id }, 'Interrupted task without checkpoint marked as failed');
-          this.notifyUser(task, '\u274C Hintergrund-Task abgebrochen (Prozess-Neustart ohne Checkpoint)');
+          // v610 G1/G2 \u2014 only notify for tasks that ran >=60s before the
+          // restart. Short-running single-shot tasks (shell, deploy) simply
+          // never reached their first checkpoint \u2014 no point alarming the user.
+          // Longer tasks get an informative message instead of an alarmist one.
+          const startedAt = task.startedAt ? new Date(task.startedAt).getTime() : new Date(task.createdAt).getTime();
+          const elapsedMs = Date.now() - startedAt;
+          if (elapsedMs >= 60_000) {
+            const desc = task.description ? `"${task.description}"` : `(${task.skillName})`;
+            this.notifyUser(task,
+              `\u26A0\uFE0F Hintergrund-Task ${desc} wurde durch Neustart unterbrochen.\n` +
+              `Falls noch n\u00F6tig, bitte erneut anstossen.`,
+            );
+          }
         }
       }
     } catch (err) {

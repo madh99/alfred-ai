@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.610] - 2026-05-19
+
+### Fixed + Added — Recovery-UX + Activity-Log + Auto-Deploy-Vorschlag
+
+Schließt drei Beobachtungen aus dem alpbyte-games-Workflow nach v609-Deploy: (1) der Recovery-Mechanismus produziert ein alarmistisches "Hintergrund-Task abgebrochen" auch bei kurzen Single-Shot-Tasks die noch keinen Checkpoint hatten; (2) das activity_log.details Feld war seit jeher NULL, womit v608 F8 (Deploy-History Context) faktisch wirkungslos war; (3) nach erfolgreicher Project-Agent-Session wurde nur ein Runbook-Vorschlag enqueued, kein Deploy-Vorschlag.
+
+#### G1+G2 — Recovery-Telegram-Spam reduzieren (`persistent-agent-runner.ts`)
+- `recoverInterrupted()`: Tasks die <60s vor dem Neustart liefen werden jetzt **still** als failed markiert (kein Telegram). Diese sind meist Single-Shot-Skills (shell, deploy) die schlicht nie ihren ersten Checkpoint erreichten — eine "wir haben deine Arbeit verloren"-Meldung ist hier Noise.
+- Für längere Tasks: Formulierung umgeschrieben von "❌ Hintergrund-Task abgebrochen (Prozess-Neustart ohne Checkpoint)" zu "⚠️ Hintergrund-Task <desc> wurde durch Neustart unterbrochen. Falls noch nötig, bitte erneut anstossen." — informativ statt alarmistisch.
+
+#### G5 — Auto-Deploy-Vorschlag nach Project-Agent (`alfred.ts` setCompletionCallback)
+- Wenn ein Project-Agent erfolgreich endet (`success=true`) UND eine Memory `deploy_<project>_*` für denselben Projektnamen existiert (geschrieben von v609 V2): enqueue eines zweiten Confirmation-Eintrags `"Project Agent fertig — auch nach <host>:<port> (user <user>, pm <pm>) deployen wie letztes Mal?"` mit `skillName: deploy` und vorgefüllten Parametern.
+- Parsing aus dem strukturierten Memory-Value (`Deployed X → HOST (user=..., port=..., pm=...)`). Hose-Belt-Suspenders: Memory-Filter auf `category=deployment` zusätzlich zum Key-Prefix.
+- Timeout 60 min, dedup-source-id `auto-deploy-from-project-<sessionId8>` verhindert Doppel-Enqueue beim selben Run.
+- Der Runbook-Vorschlag bleibt unverändert; nur die Frühausstiegslogik wurde umgebaut sodass G5 unabhängig vom Milestone-Count laufen kann (Runbook bleibt ≥3-Milestones-gated, Deploy braucht nur grünen Build).
+
+#### G7 — `activity_log.details` befüllen (`message-pipeline.ts`)
+- Bug aus v608: An den drei Aufrufstellen von `logSkillExec()` (success/error/denied) wurden weder Skill-Input noch Host/Project an die Activity-Log-Tabelle weitergereicht. Konsequenz: das `details`-Feld war seit jeher NULL, womit:
+  - v608 F8 "Letzte Deploys" Reasoning-Context-Source NIE Treffer produzierte (sie sucht `details.host`/`details.project`)
+  - SkillFailureReflector (v607 D3) Workaround-Patterns nur über `errorMessage` matchen konnte
+- Fix: neue Helper-Funktion `redactInputSecrets()` strippt Keys aus der `SECRET_KEY_NAMES`-Liste (password, secret, token, apiKey, accessToken, refreshToken, clientSecret, private_key u.a.) und reicht den Rest als `details` durch.
+- Konsequenz: Ab v610 hat F8 endlich echte Daten zum Anzeigen.
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- Vorbestehende `watch-engine.test.ts`/`reasoning-engine.test.ts` Failures unverändert (nicht von v610 verursacht)
+- G5 setzt voraus dass v609 V2 schon mal einen Deploy für das Projekt geschrieben hat — beim ersten Deploy gibt's noch keinen Auto-Vorschlag (per Design)
+
 ## [0.19.0-multi-ha.609] - 2026-05-19
 
 ### Added — Project-Agent-Sessions UI + Auto-Memory on Deploy
