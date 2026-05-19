@@ -857,4 +857,20 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_health_log_probe ON project_health_log(project_id, probe, checked_at DESC)`, []);
     },
   },
+  {
+    version: 67,
+    description: 'Workflows + project_open_items — auto-extraction columns, auto_run flag, ITSM cross-linking',
+    async up(db) {
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS source_session_id TEXT`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS related_runbook_id TEXT`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS auto_extracted INTEGER NOT NULL DEFAULT 0`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS auto_run INTEGER NOT NULL DEFAULT 0`, []);
+      await db.execute(`ALTER TABLE workflow_chains ADD COLUMN IF NOT EXISTS description TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_workflow_chains_source ON workflow_chains(source_session_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_workflow_chains_name ON workflow_chains(user_id, name)`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS linked_incident_id TEXT`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS linked_change_id TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_open_items_linked_incident ON project_open_items(linked_incident_id)`, []);
+    },
+  },
 ];

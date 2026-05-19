@@ -5,6 +5,69 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.602] - 2026-05-19
+
+### Added — Auto-Workflow-Creation + Cluster-Fixes + ITSM-Verlinkung
+
+Adressiert 5 Themen aus der Analyse vom 19.05.: HealthMonitor-Cluster-Spam, fehlende Lern-Funktion (Workflow aus Sessions), Trigger-Lücke für Delegate-Sessions, ITSM-Doppel-Tracking im Misc-Bucket, WebUI-Trennung von Projekten und Beratungs-Sessions.
+
+#### P1 — HealthMonitor cluster-aware
+- `HealthMonitor` nimmt jetzt einen `ClusterClaim`-Resolver (lazy, weil `AdapterClaimManager` später in `initialize()` konstruiert wird)
+- Vor jedem Cycle: `tryClaim('project-health-monitor')` — nur der eine Node läuft die Probes
+- Andere Nodes loggen "cycle skipped — claim held by another node" und tun nichts
+- Beseitigt das Phänomen "alle 6h Confirmation-Spam wegen alternierender Node-Sichten"
+- Plattform wird in `alfred.ts` Init-Phase 2 via `adapterClaimManager.registerPlatform('project-health-monitor')` registriert
+- Single-Node SQLite-Deployments: Resolver gibt `undefined` → unverändertes Single-Node-Verhalten
+
+#### P2 — Auto-Workflow-Creation (Variante B, Session-basiert)
+- Neu: `packages/core/src/projects/workflow-extractor.ts`
+  - LLM-Analyse (Strong-Tier default) erkennt wiederverwendbare Skill-Sequenzen aus Delegate-Sessions
+  - Schwellwert: `>=2 successful tool-calls AND >=2 unique skills` als Early-Skip
+  - Output: strict JSON mit `suggested_name` (kebab-case), `suggested_description`, `steps` (WorkflowActionStep-konform)
+  - Validation: erfundene Skills werden abgelehnt (anti-hallucination), kebab-case strikt erzwungen
+- Wiring in `alfred.ts` DelegateSkill-Completion-Callback: nach `finishOrphanSession()` ruft `proposeWorkflowFromSession()` an, wenn substantiell + erfolgreich
+- Confirmation-Queue-Eintrag mit `skillName='workflow', action='create', autoExtracted=true`
+- **Zwei separate Confirmations** bei Project-Agent-Erfolg (Runbook bestehend + Workflow neu) — bewusst nach User-Entscheidung
+- Migration v64/v67: `workflow_chains` bekommt `source_session_id`, `related_runbook_id`, `auto_extracted`, `auto_run`, `description`
+- `WorkflowRepository`: neue `findByName()`, `setAutoRun()`, `setRelatedRunbook()`
+- 11 neue Vitests für Extractor
+
+#### P2 — Workflow Run-Confirmation + `auto_run` Flag
+- `WorkflowSkill.runWorkflow`: bei `auto_run=false` und ohne `confirmed=true` → enqueued Confirmation-Eintrag mit `confirmed=true` als Approval-Payload, return mit Steps-Preview
+- Neue Skill-Action `set_auto_run` (workflow_id + enabled boolean) — toggle pro Workflow
+- Wichtig: Skill-Level admin-Confirmations bleiben unabhängig aktiv. Ein Workflow mit `auto_run=true` enthält trotzdem geschützte SSH/Deploy-Skills, die ihre eigenen Sicherheits-Prompts behalten
+
+#### P3 — Runbook-Workflow-Kopplung
+- Cross-Link via `related_runbook_id` Feld in `workflow_chains`
+- Beide Artefakte entstehen aus derselben Session, behalten aber separate Confirmations und Lifecycles
+
+#### P4 — Anti-Duplicate ITSM-Verlinkung
+- Migration v64/v67: `project_open_items` bekommt `linked_incident_id`, `linked_change_id`
+- `SessionSummarizer` Prompt-Erweiterung: erkennt 8-char hex-IDs im Titel, extrahiert als `linked_incident_id` statt im Titel zu duplizieren
+- Parser-Fallback: wenn LLM die Regel missachtet, regex-basierter Fallback-Extraktor
+- **Cross-Domain-Cascade**:
+  - **Forward**: ProjectSkill `resolve_open_item` → wenn `linkedIncidentId` gesetzt → ItsmSkill `update_incident` / `close_incident`
+  - **Reverse**: ItsmSkill `close_incident` / `update_incident` mit status=resolved/closed → ProjectRepo `findOpenItemsByLinkedIncident()` → alle linked open-items auf `done`
+- `ProjectSkill.setIncidentCascade()` und `ItsmSkill.setProjectItemCascade()` neue Setter
+- Wiring in `alfred.ts` über Lazy-Lookup `skillRegistry.get('itsm')` (ItsmSkill wird im CMDB-Block ~600 Zeilen später konstruiert)
+
+#### P5 — WebUI Misc-Tab
+- `/alfred/projects` Page bekommt 2 Tabs: "Projekte" (alles ohne Misc) und "Beratungs-Sessions" (nur Misc-Bucket)
+- Misc-Erkennung: `slug='misc'` oder Tag `system` enthalten
+- Counter im Tab-Label: zeigt wieviele Projekte/Sessions pro Tab
+- Backend unverändert — Misc bleibt im `projects`-Schema, nur Frontend trennt visuell
+
+### Tests
+- 5 neue Cluster-Claim Tests in `health-monitor.test.ts` (insgesamt 15)
+- 11 neue Vitests für WorkflowExtractor (Parse, Anti-Halluzination, Skip-Cases)
+- 46/46 project-tests stabil
+
+### Backward-Compatibility
+- Bestehende Workflows: alle Spalten unverändert, neue Spalten NULL/0 für alte Records
+- Bestehende Runbooks: unverändert, `related_workflow_id` bleibt NULL
+- v591-v600 Project/Runbook/Health-Mechanismen: alle Trigger weiter aktiv
+- HealthMonitor-API: nur Constructor erweitert (optionaler Parameter ans Ende), keine Breaking Changes
+
 ## [0.19.0-multi-ha.601] - 2026-05-18
 
 ### Added — Projects WebUI + Health-Detail im Chat

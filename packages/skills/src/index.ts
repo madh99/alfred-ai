@@ -53,6 +53,7 @@ export { DockerSkill } from './built-in/docker.js';
 export { BMWSkill } from './built-in/bmw.js';
 export { BrainstormingSkill } from './built-in/brainstorming.js';
 export { ProjectSkill } from './built-in/project.js';
+export type { IncidentCascadeFn } from './built-in/project.js';
 export { CloudflareDnsSkill } from './built-in/cloudflare-dns.js';
 export { NginxProxyManagerSkill } from './built-in/nginx-proxy-manager.js';
 export { DeploySkill } from './built-in/deploy.js';

@@ -3,7 +3,7 @@ import { Skill } from '../skill.js';
 import type { WorkflowRepository } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 
-type WorkflowAction = 'create' | 'list' | 'run' | 'delete' | 'history' | 'create_from_prompt' | 'activate' | 'dry_run';
+type WorkflowAction = 'create' | 'list' | 'run' | 'delete' | 'history' | 'create_from_prompt' | 'activate' | 'dry_run' | 'set_auto_run';
 
 /** Minimal interface to avoid circular dependency with @alfred/core */
 interface WorkflowRunnerInterface {
@@ -46,7 +46,7 @@ export class WorkflowSkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['create', 'list', 'run', 'delete', 'history', 'create_from_prompt', 'activate', 'dry_run'],
+          enum: ['create', 'list', 'run', 'delete', 'history', 'create_from_prompt', 'activate', 'dry_run', 'set_auto_run'],
           description: 'Workflow action',
         },
         name: {
@@ -84,6 +84,15 @@ export class WorkflowSkill extends Skill {
   // WorkflowRunner is set after construction (to avoid circular deps)
   private runner?: WorkflowRunnerInterface;
   private promptParser?: PromptParserInterface;
+  /** Set by alfred.ts — called when a workflow needs Run-Confirmation. */
+  private onRunConfirmationRequired?: (params: {
+    chain: import('@alfred/types').WorkflowChain;
+    context: SkillContext;
+  }) => Promise<void>;
+
+  setRunConfirmationCallback(cb: typeof WorkflowSkill.prototype.onRunConfirmationRequired): void {
+    this.onRunConfirmationRequired = cb;
+  }
 
   constructor(
     private readonly workflowRepo: WorkflowRepository,
@@ -111,9 +120,32 @@ export class WorkflowSkill extends Skill {
       case 'create_from_prompt': return this.createFromPrompt(input, context);
       case 'activate': return this.activateWorkflow(input);
       case 'dry_run': return this.dryRun(input, context);
+      case 'set_auto_run': return this.setAutoRunAction(input, context);
       default:
         return { success: false, error: `Unknown action: "${String(action)}"` };
     }
+  }
+
+  private async setAutoRunAction(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const workflowId = (input.workflow_id ?? input.workflowId) as string | undefined;
+    const enabled = input.enabled as boolean | undefined;
+    if (!workflowId) return { success: false, error: 'Missing "workflow_id"' };
+    if (typeof enabled !== 'boolean') return { success: false, error: 'Missing "enabled" boolean' };
+    const chain = await this.workflowRepo.getById(workflowId);
+    if (!chain) return { success: false, error: `Workflow "${workflowId}" not found` };
+    const userIds = allUserIds(context);
+    if (!userIds.includes(chain.userId)) {
+      return { success: false, error: 'Not authorized to modify this workflow' };
+    }
+    await this.workflowRepo.setAutoRun(chain.id, enabled);
+    return {
+      success: true,
+      data: { workflowId: chain.id, autoRun: enabled },
+      display: `Auto-Run für Workflow "${chain.name}": ${enabled ? '✓ aktiviert' : '✗ deaktiviert'}. ` +
+        (enabled
+          ? 'Wird in Zukunft ohne Workflow-Bestätigung ausgeführt (Skill-eigene Sicherheits-Prompts bleiben aktiv).'
+          : 'Bei jedem Aufruf wird wieder eine Bestätigung eingeholt.'),
+    };
   }
 
   private async createWorkflow(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -228,6 +260,35 @@ export class WorkflowSkill extends Skill {
     const chain = await this.workflowRepo.getById(workflowId);
     if (!chain) return { success: false, error: `Workflow "${workflowId}" not found` };
     if (!chain.enabled) return { success: false, error: `Workflow "${chain.name}" is disabled` };
+
+    // v602 P2 — Run-Confirmation gate: workflows without auto_run require an
+    // explicit confirmation by the user. The confirmation flow re-invokes this
+    // skill with `confirmed=true` after approval. Internal automation (e.g.
+    // trigger-based) can bypass by passing `confirmed=true` directly.
+    const confirmed = input.confirmed === true;
+    if (!chain.autoRun && !confirmed && this.onRunConfirmationRequired) {
+      try {
+        await this.onRunConfirmationRequired({ chain, context });
+        const stepsPreview = chain.steps.slice(0, 5).map((s, i) =>
+          `  ${i + 1}. ${(s as { type?: string }).type === 'action' || !(s as { type?: string }).type
+            ? `${(s as { skillName?: string }).skillName ?? '?'}`
+            : (s as { type?: string }).type ?? '?'}`,
+        ).join('\n');
+        return {
+          success: true,
+          data: { workflowId: chain.id, pendingConfirmation: true },
+          display: `Workflow "${chain.name}" (${chain.steps.length} Schritte) wartet auf Bestätigung.\n\nSchritte:\n${stepsPreview}` +
+            (chain.steps.length > 5 ? `\n  ...(+${chain.steps.length - 5})` : '') +
+            `\n\nTipp: Auto-Run aktivieren via "workflow set_auto_run workflow_id=${chain.id.slice(0, 8)} enabled=true".`,
+        };
+      } catch (err) {
+        // Confirmation-enqueue failed — fall back to direct run with warning
+        return {
+          success: false,
+          error: `Workflow "${chain.name}" benötigt Bestätigung, aber ConfirmationQueue ist nicht verfügbar: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
 
     const result = await this.runner.run(chain, context);
 

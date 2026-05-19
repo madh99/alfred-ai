@@ -14,6 +14,16 @@ export interface HealthMonitorConfig {
   probeTimeoutMs?: number;
 }
 
+/**
+ * Minimal interface for the cluster-claim — depends only on tryClaim so
+ * tests can pass a stub without pulling AdapterClaimManager.
+ */
+export interface ClusterClaim {
+  tryClaim(name: string): Promise<boolean>;
+}
+
+const CLAIM_NAME = 'project-health-monitor';
+
 export interface StatusChangeEvent {
   project: Project;
   probe: HealthProbe;
@@ -46,6 +56,12 @@ export class HealthMonitor {
     private readonly userIdResolver: () => string | undefined,
     private readonly logger: Logger,
     private readonly config: HealthMonitorConfig = {},
+    /**
+     * Optional cluster-claim resolver. Called at cycle-fire-time so a Late-Init
+     * Claim-Manager (created later in alfred.ts) still gets used. Returning
+     * undefined falls back to single-node behavior (cycle always runs).
+     */
+    private readonly clusterClaimResolver?: () => ClusterClaim | undefined,
   ) {}
 
   onStatusChange(listener: StatusChangeListener): void {
@@ -73,6 +89,22 @@ export class HealthMonitor {
     if (this.running) {
       this.logger.debug('HealthMonitor cycle skipped — previous run still active');
       return;
+    }
+    // Cluster gate: only the node holding the claim runs the cycle. The resolver is
+    // late-bound because the AdapterClaimManager in alfred.ts is constructed AFTER
+    // the projects block initializes the HealthMonitor.
+    const claim = this.clusterClaimResolver?.();
+    if (claim) {
+      try {
+        const owned = await claim.tryClaim(CLAIM_NAME);
+        if (!owned) {
+          this.logger.debug('HealthMonitor cycle skipped — claim held by another node');
+          return;
+        }
+      } catch (err) {
+        this.logger.warn({ err }, 'HealthMonitor claim check failed — skipping cycle');
+        return;
+      }
     }
     this.running = true;
     try {

@@ -127,6 +127,7 @@ export class Alfred {
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
+  private projectSkillRef?: import('@alfred/skills').ProjectSkill;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
@@ -569,16 +570,84 @@ export class Alfred {
       this.projectManager = projectManager;
 
       const { ProjectSkill } = await import('@alfred/skills');
-      skillRegistry.register(new ProjectSkill(projectRepo));
+      const projectSkill = new ProjectSkill(projectRepo);
+      // v602 P4 — forward open-item resolve to ITSM (best-effort, errors swallowed).
+      // Bound late via runtime lookup of itsmSkill registered in the CMDB-block.
+      projectSkill.setIncidentCascade(async (incidentId, status) => {
+        try {
+          const itsmSkill = skillRegistry.get('itsm');
+          if (!itsmSkill) return false;
+          const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          if (!userId) return false;
+          const ctx = { userId, masterUserId: userId, chatId: this.config.security?.ownerUserId ?? '', platform: 'api' } as unknown as import('@alfred/types').SkillContext;
+          await itsmSkill.execute({ action: status === 'closed' ? 'close_incident' : 'update_incident', incident_id: incidentId, status }, ctx);
+          return true;
+        } catch { return false; }
+      });
+      skillRegistry.register(projectSkill);
+      this.projectSkillRef = projectSkill;
 
       // T4 wiring — Delegate + Code-Agent Lifecycle into the Project-Manager.
       // Threshold gate prevents trivial single-tool-call sessions from polluting
       // the project list. CodeAgent sessions auto-bind by cwd; Delegate sessions
       // (no cwd) route into the Misc-bucket.
       const { isSubstantialSession } = await import('./projects/session-thresholds.js');
+      const { WorkflowExtractor } = await import('./projects/workflow-extractor.js');
       const thresholdConfig = {
         toolCallsThreshold: this.config.projects?.orphanDelegateThresholdToolCalls,
         minutesThreshold: this.config.projects?.orphanDelegateThresholdMinutes,
+      };
+
+      // v602 P2 — WorkflowExtractor: analyzes substantial Delegate-Sessions and
+      // proposes a reusable Workflow if the sequence is structured + parametrizable.
+      const workflowExtractor = new WorkflowExtractor(
+        llmProvider,
+        this.config.projects?.summarizerLlmTier ?? 'strong',
+      );
+
+      // Helper: given a substantial session, run extractor + enqueue a Workflow-Confirmation
+      // (in parallel to the runbook flow — both artifacts are intentionally separate).
+      const proposeWorkflowFromSession = async (params: {
+        userId: string;
+        goal: string;
+        toolCalls: Array<{ name: string; input: Record<string, unknown>; success: boolean; output?: string }>;
+        sourceId: string;
+      }): Promise<void> => {
+        if (!this.confirmationQueue) return;
+        try {
+          const availableSkills = new Set(skillRegistry.getAll().map(s => s.metadata.name));
+          const extracted = await workflowExtractor.analyze({
+            goal: params.goal,
+            toolCalls: params.toolCalls,
+            availableSkills,
+          });
+          if (!extracted.reusable || !extracted.steps || !extracted.suggestedName) return;
+          const ownerPlatformForWf = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.discord?.enabled ? 'discord'
+            : this.config.whatsapp?.enabled ? 'whatsapp'
+            : 'api');
+          await this.confirmationQueue.enqueue({
+            chatId: this.config.security?.ownerUserId ?? '',
+            platform: ownerPlatformForWf,
+            source: 'reasoning',
+            sourceId: `workflow-from-session-${params.sourceId.slice(0, 16)}`,
+            description: `Workflow '${extracted.suggestedName}' (${extracted.steps.length} Schritte) aus der Session erkannt — als wiederverwendbar speichern?\n\n${extracted.suggestedDescription ?? ''}`,
+            skillName: 'workflow',
+            skillParams: {
+              action: 'create',
+              name: extracted.suggestedName,
+              description: extracted.suggestedDescription,
+              steps: extracted.steps,
+              triggerType: 'manual',
+              autoExtracted: true,
+              sourceSessionId: params.sourceId,
+            },
+            timeoutMinutes: 24 * 60,
+          });
+          this.logger.info({ name: extracted.suggestedName, steps: extracted.steps.length, sourceId: params.sourceId }, 'Workflow extraction enqueued');
+        } catch (err) {
+          this.logger.debug({ err }, 'WorkflowExtractor failed (non-critical)');
+        }
       };
 
       if (this.delegateSkillRef) {
@@ -590,17 +659,28 @@ export class Alfred {
           }
           const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
           if (!userId) return;
+          const sourceId = `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           try {
             await projectManager.finishOrphanSession({
               userId,
               sessionType: 'delegate',
-              sourceId: `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              sourceId,
               goal: info.task,
               success: info.success,
               transcript: info.finalResponse,
               totalFilesChanged: info.filesChanged,
             });
           } catch (err) { this.logger.debug({ err }, 'delegate completion → project-manager failed'); }
+
+          // v602 P2 — Workflow extraction (only on success, tool-call names are known)
+          if (info.success && info.toolNames.length > 0) {
+            try {
+              const reconstructed = info.toolNames.map(name => ({ name, input: {}, success: true }));
+              await proposeWorkflowFromSession({
+                userId, goal: info.task, toolCalls: reconstructed, sourceId,
+              });
+            } catch (err) { this.logger.debug({ err }, 'delegate workflow-extraction failed'); }
+          }
         });
       }
 
@@ -654,6 +734,10 @@ export class Alfred {
             intervalHours: this.config.projects?.healthCheckIntervalHours,
             probeTimeoutMs: this.config.projects?.healthProbeTimeoutMs,
           },
+          // v602 P1 — cluster-claim resolver: at cycle-fire time, ask the (late-init)
+          // adapterClaimManager if this node holds the claim. Single-node SQLite gets
+          // undefined here which falls back to "always run".
+          () => this.adapterClaimManager,
         );
 
         // On degradation: enqueue a confirmation so the user can decide
@@ -1110,6 +1194,20 @@ export class Alfred {
           if (!this.llmProvider) throw new Error('LLM nicht verfügbar');
           const res = await this.llmProvider.complete({ messages: [{ role: 'user', content: prompt }], tier: (tier as any) ?? 'default', maxTokens: 3000 });
           return res.content;
+        });
+
+        // v602 P4 — Reverse-Cascade: when an incident is resolved/closed, also mark
+        // linked project-open-items as done (only the most recent linkage is touched).
+        itsmSkill.setProjectItemCascade(async (incidentId: string) => {
+          if (!this.projectRepo) return;
+          try {
+            const items = await this.projectRepo.findOpenItemsByLinkedIncident(incidentId);
+            for (const it of items) {
+              await this.projectRepo.updateOpenItemStatus(it.id, 'done');
+            }
+          } catch (err) {
+            this.logger.debug({ err, incidentId }, 'ITSM→project cascade failed (non-critical)');
+          }
         });
 
         // Wire LLM callback for runbook generation
@@ -2344,6 +2442,33 @@ export class Alfred {
     // 7f. Initialize workflow chains
     const workflowRepo = new WorkflowRepository(adapter);
     const workflowSkill = new WorkflowSkill(workflowRepo, skillRegistry);
+
+    // v602 P2 — Workflow Run-Confirmation: when a workflow without auto_run is
+    // invoked, enqueue a confirmation instead of running directly. The user can
+    // approve → confirmation re-invokes 'workflow run' with confirmed=true.
+    workflowSkill.setRunConfirmationCallback(async ({ chain, context }: { chain: import('@alfred/types').WorkflowChain; context: import('@alfred/types').SkillContext }) => {
+      if (!this.confirmationQueue) throw new Error('ConfirmationQueue not available');
+      const ownerPlatformForWf = (this.config.telegram?.enabled ? 'telegram'
+        : this.config.discord?.enabled ? 'discord'
+        : this.config.whatsapp?.enabled ? 'whatsapp'
+        : context.platform ?? 'api');
+      await this.confirmationQueue.enqueue({
+        chatId: this.config.security?.ownerUserId ?? '',
+        platform: ownerPlatformForWf,
+        source: 'reasoning',
+        sourceId: `workflow-run-${chain.id.slice(0, 8)}-${Date.now()}`,
+        description: `Workflow '${chain.name}' (${chain.steps.length} Schritte) ausführen?` +
+          (chain.description ? `\n\n${chain.description}` : ''),
+        skillName: 'workflow',
+        skillParams: {
+          action: 'run',
+          workflow_id: chain.id,
+          confirmed: true,
+        },
+        timeoutMinutes: 60,
+      });
+    });
+
     skillRegistry.register(workflowSkill);
 
     const scriptExecutor = new ScriptExecutor(
@@ -2933,6 +3058,11 @@ export class Alfred {
           this.logger.error({ platform, err }, 'Adapter connection failed — skipping');
         }
       }
+    }
+
+    // Project HealthMonitor — cluster-aware claim (v602 P1)
+    if (this.adapterClaimManager && this.projectHealthMonitor) {
+      this.adapterClaimManager.registerPlatform('project-health-monitor');
     }
 
     // Start BMW MQTT streaming — cluster-aware with failover

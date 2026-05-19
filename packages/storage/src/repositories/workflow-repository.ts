@@ -9,8 +9,8 @@ export class WorkflowRepository {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.adapter.execute(`
-      INSERT INTO workflow_chains (id, name, user_id, chat_id, platform, steps, trigger_type, trigger_config, enabled, created_at, monitoring, last_triggered_at, guards)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO workflow_chains (id, name, user_id, chat_id, platform, steps, trigger_type, trigger_config, enabled, created_at, monitoring, last_triggered_at, guards, source_session_id, related_runbook_id, auto_extracted, auto_run, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       id, chain.name, chain.userId, chain.chatId, chain.platform,
       JSON.stringify(chain.steps), chain.triggerType,
@@ -19,8 +19,36 @@ export class WorkflowRepository {
       chain.monitoring ? JSON.stringify(chain.monitoring) : null,
       chain.lastTriggeredAt ?? null,
       chain.guards ? JSON.stringify(chain.guards) : null,
+      chain.sourceSessionId ?? null,
+      chain.relatedRunbookId ?? null,
+      chain.autoExtracted ? 1 : 0,
+      chain.autoRun ? 1 : 0,
+      chain.description ?? null,
     ]);
     return { ...chain, id, createdAt: now };
+  }
+
+  /** Find a workflow by user-scoped name (case-insensitive). Used by reasoning intent-match. */
+  async findByName(userId: string, name: string): Promise<WorkflowChain | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM workflow_chains WHERE user_id = ? AND lower(name) = lower(?) LIMIT 1',
+      [userId, name],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapChain(row) : undefined;
+  }
+
+  /** Toggle the auto_run flag — controls whether the workflow runs without a confirmation step. */
+  async setAutoRun(id: string, autoRun: boolean): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE workflow_chains SET auto_run = ? WHERE id = ?', [autoRun ? 1 : 0, id],
+    );
+  }
+
+  /** Set the related_runbook_id after auto-extraction created both artifacts. */
+  async setRelatedRunbook(workflowId: string, runbookId: string): Promise<void> {
+    await this.adapter.execute(
+      'UPDATE workflow_chains SET related_runbook_id = ? WHERE id = ?', [runbookId, workflowId],
+    );
   }
 
   async getById(id: string): Promise<WorkflowChain | undefined> {
@@ -144,6 +172,11 @@ export class WorkflowRepository {
       monitoring: row.monitoring ? JSON.parse(row.monitoring as string) : undefined,
       guards: row.guards ? JSON.parse(row.guards as string) : undefined,
       lastTriggeredAt: row.last_triggered_at as string | undefined,
+      sourceSessionId: (row.source_session_id as string | null) ?? undefined,
+      relatedRunbookId: (row.related_runbook_id as string | null) ?? undefined,
+      autoExtracted: Number(row.auto_extracted ?? 0) === 1,
+      autoRun: Number(row.auto_run ?? 0) === 1,
+      description: (row.description as string | null) ?? undefined,
     };
   }
 

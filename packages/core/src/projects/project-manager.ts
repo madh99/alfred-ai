@@ -98,6 +98,7 @@ export class ProjectManager {
             description: item.description,
             priority: item.priority ?? 'normal',
             sessionId: session.id,
+            linkedIncidentId: item.linkedIncidentId,
           });
         }
       }
@@ -200,6 +201,7 @@ export class ProjectManager {
           await this.repo.addOpenItem(misc.id, {
             title: item.title, description: item.description,
             priority: item.priority ?? 'normal', sessionId: session.id,
+            linkedIncidentId: item.linkedIncidentId,
           });
         }
       }

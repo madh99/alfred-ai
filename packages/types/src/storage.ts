@@ -263,6 +263,16 @@ export interface WorkflowChain {
   monitoring?: WorkflowMonitoring;
   guards?: WorkflowGuard[];
   lastTriggeredAt?: string;
+  /** Source session ID — if auto-extracted from a Delegate/Code-Agent/Project-Agent session. */
+  sourceSessionId?: string;
+  /** Cross-link to the human-readable Runbook created together with this workflow. */
+  relatedRunbookId?: string;
+  /** True if this workflow was generated from a session by the WorkflowExtractor. */
+  autoExtracted?: boolean;
+  /** True if this workflow runs without per-invocation confirmation. Admin-skills inside still confirm. */
+  autoRun?: boolean;
+  /** Optional human-readable description (set on auto-extraction). */
+  description?: string;
 }
 
 export interface WorkflowExecution {

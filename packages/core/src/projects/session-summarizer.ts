@@ -21,6 +21,13 @@ export interface SummarizerInput {
 }
 
 /**
+ * Pattern for an 8-character hex prefix of a UUID/ITSM-ID (e.g. "faad041f").
+ * Used in Anti-Duplicate-Filter (v602 P4): open-items whose title contains
+ * such an ID get the ID extracted into `linked_incident_id` instead of duplicated.
+ */
+const ITSM_ID_RE = /\b([0-9a-f]{8})\b/i;
+
+/**
  * LLM-driven extraction of structured project knowledge from a finished session.
  *
  * Returns null when the LLM call fails or output is unparseable — caller falls back
@@ -85,7 +92,15 @@ Regeln:
 - open_items: explizite TODOs aus dem Transkript ODER offensichtliche Nachfolgeschritte. Max 8.
 - files_touched: nur aus den oben gelisteten FILES auswählen, keine erfinden.
 - next_check_in_days: 7 bei aktiven Themen, 14 default, 30 wenn klar abgeschlossen ohne offene Punkte.
-- Sprache: Deutsch.`;
+- Sprache: Deutsch.
+
+ANTI-DUPLICATE-REGEL (wichtig, v602 P4):
+Wenn ein Open-Item eine konkrete ITSM-Incident-ID referenziert (8-stelliger hex-Prefix wie "faad041f" oder "b173ca40"),
+hänge die ID als zusätzliches Feld an statt sie als generischen TODO zu duplizieren:
+- linked_incident_id: "faad041f"   ← Hex-ID aus dem Titel
+- Der title sollte dann eine ZUSAMMENFASSUNG der Aufgabe sein, ohne die ID zu doppeln
+- Beispiel STATT "Incident faad041f schließen" → { title: "Redundanten Meta-Incident schließen", linked_incident_id: "faad041f" }
+- Diese verlinkten Items erscheinen weiterhin im Projekt, sind aber mit dem ITSM-Incident verknüpft sodass Resolve auf einer Seite beide schließt.`;
   }
 
   private parse(raw: string, input: SummarizerInput): ProjectSessionSummary | null {
@@ -121,13 +136,32 @@ Regeln:
     if (Array.isArray(obj.open_items)) {
       summary.openItems = obj.open_items
         .filter((it): it is Record<string, unknown> => !!it && typeof it === 'object')
-        .map(it => ({
-          title: String(it.title ?? '').trim().slice(0, 200),
-          priority: (typeof it.priority === 'string' && ['low', 'normal', 'high'].includes(it.priority))
-            ? (it.priority as 'low' | 'normal' | 'high')
-            : 'normal',
-          description: typeof it.description === 'string' ? it.description.trim().slice(0, 400) : undefined,
-        }))
+        .map(it => {
+          const titleRaw = String(it.title ?? '').trim().slice(0, 200);
+          // Anti-Duplicate fallback: if LLM didn't extract linked_incident_id but the title
+          // still contains an ITSM-ID prefix, extract it now.
+          let linkedIncidentId = typeof it.linked_incident_id === 'string' && /^[0-9a-f]{8}$/i.test(it.linked_incident_id)
+            ? it.linked_incident_id.toLowerCase()
+            : undefined;
+          let title = titleRaw;
+          if (!linkedIncidentId) {
+            const match = ITSM_ID_RE.exec(titleRaw);
+            if (match) {
+              linkedIncidentId = match[1].toLowerCase();
+              // Strip the ID from the title for cleanliness (keep surrounding text)
+              title = titleRaw.replace(match[0], '').replace(/\s{2,}/g, ' ').trim();
+              if (title.length === 0) title = titleRaw;
+            }
+          }
+          return {
+            title,
+            priority: (typeof it.priority === 'string' && ['low', 'normal', 'high'].includes(it.priority))
+              ? (it.priority as 'low' | 'normal' | 'high')
+              : 'normal',
+            description: typeof it.description === 'string' ? it.description.trim().slice(0, 400) : undefined,
+            linkedIncidentId,
+          };
+        })
         .filter(it => it.title.length > 0)
         .slice(0, 8);
     }

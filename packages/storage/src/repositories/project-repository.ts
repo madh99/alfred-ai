@@ -39,7 +39,7 @@ export interface ProjectSessionSummary {
   whatWasDone?: string;
   keyDecisions?: Array<{ choice: string; rationale?: string }>;
   filesTouched?: string[];
-  openItems?: Array<{ title: string; priority?: OpenItemPriority; description?: string }>;
+  openItems?: Array<{ title: string; priority?: OpenItemPriority; description?: string; linkedIncidentId?: string }>;
   status?: 'success' | 'failed' | 'partial';
   nextCheckInDays?: number;
 }
@@ -65,6 +65,10 @@ export interface ProjectOpenItem {
   dueAt?: string;
   createdAt: string;
   resolvedAt?: string;
+  /** ITSM-Incident-ID, falls dieses Open-Item ein bestehender Incident ist (Cross-Link). */
+  linkedIncidentId?: string;
+  /** ITSM-Change-ID, falls dieses Open-Item ein bestehender Change ist. */
+  linkedChangeId?: string;
 }
 
 export interface ProjectDecision {
@@ -140,6 +144,8 @@ function rowToOpenItem(row: Record<string, unknown>): ProjectOpenItem {
     dueAt: (row.due_at as string | null) ?? undefined,
     createdAt: row.created_at as string,
     resolvedAt: (row.resolved_at as string | null) ?? undefined,
+    linkedIncidentId: (row.linked_incident_id as string | null) ?? undefined,
+    linkedChangeId: (row.linked_change_id as string | null) ?? undefined,
   };
 }
 
@@ -315,18 +321,40 @@ export class ProjectRepository {
 
   // ── Open Items ──────────────────────────────────────────────────────────
 
-  async addOpenItem(projectId: string, input: { title: string; description?: string; priority?: OpenItemPriority; dueAt?: string; sessionId?: string }): Promise<ProjectOpenItem> {
+  async addOpenItem(projectId: string, input: { title: string; description?: string; priority?: OpenItemPriority; dueAt?: string; sessionId?: string; linkedIncidentId?: string; linkedChangeId?: string }): Promise<ProjectOpenItem> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.adapter.execute(
-      `INSERT INTO project_open_items (id, project_id, session_id, title, description, priority, status, due_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
-      [id, projectId, input.sessionId ?? null, input.title, input.description ?? null, input.priority ?? 'normal', input.dueAt ?? null, now],
+      `INSERT INTO project_open_items (id, project_id, session_id, title, description, priority, status, due_at, created_at, linked_incident_id, linked_change_id)
+       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
+      [
+        id, projectId, input.sessionId ?? null, input.title, input.description ?? null,
+        input.priority ?? 'normal', input.dueAt ?? null, now,
+        input.linkedIncidentId ?? null, input.linkedChangeId ?? null,
+      ],
     );
     return {
       id, projectId, sessionId: input.sessionId, title: input.title, description: input.description,
       priority: input.priority ?? 'normal', status: 'open', dueAt: input.dueAt, createdAt: now,
+      linkedIncidentId: input.linkedIncidentId, linkedChangeId: input.linkedChangeId,
     };
+  }
+
+  /** Find an open-item by its ID (for cascading resolves from ITSM side). */
+  async getOpenItemById(itemId: string): Promise<ProjectOpenItem | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM project_open_items WHERE id = ?`, [itemId],
+    ) as Record<string, unknown> | undefined;
+    return row ? rowToOpenItem(row) : null;
+  }
+
+  /** Find all open-items linked to a given ITSM-incident (for reverse-cascading from ITSM-resolution). */
+  async findOpenItemsByLinkedIncident(incidentId: string): Promise<ProjectOpenItem[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_open_items WHERE linked_incident_id = ? AND status = 'open'`,
+      [incidentId],
+    ) as Record<string, unknown>[];
+    return rows.map(rowToOpenItem);
   }
 
   async listOpenItems(userId: string, filters?: { projectId?: string; status?: OpenItemStatus; priority?: OpenItemPriority; limit?: number }): Promise<ProjectOpenItem[]> {

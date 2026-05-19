@@ -49,6 +49,7 @@ export function ProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('active');
+  const [tab, setTab] = useState<'projects' | 'consultations'>('projects');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState('');
@@ -167,12 +168,23 @@ export function ProjectsPage() {
     }
   }
 
+  // v602 P5 — Tabs trennen normale Projekte vom Misc-Sammel-Bucket.
+  // Backend speichert beide als 'projects', das Frontend trennt visuell:
+  // 'projects' Tab → alles AUSSER Misc-Bucket
+  // 'consultations' Tab → NUR Misc-Bucket (slug='misc' oder tags enthalten 'system')
+  const isMiscBucket = (p: Project): boolean =>
+    p.slug === 'misc' || p.tags.includes('system');
+
   const visible = projects
+    .filter(p => tab === 'consultations' ? isMiscBucket(p) : !isMiscBucket(p))
     .filter(p => !search ||
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.description ?? '').toLowerCase().includes(search.toLowerCase()) ||
       (p.cwd ?? '').toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => (b.lastActiveAt || '').localeCompare(a.lastActiveAt || ''));
+
+  const miscCount = projects.filter(isMiscBucket).length;
+  const projectsCount = projects.length - miscCount;
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -197,6 +209,21 @@ export function ProjectsPage() {
             Aktualisieren
           </button>
         </div>
+      </div>
+
+      <div className="flex gap-2 mb-4 border-b border-[#222]">
+        <button
+          onClick={() => { setTab('projects'); setSelectedId(null); }}
+          className={`px-4 py-2 text-sm -mb-px border-b-2 ${tab === 'projects' ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+        >
+          Projekte ({projectsCount})
+        </button>
+        <button
+          onClick={() => { setTab('consultations'); setSelectedId(null); }}
+          className={`px-4 py-2 text-sm -mb-px border-b-2 ${tab === 'consultations' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+        >
+          Beratungs-Sessions ({miscCount})
+        </button>
       </div>
 
       {creating && (

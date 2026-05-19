@@ -1541,4 +1541,20 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_health_log_probe ON project_health_log(project_id, probe, checked_at DESC)`);
     },
   },
+  {
+    version: 64,
+    description: 'Workflows + project_open_items — auto-extraction columns, auto_run flag, ITSM cross-linking',
+    up(db) {
+      try { db.exec(`ALTER TABLE workflow_chains ADD COLUMN source_session_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE workflow_chains ADD COLUMN related_runbook_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE workflow_chains ADD COLUMN auto_extracted INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE workflow_chains ADD COLUMN auto_run INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE workflow_chains ADD COLUMN description TEXT`); } catch { /* exists */ }
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_chains_source ON workflow_chains(source_session_id)`); } catch { /* exists */ }
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_workflow_chains_name ON workflow_chains(user_id, name)`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN linked_incident_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN linked_change_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`CREATE INDEX IF NOT EXISTS idx_open_items_linked_incident ON project_open_items(linked_incident_id)`); } catch { /* exists */ }
+    },
+  },
 ];

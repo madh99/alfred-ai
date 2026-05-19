@@ -166,6 +166,17 @@ export class ItsmSkill extends Skill {
   }
 
   /**
+   * v602 P4 — Reverse-Cascade callback: invoked after an incident transitions to
+   * resolved/closed. Wires into ProjectRepository.findOpenItemsByLinkedIncident()
+   * + updateOpenItemStatus() so a linked project-open-item resolves automatically.
+   */
+  private projectItemCascade?: (incidentId: string) => Promise<void>;
+
+  setProjectItemCascade(cb: (incidentId: string) => Promise<void>): void {
+    this.projectItemCascade = cb;
+  }
+
+  /**
    * Topologically sort components so parents are processed before children.
    * Returns indices in parent-first order.
    */
@@ -337,6 +348,10 @@ export class ItsmSkill extends Skill {
 
     const result = await this.itsm.updateIncident(userId, id, updates as any);
     if (!result) return { success: false, error: `Incident ${id} nicht gefunden` };
+    // v602 P4 — Reverse-Cascade only when transitioning to a terminal state
+    if (this.projectItemCascade && (result.status === 'resolved' || result.status === 'closed')) {
+      try { await this.projectItemCascade(result.id); } catch { /* non-critical */ }
+    }
     return { success: true, data: result, display: `✅ Incident ${result.title} aktualisiert (Status: ${result.status})` };
   }
 
@@ -398,6 +413,10 @@ export class ItsmSkill extends Skill {
 
     const result = await this.itsm.closeIncident(userId, id, resolution);
     if (!result) return { success: false, error: `Incident ${id} nicht gefunden` };
+    // v602 P4 — Reverse-Cascade to linked project-open-items
+    if (this.projectItemCascade) {
+      try { await this.projectItemCascade(result.id); } catch { /* non-critical */ }
+    }
     return { success: true, data: result, display: `✅ Incident **${result.title}** geschlossen` };
   }
 

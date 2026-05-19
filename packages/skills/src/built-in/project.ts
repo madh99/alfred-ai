@@ -5,6 +5,9 @@ import type {
   ProjectOpenItem,
 } from '@alfred/storage';
 
+/** Callback signature for cross-domain cascade — set by alfred.ts wiring. */
+export type IncidentCascadeFn = (incidentId: string, status: 'resolved' | 'closed' | 'reopened') => Promise<boolean>;
+
 type Action =
   | 'list' | 'get' | 'create' | 'rename' | 'set_status' | 'set_health_mode'
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
@@ -61,8 +64,16 @@ export class ProjectSkill extends Skill {
     },
   };
 
+  /** Set by alfred.ts — called when an open-item with linkedIncidentId is resolved. */
+  private incidentCascade?: IncidentCascadeFn;
+
   constructor(private readonly repo: ProjectRepository) {
     super();
+  }
+
+  /** Inject the cascade callback for ITSM linked open-items. */
+  setIncidentCascade(fn: IncidentCascadeFn): void {
+    this.incidentCascade = fn;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -256,6 +267,14 @@ ${decLines.join('\n') || '  _keine_'}`;
     const item = items.find(it => it.id === itemId || it.id.startsWith(itemId));
     if (!item) return { success: false, error: `Open-Item "${itemId}" nicht gefunden.` };
     await this.repo.updateOpenItemStatus(item.id, status);
+
+    // v602 P4 — Cross-Domain Cascade: if this item is linked to an ITSM-incident
+    // and status went to done/cancelled, also mark the incident as resolved.
+    if (item.linkedIncidentId && (status === 'done' || status === 'cancelled') && this.incidentCascade) {
+      try {
+        await this.incidentCascade(item.linkedIncidentId, status === 'done' ? 'resolved' : 'closed');
+      } catch { /* non-critical */ }
+    }
     return {
       success: true, data: { id: item.id, status },
       display: `✓ "${item.title}" → ${status}.`,
