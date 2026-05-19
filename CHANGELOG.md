@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.605] - 2026-05-19
+
+### Added — Project-Agent Anti-Hallucination (Reaktion auf "interject auf tote Session" 17:21)
+
+Adressiert die in der 17:21-Analyse identifizierten 7 Punkte (M1-M7). Behebt das Phänomen "Alfred sagt 'ich habe dem laufenden Project-Agenten nachgereicht' obwohl die Session längst beendet ist". Vollständige Maximal-Variante.
+
+#### M1 — `interject` lehnt tote Sessions ab (`project-agent-skill.ts`)
+- Vorher: `interject` rief `pushInterjection` auch wenn `session.currentPhase === 'done'` / `'failed'` → success=true, Nachricht landet in orphan-inbox
+- Jetzt: Strikte Phase-Prüfung → `success=false` mit klarer Meldung: "Session bereits beendet (phase: X). Interject geht nur an LAUFENDE Sessions. Starte eine NEUE Session mit action='start'."
+
+#### M2 — Skill-Description präzisiert
+- Action-Beschreibungen ergänzt: "start: when the user asks for a NEW project or wants to retry"
+- "interject: ONLY use to send updates to a CURRENTLY RUNNING session. DO NOT use after a session has finished — start a new one"
+- Macht LLM-Entscheidung beim Tool-Call klarer
+
+#### M3 — Reasoning-Prompt-Regel im PromptBuilder (`prompt-builder.ts`)
+- Wenn `project_agent`-Skill im Skill-Set: explizite Section "## project_agent — start vs interject"
+- Klare Regeln: "Same goal, different attempt = new session. Do not assume a previous task_id is still alive. When in doubt → start."
+
+#### M4 — `status` zeigt TERMINIERT-Hint
+- Bei `currentPhase === 'done'` / `'failed'`: Display zeigt explizit "⚠️ Diese Session ist ABGESCHLOSSEN. Interject hat hier keine Wirkung."
+- `data.terminated: true` als strukturiertes Feld für Programm-Logik
+
+#### M5 — Inbox-Cleanup beim Session-Ende (`project-agent-runner.ts`)
+- Im `finally`-Block: `drainInterjections(sessionId)` aufgerufen
+- Verhindert Akkumulation von orphan-messages wenn User nach Session-Ende noch interjectet
+- Loggt Anzahl der gedraintten orphans als Warnung (Hinweis auf User-Verwirrung)
+
+#### M6 — Start mit Vorgänger-Hint (`project-agent-skill.ts`)
+- Bei `startProject`: prüft `sessionRepo.getCompletedByCwd(cwd)` — wenn Vorgänger existiert: Hint im Display "ℹ️ Vorheriger Versuch in diesem Verzeichnis existiert. Diese neue Session läuft frisch — keine Daten werden weitergeführt."
+- Nicht-blockierend, nur informativ. Macht User-Erwartung klar.
+
+#### M7 — Currently-Running-Section im System-Prompt (M3-Ergänzung)
+- `SystemPromptContext` neues optionales Feld `runningProjectAgentSessions: Array<{ taskId, goal, currentPhase, cwd, lastProgressAt }>`
+- `PromptBuilder` rendert Section "### Currently running project-agent sessions (interject targets):"
+- Bei leerer Liste: "### No project-agent sessions are currently running. Any task_id in chat history is from a TERMINATED session."
+- `ProjectAgentSessionRepository.listRunning()` neu (filter auf `current_phase NOT IN ('done', 'failed')`)
+- `MessagePipeline.setProjectAgentSessionRepo()` neu — wird in `alfred.ts` verkabelt nachdem `projectAgents.enabled`
+- Pipeline lädt running sessions pro message-build und übergibt an PromptBuilder
+- Eliminiert die "task_id aus chat-history zieht den LLM in dead session" Falle
+
+### Wie die 7 Maßnahmen zusammenwirken
+1. **LLM versucht trotz Prompt-Regel ein interject auf tote session** → M1 rejected mit success=false (last resort)
+2. **LLM ruft status auf einer toten Session auf** → M4 zeigt TERMINIERT-Hint, LLM wechselt zu start
+3. **LLM sieht task_id in chat-history** → M7 Section sagt explizit "diese ist TERMINIERT, einzige laufenden sind: ..."
+4. **LLM hat Zweifel ob start oder interject** → M3 Prompt-Regel sagt "Bei Zweifel → start"
+5. **User schreibt Nachricht nach Session-Ende** → M5 drained inbox, keine orphan-msg-Akkumulation
+6. **User startet erneut für selben cwd** → M6 informiert "fresh session, kein Carry-Over"
+7. **Skill-Description leitet den LLM grundlegend** → M2 verstärkt M3
+
+### Backward-Compatibility
+- Bestehende running sessions: kein Effekt. M5 drained nur am Ende, nicht bei laufender Session.
+- API-Surface: nur neue Methoden + Optional-Fields hinzugefügt, keine Breaking Changes.
+- Pipeline ohne `setProjectAgentSessionRepo` Wiring: `runningProjectAgentSessions=undefined` → PromptBuilder zeigt die "No sessions running" Default-Section.
+
 ## [0.19.0-multi-ha.604] - 2026-05-19
 
 ### Added — Project-Agent Robustheit (Reaktion auf alpbyte-games Total-Failure)

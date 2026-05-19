@@ -181,6 +181,7 @@ export class MessagePipeline {
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
   private kgService?: import('./knowledge-graph.js').KnowledgeGraphService;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
+  private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   private usageRepo?: import('@alfred/storage').UsageRepository;
@@ -243,6 +244,12 @@ export class MessagePipeline {
 
   setRunbookRepo(repo: import('@alfred/storage').RunbookRepository): void {
     this.runbookRepo = repo;
+  }
+
+  /** v605 M7 — feed the project-agent session repo so we can list currently
+   *  running sessions in the system prompt (scopes valid interject targets). */
+  setProjectAgentSessionRepo(repo: import('@alfred/storage').ProjectAgentSessionRepository): void {
+    this.projectAgentSessionRepo = repo;
   }
 
   setModerationService(service: import('@alfred/security').ModerationService): void {
@@ -701,6 +708,19 @@ export class MessagePipeline {
         } catch { /* skip, not critical */ }
       }
 
+      // v605 M7 — list currently running project-agent sessions so the LLM
+      // knows which task_ids accept interject. Empty list → must use 'start'.
+      let runningProjectAgentSessions: Array<{ taskId: string; goal: string; currentPhase: string; cwd?: string; lastProgressAt?: string }> | undefined;
+      if (this.projectAgentSessionRepo) {
+        try {
+          const running = await this.projectAgentSessionRepo.listRunning();
+          runningProjectAgentSessions = running.map(s => ({
+            taskId: s.taskId, goal: s.goal, currentPhase: s.currentPhase,
+            cwd: s.cwd, lastProgressAt: s.lastProgressAt,
+          }));
+        } catch { /* non-critical */ }
+      }
+
       let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
@@ -711,6 +731,7 @@ export class MessagePipeline {
         personalContext,
         queryContext,
         personality: this.personality,
+        runningProjectAgentSessions,
       });
 
       // Inject active ITSM incidents into system prompt so the LLM can reference

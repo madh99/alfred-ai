@@ -2760,6 +2760,17 @@ export class Alfred {
       this.pipeline.setRunbookRepo(this.runbookRepo);
     }
 
+    // v605 M7 — feed pipeline the project-agent-session repo so the system
+    // prompt enumerates currently running sessions (valid interject targets).
+    if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
+      try {
+        const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+        this.pipeline.setProjectAgentSessionRepo(new ProjectAgentSessionRepository(adapter));
+      } catch (err) {
+        this.logger.debug({ err }, 'Could not wire project-agent-session repo into pipeline (non-critical)');
+      }
+    }
+
     // 7a2. Wire optional moderation service into pipeline
     if (this.config.security?.moderation?.enabled) {
       const modConfig = this.config.security.moderation;

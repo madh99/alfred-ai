@@ -75,6 +75,19 @@ export class ProjectAgentSessionRepository {
     );
   }
 
+  /**
+   * v605 M7 — list all sessions that are NOT in a terminal state. Used by
+   * the message-pipeline to scope which task_ids the LLM may target with
+   * `project_agent interject`. Sessions in 'done' / 'failed' are excluded.
+   */
+  async listRunning(): Promise<ProjectAgentSession[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_agent_sessions WHERE current_phase NOT IN ('done', 'failed') ORDER BY created_at DESC LIMIT 50`,
+      [],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => this.mapRow(r));
+  }
+
   async findActiveByCwd(cwd: string): Promise<ProjectAgentSession | undefined> {
     const row = await this.adapter.queryOne(
       `SELECT * FROM project_agent_sessions WHERE cwd = ? AND current_phase != 'done' ORDER BY created_at DESC LIMIT 1`,

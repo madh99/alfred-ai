@@ -49,9 +49,9 @@ export class ProjectAgentSkill extends Skill {
     category: 'automation',
     description: `Autonomous coding agent that creates and develops software projects end-to-end. Runs indefinitely until the goal is reached.
 Actions:
-- start: Start a new project agent session. Params: goal (what to build), cwd (directory), agent (which code agent to use, e.g. "claude-code"), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs")
-- status: Check current status of a running project agent. Params: task_id
-- interject: Send a message to a running project agent (e.g. "add feature X"). Params: task_id, message
+- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use, e.g. "claude-code"), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs")
+- status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
+- interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
 - stop: Stop a running project agent. Params: task_id`,
     riskLevel: 'admin',
     version: '1.0.0',
@@ -158,6 +158,17 @@ Actions:
       };
     }
 
+    // v605 M6 — surface any previous (completed/failed) sessions for the same
+    // cwd as informational hint. Not a blocker — just makes it clear that this
+    // is a retry, and what the previous attempt's outcome was.
+    let previousAttemptHint: string | undefined;
+    try {
+      const previous = await this.sessionRepo.getCompletedByCwd(cwd);
+      if (previous.length > 0) {
+        previousAttemptHint = `Vorheriger Versuch in diesem Verzeichnis existiert (Ziel: "${previous[0].goal.slice(0, 80)}..."). Diese neue Session läuft frisch — keine Daten werden weitergeführt.`;
+      }
+    } catch { /* non-critical */ }
+
     // Resolve build/test commands from input, template, or defaults
     const template = this.config.templates?.find(t => t.name === input.template);
     const buildCommands = (input.buildCommands as string[]) ?? template?.buildCommands ?? ['npm install', 'npm run build'];
@@ -185,13 +196,14 @@ Actions:
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
         (cwdRewriteHint ? `\n⚠️ ${cwdRewriteHint}\n` : '') +
+        (previousAttemptHint ? `\nℹ️ ${previousAttemptHint}\n` : '') +
         `Fortschritt wird via Chat gemeldet.`,
     };
   }
@@ -213,16 +225,23 @@ Actions:
     const session = await this.verifyTaskAccess(taskId, context);
     if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
 
+    // v605 M4 — explicit "session ended" hint when phase is terminal
+    const isTerminal = session.currentPhase === 'done' || session.currentPhase === 'failed';
+    const terminalHint = isTerminal
+      ? `\n\n⚠️ **Diese Session ist ABGESCHLOSSEN** (phase: ${session.currentPhase}). ` +
+        `Interject hat hier keine Wirkung. Für neue Arbeit: \`project_agent action='start'\` mit neuem Goal.`
+      : '';
     return {
       success: true,
-      data: session,
+      data: { ...session, terminated: isTerminal },
       display: `📊 Project Agent Status (${taskId})\n` +
-        `Phase: ${session.currentPhase}\n` +
+        `Phase: ${session.currentPhase}${isTerminal ? ' (TERMINATED)' : ''}\n` +
         `Iteration: ${session.currentIteration}\n` +
         `Dateien geändert: ${session.totalFilesChanged}\n` +
         `Letzter Build: ${session.lastBuildPassed ? '✅ passed' : '❌ failed'}\n` +
         `Letzter Commit: ${session.lastCommitSha ?? '—'}\n` +
-        (session.milestones.length > 0 ? `Milestones: ${session.milestones.join(', ')}` : ''),
+        (session.milestones.length > 0 ? `Milestones: ${session.milestones.join(', ')}` : '') +
+        terminalHint,
     };
   }
 
@@ -234,6 +253,20 @@ Actions:
 
     const session = await this.verifyTaskAccess(taskId, context);
     if (!session) return { success: false, error: `Task "${taskId}" nicht gefunden oder keine Berechtigung.` };
+
+    // v605 M1 — reject interjections to terminated sessions. Previously the
+    // alfred-hallucination "ich habe nachgereicht" happened because interject
+    // returned success on completed sessions, leaving messages in an
+    // orphan-inbox that no runner ever drained.
+    const terminal = session.currentPhase === 'done' || session.currentPhase === 'failed';
+    if (terminal) {
+      return {
+        success: false,
+        error: `Project-Agent-Session ${taskId} ist bereits beendet (phase: ${session.currentPhase}). ` +
+          `Interject geht nur an LAUFENDE Sessions. Starte eine NEUE Session mit action='start' und neuem Goal.`,
+        data: { taskId, sessionPhase: session.currentPhase, terminated: true },
+      };
+    }
 
     await pushInterjection(taskId, message);
     return {

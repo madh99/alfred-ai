@@ -46,6 +46,16 @@ export interface SystemPromptContext {
   deviceContext?: string;
   /** Configurable personality: tone, humor, directness, language. */
   personality?: { tone?: string; humor?: string; directness?: string; language?: string; custom?: string };
+  /** v605 M7 — running project-agent sessions, used to scope which task_ids
+   *  are valid targets for interject. Empty/undefined → no running sessions
+   *  → LLM must use 'start' for any new project request. */
+  runningProjectAgentSessions?: Array<{
+    taskId: string;
+    goal: string;
+    currentPhase: string;
+    cwd?: string;
+    lastProgressAt?: string;
+  }>;
 }
 
 /**
@@ -332,6 +342,32 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
 ## background_task
 - **\`background_task\`**: Runs a **single skill call** asynchronously (e.g. schedule one email send, one file download). It does NOT support multi-step workflows.
 - For complex tasks requiring multiple different skill calls in sequence, use \`delegate\` instead.`;
+      }
+
+      // v605 M3 — Project-Agent: explicit rules to prevent the "interject to dead session" hallucination
+      if (skills.some(s => s.name === 'project_agent')) {
+        prompt += `
+## project_agent — start vs interject
+- **\`start\`**: When the user asks for a NEW project, OR repeats a project request after a previous attempt ended — ALWAYS use \`action='start'\` with a fresh goal. This creates a new session with a new task_id.
+- **\`interject\`**: ONLY use to send updates/hints to a CURRENTLY RUNNING session. Before calling interject:
+  1. Either you saw the start happen in THIS conversation AND received no completion message yet, OR
+  2. Call \`action='status'\` first to verify \`currentPhase\` is NOT \`done\` or \`failed\`.
+- **NEVER interject to a session that ended.** The skill will reject it with success=false. The user will see Alfred claiming things that didn't happen (hallucination).
+- **Same goal, different attempt = new session.** Do not assume a previous task_id is still alive. When in doubt → \`start\`.`;
+
+        // v605 M7 — enumerate currently running sessions. Only these task_ids
+        // accept interject. Without this list the LLM was inferring task_ids
+        // from chat history that pointed to long-terminated sessions.
+        const running = context.runningProjectAgentSessions ?? [];
+        if (running.length > 0) {
+          prompt += `\n\n### Currently running project-agent sessions (interject targets):\n`;
+          for (const s of running) {
+            prompt += `- task_id=${s.taskId} | phase=${s.currentPhase} | cwd=${s.cwd ?? '—'} | goal="${s.goal.slice(0, 80)}"\n`;
+          }
+          prompt += `\nOnly these task_ids accept interject. Any other task_id in conversation history is TERMINATED — use 'start' for new work.`;
+        } else {
+          prompt += `\n\n### No project-agent sessions are currently running.\nAny task_id you might see in chat history is from a TERMINATED session. To work on a new project: use 'start'.`;
+        }
       }
     }
 

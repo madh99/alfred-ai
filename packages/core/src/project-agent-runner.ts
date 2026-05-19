@@ -440,6 +440,17 @@ export class ProjectAgentRunner {
       }
     } finally {
       removeAbortController(sessionId);
+      // v605 M5 — drain the interjection inbox so any messages that arrive after
+      // session termination (e.g. user thinks the agent still runs and sends
+      // another file) don't accumulate as orphans. Without this, late
+      // interjections silently buffer forever in the inbox map / DB.
+      try {
+        const orphans = await drainInterjections(sessionId);
+        if (orphans.length > 0) {
+          this.logger.warn({ sessionId, count: orphans.length },
+            'Project-agent: drained orphan interjections after session end');
+        }
+      } catch { /* non-critical */ }
     }
   }
 
