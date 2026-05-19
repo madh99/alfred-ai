@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.613] - 2026-05-20
+
+### Fixed — findActiveByCwd ignorierte 'failed' als terminal
+
+**Root Cause**: `ProjectAgentSessionRepository.findActiveByCwd()` filterte mit `current_phase != 'done'`, schloss aber `'failed'` NICHT aus. Eine project-agent-Session die crashte und manuell auf 'failed' gesetzt wurde, blockierte trotzdem weiterhin neue Starts für denselben cwd — der Block-Check im Skill rief `findActiveByCwd` auf, bekam die failed-Session zurück und lehnte mit "läuft bereits" ab.
+
+Inkonsistent zu zwei Geschwister-Funktionen im selben Repository:
+- `listRunning()`: filtert `NOT IN ('done', 'failed')` ✓
+- `getHistoryByCwd()`: filtert `IN ('done', 'failed')` als terminal ✓
+- `findActiveByCwd()`: filterte nur `!= 'done'` ✗ (Bug)
+
+**Fix**: `findActiveByCwd` benutzt jetzt `NOT IN ('done', 'failed')` — konsistent mit dem Rest.
+
+### Notes
+- Build grün
+- Aufgetaucht beim Versuch nach dem v611-Midnight-Crash einen neuen Project-Agent für alpbyte-games zu starten, nachdem die orphan-Session manuell auf 'failed' gesetzt wurde
+
 ## [0.19.0-multi-ha.612] - 2026-05-20
 
 ### Fixed — Log-Viewer WebUI sieht pino-roll v4 Files nicht (Hotfix v611)

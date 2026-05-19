@@ -109,8 +109,13 @@ export class ProjectAgentSessionRepository {
   }
 
   async findActiveByCwd(cwd: string): Promise<ProjectAgentSession | undefined> {
+    // v613 — Both 'done' AND 'failed' are terminal phases. The original v605 M6
+    // filter `!= 'done'` was inconsistent with listRunning() and getHistoryByCwd()
+    // which both treat 'failed' as terminal too. As a result, a project-agent
+    // that crashed and was marked 'failed' still blocked new starts on the same
+    // cwd until the row was deleted manually.
     const row = await this.adapter.queryOne(
-      `SELECT * FROM project_agent_sessions WHERE cwd = ? AND current_phase != 'done' ORDER BY created_at DESC LIMIT 1`,
+      `SELECT * FROM project_agent_sessions WHERE cwd = ? AND current_phase NOT IN ('done', 'failed') ORDER BY created_at DESC LIMIT 1`,
       [cwd],
     ) as Record<string, unknown> | undefined;
     return row ? this.mapRow(row) : undefined;
