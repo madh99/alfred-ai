@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.612] - 2026-05-20
+
+### Fixed — Log-Viewer WebUI sieht pino-roll v4 Files nicht (Hotfix v611)
+
+Nach dem v611-Upgrade auf pino-roll@4 sahen die WebUI-Logs keine aktuellen Einträge mehr.
+
+**Root Cause**: `packages/core/src/alfred.ts:3802-3822` `listLogFiles()` matchte File-Namen nur gegen das alte v2-Schema `<base>.<date>.<num>` (z.B. `alfred.log.2026-05-19.1`). pino-roll v4 schreibt aber `<stem>.<date>.<num>.<ext>` (z.B. `alfred.2026-05-20.1.log` mit Extension am Ende). Der Pattern `entry.startsWith("alfred.log.")` matcht `"alfred.2026..."` nicht → WebUI fand die neuen Dateien gar nicht.
+
+**Fix**: `listLogFiles()` matcht jetzt BEIDE Naming-Schemen:
+- Old (v2): `<base>` oder `<base>.<anything>` 
+- New (v4): `<stem>.<anything><ext>`
+
+Kompatibel mit gemischten Verzeichnissen die noch v2- und schon v4-Dateien enthalten.
+
+### Notes
+- Build grün, Bundle erstellt
+- Reine Logik-Korrektur, keine Schema-/Migrations-Änderungen
+- Audit-Log-Viewer profitiert automatisch (gleiche Funktion)
+
 ## [0.19.0-multi-ha.611] - 2026-05-20
 
 ### Fixed — Midnight-Crash auf beiden Cluster-Nodes (pino-roll v2 → v4) + Agent-Auswahl im Project-Agent

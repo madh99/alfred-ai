@@ -3801,12 +3801,23 @@ export class Alfred {
       /** List all available log files for a base path, sorted newest first. */
       const listLogFiles = (filePath: string): Array<{ name: string; path: string; size: number; modified: string }> => {
         const files: Array<{ name: string; path: string; size: number; modified: string; mtime: number }> = [];
-        // Scan directory for all log files matching the base name (numbered .1/.2 AND dated .2026-04-17)
+        // v612 — Scan directory for all log files. Supports BOTH naming schemes:
+        //   pino-roll v2: "<base>.log.<date>.<num>"  e.g. alfred.log.2026-05-19.1
+        //   pino-roll v4: "<stem>.<date>.<num>.<ext>" e.g. alfred.2026-05-20.1.log
+        //   plus the active "<base>" itself (e.g. alfred.log) and the symlink "current.log"
+        // Before this fix only the v2 scheme was matched, so after the v611
+        // upgrade to pino-roll@4 today's log files were invisible in the WebUI.
         const dir = path.dirname(filePath);
-        const baseName = path.basename(filePath);
+        const baseName = path.basename(filePath);          // "alfred.log"
+        const ext = path.extname(baseName);                 // ".log"
+        const stem = ext ? baseName.slice(0, -ext.length) : baseName; // "alfred"
         try {
           for (const entry of fs.readdirSync(dir)) {
-            if (entry === baseName || entry.startsWith(baseName + '.')) {
+            const isOldStyle = entry === baseName || entry.startsWith(baseName + '.');
+            const isNewStyle = ext !== '' && stem !== baseName
+              && entry.startsWith(stem + '.')
+              && entry.endsWith(ext);
+            if (isOldStyle || isNewStyle) {
               const fullPath = path.join(dir, entry);
               try {
                 const s = fs.statSync(fullPath);
