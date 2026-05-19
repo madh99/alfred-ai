@@ -193,6 +193,23 @@ export class DeploySkill extends Skill {
     this.hostCapabilitiesRepo = repo;
   }
 
+  // v609 — auto-memory: after a successful deploy, persist a fact-memory so the
+  // LLM can later reason "you previously deployed alpbyte-games to 192.168.1.96
+  // as ubuntu with docker-compose" without trawling activity_log.
+  private memoryRepo?: {
+    saveWithMetadata(
+      userId: string, key: string, value: string, category: string,
+      type: 'fact' | 'preference' | 'correction' | 'entity' | 'decision' | 'relationship' | 'principle' | 'commitment' | 'moment' | 'skill' | 'pattern' | 'connection' | 'feedback' | 'rule' | 'general',
+      confidence: number, source: 'manual' | 'auto',
+    ): Promise<unknown>;
+  };
+  private ownerUserId?: string;
+
+  setMemoryRepo(repo: typeof this.memoryRepo, ownerUserId: string | undefined): void {
+    this.memoryRepo = repo;
+    this.ownerUserId = ownerUserId;
+  }
+
   /**
    * v607 D1 — detect which docker-compose invocation works on the target host.
    * Probes both v1 and v2 variants, caches result for the session, returns
@@ -400,6 +417,36 @@ export class DeploySkill extends Skill {
       } catch {
         steps.push(`⚠️ Verify fehlgeschlagen`);
       }
+    }
+
+    // v609 — auto-memory: persist the successful deploy as a fact-memory so
+    // future reasoning can answer "where/how did I deploy this last time"
+    // without scanning activity_log. Replaces older entry for same (project,host).
+    if (this.memoryRepo && this.ownerUserId) {
+      try {
+        const safeKey = `deploy_${project}_${host.replace(/[^a-zA-Z0-9]/g, '_')}`;
+        const composeVariant = pm === 'docker-compose'
+          ? (await this.detectComposeVariant(host, user)) ?? 'docker-compose'
+          : undefined;
+        const valueParts = [
+          `Deployed ${project} → ${host} (user=${user}`,
+          `runtime=${runtime}`,
+          `pm=${pm}`,
+          ...(composeVariant ? [`compose=${composeVariant}`] : []),
+          ...(appPort ? [`port=${appPort}`] : []),
+          ...(verifyOk ? ['verified=ok'] : []),
+          `am=${new Date().toISOString().slice(0, 10)})`,
+        ];
+        await this.memoryRepo.saveWithMetadata(
+          this.ownerUserId,
+          safeKey,
+          valueParts.join(', '),
+          'deployment',
+          'fact',
+          0.95,
+          'auto',
+        );
+      } catch { /* best-effort, never fail a deploy on memory issues */ }
     }
 
     return {

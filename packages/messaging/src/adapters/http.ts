@@ -227,6 +227,21 @@ export class HttpAdapter extends MessagingAdapter {
     this.runbooksDeleteFn = opts.delete;
   }
 
+  // v609 — Project-Agent-Sessions API (WebUI list/inspect/stop)
+  private projectAgentsListFn?: (filter?: { phase?: string }) => Promise<any[]>;
+  private projectAgentsGetFn?: (taskId: string) => Promise<any | null>;
+  private projectAgentsStopFn?: (taskId: string) => Promise<boolean>;
+
+  setProjectAgentCallbacks(opts: {
+    list: (filter?: { phase?: string }) => Promise<any[]>;
+    get: (taskId: string) => Promise<any | null>;
+    stop: (taskId: string) => Promise<boolean>;
+  }): void {
+    this.projectAgentsListFn = opts.list;
+    this.projectAgentsGetFn = opts.get;
+    this.projectAgentsStopFn = opts.stop;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -519,6 +534,13 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleRunbooksUpdate(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.startsWith('/api/runbooks/') && req.method === 'DELETE') {
       this.handleRunbooksDelete(req, res, url).catch(err => this.safeError(res, err));
+    // ── Project-Agent-Sessions API (v609) ──
+    } else if (url.pathname === '/api/project-agents' && req.method === 'GET') {
+      this.handleProjectAgentsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+$/) && req.method === 'GET') {
+      this.handleProjectAgentsGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/stop$/) && req.method === 'POST') {
+      this.handleProjectAgentsStop(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1138,6 +1160,42 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const id = url.pathname.split('/').pop()!;
     const ok = await this.runbooksDeleteFn(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── Project-Agent-Sessions API handlers (v609) ──
+  private async handleProjectAgentsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const phase = url.searchParams.get('phase') ?? undefined;
+    const list = await this.projectAgentsListFn({ phase });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ sessions: list }));
+  }
+
+  private async handleProjectAgentsGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsGetFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const taskId = url.pathname.split('/').pop()!;
+    const session = await this.projectAgentsGetFn(taskId);
+    if (!session) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ session }));
+  }
+
+  private async handleProjectAgentsStop(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsStopFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const taskId = segments[segments.length - 2]; // .../{taskId}/stop
+    const ok = await this.projectAgentsStopFn(taskId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

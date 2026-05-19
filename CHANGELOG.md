@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.609] - 2026-05-19
+
+### Added — Project-Agent-Sessions UI + Auto-Memory on Deploy
+
+Schließt die zwei in v608 explizit ausgesparten Themen ab: (1) eine UI um nachzusehen was der Project-Agent historisch gebaut hat, und (2) ein zweiter Lern-Pfad zusätzlich zu F8 (activity-log-basiert) bei dem jeder erfolgreiche Deploy als Fact-Memory persistiert wird.
+
+#### Project-Agent-Sessions UI (V1)
+- Neue Sidebar-Section: `🤖 Project Agents` (zwischen Runbooks und Projects)
+- Neue Page: `/project-agents` mit Tabelle aller Sessions (`ProjectAgentSessionRepository.listAll`)
+- Filter: Phase-Dropdown (planning/coding/building/fixing/done/failed) + Volltext-Suche über goal/cwd/taskId
+- Detail-Panel zeigt: Task ID, Ziel, Phase-Badge, Build-Status, Iteration, Files-Changed, cwd, Agent, Last-Commit-SHA, Milestones (letzte N), Created/Updated
+- Auto-Refresh alle 10s solange mindestens eine non-terminale Session sichtbar ist
+- Button "Session stoppen" für laufende Sessions (sendet `__STOP__` Interjection an Runner)
+- 3 neue HTTP-Endpoints (`GET /api/project-agents`, `GET /api/project-agents/:id`, `POST /api/project-agents/:id/stop`)
+- 3 neue Client-Methoden in `alfred-client.ts` (`fetchProjectAgents`, `fetchProjectAgent`, `stopProjectAgent`)
+- Callback-Wiring in `alfred.ts` parallel zur bestehenden Runbook/Projects-API
+
+#### Auto-Memory on Deploy Success (V2)
+- `deploy.ts doDeploy()` schreibt nach erfolgreichem Deploy einen Memory-Eintrag (`source='auto', type='fact', category='deployment', confidence=0.95`)
+- Key-Schema: `deploy_<project>_<host-sanitized>` → idempotent (überschreibt vorherigen Eintrag für dasselbe project+host)
+- Value enthält: project, host, user, runtime, process_manager, ggf. compose-Variant, port, verified-Flag, Datum (YYYY-MM-DD)
+- Wired via `DeploySkill.setMemoryRepo(memoryRepo, ownerMasterUserId)` in `alfred.ts` Skill-Registration
+- Wirkt komplementär zu v608 F8: F8 zieht aus activity_log (transient), v609 schreibt persistente semantische Memories die der KG-Linker erfasst und das Memory-Section (Priority 1, 1200 token budget) im Reasoning-Context auftauchen können
+
+### Notes
+- Build grün (12 packages), neue `/project-agents` Route 2.4 kB
+- Memory-Save ist best-effort: Deploys schlagen NIE wegen Memory-Fehler fehl
+- composeVariant wird in der Auto-Memory mit aufgenommen (zusätzliche Sichtbarkeit neben v608 host_capabilities Tabelle)
+
 ## [0.19.0-multi-ha.608] - 2026-05-19
 
 ### Fixed + Added — Code-Agent-Crash-Fixes + Persistente Lehre (F1-F8 Voll-Variante)

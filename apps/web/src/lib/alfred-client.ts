@@ -218,6 +218,38 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── v609 — Project-Agent-Sessions ──
+  async fetchProjectAgents(filter?: { phase?: string }): Promise<ProjectAgentSession[]> {
+    const params = new URLSearchParams();
+    if (filter?.phase) params.set('phase', filter.phase);
+    const url = `${this.baseUrl}/api/project-agents${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch project agents: ${res.status}`);
+    const data = await res.json();
+    return data.sessions ?? [];
+  }
+
+  async fetchProjectAgent(taskId: string): Promise<ProjectAgentSession | null> {
+    const res = await fetch(`${this.baseUrl}/api/project-agents/${taskId}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.session ?? null;
+  }
+
+  async stopProjectAgent(taskId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/project-agents/${taskId}/stop`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   // ── Projects API ──
   async fetchProjects(filter?: { status?: string }): Promise<Project[]> {
     const params = new URLSearchParams();
@@ -772,6 +804,24 @@ export interface Runbook {
   usageCount: number;
   lastUsedAt?: string;
   status: 'draft' | 'verified' | 'deprecated';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// v609 — Project-Agent-Sessions (WebUI inspector)
+export interface ProjectAgentSession {
+  id: string;
+  taskId: string;
+  goal: string;
+  cwd: string;
+  agentName: string;
+  currentPhase: string;
+  currentIteration: number;
+  totalFilesChanged: number;
+  lastBuildPassed: boolean;
+  lastCommitSha?: string;
+  lastProgressAt?: string;
+  milestones: string[];
   createdAt: string;
   updatedAt: string;
 }

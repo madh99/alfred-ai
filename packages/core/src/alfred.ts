@@ -1195,6 +1195,18 @@ export class Alfred {
         const { HostCapabilitiesRepository } = await import('@alfred/storage');
         deploySkill.setHostCapabilitiesRepo(new HostCapabilitiesRepository(this.database.getAdapter()));
       }
+      // v609 — auto-save a fact-memory after each successful deploy
+      if (this.memoryRepo) {
+        const ownerId = this.config.security?.ownerUserId;
+        let ownerMasterId: string | undefined;
+        try {
+          if (ownerId && this.userRepo) {
+            const ownerUser = await this.userRepo.findOrCreate('telegram' as any, ownerId);
+            ownerMasterId = ownerUser.masterUserId ?? ownerUser.id;
+          }
+        } catch { /* fall back to raw owner id */ }
+        deploySkill.setMemoryRepo(this.memoryRepo, ownerMasterId ?? ownerId);
+      }
       skillRegistry.register(deploySkill);
       this.logger.info('Deploy skill registered (with orchestration)');
 
@@ -3417,6 +3429,42 @@ export class Alfred {
           },
         });
         this.logger.info('Runbook API registered');
+      }
+
+      // v609 — Wire Project-Agent-Sessions API on HTTP adapter (WebUI inspector)
+      if (apiAdapter && this.database && 'setProjectAgentCallbacks' in apiAdapter) {
+        const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+        const sessionRepo = new ProjectAgentSessionRepository(this.database.getAdapter());
+        const { pushInterjection } = await import('@alfred/skills');
+        (apiAdapter as any).setProjectAgentCallbacks({
+          list: async (filter?: { phase?: string }) => {
+            try {
+              return await sessionRepo.listAll({ phase: filter?.phase, limit: 200 });
+            } catch (err) {
+              this.logger.warn({ err }, 'Project-Agent API list failed');
+              return [];
+            }
+          },
+          get: async (taskId: string) => {
+            try {
+              return await sessionRepo.getByTaskId(taskId);
+            } catch { return null; }
+          },
+          stop: async (taskId: string) => {
+            try {
+              const session = await sessionRepo.getByTaskId(taskId);
+              if (!session) return false;
+              if (session.currentPhase === 'done' || session.currentPhase === 'failed') return true;
+              // pushInterjection with a special STOP token; runner picks it up and aborts.
+              await pushInterjection(taskId, '__STOP__');
+              return true;
+            } catch (err) {
+              this.logger.warn({ err, taskId }, 'Project-Agent API stop failed');
+              return false;
+            }
+          },
+        });
+        this.logger.info('Project-Agent API registered');
       }
 
       // Wire Projects API on HTTP adapter

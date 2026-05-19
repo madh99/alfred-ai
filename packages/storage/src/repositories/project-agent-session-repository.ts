@@ -88,6 +88,26 @@ export class ProjectAgentSessionRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  /**
+   * v609 — list all sessions across the lifecycle, optional phase filter.
+   * Used by the WebUI to inspect what the project-agent has done historically.
+   */
+  async listAll(opts?: { phase?: string; limit?: number }): Promise<ProjectAgentSession[]> {
+    const limit = opts?.limit ?? 200;
+    if (opts?.phase) {
+      const rows = await this.adapter.query(
+        `SELECT * FROM project_agent_sessions WHERE current_phase = ? ORDER BY updated_at DESC LIMIT ?`,
+        [opts.phase, limit],
+      ) as Array<Record<string, unknown>>;
+      return rows.map(r => this.mapRow(r));
+    }
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_agent_sessions ORDER BY updated_at DESC LIMIT ?`,
+      [limit],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => this.mapRow(r));
+  }
+
   async findActiveByCwd(cwd: string): Promise<ProjectAgentSession | undefined> {
     const row = await this.adapter.queryOne(
       `SELECT * FROM project_agent_sessions WHERE cwd = ? AND current_phase != 'done' ORDER BY created_at DESC LIMIT 1`,
