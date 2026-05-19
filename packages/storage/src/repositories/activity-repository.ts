@@ -65,6 +65,10 @@ export class ActivityRepository {
       conditions.push('user_id = ?');
       params.push(filters.userId);
     }
+    if (filters.action) {
+      conditions.push('action = ?');
+      params.push(filters.action);
+    }
     if (filters.since) {
       conditions.push('timestamp >= ?');
       params.push(filters.since);

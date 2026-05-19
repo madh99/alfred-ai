@@ -177,8 +177,21 @@ export class DeploySkill extends Skill {
    * v607 D1 — Cache of detected docker-compose variant per `user@host`.
    * Values: 'docker-compose' (legacy v1 binary), 'docker compose' (v2 plugin),
    *         null = not available at all.
+   *
+   * v608 F6 — In-memory cache PLUS optional persistent backing via
+   * HostCapabilitiesRepository (set via setHostCapabilitiesRepo). Persistence
+   * means we don't re-probe after a process restart or cluster failover.
    */
   private composeVariantCache = new Map<string, 'docker-compose' | 'docker compose' | null>();
+  private hostCapabilitiesRepo?: {
+    get(host: string, user: string, key: string): Promise<string | null | undefined>;
+    set(host: string, user: string, key: string, value: string | null): Promise<void>;
+  };
+
+  /** v608 F6 — wire the persistent capabilities repo from alfred.ts. */
+  setHostCapabilitiesRepo(repo: typeof this.hostCapabilitiesRepo): void {
+    this.hostCapabilitiesRepo = repo;
+  }
 
   /**
    * v607 D1 — detect which docker-compose invocation works on the target host.
@@ -191,21 +204,42 @@ export class DeploySkill extends Skill {
     const cacheKey = `${user}@${host}`;
     if (this.composeVariantCache.has(cacheKey)) return this.composeVariantCache.get(cacheKey)!;
 
+    // v608 F6 — consult persistent store before re-probing
+    if (this.hostCapabilitiesRepo) {
+      try {
+        const stored = await this.hostCapabilitiesRepo.get(host, user, 'compose_variant');
+        if (stored !== undefined) {
+          const variant = stored === null
+            ? null
+            : (stored === 'docker-compose' || stored === 'docker compose' ? stored : null);
+          this.composeVariantCache.set(cacheKey, variant);
+          return variant;
+        }
+      } catch { /* fall through to probe */ }
+    }
+
+    const persist = async (v: 'docker-compose' | 'docker compose' | null): Promise<void> => {
+      this.composeVariantCache.set(cacheKey, v);
+      if (this.hostCapabilitiesRepo) {
+        try { await this.hostCapabilitiesRepo.set(host, user, 'compose_variant', v); } catch { /* best-effort */ }
+      }
+    };
+
     // Try v1 first (legacy binary)
     try {
       await this.ssh(host, user, 'command -v docker-compose >/dev/null 2>&1 && echo ok');
-      this.composeVariantCache.set(cacheKey, 'docker-compose');
+      await persist('docker-compose');
       return 'docker-compose';
     } catch { /* v1 not present, fall through */ }
 
     // Try v2 plugin
     try {
       await this.ssh(host, user, 'docker compose version >/dev/null 2>&1 && echo ok');
-      this.composeVariantCache.set(cacheKey, 'docker compose');
+      await persist('docker compose');
       return 'docker compose';
     } catch { /* v2 not present either */ }
 
-    this.composeVariantCache.set(cacheKey, null);
+    await persist(null);
     return null;
   }
 

@@ -78,8 +78,13 @@ export class SkillSandbox {
         resolve(result);
       };
 
+      // v608 F4 — expose the tracker on context so child sub-processes
+      // (e.g. claude-code spawned by code_agent) can keep the watchdog alive
+      // by pinging on every stdout/stderr chunk.
+      const contextWithTracker: SkillContext = { ...context, tracker } as SkillContext;
+
       // Run the skill
-      skill.execute(input, context).then(
+      skill.execute(input, contextWithTracker).then(
         (result) => {
           this.logger.info({ skill: name, success: result.success, ...(result.success ? {} : { error: result.error }) }, 'Skill execution completed');
           finish(result);

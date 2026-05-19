@@ -73,7 +73,7 @@ export class SkillFailureReflector {
     }>;
     try {
       const rows = await this.activityRepo.query({
-        eventType: 'skill_call', userId, since, limit: 200,
+        eventType: 'skill_exec', userId, since, limit: 200,
       });
       entries = rows.map(r => ({
         id: r.id,

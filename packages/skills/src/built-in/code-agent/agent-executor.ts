@@ -1,4 +1,4 @@
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
@@ -6,6 +6,41 @@ import type { CodeAgentDefinitionConfig } from '@alfred/types';
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const MAX_TIMEOUT_MS = 900_000; // 15 minutes
 const MAX_OUTPUT_CHARS = 100_000;
+
+/**
+ * v608 F5 — Preflight: check the agent's binary is callable before spawning.
+ * If it's missing we want a clear actionable error, not a 10-minute idle hang
+ * (claude-code sometimes exits silently with no output when the binary is unreachable).
+ */
+function preflightAgent(agentDef: CodeAgentDefinitionConfig): string | null {
+  // For `sudo -u <user> <real-command> ...` we want to check the real binary,
+  // not `sudo` itself.
+  let probeCommand = agentDef.command;
+  let probeArgs: string[] = [];
+  if (agentDef.command === 'sudo' && Array.isArray(agentDef.argsTemplate)) {
+    const sudoArgs = [...agentDef.argsTemplate];
+    let i = 0;
+    while (i < sudoArgs.length && sudoArgs[i].startsWith('-')) {
+      if (sudoArgs[i] === '-u' || sudoArgs[i] === '--user') { i += 2; continue; }
+      i += 1;
+    }
+    if (i < sudoArgs.length) probeCommand = sudoArgs[i];
+  }
+  if (process.platform === 'win32') return null; // skip on Windows — shell:true handles wrappers
+  if (path.isAbsolute(probeCommand)) {
+    return fs.existsSync(probeCommand) ? null : `Agent binary nicht gefunden: ${probeCommand}`;
+  }
+  try {
+    const result = spawnSync('which', [probeCommand], { timeout: 3000, encoding: 'utf8' });
+    if (result.status !== 0 || !result.stdout?.trim()) {
+      return `Agent binary "${probeCommand}" nicht im PATH (\`which ${probeCommand}\` exit=${result.status}). ` +
+        `Prüfe Installation oder agents.command in Config.`;
+    }
+    return null;
+  } catch {
+    return null; // best-effort — don't block on the preflight itself
+  }
+}
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.next', 'dist', '.cache']);
 
@@ -103,9 +138,28 @@ export async function executeAgent(
     cwd?: string;
     timeoutMs?: number;
     onProgress?: (status: string) => void;
+    /** v608 F4 — callback fired on every stdout/stderr chunk so the SkillSandbox
+     *  ActivityTracker stays alive while the subprocess produces output.
+     *  Without this, long-running claude-code runs get killed by the 120s
+     *  inactivity watchdog even though they're working. */
+    onActivity?: () => void;
   } = {},
 ): Promise<AgentExecutionResult> {
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
+
+  // v608 F5 — preflight: catch missing binary BEFORE spawning, so we don't
+  // burn the 10-minute initial-timeout on a process that silently dies.
+  const preflightError = preflightAgent(agentDef);
+  if (preflightError) {
+    return {
+      stdout: '',
+      stderr: preflightError,
+      exitCode: 127,
+      durationMs: 0,
+      modifiedFiles: [],
+    };
+  }
+
   // Auto-create working directory if it doesn't exist
   if (!fs.existsSync(cwd)) {
     fs.mkdirSync(cwd, { recursive: true });
@@ -156,11 +210,13 @@ export async function executeAgent(
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
+      options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
+      options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
       // Forward stderr lines as progress updates
       if (options.onProgress) {
         const lastLine = text.trim().split('\n').pop();

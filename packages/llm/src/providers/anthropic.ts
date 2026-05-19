@@ -26,6 +26,18 @@ export class AnthropicProvider extends LLMProvider {
     if (cw) this.contextWindow = cw;
   }
 
+  /**
+   * v608 F2 — Some Anthropic models reject `temperature` ("`temperature` is deprecated
+   * for this model"). Filter it out for those models instead of bubbling a 400 error
+   * up to the caller. Currently applies to `claude-opus-4-7*` family; extend the list
+   * as Anthropic ships new reasoning-flavoured models.
+   */
+  private supportsTemperature(): boolean {
+    const model = (this.config.model ?? '').toLowerCase();
+    if (model.includes('opus-4-7')) return false;
+    return true;
+  }
+
   async complete(request: LLMRequest): Promise<LLMResponse> {
     const messages = this.mapMessages(request.messages);
     const tools = request.tools ? this.mapTools(request.tools) : undefined;
@@ -33,7 +45,9 @@ export class AnthropicProvider extends LLMProvider {
     const params: Anthropic.MessageCreateParams = {
       model: this.config.model,
       max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
-      temperature: request.temperature ?? this.config.temperature,
+      ...(this.supportsTemperature()
+        ? { temperature: request.temperature ?? this.config.temperature }
+        : {}),
       system: request.system ? [
         {
           type: 'text' as const,
@@ -57,7 +71,9 @@ export class AnthropicProvider extends LLMProvider {
     const stream = this.client.messages.stream({
       model: this.config.model,
       max_tokens: request.maxTokens ?? this.config.maxTokens ?? 4096,
-      temperature: request.temperature ?? this.config.temperature,
+      ...(this.supportsTemperature()
+        ? { temperature: request.temperature ?? this.config.temperature }
+        : {}),
       system: request.system ? [
         {
           type: 'text' as const,

@@ -49,6 +49,10 @@ export interface OrchestrationOptions {
   maxIterations?: number;
   maxConcurrent?: number;
   onProgress?: (status: string) => void;
+  /** v608 F4 — relay subprocess stdout/stderr chunks back to the SkillSandbox
+   *  ActivityTracker. Without this the parent watchdog can't see that the
+   *  spawned claude-code is actually doing work. */
+  onActivity?: () => void;
 }
 
 export interface GitOrchestrationOptions extends OrchestrationOptions {
@@ -170,7 +174,6 @@ async function planSubtasks(
   const response = await llm.complete({
     system: PLANNING_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
-    temperature: 0.2,
     tier: 'strong',
   });
 
@@ -200,6 +203,7 @@ async function executeSubtasksParallel(
   agentMap: Map<string, CodeAgentDefinitionConfig>,
   maxConcurrent: number,
   onProgress?: (status: string) => void,
+  onActivity?: () => void,
 ): Promise<SubTaskResult[]> {
   const semaphore = new Semaphore(maxConcurrent);
   const results: SubTaskResult[] = [];
@@ -213,6 +217,7 @@ async function executeSubtasksParallel(
         onProgress: onProgress
           ? (status: string) => onProgress(`[${subtask.id}] ${status}`)
           : undefined,
+        onActivity,
       });
       const result: SubTaskResult = { subtask, execution };
       results.push(result);
@@ -264,7 +269,6 @@ async function validateResults(
   const response = await llm.complete({
     system: VALIDATION_SYSTEM,
     messages: [{ role: 'user', content: userPrompt }],
-    temperature: 0.2,
     tier: 'strong',
   });
 
@@ -319,6 +323,7 @@ export async function orchestrate(
       agentMap,
       maxConcurrent,
       onProgress,
+      options.onActivity,
     );
     allResults = allResults.concat(iterationResults);
 

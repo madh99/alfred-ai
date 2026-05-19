@@ -1578,4 +1578,21 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_skill_host_failures_last ON skill_host_failures(last_seen DESC)`);
     },
   },
+  {
+    version: 66,
+    description: 'Host capabilities — persisted facts per (host,user) like compose variant (v608 F6)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS host_capabilities (
+          host TEXT NOT NULL,
+          user_name TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT,
+          probed_at TEXT NOT NULL,
+          PRIMARY KEY (host, user_name, key)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_host_capabilities_host ON host_capabilities(host)`);
+    },
+  },
 ];

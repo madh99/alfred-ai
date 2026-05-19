@@ -21,6 +21,8 @@ export interface ActivityQuery {
   userId?: string;
   since?: string;
   limit?: number;
+  /** v608 F8 — filter on the `action` column (e.g. only 'deploy' entries). */
+  action?: string;
 }
 
 export interface ActivityStats {

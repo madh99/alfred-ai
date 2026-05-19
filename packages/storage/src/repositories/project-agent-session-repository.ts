@@ -107,6 +107,45 @@ export class ProjectAgentSessionRepository {
     }));
   }
 
+  /**
+   * v608 F7 — Richer history per cwd: includes terminated runs (done OR failed)
+   * with build-status, commit SHA and recent milestones. The Planning-LLM needs
+   * to know if the previous attempt actually built (then this is an enhancement,
+   * not a rewrite) and what milestones it reached.
+   */
+  async getHistoryByCwd(cwd: string): Promise<Array<{
+    taskId: string;
+    goal: string;
+    phase: string;
+    lastBuildPassed: boolean;
+    lastCommitSha?: string;
+    milestones: string[];
+    createdAt: string;
+    updatedAt: string;
+  }>> {
+    const rows = await this.adapter.query(
+      `SELECT id, task_id, goal, current_phase, last_build_passed, last_commit_sha, milestones, created_at, updated_at
+       FROM project_agent_sessions
+       WHERE cwd = ? AND current_phase IN ('done', 'failed')
+       ORDER BY updated_at DESC LIMIT 5`,
+      [cwd],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => {
+      let milestones: string[] = [];
+      try { milestones = JSON.parse((r.milestones as string) ?? '[]'); } catch { /* empty */ }
+      return {
+        taskId: r.task_id as string,
+        goal: (r.goal as string).slice(0, 200),
+        phase: r.current_phase as string,
+        lastBuildPassed: (r.last_build_passed as number) === 1,
+        lastCommitSha: (r.last_commit_sha as string | null) ?? undefined,
+        milestones: milestones.slice(-5),
+        createdAt: r.created_at as string,
+        updatedAt: r.updated_at as string,
+      };
+    });
+  }
+
   private mapRow(row: Record<string, unknown>): ProjectAgentSession {
     let milestones: string[] = [];
     try { milestones = JSON.parse(row.milestones as string); } catch { /* empty */ }

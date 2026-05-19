@@ -202,10 +202,15 @@ export class CodeAgentSkill extends Skill {
     const cwd = typeof input.cwd === 'string' ? input.cwd : undefined;
     const timeoutMs = typeof input.timeout === 'number' ? input.timeout : undefined;
 
+    // v608 F4 — bridge the subprocess into the sandbox's ActivityTracker.
+    // Each stdout/stderr chunk fires onActivity, which calls tracker.ping('processing'),
+    // so a long but actively-running claude-code subprocess isn't killed by the 120s idle watchdog.
+    const tracker = (context as { tracker?: { ping(state: string): void } }).tracker;
     const result = await executeAgent(agentDef, prompt, {
       cwd,
       timeoutMs,
       onProgress: context.onProgress,
+      onActivity: tracker ? () => tracker.ping('processing') : undefined,
     });
 
     this.emitCompletion({
@@ -294,6 +299,10 @@ export class CodeAgentSkill extends Skill {
     const orchestrateStartedAt = Date.now();
     const cwd = typeof input.cwd === 'string' ? input.cwd : undefined;
 
+    // v608 F4 — bridge subprocess activity into the sandbox watchdog (see runAgent).
+    const tracker = (context as { tracker?: { ping(state: string): void } }).tracker;
+    const onActivity = tracker ? () => tracker.ping('processing') : undefined;
+
     try {
       if (useGit) {
         const result: GitOrchestrationResult = await orchestrateWithGit(
@@ -303,6 +312,7 @@ export class CodeAgentSkill extends Skill {
           {
             maxIterations,
             onProgress: context.onProgress,
+            onActivity,
             forge: this.forgeConfig,
             prTitle,
             baseBranch,
@@ -335,6 +345,7 @@ export class CodeAgentSkill extends Skill {
         {
           maxIterations,
           onProgress: context.onProgress,
+          onActivity,
         },
       );
 

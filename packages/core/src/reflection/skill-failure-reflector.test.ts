@@ -15,7 +15,7 @@ function makeRepoStub(entries: Array<{
   const realRows = entries.map(e => ({
     id: e.id, action: e.action ?? '', outcome: e.outcome,
     errorMessage: e.errorMessage, details: e.details, timestamp: e.timestamp,
-    eventType: 'skill_call', source: 'user' as const,
+    eventType: 'skill_exec', source: 'user' as const,
   }));
   return {
     query: vi.fn().mockResolvedValue(realRows),

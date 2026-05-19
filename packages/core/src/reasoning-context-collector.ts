@@ -314,6 +314,59 @@ export class ReasoningContextCollector {
       }
     }
 
+    // ── PHASE 2c2: Recent successful Deploys (v608 F8) ────────────
+    // Surfaces "I have deployed project X to host H before, and it worked".
+    // Lets the LLM say "you previously deployed alpbyte-games to 192.168.1.96"
+    // instead of asking the user where to deploy it. Strictly success-only and
+    // capped at 5 entries so the prompt stays small.
+    if (this.activityRepo) {
+      try {
+        const userId = await this.getEffectiveUserId();
+        if (userId) {
+          const since = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
+          const rows = await this.activityRepo.query({
+            eventType: 'skill_exec',
+            action: 'deploy',
+            outcome: 'success',
+            userId,
+            since,
+            limit: 30,
+          });
+          // Group by host+project, keep most recent per pair
+          type Entry = { host: string; project: string; when: string; details?: Record<string, unknown> };
+          const byKey = new Map<string, Entry>();
+          for (const r of rows) {
+            const d = r.details ?? {};
+            const host = typeof d.host === 'string' ? d.host
+              : (typeof d.target_host === 'string' ? d.target_host : undefined);
+            const project = typeof d.project === 'string' ? d.project : undefined;
+            if (!host || !project) continue;
+            const key = `${host}::${project}`;
+            if (!byKey.has(key)) {
+              byKey.set(key, { host, project, when: r.timestamp, details: d });
+            }
+          }
+          if (byKey.size > 0) {
+            const items = [...byKey.values()].slice(0, 5);
+            const lines = items.map(e => {
+              const ago = Math.floor((Date.now() - new Date(e.when).getTime()) / 86_400_000);
+              const ageStr = ago === 0 ? 'heute' : ago === 1 ? 'gestern' : `vor ${ago}d`;
+              const runtime = typeof e.details?.runtime === 'string' ? ` · runtime=${e.details.runtime}` : '';
+              const pm = typeof e.details?.process_manager === 'string' ? ` · pm=${e.details.process_manager}` : '';
+              return `- ${e.project} → ${e.host} (${ageStr})${runtime}${pm}`;
+            });
+            const content = `Erfolgreich deployte Projekte (letzte 14 Tage, je host+project nur neueste):\n${lines.join('\n')}\n\nHinweis: Wenn der User dasselbe Projekt erneut deployen will, ist Host & Setup oben dokumentiert.`;
+            sections.push({
+              key: 'deploys', label: 'Letzte Deploys', priority: 2,
+              content, tokenEstimate: Math.ceil(content.length / 3.5), changed: false,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'Recent-deploys section failed (non-critical)');
+      }
+    }
+
     // ── PHASE 2d: Active Projects section (v599) ──────────────────
     // Project containers Alfred has been working on. Hidden when no active projects.
     // Surfaces open items and stale projects so the LLM can reference them in insights

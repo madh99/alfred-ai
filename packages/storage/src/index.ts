@@ -35,6 +35,7 @@ export type { WeeklySkillStats, HourlyStats } from './repositories/activity-repo
 export { KnowledgeGraphRepository } from './repositories/knowledge-graph-repository.js';
 export type { KGEntity, KGRelation, KGEntityType } from './repositories/knowledge-graph-repository.js';
 export { SkillHealthRepository } from './repositories/skill-health-repository.js';
+export { HostCapabilitiesRepository } from './repositories/host-capabilities-repository.js';
 export { WorkflowRepository } from './repositories/workflow-repository.js';
 export { FeedbackRepository } from './repositories/feedback-repository.js';
 export { DatabaseConnectionRepository } from './repositories/database-connection-repository.js';

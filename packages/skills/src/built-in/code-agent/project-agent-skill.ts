@@ -200,14 +200,22 @@ Actions:
       };
     }
 
-    // v605 M6 — surface any previous (completed/failed) sessions for the same
-    // cwd as informational hint. Not a blocker — just makes it clear that this
-    // is a retry, and what the previous attempt's outcome was.
+    // v605 M6 / v608 F7 — surface any previous (completed/failed) sessions for
+    // the same cwd as informational hint. Not a blocker — but the new attempt
+    // SHOULD know whether the last build passed, what milestones were reached
+    // and which commit was the last good state.
     let previousAttemptHint: string | undefined;
     try {
-      const previous = await this.sessionRepo.getCompletedByCwd(cwd);
-      if (previous.length > 0) {
-        previousAttemptHint = `Vorheriger Versuch in diesem Verzeichnis existiert (Ziel: "${previous[0].goal.slice(0, 80)}..."). Diese neue Session läuft frisch — keine Daten werden weitergeführt.`;
+      const history = await this.sessionRepo.getHistoryByCwd(cwd);
+      if (history.length > 0) {
+        const lines = history.slice(0, 3).map((h, i) => {
+          const buildIcon = h.lastBuildPassed ? '✅ build ok' : '🔴 build broken';
+          const phaseIcon = h.phase === 'done' ? '✓ done' : '✗ failed';
+          const sha = h.lastCommitSha ? ` @ ${h.lastCommitSha.slice(0, 8)}` : '';
+          const ms = h.milestones.length > 0 ? ` — ${h.milestones.slice(-2).join(' · ')}` : '';
+          return `  ${i + 1}. [${phaseIcon}, ${buildIcon}${sha}] ${h.goal.slice(0, 80)}${ms}`;
+        });
+        previousAttemptHint = `Vorherige Versuche in diesem Verzeichnis:\n${lines.join('\n')}\n\nDie neue Session läuft frisch. Build-Status der letzten Sessions bitte beachten.`;
       }
     } catch { /* non-critical */ }
 

@@ -1190,6 +1190,11 @@ export class Alfred {
       if (this.config.codeAgents?.forge) {
         deploySkill.setForgeConfig(this.config.codeAgents.forge);
       }
+      // v608 F6 — persistent compose-variant memory across restarts/failover
+      if (this.database) {
+        const { HostCapabilitiesRepository } = await import('@alfred/storage');
+        deploySkill.setHostCapabilitiesRepo(new HostCapabilitiesRepository(this.database.getAdapter()));
+      }
       skillRegistry.register(deploySkill);
       this.logger.info('Deploy skill registered (with orchestration)');
 

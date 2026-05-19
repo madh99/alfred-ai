@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.608] - 2026-05-19
+
+### Fixed + Added — Code-Agent-Crash-Fixes + Persistente Lehre (F1-F8 Voll-Variante)
+
+Adressiert zwei verzahnte Probleme aus dem 19:51-Vorfall: (a) der `code_agent` Skill scheiterte zweimal hintereinander mit unterschiedlichen Bugs (orchestrate-API-Error, run-idle-Timeout), wodurch eine User-Bestätigung "(no response)" produzierte; (b) Alfred zog keine Lehren aus erfolgreichen Deploys, weil mehrere "Lern-Pipelines" gebrochen oder unverdrahtet waren.
+
+#### F1 — `temperature` aus `code_agent orchestrate` LLM-Calls entfernt
+- `packages/skills/src/built-in/code-agent/orchestrator.ts:170`, `:264` — Planning + Validation LLM-complete-Calls hatten hartcodiertes `temperature: 0.2`
+- Anthropic API (Opus 4.7) wirft 400-Fehler `\`temperature\` is deprecated for this model` → Orchestrate komplett unbenutzbar
+- Beide Stellen aufgeräumt; `tier: 'strong'` reicht
+
+#### F2 — Anthropic-Provider `supportsTemperature()` Filter
+- `packages/llm/src/providers/anthropic.ts` — neue Helper-Methode prüft Model-Name
+- Bei `opus-4-7*` wird `temperature` nicht mehr im Request mitgeschickt (analog zu OpenAI's `safeTemperature()` für o-series-Reasoning-Modelle)
+- Verhindert Wiederholung des Bugs in allen anderen LLM-Pfaden die `temperature` durchreichen
+
+#### F3 — SkillFailureReflector `eventType`-Bug behoben (RUNBOOK-LEHRE WAR TOT!)
+- `packages/core/src/reflection/skill-failure-reflector.ts:76` — query suchte nach `eventType: 'skill_call'`
+- ActivityLogger schreibt aber `eventType: 'skill_exec'` (activity-logger.ts:25) → **Reflector fand seit v607 NIE etwas**
+- Bedeutet: die in v607 aufgebaute "Lerne aus Skill-Workarounds → erzeuge Runbook"-Pipeline war seit Release tot
+- Fix: einzeiliger String-Tausch. Test entsprechend angepasst. 6/6 Tests grün
+
+#### F4 — Code-Agent Subprocess `activity-ping` an SkillSandbox-Watchdog
+- `packages/skills/src/built-in/code-agent/agent-executor.ts` — neuer `onActivity` Callback in `executeAgent()` Options
+- Wird bei jedem stdout/stderr-Chunk gefeuert → ruft `tracker.ping('processing')`
+- `packages/skills/src/skill-sandbox.ts` — injectet jetzt den Tracker in den `SkillContext` (`context.tracker`)
+- `code-agent-skill.ts runAgent()` + Orchestrator: ziehen Tracker aus Context und reichen `onActivity` durch
+- Verhindert das Phänomen, dass claude-code subprocess mit korrektem Output gekillt wird, weil der Sandbox-Watchdog 600s lang keinen ping bekam und auf "idle" geschlossen hat
+
+#### F5 — `code_agent` Preflight-Check (`which <binary>`)
+- Vor `spawn()` wird via `spawnSync('which', [command])` geprüft ob die Agent-Binary existiert
+- Bei `sudo -u <user> <real-command>` wird die `real-command` Binary geprüft, nicht `sudo`
+- Bei Fehlen: sofortige klare Fehlermeldung `"Agent binary 'claude' nicht im PATH"` statt 10min Idle-Hang
+- Best-effort: wenn `which` selbst nicht verfügbar, blockt der Preflight nicht
+
+#### F6 — Persistente `host_capabilities`-Tabelle (composeVariant überlebt Restarts)
+- Neue Migration v66 (SQLite) + v69 (PG): Tabelle `host_capabilities(host, user_name, key, value, probed_at)` mit PK (host, user, key)
+- Neue `HostCapabilitiesRepository` mit `get(host,user,key)` + `set(host,user,key,value)`
+- `deploy.ts detectComposeVariant()`: konsultiert vor Probe den persistenten Store, persistiert das Probe-Ergebnis
+- Verbindung via `setHostCapabilitiesRepo()` in `alfred.ts` nach Skill-Registration
+- Effekt: Wenn Alfred auf Host X einmal `docker compose v2` festgestellt hat, weiß er das auch nach Node-Restart und Cluster-Failover
+
+#### F7 — Project-Agent: bessere Vorgeschichte beim Retry
+- Neue `ProjectAgentSessionRepository.getHistoryByCwd()` liefert bis zu 5 abgeschlossene/gescheiterte Sessions mit Phase, `lastBuildPassed`, `lastCommitSha`, jüngsten Milestones
+- `project-agent-skill.ts startProject()`: ersetzt den knappen `previousAttemptHint` durch eine strukturierte Übersicht (Build-Status, Commit-SHA, letzte Milestones pro Vorgänger-Session)
+- Hilft sowohl dem Reasoning-LLM ("die letzte Session ist auf einem grünen Build stehengeblieben") als auch dem Planning-LLM in `createProjectPlan()`
+
+#### F8 — Deploy-History als Reasoning-Context-Source
+- `reasoning-context-collector.ts`: neue Section "Letzte Deploys" (Priority 2)
+- Query: `activity_log` letzte 14 Tage, `action='deploy', outcome='success'`, gruppiert per (host, project), neueste pro Paar
+- `ActivityQuery` erweitert um `action`-Filter (`types/activity.ts` + repository-query)
+- Bis zu 5 Einträge mit Host, Projekt, Alter, runtime/process_manager — damit der LLM beim Wunsch "deploy alpbyte-games erneut" weiß "letztes Mal nach 192.168.1.96 als ubuntu mit docker-compose"
+- Vorher: Diese Information lag zwar im activity_log, wurde aber NIE in einen Prompt gezogen
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- `skill-failure-reflector.test.ts` 6/6 grün — bestätigt dass F3 nicht regrediert
+- Vorbestehende `watch-engine.test.ts`/`reasoning-engine.test.ts` Failures sind unverändert (nicht durch v608 verursacht)
+- Migration v66 (SQLite) / v69 (PG) wird beim ersten Start einmalig ausgeführt
+- Code-Agent UI für Project-Agent-Sessions noch nicht enthalten — geplant als v609
+
 ## [0.19.0-multi-ha.607] - 2026-05-19
 
 ### Added — Deploy-Skill Variant-Detection + Skill-Failure-Lehre (D1-D7 Voll-Variante)
