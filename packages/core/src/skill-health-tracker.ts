@@ -35,6 +35,20 @@ export class SkillHealthTracker {
     }
   }
 
+  /**
+   * v607 D7 — record a failure scoped to a specific remote host. Called by
+   * skills that operate on infrastructure when they can extract a host
+   * parameter from their input. Captures only the (skill, host, error_class)
+   * tuple — enough for the reasoning prompt to surface a warning.
+   */
+  async recordHostFailure(skillName: string, host: string, errorClass: string, errorMessage?: string): Promise<void> {
+    try {
+      await this.healthRepo.recordHostFailure({ skillName, host, errorClass, errorMessage });
+    } catch (err) {
+      this.logger.debug({ err, skillName, host }, 'Failed to record host-skill failure');
+    }
+  }
+
   async recordFailure(skillName: string, error: string): Promise<void> {
     try {
       const health = await this.healthRepo.recordFailure(skillName, error);

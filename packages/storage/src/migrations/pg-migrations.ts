@@ -873,4 +873,25 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_open_items_linked_incident ON project_open_items(linked_incident_id)`, []);
     },
   },
+  {
+    version: 68,
+    description: 'Skill-Pattern-Memory — host-specific skill failures (v607 D7)',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS skill_host_failures (
+          id TEXT PRIMARY KEY,
+          skill_name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          error_class TEXT NOT NULL,
+          error_message TEXT,
+          count INTEGER NOT NULL DEFAULT 1,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          UNIQUE(skill_name, host, error_class)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_skill_host_failures_skill ON skill_host_failures(skill_name, host)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_skill_host_failures_last ON skill_host_failures(last_seen DESC)`, []);
+    },
+  },
 ];

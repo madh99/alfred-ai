@@ -173,6 +173,54 @@ export class DeploySkill extends Skill {
     } catch { return false; }
   }
 
+  /**
+   * v607 D1 — Cache of detected docker-compose variant per `user@host`.
+   * Values: 'docker-compose' (legacy v1 binary), 'docker compose' (v2 plugin),
+   *         null = not available at all.
+   */
+  private composeVariantCache = new Map<string, 'docker-compose' | 'docker compose' | null>();
+
+  /**
+   * v607 D1 — detect which docker-compose invocation works on the target host.
+   * Probes both v1 and v2 variants, caches result for the session, returns
+   * the working invocation prefix (or null on totally missing docker).
+   *
+   * Resolves the v1-hardcoded bug that broke alpbyte-games deploy on a v2-only host.
+   */
+  private async detectComposeVariant(host: string, user: string): Promise<'docker-compose' | 'docker compose' | null> {
+    const cacheKey = `${user}@${host}`;
+    if (this.composeVariantCache.has(cacheKey)) return this.composeVariantCache.get(cacheKey)!;
+
+    // Try v1 first (legacy binary)
+    try {
+      await this.ssh(host, user, 'command -v docker-compose >/dev/null 2>&1 && echo ok');
+      this.composeVariantCache.set(cacheKey, 'docker-compose');
+      return 'docker-compose';
+    } catch { /* v1 not present, fall through */ }
+
+    // Try v2 plugin
+    try {
+      await this.ssh(host, user, 'docker compose version >/dev/null 2>&1 && echo ok');
+      this.composeVariantCache.set(cacheKey, 'docker compose');
+      return 'docker compose';
+    } catch { /* v2 not present either */ }
+
+    this.composeVariantCache.set(cacheKey, null);
+    return null;
+  }
+
+  /** Build a docker-compose command string with the detected variant. */
+  private async composeCmd(host: string, user: string, args: string): Promise<string> {
+    const variant = await this.detectComposeVariant(host, user);
+    if (!variant) {
+      throw new Error(
+        `Auf ${host} ist weder 'docker-compose' (v1 binary) noch 'docker compose' (v2 plugin) verfügbar. ` +
+        `Installiere docker-compose-plugin oder docker-compose und versuche es erneut.`,
+      );
+    }
+    return `${variant} ${args}`;
+  }
+
   /** Inject forge token into Git URL if no auth is present. */
   private injectGitToken(url: string): string {
     if (!this.forgeConfig || !url.startsWith('http')) return url;
@@ -299,8 +347,9 @@ export class DeploySkill extends Skill {
         await this.ssh(host, user, `sudo systemctl restart ${project}`);
         steps.push(`🔄 systemd restart: ${project}`);
       } else if (pm === 'docker-compose') {
-        await this.ssh(host, user, `cd ${projectDir} && docker-compose up -d --build`);
-        steps.push(`🐳 docker-compose up: ${project}`);
+        const composeUp = await this.composeCmd(host, user, 'up -d --build');
+        await this.ssh(host, user, `cd ${projectDir} && ${composeUp}`);
+        steps.push(`🐳 ${composeUp.split(' ').slice(0, 2).join(' ')} up: ${project}`);
       }
     } catch (err) {
       return { success: false, error: `Service-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`, data: { steps } };
@@ -335,7 +384,8 @@ export class DeploySkill extends Skill {
     } else if (pm === 'systemd') {
       output = await this.ssh(host, user, `systemctl status ${project ?? '*'} --no-pager -l`);
     } else {
-      output = await this.ssh(host, user, `cd /home/${user}/${project ?? '.'} && docker-compose ps`);
+      const composePs = await this.composeCmd(host, user, 'ps');
+      output = await this.ssh(host, user, `cd /home/${user}/${project ?? '.'} && ${composePs}`);
     }
     return { success: true, display: `## Service Status: ${project ?? 'alle'} auf ${host}\n\n\`\`\`\n${output}\n\`\`\`` };
   }
@@ -348,7 +398,8 @@ export class DeploySkill extends Skill {
     } else if (pm === 'systemd') {
       output = await this.ssh(host, user, `journalctl -u ${project} -n ${n} --no-pager`);
     } else {
-      output = await this.ssh(host, user, `cd /home/${user}/${project ?? '.'} && docker-compose logs --tail ${n}`);
+      const composeLogs = await this.composeCmd(host, user, `logs --tail ${n}`);
+      output = await this.ssh(host, user, `cd /home/${user}/${project ?? '.'} && ${composeLogs}`);
     }
     return { success: true, display: `## Logs: ${project ?? 'alle'} auf ${host}\n\n\`\`\`\n${output.slice(0, 3000)}\n\`\`\`` };
   }
@@ -362,7 +413,8 @@ export class DeploySkill extends Skill {
       output = await this.ssh(host, user, `sudo systemctl ${action} ${project}`);
     } else {
       const dcAction = action === 'stop' ? 'down' : action === 'start' ? 'up -d' : 'restart';
-      output = await this.ssh(host, user, `cd /home/${user}/${project} && docker-compose ${dcAction}`);
+      const composeCmd = await this.composeCmd(host, user, dcAction);
+      output = await this.ssh(host, user, `cd /home/${user}/${project} && ${composeCmd}`);
     }
     return { success: true, display: `✅ ${action}: ${project} auf ${host}\n\n${output}` };
   }

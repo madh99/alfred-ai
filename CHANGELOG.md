@@ -5,6 +5,76 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.607] - 2026-05-19
+
+### Added — Deploy-Skill Variant-Detection + Skill-Failure-Lehre (D1-D7 Voll-Variante)
+
+Adressiert die in der 18:39-Analyse identifizierten 7 Wurzel-Probleme nach dem alpbyte-games Deploy-Fail. Behebt den konkreten docker-compose-Bug UND etabliert den fehlenden "Lehre"-Mechanismus für Skill-Failures.
+
+#### D1 — Docker-Compose-Variant-Detection (`deploy.ts`)
+- Neue Methode `detectComposeVariant(host, user)`: probiert via SSH `command -v docker-compose` (v1 binary) → fallback `docker compose version` (v2 plugin)
+- Ergebnis pro `user@host` gecached für die Session
+- `composeCmd()` baut den dynamischen Command-Prefix
+- Bei beidem fehlend: klare Fehlermeldung mit Install-Hint statt "command not found"
+
+#### D2 — Detection in allen Deploy-Pfaden
+- `deploy` (start), `status`, `logs`, `start/stop/restart` — alle nutzen jetzt `composeCmd()`
+- Eliminiert das Phänomen "Deploy-Skill zickt auf v2-only Hosts"
+
+#### D3 — Skill-Failure-Reflector (`packages/core/src/reflection/skill-failure-reflector.ts`)
+- Neues Modul scannt activity_log nach Pattern: "Skill X scheitert ≥2× konsekutiv mit gleichem error_class → shell/code_agent/deploy-Workaround → success"
+- Klassifiziert Error in COMMAND_NOT_FOUND, EACCES, ENOENT, ETIMEDOUT, NETWORK, AUTH_FAIL, NOT_FOUND, OTHER
+- Extrahiert Scope (host/cwd) aus failed-skill-input
+- Liefert pro Pattern: workaroundSteps, finalSuccess, participatingActivityIds
+- 6 Vitests grün (alpbyte-Repro, single-fail-skip, no-workaround-skip, failed-workaround-skip, cwd-scope-extraction)
+
+#### D3 Wiring (`alfred.ts`)
+- 15-Minuten Sweep-Interval ruft `failureReflector.detect(ownerUid)` 
+- Pro Pattern: Confirmation-Queue-Eintrag "Runbook aus Skill-Failure-Workaround erstellen: ..." mit den Workaround-Schritten als runbook-steps
+- DedupSourceId verhindert Spam wenn dasselbe Pattern wiederholt erkannt wird
+
+#### D4 — Parallele Workflow-Vorschläge (`alfred.ts`)
+- Wenn Pattern ≥2 shell-Steps UND scope=host enthält: zusätzliche Confirmation "Workflow X aus Workaround speichern?"
+- WorkflowSteps werden als WorkflowActionStep (shell-skill calls) gebildet
+- `auto_extracted=true` Flag für Tracking
+
+#### D5 — Goal-Sanitization (`project-agent-skill.ts`)
+- Neue exportierte Funktion `stripGoalPrefix(goal)`: entfernt LLM-Boilerplate-Prefixe wie "Starte einen NEUEN Projekt-Agent-Lauf für", "Bitte starte", "Erstelle ein neues Projekt für"
+- Layered-stripping (iter bis stable)
+- Quote-Stripping um Projekt-Namen
+- 9 Vitests grün
+- Beseitigt das v605-Goal-Pollution-Phänomen (sah als Project-Name "Starte einen NEUEN..." in DB)
+
+#### D6 — LLM-generated Runbook-Title (`alfred.ts` Trigger-B)
+- Statt `goal.slice(0, 100)`: fast-Tier-LLM-Call "Fasse das Projekt-Ziel in einem prägnanten Titel zusammen (max 60 Zeichen)"
+- Fallback auf raw-slice bei LLM-Fehler
+- Resultat: lesbare Titel statt zerschnittene goal-Texte
+
+#### D7 — Host-spezifische Skill-Pattern-Memory
+- Migration v65 SQLite / v68 PG: neue Tabelle `skill_host_failures` (skill_name, host, error_class, count, first_seen, last_seen, error_message)
+- `SkillHealthRepository.recordHostFailure()`, `getHostFailures()`, `listRecentHostFailures()` neu
+- `SkillHealthTracker.recordHostFailure()` API
+- `MessagePipeline`: bei jedem skill-failure mit `host` oder `target_host` im input → automatisch `recordHostFailure` mit klassifiziertem error_class
+- `PromptBuilder` rendert Section "## Known skill-failure patterns" wenn `recentHostFailures` provided → LLM sieht "deploy @ 192.168.1.96 → COMMAND_NOT_FOUND (2× seen)" und routet around
+- `MessagePipeline.setSkillHealthRepo()` neu für direct repo access
+
+### Wie D1-D7 zusammenwirken (Defense-in-Depth gegen den nächsten "Wand-Hit")
+1. **Vorbeugung**: D1+D2 verhindern den konkreten docker-compose-Wand-Hit
+2. **Verhinderung Wiederholung**: D7 warnt LLM beim nächsten Aufruf wenn (skill, host) bereits gescheitert
+3. **Lehre festhalten**: D3 erkennt successful workarounds und schlägt Runbook vor
+4. **Lehre wiederverwendbar**: D4 promotet zu Workflow wenn parametrisierbar
+5. **Saubere Doku**: D5 + D6 sorgen für lesbare Project-Namen und Runbook-Titel statt LLM-Boilerplate
+
+### Tests
+- 9 Vitests `stripGoalPrefix`
+- 6 Vitests `SkillFailureReflector` (alpbyte-Repro inkl.)
+- Bestehende Tests stabil
+
+### Backward-Compatibility
+- alle Setter optional → setups ohne `setSkillHealthRepo` zeigen keine Section
+- Migration v65/v68 nur additiv (neue Tabelle, keine Schema-Änderung an existing tables)
+- Deploy-Skill funktioniert auf Hosts MIT Legacy docker-compose v1 unverändert (Detection erkennt v1 first)
+
 ## [0.19.0-multi-ha.606] - 2026-05-19
 
 ### Added — Memory-Hygiene: Correction-Klassifikation + Deduplication (K1-K6 Voll-Variante)

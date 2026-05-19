@@ -31,6 +31,20 @@ export interface CalendarEvent {
   allDay?: boolean;
 }
 
+/** v607 D7 — human-readable "X minutes ago" from an ISO timestamp. */
+function relativeAgo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return iso.slice(0, 16).replace('T', ' ');
+  const s = Math.floor(ms / 1000);
+  if (s < 120) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 120) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
 export interface SystemPromptContext {
   memories?: MemoryForPrompt[];
   skills?: SkillMetadata[];
@@ -55,6 +69,15 @@ export interface SystemPromptContext {
     currentPhase: string;
     cwd?: string;
     lastProgressAt?: string;
+  }>;
+  /** v607 D7 — recent host-specific skill failures. Warns the LLM about known-
+   *  broken (skill, host) combinations so it can pick a different approach. */
+  recentHostFailures?: Array<{
+    skillName: string;
+    host: string;
+    errorClass: string;
+    count: number;
+    lastSeen: string;
   }>;
 }
 
@@ -367,6 +390,17 @@ When the user asks to **collect data and produce a file** (e.g. "list all invoic
           prompt += `\nOnly these task_ids accept interject. Any other task_id in conversation history is TERMINATED — use 'start' for new work.`;
         } else {
           prompt += `\n\n### No project-agent sessions are currently running.\nAny task_id you might see in chat history is from a TERMINATED session. To work on a new project: use 'start'.`;
+        }
+      }
+
+      // v607 D7 — surface recent host-specific skill failures. The LLM sees the
+      // (skill, host) tuples that recently failed and can route around them.
+      const failures = context.recentHostFailures ?? [];
+      if (failures.length > 0) {
+        prompt += `\n\n## Known skill-failure patterns (v607 D7)\nThe following (skill, host) combinations failed recently. When calling these skills against the listed hosts, EXPECT the same failure unless something on the host changed. Try alternatives or warn the user:\n`;
+        for (const f of failures.slice(0, 10)) {
+          const ago = relativeAgo(f.lastSeen);
+          prompt += `- \`${f.skillName}\` @ \`${f.host}\` → ${f.errorClass} (${f.count}× seen, last ${ago})\n`;
         }
       }
     }

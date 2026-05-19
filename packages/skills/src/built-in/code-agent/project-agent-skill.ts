@@ -3,6 +3,41 @@ import { Skill } from '../../skill.js';
 import type { ProjectAgentSessionRepository, ProjectAgentInterjectionRepository } from '@alfred/storage';
 import type { LLMProvider } from '@alfred/llm';
 
+/**
+ * v607 D5 — strip LLM-introduced boilerplate prefixes from the goal-text.
+ *
+ * The v605 PromptBuilder tells the LLM "always use action='start' with a fresh
+ * goal", which the LLM tends to take literally and prepend phrases like
+ * "Starte einen NEUEN Projekt-Agent-Lauf für ..." to the actual project
+ * description. This pollutes project-names and runbook-titles downstream.
+ *
+ * Strips repeatedly to handle layered prefixes. Returns the cleaned goal.
+ */
+export function stripGoalPrefix(goal: string): string {
+  const prefixes = [
+    /^Starte\s+(einen\s+)?(NEUE[NRS]?\s+)?Projekt-Agent-Lauf\s+(für|fuer)\s+/i,
+    /^Bitte\s+(starte|erstelle|baue)\s+/i,
+    /^Starte\s+(einen\s+)?(neuen\s+)?Project[-\s]Agent[-\s]Lauf\s+/i,
+    /^Erstelle\s+(ein\s+)?(neues\s+)?Projekt\s+(für|für\s+|fuer\s+)?/i,
+    /^Bitte\s+/i,
+  ];
+  let result = goal.trim();
+  let changed = true;
+  let iters = 0;
+  while (changed && iters++ < 4) {
+    changed = false;
+    for (const re of prefixes) {
+      if (re.test(result)) {
+        result = result.replace(re, '').trim();
+        // Strip leading quotes around the project name if any
+        result = result.replace(/^["'"„"](.+?)["'"""]/, '$1').trim();
+        changed = true;
+      }
+    }
+  }
+  return result.length > 0 ? result : goal.trim();
+}
+
 /** Fallback in-memory inbox (used when no DB repository is available). */
 const interjectionInboxFallback = new Map<string, string[]>();
 
@@ -120,13 +155,20 @@ Actions:
   }
 
   private async startProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
-    const goal = input.goal as string | undefined;
+    const rawGoal = input.goal as string | undefined;
     let cwd = input.cwd as string | undefined;
     const agentName = (input.agent as string) ?? [...this.agents.keys()][0];
 
-    if (!goal) return { success: false, error: 'Missing required field "goal"' };
+    if (!rawGoal) return { success: false, error: 'Missing required field "goal"' };
     if (!cwd) return { success: false, error: 'Missing required field "cwd"' };
     if (!this.runner) return { success: false, error: 'Project agent runner not configured' };
+
+    // v607 D5 — strip boilerplate prefixes the LLM tends to prepend (driven by
+    // the v605 PromptBuilder rule "use action='start' with fresh goal"). Without
+    // this, project-names + runbook-titles look like
+    // "Starte einen NEUEN Projekt-Agent-Lauf für 'X' unter ..."
+    // instead of just the project description.
+    const goal = stripGoalPrefix(rawGoal);
 
     const agentDef = this.agents.get(agentName);
     if (!agentDef) {

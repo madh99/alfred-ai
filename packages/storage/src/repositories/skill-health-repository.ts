@@ -91,4 +91,92 @@ export class SkillHealthRepository {
       updatedAt: row.updated_at as string,
     };
   }
+
+  // ── v607 D7 — host-specific skill-failure pattern memory ────────────────
+
+  /**
+   * Record a skill failure scoped to a specific remote host. Used by skills
+   * that operate on remote infrastructure (deploy, ssh, proxmox, etc.) so the
+   * LLM can be warned about known-broken combinations on subsequent calls.
+   *
+   * Idempotent on (skill_name, host, error_class) — increments count.
+   */
+  async recordHostFailure(input: {
+    skillName: string;
+    host: string;
+    errorClass: string;
+    errorMessage?: string;
+  }): Promise<void> {
+    const now = new Date().toISOString();
+    // Try update first
+    const updateRes = await this.adapter.execute(
+      `UPDATE skill_host_failures SET count = count + 1, last_seen = ?, error_message = ? WHERE skill_name = ? AND host = ? AND error_class = ?`,
+      [now, input.errorMessage ?? null, input.skillName, input.host, input.errorClass],
+    );
+    if (updateRes.changes === 0) {
+      // No existing row — insert
+      const id = (await import('node:crypto')).randomUUID();
+      try {
+        await this.adapter.execute(
+          `INSERT INTO skill_host_failures (id, skill_name, host, error_class, error_message, count, first_seen, last_seen)
+           VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+          [id, input.skillName, input.host, input.errorClass, input.errorMessage ?? null, now, now],
+        );
+      } catch { /* race: row appeared, retry update */
+        await this.adapter.execute(
+          `UPDATE skill_host_failures SET count = count + 1, last_seen = ? WHERE skill_name = ? AND host = ? AND error_class = ?`,
+          [now, input.skillName, input.host, input.errorClass],
+        );
+      }
+    }
+  }
+
+  /**
+   * Look up known failures for a (skill, host) pair. Returns most recent first.
+   * Used by the reasoning prompt to warn the LLM about known-broken patterns
+   * before it invokes the skill again.
+   */
+  async getHostFailures(skillName: string, host: string): Promise<Array<{
+    errorClass: string;
+    errorMessage?: string;
+    count: number;
+    firstSeen: string;
+    lastSeen: string;
+  }>> {
+    const rows = await this.adapter.query(
+      `SELECT error_class, error_message, count, first_seen, last_seen
+       FROM skill_host_failures
+       WHERE skill_name = ? AND host = ?
+       ORDER BY last_seen DESC LIMIT 10`,
+      [skillName, host],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      errorClass: r.error_class as string,
+      errorMessage: (r.error_message as string | null) ?? undefined,
+      count: r.count as number,
+      firstSeen: r.first_seen as string,
+      lastSeen: r.last_seen as string,
+    }));
+  }
+
+  /** List recent host-failures across all skills, useful for pipeline-prompt enrichment. */
+  async listRecentHostFailures(limit = 20): Promise<Array<{
+    skillName: string; host: string; errorClass: string; errorMessage?: string;
+    count: number; firstSeen: string; lastSeen: string;
+  }>> {
+    const rows = await this.adapter.query(
+      `SELECT skill_name, host, error_class, error_message, count, first_seen, last_seen
+       FROM skill_host_failures ORDER BY last_seen DESC LIMIT ?`,
+      [limit],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      skillName: r.skill_name as string,
+      host: r.host as string,
+      errorClass: r.error_class as string,
+      errorMessage: (r.error_message as string | null) ?? undefined,
+      count: r.count as number,
+      firstSeen: r.first_seen as string,
+      lastSeen: r.last_seen as string,
+    }));
+  }
 }

@@ -36,6 +36,23 @@ const NODE_LOCAL_SKILLS = new Set([
  *  — that causes spam insights like "E-Mail-Leseoperation konsistent mit Abend-Muster". */
 const REASONING_TRIGGER_SKILLS = new Set<string>([]);
 
+/**
+ * v607 D7 — classify a raw error message into a short class label suitable for
+ * dedup + UI ("EACCES", "ENOTFOUND", "COMMAND_NOT_FOUND", "TIMEOUT", "AUTH_FAIL", "OTHER").
+ */
+function classifyErrorMessage(err: string): string {
+  const s = err.toLowerCase();
+  if (/command not found/.test(s)) return 'COMMAND_NOT_FOUND';
+  if (/eacces|permission denied/.test(s)) return 'EACCES';
+  if (/enoent|no such file/.test(s)) return 'ENOENT';
+  if (/enospc|no space left/.test(s)) return 'ENOSPC';
+  if (/etimedout|timeout/.test(s)) return 'TIMEOUT';
+  if (/ehostunreach|enetunreach|econnrefused/.test(s)) return 'NETWORK';
+  if (/auth|unauthorized|forbidden|401|403/.test(s)) return 'AUTH_FAIL';
+  if (/notfound|not found|404/.test(s)) return 'NOT_FOUND';
+  return 'OTHER';
+}
+
 const MAX_TOOL_DURATION_MS = 15 * 60 * 1000; // 15 minutes timeout for tool loop
 const MAX_TOOL_ITERATIONS = 50; // Abort tool loop after N iterations
 const MAX_REPEATED_ERRORS = 2; // Abort tool loop after N identical consecutive errors
@@ -176,6 +193,8 @@ export class MessagePipeline {
   private confirmationQueue?: import('./confirmation-queue.js').ConfirmationQueue;
   private activityLogger?: import('./activity-logger.js').ActivityLogger;
   private skillHealthTracker?: import('./skill-health-tracker.js').SkillHealthTracker;
+  /** v607 D7 — direct access to skill-health-repo for prompt enrichment with host-failure history. */
+  private skillHealthRepo?: import('@alfred/storage').SkillHealthRepository;
   private insightTracker?: import('./insight-tracker.js').InsightTracker;
   private moderationService?: import('@alfred/security').ModerationService;
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
@@ -228,6 +247,11 @@ export class MessagePipeline {
 
   setSkillHealthTracker(tracker: import('./skill-health-tracker.js').SkillHealthTracker): void {
     this.skillHealthTracker = tracker;
+  }
+
+  /** v607 D7 — also accept a direct repo ref for prompt enrichment. */
+  setSkillHealthRepo(repo: import('@alfred/storage').SkillHealthRepository): void {
+    this.skillHealthRepo = repo;
   }
 
   setInsightTracker(tracker: import('./insight-tracker.js').InsightTracker): void {
@@ -721,6 +745,16 @@ export class MessagePipeline {
         } catch { /* non-critical */ }
       }
 
+      // v607 D7 — recent host-specific skill failures (Skill-Pattern-Memory).
+      // Surfaces known-broken (skill, host) combinations so the LLM can avoid
+      // running into the same wall twice.
+      let recentHostFailures: Array<{ skillName: string; host: string; errorClass: string; count: number; lastSeen: string }> | undefined;
+      if (this.skillHealthRepo) {
+        try {
+          recentHostFailures = await this.skillHealthRepo.listRecentHostFailures(10);
+        } catch { /* non-critical */ }
+      }
+
       let system = this.promptBuilder.buildSystemPrompt({
         memories,
         skills: skillMetas,
@@ -732,6 +766,7 @@ export class MessagePipeline {
         queryContext,
         personality: this.personality,
         runningProjectAgentSessions,
+        recentHostFailures,
       });
 
       // Inject active ITSM incidents into system prompt so the LLM can reference
@@ -1516,6 +1551,16 @@ export class MessagePipeline {
             await this.skillHealthTracker.recordSuccess(toolCall.name);
           } else {
             await this.skillHealthTracker.recordFailure(toolCall.name, result.error ?? 'Unknown error');
+            // v607 D7 — additionally record per-host failure when the skill
+            // operates on a remote host (extracted from common input fields).
+            const host = (toolCall.input as Record<string, unknown>)?.host
+              ?? (toolCall.input as Record<string, unknown>)?.target_host;
+            if (typeof host === 'string' && host.length > 0) {
+              const errClass = classifyErrorMessage(result.error ?? 'unknown');
+              this.skillHealthTracker.recordHostFailure(
+                toolCall.name, host, errClass, (result.error ?? '').slice(0, 200),
+              ).catch(() => {});
+            }
           }
         }
         // Post-skill reasoning trigger (fire-and-forget)

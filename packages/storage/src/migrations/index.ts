@@ -1557,4 +1557,25 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`CREATE INDEX IF NOT EXISTS idx_open_items_linked_incident ON project_open_items(linked_incident_id)`); } catch { /* exists */ }
     },
   },
+  {
+    version: 65,
+    description: 'Skill-Pattern-Memory — host-specific skill failures (v607 D7)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS skill_host_failures (
+          id TEXT PRIMARY KEY,
+          skill_name TEXT NOT NULL,
+          host TEXT NOT NULL,
+          error_class TEXT NOT NULL,
+          error_message TEXT,
+          count INTEGER NOT NULL DEFAULT 1,
+          first_seen TEXT NOT NULL,
+          last_seen TEXT NOT NULL,
+          UNIQUE(skill_name, host, error_class)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_skill_host_failures_skill ON skill_host_failures(skill_name, host)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_skill_host_failures_last ON skill_host_failures(last_seen DESC)`);
+    },
+  },
 ];

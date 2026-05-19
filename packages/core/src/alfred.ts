@@ -856,16 +856,28 @@ export class Alfred {
             : this.config.discord?.enabled ? 'discord'
             : this.config.whatsapp?.enabled ? 'whatsapp'
             : 'api');
+          // v607 D6 — short LLM-generated runbook title instead of goal.slice(0, 100)
+          // which produced things like "Projekt: Starte einen NEUEN Projekt-Agent-Lauf..."
+          let rbTitle = `Projekt: ${cfg.goal.slice(0, 100)}`;
+          try {
+            const summaryResp = await llmProvider.complete({
+              messages: [{ role: 'user', content:
+                `Fasse das folgende Projekt-Ziel in einem klaren, prägnanten Titel zusammen (max 60 Zeichen, ohne Quotes, ohne "Projekt:" Prefix, ohne "Starte einen ..." Boilerplate). Antworte NUR mit dem Titel.\n\nZiel:\n${cfg.goal.slice(0, 600)}` }],
+              tier: 'fast', maxTokens: 30, temperature: 0.1,
+            });
+            const cleaned = summaryResp.content.trim().replace(/^["'"„""]|["'"„""]$/g, '').slice(0, 60);
+            if (cleaned.length >= 8) rbTitle = cleaned;
+          } catch { /* fallback to raw slice */ }
           await this.confirmationQueue.enqueue({
             chatId: this.config.security?.ownerUserId ?? '',
             platform: ownerPlatformForRb,
             source: 'reasoning',
             sourceId: `runbook-from-project-${sessionId.slice(0, 8)}`,
-            description: `Runbook aus Project-Agent-Session erstellen: "${cfg.goal.slice(0, 80)}"?`,
+            description: `Runbook aus Project-Agent-Session erstellen: "${rbTitle}"?`,
             skillName: 'runbook',
             skillParams: {
               action: 'create',
-              title: `Projekt: ${cfg.goal.slice(0, 100)}`,
+              title: rbTitle,
               symptom: `Initialer Goal: ${cfg.goal}`,
               steps: state.milestonesReached,
               source_type: 'project_agent',
@@ -875,7 +887,7 @@ export class Alfred {
             },
             timeoutMinutes: 24 * 60,
           });
-          this.logger.info({ sessionId, milestones: state.milestonesReached.length }, 'Project-agent runbook suggestion enqueued');
+          this.logger.info({ sessionId, milestones: state.milestonesReached.length, title: rbTitle }, 'Project-agent runbook suggestion enqueued');
         } catch (err) { this.logger.debug({ err }, 'Runbook suggestion (project-agent) failed'); }
       });
 
@@ -2764,6 +2776,7 @@ export class Alfred {
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
+    if (this.skillHealthRepo) this.pipeline.setSkillHealthRepo(this.skillHealthRepo);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
 
     // Wire reasoning engine into pipeline for post-skill triggers
@@ -4146,6 +4159,92 @@ export class Alfred {
         this.logger.info('Chat-session runbook reflector started');
       } catch (err) {
         this.logger.warn({ err }, 'Chat-session runbook reflector init failed');
+      }
+    }
+
+    // v607 D3 — Skill-Failure-Reflector. Detects "skill failed → workaround → success"
+    // patterns in the recent activity log and proposes a Runbook for the lesson.
+    if (this.activityRepo && this.confirmationQueue && this.runbookRepo) {
+      try {
+        const { SkillFailureReflector } = await import('./reflection/skill-failure-reflector.js');
+        const failureReflector = new SkillFailureReflector(
+          this.activityRepo,
+          this.logger.child({ component: 'skill-failure-reflector' }),
+        );
+        // Sweep every 15 minutes — patterns need a few minutes to form anyway
+        setInterval(async () => {
+          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          if (!ownerUid || !this.confirmationQueue) return;
+          try {
+            const patterns = await failureReflector.detect(ownerUid);
+            for (const p of patterns) {
+              const dedupSourceId = `skill-failure-runbook-${p.failedSkill}-${(p.scope ?? '').replace(/[^a-z0-9]/gi, '_').slice(0, 30)}-${p.errorClass}`;
+              // Avoid spamming the same lesson — dedup via sourceId (Confirmation-Queue handles this)
+              const titleCore = `Skill "${p.failedSkill}" auf ${p.scope ?? '?'} → Workaround`;
+              const ownerPlatformForRb = (this.config.telegram?.enabled ? 'telegram'
+                : this.config.discord?.enabled ? 'discord'
+                : this.config.whatsapp?.enabled ? 'whatsapp'
+                : 'api');
+              await this.confirmationQueue.enqueue({
+                chatId: this.config.security?.ownerUserId ?? '',
+                platform: ownerPlatformForRb,
+                source: 'reasoning',
+                sourceId: dedupSourceId,
+                description: `Runbook aus Skill-Failure-Workaround erstellen: "${titleCore}"?`,
+                skillName: 'runbook',
+                skillParams: {
+                  action: 'create',
+                  title: titleCore,
+                  symptom: `Skill "${p.failedSkill}" scheiterte ${p.errorClass} bei ${p.scope ?? '(unbekannter Scope)'}`,
+                  steps: p.workaroundSteps.map((s, i) => `${i + 1}. ${s}`),
+                  source_type: 'chat_session',
+                  source_id: dedupSourceId,
+                  status: 'draft',
+                  tags: ['skill-failure', 'workaround', 'auto', p.failedSkill, p.errorClass.toLowerCase()],
+                },
+                timeoutMinutes: 24 * 60,
+              });
+              this.logger.info({ skill: p.failedSkill, scope: p.scope, errorClass: p.errorClass },
+                'SkillFailureReflector: runbook-confirmation enqueued');
+
+              // v607 D4 — parallel Workflow-Vorschlag wenn Sequence parametrisierbar wirkt.
+              // Heuristik: nur wenn >= 2 shell-steps UND scope=host → könnte ein
+              // wiederverwendbarer Workflow sein
+              if (p.workaroundSteps.length >= 2 && p.scope?.startsWith('host=')) {
+                const wfName = `${p.failedSkill}-workaround-${p.errorClass.toLowerCase()}`
+                  .replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').slice(0, 40);
+                const wfSteps = p.workaroundSteps.map((cmd) => ({
+                  type: 'action' as const,
+                  skillName: 'shell',
+                  inputMapping: { command: cmd },
+                  onError: 'stop' as const,
+                }));
+                await this.confirmationQueue.enqueue({
+                  chatId: this.config.security?.ownerUserId ?? '',
+                  platform: ownerPlatformForRb,
+                  source: 'reasoning',
+                  sourceId: `${dedupSourceId}-workflow`,
+                  description: `Workflow '${wfName}' aus Skill-Failure-Workaround speichern (${wfSteps.length} Schritte)?`,
+                  skillName: 'workflow',
+                  skillParams: {
+                    action: 'create',
+                    name: wfName,
+                    description: `Auto-extrahiert aus Workaround für ${p.failedSkill}/${p.errorClass} auf ${p.scope}`,
+                    steps: wfSteps,
+                    triggerType: 'manual',
+                    autoExtracted: true,
+                  },
+                  timeoutMinutes: 24 * 60,
+                });
+                this.logger.info({ workflowName: wfName, steps: wfSteps.length },
+                  'SkillFailureReflector: workflow-confirmation enqueued (D4)');
+              }
+            }
+          } catch (err) { this.logger.debug({ err }, 'SkillFailureReflector sweep failed (non-critical)'); }
+        }, 15 * 60_000);
+        this.logger.info('Skill-failure reflector started (15min sweep interval)');
+      } catch (err) {
+        this.logger.warn({ err }, 'Skill-failure reflector init failed');
       }
     }
 
