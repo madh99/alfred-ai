@@ -3668,6 +3668,36 @@ export class Alfred {
         this.logger.info('Project-Agent API registered');
       }
 
+      // v623 — Wire Background-Tasks API on HTTP adapter (WebUI inspector)
+      if (apiAdapter && this.database && 'setBackgroundTaskCallbacks' in apiAdapter) {
+        const { BackgroundTaskRepository } = await import('@alfred/storage');
+        const taskRepo = new BackgroundTaskRepository(this.database.getAdapter());
+        (apiAdapter as any).setBackgroundTaskCallbacks({
+          list: async (filter?: { status?: string }) => {
+            try {
+              return await taskRepo.listAll({ status: filter?.status as any, limit: 200 });
+            } catch (err) {
+              this.logger.warn({ err }, 'Background-Tasks API list failed');
+              return [];
+            }
+          },
+          get: async (id: string) => {
+            try {
+              return await taskRepo.getById(id) ?? null;
+            } catch { return null; }
+          },
+          cancel: async (id: string) => {
+            try {
+              return await taskRepo.cancel(id);
+            } catch (err) {
+              this.logger.warn({ err, id }, 'Background-Tasks API cancel failed');
+              return false;
+            }
+          },
+        });
+        this.logger.info('Background-Tasks API registered');
+      }
+
       // Wire Projects API on HTTP adapter
       if (apiAdapter && this.projectRepo && 'setProjectsCallbacks' in apiAdapter) {
         const projRepo = this.projectRepo;

@@ -5,6 +5,54 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.623] - 2026-05-20
+
+### Added — Background-Tasks WebUI (analog Project-Agents)
+
+Persistente Inspektor-Seite für `background_tasks`-Tabelle. Gegenstück zum v609 Project-Agents-UI für die andere Sorte langlaufender/async Skill-Tasks (shell, deploy, code_agent-persistent). Macht Recovery-Stories (Midnight-Crash, Cluster-Failover) und gefährliche failed-tasks sichtbar.
+
+#### Backend
+
+`packages/storage/src/repositories/background-task-repository.ts`:
+- Neue `listAll({ status?, limit? = 200 })` — generische Liste, optional Status-Filter, neueste zuerst
+
+#### HTTP-API
+
+`packages/messaging/src/adapters/http.ts`:
+- `setBackgroundTaskCallbacks({ list, get, cancel })` — neue Callback-Setter
+- 3 neue Endpoints:
+  - `GET /api/background-tasks?status=<status>` — Liste mit optional Status-Filter
+  - `GET /api/background-tasks/:id` — Detail einer einzelnen Task
+  - `POST /api/background-tasks/:id/cancel` — Cancel-Aktion (nur in pending/running möglich)
+- Wired in `alfred.ts` neben Project-Agent-API (3635+)
+
+#### Frontend
+
+`apps/web/src/components/background-tasks/BackgroundTasksPage.tsx` (neu):
+- Tabelle aller Tasks mit Status-Badge, Description-Snippet, Skill-Name, Dauer, Resume-Count
+- ⚓-Icon wenn `agent_state` vorhanden (recoverable)
+- ↻N-Icon wenn `resumeCount > 0`
+- Filter-Dropdown: alle/pending/running/checkpointed/resuming/completed/failed/cancelled
+- Volltext-Suche über description/skill/id/error
+- Auto-Refresh alle 10s solange mindestens eine live-Task sichtbar (pending/running/resuming/checkpointed)
+- Detail-Panel rechts mit: voller Description, Skill-Input (raw JSON), Error/Result-Blocks, Created/Started/Checkpoint/Completed-Timestamps
+- Cancel-Button für `pending`/`running`-Tasks
+
+`apps/web/src/lib/alfred-client.ts`:
+- `BackgroundTaskItem` interface + `BackgroundTaskStatus` type
+- 3 Methoden: `fetchBackgroundTasks`, `fetchBackgroundTask`, `cancelBackgroundTask`
+
+`apps/web/src/components/layout/Sidebar.tsx`:
+- Neuer Eintrag "Background Tasks" mit ⚙️ Icon zwischen "Project Agents" und "Projects"
+
+`apps/web/src/app/background-tasks/page.tsx` (neu):
+- Route /background-tasks → BackgroundTasksPage
+
+### Notes
+- Build grün (12 packages), Route `/background-tasks` 2.75 kB
+- Auf .92 aktuell 2 background_tasks-Einträge sichtbar (beide failed shell-tasks vom v611-Crash + v619-Test) → Recovery-Story jetzt visuell nachvollziehbar
+- Keine DB-Migration, keine API-Breaking-Changes
+
 ## [0.19.0-multi-ha.622] - 2026-05-20
 
 ### Added — Dashboard Usage-Tracking: Time-Range-Picker + Stacked Bars + Model-Toggle

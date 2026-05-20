@@ -251,6 +251,38 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── v623 — Background-Tasks ──
+  async fetchBackgroundTasks(filter?: { status?: string }): Promise<BackgroundTaskItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    const url = `${this.baseUrl}/api/background-tasks${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch background tasks: ${res.status}`);
+    const data = await res.json();
+    return data.tasks ?? [];
+  }
+
+  async fetchBackgroundTask(id: string): Promise<BackgroundTaskItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/background-tasks/${id}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.task ?? null;
+  }
+
+  async cancelBackgroundTask(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/background-tasks/${id}/cancel`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   // ── Projects API ──
   async fetchProjects(filter?: { status?: string }): Promise<Project[]> {
     const params = new URLSearchParams();
@@ -807,6 +839,29 @@ export interface Runbook {
   status: 'draft' | 'verified' | 'deprecated';
   createdAt: string;
   updatedAt: string;
+}
+
+// v623 — Background-Tasks (WebUI inspector)
+export type BackgroundTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'checkpointed' | 'resuming';
+
+export interface BackgroundTaskItem {
+  id: string;
+  userId: string;
+  platform: string;
+  chatId: string;
+  description: string;
+  skillName: string;
+  skillInput: string;
+  status: BackgroundTaskStatus;
+  result?: string;
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  agentState?: string;
+  checkpointAt?: string;
+  resumeCount: number;
+  maxDurationHours?: number;
 }
 
 // v609 — Project-Agent-Sessions (WebUI inspector)

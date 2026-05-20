@@ -244,6 +244,21 @@ export class HttpAdapter extends MessagingAdapter {
     this.projectAgentsStopFn = opts.stop;
   }
 
+  // v623 — Background-Tasks API (WebUI list/inspect/cancel)
+  private backgroundTasksListFn?: (filter?: { status?: string }) => Promise<any[]>;
+  private backgroundTasksGetFn?: (id: string) => Promise<any | null>;
+  private backgroundTasksCancelFn?: (id: string) => Promise<boolean>;
+
+  setBackgroundTaskCallbacks(opts: {
+    list: (filter?: { status?: string }) => Promise<any[]>;
+    get: (id: string) => Promise<any | null>;
+    cancel: (id: string) => Promise<boolean>;
+  }): void {
+    this.backgroundTasksListFn = opts.list;
+    this.backgroundTasksGetFn = opts.get;
+    this.backgroundTasksCancelFn = opts.cancel;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -543,6 +558,13 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectAgentsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/stop$/) && req.method === 'POST') {
       this.handleProjectAgentsStop(req, res, url).catch(err => this.safeError(res, err));
+    // ── Background-Tasks API (v623) ──
+    } else if (url.pathname === '/api/background-tasks' && req.method === 'GET') {
+      this.handleBackgroundTasksList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/background-tasks\/[^/]+$/) && req.method === 'GET') {
+      this.handleBackgroundTasksGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/background-tasks\/[^/]+\/cancel$/) && req.method === 'POST') {
+      this.handleBackgroundTasksCancel(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1203,6 +1225,42 @@ export class HttpAdapter extends MessagingAdapter {
     const segments = url.pathname.split('/');
     const taskId = segments[segments.length - 2]; // .../{taskId}/stop
     const ok = await this.projectAgentsStopFn(taskId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── Background-Tasks API handlers (v623) ──
+  private async handleBackgroundTasksList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.backgroundTasksListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const status = url.searchParams.get('status') ?? undefined;
+    const list = await this.backgroundTasksListFn({ status });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ tasks: list }));
+  }
+
+  private async handleBackgroundTasksGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.backgroundTasksGetFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const id = url.pathname.split('/').pop()!;
+    const task = await this.backgroundTasksGetFn(id);
+    if (!task) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ task }));
+  }
+
+  private async handleBackgroundTasksCancel(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.backgroundTasksCancelFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const id = segments[segments.length - 2]; // .../{id}/cancel
+    const ok = await this.backgroundTasksCancelFn(id);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

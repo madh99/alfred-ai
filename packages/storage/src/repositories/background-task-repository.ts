@@ -118,6 +118,26 @@ export class BackgroundTaskRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /**
+   * v623 — Liste ALLER background_tasks (für WebUI-Inspector). Optional Status-Filter.
+   * Sortiert nach created_at desc; älteste Einträge können per cleanup() entfernt werden.
+   */
+  async listAll(opts?: { status?: BackgroundTask['status']; limit?: number }): Promise<BackgroundTask[]> {
+    const limit = opts?.limit ?? 200;
+    if (opts?.status) {
+      const rows = await this.adapter.query(
+        `SELECT * FROM background_tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?`,
+        [opts.status, limit],
+      ) as Record<string, unknown>[];
+      return rows.map(r => this.mapRow(r));
+    }
+    const rows = await this.adapter.query(
+      `SELECT * FROM background_tasks ORDER BY created_at DESC LIMIT ?`,
+      [limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   async getByUser(userId: string): Promise<BackgroundTask[]> {
     const oneDayAgo = new Date(Date.now() - 86400000).toISOString();
     const rows = await this.adapter.query(
