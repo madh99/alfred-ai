@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.628] - 2026-05-21
+
+### Added — Chat-Interface-Enhancements (B vom A/B/C-Trio)
+
+Zweiter Teil der WebUI-Ausbaustufe. Bestehender rudimentärer Chat bekommt produktive Bedien-Features.
+
+**InputBar** (`apps/web/src/components/chat/InputBar.tsx`):
+- **Auto-Resize-Textarea** — wächst bis 12 Zeilen, dann interner Scroll
+- **Stop-Button während Streaming** — ersetzt Senden-Button mit rotem Stop-Glyph, verbindet auf `useChat.cancel()`
+- **Slash-Command-Palette** (B3) — Komponente `SlashCommandPalette.tsx`: `/`-Tastendruck öffnet, gefilterte Liste mit ↑/↓-Navigation, Tab-Vervollständigung, Enter-Übernahme. 9 Befehle: `/help /clear /skills /usage /history /dashboard /knowledge /memories /runbooks` — Routen springen direkt, andere werden als Nachricht gesendet.
+- **Token-Preview** — Live-Zähler unter dem Input: Zeichen + geschätzte Tokens (3.5 chars/token, German-tuned)
+- **Draft-Persistence** — ungesendeter Text wird in `localStorage` als `alfred-chat-draft` gehalten und nach Reload wiederhergestellt
+- **Streaming-Indicator** — pulsierender blauer Dot rechts unten ("Alfred antwortet …")
+- Mobile-Padding: `p-3 md:p-4` statt fixed `p-4`
+
+**useChat** (`apps/web/src/hooks/useChat.ts`):
+- `clearMessages()` — lokales State + persistierten Cache leeren
+- `retryLast()` — letzte Assistant-Nachricht verwerfen, letzte User-Nachricht neu streamen
+- `editLastUser(newText)` — letzte User/Assistant-Pair durch neue User-Nachricht ersetzen, neu streamen
+- **Message-Persistence** — `state.messages` werden in `localStorage` (Key `alfred-chat-messages`, max 200) persistiert und beim Mount wiederhergestellt; reload verliert Conversation nicht mehr
+
+**ChatMessage** (`apps/web/src/components/chat/ChatMessage.tsx`):
+- **Hover-Actions** (B4) — Copy/Edit/Retry-Buttons erscheinen on-hover oberhalb der Bubble
+- **Copy** auf jeder Nachricht (mit ✓-Bestätigung)
+- **Edit** nur auf letzter User-Nachricht (Inline-Textarea, Abbrechen/Senden ↻)
+- **Retry** nur auf letzter Assistant-Nachricht
+- Edits sind disabled während `streaming`, kein Doppel-Submit möglich
+
+**ChatPage** (`apps/web/src/components/chat/ChatPage.tsx`):
+- Header (sichtbar ab erster Nachricht): User-ID, Nachrichten-Count, "Leeren"-Button
+- `lastUserId`/`lastAssistantId` per `useMemo` an `ChatMessage` durchgereicht
+- Confirm-Dialog vor "Leeren" mit Hinweis dass Server-Historie unverändert bleibt
+
+### Notes
+- `pnpm build` grün (12/12); Chat-Route hat sich nicht vergrößert (165 B Route + 154 kB First-Load gleich wie vorher)
+- v627 (A - History-Viewer) und v628 (B - Chat-UX) sind unabhängig deploybar
+- v629 (C - Structural Integration) folgt: Confirmations im Chat, Entity-Klick öffnet KG, Insight-Side-Panel
+
 ## [0.19.0-multi-ha.627] - 2026-05-21
 
 ### Added — Chat-History-Viewer in der WebUI (A vom Trio A/B/C)
