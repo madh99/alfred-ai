@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.615] - 2026-05-20
+
+### Fixed — alpbyte-games-cwd-Verwechslung: Project-Agent wählte Deploy-Target als Workspace
+
+Root cause des 2026-05-20 alpbyte-games-Vorfalls: Zwei Project-Agent-Sessions wurden mit `cwd=/home/ubuntu/alpbyte-games` gestartet anstatt mit dem korrekten Dev-Workspace `/home/madh/projects/alpbyte-games`. Ergebnis: 70+18 Dateien Arbeit (OpenAPI + API-Keys + Tests, committed bis a5f9bd2) landeten in einem lokal neu angelegten parallelen Verzeichnis `/home/ubuntu/alpbyte-games` auf der Alfred-Node, der echte Dev-Workspace wurde nicht angefasst, Push schlug fehl wegen state-Konflikt.
+
+Die LLM-Fehl-Inferenz kam aus dem Memory `deploy_alpbyte-games_192_168_1_96` (Value: "Alpbyte Games läuft auf 192.168.1.96 als ubuntu via docker-compose") — der LLM interpretierte den Deploy-Target-Pfad als Workspace, weil **kein Gegen-Memory** existierte das den Dev-Workspace explizit nennt, und der Project-Agent-Skill keine Name-basierten Konflikt-Checks machte.
+
+#### M1 — Project-Name-Konflikt-Check in `project_agent.start`
+
+`packages/skills/src/built-in/code-agent/project-agent-skill.ts` lädt jetzt vor Start die `projects`-Tabelle und prüft per Last-Segment-Match (z.B. `alpbyte-games`) ob ein aktives Projekt mit ANDEREM cwd existiert. Falls ja: explizite Fehlermeldung mit Vorschlag des bestehenden cwd, statt blind einen neuen Workspace anzulegen.
+
+Beispiel-Output bei Konflikt: *"Es gibt bereits ein Projekt 'alpbyte-games' mit cwd /home/madh/projects/alpbyte-games. Du hast cwd /home/ubuntu/alpbyte-games angegeben — meintest du den bestehenden Pfad? Falls ja: action=start nochmal mit cwd=/home/madh/projects/alpbyte-games."*
+
+Wired via `projectAgentSkill.setProjectLookup(this.projectRepo, ownerUserId)` in `alfred.ts:841`.
+
+#### M2 — Workspace-Sanity-Check für `/home/<X>/` wenn X ≠ runAsUser
+
+`project-agent-skill.ts:startProject()` lehnt cwd ab das auf `/home/<X>/` zeigt wo `<X>` nicht der `runAsUser` (typischerweise `madh`) ist. Klassisches Beispiel: `/home/ubuntu/...` ist der Deploy-Target auf einem Remote-Host, nicht der lokale Workspace.
+
+Output: *"cwd '/home/ubuntu/alpbyte-games' verweist auf Home von User 'ubuntu', aber Agent läuft als 'madh'. Wahrscheinlich gemeint: /home/madh/projects/alpbyte-games."*
+
+#### M3 (L6) — Auto-Memory bei Project-Agent-Completion (DAS fehlende Lern-Pendant zu v609 V2)
+
+**Das ist der eigentliche strukturelle Fix.** v609 V2 schrieb bereits Auto-Memory `deploy_<project>_<host>` nach jedem erfolgreichen Deploy. Es gab aber **keine Entsprechung** für Project-Agent-Sessions — das Lernen "User sagt X, ich arbeitete in cwd Y" fand nicht statt.
+
+v615 schreibt jetzt nach JEDEM Project-Agent-Lauf (success ODER failure):
+
+```
+project_workspace_<projektname> = "Dev-Workspace für Projekt '<projektname>': /home/madh/projects/<projektname> 
+                                   (lokal auf Alfred-Node), last_run=YYYY-MM-DD HH:MM, phases=N, 
+                                   files_changed=N, build_passed=yes/no, last_commit=<sha8>, 
+                                   HINWEIS: Das ist der LOKALE Workspace zum Entwickeln, 
+                                   NICHT der Deploy-Target-Pfad"
+```
+
+Category `workspace`, source `auto`, type `fact`. Wird vom Reasoning-Context-Collector via semantic-memory-search aufgenommen (Priority 1, 1200 token budget).
+
+Damit beim nächsten "weiter am alpbyte-games" das LLM zwei Memories sieht:
+- `deploy_alpbyte-games_192_168_1_96` → wo es deployed wird
+- `project_workspace_alpbyte-games` → wo es entwickelt wird
+
+#### M4 — Skill-Description erweitert
+
+Die Skill-Description nennt jetzt explizit:
+- "cwd = LOKALER Entwicklungs-Pfad auf der Alfred-Node, NICHT Deploy-Target-Pfad auf einem Remote-Host"
+- "Wenn die Deploy-Memory sagt 'läuft auf 192.168.1.96 als ubuntu' ist das der Deploy-Target, NICHT der Workspace"
+- "Für Continue-Sessions: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory)"
+
+Das LLM bekommt die Disambiguierung jetzt direkt im Tool-Schema.
+
+#### M5 — Bewusst deferred
+
+Push-Token-Inject für `sudo -u madh git push` in non-interactive-Kontext. v601 hat einen Mechanismus, der greift hier nicht in dem `/home/ubuntu/...` Workspace. Der Push-Bug ist real, aber sekundär — wenn M1+M2 verhindern dass der Agent überhaupt im falschen cwd landet, kommt es zu dem Push-Fehler nicht mehr.
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- M3 schließt die letzte offene Lern-Loop-Lücke ("User-Aufträge → Workspace-Memory")
+- Memory `project_workspace_*` wird auch bei `success=false` geschrieben — wichtig für Retry-Cases
+- Existing memories bleiben unverändert; das neue Schema kommt zu deploy_* hinzu, ersetzt nichts
+
 ## [0.19.0-multi-ha.614] - 2026-05-20
 
 ### Added — Lern-Loop schließen (L1, L2, L3, L5; L4 bewusst deferred)

@@ -85,6 +85,18 @@ export class ProjectAgentSkill extends Skill {
   private readonly config: ProjectAgentsConfig;
   /** Set by alfred.ts after construction — the runner that executes the loop. */
   private runner?: { run(sessionId: string, config: Record<string, unknown>, platform: string, chatId: string): Promise<void> };
+  /** v615 M1 — set via alfred.ts after construction to enable project-name lookups */
+  private projectRepo?: {
+    findByCwd?(userId: string, cwd: string): Promise<{ id: string; name: string; cwd?: string } | null>;
+    list(userId: string, opts?: { status?: string; limit?: number }): Promise<Array<{ id: string; name: string; slug: string; cwd?: string }>>;
+  };
+  private ownerUserId?: string;
+
+  /** v615 M1 — wire from alfred.ts after Skill construction. */
+  setProjectLookup(repo: typeof this.projectRepo, ownerUserId: string | undefined): void {
+    this.projectRepo = repo;
+    this.ownerUserId = ownerUserId;
+  }
 
   constructor(
     config: ProjectAgentsConfig & { agents: CodeAgentDefinitionConfig[] },
@@ -107,7 +119,7 @@ export class ProjectAgentSkill extends Skill {
       category: 'automation',
       description: `Autonomous coding agent that creates and develops software projects end-to-end. Runs indefinitely until the goal is reached.
 Actions:
-- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs")
+- start: Start a NEW project agent session. Use this whenever the user requests a new project or wants to retry after a previous session ended. Params: goal (what to build), cwd (directory), agent (which code agent to use — available: ${agentList}; default: ${defaultAgent}), buildCommands (optional, e.g. ["npm install", "npm run build"]), testCommands (optional), template (optional, e.g. "nextjs"). WICHTIG zur cwd: das ist der LOKALE Entwicklungs-Pfad auf der Alfred-Node (z.B. /home/madh/projects/<projektname>), NICHT der Deploy-Target-Pfad auf einem Remote-Host. Wenn die Deploy-Memory sagt "Projekt X läuft auf 192.168.1.96 als ubuntu" ist das der Deploy-Target, NICHT der Workspace. Für Continue-Sessions desselben Projekts: gleichen cwd wie der letzte erfolgreiche Lauf benutzen (siehe project_workspace_<projektname> Memory falls vorhanden).
 - status: Check current status of a project agent session. Params: task_id. Returns currentPhase — if 'done' or 'failed', the session has ENDED and interject will not work; start a fresh one instead.
 - interject: Send a message to a CURRENTLY RUNNING project agent (e.g. "add feature X"). Params: task_id, message. DO NOT use interject if the session is already finished/done/failed — start a new session with action='start' instead. The skill will reject interject on terminated sessions with a clear error.
 - stop: Stop a running project agent. Params: task_id`,
@@ -204,6 +216,57 @@ Actions:
       const newCwd = `/home/${runAsUser}/projects/${lastSegment}`;
       cwdRewriteHint = `Hinweis: cwd \`${cwd}\` wurde automatisch auf \`${newCwd}\` umgeleitet, weil Agent "${agentName}" als User "${runAsUser}" läuft und /root nicht traversierbar ist.`;
       cwd = newCwd;
+    }
+
+    // v615 M2 — Workspace-Sanity-Check: lehne cwd ab das auf ein /home/<X>/ verweist
+    // wo X nicht der runAsUser ist (außer 'projects'-Subpath). Verhindert dass das LLM
+    // einen Deploy-Target-Pfad wie /home/ubuntu/<project> als Workspace ansetzt
+    // und der Agent damit ein paralleles, isoliertes Verzeichnis auf der Alfred-Node
+    // anlegt (so passiert am 2026-05-20 mit alpbyte-games auf /home/ubuntu/...).
+    if (runAsUser && /^\/home\/([^/]+)\//.test(cwd)) {
+      const m = cwd.match(/^\/home\/([^/]+)\//);
+      const cwdHomeUser = m?.[1];
+      if (cwdHomeUser && cwdHomeUser !== runAsUser) {
+        return {
+          success: false,
+          error: `cwd "${cwd}" verweist auf das Home-Verzeichnis von User "${cwdHomeUser}", aber Agent "${agentName}" läuft als "${runAsUser}". ` +
+            `Das ist meistens eine Verwechslung von Deploy-Target-Pfad mit lokalem Dev-Workspace. ` +
+            `Wahrscheinlich gemeint: /home/${runAsUser}/projects/${cwd.split('/').pop() || 'project'} ` +
+            `(oder explizit bestätigen falls wirklich gewollt).`,
+        };
+      }
+    }
+
+    // v615 M1 — Project-Name-Lookup BEFORE accepting the supplied cwd: if a Project
+    // with a similar name already exists at a DIFFERENT cwd, reject this start.
+    // Catches the alpbyte-games / /home/ubuntu/ vs /home/madh/projects/ confusion
+    // from 2026-05-20 where the LLM picked the deploy-target path as workspace.
+    if (this.projectRepo && this.ownerUserId) {
+      try {
+        const lastSegment = cwd.replace(/\/+$/, '').split('/').pop() ?? '';
+        const lastSegmentNorm = lastSegment.toLowerCase().replace(/[^a-z0-9-]/g, '');
+        if (lastSegmentNorm.length >= 3) {
+          const allProjects = await this.projectRepo.list(this.ownerUserId, { status: 'active', limit: 100 });
+          const conflict = allProjects.find(p => {
+            if (!p.cwd) return false;
+            if (p.cwd === cwd) return false; // exact match → not a conflict
+            const projLast = p.cwd.replace(/\/+$/, '').split('/').pop() ?? '';
+            return projLast.toLowerCase().replace(/[^a-z0-9-]/g, '') === lastSegmentNorm
+              || p.name.toLowerCase().replace(/[^a-z0-9-]/g, '').includes(lastSegmentNorm)
+              || p.slug.toLowerCase().includes(lastSegmentNorm);
+          });
+          if (conflict && conflict.cwd) {
+            return {
+              success: false,
+              error: `Es gibt bereits ein Projekt "${conflict.name.slice(0, 80)}" mit cwd \`${conflict.cwd}\`. ` +
+                `Du hast cwd \`${cwd}\` angegeben — meintest du den bestehenden Pfad? ` +
+                `Falls ja: action=start nochmal mit cwd=\`${conflict.cwd}\`. ` +
+                `Falls wirklich neuer Workspace gewünscht: rename des cwd-Basenames (z.B. ${lastSegment}-v2) und erneut versuchen.`,
+              data: { existing_project_cwd: conflict.cwd, supplied_cwd: cwd, existing_project_name: conflict.name },
+            };
+          }
+        }
+      } catch { /* non-critical — fall through to existing checks */ }
     }
 
     // Check if a session is already running for this cwd

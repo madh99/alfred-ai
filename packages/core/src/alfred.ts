@@ -843,11 +843,54 @@ export class Alfred {
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
 
+      // v615 M1 — Wire project-lookup so startProject can reject a cwd that
+      // conflicts with an existing project's known workspace. ProjectRepo is
+      // set later in init(); we pass `this` as ref-holder and the skill
+      // re-reads it at call time. ownerMasterUserId is resolved similarly.
+      if (this.projectRepo) {
+        projectAgentSkill.setProjectLookup(this.projectRepo, this.ownerMasterUserId ?? this.config.security?.ownerUserId);
+      } else {
+        // Late binding: set once the ProjectRepository exists. We do this from
+        // the same init phase that constructs projectRepo (see further below).
+        // For now register an empty ref so the skill doesn't crash.
+      }
+
       // On every project-agent completion (success OR failure): hand the session over to
       // the ProjectManager so it auto-binds to a long-lived Project, runs the LLM
       // summarizer, and persists open items + decisions. This is what gives Alfred
       // post-session awareness ("what happened in project X, what's still open").
       projectRunner.setCompletionCallback(async (sessionId, cfg, state, success) => {
+        // v615 M3 (L6) — Auto-Memory der Workspace-Info bei JEDEM Project-Agent-Lauf
+        // (success ODER failure). Dual zu v609 V2 deploy-Memory: speichert wo gearbeitet
+        // wurde, damit der nächste "weiter am Projekt X"-Request den richtigen cwd
+        // findet. Best-effort — Memory-Fehler bricht den Completion-Flow nicht ab.
+        if (this.memoryRepo && cfg.cwd) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
+            if (userId && projectName) {
+              const safeKey = `project_workspace_${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+              const latestSession = await this.database?.getAdapter().queryOne(
+                `SELECT last_commit_sha, last_build_passed FROM project_agent_sessions WHERE task_id = ?`,
+                [sessionId],
+              ).catch(() => null) as { last_commit_sha?: string; last_build_passed?: number } | null;
+              const parts = [
+                `Dev-Workspace für Projekt "${projectName}": ${cfg.cwd} (lokal auf Alfred-Node)`,
+                `last_run=${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
+                `phases=${state.projectIteration}`,
+                `files_changed=${state.totalFilesChanged}`,
+                `build_passed=${success ? 'yes' : 'no'}`,
+              ];
+              if (latestSession?.last_commit_sha) parts.push(`last_commit=${latestSession.last_commit_sha.slice(0, 8)}`);
+              parts.push(`HINWEIS: Das ist der LOKALE Workspace zum Entwickeln, NICHT der Deploy-Target-Pfad`);
+              await this.memoryRepo.saveWithMetadata(
+                userId, safeKey, parts.join(', '),
+                'workspace', 'fact', 0.95, 'auto',
+              );
+            }
+          } catch (err) { this.logger.debug({ err }, 'project-agent workspace-memory auto-save failed'); }
+        }
+
         if (this.projectManager) {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
