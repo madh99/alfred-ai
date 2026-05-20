@@ -8,7 +8,11 @@ import type { CodeAgentDefinitionConfig } from '@alfred/types';
 // komplexes Multi-File-Refactoring-Reasoning gelegentlich >2min. Mit Halfway-
 // Warning bei 5min wird der User sichtbar informiert bevor's killt.
 const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — used as inactivity threshold by default
-const MAX_TIMEOUT_MS = 900_000; // 15 minutes — used as inactivity threshold ceiling
+// v626 — Ceiling 15→30min. v624 D wollte 20min für Long-Phases (npm install +
+// build + lint + typecheck + test als ein Block); die alte 15min-Decke clampte
+// den Wert intern auf 15min, wodurch das v624-Versprechen nicht eingelöst wurde.
+// Mit 30min Ceiling wirkt das 20min-Long-Phase-Setting wirklich, plus Buffer.
+const MAX_TIMEOUT_MS = 1_800_000; // 30 minutes — used as inactivity threshold ceiling
 const MAX_OUTPUT_CHARS = 100_000;
 /** v619 D0 — Absolute safety cap. Sliding inactivity timer can extend indefinitely
  *  if the subprocess keeps producing output, but we never want a single agent

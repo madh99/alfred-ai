@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.626] - 2026-05-21
+
+### Fixed — `MAX_TIMEOUT_MS` Ceiling clampte v624 Long-Phase auf 15min statt 20min
+
+User-beobachtet während laufender Phase 2 (alpbyte-games Validation): Halfway-Warning erschien bei 450s (=7.5min) mit "wird in ~8min gekillt" — Summe 15min, nicht die in v624 versprochenen 20min.
+
+**Root cause** in `agent-executor.ts:178`:
+```typescript
+const timeoutMs = Math.min(rawTimeout, MAX_TIMEOUT_MS);
+```
+
+`MAX_TIMEOUT_MS = 900_000` (15min) clampte den vom Runner übergebenen Wert (20min für Long-Phases) intern auf 15min. v624's "20min Long-Phase" war damit eine **Lüge meinerseits** — der Wert kam nie an.
+
+**Fix**: `MAX_TIMEOUT_MS` von `900_000` (15min) auf `1_800_000` (30min) angehoben. Damit wirkt das 20min-Long-Phase-Setting tatsächlich, plus 10min Buffer für noch extremere Cases (große monorepos, langsame networks).
+
+**Effekt nach v626**:
+- Normal-Phase: 10min Inactivity (Halfway bei 5min) — unverändert
+- Long-Phase: **wirklich 20min** Inactivity (Halfway bei 10min) — vorher fälschlich 15min
+- Absolute Cap bleibt 60min
+
+### Notes
+- Build grün (12 packages)
+- One-line core change; entschuldige die wiederholte Schlamperei in dieser Code-Region
+- Laufende Phase die schon im 15min-Timer war wird mit v625 noch gekillt; nach Deploy + Restart gilt v626
+
 ## [0.19.0-multi-ha.625] - 2026-05-21
 
 ### Changed — Default-Inactivity-Timeout von 5 auf 10 min
