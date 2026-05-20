@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.618] - 2026-05-20
+
+### Fixed — B1: Project-Agent ignorierte exitCode des Coding-Agents → Fake-Success
+
+**Root cause (im Detail in v617-Bericht)**: codex wurde als madh-User ohne Auth aufgerufen, brach mit exitCode 2 (401 Unauthorized vom OpenAI-API) ab. Der Project-Agent-Runner las nur `codeResult.modifiedFiles.length` (=0) und ignorierte `codeResult.exitCode`. Build-Validation lief auf unverändertem Code (= grünes Build), `git commit --allow-empty` produzierte leere Commits, alles wurde als "Phase erfolgreich" reportet. 12 leere Commits landeten auf origin/master. Der User sah "12 Phasen, 0 Dateien geändert" und dachte alles funktioniert.
+
+**Fix in `packages/core/src/project-agent-runner.ts`**:
+
+1. **Coding-Phase**: nach `executeAgent()` wird `codeResult.exitCode` geprüft. Bei `!== 0`:
+   - Phase wird als Failure gemeldet mit stderr-Tail (letzte 400 Zeichen)
+   - Diagnose-Hint basierend auf stderr-Pattern:
+     - `401|Unauthorized|Missing bearer|not authenticated` → "Auth-Fehler. Login als Runtime-User durchführen oder API-Key in agent-Config setzen"
+     - `command not found|ENOENT` → "Binary fehlt. Installation prüfen oder absoluten Pfad in Config"
+     - exitCode 124 → "Timeout. Komplexität reduzieren oder timeout in Config erhöhen"
+   - Phase-State auf `done` gesetzt (terminal), Run wird via `break` aus der Phase-Loop verlassen
+   - Post-Loop detect honestly success=false via `anyPhaseProducedFiles && lastBuildActuallyPassed` (beide false)
+   - → Telegram bekommt `❌ Project Agent fehlgeschlagen` statt `🎉 fertig`
+
+2. **Fix-Phase im Build-Validate-Loop**: bei `fixResult.exitCode !== 0` wird gewarnt, Fix-Counter läuft weiter, nach `maxFixAttempts` bricht der Loop sauber ab statt still durchzurutschen.
+
+**Was NICHT geändert wurde**:
+- `--allow-empty` bleibt — sinnvoll für legitime "nichts zu schreiben"-Phasen
+- ExitCode-Logik ist defensive; bei erfolgreichem Coding-Agent (exit 0) verhält sich der Runner exakt wie vorher
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- Reine defensive Code-Verbesserung; bei korrekter Agent-Config (Login da, Binary erreichbar) unveränderte UX
+- Erkennt zukünftige Auth-Probleme (Token-Ablauf, neue Agent-Hinzufügung ohne Login) sofort statt durch leere Commits zu maskieren
+
 ## [0.19.0-multi-ha.617] - 2026-05-20
 
 ### Fixed — M1+M2 lehnten den KORREKTEN cwd ab wenn ein anderes Projekt mit gleichem basename existiert

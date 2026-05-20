@@ -264,6 +264,43 @@ export class ProjectAgentRunner {
 
         state.totalFilesChanged += codeResult.modifiedFiles.length;
 
+        // v618 B1 — coding-agent ExitCode prüfen BEVOR Build-Validate startet.
+        // Vorher: codeResult.exitCode wurde ignoriert. Folge: wenn der Agent
+        // wegen Auth-Fehler (codex 401), fehlender Binary oder Timeout abbrach
+        // und 0 Files änderte, lief der Build trotzdem (existing Code baut)
+        // und der Runner committete leer per --allow-empty. → Fake-Success.
+        // Jetzt: bei exitCode != 0 wird die Phase als Failure behandelt und der
+        // Lauf abgebrochen. Logs/stderr werden dem User mit Diagnose-Hinweis
+        // (Auth-Fehler, Binary-Fehler, Timeout) zurückgemeldet.
+        if (codeResult.exitCode !== 0) {
+          const stderr = codeResult.stderr ?? '';
+          let hint = '';
+          if (/401|Unauthorized|Missing bearer|auth\.json|not authenticated/i.test(stderr)) {
+            hint = `\n\n🔑 **Diagnose: Auth-Fehler.** Der Code-Agent "${config.agentName}" konnte sich nicht beim LLM-Provider anmelden. Login als Runtime-User (sudo -u ${runAsUser ?? 'madh'} ${config.agentName} login) durchführen oder API-Key in der agent-Config setzen.`;
+          } else if (/command not found|ENOENT|not found in PATH/i.test(stderr)) {
+            hint = `\n\n🔍 **Diagnose: Binary fehlt.** Der Befehl "${agentDef.command}" ist im PATH von User "${runAsUser ?? 'process-owner'}" nicht erreichbar. Installation prüfen oder Pfad in der agent-Config absolut angeben.`;
+          } else if (codeResult.exitCode === 124) {
+            hint = `\n\n⏱ **Diagnose: Timeout.** Der Agent wurde nach ${Math.round((codeResult.durationMs ?? 0) / 1000)}s abgebrochen (max ${Math.round((agentDef.timeoutMs ?? 900_000) / 60_000)}min). Komplexität reduzieren oder Timeout in der Config erhöhen.`;
+          }
+          await this.sendProgress(platform, chatId,
+            `❌ Phase ${phaseIdx + 1}/${plan.phases.length} fehlgeschlagen — Coding-Agent exitCode=${codeResult.exitCode}.\n\n` +
+            `**Phase**: ${phase.slice(0, 200)}\n\n` +
+            `**stderr (letzte 400 Zeichen)**:\n\`\`\`\n${stderr.slice(-400) || '(leer)'}\n\`\`\`` +
+            hint,
+          );
+          this.logger.error({
+            sessionId, phase: phaseIdx + 1, agentName: config.agentName,
+            exitCode: codeResult.exitCode, stderrTail: stderr.slice(-400),
+          }, 'Project agent: coding phase exited non-zero — aborting');
+          // v618 B1 — Phase terminieren. Wir setzen 'done' (terminal) statt 'failed'
+          // weil das ProjectAgentMeta-Type nur done/awaiting_user/etc kennt. Die
+          // Post-Loop-Logik nutzt anyPhaseProducedFiles + lastBuildActuallyPassed
+          // um 🎉 vs ❌ zu entscheiden — beide bleiben hier false → ❌-Output.
+          state.projectPhase = 'done';
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          break; // exit the for-loop over phases; finally-block handles cleanup
+        }
+
         // ── VALIDATE + FIX LOOP ──
         let buildPassed = false;
         for (let fixAttempt = 0; fixAttempt <= config.maxFixAttempts; fixAttempt++) {
@@ -327,6 +364,19 @@ export class ProjectAgentRunner {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
           });
+          // v618 B1 — auch der Fix-Lauf darf nicht still durchrutschen wenn der
+          // Agent crashte. Bei exitCode != 0: Fix-Loop verlassen, Build wird im
+          // nächsten Iteration-Check als gescheitert behandelt und nach maxFixAttempts
+          // bricht der Loop sauber ab.
+          if (fixResult.exitCode !== 0) {
+            this.logger.warn({
+              sessionId, phase: phaseIdx + 1, fixAttempt,
+              exitCode: fixResult.exitCode, stderrTail: (fixResult.stderr ?? '').slice(-200),
+            }, 'Project agent: fix attempt exited non-zero');
+            await this.sendProgress(platform, chatId,
+              `⚠️ Fix-Versuch ${fixAttempt + 1} fehlgeschlagen (agent exitCode=${fixResult.exitCode}). Build wird erneut probiert oder Phase wird nach Max-Attempts abgebrochen.`);
+            // continue to next iteration; buildPassed stays false, loop will hit maxFixAttempts and break
+          }
           state.totalFilesChanged += fixResult.modifiedFiles.length;
         }
 
