@@ -6,6 +6,7 @@ import { WorkflowReflector } from './reflection/workflow-reflector.js';
 import { ReminderReflector } from './reflection/reminder-reflector.js';
 import { ConversationReflector } from './reflection/conversation-reflector.js';
 import { DocReflector } from './reflection/doc-reflector.js';
+import { OpenItemsReflector } from './reflection/open-items-reflector.js';
 import { ActionExecutor } from './reflection/action-executor.js';
 import type { ReflectionResult } from './reflection/types.js';
 
@@ -16,7 +17,9 @@ export class ReflectionEngine {
   private readonly reminderReflector: ReminderReflector;
   private readonly conversationReflector: ConversationReflector;
   private readonly docReflector: DocReflector;
+  private readonly openItemsReflector?: OpenItemsReflector;
   private readonly actionExecutor: ActionExecutor;
+  private lastOpenItemsHour = -1;
   private readonly config: ReflectorDeps['config'];
   private readonly nodeId: string;
   private readonly dbAdapter: AsyncDbAdapter | undefined;
@@ -67,6 +70,21 @@ export class ReflectionEngine {
       deps.config.docs as Required<typeof deps.config.docs>,
     );
 
+    // v614 L1 + L5 — Open-Items-Reflector: hourly escalation of stale high-prio items,
+    // daily 09:00-local digest of all open items. Only enabled when ProjectRepository
+    // is wired AND ownerUserId is known (otherwise we have nothing to scope to).
+    if (deps.projectRepo && deps.ownerUserId) {
+      this.openItemsReflector = new OpenItemsReflector({
+        projectRepo: deps.projectRepo,
+        memoryRepo: deps.memoryRepo,
+        adapters: deps.adapters,
+        defaultPlatform: deps.defaultPlatform,
+        defaultChatId: deps.defaultChatId,
+        ownerUserId: deps.ownerUserId,
+        logger: deps.logger.child({ component: 'open-items-reflector' }),
+      });
+    }
+
     this.actionExecutor = new ActionExecutor(
       deps.watchRepo,
       deps.workflowRepo,
@@ -103,6 +121,21 @@ export class ReflectionEngine {
   async tick(): Promise<void> {
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
+
+    // v614 L1 + L5 — Open-Items-Reflector runs INDEPENDENT of the main reflection
+    // schedule because it operates hourly (escalation) + daily-09:00 (digest),
+    // not on the cron schedule used for cleanup-reflectors.
+    if (this.openItemsReflector && this.lastOpenItemsHour !== now.getHours()) {
+      this.lastOpenItemsHour = now.getHours();
+      try {
+        await this.openItemsReflector.hourlySweep();
+      } catch (err) { this.logger.warn({ err }, 'open-items hourly sweep failed'); }
+      if (now.getHours() === 9) {
+        try {
+          await this.openItemsReflector.dailyDigest();
+        } catch (err) { this.logger.warn({ err }, 'open-items daily digest failed'); }
+      }
+    }
 
     // Parse target hour from cron-style schedule (e.g. "0 4 * * *" -> hour 4)
     const hourMatch = this.config.schedule.match(/^\d+\s+(\d+)/);

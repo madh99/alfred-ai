@@ -734,6 +734,29 @@ export class Alfred {
               });
             }
           } catch (err) { this.logger.debug({ err }, 'code-agent completion → project-manager failed'); }
+
+          // v614 L3 — Workflow extraction for code_agent sessions (mirror of delegate path).
+          // Previously only delegate-path triggered workflow extraction; code_agent runs were
+          // ignored, which is why auto_extracted=0 in production despite many code-agent runs.
+          // The extractor's pre-filter (>=2 distinct skills OR >=4 calls) means trivial
+          // 1-skill code-agent runs still get skipped.
+          if (info.success && (info.toolCalls ?? 0) > 0) {
+            try {
+              // We don't have full per-tool-call inputs from emitCompletion — just toolCalls count.
+              // For now pass a synthetic reconstruction using agentOrTask as the only "call".
+              // This is intentionally conservative; the extractor's pre-filter will likely
+              // reject most code-agent sessions until we track full inputs (future work).
+              const reconstructed = [
+                { name: 'code_agent', input: { task: info.agentOrTask, cwd: info.cwd }, success: info.success },
+              ];
+              await proposeWorkflowFromSession({
+                userId,
+                goal: info.agentOrTask,
+                toolCalls: reconstructed,
+                sourceId: `code-agent-wf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              });
+            } catch (err) { this.logger.debug({ err }, 'code-agent workflow-extraction failed'); }
+          }
         });
       }
 
@@ -4242,17 +4265,25 @@ export class Alfred {
           ? new CmdbRepository(reflectionAdapter)
           : undefined;
 
+        // v614 L1 — resolve ownerChatId for Open-Items-Reflector (Telegram chat to send digest to)
+        const ownerChatIdForReflection = this.config.telegram?.enabled
+          ? (this.config.security?.ownerUserId ?? '')
+          : '';
+
         this.reflectionEngine = new ReflectionEngine({
           watchRepo: this.watchRepo,
           memoryRepo: this.memoryRepo,
           activityRepo: this.activityRepo,
           cmdbRepo: reflectionCmdbRepo,
+          projectRepo: this.projectRepo, // v614 L1
+          runbookRepo: this.runbookRepo, // v614 L2 (passed for symmetry, used elsewhere)
+          ownerUserId: this.ownerMasterUserId ?? this.config.security?.ownerUserId, // v614 L1
           skillRegistry: this.skillRegistry,
           skillSandbox: this.skillSandbox,
           llm: this.llmProvider,
           adapters: this.adapters,
           logger: this.logger.child({ component: 'reflection-engine' }),
-          defaultChatId: '',
+          defaultChatId: ownerChatIdForReflection,
           defaultPlatform: ownerPlatform,
           nodeId: this.config.cluster?.nodeId ?? 'single',
           config: reflectionConfig,

@@ -1,0 +1,176 @@
+import type { Logger } from 'pino';
+import type { ProjectRepository, MemoryRepository } from '@alfred/storage';
+import type { MessagingAdapter } from '@alfred/messaging';
+import type { Platform } from '@alfred/types';
+
+/**
+ * v614 L1 + L5 — Open-Items-Reflector
+ *
+ * Closes the "Alfred sees open items but does nothing" gap:
+ *   - HOURLY: for high-priority items aged >4h and not yet escalated, send a
+ *     one-time Telegram message asking if Alfred should tackle them. Dedup via
+ *     a memory-marker so the same item is not re-asked every hour.
+ *   - DAILY at 09:00 LOCAL: send a digest of ALL open items grouped by project.
+ *
+ * Why memory markers and not a separate table:
+ *   - we already have a precedent (insight_delivered:* keys, type=feedback)
+ *   - one less migration to maintain
+ */
+
+const ESCALATION_AGE_HOURS = 4;
+const ESCALATION_DEDUP_PREFIX = 'open_item_escalated:';
+
+export interface OpenItemsReflectorDeps {
+  projectRepo: ProjectRepository;
+  memoryRepo: MemoryRepository;
+  adapters: Map<Platform, MessagingAdapter>;
+  defaultPlatform: Platform;
+  defaultChatId: string;
+  ownerUserId: string;
+  logger: Logger;
+}
+
+export class OpenItemsReflector {
+  constructor(private readonly deps: OpenItemsReflectorDeps) {}
+
+  /**
+   * Send escalation for each high-priority open item older than ESCALATION_AGE_HOURS
+   * that has not yet been escalated. One Telegram message per item, deduped by
+   * the escalation marker memory.
+   */
+  async hourlySweep(): Promise<void> {
+    const { projectRepo, memoryRepo, logger, ownerUserId } = this.deps;
+    if (!ownerUserId) { logger.debug('OpenItemsReflector.hourlySweep: no ownerUserId'); return; }
+
+    let items;
+    try {
+      items = await projectRepo.listOpenItems(ownerUserId, { status: 'open', priority: 'high', limit: 50 });
+    } catch (err) {
+      logger.debug({ err }, 'OpenItemsReflector: listOpenItems failed');
+      return;
+    }
+
+    if (items.length === 0) return;
+
+    const cutoff = Date.now() - ESCALATION_AGE_HOURS * 3600_000;
+
+    for (const item of items) {
+      const itemAge = Date.now() - new Date(item.createdAt).getTime();
+      if (itemAge < ESCALATION_AGE_HOURS * 3600_000) continue;
+      if (new Date(item.createdAt).getTime() < cutoff - 7 * 24 * 3600_000) {
+        // older than a week — skip; user clearly doesn't want it tackled
+        continue;
+      }
+
+      const markerKey = `${ESCALATION_DEDUP_PREFIX}${item.id}`;
+      let alreadyEscalated = false;
+      try {
+        const existing = await memoryRepo.search(ownerUserId, markerKey);
+        alreadyEscalated = existing.some(m => m.key === markerKey);
+      } catch { /* fall through, send anyway */ }
+
+      if (alreadyEscalated) continue;
+
+      const hours = Math.floor(itemAge / 3600_000);
+      const project = await projectRepo.getById(ownerUserId, item.projectId).catch(() => null);
+      const projectName = project?.name?.slice(0, 60) ?? 'unbekanntes Projekt';
+      const msg =
+        `🔴 **High-Priority Open Item — ${hours}h offen**\n\n` +
+        `📋 ${item.title}\n` +
+        `📂 Projekt: ${projectName}\n\n` +
+        (item.description ? `Beschreibung: ${item.description.slice(0, 300)}\n\n` : '') +
+        `Soll ich mich darum kümmern? Antworte mit "ja" / "nein" oder lass es liegen.`;
+
+      try {
+        await this.send(msg);
+        await memoryRepo.saveWithMetadata(
+          ownerUserId,
+          markerKey,
+          `Eskaliert: ${item.title.slice(0, 100)} (${hours}h)`,
+          'general',
+          'feedback',
+          1.0,
+          'auto',
+        );
+        logger.info({ itemId: item.id, hours, title: item.title.slice(0, 60) },
+          'OpenItemsReflector: high-priority item escalated');
+      } catch (err) {
+        logger.debug({ err, itemId: item.id }, 'OpenItemsReflector: send failed');
+      }
+    }
+  }
+
+  /**
+   * Daily 09:00 LOCAL: send a digest of all open items grouped by project.
+   * Dedup: only send if we have NOT sent a digest today (memory marker).
+   */
+  async dailyDigest(): Promise<void> {
+    const { projectRepo, memoryRepo, logger, ownerUserId } = this.deps;
+    if (!ownerUserId) return;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const digestMarkerKey = `open_items_digest_sent:${today}`;
+    try {
+      const existing = await memoryRepo.search(ownerUserId, digestMarkerKey);
+      if (existing.some(m => m.key === digestMarkerKey)) {
+        logger.debug({ today }, 'OpenItemsReflector: daily digest already sent today');
+        return;
+      }
+    } catch { /* fall through, send anyway */ }
+
+    let items;
+    try {
+      items = await projectRepo.listOpenItems(ownerUserId, { status: 'open', limit: 100 });
+    } catch (err) {
+      logger.debug({ err }, 'OpenItemsReflector dailyDigest: listOpenItems failed');
+      return;
+    }
+    if (items.length === 0) return;
+
+    // Group by project
+    const byProject = new Map<string, typeof items>();
+    for (const item of items) {
+      const arr = byProject.get(item.projectId) ?? [];
+      arr.push(item);
+      byProject.set(item.projectId, arr);
+    }
+
+    const lines: string[] = [`📋 **Tägliche Open-Items-Übersicht**\n`];
+    let totalHigh = 0;
+    for (const [projectId, projItems] of byProject) {
+      const proj = await projectRepo.getById(ownerUserId, projectId).catch(() => null);
+      const name = proj?.name?.slice(0, 60) ?? 'Unbekanntes Projekt';
+      const highCount = projItems.filter(i => i.priority === 'high').length;
+      totalHigh += highCount;
+      lines.push(`\n**${name}** (${projItems.length} offen${highCount > 0 ? `, ${highCount} hoch` : ''})`);
+      for (const item of projItems.slice(0, 5)) {
+        const icon = item.priority === 'high' ? '🔴' : item.priority === 'low' ? '⚪' : '🟡';
+        const ageDays = Math.floor((Date.now() - new Date(item.createdAt).getTime()) / 86400_000);
+        const ageStr = ageDays === 0 ? 'heute' : ageDays === 1 ? 'gestern' : `vor ${ageDays}d`;
+        lines.push(`  ${icon} ${item.title.slice(0, 80)} (${ageStr})`);
+      }
+      if (projItems.length > 5) lines.push(`  … und ${projItems.length - 5} weitere`);
+    }
+    lines.push(`\n${totalHigh > 0
+      ? `Welche der ${totalHigh} hoch-priorisierten möchtest du heute angehen?`
+      : 'Welche möchtest du heute angehen?'}`);
+
+    try {
+      await this.send(lines.join('\n'));
+      await memoryRepo.saveWithMetadata(
+        ownerUserId, digestMarkerKey,
+        `Digest gesendet: ${items.length} items, ${totalHigh} high`,
+        'general', 'feedback', 1.0, 'auto',
+      );
+      logger.info({ total: items.length, totalHigh }, 'OpenItemsReflector: daily digest sent');
+    } catch (err) {
+      logger.debug({ err }, 'OpenItemsReflector: digest send failed');
+    }
+  }
+
+  private async send(text: string): Promise<void> {
+    const adapter = this.deps.adapters.get(this.deps.defaultPlatform);
+    if (!adapter) return;
+    await adapter.sendMessage(this.deps.defaultChatId, text);
+  }
+}

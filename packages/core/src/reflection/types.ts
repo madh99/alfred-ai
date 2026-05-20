@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { WatchRepository, MemoryRepository, ActivityRepository, WorkflowRepository, CmdbRepository } from '@alfred/storage';
+import type { WatchRepository, MemoryRepository, ActivityRepository, WorkflowRepository, CmdbRepository, ProjectRepository, RunbookRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
@@ -60,6 +60,10 @@ export interface ReflectorDeps {
   memoryRepo: MemoryRepository;
   activityRepo: ActivityRepository;
   cmdbRepo?: CmdbRepository;
+  /** v614 L1 — only set if Projects enabled */
+  projectRepo?: ProjectRepository;
+  /** v614 L2 — only set if Runbooks enabled */
+  runbookRepo?: RunbookRepository;
   skillRegistry: SkillRegistry;
   skillSandbox: SkillSandbox;
   llm: LLMProvider;
@@ -67,6 +71,8 @@ export interface ReflectorDeps {
   logger: Logger;
   defaultChatId: string;
   defaultPlatform: Platform;
+  /** v614 L1 — owner-scoped reflectors need explicit ownerUserId */
+  ownerUserId?: string;
   nodeId: string;
   config: Required<ReflectionConfig>;
 }

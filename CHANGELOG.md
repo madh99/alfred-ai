@@ -5,6 +5,57 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.614] - 2026-05-20
+
+### Added — Lern-Loop schließen (L1, L2, L3, L5; L4 bewusst deferred)
+
+Adressiert die User-Beschwerde "Alfred lernt aus Aktionen nicht — Open Items liegen 5h+ unbeachtet, Runbooks haben usage_count=0, auto_extracted workflows=0". Audit der DB hat gezeigt: Capture funktioniert (Activity-Log, Memories, Runbooks, Skill-Host-Failures, Host-Capabilities, KG, Project-Auto-Binding), aber die Wiederverwendung schließt nicht.
+
+#### L1 + L5 — OpenItemsReflector (`packages/core/src/reflection/open-items-reflector.ts`)
+
+Neue Klasse mit zwei Methoden, gewired in `reflection-engine.ts:tick()`:
+- `hourlySweep()`: Für jedes `project_open_items` mit `status='open' AND priority='high' AND age > 4h` wird einmalig eine Telegram-Nachricht "🔴 High-Priority Open Item — Nh offen ... Soll ich mich darum kümmern?" gesendet. Dedup via Memory-Marker `open_item_escalated:<itemId>` (analog zum bestehenden `insight_delivered:*`-Pattern).
+- `dailyDigest()` um 09:00 LOCAL: Zusammenfassung aller offenen Items gruppiert nach Projekt mit Prioritäten-Icons. Dedup via Tages-Memory-Marker `open_items_digest_sent:<YYYY-MM-DD>`.
+
+Voraussetzung: `projectRepo` und `ownerUserId` müssen in `ReflectorDeps` gesetzt sein — beide werden jetzt von `alfred.ts:4245` ans `ReflectionEngine` übergeben. Wenn Projects-Feature deaktiviert ist, läuft der Reflector schlicht nicht (kein Error).
+
+Eskalations-Window: 4h ≤ age ≤ 7d. Älter als eine Woche wird nicht mehr eskaliert (User hat es ja gesehen und liegen gelassen — nicht weiter nerven).
+
+#### L2 — Runbook-Auto-Promotion (`reasoning-context-collector.ts`)
+
+Im PHASE-2c-Block, wo `runbookRepo.findMatching()` Runbooks für den aktuellen Kontext findet: jedes gefundene Runbook ruft `incrementUsage()` auf. Bei `status='draft' AND usage_count+1 >= 3` wird automatisch auf `status='verified'` promoted. Das Match-Statement zählt jetzt also als reale Nutzung, weil das Reasoning-LLM die Runbook-Liste im Prompt sieht.
+
+Vorher: alle 8 Runbooks `usage_count=0` permanent. Jetzt: jedes Surface inkrementiert, 3× gesehen ⇒ verifiziert. Die "verified"-Liste wird mit der Zeit zu einer kuratierten Wissensbasis ohne manuellen Eingriff.
+
+#### L3 — WorkflowExtractor auch für code_agent (`alfred.ts:701-738`)
+
+Der WorkflowExtractor war seit v602 P2 nur für `delegate`-Skill-Sessions verdrahtet. Code-Agent-Sessions wurden komplett ausgespart, obwohl diese typischerweise länger und strukturierter sind als Delegate-Runs. Erklärt warum `workflow_chains WHERE auto_extracted=1` ⇒ 0 Treffer in Produktion.
+
+Fix: Mirror der Delegate-Logik im `code_agent`-Completion-Callback. Aufruft `proposeWorkflowFromSession()` bei `info.success && info.toolCalls > 0`. Die Pre-Filter des Extractors (≥2 distinkte Skills ODER ≥4 Calls) verhindern weiterhin triviale Reuse-Vorschläge.
+
+Caveat: `emitCompletion` reicht nur `toolCalls` als Zähler durch, keine vollen Inputs pro Call. Vorerst wird ein synthetischer "code_agent: task=… cwd=…" Pseudo-Call gebaut. Echte Per-Call-Inputs erfordern eine separate Erweiterung von `SessionCompletionInfo` — als Future-Work markiert.
+
+#### L4 — Bewusst verschoben
+
+Insight→Action Mapping wurde geplant aber nicht implementiert. Begründung:
+
+Der Mechanismus ist KOMPLETT vorhanden: `reasoning-engine.ts:35 ACTION_MARKER`, `:1068-1101` Parser, `:402 processActions()`. Die Reasoning-Engine kann ACTIONS-Blöcke konsumieren und Confirmation-Queue-Einträge enqueuen.
+
+Was fehlt: das Reasoning-LLM emittiert in der Praxis fast nie ACTIONS-Blöcke (Production-Logs: `actions:0` konsistent). Das ist kein Code-Bug, sondern Prompt-Engineering — und Prompt-Engineering braucht **iteratives Testen über mehrere Reasoning-Pässe** mit verschiedenen Triggern, nicht einen Einmal-Patch. Wird in einer eigenen v615 (oder als laufender Tuning-Aufwand) angegangen.
+
+#### Wiring-Änderungen
+
+- `ReflectorDeps`: zwei neue optionale Felder `projectRepo`, `runbookRepo`, plus `ownerUserId` für owner-scoped Reflektoren
+- `alfred.ts:4245` (ReflectionEngine-Init): übergibt diese drei jetzt explizit
+- `ReflectionEngine.tick()`: ruft `openItemsReflector.hourlySweep()` einmal pro Stunde, plus `dailyDigest()` wenn `getHours() === 9`
+
+### Notes
+- Build grün (12 packages), Bundle erstellt
+- Open-Items-Reflector ist owner-scoped: in einer Multi-User-Konfiguration meldet sich Alfred nur an den `security.ownerUserId`, nicht an alle Plattform-Nutzer
+- Memory-Marker-Pattern (statt eigener Tabelle) wurde gewählt um Migrations-Aufwand zu sparen
+- L2-Promotion-Schwelle (3) ist hardcoded — wenn sich rausstellt dass das zu wenig/zu viel ist, leicht in Config heben
+- Workflow-Extraction-Quality bleibt vom Pre-Filter des Extractors abhängig; bessere Per-Call-Input-Erfassung wäre nächster Schritt
+
 ## [0.19.0-multi-ha.613] - 2026-05-20
 
 ### Fixed — findActiveByCwd ignorierte 'failed' als terminal

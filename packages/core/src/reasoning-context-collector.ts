@@ -297,10 +297,27 @@ export class ReasoningContextCollector {
           // findMatching uses keyword-overlap on title+symptom+tags — works across topics
           const matches = await this.runbookRepo.findMatching(userId, queryTerms.join(' '), 4);
           if (matches.length > 0) {
+            // v614 L2 — count "surface" as usage. Bumps usage_count for every
+            // matched runbook and auto-promotes draft → verified at threshold.
+            // Rationale: a runbook the system repeatedly considers relevant has
+            // proven its value, even if the LLM doesn't explicitly "use" it.
+            // Best-effort, never fails the prompt-build path.
+            const PROMOTION_THRESHOLD = 3;
+            for (const rb of matches) {
+              try {
+                await this.runbookRepo.incrementUsage(rb.id);
+                if (rb.status === 'draft' && (rb.usageCount + 1) >= PROMOTION_THRESHOLD) {
+                  await this.runbookRepo.update(userId, rb.id, { status: 'verified' });
+                  this.logger.info({ id: rb.id, title: rb.title.slice(0, 60), usageCount: rb.usageCount + 1 },
+                    'Runbook auto-promoted draft → verified (L2 threshold reached)');
+                }
+              } catch { /* non-critical */ }
+            }
             const lines = matches.map(rb => {
-              const status = rb.status === 'verified' ? '✓' : '·';
+              const newCount = rb.usageCount + 1;
+              const status = (rb.status === 'verified' || (rb.status === 'draft' && newCount >= PROMOTION_THRESHOLD)) ? '✓' : '·';
               const tagsSuffix = rb.tags.length > 0 ? ` [${rb.tags.slice(0, 3).join(', ')}]` : '';
-              return `- ${status} [${rb.id.slice(0, 8)}] ${rb.title.slice(0, 70)}${tagsSuffix} (${rb.usageCount}× verwendet)`;
+              return `- ${status} [${rb.id.slice(0, 8)}] ${rb.title.slice(0, 70)}${tagsSuffix} (${newCount}× verwendet)`;
             });
             const content = `Relevante Erfahrungen aus früheren Aufgaben (Runbooks zum aktuellen Thema):\n${lines.join('\n')}\n\nHinweis: Wenn ein Runbook passt → mit \`runbook get\` den vollständigen Steps abrufen und referenzieren.`;
             sections.push({
