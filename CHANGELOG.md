@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.619] - 2026-05-20
+
+### Fixed — D0+D1+D2: Sliding-Inactivity-Timeout + ehrliche Diagnose
+
+Root cause des Phase-2-Kills im alpbyte-games-Security-Review (codex Phase 2 wurde nach exakt 5 Minuten Hard-Timeout abgebrochen obwohl die ganze Zeit produktiv arbeitend):
+
+**Bug 1 (architektonisch)** — v608 F4 hatte nur halb implementiert was die Anforderung war ("Alfred checkt ob Agent aktiv und verlängert Timeout"). Die SkillSandbox arbeitet mit Inactivity-Tracker (`INACTIVITY_THRESHOLD_MS=120s`) korrekt. Aber `agent-executor.ts:204` hatte einen ZWEITEN, **harten Timer**:
+```
+const timer = setTimeout(() => kill, timeoutMs);  // absolut, ignoriert Aktivität
+```
+Egal wie aktiv der Subprocess war — nach `timeoutMs` (5min default) wurde SIGTERM gesendet. Codex Phase 2 mit Multi-Datei-Refactoring → 5min normal → gekillt mitten in der Arbeit.
+
+**Bug 2 (Diagnose-Schlamperei in v618)** — Pattern-Match `/401|Unauthorized|auth\.json|...../i` lief gegen GANZEN stderr (oft 100k+ Zeichen mit Code-Diffs). Bei einem Security-Review enthält der Code-Output zwangsläufig Wörter wie "auth", "Unauthorized" (in betroffenen Routen, Kommentaren, OpenAPI-Beschreibungen). False-Positive: "Auth-Fehler" angezeigt obwohl es ein Timeout war.
+
+#### D0 — Sliding-Inactivity-Timer in agent-executor.ts (kritisch)
+
+`packages/skills/src/built-in/code-agent/agent-executor.ts`:
+
+```diff
+- const timer = setTimeout(() => { kill }, timeoutMs);
++ let inactivityTimer;
++ const resetInactivity = () => {
++   if (inactivityTimer) clearTimeout(inactivityTimer);
++   inactivityTimer = setTimeout(() => { kill; killReason='inactivity' }, timeoutMs);
++ };
++ resetInactivity();
++
++ // Plus absolute Sicherung 60min (Safety-Cap)
++ const absoluteTimer = setTimeout(() => { kill; killReason='absolute' }, ABSOLUTE_CAP_MS);
++
++ child.stdout.on('data', chunk => { ...; resetInactivity(); });
++ child.stderr.on('data', chunk => { ...; resetInactivity(); });
+```
+
+Neue Semantik:
+- `timeoutMs` (default 5min, max 15min) ist jetzt **Inactivity-Schwelle**: kill erst wenn `timeoutMs` lang KEIN Output mehr kommt
+- `ABSOLUTE_CAP_MS = 60min` als oberste Sicherung — verhindert Endlos-Schleifen
+- stderr wird beim Kill annotiert mit Grund (`inactivity timeout` oder `absolute cap reached`)
+
+Effekt: codex/claude-code/vibe können beliebig lange Phasen ausführen solange sie kontinuierlich Output produzieren. Auth-Hänger + Frozen-Tools + Forever-Loops werden weiterhin nach `timeoutMs`-Stille bzw. spätestens 60min gekillt.
+
+#### D1 — Diagnose-Reihenfolge umgedreht (project-agent-runner.ts)
+
+Vorher: stderr-Pattern-Match war erst, exitCode-Check zuletzt → false-positive Auth-Diagnose schlug zu bei jedem Timeout der zufällig "auth" im stderr hatte.
+
+Jetzt: exitCode-spezifische Hints (exitCode 124 → Timeout-Variante anhand der agent-executor-Annotation) **ZUERST**, stderr-Pattern als Fallback.
+
+Unterschieden:
+- `[agent-executor] killed: ... (inactivity timeout)` → "Inactivity-Timeout. Logs prüfen (hung Request, frozen Tool, Auth-Wait)"
+- `[agent-executor] killed: ... (absolute cap reached)` → "Absolute Grenze. Phase zu groß, in kleinere Schritte zerlegen"
+- Legacy: einfach "Timeout. Sollte mit v619 nicht mehr vorkommen"
+
+#### D2 — stderr-Pattern nur auf letzte 2000 Zeichen
+
+`const stderrTail = stderr.slice(-2000);` — alle Pattern-Tests gegen `stderrTail` statt `stderr`. Verhindert dass beliebige Code-Inhalte (Diffs, Kommentare, OpenAPI-Texte) die Diagnose triggern.
+
+### Notes
+- Build grün (12 packages)
+- Reine Defensive-Verbesserung: bei korrekt funktionierenden Agents (kein Timeout) komplett unsichtbar
+- claude-code, codex und vibe profitieren ALLE vom sliding-timer; vorher war claude-code nur "zufällig schneller fertig", nicht strukturell besser geschützt
+
 ## [0.19.0-multi-ha.618] - 2026-05-20
 
 ### Fixed — B1: Project-Agent ignorierte exitCode des Coding-Agents → Fake-Success

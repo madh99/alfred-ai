@@ -273,14 +273,31 @@ export class ProjectAgentRunner {
         // Lauf abgebrochen. Logs/stderr werden dem User mit Diagnose-Hinweis
         // (Auth-Fehler, Binary-Fehler, Timeout) zurückgemeldet.
         if (codeResult.exitCode !== 0) {
+          // v619 D2 — Pattern-Match nur auf die letzten 2000 Zeichen vom stderr.
+          // Vorher wurde der GESAMTE stderr (oft 100k+ Zeichen mit Code-Diffs)
+          // durchsucht und matchte zufällig auf "auth"/"Unauthorized" im
+          // Code-Inhalt — produzierte false-positive "Auth-Fehler"-Diagnosen
+          // selbst bei reinem Timeout (siehe v618 alpbyte-games Phase 2).
           const stderr = codeResult.stderr ?? '';
+          const stderrTail = stderr.slice(-2000);
           let hint = '';
-          if (/401|Unauthorized|Missing bearer|auth\.json|not authenticated/i.test(stderr)) {
+          // v619 D1 — exitCode-spezifische Hints ZUERST. exitCode ist ein harter
+          // Fakt aus agent-executor, stderr-Pattern ist nur Indiz. Inactivity-
+          // vs absolute-timeout wird über die explizite annotation am stderr-Ende
+          // unterschieden (siehe agent-executor v619 D0).
+          if (codeResult.exitCode === 124) {
+            const secs = Math.round((codeResult.durationMs ?? 0) / 1000);
+            if (/absolute cap reached/i.test(stderrTail)) {
+              hint = `\n\n⏱ **Diagnose: Absolute Laufzeit-Grenze erreicht.** Der Agent lief ${secs}s und produzierte kontinuierlich Output, aber überschritt die absolute Sicherheits-Grenze (60min). Phase ist zu groß — bitte in kleinere Schritte zerlegen.`;
+            } else if (/inactivity timeout/i.test(stderrTail)) {
+              hint = `\n\n⏱ **Diagnose: Inactivity-Timeout.** Der Agent produzierte ${secs}s lang keinen Output mehr und wurde abgebrochen. Wahrscheinlich: hung HTTP-Request, eingefrorenes Tool oder Auth-Wait. Logs prüfen.`;
+            } else {
+              hint = `\n\n⏱ **Diagnose: Timeout (Legacy-Pfad).** Der Agent wurde nach ${secs}s abgebrochen. Sollte mit v619 nicht mehr vorkommen — falls doch, agent-executor.ts Logs checken.`;
+            }
+          } else if (/401|Unauthorized|Missing bearer|auth\.json|not authenticated/i.test(stderrTail)) {
             hint = `\n\n🔑 **Diagnose: Auth-Fehler.** Der Code-Agent "${config.agentName}" konnte sich nicht beim LLM-Provider anmelden. Login als Runtime-User (sudo -u ${runAsUser ?? 'madh'} ${config.agentName} login) durchführen oder API-Key in der agent-Config setzen.`;
-          } else if (/command not found|ENOENT|not found in PATH/i.test(stderr)) {
+          } else if (/command not found|ENOENT|not found in PATH/i.test(stderrTail)) {
             hint = `\n\n🔍 **Diagnose: Binary fehlt.** Der Befehl "${agentDef.command}" ist im PATH von User "${runAsUser ?? 'process-owner'}" nicht erreichbar. Installation prüfen oder Pfad in der agent-Config absolut angeben.`;
-          } else if (codeResult.exitCode === 124) {
-            hint = `\n\n⏱ **Diagnose: Timeout.** Der Agent wurde nach ${Math.round((codeResult.durationMs ?? 0) / 1000)}s abgebrochen (max ${Math.round((agentDef.timeoutMs ?? 900_000) / 60_000)}min). Komplexität reduzieren oder Timeout in der Config erhöhen.`;
           }
           await this.sendProgress(platform, chatId,
             `❌ Phase ${phaseIdx + 1}/${plan.phases.length} fehlgeschlagen — Coding-Agent exitCode=${codeResult.exitCode}.\n\n` +

@@ -3,9 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 
-const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
-const MAX_TIMEOUT_MS = 900_000; // 15 minutes
+const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes — used as inactivity threshold by default
+const MAX_TIMEOUT_MS = 900_000; // 15 minutes — used as inactivity threshold ceiling
 const MAX_OUTPUT_CHARS = 100_000;
+/** v619 D0 — Absolute safety cap. Sliding inactivity timer can extend indefinitely
+ *  if the subprocess keeps producing output, but we never want a single agent
+ *  invocation to run longer than this regardless of activity. */
+const ABSOLUTE_CAP_MS = 60 * 60 * 1000; // 60 minutes
 
 /**
  * v608 F5 — Preflight: check the agent's binary is callable before spawning.
@@ -200,23 +204,48 @@ export async function executeAgent(
     let stdout = '';
     let stderr = '';
     let killed = false;
+    let killReason: 'inactivity' | 'absolute' | undefined;
 
-    const timer = setTimeout(() => {
+    // v619 D0 — Sliding inactivity timer statt absolutem Timer.
+    // Vorher (Bug): const timer = setTimeout(kill, timeoutMs) — egal wie aktiv
+    // der Subprocess war, nach timeoutMs (5min default) wurde SIGTERM gesendet.
+    // Phasen die länger als 5min dauern aber kontinuierlich Output produzieren
+    // (typisch für codex bei Multi-Datei-Edits) wurden mitten in der Arbeit gekillt.
+    //
+    // Neu: bei jedem stdout/stderr-Chunk wird der Timer zurückgesetzt. Der Agent
+    // darf beliebig lange laufen, solange er innerhalb des timeoutMs-Fensters
+    // Output produziert. Zusätzlich absolute Sicherung (ABSOLUTE_CAP_MS) damit
+    // nichts ewig läuft (z.B. forever-loop in eskaliertem child-process).
+    let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetInactivity = () => {
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => {
+        killed = true;
+        killReason = 'inactivity';
+        child.kill('SIGTERM');
+        setTimeout(() => child.kill('SIGKILL'), 5_000);
+      }, timeoutMs);
+    };
+    resetInactivity();
+
+    const absoluteTimer = setTimeout(() => {
       killed = true;
+      killReason = 'absolute';
       child.kill('SIGTERM');
-      // Force kill after 5s grace period
       setTimeout(() => child.kill('SIGKILL'), 5_000);
-    }, timeoutMs);
+    }, ABSOLUTE_CAP_MS);
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
+      resetInactivity();      // v619 D0 — extend inactivity timer on every chunk
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
+      resetInactivity();      // v619 D0 — extend inactivity timer on every chunk
       // Forward stderr lines as progress updates
       if (options.onProgress) {
         const lastLine = text.trim().split('\n').pop();
@@ -233,14 +262,24 @@ export async function executeAgent(
     }
 
     child.on('close', (code) => {
-      clearTimeout(timer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      clearTimeout(absoluteTimer);
       const durationMs = Date.now() - startTime;
       const afterSnapshot = snapshotMtimes(cwd);
       const modifiedFiles = detectModifiedFiles(beforeSnapshot, afterSnapshot, cwd);
 
+      // v619 D0 — annotate stderr with kill-reason so downstream diagnostics
+      // (project-agent-runner) can distinguish inactivity-kill from absolute-cap-kill
+      let finalStderr = stderr;
+      if (killReason === 'inactivity') {
+        finalStderr = stderr + `\n[agent-executor] killed: no output for ${Math.round(timeoutMs / 1000)}s (inactivity timeout)`;
+      } else if (killReason === 'absolute') {
+        finalStderr = stderr + `\n[agent-executor] killed: ${Math.round(ABSOLUTE_CAP_MS / 60_000)}min absolute cap reached (was active but ran too long)`;
+      }
+
       resolve({
         stdout: truncateOutput(stdout),
-        stderr: truncateOutput(stderr),
+        stderr: truncateOutput(finalStderr),
         exitCode: killed ? 124 : (code ?? 1),
         durationMs,
         modifiedFiles,
@@ -248,7 +287,8 @@ export async function executeAgent(
     });
 
     child.on('error', (err) => {
-      clearTimeout(timer);
+      if (inactivityTimer) clearTimeout(inactivityTimer);
+      clearTimeout(absoluteTimer);
       const durationMs = Date.now() - startTime;
       resolve({
         stdout: truncateOutput(stdout),
