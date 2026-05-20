@@ -3198,17 +3198,55 @@ export class Alfred {
           };
         },
         metricsCallback: () => this.buildPrometheusMetrics(),
-        dashboardCallback: async () => {
+        dashboardCallback: async (opts?: { range?: string }) => {
+          // v622 — range-aware Dashboard. Default 'week' für Backwärts-Kompatibilität.
+          // Berechnung des Datums-Fensters + Bucket-Granularität:
+          //   today  → 1 Tag (heute), daily-buckets
+          //   week   → 7 Tage, daily-buckets
+          //   month  → 30 Tage, daily-buckets
+          //   year   → 365 Tage, MONATS-buckets (12 statt 365 Balken)
+          //   all    → ab earliest llm_usage.date, MONATS-buckets
           const today = new Date().toISOString().slice(0, 10);
-          const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+          const range = (opts?.range ?? 'week') as 'today' | 'week' | 'month' | 'year' | 'all';
+          let startDate: string;
+          let useMonthBuckets = false;
+          if (range === 'today') {
+            startDate = today;
+          } else if (range === 'week') {
+            startDate = new Date(Date.now() - 6 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+          } else if (range === 'month') {
+            startDate = new Date(Date.now() - 29 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+          } else if (range === 'year') {
+            startDate = new Date(Date.now() - 364 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+            useMonthBuckets = true;
+          } else { // 'all'
+            startDate = (await this.usageRepo?.getEarliestDate()) ?? today;
+            useMonthBuckets = true;
+          }
+
+          const usageBuckets = useMonthBuckets
+            ? (await this.usageRepo?.getRangeByMonth(startDate, today)) ?? []
+            : (await this.usageRepo?.getRange(startDate, today)) ?? [];
+
+          // Service-usage uses the daily getRange; for monthly views we still render
+          // them as a flat aggregate (Tabelle nach Range gefiltert, kein Stacking).
+          // Keeps the existing service-usage tabular display working unchanged.
+          const serviceUsageRange = await this.serviceUsageRepo?.getRange(startDate, today) ?? [];
+
           return {
+            range,
+            startDate,
+            endDate: today,
+            bucketGranularity: useMonthBuckets ? 'month' : 'day',
             watches: await this.watchRepo?.getEnabled() ?? [],
             scheduled: await this.scheduledActionRepo?.getAll() ?? [],
             skillHealth: await this.skillHealthRepo?.getAll() ?? [],
             reminders: await this.reminderRepo?.getAllPending() ?? [],
             usage: {
               today: await this.usageRepo?.getDaily(today) ?? null,
-              week: await this.usageRepo?.getRange(weekAgo, today) ?? [],
+              buckets: usageBuckets,
+              // Legacy field für non-updated Clients
+              week: range === 'week' ? usageBuckets : [],
               total: await this.usageRepo?.getTotal() ?? [],
             },
             uptime: Math.floor(process.uptime()),
@@ -3220,11 +3258,14 @@ export class Alfred {
             services: this.getConfiguredServices(),
             serviceUsage: {
               today: await this.serviceUsageRepo?.getDaily(today) ?? [],
-              week: await this.serviceUsageRepo?.getRange(weekAgo, today) ?? [],
+              range: serviceUsageRange,
+              week: range === 'week' ? serviceUsageRange : (await this.serviceUsageRepo?.getRange(
+                new Date(Date.now() - 6 * 24 * 60 * 60_000).toISOString().slice(0, 10), today,
+              )) ?? [],
               total: await this.serviceUsageRepo?.getTotal() ?? [],
             },
-            userUsage: await this.usageRepo?.getByUser(weekAgo, today) ?? [],
-            userSkillUsage: await this.activityRepo?.skillUsageByUser(weekAgo) ?? [],
+            userUsage: await this.usageRepo?.getByUser(startDate, today) ?? [],
+            userSkillUsage: await this.activityRepo?.skillUsageByUser(startDate) ?? [],
           };
         },
         webUiPath: config.api?.webUi !== false ? this.resolveWebUiPath() : undefined,

@@ -87,8 +87,9 @@ export class AlfredClient {
     return () => controller.abort();
   }
 
-  async fetchDashboard(): Promise<DashboardData> {
-    const res = await fetch(`${this.baseUrl}/api/dashboard`, {
+  async fetchDashboard(range?: 'today' | 'week' | 'month' | 'year' | 'all'): Promise<DashboardData> {
+    const qs = range ? `?range=${range}` : '';
+    const res = await fetch(`${this.baseUrl}/api/dashboard${qs}`, {
       headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
     });
     if (!res.ok) throw new Error(`Dashboard: HTTP ${res.status}`);

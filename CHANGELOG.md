@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.622] - 2026-05-20
+
+### Added — Dashboard Usage-Tracking: Time-Range-Picker + Stacked Bars + Model-Toggle
+
+User-Wunsch: granularere Sicht auf die LLM-Kosten — auswählbare Zeiträume (heute/Woche/Monat/Jahr/All-Time), Balkendiagramm gestapelt nach Model, Models toggelbar.
+
+#### Backend (X1) — Range-aware Dashboard API
+
+`packages/storage/src/repositories/usage-repository.ts`:
+- Neue `getRangeByMonth(startDate, endDate)`: aggregiert `llm_usage` über `SUBSTR(date, 1, 7)` zu Monats-Buckets statt täglich. Für Year/All-Time-Views (sonst 365 statt 12 Balken).
+- Neue `getEarliestDate()`: liefert frühestes Datum für All-Time-Range.
+
+`packages/core/src/alfred.ts:dashboardCallback`:
+- Signatur erweitert: `(opts?: { range?: string })`
+- Range-Mapping:
+  - `today` → 1 Tag, daily-buckets
+  - `week` → 7 Tage, daily-buckets (Default für Backwards-Compat)
+  - `month` → 30 Tage, daily-buckets
+  - `year` → 365 Tage, **monthly-buckets** (12 statt 365 Balken)
+  - `all` → ab `getEarliestDate()`, **monthly-buckets**
+- Response erweitert um: `range`, `startDate`, `endDate`, `bucketGranularity`, `usage.buckets`
+- `userUsage` und `userSkillUsage` laufen jetzt **mit der gewählten Range** mit (vorher 7d hardcoded)
+- Legacy `usage.week` bleibt befüllt wenn `range='week'` für nicht-aktualisierte Clients
+
+#### HTTP-Adapter — Query-Param-Routing
+
+`packages/messaging/src/adapters/http.ts`:
+- `dashboardCallback` Typ akzeptiert `opts?: { range?: string }`
+- `handleDashboard` extrahiert `?range=` aus URL, validiert gegen Whitelist (today/week/month/year/all), reicht durch
+
+#### WebUI (X1+X2) — Time-Range-Picker + Stacked Bar Chart
+
+`apps/web/src/components/dashboard/DashboardPage.tsx`:
+- Neue `DashboardRange` State (Default `week`)
+- 5-Button Tab-Picker oberhalb der Stat-Cards (Heute/Woche/Monat/Jahr/All-Time)
+- `useDashboard` hook akzeptiert `range`, ruft `client.fetchDashboard(range)`
+- Stat-Card "Letzte 7 Tage" wird dynamisch zu "Heute" / "Woche" / "Monat" / "Jahr" / "All-Time"
+- **Bar-Chart komplett neu**: ehemals einfarbig-blau-Cost-pro-Tag → **gestapelte Segmente nach Model**
+  - Pro Bucket (Tag oder Monat): jeder Model-Anteil als farbiges Segment
+  - 12 stabile Farben aus Palette (claude/gpt/mistral/... bekommen jeweils ihre Farbe)
+  - Größtes Segment unten (sortiert nach Kosten desc → stabilere Optik)
+  - Höhe normalized über alle sichtbaren Buckets (maxCost dynamisch)
+- **Multi-Select-Legend mit Click-to-Toggle**:
+  - Pro Model ein Button mit Farb-Square + Name
+  - Klick: Model wird `hiddenModels`-Set hinzugefügt → in allen Bars verschwinden seine Segmente
+  - Skala (`maxCost`) wird auf sichtbare Models re-normalisiert
+  - State lokal in Component (nicht persisted) — Reload setzt zurück
+- Bucket-Labels passen sich Granularität an: Tag → `MM-DD`, Monat → `YY-MM`
+- Per-User-Tabellen (Admin) zeigen `(${range})` im Titel statt `(letzte 7 Tage)`
+
+#### Was unverändert bleibt
+
+- Service-Usage-Tabelle (STT/TTS/OCR) bleibt flach — diese Kosten skalieren nicht mit LLM und brauchen den Stack-Stress nicht
+- "Cost by Model" Tabelle bleibt All-Time
+- DB-Schema unverändert — keine Migration
+
+### Notes
+- Build grün (12 packages)
+- Backwards-kompatibel: alte Clients ohne `?range=` bekommen weiterhin Week-Daten via `usage.week`
+- All-Time auf großen DBs (>2 Jahre) liefert 24+ Monats-Buckets — Bar-Chart skaliert horizontal über `flex-1`
+
 ## [0.19.0-multi-ha.621] - 2026-05-20
 
 ### Fixed — R2: Runbook-Similarity-Dedup im ChatSessionRunbookReflector

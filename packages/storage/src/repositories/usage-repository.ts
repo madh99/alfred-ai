@@ -114,6 +114,46 @@ export class UsageRepository {
     return rows.map(r => this.mapRow(r));
   }
 
+  /**
+   * v622 — Aggregiert llm_usage über Monats-Buckets statt täglich.
+   * Wird vom Dashboard für Year/All-Time-Views genutzt (sonst 365 Tage-Balken).
+   * Liefert pro Monat einen DailyUsageSummary mit `date='YYYY-MM'` (kein -DD).
+   * Inklusive 'startDate' und 'endDate' (Format YYYY-MM-DD). Wenn 'endDate' im
+   * laufenden Monat liegt, ist dieser Monat dabei (nicht abgeschnitten).
+   */
+  async getRangeByMonth(startDate: string, endDate: string): Promise<DailyUsageSummary[]> {
+    const rows = await this.adapter.query(`
+      SELECT SUBSTR(date, 1, 7) AS month, model,
+             SUM(calls) AS calls,
+             SUM(input_tokens) AS input_tokens,
+             SUM(output_tokens) AS output_tokens,
+             SUM(cache_read_tokens) AS cache_read_tokens,
+             SUM(cache_write_tokens) AS cache_write_tokens,
+             SUM(cost_usd) AS cost_usd
+      FROM llm_usage WHERE date >= ? AND date <= ?
+      GROUP BY SUBSTR(date, 1, 7), model
+      ORDER BY month, model
+    `, [startDate, endDate]) as Record<string, unknown>[];
+    const byMonth = new Map<string, Record<string, unknown>[]>();
+    for (const row of rows) {
+      const m = row.month as string;
+      if (!byMonth.has(m)) byMonth.set(m, []);
+      byMonth.get(m)!.push(row);
+    }
+    return [...byMonth.entries()].map(([m, r]) => this.buildSummary(m, r));
+  }
+
+  /**
+   * v622 — All-Time Range: gibt frühestes Datum in llm_usage zurück, oder undefined.
+   * Vom Dashboard genutzt um für "All-Time"-Picker den exakten startDate zu berechnen.
+   */
+  async getEarliestDate(): Promise<string | undefined> {
+    const row = await this.adapter.queryOne(
+      `SELECT MIN(date) AS min_date FROM llm_usage`,
+    ) as { min_date: string | null } | undefined;
+    return row?.min_date ?? undefined;
+  }
+
   async cleanup(olderThanDays: number = 365): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString().slice(0, 10);
     const result = await this.adapter.execute(

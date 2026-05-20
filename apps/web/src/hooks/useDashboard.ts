@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import type { DashboardData } from '@/types/api';
 import { useConfig } from '@/context/ConfigContext';
 
-export function useDashboard(refreshInterval = 30_000) {
+export type DashboardRange = 'today' | 'week' | 'month' | 'year' | 'all';
+
+export function useDashboard(refreshInterval = 30_000, range: DashboardRange = 'week') {
   const { client } = useConfig();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -12,7 +14,7 @@ export function useDashboard(refreshInterval = 30_000) {
 
   const refresh = useCallback(async () => {
     try {
-      const d = await client.fetchDashboard();
+      const d = await client.fetchDashboard(range);
       setData(d);
       setError(null);
     } catch (err) {
@@ -20,7 +22,7 @@ export function useDashboard(refreshInterval = 30_000) {
     } finally {
       setLoading(false);
     }
-  }, [client]);
+  }, [client, range]);
 
   useEffect(() => {
     refresh();

@@ -103,7 +103,9 @@ export interface HttpAdapterOptions {
   healthCheck?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   metricsCallback?: () => string | Promise<string>;
   webhooks?: WebhookHandler[];
-  dashboardCallback?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  // v622 — optionaler `opts` mit `range`-Query-Param wird vom dashboardCallback
+  // genutzt um den Zeitraum (today/week/month/year/all) zu wählen.
+  dashboardCallback?: (opts?: { range?: string }) => Record<string, unknown> | Promise<Record<string, unknown>>;
   webUiPath?: string;
   tls?: TlsOptions;
   authCallback?: {
@@ -132,7 +134,7 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly corsOrigin: string;
   private readonly healthCheckFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
   private readonly metricsFn?: () => string | Promise<string>;
-  private readonly dashboardFn?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
+  private readonly dashboardFn?: (opts?: { range?: string }) => Record<string, unknown> | Promise<Record<string, unknown>>;
   private knowledgeGraphFn?: (userId?: string) => Promise<{ entities: any[]; relations: any[] }>;
   private knowledgeGraphDeleteEntityFn?: (entityId: string) => Promise<boolean>;
   private knowledgeGraphDeleteRelationFn?: (relationId: string) => Promise<boolean>;
@@ -872,7 +874,12 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     try {
-      const data = await this.dashboardFn() as Record<string, unknown>;
+      // v622 — Range-Param aus Query-String extrahieren und an Callback weiterreichen.
+      const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`);
+      const rangeParam = url.searchParams.get('range') ?? undefined;
+      const allowed = ['today', 'week', 'month', 'year', 'all'];
+      const range = rangeParam && allowed.includes(rangeParam) ? rangeParam : undefined;
+      const data = await this.dashboardFn(range ? { range } : undefined) as Record<string, unknown>;
 
       // Strip admin-only data for non-admin users
       const authHeader = req.headers['authorization'];

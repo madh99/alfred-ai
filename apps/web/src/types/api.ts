@@ -70,6 +70,9 @@ export interface DailyUsageSummary {
 
 export interface UsageData {
   today: DailyUsageSummary | null;
+  /** v622 — generic bucket array; entries have `date` either as YYYY-MM-DD (day) or YYYY-MM (month) */
+  buckets?: DailyUsageSummary[];
+  /** Legacy: only filled when range='week' for backwards compatibility */
   week: DailyUsageSummary[];
   total: UsageRecord[];
 }
@@ -87,6 +90,11 @@ export interface LlmProviderInfo {
 }
 
 export interface DashboardData {
+  /** v622 — Selected time range (today/week/month/year/all) */
+  range?: 'today' | 'week' | 'month' | 'year' | 'all';
+  startDate?: string;
+  endDate?: string;
+  bucketGranularity?: 'day' | 'month';
   watches: WatchItem[];
   scheduled: ScheduledItem[];
   skillHealth: SkillHealthItem[];
@@ -101,6 +109,7 @@ export interface DashboardData {
   services?: Array<{ name: string; provider: string; model: string; status: string }>;
   serviceUsage?: {
     today: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
+    range?: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
     week: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
     total: Array<{ service: string; model: string; calls: number; units: number; unitType: string; costUsd: number }>;
   };
