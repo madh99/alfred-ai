@@ -216,9 +216,21 @@ export async function executeAgent(
     // darf beliebig lange laufen, solange er innerhalb des timeoutMs-Fensters
     // Output produziert. Zusätzlich absolute Sicherung (ABSOLUTE_CAP_MS) damit
     // nichts ewig läuft (z.B. forever-loop in eskaliertem child-process).
+    // v624 B — Mid-Progress-Warning: bei timeoutMs/2 Stille ein einmaliger Hinweis
+    // an onProgress (geht via project-agent-runner an Telegram). Lässt den User
+    // sehen "Agent ist still aber lebt noch — kill in N min". Wird beim nächsten
+    // Chunk zurückgesetzt damit man bei zwischenzeitlicher Aktivität nicht
+    // gespamt wird. Pro inactivity-window genau eine Warning.
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+    let halfwayTimer: ReturnType<typeof setTimeout> | undefined;
     const resetInactivity = () => {
       if (inactivityTimer) clearTimeout(inactivityTimer);
+      if (halfwayTimer) clearTimeout(halfwayTimer);
+      halfwayTimer = setTimeout(() => {
+        const halfSec = Math.round(timeoutMs / 2 / 1000);
+        const remainingMin = Math.round((timeoutMs - timeoutMs / 2) / 60_000);
+        options.onProgress?.(`⏳ Stille seit ${halfSec}s — wird in ~${remainingMin}min gekillt sofern keine Aktivität`);
+      }, timeoutMs / 2);
       inactivityTimer = setTimeout(() => {
         killed = true;
         killReason = 'inactivity';
@@ -263,6 +275,7 @@ export async function executeAgent(
 
     child.on('close', (code) => {
       if (inactivityTimer) clearTimeout(inactivityTimer);
+      if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
       const durationMs = Date.now() - startTime;
       const afterSnapshot = snapshotMtimes(cwd);
@@ -288,6 +301,7 @@ export async function executeAgent(
 
     child.on('error', (err) => {
       if (inactivityTimer) clearTimeout(inactivityTimer);
+      if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
       const durationMs = Date.now() - startTime;
       resolve({

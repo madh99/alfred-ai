@@ -5,6 +5,51 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.624] - 2026-05-21
+
+### Fixed — B+D: Halfway-Warning + Phase-Type-aware Inactivity-Timeout
+
+Zwei aufeinander folgende Phase-2-Kills im alpbyte-games Security/Production-Run (Sessions d116503c, 4252cf83): claude-code wurde bei Validierungs-Phasen ("npm install, lint, typecheck, test, build") nach exakt 5min (v619 `DEFAULT_TIMEOUT_MS`) gekillt, obwohl er produktiv arbeitete — nur eben ohne stdout während die npm-Subprocesses liefen.
+
+**Root cause**: `DEFAULT_TIMEOUT_MS=300_000` (5min) ist die Inactivity-Schwelle für ALLE Phasen. Inspect/Edit-Phasen sind <2min, aber Validierungs-Phasen mit `npm install + lint + typecheck + test + build` brauchen realistisch 5-10min Sub-Process-Zeit ohne eigenen Output des Agents. Bei genau 5min Stille → SIGTERM mit false-positive "inactivity timeout".
+
+#### D — Phase-Type-aware Inactivity-Timeout (`project-agent-runner.ts`)
+
+Vor jedem `executeAgent()`-Call wird der Phase-Text gegen ein Pattern geprüft:
+
+```typescript
+const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b/i;
+```
+
+Wenn match → `timeoutMs: 20 * 60_000` (20min Inactivity), sonst Default 5min. Plus: alle **Fix-Läufe** im Build-Validate-Loop bekommen ebenfalls 20min, weil `npm run build` zum Reparieren typisch ist.
+
+Effekt: Normal-Phasen failen weiterhin schnell wenn der Agent hängt (5min); legitime Validation/Build-Phasen können 20min still sein ohne false-positive Kill.
+
+#### B — Mid-Progress-Warning bei 50% (`agent-executor.ts`)
+
+Pro inactivity-window wird zusätzlich zum kill-Timer ein `halfwayTimer` gesetzt der bei `timeoutMs/2` einmalig den `onProgress`-Callback feuert mit Text:
+
+> ⏳ Stille seit Ns — wird in ~Mmin gekillt sofern keine Aktivität
+
+Beim nächsten stdout/stderr-Chunk wird der Timer mit `resetInactivity()` zusammen mit dem inactivity-Timer zurückgesetzt → keine Spam-Warnings bei zwischenzeitlicher Aktivität. Pro Stille-Phase max eine Warnung.
+
+Effekt für User in Telegram:
+- Normal-Phase (5min): Warning bei 2.5min Stille → Kill bei 5min
+- Long-Phase (20min): Warning bei 10min Stille → Kill bei 20min
+- → User sieht in Echtzeit "Agent ist noch da nur leise" vs "Agent ist wirklich tot"
+
+#### Was unverändert bleibt
+
+- `ABSOLUTE_CAP_MS = 60min` als oberster Hammer
+- Sliding-Inactivity-Timer-Mechanik aus v619 D0
+- exitCode-Checks aus v618 B1
+- Diagnose-Reihenfolge aus v619 D1
+
+### Notes
+- Build grün (12 packages)
+- Reine Defensive-Verbesserung; bei normalem Agent-Verhalten unverändert
+- Long-Phase-Detection ist regex-basiert auf Phase-Text — bei false-positive (kein Build aber Wort "validate" in der Beschreibung) → 20min statt 5min ist nur längere Wartezeit auf echten Hänger, kein Schaden
+
 ## [0.19.0-multi-ha.623] - 2026-05-20
 
 ### Added — Background-Tasks WebUI (analog Project-Agents)

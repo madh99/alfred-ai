@@ -253,10 +253,24 @@ export class ProjectAgentRunner {
         const prompt = this.assemblePrompt(config.goal, phase, state, userMessages);
         await this.sendProgress(platform, chatId, `🔨 Phase ${phaseIdx + 1}/${plan.phases.length}: ${phase}`);
 
+        // v624 D — Phase-Type-aware Inactivity-Timeout. Die meisten Phasen (Inspect,
+        // Edit, kleine Patches) laufen <2min und sollen schnell fail-detected werden
+        // wenn der Agent hängt. Validierungs-Phasen mit npm install/build/test/lint
+        // brauchen aber 5-10min Sub-Process-Time während der Agent kein eigenes
+        // stdout produziert (er wartet auf npm). Erkennung über Phase-Text-Keywords.
+        const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b/i;
+        const isLongPhase = longPhasePattern.test(phase);
+        const phaseTimeout = isLongPhase ? 20 * 60_000 : 5 * 60_000;
+        if (isLongPhase) {
+          this.logger.info({ sessionId, phase: phaseIdx + 1, timeoutMs: phaseTimeout },
+            'Project agent: long-phase detected, extended inactivity timeout');
+        }
+
         // ── CODING ──
         this.logger.info({ sessionId, phase: phaseIdx + 1, description: phase }, 'Project agent: coding phase');
         const codeResult = await executeAgent(agentDef, prompt, {
           cwd: config.cwd,
+          timeoutMs: phaseTimeout,
           onProgress: (status) => {
             this.sendProgressThrottled(platform, chatId, `  [${config.agentName}] ${status}`);
           },
@@ -377,6 +391,8 @@ export class ProjectAgentRunner {
           const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
           const fixResult = await executeAgent(agentDef, fixPrompt, {
             cwd: config.cwd,
+            // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout
+            timeoutMs: 20 * 60_000,
             onProgress: (status) => {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
