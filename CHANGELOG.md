@@ -5,6 +5,45 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.629] - 2026-05-21
+
+### Added — Structural Integration (C vom A/B/C-Trio)
+
+Letzter Teil der WebUI-Ausbaustufe. Verbindet den Chat strukturell mit Alfreds Reasoning-/Action-Layer und Knowledge-Graph: offene Bestätigungen werden direkt im Chat freigegeben/abgelehnt, Entity-Namen werden klickbar, anstehende Reminder sichtbar.
+
+**Backend** (`packages/storage/src/repositories/confirmation-repository.ts`):
+- `findAllPendingForUser(userId, limit)` — Join auf `conversations.user_id` als Ownership-Filter, sodass ein User in der WebUI keine pending Confirmations eines anderen Users sehen oder beeinflussen kann.
+
+**ConfirmationQueue** (`packages/core/src/confirmation-queue.ts`):
+- `handleWebDecision({ id, decision, userId })` — Web-UI-Ersatz für inline-Button-Press. Baut den `SkillContext` (inkl. korrektem `conversationId` via ConversationRepository), ruft dann `checkForConfirmation()` mit synthetischem `confirm:<id>:<decision>`-String — so läuft die Auto-Sibling-Topic-Dedup, das Adapter-Feedback, der ActivityLogger und FeedbackService **identisch** zur Telegram-Inline-Button-Flow.
+- `listPendingForUser(userId, limit)` — Wrapper über das neue Repo-Method
+- `setConversationRepository(repo)` — Optional-Dependency-Injection für korrekten `conversationId`-Lookup
+
+**HTTP-Adapter** (`packages/messaging/src/adapters/http.ts`):
+- `setConfirmationCallbacks({ list, decide })` + `setRemindersCallback(list)`
+- 4 neue Endpoints:
+  - `GET /api/confirmations/pending` — Liste der offenen Bestätigungen für den User
+  - `POST /api/confirmations/:id/approve` — Aktion freigeben (returns 200/409/404)
+  - `POST /api/confirmations/:id/reject` — Aktion ablehnen (returns 200/409/404)
+  - `GET /api/reminders` — alle anstehenden Reminders
+
+**Wiring** (`packages/core/src/alfred.ts`): scope-bar auf `ownerMasterUserId`; Web-Approval läuft serverseitig durch dieselbe ConfirmationQueue wie ein Telegram-Button — gleicher Code-Path, kein Drift.
+
+**Frontend**:
+- `apps/web/src/components/chat/ChatSidePanel.tsx` (neu, 165 LoC)
+  - **Sektion 1 "Offene Bestätigungen"**: Karten mit Skill-Name, Beschreibung, Ablaufzeit ("läuft in 28m ab") und Buttons "✓ Freigeben"/"✕ Ablehnen". Optimistic refresh nach Klick. Auto-Refresh alle 30s während Panel offen.
+  - **Sektion 2 "Anstehende Reminders"**: nächste 15, sortiert nach `triggerAt`, mit Relativ-Zeit und absoluter Zeitangabe.
+  - **Sektion 3 "Schnellzugriff"**: 2×2-Grid für History/Knowledge/Memories/Runbooks.
+  - Panel-State (offen/zu) per `localStorage` (`alfred-chat-side-panel`) persistiert.
+- `ChatPage.tsx`: 2-Spalten-Layout mit toggle-bar Side-Panel (📋-Button im Header)
+- **C2 Entity-Klick**: `ChatMessage.tsx` parsed Wiki-Style `[[Entity Name]]` (außerhalb von Code-Fences) und rendert als violetter Pill-Link auf `/alfred/knowledge/?entity=<name>`
+- `KnowledgeGraphPage.tsx`: liest `?entity=`-Query-Param und initialisiert `searchQuery` damit — Deep-Link landet direkt auf gefilterter Sicht
+
+### Notes
+- `pnpm build` grün (12/12). Knowledge-Route wuchs minimal (5.05→5.10 kB) durch initialState-Hook
+- A/B/C ist damit komplett: v627 = History-Viewer, v628 = Chat-UX-Enhancements, v629 = Structural Integration
+- Web-Approve nutzt **dieselbe** `ConfirmationQueue.checkForConfirmation()`-Methode wie der Telegram-Inline-Button-Flow → keine duplizierte Business-Logic, kein Drift bei künftigen Auto-Sibling-Dedup-Änderungen
+
 ## [0.19.0-multi-ha.628] - 2026-05-21
 
 ### Added — Chat-Interface-Enhancements (B vom A/B/C-Trio)

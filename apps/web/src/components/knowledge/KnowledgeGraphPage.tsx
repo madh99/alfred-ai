@@ -68,7 +68,13 @@ export function KnowledgeGraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [selectedLink, setSelectedLink] = useState<GraphLink | null>(null);
   const [filterType, setFilterType] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('entity') ?? '';
+    } catch { return ''; }
+  });
   const [showEvents, setShowEvents] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editName, setEditName] = useState('');

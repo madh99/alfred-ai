@@ -277,6 +277,23 @@ export class HttpAdapter extends MessagingAdapter {
     this.conversationsSearchFn = opts.search;
   }
 
+  // v629 — Confirmations + Reminders Side-Panel API
+  private confirmationsListFn?: () => Promise<any[]>;
+  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject') => Promise<{ ok: boolean; reason?: string }>;
+  private remindersListFn?: () => Promise<any[]>;
+
+  setConfirmationCallbacks(opts: {
+    list: () => Promise<any[]>;
+    decide: (id: string, decision: 'approve' | 'reject') => Promise<{ ok: boolean; reason?: string }>;
+  }): void {
+    this.confirmationsListFn = opts.list;
+    this.confirmationsDecideFn = opts.decide;
+  }
+
+  setRemindersCallback(list: () => Promise<any[]>): void {
+    this.remindersListFn = list;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -592,6 +609,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConversationsMessages(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/summary$/) && req.method === 'GET') {
       this.handleConversationsSummary(req, res, url).catch(err => this.safeError(res, err));
+    // ── Confirmations + Reminders Side-Panel (v629) ──
+    } else if (url.pathname === '/api/confirmations/pending' && req.method === 'GET') {
+      this.handleConfirmationsList(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/confirmations\/[^/]+\/approve$/) && req.method === 'POST') {
+      this.handleConfirmationDecide(req, res, url, 'approve').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/confirmations\/[^/]+\/reject$/) && req.method === 'POST') {
+      this.handleConfirmationDecide(req, res, url, 'reject').catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/reminders' && req.method === 'GET') {
+      this.handleRemindersList(req, res).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1344,6 +1370,44 @@ export class HttpAdapter extends MessagingAdapter {
     const results = await this.conversationsSearchFn(query, { limit });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ results }));
+  }
+
+  // ── Confirmations + Reminders Side-Panel handlers (v629) ──
+  private async handleConfirmationsList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.confirmationsListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const list = await this.confirmationsListFn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ confirmations: list }));
+  }
+
+  private async handleConfirmationDecide(req: http.IncomingMessage, res: http.ServerResponse, url: URL, decision: 'approve' | 'reject'): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.confirmationsDecideFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const id = segments[segments.length - 2]; // .../{id}/approve|reject
+    const result = await this.confirmationsDecideFn(id, decision);
+    if (!result.ok) {
+      res.writeHead(result.reason?.startsWith('already-') ? 409 : 404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: result.reason ?? 'Failed' }));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private async handleRemindersList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.remindersListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const list = await this.remindersListFn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ reminders: list }));
   }
 
   // ── Projects API handlers ──

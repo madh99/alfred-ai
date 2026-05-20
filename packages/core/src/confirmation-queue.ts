@@ -1,5 +1,5 @@
 import type { Logger } from 'pino';
-import type { ConfirmationRepository } from '@alfred/storage';
+import type { ConfirmationRepository, ConversationRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { Platform, SkillContext, PendingConfirmation } from '@alfred/types';
@@ -273,6 +273,62 @@ export class ConfirmationQueue {
     }
 
     return true;
+  }
+
+  private convRepo?: ConversationRepository;
+  setConversationRepository(repo: ConversationRepository): void {
+    this.convRepo = repo;
+  }
+
+  /**
+   * v629 — Web-UI helper: approve or reject by confirmation-ID without going through
+   * the chat-message-pipeline. Returns `{ok:false, reason}` if the confirmation is
+   * no longer pending so the HTTP layer can return 409/404.
+   */
+  async handleWebDecision(opts: {
+    id: string;
+    decision: 'approve' | 'reject';
+    userId: string;
+  }): Promise<{ ok: boolean; reason?: string }> {
+    const pending = await this.confirmRepo.getById(opts.id);
+    if (!pending) {
+      const stale = await this.confirmRepo.getByIdAnyStatus(opts.id);
+      if (stale) return { ok: false, reason: `already-${stale.status}` };
+      return { ok: false, reason: 'not-found' };
+    }
+
+    let conversationId = '';
+    if (this.convRepo) {
+      try {
+        const conv = await this.convRepo.findByPlatformChat(pending.platform as Platform, pending.chatId);
+        if (conv) conversationId = conv.id;
+      } catch { /* best effort */ }
+    }
+
+    const context: SkillContext = {
+      userId: opts.userId,
+      chatId: pending.chatId,
+      platform: pending.platform,
+      conversationId,
+      masterUserId: opts.userId,
+    };
+
+    // Re-use the chat-flow handler — pass synthetic callback so auto-sibling-cleanup,
+    // adapter notifications, and feedback hooks run exactly like a Telegram button press.
+    const handled = await this.checkForConfirmation(
+      pending.chatId,
+      pending.platform,
+      `confirm:${pending.id}:${opts.decision}`,
+      context,
+    );
+    return handled ? { ok: true } : { ok: false, reason: 'not-handled' };
+  }
+
+  async listPendingForUser(userId: string, limit = 50): Promise<PendingConfirmation[]> {
+    if (typeof (this.confirmRepo as unknown as { findAllPendingForUser?: unknown }).findAllPendingForUser !== 'function') {
+      return [];
+    }
+    return (this.confirmRepo as unknown as { findAllPendingForUser: (u: string, l: number) => Promise<PendingConfirmation[]> }).findAllPendingForUser(userId, limit);
   }
 
   private async expireTick(): Promise<void> {

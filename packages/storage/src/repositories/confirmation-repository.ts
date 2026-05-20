@@ -38,6 +38,23 @@ export class ConfirmationRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /**
+   * v629 — All pending confirmations whose chat_id/platform belongs to the given user.
+   * Joins `conversations` to verify ownership so a user can never approve another
+   * user's pending confirmation via the web UI.
+   */
+  async findAllPendingForUser(userId: string, limit = 50): Promise<PendingConfirmation[]> {
+    const rows = await this.adapter.query(
+      `SELECT pc.* FROM pending_confirmations pc
+       JOIN conversations c ON c.chat_id = pc.chat_id AND c.platform = pc.platform
+       WHERE c.user_id = ? AND pc.status = 'pending'
+       ORDER BY pc.created_at DESC
+       LIMIT ?`,
+      [userId, limit],
+    ) as Record<string, unknown>[];
+    return rows.map(r => this.mapRow(r));
+  }
+
   async findAllPending(chatId: string, platform: string): Promise<PendingConfirmation[]> {
     const rows = await this.adapter.query(
       `SELECT * FROM pending_confirmations WHERE chat_id = ? AND platform = ? AND status = 'pending' ORDER BY created_at DESC`,

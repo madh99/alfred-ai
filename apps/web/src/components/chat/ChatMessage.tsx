@@ -1,9 +1,63 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage as ChatMessageType } from '@/types/api';
+
+/**
+ * v629 — Wiki-Style entity link rewrite.
+ * Converts `[[Entity Name]]` in plain text into a Markdown link to the Knowledge-Graph
+ * deep-link route, so ReactMarkdown's link handler picks it up. Skips occurrences inside
+ * code fences (` ``` `) so code snippets are not mangled.
+ */
+function AssistantMarkdown({ content }: { content: string }) {
+  const rendered = useMemo(() => rewriteEntityLinks(content || '...'), [content]);
+  return (
+    <div className="prose prose-invert prose-sm max-w-none [&_pre]:bg-[#0d0d0d] [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-blue-300 [&_a]:text-blue-400">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ href, children, title }) => {
+            const isKgLink = href?.startsWith('/alfred/knowledge/?entity=');
+            return (
+              <a
+                href={href}
+                title={title}
+                target={isKgLink ? '_self' : '_blank'}
+                rel={isKgLink ? undefined : 'noopener noreferrer'}
+                className={isKgLink
+                  ? 'inline-flex items-baseline gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 no-underline'
+                  : 'text-blue-400 underline hover:text-blue-300'}
+              >
+                {isKgLink && <span className="text-[10px]">🧠</span>}
+                {children}
+              </a>
+            );
+          },
+        }}
+      >
+        {rendered}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+function rewriteEntityLinks(text: string): string {
+  if (!text.includes('[[')) return text;
+  const segments = text.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+  for (let i = 0; i < segments.length; i++) {
+    // Even-indexed segments are outside of code fences/inline code
+    if (i % 2 === 0) {
+      segments[i] = segments[i].replace(/\[\[([^\]\n]{1,80})\]\]/g, (_m, name: string) => {
+        const cleaned = name.trim();
+        const url = `/alfred/knowledge/?entity=${encodeURIComponent(cleaned)}`;
+        return `[${cleaned}](${url} "Knowledge-Graph: ${cleaned.replace(/"/g, '\\"')}")`;
+      });
+    }
+  }
+  return segments.join('');
+}
 
 interface Props {
   message: ChatMessageType;
@@ -69,11 +123,7 @@ export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onE
         ) : isUser ? (
           <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
         ) : (
-          <div className="prose prose-invert prose-sm max-w-none [&_pre]:bg-[#0d0d0d] [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-blue-300 [&_a]:text-blue-400">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {message.content || '...'}
-            </ReactMarkdown>
-          </div>
+          <AssistantMarkdown content={message.content} />
         )}
         {message.attachments?.map((a, i) => (
           <div key={i} className="mt-2">

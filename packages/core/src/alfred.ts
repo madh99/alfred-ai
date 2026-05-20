@@ -3743,6 +3743,54 @@ export class Alfred {
         this.logger.info('Conversation-History API registered');
       }
 
+      // v629 — Wire Confirmations + Reminders Side-Panel API
+      if (apiAdapter && this.confirmationQueue && 'setConfirmationCallbacks' in apiAdapter) {
+        // Give the ConfirmationQueue access to ConversationRepository so it can
+        // resolve a `conversationId` for the SkillContext when the web flow approves.
+        if (this.database) {
+          try {
+            const { ConversationRepository } = await import('@alfred/storage');
+            const convRepo = new ConversationRepository(this.database.getAdapter());
+            this.confirmationQueue.setConversationRepository(convRepo);
+          } catch (err) {
+            this.logger.warn({ err }, 'ConversationRepository wiring for ConfirmationQueue failed');
+          }
+        }
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        (apiAdapter as any).setConfirmationCallbacks({
+          list: async () => {
+            try {
+              if (!ownerUid) return [];
+              return await this.confirmationQueue!.listPendingForUser(ownerUid, 50);
+            } catch (err) {
+              this.logger.warn({ err }, 'Confirmations API list failed');
+              return [];
+            }
+          },
+          decide: async (id: string, decision: 'approve' | 'reject') => {
+            try {
+              if (!ownerUid) return { ok: false, reason: 'no-owner' };
+              return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid });
+            } catch (err) {
+              this.logger.warn({ err, id, decision }, 'Confirmation web-decision failed');
+              return { ok: false, reason: 'error' };
+            }
+          },
+        });
+        this.logger.info('Confirmations Side-Panel API registered');
+      }
+      if (apiAdapter && this.reminderRepo && 'setRemindersCallback' in apiAdapter) {
+        (apiAdapter as any).setRemindersCallback(async () => {
+          try {
+            return await this.reminderRepo!.getAllPending();
+          } catch (err) {
+            this.logger.warn({ err }, 'Reminders API list failed');
+            return [];
+          }
+        });
+        this.logger.info('Reminders Side-Panel API registered');
+      }
+
       // Wire Projects API on HTTP adapter
       if (apiAdapter && this.projectRepo && 'setProjectsCallbacks' in apiAdapter) {
         const projRepo = this.projectRepo;

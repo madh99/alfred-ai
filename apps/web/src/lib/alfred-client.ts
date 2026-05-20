@@ -251,6 +251,35 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── v629 — Confirmations + Reminders Side-Panel ──
+  async fetchPendingConfirmations(): Promise<PendingConfirmationItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/confirmations/pending`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch confirmations: ${res.status}`);
+    const data = await res.json();
+    return data.confirmations ?? [];
+  }
+
+  async decideConfirmation(id: string, decision: 'approve' | 'reject'): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/confirmations/${id}/${decision}`, {
+      method: 'POST',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.error ?? `http-${res.status}` };
+    return { ok: true };
+  }
+
+  async fetchPendingReminders(): Promise<ReminderListItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/reminders`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Failed to fetch reminders: ${res.status}`);
+    const data = await res.json();
+    return data.reminders ?? [];
+  }
+
   // ── v627 — Conversation History ──
   async fetchConversations(filter?: { platform?: string; limit?: number }): Promise<ConversationSummaryItem[]> {
     const params = new URLSearchParams();
@@ -881,6 +910,29 @@ export interface Runbook {
   status: 'draft' | 'verified' | 'deprecated';
   createdAt: string;
   updatedAt: string;
+}
+
+// v629 — Confirmations + Reminders Side-Panel
+export interface PendingConfirmationItem {
+  id: string;
+  chatId: string;
+  platform: string;
+  source: 'watch' | 'scheduled' | 'reasoning';
+  sourceId: string;
+  description: string;
+  skillName: string;
+  skillParams: Record<string, unknown>;
+  status: 'pending' | 'approved' | 'rejected' | 'expired';
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface ReminderListItem {
+  id: string;
+  message: string;
+  triggerAt: string;
+  platform: string;
+  chatId?: string;
 }
 
 // v627 — Conversation History

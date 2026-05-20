@@ -1,9 +1,12 @@
 'use client';
 
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { ChatMessage } from './ChatMessage';
 import { InputBar } from './InputBar';
+import { ChatSidePanel } from './ChatSidePanel';
 import { useChat } from '@/hooks/useChat';
+
+const SIDE_PANEL_KEY = 'alfred-chat-side-panel';
 
 export function ChatPage() {
   const {
@@ -11,6 +14,21 @@ export function ChatPage() {
     sendMessage, cancel, retryLast, editLastUser, clearMessages, userId,
   } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [sidePanelOpen, setSidePanelOpen] = useState(false);
+
+  // Restore side-panel state from localStorage
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(SIDE_PANEL_KEY);
+      if (stored === '1') setSidePanelOpen(true);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem(SIDE_PANEL_KEY, sidePanelOpen ? '1' : '0'); } catch {}
+  }, [sidePanelOpen]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -37,19 +55,37 @@ export function ChatPage() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      {messages.length > 0 && (
+    <div className="flex h-full">
+      <div className="flex flex-col flex-1 min-w-0">
+      {(messages.length > 0 || !sidePanelOpen) && (
         <div className="border-b border-[#1f1f1f] px-3 md:px-4 py-2 flex items-center justify-between bg-[#0d0d0d]">
           <div className="text-[11px] text-gray-500">
             <span className="hidden md:inline">User: </span>
             <span className="font-mono text-gray-400">{userId}</span>
-            <span className="text-gray-700 mx-2">·</span>
-            <span>{messages.length} {messages.length === 1 ? 'Nachricht' : 'Nachrichten'}</span>
+            {messages.length > 0 && (
+              <>
+                <span className="text-gray-700 mx-2">·</span>
+                <span>{messages.length} {messages.length === 1 ? 'Nachricht' : 'Nachrichten'}</span>
+              </>
+            )}
           </div>
-          <button
-            onClick={handleClear}
-            className="text-[10px] text-gray-500 hover:text-red-400 px-2 py-1 rounded border border-[#1f1f1f] hover:border-red-500/40"
-          >Leeren</button>
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setSidePanelOpen(o => !o)}
+              className={`text-[10px] px-2 py-1 rounded border ${
+                sidePanelOpen
+                  ? 'bg-blue-500/15 border-blue-500/40 text-blue-300'
+                  : 'border-[#1f1f1f] text-gray-500 hover:text-blue-400 hover:border-blue-500/40'
+              }`}
+              title="Side-Panel (Confirmations / Reminders)"
+            >📋 Panel</button>
+            {messages.length > 0 && (
+              <button
+                onClick={handleClear}
+                className="text-[10px] text-gray-500 hover:text-red-400 px-2 py-1 rounded border border-[#1f1f1f] hover:border-red-500/40"
+              >Leeren</button>
+            )}
+          </div>
         </div>
       )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 md:p-4">
@@ -96,6 +132,11 @@ export function ChatPage() {
         onCancel={cancel}
         onClear={clearMessages}
         streaming={streaming}
+      />
+      </div>
+      <ChatSidePanel
+        visible={sidePanelOpen}
+        onClose={() => setSidePanelOpen(false)}
       />
     </div>
   );
