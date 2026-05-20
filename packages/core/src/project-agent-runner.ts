@@ -309,11 +309,11 @@ export class ProjectAgentRunner {
             sessionId, phase: phaseIdx + 1, agentName: config.agentName,
             exitCode: codeResult.exitCode, stderrTail: stderr.slice(-400),
           }, 'Project agent: coding phase exited non-zero — aborting');
-          // v618 B1 — Phase terminieren. Wir setzen 'done' (terminal) statt 'failed'
-          // weil das ProjectAgentMeta-Type nur done/awaiting_user/etc kennt. Die
-          // Post-Loop-Logik nutzt anyPhaseProducedFiles + lastBuildActuallyPassed
-          // um 🎉 vs ❌ zu entscheiden — beide bleiben hier false → ❌-Output.
-          state.projectPhase = 'done';
+          // v620 — 'failed' ist jetzt im Type erlaubt (vorher Workaround mit 'done').
+          // Die UI zeigt 'failed' rot mit 🔴-Build-Icon. Die Post-Loop-Logik
+          // (anyPhaseProducedFiles + lastBuildActuallyPassed) ist unabhängig
+          // davon — sendet sowieso ❌-Final-Message bei Failure.
+          state.projectPhase = 'failed';
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
           break; // exit the for-loop over phases; finally-block handles cleanup
         }

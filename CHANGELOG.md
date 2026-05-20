@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.620] - 2026-05-20
+
+### Fixed — A1: 'failed' als terminal Phase-State zulassen (UI zeigt jetzt korrekt rot)
+
+In v618 (B1 exitCode-Check) musste der Runner einen Phase-State setzen wenn der Coding-Agent crashed. Der TypeScript-Type `ProjectAgentMeta.projectPhase` enthielt aber kein `'failed'`, nur `'done'`. Workaround in v618: `state.projectPhase = 'done'` setzen — semantisch falsch.
+
+Folge in der WebUI: `ProjectAgentsPage.tsx:128`:
+```
+buildIcon = lastBuildPassed ? '✅' : (currentPhase === 'failed' ? '🔴' : '⏳')
+```
+Mit `phase='done'` und `lastBuildPassed=false` greift weder ✅ noch 🔴 → fallback ⏳ Sanduhr. Plus `PHASE_BADGES.done` ist grün. → optisch wirkt eine gecrashte Session wie "fertig mit unklarem Build-Status".
+
+**Fix**:
+1. `packages/types/src/storage.ts:78` — `ProjectAgentMeta.projectPhase` um `'failed'` erweitert
+2. `packages/core/src/project-agent-runner.ts:295` — v618-Workaround entfernt, `state.projectPhase = 'failed'` korrekt gesetzt
+
+Effekt: gecrashte Sessions zeigen jetzt:
+- Phase-Badge: rot (`bg-red-500/20`)
+- Build-Icon: 🔴
+- Detail-Panel "phase: failed"
+
+### Notes
+- Build grün (12 packages)
+- DB-Schema unverändert (`current_phase` ist TEXT, akzeptiert beliebige Strings)
+- Bestehende Sessions in `phase='done'` bleiben so — nur neue Crashes ab v620 werden `'failed'`. Eine spezifische Session kann manuell per SQL-UPDATE auf `'failed'` gesetzt werden (so wurde z.B. `ea1fb69a-6548-4cf1-812b-66b064d66de7` korrigiert).
+
 ## [0.19.0-multi-ha.619] - 2026-05-20
 
 ### Fixed — D0+D1+D2: Sliding-Inactivity-Timeout + ehrliche Diagnose

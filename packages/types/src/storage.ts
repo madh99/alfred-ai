@@ -75,7 +75,12 @@ export interface AgentCheckpoint {
 }
 
 export interface ProjectAgentMeta {
-  projectPhase: 'planning' | 'coding' | 'validating' | 'fixing' | 'committing' | 'awaiting_user' | 'done';
+  // v620 — 'failed' added as terminal state. Previously the runner abused 'done'
+  // for failure-paths (v618 exitCode-Check) because the type lacked 'failed',
+  // which made the WebUI show 'done' (green badge) for sessions that actually
+  // crashed. UI logic in ProjectAgentsPage.tsx specifically checks for 'failed'
+  // to render 🔴 + red badge.
+  projectPhase: 'planning' | 'coding' | 'validating' | 'fixing' | 'committing' | 'awaiting_user' | 'done' | 'failed';
   projectIteration: number;
   projectGoal: string;
   buildCommands: string[];
