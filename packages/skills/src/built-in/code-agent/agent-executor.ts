@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 
-const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes — used as inactivity threshold by default
+// v625 — 10min default inactivity. Vorher 5min war zu eng: LLM-Reasoning-Phasen
+// zwischen Tool-Calls können legitim 1-3min still sein, MCP-Tool-Calls bis ~30s,
+// komplexes Multi-File-Refactoring-Reasoning gelegentlich >2min. Mit Halfway-
+// Warning bei 5min wird der User sichtbar informiert bevor's killt.
+const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — used as inactivity threshold by default
 const MAX_TIMEOUT_MS = 900_000; // 15 minutes — used as inactivity threshold ceiling
 const MAX_OUTPUT_CHARS = 100_000;
 /** v619 D0 — Absolute safety cap. Sliding inactivity timer can extend indefinitely

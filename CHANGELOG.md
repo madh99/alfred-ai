@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.625] - 2026-05-21
+
+### Changed — Default-Inactivity-Timeout von 5 auf 10 min
+
+Pragmatische Folge-Anpassung zu v624: nach Diskussion der typischen LLM-Reasoning-Pausen (1-3min legitim, gelegentlich >2min bei komplexen Multi-File-Refactorings) war der v619 Default von 5min zu eng. False-positive Kills nicht nur bei expliziten Build-Phasen sondern auch bei normalen, intensiven Coding-Phasen mit langen Reasoning-Schritten.
+
+**Geändert**:
+- `packages/skills/src/built-in/code-agent/agent-executor.ts`: `DEFAULT_TIMEOUT_MS` von `300_000` (5min) auf `600_000` (10min)
+- `packages/core/src/project-agent-runner.ts`: Normal-Phase-Timeout im Phase-Detection-Code-Block ebenfalls von 5min auf 10min angehoben (Long-Phase bleibt 20min)
+
+**Effekt**:
+- Normal-Phase: Halfway-Warning bei 5min Stille → Kill bei 10min
+- Long-Phase (build/test/lint/install): Halfway-Warning bei 10min → Kill bei 20min (unverändert v624)
+- Absolute Cap bleibt 60min (unverändert)
+
+Echte Hänger werden weiterhin erkannt; nur die Toleranz für legitime stille Phasen ist 2× erhöht. Halfway-Warning macht den Unterschied "wirklich tot" vs "still aber lebt" für den User sichtbar.
+
+### Notes
+- Build grün (12 packages)
+- One-line core change, minimaler Patch
+- Echte Hang-Erkennung verzögert sich um 5min — akzeptabel weil ABSOLUTE_CAP_MS=60min Schutz bleibt
+
 ## [0.19.0-multi-ha.624] - 2026-05-21
 
 ### Fixed — B+D: Halfway-Warning + Phase-Type-aware Inactivity-Timeout

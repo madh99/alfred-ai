@@ -260,7 +260,8 @@ export class ProjectAgentRunner {
         // stdout produziert (er wartet auf npm). Erkennung über Phase-Text-Keywords.
         const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b/i;
         const isLongPhase = longPhasePattern.test(phase);
-        const phaseTimeout = isLongPhase ? 20 * 60_000 : 5 * 60_000;
+        // v625 — Normal-Phase auf 10min angehoben (war 5min); Long-Phase bleibt 20min.
+        const phaseTimeout = isLongPhase ? 20 * 60_000 : 10 * 60_000;
         if (isLongPhase) {
           this.logger.info({ sessionId, phase: phaseIdx + 1, timeoutMs: phaseTimeout },
             'Project agent: long-phase detected, extended inactivity timeout');
