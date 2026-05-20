@@ -7,6 +7,7 @@ const BASE = '/alfred';
 
 const navItems = [
   { href: `${BASE}/chat/`, label: 'Chat', icon: '💬' },
+  { href: `${BASE}/history/`, label: 'History', icon: '📜' },
   { href: `${BASE}/dashboard/`, label: 'Dashboard', icon: '📊' },
   { href: `${BASE}/knowledge/`, label: 'Knowledge', icon: '🧠' },
   { href: `${BASE}/memories/`, label: 'Memories', icon: '📝' },

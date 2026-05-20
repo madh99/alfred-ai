@@ -3698,6 +3698,51 @@ export class Alfred {
         this.logger.info('Background-Tasks API registered');
       }
 
+      // v627 — Wire Conversation-History API on HTTP adapter
+      if (apiAdapter && this.database && 'setConversationCallbacks' in apiAdapter) {
+        const { ConversationRepository, SummaryRepository } = await import('@alfred/storage');
+        const convRepo = new ConversationRepository(this.database.getAdapter());
+        const summaryRepo = new SummaryRepository(this.database.getAdapter());
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        (apiAdapter as any).setConversationCallbacks({
+          list: async (filter?: { platform?: string; limit?: number }) => {
+            try {
+              return await convRepo.listConversations({
+                userId: ownerUid,
+                platform: filter?.platform as any,
+                limit: filter?.limit ?? 100,
+              });
+            } catch (err) {
+              this.logger.warn({ err }, 'Conversation-History API list failed');
+              return [];
+            }
+          },
+          messages: async (id: string, opts?: { beforeIso?: string; limit?: number }) => {
+            try {
+              return await convRepo.getMessagesPaged(id, opts);
+            } catch { return []; }
+          },
+          summary: async (id: string) => {
+            try {
+              return (await summaryRepo.get(id)) ?? null;
+            } catch { return null; }
+          },
+          search: async (query: string, opts?: { limit?: number }) => {
+            try {
+              if (!ownerUid) return [];
+              return await convRepo.searchMessages(ownerUid, query, {
+                limit: opts?.limit ?? 30,
+                timeDecay: true,
+              });
+            } catch (err) {
+              this.logger.warn({ err }, 'Conversation-History API search failed');
+              return [];
+            }
+          },
+        });
+        this.logger.info('Conversation-History API registered');
+      }
+
       // Wire Projects API on HTTP adapter
       if (apiAdapter && this.projectRepo && 'setProjectsCallbacks' in apiAdapter) {
         const projRepo = this.projectRepo;

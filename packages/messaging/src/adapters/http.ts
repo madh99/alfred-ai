@@ -259,6 +259,24 @@ export class HttpAdapter extends MessagingAdapter {
     this.backgroundTasksCancelFn = opts.cancel;
   }
 
+  // v627 — Conversation-History API (WebUI viewer)
+  private conversationsListFn?: (filter?: { platform?: string; limit?: number }) => Promise<any[]>;
+  private conversationsMessagesFn?: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
+  private conversationsSummaryFn?: (id: string) => Promise<any | null>;
+  private conversationsSearchFn?: (query: string, opts?: { limit?: number }) => Promise<any[]>;
+
+  setConversationCallbacks(opts: {
+    list: (filter?: { platform?: string; limit?: number }) => Promise<any[]>;
+    messages: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
+    summary: (id: string) => Promise<any | null>;
+    search: (query: string, opts?: { limit?: number }) => Promise<any[]>;
+  }): void {
+    this.conversationsListFn = opts.list;
+    this.conversationsMessagesFn = opts.messages;
+    this.conversationsSummaryFn = opts.summary;
+    this.conversationsSearchFn = opts.search;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -565,6 +583,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleBackgroundTasksGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/background-tasks\/[^/]+\/cancel$/) && req.method === 'POST') {
       this.handleBackgroundTasksCancel(req, res, url).catch(err => this.safeError(res, err));
+    // ── Conversation-History API (v627) ──
+    } else if (url.pathname === '/api/conversations' && req.method === 'GET') {
+      this.handleConversationsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/conversations/search' && req.method === 'GET') {
+      this.handleConversationsSearch(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/messages$/) && req.method === 'GET') {
+      this.handleConversationsMessages(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/summary$/) && req.method === 'GET') {
+      this.handleConversationsSummary(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1263,6 +1290,60 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.backgroundTasksCancelFn(id);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  // ── Conversation-History API handlers (v627) ──
+  private async handleConversationsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsListFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const platform = url.searchParams.get('platform') ?? undefined;
+    const limit = url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined;
+    const list = await this.conversationsListFn({ platform, limit });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ conversations: list }));
+  }
+
+  private async handleConversationsMessages(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsMessagesFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const id = segments[segments.length - 2]; // .../{id}/messages
+    const beforeIso = url.searchParams.get('before') ?? undefined;
+    const limit = url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined;
+    const messages = await this.conversationsMessagesFn(id, { beforeIso, limit });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ messages }));
+  }
+
+  private async handleConversationsSummary(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsSummaryFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const id = segments[segments.length - 2]; // .../{id}/summary
+    const summary = await this.conversationsSummaryFn(id);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ summary }));
+  }
+
+  private async handleConversationsSearch(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsSearchFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const query = url.searchParams.get('q') ?? '';
+    if (!query.trim()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'q query parameter required' })); return;
+    }
+    const limit = url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined;
+    const results = await this.conversationsSearchFn(query, { limit });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ results }));
   }
 
   // ── Projects API handlers ──

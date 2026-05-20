@@ -5,6 +5,40 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.627] - 2026-05-21
+
+### Added — Chat-History-Viewer in der WebUI (A vom Trio A/B/C)
+
+Erster Teil der mit dem User geplanten Chat-UI-Ausbaustufe ("vollumfänglich machen"). Read-Mode-Viewer für alle persistierten Conversations: Sidebar mit Plattform-Filter, Detail-Panel mit Lazy-Loading älterer Nachrichten, Volltextsuche über alle Chats via Ctrl+K, Markdown-Export pro Conversation.
+
+**Backend** (`packages/storage/src/repositories/conversation-repository.ts`):
+- `listConversations({ userId?, platform?, limit?, offset? })` — listet Conversations mit Message-Count + letztem-Preview ohne N+1, scope-bar auf User
+- `getMessagesPaged(conversationId, { beforeIso?, limit? })` — paginiert für Lazy-Loading älterer Nachrichten
+- Bestehendes `searchMessages(userId, query, opts)` (FTS5/tsvector + 30d-Decay) wird wiederverwendet
+
+**HTTP-Adapter** (`packages/messaging/src/adapters/http.ts`):
+- `setConversationCallbacks(...)` + 4 neue Endpoints:
+  - `GET /api/conversations?platform=&limit=` — Sidebar-Liste
+  - `GET /api/conversations/:id/messages?before=&limit=` — Paginierter Detail-Load
+  - `GET /api/conversations/:id/summary` — `conversation_summaries`-Eintrag wenn vorhanden
+  - `GET /api/conversations/search?q=&limit=` — Volltext-Treffer mit Score
+
+**Wiring** (`packages/core/src/alfred.ts`): Callbacks scopen auf `ownerMasterUserId`, ConversationRepository + SummaryRepository werden aus dem bestehenden DB-Adapter erzeugt.
+
+**Frontend** (`apps/web/src/components/history/`):
+- `HistoryPage.tsx` — Layout-Container, State-Mgmt, Ctrl+K-Hotkey, Markdown-Export
+- `ConversationsSidebar.tsx` — gefilterte Liste mit Plattform-Icon, Relativ-Zeit, Preview
+- `ConversationDetail.tsx` — chronologische Anzeige, "Ältere laden"-Button am Top
+- `ToolCallsBlock.tsx` — JSON-Parser für `tool_calls`, expandierbar mit Pretty-Print
+- `SummaryBanner.tsx` — gelb hervorgehoben am Top wenn Summary existiert
+- `SearchOverlay.tsx` — Modal mit 250ms-Debounce, Treffer-Hervorhebung, Klick springt in Conversation
+- Sidebar-Eintrag "📜 History" zwischen Chat und Dashboard
+
+### Notes
+- `pnpm build` grün (12/12); Web-Bundle: history-Route 4.36 kB
+- Read-Only-Viewer: Mutation-Endpoints folgen in v629 (C - Structural Integration)
+- v628 (B) bringt Chat-Interface-Enhancements; v629 (C) integriert Confirmations/Entity-Klicks/Side-Panel
+
 ## [0.19.0-multi-ha.626] - 2026-05-21
 
 ### Fixed — `MAX_TIMEOUT_MS` Ceiling clampte v624 Long-Phase auf 15min statt 20min

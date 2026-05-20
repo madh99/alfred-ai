@@ -72,6 +72,67 @@ export class ConversationRepository {
     return message;
   }
 
+  /**
+   * v627 — List conversations with optional filters + last-message + message-count.
+   * Used by the WebUI history viewer to populate the sidebar without N+1 queries.
+   */
+  async listConversations(opts?: {
+    userId?: string;
+    platform?: Platform;
+    limit?: number;
+    offset?: number;
+  }): Promise<Array<Conversation & { messageCount: number; lastMessageAt?: string; lastMessagePreview?: string }>> {
+    const limit = opts?.limit ?? 100;
+    const offset = opts?.offset ?? 0;
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts?.userId) { where.push('c.user_id = ?'); params.push(opts.userId); }
+    if (opts?.platform) { where.push('c.platform = ?'); params.push(opts.platform); }
+    const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    const sql = `
+      SELECT c.id, c.platform, c.chat_id, c.user_id, c.created_at, c.updated_at,
+        (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
+        (SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at,
+        (SELECT SUBSTR(m.content, 1, 120) FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_preview
+      FROM conversations c
+      ${whereClause}
+      ORDER BY c.updated_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    params.push(limit, offset);
+    const rows = await this.adapter.query(sql, params) as Record<string, unknown>[];
+    return rows.map(r => ({
+      ...this.mapRow(r as Record<string, string>),
+      messageCount: Number(r.message_count ?? 0),
+      lastMessageAt: r.last_message_at as string | undefined,
+      lastMessagePreview: r.last_preview as string | undefined,
+    }));
+  }
+
+  /**
+   * v627 — Paginated message fetch for lazy-loading older history in the viewer.
+   * Returns the N messages BEFORE `beforeIso` (exclusive), oldest-first within the page.
+   * If `beforeIso` is omitted, returns the N most recent messages.
+   */
+  async getMessagesPaged(conversationId: string, opts?: { beforeIso?: string; limit?: number }): Promise<ConversationMessage[]> {
+    const limit = opts?.limit ?? 50;
+    const params: unknown[] = [conversationId];
+    let sql = `SELECT * FROM messages WHERE conversation_id = ?`;
+    if (opts?.beforeIso) { sql += ` AND created_at < ?`; params.push(opts.beforeIso); }
+    sql += ` ORDER BY created_at DESC, id DESC LIMIT ?`;
+    params.push(limit);
+    const rows = await this.adapter.query(sql, params) as Record<string, string>[];
+    return rows.reverse().map((row) => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      role: row.role as ConversationMessage['role'],
+      content: row.content,
+      toolCalls: row.tool_calls ?? undefined,
+      createdAt: row.created_at,
+    }));
+  }
+
   async getMessages(conversationId: string, limit = 50): Promise<ConversationMessage[]> {
     const rows = await this.adapter.query(
       'SELECT * FROM (SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC, id DESC LIMIT ?) sub ORDER BY created_at ASC, id ASC',

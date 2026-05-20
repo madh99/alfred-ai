@@ -251,6 +251,48 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── v627 — Conversation History ──
+  async fetchConversations(filter?: { platform?: string; limit?: number }): Promise<ConversationSummaryItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.platform) params.set('platform', filter.platform);
+    if (filter?.limit) params.set('limit', String(filter.limit));
+    const url = `${this.baseUrl}/api/conversations${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
+    const data = await res.json();
+    return data.conversations ?? [];
+  }
+
+  async fetchConversationMessages(id: string, opts?: { beforeIso?: string; limit?: number }): Promise<ConversationMessageItem[]> {
+    const params = new URLSearchParams();
+    if (opts?.beforeIso) params.set('before', opts.beforeIso);
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const url = `${this.baseUrl}/api/conversations/${id}/messages${params.toString() ? '?' + params.toString() : ''}`;
+    const res = await fetch(url, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) throw new Error(`Failed to fetch messages: ${res.status}`);
+    const data = await res.json();
+    return data.messages ?? [];
+  }
+
+  async fetchConversationSummary(id: string): Promise<ConversationSummary | null> {
+    const res = await fetch(`${this.baseUrl}/api/conversations/${id}/summary`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.summary ?? null;
+  }
+
+  async searchConversations(query: string, limit = 30): Promise<ConversationSearchResult[]> {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    const res = await fetch(`${this.baseUrl}/api/conversations/search?${params.toString()}`, {
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+    const data = await res.json();
+    return data.results ?? [];
+  }
+
   // ── v623 — Background-Tasks ──
   async fetchBackgroundTasks(filter?: { status?: string }): Promise<BackgroundTaskItem[]> {
     const params = new URLSearchParams();
@@ -839,6 +881,48 @@ export interface Runbook {
   status: 'draft' | 'verified' | 'deprecated';
   createdAt: string;
   updatedAt: string;
+}
+
+// v627 — Conversation History
+export interface ConversationSummaryItem {
+  id: string;
+  platform: string;
+  chatId: string;
+  userId: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  lastMessageAt?: string;
+  lastMessagePreview?: string;
+}
+
+export interface ConversationMessageItem {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  toolCalls?: string;
+  createdAt: string;
+}
+
+export interface ConversationSummary {
+  conversationId: string;
+  summary: string;
+  messageCount: number;
+  lastUserMessage?: string;
+  lastAssistantMessage?: string;
+  updatedAt: string;
+}
+
+export interface ConversationSearchResult {
+  id: string;
+  conversationId: string;
+  role: string;
+  content: string;
+  createdAt: string;
+  score: number;
+  platform: string;
+  chatId: string;
 }
 
 // v623 — Background-Tasks (WebUI inspector)
