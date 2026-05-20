@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.617] - 2026-05-20
+
+### Fixed — M1+M2 lehnten den KORREKTEN cwd ab wenn ein anderes Projekt mit gleichem basename existiert
+
+**Selbst-entdeckt vor Deploy.** v615 M1 prüfte beim project_agent.start ob ein Projekt mit gleichem basename aber anderem cwd existiert → reject. Aber: wenn der user den KORREKTEN cwd übergibt, existiert auch ein Projekt mit EXAKT diesem cwd (auto-bind passt). Der M1-Code würde trotzdem über alle Projekte iterieren und das andere alpbyte-games (mit basename-Match aber falschem cwd) als Konflikt zurückgeben.
+
+Real-Welt-Beispiel das v616 für diesen User produziert hätte:
+- DB: Projekt 3a407ced (cwd=/home/madh/projects/alpbyte-games) ✓ richtiger Workspace
+- DB: Projekt ef6f549a (cwd=/home/ubuntu/alpbyte-games) ✗ falscher Workspace
+- User: `project_agent.start cwd=/home/madh/projects/alpbyte-games`
+- v616 M1: exact match auf 3a407ced → "not a conflict" — aber find() läuft weiter und findet ef6f549a als basename-Konflikt → BLOCK
+- Folge: User wird blockiert obwohl er den richtigen cwd übergeben hat = **Regression gegenüber v613**
+
+**Fix**: vor M1+M2-Checks wird einmal `projectRepo.list()` geholt und nach `p.cwd === cwd` durchsucht. Wenn exact match existiert → M1 und M2 werden BEIDE übersprungen (auto-bind nimmt das Projekt sowieso, kein Konflikt-Check sinnvoll).
+
+### Notes
+- Build grün
+- Reine Logik-Korrektur in `project-agent-skill.ts:startProject()`
+- v617 enthält alle v611-v616 Patches plus diese Korrektur
+- Verhindert dass v616-Deploy für diesen User in Konstellation `3a407ced + ef6f549a` einen blockierenden Fehler produziert
+
 ## [0.19.0-multi-ha.616] - 2026-05-20
 
 ### Fixed — UX-Polish: Projekt-Namen + Open-Items-Rate-Limit (NA1+L8)

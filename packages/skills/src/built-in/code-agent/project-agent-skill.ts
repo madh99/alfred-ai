@@ -218,12 +218,29 @@ Actions:
       cwd = newCwd;
     }
 
+    // v617 — Wenn ein Projekt mit GENAU diesem cwd schon existiert, ist auto-bind
+    // explizit gewollt. M1 + M2 dürfen dann NICHT blocken (sonst wird der korrekte
+    // Continue-Pfad blockiert nur weil irgendwo ein anderes Projekt mit ähnlichem
+    // Namen existiert). Genau dieser Bug wäre bei dir aufgetreten weil 3a407ced
+    // (cwd=/home/madh/projects/alpbyte-games) UND ef6f549a (cwd=/home/ubuntu/...)
+    // beide existieren — ein Start mit dem korrekten /home/madh/...-cwd hätte
+    // M1 fälschlich getriggert weil basename gleich.
+    let exactProjectMatch: { id: string; name: string; cwd?: string } | null = null;
+    if (this.projectRepo && this.ownerUserId) {
+      try {
+        const list = await this.projectRepo.list(this.ownerUserId, { limit: 200 });
+        exactProjectMatch = list.find(p => p.cwd === cwd) ?? null;
+      } catch { /* fall through */ }
+    }
+
     // v615 M2 — Workspace-Sanity-Check: lehne cwd ab das auf ein /home/<X>/ verweist
     // wo X nicht der runAsUser ist (außer 'projects'-Subpath). Verhindert dass das LLM
     // einen Deploy-Target-Pfad wie /home/ubuntu/<project> als Workspace ansetzt
     // und der Agent damit ein paralleles, isoliertes Verzeichnis auf der Alfred-Node
     // anlegt (so passiert am 2026-05-20 mit alpbyte-games auf /home/ubuntu/...).
-    if (runAsUser && /^\/home\/([^/]+)\//.test(cwd)) {
+    // v617: skip wenn ein bestehendes Projekt diesen cwd schon registriert hat
+    // (= war offensichtlich gewollt, blockieren wäre Regression).
+    if (!exactProjectMatch && runAsUser && /^\/home\/([^/]+)\//.test(cwd)) {
       const m = cwd.match(/^\/home\/([^/]+)\//);
       const cwdHomeUser = m?.[1];
       if (cwdHomeUser && cwdHomeUser !== runAsUser) {
@@ -239,9 +256,10 @@ Actions:
 
     // v615 M1 — Project-Name-Lookup BEFORE accepting the supplied cwd: if a Project
     // with a similar name already exists at a DIFFERENT cwd, reject this start.
+    // v617: skip wenn ein Projekt mit EXAKT diesem cwd existiert (auto-bind nimmt es)
     // Catches the alpbyte-games / /home/ubuntu/ vs /home/madh/projects/ confusion
     // from 2026-05-20 where the LLM picked the deploy-target path as workspace.
-    if (this.projectRepo && this.ownerUserId) {
+    if (!exactProjectMatch && this.projectRepo && this.ownerUserId) {
       try {
         const lastSegment = cwd.replace(/\/+$/, '').split('/').pop() ?? '';
         const lastSegmentNorm = lastSegment.toLowerCase().replace(/[^a-z0-9-]/g, '');
@@ -249,7 +267,7 @@ Actions:
           const allProjects = await this.projectRepo.list(this.ownerUserId, { status: 'active', limit: 100 });
           const conflict = allProjects.find(p => {
             if (!p.cwd) return false;
-            if (p.cwd === cwd) return false; // exact match → not a conflict
+            if (p.cwd === cwd) return false; // exact match → not a conflict (defensive double-check)
             const projLast = p.cwd.replace(/\/+$/, '').split('/').pop() ?? '';
             return projLast.toLowerCase().replace(/[^a-z0-9-]/g, '') === lastSegmentNorm
               || p.name.toLowerCase().replace(/[^a-z0-9-]/g, '').includes(lastSegmentNorm)
