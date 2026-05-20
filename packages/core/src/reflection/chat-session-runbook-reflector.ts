@@ -4,6 +4,35 @@ import type { ConversationRepository, MemoryRepository, RunbookRepository, Async
 import type { ConfirmationQueue } from '../confirmation-queue.js';
 
 /**
+ * v621 R2 — Title-Normalisierung für Duplikat-Erkennung.
+ * - lowercase
+ * - alles außer Buchstaben/Zahlen/Umlauten → Whitespace
+ * - Füllwörter und Modal-Verben entfernen
+ * - leere Tokens raus
+ * Liefert ein Set tokens für O(1) Schnittmenge.
+ */
+const STOPWORDS = new Set([
+  'der', 'die', 'das', 'den', 'dem', 'des', 'und', 'oder', 'aber', 'auch',
+  'in', 'im', 'auf', 'an', 'am', 'mit', 'von', 'vom', 'zu', 'zum', 'zur',
+  'fuer', 'für', 'aus', 'bei', 'nach', 'ueber', 'über', 'um', 'unter',
+  'ein', 'eine', 'einen', 'einer', 'eines',
+  'soll', 'sollen', 'kann', 'koennen', 'können', 'will', 'wird', 'werden',
+  'ist', 'sind', 'war', 'waren', 'sein',
+  'and', 'or', 'the', 'to', 'of', 'for', 'with', 'on', 'in', 'at', 'by',
+  'is', 'are', 'was', 'were', 'be',
+]);
+function normalizeTitle(title: string): Set<string> {
+  return new Set(
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9äöüß]+/g, ' ')
+      .split(' ')
+      .map(t => t.trim())
+      .filter(t => t.length >= 3 && !STOPWORDS.has(t)),
+  );
+}
+
+/**
  * ChatSessionRunbookReflector — Trigger C.
  *
  * Periodically (every 5 min) scans conversations that became "quiet" (no messages
@@ -245,6 +274,43 @@ Wenn is_runbook_candidate false ist, alle anderen Felder dürfen leer sein.`;
     if (existingRunbook) {
       await this.markProcessed(userId, markerKey);
       return;
+    }
+
+    // v621 R2 — Similarity-Dedup gegen ALLE bestehenden Runbooks. Vorher nur
+    // pro-Conversation Dedup, was bei Cron-Triggered-Conversations (z.B.
+    // aWATTar-Check 4× täglich → 4 separate Conversations) zu nahezu identischen
+    // Runbooks führte ("aWATTar-Rechnung in Microsoft-Mail prüfen/suchen/...
+    // Duplikate vermeiden/blockieren" 3× am selben Tag). Heuristik:
+    //   - ≥3 gemeinsame Tags  → Duplikat
+    //   - Title-Token-Overlap ≥ 60% (normalisiert, ohne Füllwörter) → Duplikat
+    // Beide Bedingungen separat — eine reicht. Bei Treffer: skip + mark.
+    try {
+      const candidateTags = new Set((parsed.tags ?? []).map(t => t.toLowerCase()));
+      const candidateTitleTokens = normalizeTitle(parsed.title ?? '');
+      if (candidateTitleTokens.size >= 2 || candidateTags.size >= 2) {
+        // Alle Status berücksichtigen (auch 'verified'/'deprecated') — gegen
+        // ein verified-Runbook zu duplizieren wäre besonders unsinnig.
+        const allExisting = await this.runbookRepo.list(userId, { limit: 200 });
+        const similar = allExisting.find(rb => {
+          const sharedTags = [...candidateTags].filter(t => rb.tags.map(x => x.toLowerCase()).includes(t)).length;
+          if (sharedTags >= 3) return true;
+          const existingTitleTokens = normalizeTitle(rb.title);
+          if (candidateTitleTokens.size === 0 || existingTitleTokens.size === 0) return false;
+          const sharedTokens = [...candidateTitleTokens].filter(t => existingTitleTokens.has(t)).length;
+          const smallerSize = Math.min(candidateTitleTokens.size, existingTitleTokens.size);
+          return smallerSize > 0 && (sharedTokens / smallerSize) >= 0.6;
+        });
+        if (similar) {
+          this.logger.info({
+            conversationId, newTitle: parsed.title?.slice(0, 60),
+            existingId: similar.id.slice(0, 8), existingTitle: similar.title.slice(0, 60),
+          }, 'Runbook-reflector R2: similar runbook already exists — skipping');
+          await this.markProcessed(userId, markerKey);
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.debug({ err }, 'Runbook-reflector R2: similarity-dedup failed (non-critical, falling through)');
     }
 
     if (confidence >= ChatSessionRunbookReflector.CONFIRM_THRESHOLD) {

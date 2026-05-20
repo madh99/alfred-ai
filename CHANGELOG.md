@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.621] - 2026-05-20
+
+### Fixed — R2: Runbook-Similarity-Dedup im ChatSessionRunbookReflector
+
+User-Beschwerde: 3× aWATTar-Runbooks und 2× Spond-Runbooks am selben Tag — alle nahezu identisch, nur mit leicht anderen LLM-generierten Titeln. Ursache:
+
+Der `ChatSessionRunbookReflector` deduplt **pro Conversation+Marker**. Aber `scheduled_actions` wie `aWATTar Rechnung Check 07:00/12:00/17:00/22:00` erzeugen pro Cron-Lauf eine **neue Conversation**. Jede dieser Conversations wird unabhängig analysiert → LLM extrahiert essentially-gleiches Runbook 4× mit leicht anderen Worten.
+
+**Fix in `chat-session-runbook-reflector.ts`**:
+
+1. Neue `normalizeTitle(title)` Helper-Funktion am Datei-Anfang:
+   - lowercase, Sonderzeichen → Whitespace
+   - Deutsche + englische Stopwords entfernt (der/die/das, soll/kann/wird, etc)
+   - Tokens ≥3 Zeichen behalten, in Set für O(1) Schnittmenge
+2. In `processCandidate()` nach LLM-Extraktion + bestehender per-Conversation-Dedup: zusätzlicher Similarity-Check gegen ALLE bestehenden Runbooks (limit 200, alle Status — Duplizieren eines verified-Runbooks wäre besonders unsinnig):
+   - **≥3 gemeinsame Tags** → Duplikat
+   - **Title-Token-Overlap ≥ 60%** (`shared / min(setA.size, setB.size)`) → Duplikat
+3. Bei Treffer: skip + `markProcessed()` damit die Conversation nicht in 5min nochmal versucht wird
+
+Beispiel: für die aWATTar-Konversation würde der neue Code finden:
+- Existing: `aWATTar-Rechnungen in Microsoft-Mail prüfen und Duplikate vermeiden` → Tokens {awattar, rechnungen, microsoft, mail, prüfen, duplikate, vermeiden}
+- Candidate: `aWATTar-Rechnung in Microsoft-Mail suchen und Duplikate blockieren` → Tokens {awattar, rechnung, microsoft, mail, suchen, duplikate, blockieren}
+- Shared: {awattar, microsoft, mail, duplikate} = 4 von 7 = 57% Overlap — könnte je nach Stopword-Filter doch matchen
+- PLUS Tag-Overlap "awattar, microsoft, email, finanzen" = 4 gemeinsam → klares Duplikat
+
+Außerdem: bestehende 4 Duplikate (3× aWATTar, 2× Spond minus original) müssen manuell in der WebUI gelöscht werden — der Reflector lässt sie ab v621 nur nicht mehr nachwachsen.
+
+### Notes
+- Build grün (12 packages)
+- Best-effort — bei Repo-Fehlern wird die Dedup-Check übersprungen, Standard-Save geht weiter
+- Marker wird auch beim Skip gesetzt (24h TTL), damit dieselbe Conversation nicht alle 5min erneut versucht
+- Keine DB-Migration, kein API-Change
+
 ## [0.19.0-multi-ha.620] - 2026-05-20
 
 ### Fixed — A1: 'failed' als terminal Phase-State zulassen (UI zeigt jetzt korrekt rot)
