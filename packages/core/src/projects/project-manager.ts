@@ -31,6 +31,43 @@ export interface FinishSessionParams {
 }
 
 /**
+ * v616 NA1 — Derive a semantic project name. Priorität:
+ *   1. basename(cwd) wenn cwd vorhanden (z.B. "alpbyte-games")
+ *   2. erste sinnvolle Phrase aus goal-text (LLM-Boilerplate "Starte einen ...",
+ *      "Erstelle ein ...", "Bearbeite das ..." entfernt; max 60 Zeichen)
+ *   3. Fallback: "Session <kurz-id>"
+ *
+ * Exportiert + auch von der Startup-Cleanup-Funktion (rebuildProjectNames) genutzt.
+ */
+export function deriveProjectName(cwd: string | undefined, goal: string, sourceId: string): string {
+  if (cwd && cwd.trim().length > 0) {
+    const last = cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop();
+    if (last && last.length > 0 && last !== 'home' && last !== 'root') {
+      return last.slice(0, 80);
+    }
+  }
+  const trimmed = (goal ?? '').trim();
+  if (trimmed.length > 0) {
+    const boilerplatePatterns = [
+      /^Starte\s+(einen\s+)?(NEUEN\s+)?Projekt-Agent-Lauf\s+(für|fuer)\s+["'„""]?/i,
+      /^Starte\s+(einen\s+)?(neuen\s+)?Project[-\s]Agent[-\s]Lauf\s+/i,
+      /^Erstelle\s+(ein\s+)?(neues\s+)?Projekt\s+(für|fuer)?\s*["'„""]?/i,
+      /^Bearbeite\s+(das\s+)?(bestehende\s+)?Projekt\s+["'„""]?/i,
+      /^Im\s+Projekt\s+\/?[\w\/.-]+\s+(soll|wird)\s+/i,
+      /^Bitte\s+(starte|erstelle|baue)\s+/i,
+    ];
+    let cleaned = trimmed;
+    for (const re of boilerplatePatterns) cleaned = cleaned.replace(re, '');
+    cleaned = cleaned.replace(/[.!?]\s+\S.*$/s, ''); // ersten Satz behalten
+    cleaned = cleaned.replace(/^["'„""]|["'""„""]\s*$/g, '');
+    cleaned = cleaned.trim();
+    if (cleaned.length >= 3) return cleaned.slice(0, 60);
+    return trimmed.slice(0, 60);
+  }
+  return `Session ${sourceId.slice(0, 8)}`;
+}
+
+/**
  * Glue layer: binds incoming sessions to long-lived Project containers,
  * runs the LLM summarizer on completion, and persists extracted open items + decisions.
  */
@@ -143,12 +180,46 @@ export class ProjectManager {
     }
   }
 
+  /**
+   * v616 NA1 — One-shot cleanup für Projekt-Namen die aus der alten
+   * goal.slice(0,80)-Logik stammen. Erkennungs-Heuristik: Name beginnt mit
+   * einem der LLM-Boilerplate-Prefixe ODER ist länger als 50 Zeichen UND
+   * enthält das cwd-Basename nicht. Sicher idempotent — läuft mehrfach OK.
+   * Returns: { renamed: <count>, skipped: <count> }.
+   */
+  async rebuildLongProjectNames(userId: string): Promise<{ renamed: number; skipped: number }> {
+    const all = await this.repo.list(userId, { limit: 500 });
+    const BOILERPLATE_RE = /^(Starte\s+(einen\s+)?(NEUEN\s+)?Projekt-Agent-Lauf|Erstelle\s+(ein\s+)?(neues\s+)?Projekt|Bearbeite\s+(das\s+)?(bestehende\s+)?Projekt|Im\s+Projekt\s+\/|Bitte\s+(starte|erstelle|baue))/i;
+    let renamed = 0;
+    let skipped = 0;
+    for (const p of all) {
+      const looksBoilerplate = BOILERPLATE_RE.test(p.name) || (p.name.length > 50 && p.cwd && !p.name.toLowerCase().includes((p.cwd.split('/').pop() ?? '').toLowerCase()));
+      if (!looksBoilerplate) { skipped++; continue; }
+      const newName = deriveProjectName(p.cwd, p.description ?? p.name, p.id);
+      if (newName === p.name || newName.length < 2) { skipped++; continue; }
+      try {
+        await this.repo.update(userId, p.id, { name: newName });
+        this.logger.info({ projectId: p.id, oldName: p.name.slice(0, 60), newName }, 'project-manager: project name rebuilt');
+        renamed++;
+      } catch (err) {
+        this.logger.debug({ err, projectId: p.id }, 'project-manager: rename failed');
+        skipped++;
+      }
+    }
+    return { renamed, skipped };
+  }
+
   private async findOrCreate(params: AttachSessionParams): Promise<Project> {
     if (this.autoBindByCwd && params.cwd) {
       const existing = await this.repo.findByCwd(params.userId, params.cwd);
       if (existing) return existing;
     }
-    const name = params.goal.length > 0 ? params.goal.slice(0, 80) : `Session ${params.sourceId.slice(0, 8)}`;
+    // v616 NA1 — semantischer Projekt-Name. Vorher: goal.slice(0,80), was
+    // unleserliche Stümpfe wie "Starte einen NEUEN Projekt-Agent-Lauf für..."
+    // produzierte. Jetzt: wenn cwd existiert, nimm das Basename als Name
+    // (z.B. "alpbyte-games"). uniqueSlug() im Repo handhabt Duplikate.
+    // Fallback bei fehlendem cwd: gekürzte Goal-Slice.
+    const name = deriveProjectName(params.cwd, params.goal, params.sourceId);
     return this.repo.create(params.userId, {
       name,
       cwd: params.cwd,

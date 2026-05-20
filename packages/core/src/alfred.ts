@@ -583,6 +583,31 @@ export class Alfred {
       this.projectRepo = projectRepo;
       this.projectManager = projectManager;
 
+      // v616 NA1 — One-shot cleanup für unleserliche Projekt-Namen aus dem alten
+      // goal.slice(0,80) Format. Idempotent — läuft sicher mehrfach. Fire-and-forget
+      // damit Startup nicht blockiert wird. Memory-Marker verhindert dass es bei
+      // jedem Start läuft.
+      (async () => {
+        try {
+          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          if (!ownerUid) return;
+          if (this.memoryRepo) {
+            const markerKey = 'project_names_rebuilt_v616';
+            const existing = await this.memoryRepo.search(ownerUid, markerKey).catch(() => []);
+            if (existing.some(m => m.key === markerKey)) return; // already done
+          }
+          const result = await projectManager.rebuildLongProjectNames(ownerUid);
+          this.logger.info({ ...result }, 'v616 NA1: project names rebuild complete');
+          if (this.memoryRepo) {
+            await this.memoryRepo.saveWithMetadata(
+              ownerUid, 'project_names_rebuilt_v616',
+              `Rebuild: ${result.renamed} renamed, ${result.skipped} skipped`,
+              'general', 'feedback', 1.0, 'auto',
+            ).catch(() => {});
+          }
+        } catch (err) { this.logger.debug({ err }, 'v616 NA1 startup rebuild failed (non-critical)'); }
+      })().catch(() => {});
+
       const { ProjectSkill } = await import('@alfred/skills');
       const projectSkill = new ProjectSkill(projectRepo);
       // v602 P4 — forward open-item resolve to ITSM (best-effort, errors swallowed).

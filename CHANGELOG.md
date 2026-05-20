@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.616] - 2026-05-20
+
+### Fixed — UX-Polish: Projekt-Namen + Open-Items-Rate-Limit (NA1+L8)
+
+Zwei Patches die zusammen mit v615 deployt werden sollten, damit die UX nach v615 stimmig ist.
+
+#### NA1 — Semantische Projekt-Namen + Cleanup der Bestandsdaten
+
+**Vorher**: `project-manager.ts findOrCreate()` setzte `name = params.goal.slice(0, 80)`. Das produzierte unleserliche Stümpfe wie "Starte einen NEUEN Projekt-Agent-Lauf für 'Alpbyte Games' unter /root/alpbyte-ga…" und machte die WebUI-Projekt-Liste schwer scanbar. Zwei verschiedene alpbyte-games-Projekte waren so im UI optisch fast identisch.
+
+**Neu**: 
+1. `deriveProjectName(cwd, goal, sourceId)` — exportierte Helper-Funktion:
+   - Wenn cwd existiert → `basename(cwd)` (z.B. "alpbyte-games", "uboot-cc")
+   - Sonst → goal-text mit LLM-Boilerplate-Patterns gestrippt ("Starte einen ...", "Bearbeite das ...", "Erstelle ein ...", "Im Projekt ...", "Bitte ...") + erstem Satz, max 60 Zeichen
+   - Fallback → "Session <kurz-id>"
+2. `ProjectManager.rebuildLongProjectNames(userId)` — One-shot Cleanup für Bestandsprojekte. Erkennungs-Heuristik: Name beginnt mit Boilerplate-Prefix ODER ist länger als 50 Zeichen + enthält cwd-basename nicht. Idempotent über Memory-Marker `project_names_rebuilt_v616`.
+3. Wired in `alfred.ts:585` fire-and-forget beim Startup. Läuft genau einmal pro Installation.
+
+Effekt nach Deploy: bestehende Projekte werden umbenannt, die WebUI-Liste wird kompakt + lesbar. Auto-Generated Slugs bleiben durch `uniqueSlug()` eindeutig auch bei Duplikat-Namen (alpbyte-games + alpbyte-games-2 etc).
+
+#### L8 — Rate-Limit für OpenItemsReflector (max 3 Eskalationen pro Sweep)
+
+**Vorher**: v615 deployen hätte beim ersten hourlySweep alle 11 wartenden high-prio open items auf einmal eskaliert → 11 Telegram-Nachrichten innerhalb Sekunden.
+
+**Neu**: `MAX_ESCALATIONS_PER_SWEEP = 3` Konstante in `open-items-reflector.ts`. Items werden vor der Loop nach `createdAt ASC` sortiert (älteste zuerst), Zähler `sentThisSweep` wird pro erfolgreich gesendeter Eskalation inkrementiert. Sobald 3 erreicht → break mit Info-Log "rate-limit reached, deferring rest to next sweep".
+
+Effekt: 11 wartende Items → 3 Eskalationen pro Stunde → über ~4 Stunden komplett durchgegangen. Älteste-zuerst sorgt für sinnvolle Prio.
+
+### Risiken / Tradeoffs
+
+- **NA1-Cleanup**: bei dem ersten Startup nach v616 werden bestehende Projekt-Namen aktualisiert. Memory-Marker verhindert mehrfache Ausführung. Falls etwas schiefgeht: Cleanup-Action ist additiv (nur UPDATE name, kein DELETE), reversibel über DB.
+- **L8 Rate-Limit**: bei wachsendem high-prio-Backlog könnten 3/h nicht ausreichen. Wenn das passiert, leicht in der Konstante hochsetzen (z.B. 5).
+
+### Notes
+- Build grün (12 packages)
+- Keine DB-Migration nötig
+- Memory-Marker `project_names_rebuilt_v616` (type=feedback) wird beim ersten Startup geschrieben — sicheres Indiz dass Cleanup gelaufen ist
+
 ## [0.19.0-multi-ha.615] - 2026-05-20
 
 ### Fixed — alpbyte-games-cwd-Verwechslung: Project-Agent wählte Deploy-Target als Workspace

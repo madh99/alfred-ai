@@ -19,6 +19,11 @@ import type { Platform } from '@alfred/types';
 
 const ESCALATION_AGE_HOURS = 4;
 const ESCALATION_DEDUP_PREFIX = 'open_item_escalated:';
+/** v616 L8 — max Eskalationen pro stündlichem Sweep um eine Flood-Welle bei vielen
+ *  alten high-prio Items zu vermeiden (am 2026-05-20 waren 11 Items eligible auf
+ *  einmal). Älteste-zuerst-Sortierung sorgt dafür dass die brennendsten Themen
+ *  zuerst dran kommen. Über mehrere Stunden wird der Backlog dann abgearbeitet. */
+const MAX_ESCALATIONS_PER_SWEEP = 3;
 
 export interface OpenItemsReflectorDeps {
   projectRepo: ProjectRepository;
@@ -54,7 +59,19 @@ export class OpenItemsReflector {
 
     const cutoff = Date.now() - ESCALATION_AGE_HOURS * 3600_000;
 
+    // v616 L8 — älteste-zuerst sortieren, dann durch MAX_ESCALATIONS_PER_SWEEP
+    // limitieren. Verhindert Flood-Welle wenn viele Items gleichzeitig
+    // eskalations-fällig sind (z.B. Erstdeploy nach v615 hätte 11 Nachrichten
+    // auf einmal produziert).
+    items.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    let sentThisSweep = 0;
+
     for (const item of items) {
+      if (sentThisSweep >= MAX_ESCALATIONS_PER_SWEEP) {
+        logger.info({ remaining: items.length - sentThisSweep, sentThisSweep },
+          'OpenItemsReflector L8: rate-limit reached, deferring rest to next sweep');
+        break;
+      }
       const itemAge = Date.now() - new Date(item.createdAt).getTime();
       if (itemAge < ESCALATION_AGE_HOURS * 3600_000) continue;
       if (new Date(item.createdAt).getTime() < cutoff - 7 * 24 * 3600_000) {
@@ -83,6 +100,7 @@ export class OpenItemsReflector {
 
       try {
         await this.send(msg);
+        sentThisSweep++; // v616 L8 — count actually-sent escalations against the rate-limit
         await memoryRepo.saveWithMetadata(
           ownerUserId,
           markerKey,
