@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.651] - 2026-05-21
+
+### Added — Project-Agent Live UX (Bundle 4 von 5)
+
+**#10 SSE Output-Stream**:
+- Neuer In-Memory-Ring-Buffer pro Session in `project-agent-skill.ts`
+  - `outputBuffers: Map<taskId, { lines, subscribers, endedAt? }>`
+  - 500 Zeilen max pro Session, 5min Retention nach `markOutputEnded()`
+- 3 Quellen pumpen in den Buffer:
+  - `agent-executor` stdout/stderr (per-Zeile, `taskId` Option neu)
+  - `project-agent-runner.sendProgress` (System-Events: Phase-Start, Build-Ergebnis) via `AsyncLocalStorage`-Context — kein Refactoring der 46 sendProgress-Call-Sites nötig
+- Neue HTTP-Endpoints:
+  - `GET /api/project-agents/:taskId/output` — Server-Sent-Events
+    - Beim Connect: `event: history` mit gepufferten Zeilen
+    - Danach `event: line` pro neuer Zeile
+    - Heartbeat-Comment alle 25s gegen Proxy-Timeouts
+    - `X-Accel-Buffering: no` damit Nginx nicht puffert
+  - EventSource Token-Fallback über `?token=…` Query-Param
+- Cleanup: bei `req.close`/`req.error` unsubscribe(), `markOutputEnded()` im Runner-finally
+
+**#11 Live-Interjection im WebUI**:
+- Neuer Endpoint `POST /api/project-agents/:taskId/interject` — bestehende v605-Pipeline
+- WebUI ProjectAgentsPage für laufende Sessions:
+  - Schwarze Output-Box (h-48 scroll-auto-bottom) Farbcodiert stdout=grau, stderr=rot, system=blau
+  - Text-Input + Senden-Button, Enter sendet
+  - SSE-EventSource bei selected-Wechsel sauber geschlossen + neu geöffnet
+- Auto-Scroll, max 800 Zeilen im Frontend-Buffer
+
+### Architecture
+- `AsyncLocalStorage` für sessionId-Propagation durch sendProgress — sauberer als 46 Call-Sites umschreiben oder Map-by-chatId (race-anfällig bei parallelen Sessions im selben Chat)
+- Ring-Buffer:
+  - Geboren bei erstem `appendOutputLine()` oder erstem Subscriber
+  - `endedAt` nach Session-Ende → 5min Retention dann freigegeben
+  - Spät-Connector bekommt letzte 500 Zeilen für 5min
+
+### Notes
+- Build grün (12/12)
+- 1 EventSource pro WebUI-Klient — Subscriber-Liste pro Session
+- Live-Interjection nutzt drainInterjections() im Phase-Loop (selber Pfad wie Telegram)
+- Auth: API-Token + User-Session-Token via Query-Param
+
 ## [0.19.0-multi-ha.650] - 2026-05-21
 
 ### Added — Project-Agent Safety (Bundle 3 von 5)

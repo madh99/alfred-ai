@@ -263,6 +263,35 @@ export class AlfredClient {
     return { ok: true, taskId: data.taskId };
   }
 
+  // v651 — Live-Interjection in laufende Session
+  async interjectProjectAgent(taskId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/project-agents/${taskId}/interject`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ text }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? `http-${res.status}` };
+    return { ok: true };
+  }
+
+  // v651 — SSE-EventSource für Output-Stream. EventSource trägt das auth-token via
+  // query-string (?token=…) weil der Browser kein Authorization-Header bei EventSource erlaubt.
+  openProjectAgentOutputStream(taskId: string, onLine: (line: { ts: number; source: string; text: string }) => void, onHistory?: (lines: Array<{ ts: number; source: string; text: string }>) => void): EventSource {
+    const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
+    const es = new EventSource(`${this.baseUrl}/api/project-agents/${taskId}/output${qs}`);
+    es.addEventListener('line', (ev) => {
+      try { onLine(JSON.parse((ev as MessageEvent).data)); } catch { /* skip */ }
+    });
+    es.addEventListener('history', (ev) => {
+      try {
+        const payload = JSON.parse((ev as MessageEvent).data);
+        if (onHistory && Array.isArray(payload.lines)) onHistory(payload.lines);
+      } catch { /* skip */ }
+    });
+    return es;
+  }
+
   // ── v638 — Insights ──
   async fetchInsights(filter?: { category?: string; status?: string; limit?: number }): Promise<InsightItem[]> {
     const params = new URLSearchParams();

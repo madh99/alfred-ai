@@ -4293,7 +4293,7 @@ export class Alfred {
       if (apiAdapter && this.database && 'setProjectAgentCallbacks' in apiAdapter) {
         const { ProjectAgentSessionRepository } = await import('@alfred/storage');
         const sessionRepo = new ProjectAgentSessionRepository(this.database.getAdapter());
-        const { pushInterjection } = await import('@alfred/skills');
+        const { pushInterjection, subscribeOutput } = await import('@alfred/skills');
         (apiAdapter as any).setProjectAgentCallbacks({
           list: async (filter?: { phase?: string }) => {
             try {
@@ -4349,6 +4349,30 @@ export class Alfred {
             } catch (err) {
               this.logger.warn({ err, taskId }, 'Project-Agent API plan failed');
               return [];
+            }
+          },
+          // v651 — Live Output-Stream (SSE)
+          subscribeOutput: (taskId: string, cb: (line: { ts: number; source: string; text: string }) => void) => {
+            try {
+              return subscribeOutput(taskId, cb);
+            } catch (err) {
+              this.logger.warn({ err, taskId }, 'Project-Agent API subscribeOutput failed');
+              return null;
+            }
+          },
+          // v651 — Live-Interjection
+          interject: async (taskId: string, text: string) => {
+            try {
+              const session = await sessionRepo.getByTaskId(taskId);
+              if (!session) return { ok: false, error: 'Session nicht gefunden' };
+              if (session.currentPhase === 'done' || session.currentPhase === 'failed') {
+                return { ok: false, error: 'Session bereits beendet' };
+              }
+              await pushInterjection(taskId, text);
+              return { ok: true };
+            } catch (err) {
+              this.logger.warn({ err, taskId }, 'Project-Agent API interject failed');
+              return { ok: false, error: (err as Error).message };
             }
           },
         });

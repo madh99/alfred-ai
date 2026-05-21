@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import type { ProjectAgentSession } from '@/lib/alfred-client';
 
@@ -63,6 +63,56 @@ export function ProjectAgentsPage() {
       await load();
     } else {
       alert('Stop fehlgeschlagen.');
+    }
+  }
+
+  // v651 — Live-Output (SSE) + Live-Interjection
+  const [liveLines, setLiveLines] = useState<Array<{ ts: number; source: string; text: string }>>([]);
+  const [interjectText, setInterjectText] = useState('');
+  const [interjectBusy, setInterjectBusy] = useState(false);
+  const outputBoxRef = useRef<HTMLDivElement | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    // Cleanup previous stream
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    setLiveLines([]);
+    if (!client || !selected) return;
+    // Stream nur für laufende Sessions
+    if (selected.currentPhase === 'done' || selected.currentPhase === 'failed') return;
+    const es = client.openProjectAgentOutputStream(
+      selected.taskId,
+      (line) => {
+        setLiveLines((prev) => {
+          const next = [...prev, line];
+          return next.length > 800 ? next.slice(next.length - 800) : next;
+        });
+      },
+      (history) => setLiveLines(history),
+    );
+    esRef.current = es;
+    return () => { es.close(); };
+  }, [client, selected]);
+
+  // Auto-scroll the output box to the bottom on new line
+  useEffect(() => {
+    const box = outputBoxRef.current;
+    if (!box) return;
+    box.scrollTop = box.scrollHeight;
+  }, [liveLines]);
+
+  async function handleInterject() {
+    if (!client || !selected || !interjectText.trim()) return;
+    setInterjectBusy(true);
+    try {
+      const r = await client.interjectProjectAgent(selected.taskId, interjectText.trim());
+      if (r.ok) {
+        setInterjectText('');
+      } else {
+        alert(`Interjection fehlgeschlagen: ${r.error}`);
+      }
+    } finally {
+      setInterjectBusy(false);
     }
   }
 
@@ -253,6 +303,51 @@ export function ProjectAgentsPage() {
               </div>
             </div>
 
+            {/* v651 — Live Output + Interjection für laufende Sessions */}
+            {(selected.currentPhase !== 'done' && selected.currentPhase !== 'failed') && (
+              <div className="mt-4 space-y-2">
+                <div className="text-xs text-gray-500 uppercase tracking-wider">Live Output {liveLines.length > 0 && <span className="text-gray-400">({liveLines.length} Zeilen)</span>}</div>
+                <div
+                  ref={outputBoxRef}
+                  className="bg-black/60 border border-gray-700 rounded p-2 text-xs font-mono h-48 overflow-y-auto whitespace-pre-wrap"
+                >
+                  {liveLines.length === 0 ? (
+                    <div className="text-gray-600 italic">Warte auf Output…</div>
+                  ) : (
+                    liveLines.map((l, i) => (
+                      <div
+                        key={i}
+                        className={
+                          l.source === 'stderr' ? 'text-red-300'
+                          : l.source === 'system' ? 'text-blue-300'
+                          : 'text-gray-300'
+                        }
+                      >
+                        {l.text}
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={interjectText}
+                    onChange={(e) => setInterjectText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !interjectBusy) handleInterject(); }}
+                    placeholder="Live-Hinweis an den Agent (Enter zum senden)…"
+                    className="flex-1 px-2 py-1 bg-black/40 border border-gray-700 rounded text-xs text-gray-200"
+                    disabled={interjectBusy}
+                  />
+                  <button
+                    onClick={handleInterject}
+                    disabled={interjectBusy || !interjectText.trim()}
+                    className="px-3 py-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/40 rounded text-xs hover:bg-cyan-500/20 disabled:opacity-40"
+                  >
+                    Senden
+                  </button>
+                </div>
+              </div>
+            )}
             {(selected.currentPhase !== 'done' && selected.currentPhase !== 'failed') && (
               <button
                 onClick={() => handleStop(selected.taskId)}

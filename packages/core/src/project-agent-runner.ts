@@ -2,12 +2,17 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+/** v651 — Async-context für die aktuelle Project-Agent-Session, damit sendProgress
+ *  ohne Signatur-Änderung in alle 46 Call-Sites die sessionId für Output-Buffer findet. */
+const currentSession = new AsyncLocalStorage<{ sessionId: string }>();
 import type { Logger } from 'pino';
 import type { Platform, ProjectAgentMeta, CodeAgentDefinitionConfig, ForgeConfig } from '@alfred/types';
 import type { ProjectAgentSessionRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
 import type { LLMProvider } from '@alfred/llm';
-import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject } from '@alfred/skills';
+import { executeAgent, validateBuild, createProjectPlan, drainInterjections, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, appendOutputLine, markOutputEnded } from '@alfred/skills';
 import type { FileStore } from '@alfred/storage';
 
 const execFileAsync = promisify(execFile);
@@ -172,6 +177,10 @@ export class ProjectAgentRunner {
   }
 
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
+    return currentSession.run({ sessionId }, () => this._runInner(sessionId, configInput, platform, chatId));
+  }
+
+  private async _runInner(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
     const config: ProjectAgentConfig = {
       goal: configInput.goal as string,
       cwd: configInput.cwd as string,
@@ -446,6 +455,7 @@ export class ProjectAgentRunner {
           cwd: config.cwd,
           timeoutMs: phaseTimeout,
           signal: abortController.signal,
+          taskId: sessionId,
           onProgress: (status) => {
             this.sendProgressThrottled(platform, chatId, `  [${config.agentName}] ${status}`);
           },
@@ -576,6 +586,7 @@ export class ProjectAgentRunner {
             // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout
             timeoutMs: 20 * 60_000,
             signal: abortController.signal,
+            taskId: sessionId,
             onProgress: (status) => {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
@@ -751,6 +762,7 @@ export class ProjectAgentRunner {
       }
     } finally {
       removeAbortController(sessionId);
+      try { markOutputEnded(sessionId); } catch { /* best-effort */ }
       // v605 M5 — drain the interjection inbox so any messages that arrive after
       // session termination (e.g. user thinks the agent still runs and sends
       // another file) don't accumulate as orphans. Without this, late
@@ -1047,6 +1059,10 @@ export class ProjectAgentRunner {
 
   private async sendProgress(platform: string, chatId: string, text: string): Promise<void> {
     this.lastProgressAt = Date.now();
+    const ctx = currentSession.getStore();
+    if (ctx?.sessionId) {
+      try { appendOutputLine(ctx.sessionId, 'system', text); } catch { /* buffer best-effort */ }
+    }
     const adapter = this.adapters.get(platform as Platform);
     if (adapter) {
       try { await adapter.sendMessage(chatId, text); } catch { /* ignore */ }

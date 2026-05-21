@@ -244,6 +244,9 @@ export class HttpAdapter extends MessagingAdapter {
   private projectAgentsStopFn?: (taskId: string) => Promise<boolean>;
   private projectAgentsResumeFn?: (taskId: string, notes?: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
   private projectAgentsPlanFn?: (taskId: string) => Promise<any[]>;
+  // v651 — Live-Output-Stream + Live-Interjection
+  private projectAgentsSubscribeOutputFn?: (taskId: string, cb: (line: { ts: number; source: string; text: string }) => void) => { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } | null;
+  private projectAgentsInterjectFn?: (taskId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
 
   setProjectAgentCallbacks(opts: {
     list: (filter?: { phase?: string }) => Promise<any[]>;
@@ -251,12 +254,16 @@ export class HttpAdapter extends MessagingAdapter {
     stop: (taskId: string) => Promise<boolean>;
     resume?: (taskId: string, notes?: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
     plan?: (taskId: string) => Promise<any[]>;
+    subscribeOutput?: (taskId: string, cb: (line: { ts: number; source: string; text: string }) => void) => { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } | null;
+    interject?: (taskId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   }): void {
     this.projectAgentsListFn = opts.list;
     this.projectAgentsGetFn = opts.get;
     this.projectAgentsStopFn = opts.stop;
     this.projectAgentsResumeFn = opts.resume;
     this.projectAgentsPlanFn = opts.plan;
+    this.projectAgentsSubscribeOutputFn = opts.subscribeOutput;
+    this.projectAgentsInterjectFn = opts.interject;
   }
 
   // v623 — Background-Tasks API (WebUI list/inspect/cancel)
@@ -686,6 +693,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectAgentsResume(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/plan$/) && req.method === 'GET') {
       this.handleProjectAgentsPlan(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/output$/) && req.method === 'GET') {
+      this.handleProjectAgentsOutputStream(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/interject$/) && req.method === 'POST') {
+      this.handleProjectAgentsInterject(req, res, url).catch(err => this.safeError(res, err));
     // ── Background-Tasks API (v623) ──
     } else if (url.pathname === '/api/background-tasks' && req.method === 'GET') {
       this.handleBackgroundTasksList(req, res, url).catch(err => this.safeError(res, err));
@@ -1033,7 +1044,17 @@ export class HttpAdapter extends MessagingAdapter {
   private async checkAuth(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
     if (!this.apiToken && !this.authCb) return true;
     const authHeader = req.headers['authorization'];
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    let token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+    // v651 — EventSource kann keinen Authorization-Header setzen, daher Token via
+    // ?token=… aus der Query als Fallback akzeptieren. Nur für GET (SSE).
+    if (!token && req.method === 'GET' && req.url) {
+      try {
+        const u = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`);
+        const qsToken = u.searchParams.get('token');
+        if (qsToken) token = qsToken;
+      } catch { /* ignore */ }
+    }
 
     // Check static API token
     if (this.apiToken && token) {
@@ -1470,6 +1491,72 @@ export class HttpAdapter extends MessagingAdapter {
     const phases = await this.projectAgentsPlanFn(taskId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ phases }));
+  }
+
+  // v651 — SSE-Stream der laufenden Project-Agent-Session Output-Buffer-Zeilen
+  private async handleProjectAgentsOutputStream(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsSubscribeOutputFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Output stream not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const taskId = segments[segments.length - 2];
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no', // disable Nginx buffering
+    });
+
+    const send = (event: string, data: unknown) => {
+      try {
+        res.write(`event: ${event}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch { /* client gone */ }
+    };
+
+    const sub = this.projectAgentsSubscribeOutputFn(taskId, (line) => send('line', line));
+    if (!sub) {
+      send('error', { message: 'no active session' });
+      res.end();
+      return;
+    }
+
+    // Replay history first
+    send('history', { lines: sub.history });
+
+    // Heartbeat every 25s so proxies don't close the connection
+    const heartbeat = setInterval(() => {
+      try { res.write(`:hb\n\n`); } catch { /* gone */ }
+    }, 25_000);
+
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      try { sub.unsubscribe(); } catch { /* ignore */ }
+      try { res.end(); } catch { /* ignore */ }
+    };
+    req.on('close', cleanup);
+    req.on('error', cleanup);
+  }
+
+  // v651 — Live-Interjection für laufende Session
+  private async handleProjectAgentsInterject(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsInterjectFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Interject not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const taskId = segments[segments.length - 2];
+    const body = await this.readBody(req);
+    let text: string | undefined;
+    try { text = JSON.parse(body).text; } catch { /* skip */ }
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'text required' })); return;
+    }
+    const result = await this.projectAgentsInterjectFn(taskId, text.trim());
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // ── Background-Tasks API handlers (v623) ──

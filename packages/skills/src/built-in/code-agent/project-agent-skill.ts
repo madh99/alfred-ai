@@ -51,6 +51,53 @@ export function setInterjectionRepo(repo: ProjectAgentInterjectionRepository): v
 /** Active runner abort controllers keyed by session ID. */
 const activeAbortControllers = new Map<string, AbortController>();
 
+/**
+ * v651 — Per-Session Output-Ring-Buffer für Live-Streaming. Hält die letzten ~500
+ * Output-Lines pro aktiver Session + Liste der SSE-Subscriber. Wird bei Session-Ende
+ * 5min lang behalten damit Spät-Connector noch das Ende sieht, dann gelöscht.
+ */
+interface OutputBuffer {
+  lines: Array<{ ts: number; source: 'stdout' | 'stderr' | 'system'; text: string }>;
+  subscribers: Set<(line: { ts: number; source: string; text: string }) => void>;
+  endedAt?: number;
+}
+const outputBuffers = new Map<string, OutputBuffer>();
+const OUTPUT_BUFFER_MAX_LINES = 500;
+const OUTPUT_BUFFER_RETAIN_MS = 5 * 60_000;
+
+export function appendOutputLine(taskId: string, source: 'stdout' | 'stderr' | 'system', text: string): void {
+  let buf = outputBuffers.get(taskId);
+  if (!buf) { buf = { lines: [], subscribers: new Set() }; outputBuffers.set(taskId, buf); }
+  const entry = { ts: Date.now(), source, text: text.slice(0, 4000) };
+  buf.lines.push(entry);
+  if (buf.lines.length > OUTPUT_BUFFER_MAX_LINES) buf.lines.splice(0, buf.lines.length - OUTPUT_BUFFER_MAX_LINES);
+  for (const sub of buf.subscribers) {
+    try { sub(entry); } catch { /* dropped */ }
+  }
+}
+
+export function subscribeOutput(taskId: string, cb: (line: { ts: number; source: string; text: string }) => void): { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } {
+  let buf = outputBuffers.get(taskId);
+  if (!buf) { buf = { lines: [], subscribers: new Set() }; outputBuffers.set(taskId, buf); }
+  buf.subscribers.add(cb);
+  return {
+    history: [...buf.lines],
+    unsubscribe: () => { buf!.subscribers.delete(cb); },
+  };
+}
+
+export function markOutputEnded(taskId: string): void {
+  const buf = outputBuffers.get(taskId);
+  if (!buf) return;
+  buf.endedAt = Date.now();
+  setTimeout(() => {
+    const b = outputBuffers.get(taskId);
+    if (b && b.endedAt && Date.now() - b.endedAt > OUTPUT_BUFFER_RETAIN_MS - 100) {
+      outputBuffers.delete(taskId);
+    }
+  }, OUTPUT_BUFFER_RETAIN_MS);
+}
+
 export async function pushInterjection(taskId: string, message: string): Promise<void> {
   if (interjectionRepo) {
     await interjectionRepo.push(taskId, message);

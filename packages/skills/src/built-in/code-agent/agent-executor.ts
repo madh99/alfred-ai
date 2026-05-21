@@ -2,6 +2,7 @@ import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
+import { appendOutputLine } from './project-agent-skill.js';
 
 // v635 — Default auf 12min angehoben (war 10min v625). Praxisbefund Phase 24
 // (Datenmodell/Migration): claude-code ging 600s lang stdout-stumm obwohl
@@ -158,6 +159,10 @@ export async function executeAgent(
     /** v650 — AbortSignal vom Runner. Wenn signal aborted: child-process tree
      *  wird sauber gekillt (SIGTERM, dann SIGKILL nach 3s). */
     signal?: AbortSignal;
+    /** v651 — taskId/sessionId für Live-Output-Buffer (siehe project-agent-skill
+     *  outputBuffers). Wenn gesetzt: jede stdout/stderr-Zeile wird in den
+     *  Ring-Buffer geschoben damit SSE-Subscriber live mitlesen können. */
+    taskId?: string;
   } = {},
 ): Promise<AgentExecutionResult> {
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
@@ -305,9 +310,18 @@ export async function executeAgent(
     }, ABSOLUTE_CAP_MS);
 
     child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
       resetInactivity('stdout'); // v619 D0 — extend inactivity timer on every chunk
+      // v651 — Live-Output-Buffer pro Zeile (max die letzten N Zeilen vorhalten)
+      if (options.taskId) {
+        for (const line of text.split('\n')) {
+          const trimmed = line.replace(/\r$/, '');
+          if (trimmed.length === 0) continue;
+          try { appendOutputLine(options.taskId, 'stdout', trimmed); } catch { /* best-effort */ }
+        }
+      }
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -315,6 +329,14 @@ export async function executeAgent(
       stderr += text;
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
       resetInactivity('stderr'); // v619 D0 — extend inactivity timer on every chunk
+      // v651 — Live-Output-Buffer pro Zeile
+      if (options.taskId) {
+        for (const line of text.split('\n')) {
+          const trimmed = line.replace(/\r$/, '');
+          if (trimmed.length === 0) continue;
+          try { appendOutputLine(options.taskId, 'stderr', trimmed); } catch { /* best-effort */ }
+        }
+      }
       // Forward stderr lines as progress updates
       if (options.onProgress) {
         const lastLine = text.trim().split('\n').pop();
