@@ -306,6 +306,27 @@ export class HttpAdapter extends MessagingAdapter {
   private insightsSweepFn?: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
   private insightsStatsFn?: () => Promise<Record<string, number>>;
 
+  // v639 — Goals API
+  private goalsListFn?: (filter?: { status?: string; category?: string }) => Promise<any[]>;
+  private goalsGetFn?: (id: string) => Promise<{ goal: any; checkpoints: any[] } | null>;
+  private goalsAddFn?: (data: Record<string, unknown>) => Promise<any>;
+  private goalsUpdateFn?: (id: string, data: Record<string, unknown>) => Promise<any>;
+  private goalsCheckFn?: (id: string, status: string, notes?: string) => Promise<void>;
+
+  setGoalsCallbacks(opts: {
+    list: (filter?: { status?: string; category?: string }) => Promise<any[]>;
+    get: (id: string) => Promise<{ goal: any; checkpoints: any[] } | null>;
+    add: (data: Record<string, unknown>) => Promise<any>;
+    update: (id: string, data: Record<string, unknown>) => Promise<any>;
+    check: (id: string, status: string, notes?: string) => Promise<void>;
+  }): void {
+    this.goalsListFn = opts.list;
+    this.goalsGetFn = opts.get;
+    this.goalsAddFn = opts.add;
+    this.goalsUpdateFn = opts.update;
+    this.goalsCheckFn = opts.check;
+  }
+
   setInsightsCallbacks(opts: {
     list: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
     dismiss: (id: string) => Promise<void>;
@@ -659,6 +680,17 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInsightsSnooze(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/act$/) && req.method === 'POST') {
       this.handleInsightsAct(req, res, url).catch(err => this.safeError(res, err));
+    // ── Goals API (v639) ──
+    } else if (url.pathname === '/api/goals' && req.method === 'GET') {
+      this.handleGoalsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/goals' && req.method === 'POST') {
+      this.handleGoalsAdd(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/goals\/[^/]+$/) && req.method === 'GET') {
+      this.handleGoalsGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/goals\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleGoalsUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/goals\/[^/]+\/check$/) && req.method === 'POST') {
+      this.handleGoalsCheck(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1521,6 +1553,60 @@ export class HttpAdapter extends MessagingAdapter {
     const result = await this.insightsActFn(id);
     res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  // ── Goals handlers (v639) ──
+  private async handleGoalsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.goalsListFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const list = await this.goalsListFn({
+      status: url.searchParams.get('status') ?? undefined,
+      category: url.searchParams.get('category') ?? undefined,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ goals: list }));
+  }
+  private async handleGoalsGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.goalsGetFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    const detail = await this.goalsGetFn(id);
+    if (!detail) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(detail));
+  }
+  private async handleGoalsAdd(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.goalsAddFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!data.title) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title required' })); return; }
+    const goal = await this.goalsAddFn(data);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ goal }));
+  }
+  private async handleGoalsUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.goalsUpdateFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const goal = await this.goalsUpdateFn(id, data);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ goal }));
+  }
+  private async handleGoalsCheck(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.goalsCheckFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let data: { status?: string; notes?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    await this.goalsCheckFn(id, data.status ?? 'on-track', data.notes);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
   }
 
   // ── Projects API handlers ──

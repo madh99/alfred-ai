@@ -5,6 +5,64 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.639] - 2026-05-21
+
+### Added — Goal-Tracker (v639 — Teil 2 von 3 für Personal-Optimization)
+
+Persistente Ziel-Verfolgung mit Drift-Detection im Insight-Engine.
+
+**Schema** — SQLite Migration v70 / Postgres v73:
+- `alfred_goals` — id, title, description, category (fitness/finance/relationships/work/health/learning/home/other), cadence (daily/weekly/monthly/one-time), target_metric, status (active/paused/achieved/abandoned), check_frequency_days, last_checked_at + last_status, source (user/extracted-chat), source_conversation_id + source_message_id
+- `alfred_goal_checkpoints` — pro Check ein Eintrag mit status (on-track/drifting/achieved/no-data/paused), evidence (JSON), notes
+
+**Repository** (`packages/storage/src/repositories/goals-repository.ts`):
+- `create/getById/list/update`
+- `findGoalsDueForCheck()` — alle aktiven Goals deren `lastCheckedAt + checkFrequencyDays` in der Vergangenheit liegt
+- `recordCheckpoint()` — schreibt Checkpoint UND aktualisiert `last_checked_at`/`last_status` auf dem Goal
+- `listCheckpoints()` — History pro Goal
+
+**Skill `goal`** (`packages/skills/src/built-in/goals.ts`):
+- `add/list/get/check/pause/resume/complete/abandon/history`
+- ID-Prefix-Resolution (8-char Prefix → volle UUID)
+
+**GoalDriftAdapter** (`packages/core/src/insights/adapters/goal-drift-adapter.ts`):
+- Registriert sich beim InsightEngine
+- Erzeugt Insight pro überfälligem Goal mit Confidence skalierend nach Überfälligkeit (0.85 wenn letzter Status "drifting", sonst 0.55 + 0.02/Tag Überfälligkeit)
+- Bindet `goal.check` als Action — Klick im WebUI Insight-Card oder Skill-Call markiert Goal als geprüft
+
+**LLM-Goal-Extractor** (`packages/core/src/insights/goal-extractor.ts`):
+- Wöchentlich (Sonntag 21:00 lokal) scannt es die letzten 7 Tage Chat-Messages
+- Pro Conversation: gruppiert User-Messages, schickt sie mit Goal-Extraction-Prompt an default-LLM-Tier (1500 Tokens)
+- Erwartetes Output: JSON-Array mit `title/description/category/cadence/target_metric/confidence/source_excerpt`
+- Dedup gegen existierende Goals via Title-Normalization
+- Erkannte Ziele werden NICHT direkt persistiert — **Confirmation queued** mit Skill-Action `goal.add`, User bestätigt explizit über Side-Panel oder Telegram-Inline-Button
+
+**HTTP-API**:
+- `GET /api/goals` (filter: status, category)
+- `POST /api/goals` (title required + optional fields)
+- `GET /api/goals/:id` (returns goal + checkpoint-history)
+- `PATCH /api/goals/:id` (status/title/description/cadence updates)
+- `POST /api/goals/:id/check` (body: { status, notes? })
+
+**WebUI** (`apps/web/src/components/goals/GoalsPage.tsx`):
+- Neue Route `/alfred/goals` mit Karten-Layout (Title, Category, Cadence, Target-Metric, Last-Check + Status-Badge)
+- Card-Click expandiert: Description, Status-Aktionen (Pausieren/Reaktivieren/Erreicht/Aufgeben), Checkpoint-History
+- "+ Check"-Button pro aktivem Goal öffnet Quick-Check-Modal (Status + optional Notiz)
+- "+ Neues Ziel"-Modal mit Category/Cadence-Dropdown + Check-Frequency
+- Sidebar-Eintrag `🎯 Goals` nach Insights
+
+### Workflow
+1. **Manuell**: User → "+ Neues Ziel" oder im Chat `goal add title="…" cadence=weekly`
+2. **Auto-Extract**: User schreibt im Chat "ich möchte ab Juni 2x/Woche Sport" → Sonntag-Sweep extrahiert → Confirmation kommt → User approves → Goal persistiert
+3. **Drift-Detection**: Goal wird N Tage nicht gecheckt → Insight erscheint im Insights-Tab mit "🎯 Ziel-Check fällig" + Action-Button
+4. **Check**: User klickt "Act" oder "+ Check" → Checkpoint geloggt → Goal-Drift-Insight wird re-evaluated
+
+### Notes
+- Build grün (12/12)
+- LLM-Extraction läuft mit default-Tier — bei kleinem Mistral-Setup ggf. Modell anpassen
+- Confirmation-Quelle ist 'reasoning' → läuft durch die normale Telegram/Matrix-Approval-Pipeline
+- v640 (Question-Generator + KG-Self-Audit) folgt als letzter Teil
+
 ## [0.19.0-multi-ha.638] - 2026-05-21
 
 ### Added — Insight-Engine Foundation (v638 — Teil 1 von 3 für Personal-Optimization)

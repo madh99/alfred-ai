@@ -290,6 +290,39 @@ export class AlfredClient {
     return data;
   }
 
+  // ── v639 — Goals ──
+  async fetchGoals(filter?: { status?: string; category?: string }): Promise<GoalItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.category) params.set('category', filter.category);
+    const res = await fetch(`${this.baseUrl}/api/goals${params.toString() ? '?' + params.toString() : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Goals: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.goals ?? [];
+  }
+  async fetchGoalDetail(id: string): Promise<{ goal: GoalItem; checkpoints: GoalCheckpointItem[] } | null> {
+    const res = await fetch(`${this.baseUrl}/api/goals/${id}`, { headers: this.authHeaders });
+    if (!res.ok) return null;
+    return res.json();
+  }
+  async addGoal(data: Partial<GoalItem>): Promise<GoalItem> {
+    const res = await fetch(`${this.baseUrl}/api/goals`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`Goals add: HTTP ${res.status}`);
+    return (await res.json()).goal;
+  }
+  async updateGoal(id: string, data: Partial<GoalItem>): Promise<GoalItem> {
+    const res = await fetch(`${this.baseUrl}/api/goals/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(data) });
+    if (!res.ok) throw new Error(`Goals update: HTTP ${res.status}`);
+    return (await res.json()).goal;
+  }
+  async checkGoal(id: string, status: string, notes?: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/goals/${id}/check`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ status, notes }),
+    });
+    if (!res.ok) throw new Error(`Goal check: HTTP ${res.status}`);
+  }
+
   // ── v629 — Confirmations + Reminders Side-Panel ──
   async fetchPendingConfirmations(): Promise<PendingConfirmationItem[]> {
     const res = await fetch(`${this.baseUrl}/api/confirmations/pending`, {
@@ -994,6 +1027,33 @@ export interface InsightItem {
   dedupeKey?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// v639 — Goals
+export interface GoalItem {
+  id: string;
+  userId: string;
+  title: string;
+  description?: string;
+  category?: string;
+  cadence?: string;
+  targetMetric?: string;
+  source: string;
+  sourceConversationId?: string;
+  sourceMessageId?: string;
+  status: 'active' | 'paused' | 'achieved' | 'abandoned';
+  checkFrequencyDays: number;
+  lastCheckedAt?: string;
+  lastStatus?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface GoalCheckpointItem {
+  id: string;
+  goalId: string;
+  checkedAt: string;
+  status?: string;
+  notes?: string;
 }
 
 // v629 — Confirmations + Reminders Side-Panel

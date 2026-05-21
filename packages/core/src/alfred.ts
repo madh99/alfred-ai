@@ -2513,6 +2513,59 @@ export class Alfred {
             }
           }
 
+          // v639 — Goals: Repository + Skill + DriftAdapter
+          let goalsRepo: import('@alfred/storage').GoalsRepository | undefined;
+          try {
+            const { GoalsRepository } = await import('@alfred/storage');
+            goalsRepo = new GoalsRepository(adapter);
+            const { GoalsSkill } = await import('@alfred/skills');
+            skillRegistry.register(new GoalsSkill(goalsRepo));
+            const { GoalDriftAdapter } = await import('./insights/adapters/goal-drift-adapter.js');
+            insightEngine.register(new GoalDriftAdapter(goalsRepo));
+            this.logger.info('Goals subsystem wired');
+          } catch (err) {
+            this.logger.warn({ err }, 'Goals wiring failed (non-fatal)');
+          }
+
+          // v639 — Weekly Goal-Extraction (Sonntag 21:00 lokal)
+          if (goalsRepo && this.llmProvider && this.database) {
+            try {
+              const { GoalExtractor } = await import('./insights/goal-extractor.js');
+              const { ConversationRepository: ConvRepoForGoal, ConfirmationRepository } = await import('@alfred/storage');
+              const extractor = new GoalExtractor(
+                goalsRepo,
+                new ConvRepoForGoal(adapter),
+                this.llmProvider,
+                new ConfirmationRepository(adapter),
+                this.logger.child({ component: 'goal-extractor' }),
+              );
+              const ownerUidForGoals = this.ownerMasterUserId || this.config.security?.ownerUserId;
+              if (ownerUidForGoals) {
+                const linkedForGoals = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForGoals)).map(u => u.id) : [ownerUidForGoals];
+                if (!linkedForGoals.includes(ownerUidForGoals)) linkedForGoals.push(ownerUidForGoals);
+                const runWeekly = async () => {
+                  try { await extractor.run(ownerUidForGoals, linkedForGoals, { lookbackDays: 7 }); }
+                  catch (err) { this.logger.debug({ err }, 'Weekly goal-extraction failed (non-fatal)'); }
+                };
+                // Next Sunday 21:00
+                const now = new Date();
+                const next = new Date(now);
+                next.setHours(21, 0, 0, 0);
+                const daysToSun = (7 - next.getDay()) % 7;
+                next.setDate(next.getDate() + (daysToSun === 0 && next.getTime() <= now.getTime() ? 7 : daysToSun));
+                const delay = next.getTime() - now.getTime();
+                setTimeout(() => {
+                  runWeekly();
+                  const intv = setInterval(runWeekly, 7 * 86400_000);
+                  (intv as { unref?: () => void }).unref?.();
+                }, delay).unref?.();
+                this.logger.info({ firstRunIn: Math.round(delay / 60_000 / 60) + 'h' }, 'Goal-Extractor scheduled (Sun 21:00)');
+              }
+            } catch (err) {
+              this.logger.warn({ err }, 'Goal-Extractor wiring failed (non-fatal)');
+            }
+          }
+
           // Skill
           const { InsightsSkill } = await import('@alfred/skills');
           const insightsSkill = new InsightsSkill(insightsRepo);
@@ -4277,6 +4330,53 @@ export class Alfred {
           },
         });
         this.logger.info('Insights API registered');
+      }
+
+      // v639 — Wire Goals API
+      if (apiAdapter && this.database && 'setGoalsCallbacks' in apiAdapter) {
+        try {
+          const { GoalsRepository: GoalsRepo } = await import('@alfred/storage');
+          const goalsRepoForApi = new GoalsRepo(this.database.getAdapter());
+          const ownerForGoals = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          (apiAdapter as any).setGoalsCallbacks({
+            list: async (filter?: { status?: string; category?: string }) => {
+              if (!ownerForGoals) return [];
+              return goalsRepoForApi.list(ownerForGoals, {
+                status: filter?.status as any,
+                category: filter?.category as any,
+              });
+            },
+            get: async (id: string) => {
+              if (!ownerForGoals) return null;
+              const goal = await goalsRepoForApi.getById(ownerForGoals, id);
+              if (!goal) return null;
+              const checkpoints = await goalsRepoForApi.listCheckpoints(id, 30);
+              return { goal, checkpoints };
+            },
+            add: async (data: Record<string, unknown>) => {
+              if (!ownerForGoals) throw new Error('no owner');
+              return goalsRepoForApi.create(ownerForGoals, {
+                title: data.title as string,
+                description: data.description as string | undefined,
+                category: data.category as any,
+                cadence: data.cadence as any,
+                targetMetric: data.target_metric as string | undefined,
+                checkFrequencyDays: (data.check_frequency_days as number) ?? 7,
+                source: 'user',
+              });
+            },
+            update: async (id: string, data: Record<string, unknown>) => {
+              if (!ownerForGoals) return null;
+              return goalsRepoForApi.update(ownerForGoals, id, data as any);
+            },
+            check: async (id: string, status: string, notes?: string) => {
+              await goalsRepoForApi.recordCheckpoint(id, status as any, undefined, notes);
+            },
+          });
+          this.logger.info('Goals API registered');
+        } catch (err) {
+          this.logger.warn({ err }, 'Goals API wiring failed (non-fatal)');
+        }
       }
 
       if (apiAdapter && this.reminderRepo && 'setRemindersCallback' in apiAdapter) {

@@ -1667,4 +1667,43 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_insights_category ON alfred_insights(user_id, category, status)`);
     },
   },
+  {
+    version: 70,
+    description: 'v639 — alfred_goals + alfred_goal_checkpoints for Goal-Tracker',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS alfred_goals (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          category TEXT,
+          cadence TEXT,
+          target_metric TEXT,
+          source TEXT NOT NULL DEFAULT 'user',
+          source_conversation_id TEXT,
+          source_message_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          check_frequency_days INTEGER NOT NULL DEFAULT 7,
+          last_checked_at TEXT,
+          last_status TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_goals_user_status ON alfred_goals(user_id, status)`);
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS alfred_goal_checkpoints (
+          id TEXT PRIMARY KEY,
+          goal_id TEXT NOT NULL,
+          checked_at TEXT NOT NULL,
+          status TEXT,
+          evidence TEXT,
+          notes TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_goal_checkpoints_goal ON alfred_goal_checkpoints(goal_id, checked_at DESC)`);
+    },
+  },
 ];

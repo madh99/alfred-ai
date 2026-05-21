@@ -71,6 +71,8 @@ export { MetricSamplesRepository } from './repositories/metric-samples-repositor
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
 export { InsightsRepository } from './repositories/insights-repository.js';
 export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from './repositories/insights-repository.js';
+export { GoalsRepository } from './repositories/goals-repository.js';
+export type { Goal, GoalCheckpoint, GoalStatus, GoalCategory, GoalCadence, CheckpointStatus } from './repositories/goals-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';
 export { ProjectRepository } from './repositories/project-repository.js';
