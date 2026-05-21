@@ -5,6 +5,62 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.646] - 2026-05-21
+
+### Improved — Sidebar-Umbau (Variante B) + Chat-Welcome-View
+
+Sidebar wechselt von einer flachen 18-Item-Liste zu einem strukturierten Layout im Stil moderner Chat-UIs (Claude-Code / ChatGPT). Funktional verliert nichts — alle Routes bleiben erreichbar, nur visuell aufgeräumt.
+
+**Neue Sidebar-Struktur** (`apps/web/src/components/layout/Sidebar.tsx`):
+
+1. **Quick-Actions oben** (immer sichtbar):
+   - 💬 **Neuer Chat** — clears localStorage und navigiert zu /chat
+   - 🔍 **Suche & History** — geht zu /history (mit Ctrl+K Volltext-Search innerhalb)
+   - 💡 **Insights** — Counter-Badge zeigt pending-Anzahl aus `/api/insights/stats`
+   - 🎯 **Goals** — Counter-Badge mit aktiven Goals
+
+2. **Projekte-Sektion** (sichtbar wenn ≥1 aktives Projekt):
+   - Top-8 active Projects als klickbare Items mit 📁-Icon
+   - "Alle ›"-Link in der Section-Header zu /projects
+
+3. **Chats-Sektion** (sichtbar wenn ≥1 nicht-scheduled Conversation):
+   - Top-10 Conversations (sortiert pinned_first), mit Platform-Icon + Pin-Marker
+   - Klick speichert `alfred-chat-active-conversation-id` und navigiert zu /chat
+   - Custom-Label statt chatId wenn vorhanden (v644)
+   - "Alle ›"-Link zur vollen History
+
+4. **🛠️ Tools** (collapsible, State persistiert in localStorage):
+   - Default zu, expanded zeigt: Dashboard, Knowledge, Memories, Runbooks, Project-Agents, Background-Tasks, CMDB, ITSM, Services, Docs, Logs, Cluster
+   - 12 Routes — alles was nicht primary aber wichtig ist
+
+5. **Account-Box unten** (collapsible):
+   - Default zu: zeigt Username + Role
+   - Expanded: Einstellungen / Verbrauch (Token + $Kosten heute aus /api/dashboard) / GitHub / Abmelden
+
+**Chat-Welcome-View** (`apps/web/src/components/chat/ChatWelcome.tsx`):
+
+- Wird statt der alten "Alfred"-Headline angezeigt sobald `messages.length === 0`
+- **Hero**: "Woran sollen wir arbeiten?" + Slash-Befehl-Tipp
+- **3-4 dynamische Connector-Cards** mit Live-Daten:
+  - 💡 Pending Insights (mit Counter)
+  - ✅ Pending Confirmations (Counter aus side-panel-API)
+  - ⏰ Anstehende Reminders (nächster mit Time-Stamp)
+  - 🎯 Überfällige Goal-Checks
+  - 🤖 Active Project-Agents (mit aktueller Phase)
+  - Wenn nichts pending → Fallback-Cards: Knowledge-Graph / Runbooks / Projekte
+- Cards mit hover-Border, klick navigiert zur entsprechenden Page
+- Graceful degradation bei fehlenden Daten
+
+**Layout**:
+- Sidebar-Breite 16/56 → uniform 64 (256px) — Labels immer sichtbar (kein collapsed mode mehr nötig — die Sidebar ist jetzt strukturiert genug)
+- Account-Box sticky bottom mit explicit border-t für visuelle Trennung
+
+### Notes
+- Build grün (12/12), Routen unverändert in Größe (Chat 165B+158kB shared)
+- Existing-Pages (ItsmPage, ProjectsPage, etc.) komplett unangetastet
+- Keine API-Änderungen — nur 5 existing Endpoints werden in der Sidebar parallel gefetched
+- Layout-Anpassungen für Mobile-Drawer können in v647 folgen falls gewünscht
+
 ## [0.19.0-multi-ha.645] - 2026-05-21
 
 ### Improved — ITSM-UI: Closed default aus, Bulk-Actions überall, Stats-Bar

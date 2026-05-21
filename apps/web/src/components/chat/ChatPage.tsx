@@ -4,6 +4,7 @@ import { useRef, useEffect, useMemo, useState } from 'react';
 import { ChatMessage } from './ChatMessage';
 import { InputBar } from './InputBar';
 import { ChatSidePanel } from './ChatSidePanel';
+import { ChatWelcome } from './ChatWelcome';
 import { useChat } from '@/hooks/useChat';
 
 const SIDE_PANEL_KEY = 'alfred-chat-side-panel';
@@ -90,18 +91,7 @@ export function ChatPage() {
       )}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 md:p-4">
         <div className="max-w-4xl mx-auto">
-          {messages.length === 0 && (
-            <div className="text-center text-gray-500 mt-20">
-              <p className="text-4xl mb-4 font-mono font-bold text-blue-500">Alfred</p>
-              <p className="text-sm">Self-hosted AI Assistant</p>
-              <p className="text-xs mt-2 text-gray-600">Stelle eine Frage oder gib einen Befehl ein.</p>
-              <p className="text-xs mt-4 text-gray-700">
-                User: <span className="font-mono text-gray-500">{userId}</span>
-                <br />
-                <span className="text-gray-600">Tipp: <span className="font-mono text-gray-400">/</span> öffnet die Befehlspalette.</span>
-              </p>
-            </div>
-          )}
+          {messages.length === 0 && <ChatWelcome />}
           {messages.map((msg) => (
             <ChatMessage
               key={msg.id}
