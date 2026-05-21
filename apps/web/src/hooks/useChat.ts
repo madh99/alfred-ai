@@ -1,6 +1,6 @@
 'use client';
 
-import { useReducer, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useReducer, useCallback, useRef, useMemo, useEffect, useState } from 'react';
 import type { ChatMessage, Attachment } from '@/types/api';
 import { useConfig } from '@/context/ConfigContext';
 
@@ -125,6 +125,11 @@ export function useChat() {
   const { client, user: authUser } = useConfig();
   const userId = useMemo(() => authUser?.userId ? `web-${authUser.userId}` : getPersistentUserId(), [authUser]);
   const chatId = useMemo(() => authUser?.userId ? `web-chat-${authUser.userId}` : getPersistentChatId(), [authUser]);
+  // v647 — Active-Conversation-ID aus localStorage (von Sidebar "Chat fortsetzen")
+  const [activeConvId, setActiveConvId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try { return localStorage.getItem('alfred-chat-active-conversation-id'); } catch { return null; }
+  });
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     messages: loadPersistedMessages(),
     streaming: false,
@@ -141,6 +146,30 @@ export function useChat() {
       localStorage.setItem(MESSAGES_PERSIST_KEY, JSON.stringify(state.messages.slice(-MESSAGES_PERSIST_MAX)));
     } catch {}
   }, [state.messages, state.streaming]);
+
+  // v647 — Wenn eine activeConvId gesetzt ist (von Sidebar/History "Im Chat fortsetzen"),
+  // lade einmalig die Messages dieser Conversation in den Chat-State.
+  // Räume die Flag-Variable danach auf damit Reload nicht doppelt lädt.
+  const loadedConvOnceRef = useRef(false);
+  useEffect(() => {
+    if (!activeConvId || !client || loadedConvOnceRef.current) return;
+    loadedConvOnceRef.current = true;
+    (async () => {
+      try {
+        const msgs = await client.fetchConversationMessages(activeConvId, { limit: 500 });
+        if (msgs.length > 0) {
+          dispatch({ type: 'CLEAR' });
+          for (const m of msgs) {
+            if (m.role === 'user') dispatch({ type: 'ADD_USER', text: m.content });
+            else if (m.role === 'assistant') { dispatch({ type: 'START_ASSISTANT' }); dispatch({ type: 'APPEND_RESPONSE', text: m.content }); dispatch({ type: 'DONE' }); }
+          }
+        }
+      } catch { /* silent: degrade to empty chat */ }
+      // Clear the flag so next reload doesn't repeat
+      try { localStorage.removeItem('alfred-chat-active-conversation-id'); } catch {}
+      setActiveConvId(null);
+    })();
+  }, [activeConvId, client]);
 
   const sendMessage = useCallback((text: string, attachments?: Array<{ name: string; mime: string; dataUrl: string }>) => {
     if ((!text.trim() && (!attachments || attachments.length === 0)) || state.streaming) return;

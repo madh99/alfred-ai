@@ -75,6 +75,19 @@ export function HistoryPage() {
 
   useEffect(() => { loadList(0, false); }, [loadList]);
 
+  // v647 — Deep-Link: ?id=<conversationId> auto-öffnet die Conversation
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get('id');
+      if (idParam && client) {
+        loadConversation(idParam);
+      }
+    } catch { /* skip */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client]);
+
   const loadConversation = useCallback(async (id: string) => {
     if (!client) return;
     setSelectedId(id);

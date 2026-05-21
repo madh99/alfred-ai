@@ -100,6 +100,16 @@ export function ProjectsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // v647 — Deep-Link: ?id=<projectId> auto-selektiert
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const idParam = params.get('id');
+      if (idParam) setSelectedId(idParam);
+    } catch { /* skip */ }
+  }, []);
+
   const loadDetail = useCallback(async (id: string) => {
     if (!client) return;
     try {

@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.647] - 2026-05-21
+
+### Fixed — Sidebar-Deep-Links: Klick auf Projekte/Chats öffnet jetzt das gewählte Item
+
+**Symptom (v646)**: User-Report: Klick auf ein Projekt in der Sidebar öffnete die Projekt-Übersicht ohne Auswahl, gleiches Verhalten bei Chats — der Klick navigierte zur Page-Liste, aber das gewählte Item wurde nicht auto-selektiert.
+
+**Ursache**:
+- Sidebar-Projekte: `<a href="/alfred/projects/">` ohne ID-Parameter
+- Sidebar-Chats: `localStorage.setItem('alfred-chat-active-conversation-id', id)` + Navigation zu `/chat/` — aber `useChat`-Hook hat den localStorage-Key nicht gelesen
+- Beides resultierte in: navigate-to-page-aber-zeige-Standardansicht
+
+**Fix v647**:
+
+1. **Sidebar** (`apps/web/src/components/layout/Sidebar.tsx`):
+   - `openProject(id)` → `/alfred/projects/?id=<projectId>` Deep-Link
+   - `openConversation(c)` differenziert nach Platform:
+     - `api`/web-Chats → `localStorage.setItem('alfred-chat-active-conversation-id')` + Navigation zu `/chat/`
+     - Matrix/Telegram/Discord/etc. → `/alfred/history/?id=<conversationId>` (read-only View, weil ChatPage Messages nur als Platform=api versendet)
+   - Tooltip auf Chat-Items zeigt jetzt "Im Chat fortsetzen" vs "In History öffnen (read-only)"
+
+2. **ProjectsPage** (`apps/web/src/components/projects/ProjectsPage.tsx`):
+   - useEffect liest `?id=` aus URL beim Mount, setzt `selectedId` → triggert existierende `loadDetail()`-Logik, Detail-Panel öffnet automatisch
+
+3. **HistoryPage** (`apps/web/src/components/history/HistoryPage.tsx`):
+   - useEffect liest `?id=` aus URL beim Mount (gated auf `client` damit Repository-Helper bereit ist), ruft `loadConversation(id)` → Detail-Panel öffnet mit Messages-Lazy-Load
+
+4. **useChat** (`apps/web/src/hooks/useChat.ts`):
+   - Liest `alfred-chat-active-conversation-id` aus localStorage beim Initialisieren
+   - Wenn gesetzt: `fetchConversationMessages(id, 500)` und befüllt den Reducer-State mit User-/Assistant-Messages
+   - localStorage-Key wird nach dem Laden wieder gelöscht — sonst würde Reload doppelt laden
+   - `loadedConvOnceRef` als Re-Mount-Guard
+
+### Notes
+- Build grün (12/12), nur Web-Bundle verändert
+- Keine Schema-Änderungen, keine API-Änderungen
+- Bestehendes "Im Chat fortsetzen"-Button in History-Detail-View (v644) nutzt denselben localStorage-Mechanismus, profitiert automatisch
+- v647 ergänzt **kein** Projekt-Agent-Resume (separate Funktion, kann später folgen) — heute zeigt v605 M6 schon Hint mit `getHistoryByCwd` beim Start im selben Verzeichnis
+
 ## [0.19.0-multi-ha.646] - 2026-05-21
 
 ### Improved — Sidebar-Umbau (Variante B) + Chat-Welcome-View
