@@ -4087,6 +4087,41 @@ export class Alfred {
           },
           detectPatterns: async (uid: string, data: Record<string, unknown>) => problemRepo.detectPatterns(await resolveUser(uid), data as any),
           getProblemDashboard: async (uid: string) => problemRepo.getDashboard(await resolveUser(uid)),
+          // v632 — Bulk-Merge + Promote + Backfill
+          bulkLinkToProblem: async (uid: string, problemId: string, incidentIds: string[]) => {
+            const userId = await resolveUser(uid);
+            let linked = 0;
+            const failed: string[] = [];
+            for (const incId of incidentIds) {
+              try {
+                const r = await problemRepo.linkIncident(userId, problemId, incId);
+                if (r) linked++; else failed.push(incId);
+              } catch { failed.push(incId); }
+            }
+            return { linked, failed };
+          },
+          promoteIncidentsToProblem: async (uid: string, data: { title: string; priority?: string; incidentIds: string[] }) => {
+            const userId = await resolveUser(uid);
+            const problem = await problemRepo.createProblem(userId, {
+              title: data.title,
+              description: `WebUI-Bulk-Promote aus ${data.incidentIds.length} Incidents.`,
+              priority: (data.priority as any) ?? 'medium',
+              linkedIncidentIds: data.incidentIds,
+              detectedBy: 'manual',
+              detectionMethod: 'webui-bulk-promote',
+            });
+            for (const incId of data.incidentIds) {
+              try { await problemRepo.linkIncident(userId, problem.id, incId); } catch { /* best effort */ }
+            }
+            return problem;
+          },
+          backfillAssets: async (uid: string) => {
+            const userId = await resolveUser(uid);
+            const itsmSkill = this.skillRegistry?.get('itsm');
+            if (!itsmSkill) return { updated: 0, skipped: 0, unmatched: 0, total: 0 };
+            const result = await itsmSkill.execute({ action: 'backfill_assets' }, { userId, masterUserId: userId } as any);
+            return result.data ?? { updated: 0, skipped: 0, unmatched: 0, total: 0 };
+          },
           // SLA Management
           setSla: async (uid: string, targetType: string, targetId: string, sla: Record<string, unknown>) => {
             const userId = await resolveUser(uid);

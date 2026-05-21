@@ -78,6 +78,10 @@ export interface ItsmCallbacks {
   createFixChange: (userId: string, problemId: string, data: Record<string, unknown>) => Promise<any>;
   detectPatterns: (userId: string, data: Record<string, unknown>) => Promise<any>;
   getProblemDashboard: (userId: string) => Promise<any>;
+  // v632 — Bulk-Merge + Backfill (WebUI)
+  bulkLinkToProblem: (userId: string, problemId: string, incidentIds: string[]) => Promise<{ linked: number; failed: string[] }>;
+  promoteIncidentsToProblem: (userId: string, data: { title: string; priority?: string; incidentIds: string[] }) => Promise<any>;
+  backfillAssets: (userId: string) => Promise<{ updated: number; skipped: number; unmatched: number; total: number }>;
   // Service Management
   getService: (userId: string, id: string) => Promise<any>;
   deleteService: (userId: string, id: string) => Promise<boolean>;
@@ -772,6 +776,18 @@ export class HttpAdapter extends MessagingAdapter {
     // ── Problem Management API ──
     } else if (url.pathname === '/api/itsm/problems/detect-patterns' && req.method === 'POST') {
       this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.detectPatterns(userId, body));
+    // v632 — Bulk-Merge + Promote + Backfill
+    } else if (url.pathname.match(/^\/api\/itsm\/problems\/[^/]+\/bulk-link$/) && req.method === 'POST') {
+      const id = url.pathname.split('/api/itsm/problems/')[1].split('/bulk-link')[0];
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.bulkLinkToProblem(userId, id, (body.incident_ids as string[]) ?? []));
+    } else if (url.pathname === '/api/itsm/problems/promote' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.promoteIncidentsToProblem(userId, {
+        title: body.title as string,
+        priority: body.priority as string | undefined,
+        incidentIds: (body.incident_ids as string[]) ?? [],
+      }));
+    } else if (url.pathname === '/api/itsm/incidents/backfill-assets' && req.method === 'POST') {
+      this.handleItsmRoute(req, res, (cbs, userId) => cbs.backfillAssets(userId));
     } else if (url.pathname === '/api/itsm/problems/dashboard' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.getProblemDashboard(userId));
     } else if (url.pathname === '/api/itsm/problems' && req.method === 'GET') {

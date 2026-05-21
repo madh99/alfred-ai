@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.632] - 2026-05-21
+
+### Added — ITSM WebUI Bulk-Merge + Pattern-Preview (T2 vom T1-T4-Quartett)
+
+Macht Pattern-Detection und Backfill sichtbar/bedienbar in der WebUI.
+
+**Backend** (3 neue Endpoints + Callbacks):
+- `POST /api/itsm/problems/:id/bulk-link` — mehrere `incident_ids` in einem Call an bestehendes Problem hängen
+- `POST /api/itsm/problems/promote` — `title` + `incident_ids[]` → neues Problem mit allen verlinkt
+- `POST /api/itsm/incidents/backfill-assets` — Skill-Action `backfill_assets` als HTTP-Wrapper
+- `ItsmCallbacks` um `bulkLinkToProblem`, `promoteIncidentsToProblem`, `backfillAssets` erweitert
+- `alfred.ts` wired alle drei mit `resolveUser`-User-Scoping
+
+**Frontend** (`apps/web/src/components/itsm/ItsmPage.tsx`):
+- **Multi-Select-Spalte** in Incidents-Tabelle: Checkboxen pro Zeile + Select-All-Header, ausgewählte Zeilen blau hinterlegt
+- **Bulk-Toolbar** erscheint sobald ≥1 ausgewählt: Counter, "Auswahl löschen", "+ Neues Problem", "→ Bestehendes Problem"
+- **Merge-Modal** mit zwei Modi: Neues Problem (Titel + Priority) oder bestehendes Problem (Dropdown aus `problems`-Liste)
+- **🔧 Asset-Backfill-Button** im Toolbar — One-Shot-Action mit Result-Alert (`X aktualisiert, Y bereits gesetzt, Z kein Match`)
+- **🔁 Patterns-Tab** (neu) — listet alle erkannten Cluster (default ≥2 Incidents in 14d) als Karten mit:
+  - Vorkommen-Counter, Keyword-Cluster, Zeitraum, Asset/Service-Counts
+  - "Linked Incidents"-Details-Expander
+  - "+ Als Problem promoten"-Button pro Cluster (mit Confirm-Dialog), wenn nicht schon gelinkt
+  - Live-Filter: Fenster-Tage + Min. Incidents
+
+**Client** (`apps/web/src/lib/alfred-client.ts`):
+- `itsmBulkLinkToProblem(problemId, incidentIds[])`
+- `itsmPromoteIncidents(title, incidentIds[], priority?)`
+- `itsmBackfillAssets()`
+
+### Notes
+- ITSM-Route: 9.9 kB → 12.2 kB
+- Praktischer Workflow: **Patterns-Tab öffnen → Cluster sehen → "Promoten" oder manuell Incidents im Tab "Incidents" filtern → Multi-Select → Bulk-Merge**
+- Backend grün (12/12), Frontend grün
+- v633 (T3 Smart Features) und v634 (T4 Operational Excellence) folgen
+
 ## [0.19.0-multi-ha.631] - 2026-05-21
 
 ### Added — ITSM Pattern-Detection greift härter (T1 vom T1-T4-Quartett)

@@ -627,6 +627,33 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v632 — Bulk-Merge + Backfill
+  async itsmBulkLinkToProblem(problemId: string, incidentIds: string[]): Promise<{ linked: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/${problemId}/bulk-link`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ incident_ids: incidentIds }),
+    });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmPromoteIncidents(title: string, incidentIds: string[], priority?: string): Promise<any> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/promote`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ title, priority, incident_ids: incidentIds }),
+    });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async itsmBackfillAssets(): Promise<{ updated: number; skipped: number; unmatched: number; total: number }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents/backfill-assets`, {
+      method: 'POST', headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`ITSM: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ── Docs API ──
 
   async docsGenerate(type: string, params?: Record<string, unknown>): Promise<any> {

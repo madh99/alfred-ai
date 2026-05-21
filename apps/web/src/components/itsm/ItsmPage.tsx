@@ -115,7 +115,7 @@ interface Problem {
   closedAt: string | null;
 }
 
-type Tab = 'incidents' | 'changes' | 'services' | 'problems';
+type Tab = 'incidents' | 'changes' | 'services' | 'problems' | 'patterns';
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -343,6 +343,24 @@ export function ItsmPage() {
   const [addingAnalysisNote, setAddingAnalysisNote] = useState(false);
   const [analysisNoteText, setAnalysisNoteText] = useState('');
 
+  // v632 — Multi-Select & Patterns
+  const [selectedIncidentIds, setSelectedIncidentIds] = useState<Set<string>>(new Set());
+  const [bulkMergeMode, setBulkMergeMode] = useState<'new-problem' | 'existing-problem' | null>(null);
+  const [bulkMergeProblemId, setBulkMergeProblemId] = useState<string>('');
+  const [bulkMergeTitle, setBulkMergeTitle] = useState('');
+  const [bulkMergePriority, setBulkMergePriority] = useState('medium');
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+
+  const [patterns, setPatterns] = useState<Array<{
+    patternKey: string; incidentIds: string[]; assetIds: string[]; serviceIds: string[];
+    keywordCluster: string[]; incidentCount: number; firstSeen: string; lastSeen: string;
+    existingProblemId?: string;
+  }>>([]);
+  const [patternsLoading, setPatternsLoading] = useState(false);
+  const [patternWindowDays, setPatternWindowDays] = useState(14);
+  const [patternMinIncidents, setPatternMinIncidents] = useState(2);
+
   // Selection
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [selectedChange, setSelectedChange] = useState<ChangeRequest | null>(null);
@@ -426,6 +444,79 @@ export function ItsmPage() {
   }, [loadIncidents, loadChanges, loadServices, loadAssets, loadProblems]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // v632 — Pattern-Loader
+  const loadPatterns = useCallback(async () => {
+    if (!client) return;
+    setPatternsLoading(true);
+    try {
+      const list = await client.itsmDetectPatterns(patternWindowDays, patternMinIncidents);
+      setPatterns(Array.isArray(list) ? list : []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setPatternsLoading(false); }
+  }, [client, patternWindowDays, patternMinIncidents]);
+
+  // Load patterns when entering the tab or filters change
+  useEffect(() => { if (tab === 'patterns') loadPatterns(); }, [tab, loadPatterns]);
+
+  function toggleIncSelect(id: string) {
+    setSelectedIncidentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function clearIncSelection() { setSelectedIncidentIds(new Set()); }
+
+  async function executeBulkMerge() {
+    if (!client) return;
+    const ids = [...selectedIncidentIds];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      if (bulkMergeMode === 'new-problem') {
+        if (!bulkMergeTitle.trim()) { setError('Titel für neues Problem fehlt.'); return; }
+        await client.itsmPromoteIncidents(bulkMergeTitle.trim(), ids, bulkMergePriority);
+      } else if (bulkMergeMode === 'existing-problem') {
+        if (!bulkMergeProblemId) { setError('Bitte Problem auswählen.'); return; }
+        await client.itsmBulkLinkToProblem(bulkMergeProblemId, ids);
+      }
+      setBulkMergeMode(null);
+      setBulkMergeTitle('');
+      setBulkMergeProblemId('');
+      clearIncSelection();
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBulkBusy(false); }
+  }
+
+  async function runBackfill() {
+    if (!client) return;
+    if (!confirm('Backfill scannt alle Incidents ohne Asset-Zuordnung und versucht Asset-Namen im Titel zu finden. Fortfahren?')) return;
+    setBackfillBusy(true);
+    try {
+      const r = await client.itsmBackfillAssets();
+      alert(`Backfill abgeschlossen: ${r.updated} aktualisiert, ${r.skipped} bereits gesetzt, ${r.unmatched} kein Match (gesamt ${r.total}).`);
+      await loadAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBackfillBusy(false); }
+  }
+
+  async function promoteFromPattern(p: typeof patterns[number]) {
+    if (!client) return;
+    const title = `Wiederkehrend: ${p.keywordCluster.slice(0, 4).join(', ') || 'unbenannt'} (${p.incidentCount}×)`;
+    if (!confirm(`Problem-Ticket "${title}" mit ${p.incidentCount} verlinkten Incidents erstellen?`)) return;
+    setBulkBusy(true);
+    try {
+      await client.itsmPromoteIncidents(title, p.incidentIds, p.incidentCount >= 5 ? 'high' : 'medium');
+      await Promise.all([loadAll(), loadPatterns()]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBulkBusy(false); }
+  }
 
   // Reset note state when switching incidents
   useEffect(() => { setAddingNote(false); setNoteText(''); }, [selectedIncident?.id]);
@@ -655,6 +746,7 @@ export function ItsmPage() {
     { key: 'changes', label: 'Change Requests', count: changes.length },
     { key: 'services', label: 'Services', count: services.length },
     { key: 'problems', label: 'Problems', count: problems.length },
+    { key: 'patterns', label: '🔁 Patterns', count: patterns.length },
   ];
 
   return (
@@ -712,16 +804,52 @@ export function ItsmPage() {
                 <option value="low">Low</option>
               </select>
               <div className="flex-1" />
+              <button
+                onClick={runBackfill}
+                disabled={backfillBusy}
+                className="px-3 py-1.5 text-sm bg-amber-600/20 border border-amber-500/40 text-amber-300 hover:bg-amber-600/30 rounded disabled:opacity-50"
+                title="Asset-IDs in alle Incidents nachtragen \u2014 verbessert Pattern-Detection auf Altdaten"
+              >{backfillBusy ? 'Backfill \u2026' : '\ud83d\udd27 Asset-Backfill'}</button>
               <button onClick={() => setShowCreateIncident(true)} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center gap-1">
                 <span>+</span> Incident
               </button>
             </div>
+
+            {/* v632 \u2014 Bulk-Merge Toolbar */}
+            {selectedIncidentIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
+                <span className="text-sm text-blue-200">
+                  <strong>{selectedIncidentIds.size}</strong> Incident(s) ausgew\u00e4hlt
+                </span>
+                <div className="flex-1" />
+                <button onClick={clearIncSelection} className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200">Auswahl l\u00f6schen</button>
+                <button
+                  onClick={() => { setBulkMergeMode('new-problem'); setBulkMergeTitle(`Wiederkehrender Vorfall (${selectedIncidentIds.size}\u00d7)`); }}
+                  className="px-2 py-1 text-xs bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 rounded hover:bg-emerald-600/50"
+                >+ Neues Problem</button>
+                <button
+                  onClick={() => setBulkMergeMode('existing-problem')}
+                  className="px-2 py-1 text-xs bg-blue-600/30 border border-blue-500/40 text-blue-200 rounded hover:bg-blue-600/50"
+                >\u2192 Bestehendes Problem</button>
+              </div>
+            )}
 
             {/* Table */}
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-[#0d0d0d] text-gray-400">
                   <tr>
+                    <th className="px-2 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={filteredIncidents.length > 0 && filteredIncidents.every(i => selectedIncidentIds.has(i.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedIncidentIds(new Set(filteredIncidents.map(i => i.id)));
+                          else clearIncSelection();
+                        }}
+                        title="Alle ausw\u00e4hlen"
+                      />
+                    </th>
                     <th className="text-left px-4 py-2 font-medium w-8">Sev</th>
                     <th className="text-left px-4 py-2 font-medium">Titel</th>
                     <th className="text-left px-4 py-2 font-medium">Status</th>
@@ -731,7 +859,7 @@ export function ItsmPage() {
                 </thead>
                 <tbody>
                   {filteredIncidents.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Keine Incidents gefunden.</td></tr>
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Keine Incidents gefunden.</td></tr>
                   )}
                   {filteredIncidents.map(inc => (
                     <tr
@@ -739,9 +867,18 @@ export function ItsmPage() {
                       onClick={() => setSelectedIncident(inc)}
                       className={clsx(
                         'border-t border-[#1f1f1f] cursor-pointer transition-colors',
+                        selectedIncidentIds.has(inc.id) ? 'bg-blue-500/10' :
                         selectedIncident?.id === inc.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]',
                       )}
                     >
+                      <td className="px-2 py-2" onClick={(e) => { e.stopPropagation(); toggleIncSelect(inc.id); }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIncidentIds.has(inc.id)}
+                          onChange={() => toggleIncSelect(inc.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
                       <td className="px-4 py-2">
                         <span className={SEV_COLORS[inc.severity]} title={inc.severity}>{SEV_ICONS[inc.severity] ?? '\u25cf'}</span>
                       </td>
@@ -1747,6 +1884,146 @@ export function ItsmPage() {
                 if (missing.length > 0) { setError(`Pflichtfeld: ${missing.map(f => f.label).join(', ')}`); return; }
                 submitProblemTransition(problemTransitionModal.incidentId, problemTransitionModal.targetStatus, problemTransitionFields);
               }} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded">{problemTransitionModal.label}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* v632 — Patterns Tab */}
+      {!loading && tab === 'patterns' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-sm text-gray-300">
+              Erkannte Incident-Cluster (mind. {patternMinIncidents} verwandte Incidents in {patternWindowDays}d).
+            </div>
+            <div className="flex-1" />
+            <label className="text-xs text-gray-400 flex items-center gap-1">
+              Fenster (Tage):
+              <input
+                type="number" min={1} max={90} value={patternWindowDays}
+                onChange={(e) => setPatternWindowDays(Math.max(1, Number(e.target.value) || 14))}
+                className="w-16 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-gray-200"
+              />
+            </label>
+            <label className="text-xs text-gray-400 flex items-center gap-1">
+              Min. Incidents:
+              <input
+                type="number" min={2} max={20} value={patternMinIncidents}
+                onChange={(e) => setPatternMinIncidents(Math.max(2, Number(e.target.value) || 2))}
+                className="w-14 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1 text-gray-200"
+              />
+            </label>
+            <button onClick={loadPatterns} disabled={patternsLoading} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded disabled:opacity-50">
+              {patternsLoading ? 'Analysiere …' : '🔍 Analysieren'}
+            </button>
+          </div>
+
+          {patterns.length === 0 && !patternsLoading && (
+            <div className="text-center text-gray-500 text-sm border border-dashed border-[#2a2a2a] rounded p-8">
+              Keine Cluster gefunden — entweder ist alles aufgeräumt, oder Schwellwerte hochsetzen.
+            </div>
+          )}
+
+          {patterns.map(p => (
+            <div key={p.patternKey} className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-bold text-amber-400">{p.incidentCount}×</span>
+                  <span className="text-sm text-gray-200">
+                    {p.keywordCluster.slice(0, 5).join(', ') || 'unbenannt'}
+                  </span>
+                </div>
+                {p.existingProblemId ? (
+                  <span className="text-xs px-2 py-1 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-300">
+                    bereits gelinkt → Problem {p.existingProblemId.slice(0, 8)}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => promoteFromPattern(p)}
+                    disabled={bulkBusy}
+                    className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-500 text-white rounded disabled:opacity-50"
+                  >+ Als Problem promoten</button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-gray-400">
+                <div><div className="text-gray-500">Zeitraum</div><div className="text-gray-300">{fmtDate(p.firstSeen).slice(0, 10)} – {fmtDate(p.lastSeen).slice(0, 10)}</div></div>
+                <div><div className="text-gray-500">Assets</div><div className="text-gray-300">{p.assetIds.length}</div></div>
+                <div><div className="text-gray-500">Services</div><div className="text-gray-300">{p.serviceIds.length}</div></div>
+                <div><div className="text-gray-500">Incidents</div><div className="text-gray-300">{p.incidentIds.length}</div></div>
+              </div>
+              <details className="mt-2 text-xs">
+                <summary className="text-gray-500 cursor-pointer hover:text-gray-300">Linked Incidents anzeigen</summary>
+                <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                  {p.incidentIds.map(iid => {
+                    const inc = incidents.find(i => i.id === iid);
+                    return (
+                      <div key={iid} className="font-mono text-[10px] text-gray-400">
+                        {iid.slice(0, 8)} {inc ? `· ${inc.title}` : ''}
+                      </div>
+                    );
+                  })}
+                </div>
+              </details>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* v632 — Bulk-Merge Modal */}
+      {bulkMergeMode && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6 w-full max-w-md space-y-4">
+            <h3 className="text-lg font-semibold text-white">
+              {bulkMergeMode === 'new-problem' ? 'Neues Problem aus Auswahl' : 'Auswahl mit bestehendem Problem verknüpfen'}
+            </h3>
+            <p className="text-sm text-gray-400">
+              <strong>{selectedIncidentIds.size}</strong> Incident(s) werden {bulkMergeMode === 'new-problem' ? 'mit einem neuen Problem-Ticket verknüpft' : 'an das gewählte Problem angehängt'}.
+            </p>
+            {bulkMergeMode === 'new-problem' && (
+              <>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Titel</label>
+                  <input
+                    value={bulkMergeTitle}
+                    onChange={(e) => setBulkMergeTitle(e.target.value)}
+                    className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-400 mb-1 block">Priorität</label>
+                  <select
+                    value={bulkMergePriority}
+                    onChange={(e) => setBulkMergePriority(e.target.value)}
+                    className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+                  >
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {bulkMergeMode === 'existing-problem' && (
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Problem auswählen</label>
+                <select
+                  value={bulkMergeProblemId}
+                  onChange={(e) => setBulkMergeProblemId(e.target.value)}
+                  className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+                >
+                  <option value="">— wähle ein Problem —</option>
+                  {problems.map(p => (
+                    <option key={p.id} value={p.id}>{p.title} ({p.id.slice(0, 8)})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-2">
+              <button onClick={() => setBulkMergeMode(null)} disabled={bulkBusy} className="px-4 py-2 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button onClick={executeBulkMerge} disabled={bulkBusy} className="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded disabled:opacity-50">
+                {bulkBusy ? 'Wird ausgeführt …' : (bulkMergeMode === 'new-problem' ? 'Problem erstellen' : 'Verknüpfen')}
+              </button>
             </div>
           </div>
         </div>
