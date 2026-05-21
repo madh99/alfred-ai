@@ -3039,6 +3039,15 @@ export class Alfred {
       });
       const effectiveSttProvider = this.config.speech.sttProvider ?? this.config.speech.provider;
       this.logger.info({ provider: effectiveSttProvider }, 'Speech-to-text initialized');
+
+      // v644 — Wire transcribe endpoint into HTTP-Adapter
+      const apiAdapterForStt = this.adapters.get('api');
+      if (apiAdapterForStt && 'setTranscribeCallback' in apiAdapterForStt) {
+        (apiAdapterForStt as any).setTranscribeCallback(async (audio: Buffer, mimeType: string) => {
+          return speechTranscriber!.transcribe(audio, mimeType);
+        });
+        this.logger.info('Transcribe API endpoint registered (/api/transcribe)');
+      }
     }
 
     // 5b. Initialize text-to-speech (optional)
@@ -4357,13 +4366,18 @@ export class Alfred {
           } catch { return [ownerUid]; }
         };
         (apiAdapter as any).setConversationCallbacks({
-          list: async (filter?: { platform?: string; limit?: number }) => {
+          list: async (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => {
             try {
               const userIds = await resolveLinkedUserIds();
               return await convRepo.listConversations({
                 userIds,
                 platform: filter?.platform as any,
                 limit: filter?.limit ?? 100,
+                offset: filter?.offset ?? 0,
+                sortBy: (filter?.sortBy as any) ?? 'pinned_first',
+                sinceIso: filter?.sinceIso,
+                untilIso: filter?.untilIso,
+                includeDeleted: filter?.includeDeleted ?? false,
               });
             } catch (err) {
               this.logger.warn({ err }, 'Conversation-History API list failed');
@@ -4391,6 +4405,76 @@ export class Alfred {
             } catch (err) {
               this.logger.warn({ err }, 'Conversation-History API search failed');
               return [];
+            }
+          },
+          // v644 — Lifecycle
+          patch: async (id: string, patch: { customLabel?: string | null; pinned?: boolean }) => {
+            await convRepo.updateLifecycle(id, patch);
+          },
+          deleteConv: async (id: string, hard?: boolean) => {
+            if (hard) await convRepo.hardDelete(id);
+            else await convRepo.softDelete(id);
+          },
+          branch: async (id: string, atMessageId: string) => {
+            const userIds = await resolveLinkedUserIds();
+            // Use the first available user-id (typically the owner-master). If a different
+            // user owns the source conversation we'll re-attribute the branch to the same.
+            const sourceConv = await convRepo.findById(id);
+            const ownerId = sourceConv?.userId ?? userIds[0];
+            if (!ownerId) throw new Error('no user-id for branching');
+            const newConversationId = await convRepo.branchAtMessage(id, atMessageId, { userId: ownerId });
+            return { newConversationId };
+          },
+          exportConv: async (ids: string[]) => {
+            const entries: Array<{ id: string; filename: string; content: string }> = [];
+            for (const id of ids) {
+              try {
+                const conv = await convRepo.findById(id);
+                if (!conv) continue;
+                const msgs = await convRepo.getMessages(id, 5000);
+                const safeName = (conv.customLabel ?? conv.chatId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+                const lines = [
+                  `# ${conv.customLabel ?? conv.chatId}`,
+                  `Platform: ${conv.platform} · ChatId: ${conv.chatId}`,
+                  `Created: ${conv.createdAt} · Messages: ${msgs.length}`,
+                  '',
+                  ...msgs.map(m => `## ${m.role.toUpperCase()} — ${m.createdAt}\n${m.content}${m.toolCalls ? `\n\n[tool-calls]\n${m.toolCalls}` : ''}`),
+                ];
+                entries.push({ id, filename: `conversation-${safeName}-${id.slice(0, 8)}.md`, content: lines.join('\n') });
+              } catch { /* skip */ }
+            }
+            return { format: 'markdown' as const, entries };
+          },
+          replay: async (conversationId: string, messageId: string) => {
+            try {
+              // Find the message; if it has tool_calls, parse and re-execute via SkillSandbox
+              const msgs = await convRepo.getMessages(conversationId, 5000);
+              const msg = msgs.find(m => m.id === messageId);
+              if (!msg) return { ok: false, reason: 'message not found' };
+              if (!msg.toolCalls) return { ok: false, reason: 'message has no tool calls' };
+              let toolCalls: Array<{ name?: string; tool?: string; function?: string; parameters?: any; arguments?: any; params?: any }> = [];
+              try {
+                const parsed = JSON.parse(msg.toolCalls);
+                toolCalls = Array.isArray(parsed) ? parsed : [parsed];
+              } catch { return { ok: false, reason: 'cannot parse tool_calls' }; }
+              const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+              const results: any[] = [];
+              for (const tc of toolCalls) {
+                const skillName = (tc.name ?? tc.tool ?? tc.function) as string | undefined;
+                const params = (tc.parameters ?? tc.arguments ?? tc.params ?? {}) as Record<string, unknown>;
+                if (!skillName || !this.skillRegistry) { results.push({ skill: skillName, ok: false, reason: 'skill not found' }); continue; }
+                const skill = this.skillRegistry.get(skillName);
+                if (!skill) { results.push({ skill: skillName, ok: false, reason: 'skill not registered' }); continue; }
+                try {
+                  const r = await skill.execute(params, { userId: uid, masterUserId: uid } as any);
+                  results.push({ skill: skillName, ok: r.success, result: r });
+                } catch (err) {
+                  results.push({ skill: skillName, ok: false, reason: (err as Error).message });
+                }
+              }
+              return { ok: results.some(r => r.ok), result: results };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
             }
           },
         });

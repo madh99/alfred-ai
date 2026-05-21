@@ -1766,4 +1766,16 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE projects ADD COLUMN default_branch TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 74,
+    description: 'v644 — conversations: pinned_at, custom_label, deleted_at, branched_from for lifecycle ops',
+    up(db) {
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN pinned_at TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN custom_label TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN deleted_at TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN branched_from_conversation_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN branched_at_message_id TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_lifecycle ON conversations(user_id, pinned_at, updated_at DESC)`);
+    },
+  },
 ];

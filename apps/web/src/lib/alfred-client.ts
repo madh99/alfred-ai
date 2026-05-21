@@ -353,10 +353,15 @@ export class AlfredClient {
   }
 
   // ── v627 — Conversation History ──
-  async fetchConversations(filter?: { platform?: string; limit?: number }): Promise<ConversationSummaryItem[]> {
+  async fetchConversations(filter?: { platform?: string; limit?: number; offset?: number; sort?: string; since?: string; until?: string; includeDeleted?: boolean }): Promise<ConversationSummaryItem[]> {
     const params = new URLSearchParams();
     if (filter?.platform) params.set('platform', filter.platform);
     if (filter?.limit) params.set('limit', String(filter.limit));
+    if (filter?.offset) params.set('offset', String(filter.offset));
+    if (filter?.sort) params.set('sort', filter.sort);
+    if (filter?.since) params.set('since', filter.since);
+    if (filter?.until) params.set('until', filter.until);
+    if (filter?.includeDeleted) params.set('include_deleted', '1');
     const url = `${this.baseUrl}/api/conversations${params.toString() ? '?' + params.toString() : ''}`;
     const res = await fetch(url, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) throw new Error(`Failed to fetch conversations: ${res.status}`);
@@ -392,6 +397,68 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Search failed: ${res.status}`);
     const data = await res.json();
     return data.results ?? [];
+  }
+
+  // v644 — Conversation Lifecycle
+  async patchConversation(id: string, patch: { customLabel?: string | null; pinned?: boolean }): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/conversations/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`Patch: HTTP ${res.status}`);
+  }
+  async deleteConversation(id: string, hard = false): Promise<void> {
+    const qs = hard ? '?hard=1' : '';
+    const res = await fetch(`${this.baseUrl}/api/conversations/${id}${qs}`, {
+      method: 'DELETE',
+      headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Delete: HTTP ${res.status}`);
+  }
+  async branchConversation(id: string, atMessageId: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/conversations/${id}/branch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ at_message_id: atMessageId }),
+    });
+    if (!res.ok) throw new Error(`Branch: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.newConversationId;
+  }
+  async exportConversations(ids: string[]): Promise<{ entries: Array<{ id: string; filename: string; content: string }> }> {
+    const res = await fetch(`${this.baseUrl}/api/conversations/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ conversation_ids: ids }),
+    });
+    if (!res.ok) throw new Error(`Export: HTTP ${res.status}`);
+    return res.json();
+  }
+  async replayToolCall(conversationId: string, messageId: string): Promise<{ ok: boolean; reason?: string; result?: any }> {
+    const res = await fetch(`${this.baseUrl}/api/conversations/${conversationId}/replay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ message_id: messageId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+
+  // v644 — Audio Transcription
+  async transcribeAudio(blob: Blob): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/transcribe`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': blob.type || 'audio/webm',
+        ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
+      },
+      body: blob,
+    });
+    if (!res.ok) throw new Error(`Transcribe: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.text ?? '';
   }
 
   // ── v623 — Background-Tasks ──
@@ -1132,6 +1199,11 @@ export interface ConversationSummaryItem {
   messageCount: number;
   lastMessageAt?: string;
   lastMessagePreview?: string;
+  // v644 — Lifecycle
+  customLabel?: string;
+  pinnedAt?: string;
+  deletedAt?: string;
+  branchedFromConversationId?: string;
 }
 
 export interface ConversationMessageItem {

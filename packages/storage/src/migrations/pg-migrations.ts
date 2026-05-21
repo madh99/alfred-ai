@@ -1085,4 +1085,16 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_branch TEXT`, []);
     },
   },
+  {
+    version: 77,
+    description: 'v644 — conversations: pinned_at, custom_label, deleted_at, branched_from for lifecycle ops',
+    async up(db) {
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS pinned_at TEXT`, []);
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS custom_label TEXT`, []);
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS deleted_at TEXT`, []);
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS branched_from_conversation_id TEXT`, []);
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS branched_at_message_id TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(user_id, pinned_at DESC NULLS LAST, updated_at DESC) WHERE deleted_at IS NULL`, []);
+    },
+  },
 ];

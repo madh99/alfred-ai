@@ -264,21 +264,42 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   // v627 — Conversation-History API (WebUI viewer)
-  private conversationsListFn?: (filter?: { platform?: string; limit?: number }) => Promise<any[]>;
+  private conversationsListFn?: (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => Promise<any[]>;
   private conversationsMessagesFn?: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
   private conversationsSummaryFn?: (id: string) => Promise<any | null>;
   private conversationsSearchFn?: (query: string, opts?: { limit?: number }) => Promise<any[]>;
+  // v644 — Lifecycle
+  private conversationsPatchFn?: (id: string, patch: { customLabel?: string | null; pinned?: boolean }) => Promise<void>;
+  private conversationsDeleteFn?: (id: string, hard?: boolean) => Promise<void>;
+  private conversationsBranchFn?: (id: string, atMessageId: string) => Promise<{ newConversationId: string }>;
+  private conversationsExportFn?: (ids: string[]) => Promise<{ format: 'markdown'; entries: Array<{ id: string; filename: string; content: string }> }>;
+  private conversationsReplayFn?: (conversationId: string, messageId: string) => Promise<{ ok: boolean; reason?: string; result?: any }>;
+  private transcribeFn?: (audioBuffer: Buffer, mimeType: string) => Promise<string>;
+
+  setTranscribeCallback(fn: (audioBuffer: Buffer, mimeType: string) => Promise<string>): void {
+    this.transcribeFn = fn;
+  }
 
   setConversationCallbacks(opts: {
-    list: (filter?: { platform?: string; limit?: number }) => Promise<any[]>;
+    list: (filter?: { platform?: string; limit?: number; offset?: number; sortBy?: string; sinceIso?: string; untilIso?: string; includeDeleted?: boolean }) => Promise<any[]>;
     messages: (id: string, opts?: { beforeIso?: string; limit?: number }) => Promise<any[]>;
     summary: (id: string) => Promise<any | null>;
     search: (query: string, opts?: { limit?: number }) => Promise<any[]>;
+    patch?: (id: string, patch: { customLabel?: string | null; pinned?: boolean }) => Promise<void>;
+    deleteConv?: (id: string, hard?: boolean) => Promise<void>;
+    branch?: (id: string, atMessageId: string) => Promise<{ newConversationId: string }>;
+    exportConv?: (ids: string[]) => Promise<{ format: 'markdown'; entries: Array<{ id: string; filename: string; content: string }> }>;
+    replay?: (conversationId: string, messageId: string) => Promise<{ ok: boolean; reason?: string; result?: any }>;
   }): void {
     this.conversationsListFn = opts.list;
     this.conversationsMessagesFn = opts.messages;
     this.conversationsSummaryFn = opts.summary;
     this.conversationsSearchFn = opts.search;
+    this.conversationsPatchFn = opts.patch;
+    this.conversationsDeleteFn = opts.deleteConv;
+    this.conversationsBranchFn = opts.branch;
+    this.conversationsExportFn = opts.exportConv;
+    this.conversationsReplayFn = opts.replay;
   }
 
   // v629 — Confirmations + Reminders Side-Panel API
@@ -666,6 +687,20 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConversationsMessages(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/summary$/) && req.method === 'GET') {
       this.handleConversationsSummary(req, res, url).catch(err => this.safeError(res, err));
+    // ── Conversation Lifecycle (v644) ──
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleConversationsPatch(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleConversationsDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/branch$/) && req.method === 'POST') {
+      this.handleConversationsBranch(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/conversations/export' && req.method === 'POST') {
+      this.handleConversationsExport(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/conversations\/[^/]+\/replay$/) && req.method === 'POST') {
+      this.handleConversationsReplay(req, res, url).catch(err => this.safeError(res, err));
+    // ── Chat multi-modal (v644) ──
+    } else if (url.pathname === '/api/transcribe' && req.method === 'POST') {
+      this.handleTranscribe(req, res).catch(err => this.safeError(res, err));
     // ── Confirmations + Reminders Side-Panel (v629) ──
     } else if (url.pathname === '/api/confirmations/pending' && req.method === 'GET') {
       this.handleConfirmationsList(req, res).catch(err => this.safeError(res, err));
@@ -1427,11 +1462,107 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.conversationsListFn) {
       res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
     }
-    const platform = url.searchParams.get('platform') ?? undefined;
-    const limit = url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined;
-    const list = await this.conversationsListFn({ platform, limit });
+    const list = await this.conversationsListFn({
+      platform: url.searchParams.get('platform') ?? undefined,
+      limit: url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined,
+      offset: url.searchParams.get('offset') ? Number(url.searchParams.get('offset')) : undefined,
+      sortBy: url.searchParams.get('sort') ?? undefined,
+      sinceIso: url.searchParams.get('since') ?? undefined,
+      untilIso: url.searchParams.get('until') ?? undefined,
+      includeDeleted: url.searchParams.get('include_deleted') === '1',
+    });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ conversations: list }));
+  }
+
+  // v644 — Lifecycle handlers
+  private async handleConversationsPatch(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsPatchFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let patch: { customLabel?: string | null; pinned?: boolean };
+    try { patch = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    await this.conversationsPatchFn(id, patch);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private async handleConversationsDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsDeleteFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const hard = url.searchParams.get('hard') === '1';
+    await this.conversationsDeleteFn(id, hard);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private async handleConversationsBranch(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsBranchFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const id = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { at_message_id?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.at_message_id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'at_message_id required' })); return; }
+    const result = await this.conversationsBranchFn(id, data.at_message_id);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleConversationsExport(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsExportFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let data: { conversation_ids?: string[] };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.conversation_ids || data.conversation_ids.length === 0) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'conversation_ids required' })); return; }
+    const result = await this.conversationsExportFn(data.conversation_ids);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // v644 — Audio-Transcription für Chat-Voice-Input
+  private async handleTranscribe(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.transcribeFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Transcribe not configured' })); return; }
+    const contentType = req.headers['content-type'] ?? 'application/octet-stream';
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+    for await (const chunk of req) {
+      const buf = chunk as Buffer;
+      total += buf.length;
+      if (total > MAX_AUDIO_BYTES) {
+        res.writeHead(413, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Audio too large (>25MB)' })); return;
+      }
+      chunks.push(buf);
+    }
+    try {
+      const audio = Buffer.concat(chunks);
+      const text = await this.transcribeFn(audio, contentType);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ text }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleConversationsReplay(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.conversationsReplayFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const conversationId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { message_id?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.message_id) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'message_id required' })); return; }
+    const result = await this.conversationsReplayFn(conversationId, data.message_id);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   private async handleConversationsMessages(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

@@ -33,10 +33,15 @@ interface Props {
   hasMore: boolean;
   onLoadOlder: () => void;
   onExport: () => void;
+  // v644 — Branch / Replay / Continue
+  onBranchAtMessage?: (messageId: string) => void;
+  onReplayMessage?: (messageId: string) => void;
+  onContinueInChat?: () => void;
 }
 
 export function ConversationDetail({
   conversation, messages, summary, loading, loadingMore, hasMore, onLoadOlder, onExport,
+  onBranchAtMessage, onReplayMessage, onContinueInChat,
 }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastConvId = useRef<string | null>(null);
@@ -65,16 +70,27 @@ export function ConversationDetail({
       <header className="border-b border-[#1f1f1f] px-4 py-3 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold text-gray-200">
-            {conversation.platform} · {conversation.chatId}
+            {conversation.customLabel ?? `${conversation.platform} · ${conversation.chatId}`}
+            {conversation.pinnedAt && <span className="ml-2 text-amber-400" title="Pinned">📌</span>}
+            {conversation.branchedFromConversationId && <span className="ml-2 text-purple-400" title="Branched">⎇</span>}
           </h2>
           <p className="text-xs text-gray-500">
             {conversation.messageCount} Nachrichten · seit {new Date(conversation.createdAt).toLocaleString('de-AT')}
           </p>
         </div>
-        <button
-          onClick={onExport}
-          className="text-xs text-gray-400 hover:text-blue-400 px-3 py-1.5 border border-[#1f1f1f] rounded hover:border-blue-500/40"
-        >Export ↓</button>
+        <div className="flex items-center gap-1">
+          {onContinueInChat && (
+            <button
+              onClick={onContinueInChat}
+              className="text-xs text-emerald-400 hover:text-emerald-300 px-3 py-1.5 border border-emerald-500/30 rounded hover:bg-emerald-500/10"
+              title="Diese Conversation im Chat fortsetzen"
+            >💬 Im Chat fortsetzen</button>
+          )}
+          <button
+            onClick={onExport}
+            className="text-xs text-gray-400 hover:text-blue-400 px-3 py-1.5 border border-[#1f1f1f] rounded hover:border-blue-500/40"
+          >Export ↓</button>
+        </div>
       </header>
       {summary && <SummaryBanner summary={summary} />}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
@@ -96,7 +112,7 @@ export function ConversationDetail({
           <div className="text-center text-xs text-gray-500 py-6">Keine Nachrichten in dieser Conversation.</div>
         )}
         {messages.map(m => (
-          <div key={m.id} className={clsx('border rounded-lg p-3', ROLE_STYLES[m.role] ?? ROLE_STYLES.system)}>
+          <div key={m.id} className={clsx('border rounded-lg p-3 group relative', ROLE_STYLES[m.role] ?? ROLE_STYLES.system)}>
             <div className="flex items-baseline justify-between mb-1.5">
               <span className="text-[10px] uppercase tracking-wide font-semibold opacity-70">
                 {ROLE_LABEL[m.role] ?? m.role}
@@ -107,6 +123,23 @@ export function ConversationDetail({
             </div>
             <div className="text-sm whitespace-pre-wrap break-words">{m.content}</div>
             {m.toolCalls && <ToolCallsBlock raw={m.toolCalls} />}
+            {/* v644 — Hover-Actions pro Message */}
+            <div className="absolute right-2 -top-3 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+              {onBranchAtMessage && (
+                <button
+                  onClick={() => onBranchAtMessage(m.id)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-[#0d0d0d] border border-[#2a2a2a] text-purple-300 hover:bg-purple-500/15"
+                  title="Ab dieser Nachricht eine neue Conversation forken"
+                >⎇ Branch</button>
+              )}
+              {m.toolCalls && onReplayMessage && (
+                <button
+                  onClick={() => onReplayMessage(m.id)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-[#0d0d0d] border border-[#2a2a2a] text-emerald-300 hover:bg-emerald-500/15"
+                  title="Tool-Call erneut ausführen"
+                >▶ Replay</button>
+              )}
+            </div>
           </div>
         ))}
       </div>

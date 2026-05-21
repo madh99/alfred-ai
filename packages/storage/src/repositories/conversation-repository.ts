@@ -87,6 +87,13 @@ export class ConversationRepository {
     platform?: Platform;
     limit?: number;
     offset?: number;
+    /** v644 — exclude soft-deleted (default true) */
+    includeDeleted?: boolean;
+    /** v644 — Date-Range-Filter (createdAt) */
+    sinceIso?: string;
+    untilIso?: string;
+    /** v644 — sort options */
+    sortBy?: 'updated' | 'created' | 'message_count_desc' | 'pinned_first';
   }): Promise<Array<Conversation & { messageCount: number; lastMessageAt?: string; lastMessagePreview?: string }>> {
     const limit = opts?.limit ?? 100;
     const offset = opts?.offset ?? 0;
@@ -100,16 +107,28 @@ export class ConversationRepository {
       params.push(...allUserIds);
     }
     if (opts?.platform) { where.push('c.platform = ?'); params.push(opts.platform); }
+    if (!opts?.includeDeleted) where.push('c.deleted_at IS NULL');
+    if (opts?.sinceIso) { where.push('c.created_at >= ?'); params.push(opts.sinceIso); }
+    if (opts?.untilIso) { where.push('c.created_at <= ?'); params.push(opts.untilIso); }
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+
+    let orderBy = 'c.updated_at DESC';
+    switch (opts?.sortBy) {
+      case 'created': orderBy = 'c.created_at DESC'; break;
+      case 'message_count_desc': orderBy = 'message_count DESC, c.updated_at DESC'; break;
+      case 'pinned_first':
+      default: orderBy = `CASE WHEN c.pinned_at IS NULL THEN 1 ELSE 0 END, c.pinned_at DESC, c.updated_at DESC`; break;
+    }
 
     const sql = `
       SELECT c.id, c.platform, c.chat_id, c.user_id, c.created_at, c.updated_at,
+        c.custom_label, c.pinned_at, c.deleted_at, c.branched_from_conversation_id, c.branched_at_message_id,
         (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count,
         (SELECT m.created_at FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_at,
         (SELECT SUBSTR(m.content, 1, 120) FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_preview
       FROM conversations c
       ${whereClause}
-      ORDER BY c.updated_at DESC
+      ORDER BY ${orderBy}
       LIMIT ? OFFSET ?
     `;
     params.push(limit, offset);
@@ -120,6 +139,66 @@ export class ConversationRepository {
       lastMessageAt: r.last_message_at as string | undefined,
       lastMessagePreview: r.last_preview as string | undefined,
     }));
+  }
+
+  /** v644 — Update conversation custom_label / pinned_at. */
+  async updateLifecycle(id: string, updates: { customLabel?: string | null; pinned?: boolean }): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if ('customLabel' in updates) { sets.push('custom_label = ?'); params.push(updates.customLabel ?? null); }
+    if ('pinned' in updates) {
+      sets.push('pinned_at = ?');
+      params.push(updates.pinned ? new Date().toISOString() : null);
+    }
+    if (sets.length === 0) return;
+    params.push(id);
+    await this.adapter.execute(`UPDATE conversations SET ${sets.join(', ')} WHERE id = ?`, params);
+  }
+
+  /** v644 — Soft-delete (sets deleted_at). Messages bleiben für eventuelle Wiederherstellung. */
+  async softDelete(id: string): Promise<void> {
+    await this.adapter.execute('UPDATE conversations SET deleted_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+  }
+
+  /** v644 — Permanent delete (cascade messages). */
+  async hardDelete(id: string): Promise<void> {
+    await this.adapter.execute('DELETE FROM messages WHERE conversation_id = ?', [id]);
+    await this.adapter.execute('DELETE FROM conversations WHERE id = ?', [id]);
+  }
+
+  /**
+   * v644 — Branch off an existing conversation at a given message: copies all messages
+   * up to and including `atMessageId` into a new conversation row. The new conversation
+   * has a fresh chat_id (web-fork-<uuid>) so the runtime doesn't auto-attach to the
+   * old chat-thread. Returns the new conversation id.
+   */
+  async branchAtMessage(sourceConversationId: string, atMessageId: string, opts: { userId: string; newChatId?: string }): Promise<string> {
+    const source = await this.findById(sourceConversationId);
+    if (!source) throw new Error('source conversation not found');
+    const cutoffMsg = await this.adapter.queryOne(
+      'SELECT created_at FROM messages WHERE id = ? AND conversation_id = ?',
+      [atMessageId, sourceConversationId],
+    ) as { created_at: string } | undefined;
+    if (!cutoffMsg) throw new Error('cutoff message not found');
+
+    const newConv = await this.create(source.platform, opts.newChatId ?? `web-fork-${crypto.randomUUID().slice(0, 8)}`, opts.userId);
+    await this.adapter.execute(
+      'UPDATE conversations SET branched_from_conversation_id = ?, branched_at_message_id = ? WHERE id = ?',
+      [sourceConversationId, atMessageId, newConv.id],
+    );
+
+    const messagesToCopy = await this.adapter.query(
+      'SELECT * FROM messages WHERE conversation_id = ? AND created_at <= ? ORDER BY created_at ASC, id ASC',
+      [sourceConversationId, cutoffMsg.created_at],
+    ) as Array<Record<string, unknown>>;
+    for (const m of messagesToCopy) {
+      const newId = crypto.randomUUID();
+      await this.adapter.execute(
+        'INSERT INTO messages (id, conversation_id, role, content, tool_calls, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [newId, newConv.id, m.role as string, m.content as string, (m.tool_calls as string | null) ?? null, m.created_at as string],
+      );
+    }
+    return newConv.id;
   }
 
   /**
@@ -283,6 +362,11 @@ export class ConversationRepository {
       userId: row.user_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      customLabel: (row.custom_label as string | undefined) ?? undefined,
+      pinnedAt: (row.pinned_at as string | undefined) ?? undefined,
+      deletedAt: (row.deleted_at as string | undefined) ?? undefined,
+      branchedFromConversationId: (row.branched_from_conversation_id as string | undefined) ?? undefined,
+      branchedAtMessageId: (row.branched_at_message_id as string | undefined) ?? undefined,
     };
   }
 }

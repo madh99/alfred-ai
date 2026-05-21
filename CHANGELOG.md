@@ -5,6 +5,74 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.644] - 2026-05-21
+
+### Added — Chat + History vervollständigt (drei Bereiche)
+
+User-Befund: nicht alles aus dem A/B/C-Plan war umgesetzt. Drei Bereiche nachgezogen.
+
+**Schema** — SQLite v74 / Postgres v77:
+- `conversations.pinned_at`, `custom_label`, `deleted_at`, `branched_from_conversation_id`, `branched_at_message_id`
+- Index für `(user_id, pinned_at DESC, updated_at DESC)` zum effizienten Listing
+
+**Bereich 1 — Chat: Multi-Modal + Voice**
+- **File-Upload** in `InputBar.tsx`:
+  - 📎-Button + verstecktes `<input type="file" multiple>`
+  - **Drag&Drop** über die ganze InputBar (visuelles Ring-Highlight)
+  - **Paste-Handler** für Bilder direkt aus Zwischenablage
+  - Pending-Attachments-Preview mit Thumbnail (Bilder) / 📄-Icon (Files), Name, Size, Remove-Button
+  - Max 8 Files, je max 10MB
+- **Voice-Input** mit MediaRecorder API:
+  - 🎤-Button startet Aufnahme (rot pulsiert während Recording)
+  - Stop sendet WebM-Blob an neuen `POST /api/transcribe`-Endpoint
+  - Server nutzt bestehende `SpeechTranscriber.transcribe(buffer, mime)` (Mistral Voxtral / Groq Whisper)
+  - Transkribierter Text landet in der Textarea zum Editieren vor dem Senden
+- `useChat.sendMessage(text, attachments?)` — Bilder werden als Markdown `![]()` inlined, andere Files als `[📄 name](dataUrl)` Link
+
+**Bereich 2 — History: Lifecycle**
+- **Sort**: Pinned-zuerst (default) / Letzte-Aktivität / Neueste / Längste
+- **Date-Range-Filter**: Heute / 7d / 30d / 90d / Jahr / Alle Zeit
+- **Pagination**: PAGE_SIZE=100, "↓ Mehr laden"-Button unten in Sidebar
+- **Pin/Unpin** pro Conversation (📌/📍-Button hover) → `pinned_at`
+- **Rename** (Inline-Edit, Enter speichert, Escape verwirft) → `custom_label`
+- **Delete** (Soft-Delete mit Confirm) → setzt `deleted_at`, default ausgefiltert
+- **"💬 Im Chat fortsetzen"** Button im Sidebar-Item-Hover und im Detail-Header — speichert `alfred-chat-active-conversation-id` in localStorage und navigiert zu /chat
+- **Bulk-Mode**: ☑-Toggle, Multi-Checkbox-Auswahl, "📥 Export"-Button generiert pro Conversation eine `.md`-Datei (Browser-Multi-Download)
+- Branched-Conversations bekommen ⎇-Badge
+
+**Bereich 3 — Tieferes**
+- **Branch** (`POST /api/conversations/:id/branch` body `{at_message_id}`):
+  - `ConversationRepository.branchAtMessage` kopiert alle Messages bis zum Cutoff in neue Conversation mit neuem `chat_id=web-fork-<uuid>`
+  - Neue Conversation hat `branched_from_conversation_id` + `branched_at_message_id`
+  - UI: Hover-Action `⎇ Branch` pro Message → Confirm → neue Conv erstellt und sofort geöffnet
+- **Skill-Replay** (`POST /api/conversations/:id/replay` body `{message_id}`):
+  - Parsed `tool_calls` JSON aus der Message
+  - Pro Tool-Call: holt Skill aus Registry, führt mit denselben Params erneut aus (mit Owner-User-Context)
+  - UI: Hover-Action `▶ Replay` (nur sichtbar wenn Message tool_calls hat) → Confirm-Dialog (mutating-Warning) → Result als Alert
+- **Bulk-Export**: über Bulk-Mode → `POST /api/conversations/export` body `{conversation_ids[]}` → Server liefert Array `{filename, content}` → Browser triggert sequentielle Downloads (kein zip-Dep im Frontend nötig)
+
+**HTTP-API** — neue Endpoints:
+- `PATCH /api/conversations/:id` — `{customLabel?, pinned?}`
+- `DELETE /api/conversations/:id?hard=1` — soft (default) oder hard delete
+- `POST /api/conversations/:id/branch` — body `{at_message_id}`
+- `POST /api/conversations/export` — body `{conversation_ids[]}`
+- `POST /api/conversations/:id/replay` — body `{message_id}`
+- `POST /api/transcribe` — Audio-Blob im Body (max 25MB)
+- `GET /api/conversations` erweitert um Query-Params: `offset`, `sort`, `since`, `until`, `include_deleted`
+
+**Frontend-Files erweitert/neu**:
+- `apps/web/src/components/chat/InputBar.tsx` — File/Voice/Drag&Drop/Paste
+- `apps/web/src/hooks/useChat.ts` — sendMessage akzeptiert attachments
+- `apps/web/src/components/history/ConversationsSidebar.tsx` — komplettes Rewrite mit Hover-Actions, Bulk-Mode, Pagination, Sort/Date
+- `apps/web/src/components/history/HistoryPage.tsx` — Lifecycle-Handler + Branch/Replay-Aufrufe + Bulk-Export-Logik
+- `apps/web/src/components/history/ConversationDetail.tsx` — Per-Message-Hover-Actions + "Im Chat fortsetzen"-Button
+
+### Notes
+- Build grün (12/12), Migrationen laufen automatisch beim ersten Start
+- Voice-Input nutzt MediaRecorder API → braucht HTTPS-Origin oder localhost
+- Replay ist mit Confirmation-Dialog gegated — bei mutierenden Skills (z.B. itsm.close_incident) entscheidet User explizit
+- Branch dupliziert Messages (kein Foreign-Key); die forked Conversation lebt unabhängig
+
 ## [0.19.0-multi-ha.643] - 2026-05-21
 
 ### Added — Project-Repo-URL + Commit-Tracking + PR-Detection (v643, vollumfänglich A+B+C+D)

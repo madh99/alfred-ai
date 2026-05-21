@@ -7,6 +7,16 @@ export interface Conversation {
   userId: string;
   createdAt: string;
   updatedAt: string;
+  /** v644 — Custom user-facing label (rename) */
+  customLabel?: string;
+  /** v644 — ISO timestamp when user pinned (null = not pinned) */
+  pinnedAt?: string;
+  /** v644 — Soft-delete timestamp */
+  deletedAt?: string;
+  /** v644 — Branched-from source conversation (null = original) */
+  branchedFromConversationId?: string;
+  /** v644 — Message at which the branch was forked */
+  branchedAtMessageId?: string;
 }
 
 export interface ConversationMessage {

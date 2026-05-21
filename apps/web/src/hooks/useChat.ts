@@ -142,11 +142,25 @@ export function useChat() {
     } catch {}
   }, [state.messages, state.streaming]);
 
-  const sendMessage = useCallback((text: string) => {
-    if (!text.trim() || state.streaming) return;
-    dispatch({ type: 'ADD_USER', text });
+  const sendMessage = useCallback((text: string, attachments?: Array<{ name: string; mime: string; dataUrl: string }>) => {
+    if ((!text.trim() && (!attachments || attachments.length === 0)) || state.streaming) return;
+    // v644 — Bilder als Markdown ![]() inlinen, andere Files als download-Tag (best-effort —
+    // bei größeren Files sollte später ein Upload-Endpoint genutzt werden).
+    let fullText = text.trim();
+    if (attachments && attachments.length > 0) {
+      const lines: string[] = [];
+      for (const a of attachments) {
+        if (a.mime.startsWith('image/')) {
+          lines.push(`![${a.name}](${a.dataUrl})`);
+        } else {
+          lines.push(`[📄 ${a.name}](${a.dataUrl})`);
+        }
+      }
+      fullText = fullText ? `${fullText}\n\n${lines.join('\n')}` : lines.join('\n');
+    }
+    dispatch({ type: 'ADD_USER', text: fullText });
     dispatch({ type: 'START_ASSISTANT' });
-    cancelRef.current = client.streamMessage(text, chatId, userId, {
+    cancelRef.current = client.streamMessage(fullText, chatId, userId, {
       onStatus: (t) => dispatch({ type: 'SET_STATUS', text: t }),
       onResponse: (t) => dispatch({ type: 'APPEND_RESPONSE', text: t }),
       onAttachment: (a) => dispatch({ type: 'ADD_ATTACHMENT', attachment: a }),
