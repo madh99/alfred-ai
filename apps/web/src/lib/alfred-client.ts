@@ -575,12 +575,16 @@ export class AlfredClient {
     return await res.json();
   }
 
-  // v659 — Letzte Deploys aus deploy_*-Memory parsed
-  async fetchProjectLastDeploys(projectId: string): Promise<ProjectLastDeploy[]> {
+  // v659 — Letzte Deploys aus deploy_*-Memory + auto-detected Runtime aus cwd
+  async fetchProjectLastDeploys(projectId: string): Promise<{ deploys: ProjectLastDeploy[]; detectedRuntime?: string; detectionReason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/last-deploys`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
-    if (!res.ok) return [];
+    if (!res.ok) return { deploys: [] };
     const data = await res.json();
-    return Array.isArray(data.deploys) ? data.deploys : [];
+    return {
+      deploys: Array.isArray(data.deploys) ? data.deploys : [],
+      detectedRuntime: typeof data.detectedRuntime === 'string' ? data.detectedRuntime : undefined,
+      detectionReason: typeof data.detectionReason === 'string' ? data.detectionReason : undefined,
+    };
   }
 
   // v659 — Deploy-Trigger mit Form-Params

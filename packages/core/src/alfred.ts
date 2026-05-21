@@ -4913,44 +4913,75 @@ export class Alfred {
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
-          // v659 — Letzte Deploys aus deploy_*-Memories für das Projekt parsen.
+          // v659 — Letzte Deploys aus deploy_*-Memories + Runtime-Auto-Detect aus cwd.
           // Memory-Format (siehe packages/skills/.../deploy.ts:425):
           //   key: `deploy_<projectName>_<host_normalized>`
           //   value: `Deployed X → HOST (user=U, runtime=R, pm=P, compose=…, port=N, verified=ok, am=YYYY-MM-DD)`
           lastDeploys: async (id: string) => {
             try {
-              if (!this.memoryRepo) return [];
               const uid = await resolveOwnerProj();
               const project = await projRepo.getById(uid, id);
-              if (!project) return [];
-              const keyPrefix = `deploy_${project.name}_`;
-              const mems = await this.memoryRepo.search(uid, keyPrefix);
-              const filtered = mems.filter(m => m.key.startsWith(keyPrefix) && m.category === 'deployment');
-              return filtered.map(m => {
-                const v = m.value;
-                const hostMatch = v.match(/→\s*([\w.-]+)\s*\(/);
-                const userMatch = v.match(/user=([^,)]+)/);
-                const runtimeMatch = v.match(/runtime=([^,)]+)/);
-                const pmMatch = v.match(/pm=([^,)]+)/);
-                const composeMatch = v.match(/compose=([^,)]+)/);
-                const portMatch = v.match(/port=(\d+)/);
-                const verifiedMatch = /verified=ok/.test(v);
-                const dateMatch = v.match(/am=([\d-]+)/);
-                return {
-                  host: hostMatch?.[1] ?? '',
-                  user: userMatch?.[1]?.trim() ?? 'root',
-                  runtime: runtimeMatch?.[1]?.trim(),
-                  processManager: pmMatch?.[1]?.trim(),
-                  composeVariant: composeMatch?.[1]?.trim(),
-                  port: portMatch ? Number(portMatch[1]) : undefined,
-                  verified: verifiedMatch,
-                  date: dateMatch?.[1],
-                  updatedAt: m.updatedAt,
-                };
-              }).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+              if (!project) return { deploys: [] };
+
+              // v659 — Runtime aus cwd auto-detecten
+              let detectedRuntime: string | undefined;
+              let detectionReason: string | undefined;
+              if (project.cwd) {
+                const { existsSync } = await import('node:fs');
+                const path = await import('node:path');
+                const cwd = project.cwd;
+                // Reihenfolge: Docker > Node > Python > Static (Docker hat Vorrang weil oft Container-Wrap)
+                if (existsSync(path.join(cwd, 'docker-compose.yml')) || existsSync(path.join(cwd, 'docker-compose.yaml')) || existsSync(path.join(cwd, 'compose.yaml')) || existsSync(path.join(cwd, 'compose.yml'))) {
+                  detectedRuntime = 'docker';
+                  detectionReason = 'docker-compose.yml gefunden';
+                } else if (existsSync(path.join(cwd, 'Dockerfile'))) {
+                  detectedRuntime = 'docker';
+                  detectionReason = 'Dockerfile gefunden';
+                } else if (existsSync(path.join(cwd, 'package.json'))) {
+                  detectedRuntime = 'node';
+                  detectionReason = 'package.json gefunden';
+                } else if (existsSync(path.join(cwd, 'pyproject.toml')) || existsSync(path.join(cwd, 'requirements.txt')) || existsSync(path.join(cwd, 'setup.py'))) {
+                  detectedRuntime = 'python';
+                  detectionReason = existsSync(path.join(cwd, 'pyproject.toml')) ? 'pyproject.toml gefunden' : existsSync(path.join(cwd, 'requirements.txt')) ? 'requirements.txt gefunden' : 'setup.py gefunden';
+                } else if (existsSync(path.join(cwd, 'index.html'))) {
+                  detectedRuntime = 'static';
+                  detectionReason = 'index.html gefunden (static site)';
+                }
+              }
+
+              let deploys: Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string; updatedAt?: string }> = [];
+              if (this.memoryRepo) {
+                const keyPrefix = `deploy_${project.name}_`;
+                const mems = await this.memoryRepo.search(uid, keyPrefix);
+                const filtered = mems.filter(m => m.key.startsWith(keyPrefix) && m.category === 'deployment');
+                deploys = filtered.map(m => {
+                  const v = m.value;
+                  const hostMatch = v.match(/→\s*([\w.-]+)\s*\(/);
+                  const userMatch = v.match(/user=([^,)]+)/);
+                  const runtimeMatch = v.match(/runtime=([^,)]+)/);
+                  const pmMatch = v.match(/pm=([^,)]+)/);
+                  const composeMatch = v.match(/compose=([^,)]+)/);
+                  const portMatch = v.match(/port=(\d+)/);
+                  const verifiedMatch = /verified=ok/.test(v);
+                  const dateMatch = v.match(/am=([\d-]+)/);
+                  return {
+                    host: hostMatch?.[1] ?? '',
+                    user: userMatch?.[1]?.trim() ?? 'root',
+                    runtime: runtimeMatch?.[1]?.trim(),
+                    processManager: pmMatch?.[1]?.trim(),
+                    composeVariant: composeMatch?.[1]?.trim(),
+                    port: portMatch ? Number(portMatch[1]) : undefined,
+                    verified: verifiedMatch,
+                    date: dateMatch?.[1],
+                    updatedAt: m.updatedAt,
+                  };
+                }).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+              }
+
+              return { deploys, detectedRuntime, detectionReason };
             } catch (err) {
               this.logger.warn({ err, id }, 'Projects API lastDeploys failed');
-              return [];
+              return { deploys: [] };
             }
           },
 

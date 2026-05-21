@@ -24,6 +24,10 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
   const { client } = useConfig();
   const [lastDeploys, setLastDeploys] = useState<ProjectLastDeploy[]>([]);
   const [loadingDeploys, setLoadingDeploys] = useState(false);
+  // v659 — Auto-Detected Runtime aus Projekt-cwd (z.B. Dockerfile, package.json …)
+  const [detectedRuntime, setDetectedRuntime] = useState<string | undefined>();
+  const [detectionReason, setDetectionReason] = useState<string | undefined>();
+  const [runtimeOverridden, setRuntimeOverridden] = useState(false);
 
   // Form state
   const [host, setHost] = useState('');
@@ -41,11 +45,20 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
     if (!client) return;
     setLoadingDeploys(true);
     try {
-      const list = await client.fetchProjectLastDeploys(projectId);
-      setLastDeploys(list);
-      // Auto-Prefill aus dem aktuellsten Deploy
-      if (list.length > 0 && !host) {
-        applyDeploy(list[0]);
+      const r = await client.fetchProjectLastDeploys(projectId);
+      setLastDeploys(r.deploys);
+      setDetectedRuntime(r.detectedRuntime);
+      setDetectionReason(r.detectionReason);
+      // Auto-Prefill: bevorzugt letzter Deploy, sonst detected Runtime
+      if (r.deploys.length > 0 && !host) {
+        applyDeploy(r.deploys[0]);
+      } else if (r.detectedRuntime && !runtimeOverridden) {
+        // Detected Runtime als Default setzen
+        if (r.detectedRuntime === 'node' || r.detectedRuntime === 'python' || r.detectedRuntime === 'docker' || r.detectedRuntime === 'static') {
+          setRuntime(r.detectedRuntime);
+        }
+        // Bei docker-Runtime ist docker-compose der natürliche pm
+        if (r.detectedRuntime === 'docker') setProcessManager('docker-compose');
       }
     } finally {
       setLoadingDeploys(false);
@@ -171,16 +184,26 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
               </select>
             </div>
             <div>
-              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Runtime</label>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5 flex items-center justify-between gap-1">
+                <span>Runtime</span>
+                {detectedRuntime && (
+                  <span
+                    className={runtime === detectedRuntime ? 'text-emerald-400 text-[9px] normal-case' : 'text-amber-400 text-[9px] normal-case'}
+                    title={detectionReason ?? 'aus cwd erkannt'}
+                  >
+                    {runtime === detectedRuntime ? `🔍 ${detectedRuntime}` : `⚠ detected: ${detectedRuntime}`}
+                  </span>
+                )}
+              </label>
               <select
                 value={runtime}
-                onChange={(e) => setRuntime(e.target.value as Runtime)}
+                onChange={(e) => { setRuntime(e.target.value as Runtime); setRuntimeOverridden(true); }}
                 className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
               >
-                <option value="node">Node.js</option>
-                <option value="python">Python</option>
-                <option value="docker">Docker</option>
-                <option value="static">Static</option>
+                <option value="node">Node.js{detectedRuntime === 'node' ? ' (detected)' : ''}</option>
+                <option value="python">Python{detectedRuntime === 'python' ? ' (detected)' : ''}</option>
+                <option value="docker">Docker{detectedRuntime === 'docker' ? ' (detected)' : ''}</option>
+                <option value="static">Static{detectedRuntime === 'static' ? ' (detected)' : ''}</option>
               </select>
             </div>
             <div>

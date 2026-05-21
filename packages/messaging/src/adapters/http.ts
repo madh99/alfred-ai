@@ -393,8 +393,12 @@ export class HttpAdapter extends MessagingAdapter {
     } | null>;
     /** v658 — Chat-History für Projekt-Conversation */
     chatHistory?: (id: string, limit: number) => Promise<{ conversationId: string; messages: Array<{ id: string; role: string; content: string; createdAt: string }> } | null>;
-    /** v659 — Letzte Deploys aus Memory parsed */
-    lastDeploys?: (id: string) => Promise<Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string }>>;
+    /** v659 — Letzte Deploys aus Memory parsed + auto-detected runtime aus cwd */
+    lastDeploys?: (id: string) => Promise<{
+      deploys: Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string }>;
+      detectedRuntime?: string;
+      detectionReason?: string;
+    }>;
     /** v659 — Deploy-Trigger mit Form-Params (process_manager, host, user, port, runtime, branch) */
     triggerDeploy?: (id: string, input: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; error?: string; display?: string }>;
     create: (input: Record<string, unknown>) => Promise<any>;
@@ -2106,7 +2110,7 @@ export class HttpAdapter extends MessagingAdapter {
     res.end(JSON.stringify(history ?? { error: 'not-found' }));
   }
 
-  // v659 — Letzte Deploys aus deploy_*-Memories parsen
+  // v659 — Letzte Deploys aus deploy_*-Memories parsen + auto-detected Runtime
   private async handleProjectsLastDeploys(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.projectsCallbacks?.lastDeploys) {
@@ -2114,9 +2118,9 @@ export class HttpAdapter extends MessagingAdapter {
     }
     const parts = url.pathname.split('/');
     const projectId = parts[parts.length - 2];
-    const deploys = await this.projectsCallbacks.lastDeploys(projectId);
+    const result = await this.projectsCallbacks.lastDeploys(projectId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ deploys }));
+    res.end(JSON.stringify(result));
   }
 
   // v659 — Deploy-Trigger mit Form-Params

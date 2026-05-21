@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.660] - 2026-05-21
+
+### Improved — Deploy-Modal Runtime Auto-Detect aus Projekt-cwd
+
+**Backend**:
+- `lastDeploys`-Callback erweitert: prüft `project.cwd` per `existsSync()` und
+  liefert `detectedRuntime` + `detectionReason`
+- Detect-Reihenfolge (erst-Match):
+  1. `docker-compose.yml` / `compose.yaml` → `docker`
+  2. `Dockerfile` → `docker`
+  3. `package.json` → `node`
+  4. `pyproject.toml` / `requirements.txt` / `setup.py` → `python`
+  5. `index.html` → `static`
+- Response-Format geändert: `{ deploys: […], detectedRuntime: 'node', detectionReason: 'package.json gefunden' }`
+
+**Frontend**:
+- Runtime-Badge neben Label im Form:
+  - 🔍 grün wenn aktueller Runtime-Select == detected
+  - ⚠ amber wenn Override (User hat manuell anders gewählt)
+- Dropdown-Optionen mit `(detected)`-Suffix bei der erkannten Runtime
+- Auto-Default-Logik:
+  - Wenn letzter Deploy vorhanden → Runtime aus dem letzten Deploy
+  - Sonst wenn detected → detected wird Default
+  - Bei `docker`-Detect → docker-compose als pm vorbelegt
+- `runtimeOverridden`-Flag verhindert dass detected nachträglich überschreibt
+- Hover-Tooltip zeigt `detectionReason` (z.B. „Dockerfile gefunden")
+
+### Notes
+- Build grün (12/12)
+- Backwards-compat: Response ist jetzt Objekt `{deploys, detectedRuntime}` statt
+  Array — Client-Code wurde mit-angepasst, kein anderer Konsument existiert
+- Detect läuft im Backend (Node fs) — funktioniert auf der Cluster-Node die
+  Zugriff auf das Project-cwd hat. Bei verteiltem Mount würde der falsche Node
+  ggf. nichts finden — Edge-Case, später lösbar via Node-Targeting
+
 ## [0.19.0-multi-ha.659] - 2026-05-21
 
 ### Added — Deploy-Trigger pro Projekt in ProjectsPage
