@@ -2527,6 +2527,50 @@ export class Alfred {
             this.logger.warn({ err }, 'Goals wiring failed (non-fatal)');
           }
 
+          // v640 — Daily KG-Question-Generator (18:00 lokal, max 3 Fragen/Tag)
+          if (this.llmProvider && this.database) {
+            try {
+              const { KgQuestionsRepository, ConfirmationRepository: ConfRepoQg, KnowledgeGraphRepository: KGRepoQg } = await import('@alfred/storage');
+              const { KgQuestionGenerator } = await import('./insights/question-generator.js');
+              const kgQuestRepo = new KgQuestionsRepository(adapter);
+              const kgRepoForQg = new KGRepoQg(adapter);
+              const KG_TYPES_QG = ['person', 'location', 'organization'] as const;
+              const facadeQg = {
+                listEntities: async (uid: string) => {
+                  const all: any[] = [];
+                  for (const t of KG_TYPES_QG) {
+                    try { for (const e of await kgRepoForQg.getEntitiesByType(uid, t as any)) all.push({ id: e.id, name: e.name, entityType: e.entityType, mentionCount: (e as any).mentionCount ?? 0, attributes: (e as any).attributes ?? {} }); } catch { /* skip */ }
+                  }
+                  return all;
+                },
+              };
+              const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, new ConfRepoQg(adapter), this.logger.child({ component: 'kg-question-gen' }));
+              const ownerUidQg = this.ownerMasterUserId || this.config.security?.ownerUserId;
+              const ownerPlatformQg = (this.config.telegram?.enabled ? 'telegram'
+                : this.config.matrix?.enabled ? 'matrix'
+                : this.config.discord?.enabled ? 'discord'
+                : 'api');
+              if (ownerUidQg && this.config.security?.ownerUserId) {
+                const ownerChat = this.config.security.ownerUserId;
+                const runDailyQg = () => generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3 }).catch(err =>
+                  this.logger.debug({ err }, 'KG-question-generator failed (non-fatal)'));
+                // Schedule next 18:00 local
+                const next18 = new Date();
+                next18.setHours(18, 0, 0, 0);
+                if (next18.getTime() <= Date.now()) next18.setDate(next18.getDate() + 1);
+                const delayQg = next18.getTime() - Date.now();
+                setTimeout(() => {
+                  runDailyQg();
+                  const intv = setInterval(runDailyQg, 24 * 3600_000);
+                  (intv as { unref?: () => void }).unref?.();
+                }, delayQg).unref?.();
+                this.logger.info({ firstRunIn: Math.round(delayQg / 60_000) + 'min', platform: ownerPlatformQg }, 'KG-Question-Generator scheduled (daily 18:00, max 3/run)');
+              }
+            } catch (err) {
+              this.logger.warn({ err }, 'KG-Question-Generator wiring failed (non-fatal)');
+            }
+          }
+
           // v639 — Weekly Goal-Extraction (Sonntag 21:00 lokal)
           if (goalsRepo && this.llmProvider && this.database) {
             try {

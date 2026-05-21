@@ -5,6 +5,45 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.640] - 2026-05-21
+
+### Added — KG Question-Generator + Self-Audit (v640 — Teil 3 von 3 für Personal-Optimization, Abschluss)
+
+Alfred fragt proaktiv nach KG-Lücken die er nicht selbst füllen kann. Anti-Nagging mit Ignore-Learning.
+
+**Schema** — SQLite Migration v71 / Postgres v74:
+- `kg_questions` Tabelle mit UNIQUE(user_id, target_kind, target_id, attribute) — pro KG-Entity + Attribut nur eine offene Frage
+- Felder: `question_text`, `asked_at`, `asked_via_platform/chat_id`, `status` (asked/answered/ignored/cancelled), `answered_at` + `answer_text` + `parsed_value`, `ignore_count`
+
+**Repository** (`packages/storage/src/repositories/kg-questions-repository.ts`):
+- `upsertAsk()` — UNIQUE-Constraint per (user, target, attribute). Existiert eine Frage <7d alt → skip. >7d → `ignore_count++` und neue `asked_at`. Bei 3 Ignores → status='ignored', wird nie wieder gefragt.
+- `markAnswered()` — speichert Antwort + optional parsed_value
+- `cancel()` — manueller User-Block
+- `ignoreRateForAttribute()` — wie oft wurde die Attribut-Klasse (z.B. 'birthday') schon ignoriert? Treibt das Back-Off.
+
+**Generator** (`packages/core/src/insights/question-generator.ts`):
+- Scannt KG für Lücken: Personen ohne Birthday/Relation bei ≥3 Mentions, Orgs ohne URL+Branche bei ≥5 Mentions, Locations ohne Adresse bei ≥3 Mentions
+- Score = `mentions × Attribut-Gewicht × backoff(attribute)`
+- `backoff` = `1 - min(0.7, ignore_rate_per_attribute)` → wenn Birthday-Fragen oft ignoriert wurden, sinkt der Score für NEUE Birthday-Fragen automatisch
+- Sortiert nach Score, nimmt Top-N, queued max 3 Confirmations pro Run
+- Pro Frage wird eine Confirmation gestellt mit gebundener `memory.add` Action (User-Antwort landet in der nächsten Nachricht und wird via Confirmation-Approval persistiert)
+
+**Scheduling**: täglich 18:00 lokal, max 3 Fragen/Tag. Platform: telegram > matrix > discord (erste aktive).
+
+### Workflow
+1. Alfred sieht im KG: "Bernhard" hat 8 Mentions, kein Birthday-Attribut, keine Frage in den letzten 7d.
+2. Generator scored: 8 × 2 × 1.0 = 16 (höchster Kandidat).
+3. Sendet Confirmation an Owner-Chat: "🤔 Wann hat Bernhard Geburtstag?"
+4. Approve → User schreibt Datum als nächste Nachricht → memory.add speichert es.
+5. Reject oder ignoriere 3× → wird nicht mehr gefragt.
+6. Wenn 5 von 10 Birthday-Fragen ignoriert wurden → ignore_rate=0.5 → backoff=0.5 → neue Birthday-Fragen scoren halb so hoch → andere Attribut-Klassen kommen zum Zug.
+
+### Notes
+- Build grün (12/12)
+- Personal-Optimization-Trio v638/v639/v640 komplett: Insight-Engine + Goal-Tracker + KG-Question-Generator
+- Frequenz und max-pro-Tag könnten später konfigurierbar gemacht werden (heute hardcoded auf 18:00 / 3 Fragen)
+- KG-Self-Audit-Funktion sitzt in v638 KgGapAdapter (statisch im Insights-Tab sichtbar). v640 ergänzt **aktiv nachfragen** statt nur in der Web-UI auflisten.
+
 ## [0.19.0-multi-ha.639] - 2026-05-21
 
 ### Added — Goal-Tracker (v639 — Teil 2 von 3 für Personal-Optimization)

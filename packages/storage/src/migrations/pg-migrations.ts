@@ -1025,4 +1025,30 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_goal_checkpoints_goal ON alfred_goal_checkpoints(goal_id, checked_at DESC)`, []);
     },
   },
+  {
+    version: 74,
+    description: 'v640 — kg_questions table for question-generator with ignore-learning',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS kg_questions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          target_kind TEXT NOT NULL,
+          target_id TEXT NOT NULL,
+          attribute TEXT NOT NULL,
+          question_text TEXT NOT NULL,
+          asked_at TEXT NOT NULL,
+          asked_via_platform TEXT,
+          asked_via_chat_id TEXT,
+          status TEXT NOT NULL DEFAULT 'asked',
+          answered_at TEXT,
+          answer_text TEXT,
+          parsed_value TEXT,
+          ignore_count INTEGER NOT NULL DEFAULT 0,
+          UNIQUE(user_id, target_kind, target_id, attribute)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_kg_questions_user_status ON kg_questions(user_id, status, asked_at DESC)`, []);
+    },
+  },
 ];
