@@ -258,7 +258,11 @@ export class ProjectAgentRunner {
         // wenn der Agent hängt. Validierungs-Phasen mit npm install/build/test/lint
         // brauchen aber 5-10min Sub-Process-Time während der Agent kein eigenes
         // stdout produziert (er wartet auf npm). Erkennung über Phase-Text-Keywords.
-        const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b/i;
+        // v624 D — Long-phase keywords (deutsch + englisch). v635 erweitert um
+        // Datenmodell/Migration/Schema/Refactor/Gallery-Schema — diese Phasen
+        // schreiben oft viele Dateien in stiller Folge (LLM-Thinking → File-Write
+        // → kein stdout), wurden vorher mit 10min-Default fälschlich gekillt.
+        const longPhasePattern = /\bnpm\s+(install|run\s+build|run\s+lint|run\s+typecheck|test|run\s+test|ci)\b|\bvalidier|\bvalidation\b|\bvalidate\b|\bbuild-?fehler\b|\breproduzieren\b|\bdatenmodell\b|\bdata\s*model\b|\bdatamodel\b|\bmigration(?:en|s)?\b|\bschema\b|\brefactor(?:ing)?\b|\bumbau\b|\btypsystem\b|\btype\s*system\b/i;
         const isLongPhase = longPhasePattern.test(phase);
         // v625 — Normal-Phase auf 10min angehoben (war 5min); Long-Phase bleibt 20min.
         const phaseTimeout = isLongPhase ? 20 * 60_000 : 10 * 60_000;

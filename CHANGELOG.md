@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.635] - 2026-05-21
+
+### Fixed — Agent-Executor Inactivity-Detection: File-mtime-Heartbeat ergänzt
+
+**Symptom** (User-Report 02:28 nach v634): Project-Agent lief 24 Phasen erfolgreich (77 Dateien geändert) und wurde dann in Phase 24/28 ("Datenmodell prüfen und ergänzen: Migrationen für Galerie/Trailer") nach 600s stdout/stderr-Stille gekillt — obwohl der Build danach grün gelaufen wäre (293/293 Tests passed in der Final-Output). Phase wurde mit Normal-Default 10min (v625) statt Long-Phase 20min behandelt, weil das Regex auf "Datenmodell/Migration"-Keywords nicht matched.
+
+**Ursache** (`agent-executor.ts`): Inactivity-Detection ist heute rein stdout/stderr-driven. claude-code kann in einzelnen langen Tool-Calls (Multi-Datei-Read, deep thinking) >10min stdout-stumm sein — entweder weil das Tool das wirklich braucht oder weil Node's child-process-Pipes den Output puffern wenn der Subprocess nicht aktiv flushed. Auch wenn der Agent in der Zwischenzeit **77 Dateien schreibt** wird das nicht als Aktivität erkannt.
+
+**Fix** (drei Komponenten, in absteigender Wichtigkeit):
+
+1. **File-mtime-Heartbeat** (`packages/skills/src/built-in/code-agent/agent-executor.ts`)
+   - Neuer `setInterval(30s)` vergleicht aktuellen mtime-Snapshot vom cwd gegen letzten Snapshot
+   - Findet sich ≥1 geänderte Datei → `resetInactivity('fs-heartbeat')` wird gefeuert
+   - Verhindert das exakte Symptom: Agent schreibt Dateien, stdout-Buffer staut sich, mit Heartbeat bleibt der Timer am Leben
+   - `unref()`-ed, wird in `close`/`error` Handler aufgeräumt
+   - `resetSource` wird in der Kill-Annotation mit ausgegeben (`last-activity=fs-heartbeat|stdout|stderr`) für Diagnose
+
+2. **Long-Phase-Pattern erweitert** (`packages/core/src/project-agent-runner.ts`)
+   - Zusätzlich erkannt: `Datenmodell`, `data model`, `datamodel`, `Migration(en|s)`, `Schema`, `Refactor(ing)`, `Umbau`, `Typsystem`, `type system`
+   - Diese Phasen schreiben typisch viele Dateien (Migration + Type + Repo + Service-Layer + Tests) und passten vorher nicht ins Regex → bekamen Normal-Default
+   - Jetzt: Long-Phase-Default (20min Inactivity)
+
+3. **Default sanft angehoben** `DEFAULT_TIMEOUT_MS` von 600.000ms (10min) → 720.000ms (12min)
+   - Kleiner Bump als Belt-and-Suspenders. Wichtiger ist (1) — der Heartbeat sollte 99% der Fälle erfassen
+   - Ceiling `MAX_TIMEOUT_MS` bleibt 30min, Long-Phase bleibt 20min explizit
+
+### Effekt
+- Phase 24 des Beispiels: schreibt vermutlich `prisma/schema.prisma` + Migration-File(s) + Typedefs binnen 30s → Heartbeat-Reset → Timer läuft weiter
+- Phasen mit `Migration`/`Datenmodell`/`Schema`/`Refactor` im Phase-Text: ab v635 mit 20min Default
+- Diagnose-Ausgabe: bei `exitCode=124` sehen wir jetzt `last-activity=fs-heartbeat` vs `last-activity=stdout` — wenn fs-heartbeat zuletzt zog und der Agent trotzdem killed wurde, war die Phase wirklich >12min ohne **jegliche** File-Aktivität
+
+### Notes
+- Build grün (12/12, nur skills + core touched)
+- Wenn v635 noch nicht reicht: nächster Schritt wäre Process-CPU-Heartbeat (`ps`-basiert auf Linux) als drittes Aktivitäts-Signal
+- Performance: mtime-Scan über cwd alle 30s — Skip-Dirs (.git, node_modules, .next, dist, .cache) hält den Scan klein, Last vernachlässigbar auch bei ~1k Files
+
 ## [0.19.0-multi-ha.634] - 2026-05-21
 
 ### Added — ITSM Operational Excellence (T4 vom T1-T4-Quartett, Abschluss)

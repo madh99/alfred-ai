@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 
-// v625 — 10min default inactivity. Vorher 5min war zu eng: LLM-Reasoning-Phasen
-// zwischen Tool-Calls können legitim 1-3min still sein, MCP-Tool-Calls bis ~30s,
-// komplexes Multi-File-Refactoring-Reasoning gelegentlich >2min. Mit Halfway-
-// Warning bei 5min wird der User sichtbar informiert bevor's killt.
-const DEFAULT_TIMEOUT_MS = 600_000; // 10 minutes — used as inactivity threshold by default
+// v635 — Default auf 12min angehoben (war 10min v625). Praxisbefund Phase 24
+// (Datenmodell/Migration): claude-code ging 600s lang stdout-stumm obwohl
+// Dateien geschrieben wurden — stdout-Buffering oder lange interne Tool-Calls.
+// Wichtiger als Default-Bump ist der File-mtime-Heartbeat unten.
+const DEFAULT_TIMEOUT_MS = 720_000; // 12 minutes — used as inactivity threshold by default
 // v626 — Ceiling 15→30min. v624 D wollte 20min für Long-Phases (npm install +
 // build + lint + typecheck + test als ein Block); die alte 15min-Decke clampte
 // den Wert intern auf 15min, wodurch das v624-Versprechen nicht eingelöst wurde.
@@ -231,7 +231,9 @@ export async function executeAgent(
     // gespamt wird. Pro inactivity-window genau eine Warning.
     let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
     let halfwayTimer: ReturnType<typeof setTimeout> | undefined;
-    const resetInactivity = () => {
+    let resetSource: 'stdout' | 'stderr' | 'fs-heartbeat' | 'initial' = 'initial';
+    const resetInactivity = (source: typeof resetSource = 'initial') => {
+      resetSource = source;
       if (inactivityTimer) clearTimeout(inactivityTimer);
       if (halfwayTimer) clearTimeout(halfwayTimer);
       halfwayTimer = setTimeout(() => {
@@ -248,6 +250,29 @@ export async function executeAgent(
     };
     resetInactivity();
 
+    // v635 — File-mtime-Heartbeat alle 30s. Wenn der Agent neue Dateien schreibt
+    // (typisch für Multi-File-Edits / Migrationen / Code-Generation) aber stdout/stderr
+    // gepuffert oder still ist, bleibt der Subprocess als aktiv erkannt und der
+    // Inactivity-Timer wird zurückgesetzt. Verhindert das v625-Symptom: Agent
+    // schreibt 77 Dateien aber wird mid-phase wegen stdout-Stille gekillt.
+    let lastHeartbeatSnapshot = beforeSnapshot;
+    const heartbeatInterval = setInterval(() => {
+      try {
+        const nowSnapshot = snapshotMtimes(cwd);
+        // Compare against last heartbeat snapshot — count files that changed since
+        let changed = 0;
+        for (const [fp, mtime] of nowSnapshot) {
+          const prev = lastHeartbeatSnapshot.get(fp);
+          if (prev === undefined || mtime > prev) { changed++; if (changed >= 1) break; }
+        }
+        if (changed > 0) {
+          lastHeartbeatSnapshot = nowSnapshot;
+          resetInactivity('fs-heartbeat');
+        }
+      } catch { /* fs scan errors are non-fatal */ }
+    }, 30_000);
+    (heartbeatInterval as { unref?: () => void }).unref?.();
+
     const absoluteTimer = setTimeout(() => {
       killed = true;
       killReason = 'absolute';
@@ -258,14 +283,14 @@ export async function executeAgent(
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
-      resetInactivity();      // v619 D0 — extend inactivity timer on every chunk
+      resetInactivity('stdout'); // v619 D0 — extend inactivity timer on every chunk
     });
 
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderr += text;
       options.onActivity?.(); // v608 F4 — keep sandbox watchdog alive
-      resetInactivity();      // v619 D0 — extend inactivity timer on every chunk
+      resetInactivity('stderr'); // v619 D0 — extend inactivity timer on every chunk
       // Forward stderr lines as progress updates
       if (options.onProgress) {
         const lastLine = text.trim().split('\n').pop();
@@ -285,15 +310,18 @@ export async function executeAgent(
       if (inactivityTimer) clearTimeout(inactivityTimer);
       if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
+      clearInterval(heartbeatInterval);
       const durationMs = Date.now() - startTime;
       const afterSnapshot = snapshotMtimes(cwd);
       const modifiedFiles = detectModifiedFiles(beforeSnapshot, afterSnapshot, cwd);
 
       // v619 D0 — annotate stderr with kill-reason so downstream diagnostics
       // (project-agent-runner) can distinguish inactivity-kill from absolute-cap-kill
+      // v635 — include last-activity-source so we can see whether the agent
+      // was silent both in stdout AND in file-writes (truly idle) vs only stdout
       let finalStderr = stderr;
       if (killReason === 'inactivity') {
-        finalStderr = stderr + `\n[agent-executor] killed: no output for ${Math.round(timeoutMs / 1000)}s (inactivity timeout)`;
+        finalStderr = stderr + `\n[agent-executor] killed: no output for ${Math.round(timeoutMs / 1000)}s (inactivity timeout, last-activity=${resetSource})`;
       } else if (killReason === 'absolute') {
         finalStderr = stderr + `\n[agent-executor] killed: ${Math.round(ABSOLUTE_CAP_MS / 60_000)}min absolute cap reached (was active but ran too long)`;
       }
@@ -311,6 +339,7 @@ export async function executeAgent(
       if (inactivityTimer) clearTimeout(inactivityTimer);
       if (halfwayTimer) clearTimeout(halfwayTimer);
       clearTimeout(absoluteTimer);
+      clearInterval(heartbeatInterval);
       const durationMs = Date.now() - startTime;
       resolve({
         stdout: truncateOutput(stdout),
