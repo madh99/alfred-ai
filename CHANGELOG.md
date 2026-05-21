@@ -5,6 +5,79 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.664] - 2026-05-21
+
+### Added — Project Automations mit 22 Templates (v663b)
+
+**Schema (Migration v81/v84)**:
+- Neue Tabelle `project_automations` (id/project_id/user_id/name/template_kind/
+  schedule/prompt_override/output_destination/enabled/last_run_at/last_run_status/
+  last_run_output/next_run_at/created_at)
+- Indizes auf `(project_id, enabled)` und `(next_run_at, enabled)` für Cron-Sweep
+
+**22 Template-Kinds** (`automation-templates.ts`):
+
+**Core (mit Daten-Collectors):**
+- 📅 daily_standup — täglich 08:00, git_log_recent
+- 📈 weekly_progress — Mo 09:00, git_log_recent
+- 🚀 release_prep — manuell, CHANGELOG-Vorschlag + Tag
+- 🔍 code_review — manuell, git_diff_summary + git_log_recent
+- 📦 dependency_check — 1. Monat 09:00, npm_outdated + pip_outdated + npm_audit
+- 🎯 open_items_triage — Mo 09:00, prompt-basiert
+- 📝 documentation_drift — monatlich, tree_overview
+
+**Erweiterungen (prompt-basiert mit Projekt-Kontext):**
+- 🧪 test_coverage_drift, 📊 activity_digest, 🔄 auto_rebase
+- 💡 brainstorming_pulse, 🔀 pr_pflege (mit `gh pr list` collector)
+- 🛡 security_sentinel (mit npm_audit), ⚡ performance_baseline
+- 👋 onboarding_doc, 💰 cost_tracking
+- 👥 stakeholder_briefing, ⚖ license_audit
+- 🔮 pre_mortem, 📜 adr_decisions
+- 🎬 demo_day_prep, 🐛 recurring_bug_detector
+- ✨ custom (frei definierbar)
+
+**AutomationEngine** (`automation/automation-engine.ts`):
+- Tick alle 60s → fällige `next_run_at <= now()` ausführen
+- Pro Run:
+  1. Projekt-Kontext laden (sessions/openItems/decisions)
+  2. Collectors ausführen (git log / npm outdated / npm audit / tree / pr list / coverage)
+  3. LLM-Call mit Template-Prompt + Kontext + Collector-Output (tier=fast, 1500 tokens)
+  4. Output an Destination liefern:
+     - `telegram` → Owner-Chat (default)
+     - `project_chat` → ConversationRepo.addMessage in Projekt-Conversation (v658)
+     - `email` / `web_notification` → fallback auf adapter (TODO)
+  5. `recordRun(status, output, nextRunAt)` persistieren
+- **Minimaler Cron-Parser** (5 Felder: min hour dom mon dow, mit *, Listen, Ranges, Steps)
+
+**API-Endpoints**:
+- `GET /api/projects/automation-templates` — 22 Templates auflisten
+- `GET /api/projects/:id/automations` — pro Projekt
+- `POST /api/projects/:id/automations` — Add (mit nextRunAt-Compute)
+- `PATCH /api/projects/automations/:id` — Update (Schedule → next_run_at recompute)
+- `DELETE /api/projects/automations/:id`
+- `POST /api/projects/automations/:id/run` — Sofort-Ausführen
+
+**WebUI** (`ProjectAutomationsView`):
+- 🤖 Automations Section in ProjectsPage Detail (collapsible)
+- Add-Modal mit Template-Picker (2-Spalten-Grid, 22 Cards mit Icon+Label+Description+Default-Schedule)
+- Pro Card: Klick öffnet Form mit
+  - Name (bearbeitbar)
+  - Schedule (Cron oder „manual")
+  - Output-Ziel Dropdown (Telegram/Projekt-Chat/Email/Web)
+  - Prompt (bearbeitbar — default vorgeladen)
+- Liste der konfigurierten Automations:
+  - Icon + Name + Status (✓ Last Run) + Next-Run-Hinweis
+  - ▶ Run-Now / ⏸ Pause-Toggle / ✕ Delete
+  - Expandable „Last Output" details
+
+### Notes
+- Build grün (12/12)
+- AutomationEngine startet automatisch im Background
+- Schedules sind opt-in via `enabled` Flag
+- Collectors die fehlen (npm/pip/gh nicht installiert) failen silent — Output ist dann nur Kontext-basiert
+- Custom-Template erlaubt freien Prompt mit Projekt-Kontext (cwd/sessions/openItems/decisions/conventions wird automatisch zum LLM gegeben)
+- `email` und `web_notification` Output-Destinations sind Routing-Hooks aber noch ohne separate Adapter — fallen aktuell auf Telegram zurück
+
 ## [0.19.0-multi-ha.663] - 2026-05-21
 
 ### Added — Project Conventions + Roadmap (v663a)

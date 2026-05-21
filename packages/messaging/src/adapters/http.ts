@@ -429,6 +429,13 @@ export class HttpAdapter extends MessagingAdapter {
     updateOpenItemRoadmap?: (itemId: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }) => Promise<boolean>;
     /** v663a — Alle open Items eines Milestones zu einem Project-Agent-Goal aggregieren und starten */
     implementMilestone?: (id: string, milestone: string) => Promise<{ ok: boolean; taskId?: string; itemCount?: number; error?: string }>;
+    /** v663b — Automations CRUD + Templates-Liste + Run-Now */
+    listAutomations?: (projectId: string) => Promise<any[]>;
+    listAutomationTemplates?: () => Promise<any[]>;
+    addAutomation?: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
+    updateAutomation?: (id: string, patch: Record<string, unknown>) => Promise<boolean>;
+    deleteAutomation?: (id: string) => Promise<boolean>;
+    runAutomationNow?: (id: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
     create: (input: Record<string, unknown>) => Promise<any>;
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
@@ -869,6 +876,18 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsUpdateOpenItemRoadmap(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/implement-milestone$/) && req.method === 'POST') {
       this.handleProjectsImplementMilestone(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
+      this.handleAutomationTemplates(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/automations$/) && req.method === 'GET') {
+      this.handleAutomationsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/automations$/) && req.method === 'POST') {
+      this.handleAutomationsAdd(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/automations\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleAutomationsUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/automations\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleAutomationsDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/automations\/[^/]+\/run$/) && req.method === 'POST') {
+      this.handleAutomationsRun(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -2332,6 +2351,69 @@ export class HttpAdapter extends MessagingAdapter {
     if (!data.milestone?.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'milestone required' })); return; }
     const result = await this.projectsCallbacks.implementMilestone(projectId, data.milestone.trim());
     res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // v663b — Automations Handlers
+  private async handleAutomationTemplates(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listAutomationTemplates) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const templates = await this.projectsCallbacks.listAutomationTemplates();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ templates }));
+  }
+
+  private async handleAutomationsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listAutomations) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const automations = await this.projectsCallbacks.listAutomations(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ automations }));
+  }
+
+  private async handleAutomationsAdd(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.addAutomation) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const automation = await this.projectsCallbacks.addAutomation(projectId, data);
+    res.writeHead(automation ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(automation ? { automation } : { error: 'add failed' }));
+  }
+
+  private async handleAutomationsUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.updateAutomation) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const ok = await this.projectsCallbacks.updateAutomation(id, data);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleAutomationsDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.deleteAutomation) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.projectsCallbacks.deleteAutomation(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleAutomationsRun(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.runAutomationNow) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const id = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.runAutomationNow(id);
+    res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 

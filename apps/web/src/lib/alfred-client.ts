@@ -631,6 +631,44 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v663b — Automations API
+  async fetchAutomationTemplates(): Promise<AutomationTemplate[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/automation-templates`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.templates ?? [];
+  }
+  async fetchProjectAutomations(projectId: string): Promise<ProjectAutomation[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/automations`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.automations ?? [];
+  }
+  async addProjectAutomation(projectId: string, input: Partial<ProjectAutomation>): Promise<ProjectAutomation | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/automations`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.automation ?? null;
+  }
+  async updateProjectAutomation(id: string, patch: Partial<ProjectAutomation>): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/automations/${id}`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    return res.ok;
+  }
+  async deleteProjectAutomation(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/automations/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+  async runProjectAutomation(id: string): Promise<{ ok: boolean; output?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/automations/${id}/run`, { method: 'POST', headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  }
+
   // v663a — Roadmap-API
   async fetchProjectRoadmap(projectId: string): Promise<Record<string, ProjectOpenItem[]>> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/roadmap`, { headers: this.authHeaders });
@@ -1422,6 +1460,33 @@ export interface GoalCheckpointItem {
   checkedAt: string;
   status?: string;
   notes?: string;
+}
+
+// v663b — Project Automations
+export interface AutomationTemplate {
+  kind: string;
+  label: string;
+  icon: string;
+  defaultSchedule: string;
+  description: string;
+  defaultPrompt: string;
+  collectors?: string[];
+}
+export interface ProjectAutomation {
+  id: string;
+  projectId: string;
+  userId: string;
+  name: string;
+  templateKind: string;
+  schedule?: string;
+  promptOverride?: string;
+  outputDestination: 'telegram' | 'project_chat' | 'email' | 'web_notification';
+  enabled: boolean;
+  lastRunAt?: string;
+  lastRunStatus?: 'success' | 'failed' | 'skipped';
+  lastRunOutput?: string;
+  nextRunAt?: string;
+  createdAt: string;
 }
 
 // v663a — Project Conventions Type

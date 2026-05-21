@@ -12,6 +12,7 @@ import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { ProjectRoadmapView } from './ProjectRoadmapView';
+import { ProjectAutomationsView } from './ProjectAutomationsView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -773,6 +774,9 @@ export function ProjectsPage() {
 
               {/* v663a — Roadmap-View (collapsible) */}
               <ProjectRoadmapView projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v663b — Automations-View (collapsible) */}
+              <ProjectAutomationsView projectId={detail.project.id} projectName={detail.project.name} />
 
               {/* v663a — Conventions (collapsible) */}
               <ProjectConventionsView

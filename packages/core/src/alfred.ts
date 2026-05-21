@@ -178,6 +178,9 @@ export class Alfred {
   /** v661 — Todos + Notes für WebUI-API */
   private todoRepo?: TodoRepository;
   private noteRepo?: NoteRepository;
+  /** v663b — Project Automations */
+  private projectAutomationsRepo?: import('@alfred/storage').ProjectAutomationsRepository;
+  private automationEngine?: import('./automation/automation-engine.js').AutomationEngine;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
   private bmwTelematicRepo?: BmwTelematicRepository;
@@ -622,6 +625,33 @@ export class Alfred {
       );
       this.projectRepo = projectRepo;
       this.projectManager = projectManager;
+
+      // v663b — Project Automations Repo + Engine
+      try {
+        const { ProjectAutomationsRepository } = await import('@alfred/storage');
+        const automationsRepo = new ProjectAutomationsRepository(adapter);
+        this.projectAutomationsRepo = automationsRepo;
+        const { AutomationEngine } = await import('./automation/automation-engine.js');
+        const ownerChatIdForAuto = this.config.security?.ownerUserId ?? '';
+        const ownerPlatformForAuto = (this.config.telegram?.enabled ? 'telegram'
+          : this.config.matrix?.enabled ? 'matrix'
+          : 'api') as Platform;
+        const engine = new AutomationEngine(
+          automationsRepo,
+          projectRepo,
+          conversationRepo,
+          this.llmProvider,
+          this.adapters,
+          this.logger.child({ component: 'automation-engine' }),
+          ownerChatIdForAuto,
+          ownerPlatformForAuto,
+        );
+        this.automationEngine = engine;
+        engine.start();
+        this.logger.info('Automation Engine started (v663b)');
+      } catch (err) {
+        this.logger.warn({ err }, 'AutomationEngine wiring failed (non-fatal)');
+      }
 
       // v616 NA1 — One-shot cleanup für unleserliche Projekt-Namen aus dem alten
       // goal.slice(0,80) Format. Idempotent — läuft sicher mehrfach. Fire-and-forget
@@ -5001,6 +5031,74 @@ export class Alfred {
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
+          // v663b — Automations CRUD + Templates + Run-Now
+          listAutomationTemplates: async () => {
+            try {
+              const mod = await import('./automation/automation-templates.js');
+              return mod.listAutomationTemplates();
+            } catch { return []; }
+          },
+          listAutomations: async (projectId: string) => {
+            try {
+              if (!this.projectAutomationsRepo) return [];
+              return await this.projectAutomationsRepo.listByProject(projectId);
+            } catch { return []; }
+          },
+          addAutomation: async (projectId: string, input: Record<string, unknown>) => {
+            try {
+              if (!this.projectAutomationsRepo) return null;
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return null;
+              const created = await this.projectAutomationsRepo.create({
+                projectId, userId: uid,
+                name: String(input.name ?? 'Automation'),
+                templateKind: String(input.templateKind ?? 'custom') as any,
+                schedule: input.schedule ? String(input.schedule) : undefined,
+                promptOverride: input.promptOverride ? String(input.promptOverride) : undefined,
+                outputDestination: (input.outputDestination as any) ?? 'telegram',
+                enabled: input.enabled !== false,
+              });
+              // nextRunAt aus schedule berechnen + speichern
+              if (this.automationEngine && created.schedule) {
+                const next = this.automationEngine.computeNextRun(created.schedule);
+                if (next) await this.projectAutomationsRepo.update(created.id, { nextRunAt: next });
+                return { ...created, nextRunAt: next };
+              }
+              return created;
+            } catch (err) { this.logger.warn({ err }, 'Automations API add failed'); return null; }
+          },
+          updateAutomation: async (id: string, patch: Record<string, unknown>) => {
+            try {
+              if (!this.projectAutomationsRepo) return false;
+              const mappedPatch: Record<string, unknown> = {};
+              if (typeof patch.name === 'string') mappedPatch.name = patch.name;
+              if (typeof patch.schedule === 'string' || patch.schedule === null) mappedPatch.schedule = patch.schedule;
+              if (typeof patch.promptOverride === 'string' || patch.promptOverride === null) mappedPatch.promptOverride = patch.promptOverride;
+              if (typeof patch.outputDestination === 'string') mappedPatch.outputDestination = patch.outputDestination;
+              if (typeof patch.enabled === 'boolean') mappedPatch.enabled = patch.enabled;
+              const ok = await this.projectAutomationsRepo.update(id, mappedPatch as any);
+              // nextRunAt neu berechnen wenn schedule geändert
+              if (ok && this.automationEngine && typeof patch.schedule === 'string') {
+                const next = this.automationEngine.computeNextRun(patch.schedule);
+                await this.projectAutomationsRepo.update(id, { nextRunAt: next });
+              }
+              return ok;
+            } catch { return false; }
+          },
+          deleteAutomation: async (id: string) => {
+            try { return this.projectAutomationsRepo ? await this.projectAutomationsRepo.delete(id) : false; } catch { return false; }
+          },
+          runAutomationNow: async (id: string) => {
+            try {
+              if (!this.projectAutomationsRepo || !this.automationEngine) return { ok: false, error: 'Engine nicht verfügbar' };
+              const auto = await this.projectAutomationsRepo.getById(id);
+              if (!auto) return { ok: false, error: 'Automation nicht gefunden' };
+              const output = await this.automationEngine.runAutomation(auto);
+              return { ok: true, output };
+            } catch (err) { return { ok: false, error: (err as Error).message }; }
+          },
+
           // v663a — Roadmap-Items grouped by milestone
           listRoadmap: async (id: string) => {
             try {

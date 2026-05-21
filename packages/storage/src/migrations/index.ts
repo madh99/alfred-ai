@@ -1866,4 +1866,31 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_open_items_roadmap ON project_open_items(project_id, roadmap_milestone, roadmap_order)`);
     },
   },
+  {
+    version: 81,
+    description: 'v663b — project_automations Tabelle für Templates (Standup, Release-Pflege, etc.)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_automations (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          template_kind TEXT NOT NULL,
+          schedule TEXT,
+          prompt_override TEXT,
+          output_destination TEXT NOT NULL DEFAULT 'telegram',
+          enabled INTEGER NOT NULL DEFAULT 1,
+          last_run_at TEXT,
+          last_run_status TEXT,
+          last_run_output TEXT,
+          next_run_at TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_automations_project ON project_automations(project_id, enabled)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_automations_next ON project_automations(next_run_at, enabled)`);
+    },
+  },
 ];

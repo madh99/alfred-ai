@@ -63,6 +63,8 @@ export { ProjectAgentPlansRepository } from './repositories/project-agent-plans-
 export type { PlanPhase, PlanPhaseStatus } from './repositories/project-agent-plans-repository.js';
 export { ProjectAgentLessonsRepository } from './repositories/project-agent-lessons-repository.js';
 export type { ProjectAgentLesson } from './repositories/project-agent-lessons-repository.js';
+export { ProjectAutomationsRepository } from './repositories/project-automations-repository.js';
+export type { ProjectAutomation, AutomationTemplateKind, AutomationOutputDestination, AutomationRunStatus } from './repositories/project-automations-repository.js';
 export { PlanRepository } from './repositories/plan-repository.js';
 export { ProcessedMessageRepository } from './repositories/processed-message-repository.js';
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';
