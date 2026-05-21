@@ -1,5 +1,5 @@
 import type { SkillMetadata, SkillContext, SkillResult, IncidentSeverity, ServiceHealthStatus } from '@alfred/types';
-import type { ItsmRepository, ProblemRepository } from '@alfred/storage';
+import type { ItsmRepository, ProblemRepository, MetricSamplesRepository } from '@alfred/storage';
 import type { CmdbRepository } from '@alfred/storage';
 import { Skill } from '../skill.js';
 
@@ -12,7 +12,8 @@ type Action =
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard'
   | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs'
   | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches'
-  | 'backfill_assets' | 'bulk_link_to_problem';
+  | 'backfill_assets' | 'bulk_link_to_problem'
+  | 'mttr_report' | 'capacity_forecast';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -61,13 +62,15 @@ export class ItsmSkill extends Skill {
       '"check_sla_compliance" prüft alle aktiven SLAs auf Einhaltung. ' +
       '"list_sla_breaches" listet SLA-Verletzungen (sla_period). ' +
       '"backfill_assets" scannt alle Incidents ohne affected_asset_ids und matched Asset-Names im Titel/Symptoms — one-shot DB-Cleanup für Altdaten. ' +
-      '"bulk_link_to_problem" verknüpft mehrere Incidents in einem Schritt mit einem bestehenden Problem (problem_id, incident_ids).',
+      '"bulk_link_to_problem" verknüpft mehrere Incidents in einem Schritt mit einem bestehenden Problem (problem_id, incident_ids). ' +
+      '"mttr_report" zeigt MTTR-Statistik (Mean/Median/p95 in Minuten) je Asset + Recurrence-Counter, Filter window_days. ' +
+      '"capacity_forecast" prognostiziert wann Metrik-Werte (CPU/RAM/disk%) die Schwelle erreichen (window_days, threshold).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -155,6 +158,7 @@ export class ItsmSkill extends Skill {
   private readonly itsm: ItsmRepository;
   private readonly cmdb: CmdbRepository;
   private readonly problem?: ProblemRepository;
+  private metricSamples?: MetricSamplesRepository;
   private llmCallback?: LlmCallback;
 
   constructor(itsmRepo: ItsmRepository, cmdbRepo: CmdbRepository, problemRepo?: ProblemRepository) {
@@ -163,6 +167,8 @@ export class ItsmSkill extends Skill {
     this.cmdb = cmdbRepo;
     this.problem = problemRepo;
   }
+
+  setMetricSamplesRepo(repo: MetricSamplesRepository): void { this.metricSamples = repo; }
 
   setLlmCallback(cb: LlmCallback): void {
     this.llmCallback = cb;
@@ -236,6 +242,8 @@ export class ItsmSkill extends Skill {
         case 'problem_dashboard': return await this.problemDashboardAction(userId);
         case 'backfill_assets': return await this.backfillAssets(userId);
         case 'bulk_link_to_problem': return await this.bulkLinkToProblem(userId, input);
+        case 'mttr_report': return await this.mttrReportAction(userId, input);
+        case 'capacity_forecast': return await this.capacityForecastAction(userId, input);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
         case 'add_component': return await this.addComponent(userId, input);
@@ -817,6 +825,63 @@ export class ItsmSkill extends Skill {
     const display = `## Bulk-Link abgeschlossen\n\n- **Verknüpft:** ${linked}/${incidentIds.length}\n` +
       (failed.length > 0 ? `- **Fehlgeschlagen:** ${failed.length} (${failed.slice(0, 5).map(i => i.slice(0, 8)).join(', ')}${failed.length > 5 ? '…' : ''})` : '');
     return { success: linked > 0, data: { linked, failed }, display };
+  }
+
+  /**
+   * v633 T3.3 — MTTR-Report: aggregierte Resolve-Zeiten je Asset für die letzten N Tage.
+   */
+  private async mttrReportAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const windowDays = (input.window_days as number) ?? 30;
+    const report = await this.itsm.mttrReport(userId, { windowDays });
+    if (report.length === 0) return { success: true, data: [], display: 'Keine resolved-Incidents im Zeitfenster.' };
+
+    const allRow = report.find(r => r.scope === 'all');
+    const perAsset = report.filter(r => r.scope === 'asset').slice(0, 10);
+    const lines: string[] = [
+      `## MTTR-Report (${windowDays}d)`,
+      '',
+    ];
+    if (allRow) {
+      lines.push(`**Gesamt**: ${allRow.count} Incidents · ⌀ ${allRow.meanMinutes}min · Median ${allRow.medianMinutes}min · p95 ${allRow.p95Minutes}min · ${allRow.recurrenceTotal} Re-Opens`);
+      lines.push('');
+    }
+    if (perAsset.length > 0) {
+      lines.push('| Asset | # | ⌀ | Median | p95 | Re-Opens |');
+      lines.push('|---|---|---|---|---|---|');
+      for (const r of perAsset) {
+        const aid = r.assetId ? r.assetId.slice(0, 8) : '—';
+        lines.push(`| ${aid} | ${r.count} | ${r.meanMinutes}m | ${r.medianMinutes}m | ${r.p95Minutes}m | ${r.recurrenceTotal} |`);
+      }
+    }
+    return { success: true, data: report, display: lines.join('\n') };
+  }
+
+  /**
+   * v633 T3.4 — Capacity-Forecast: lineare Regression über cmdb_metric_samples.
+   * Sortiert nach "Tage bis Threshold" (default 95%) — zeigt was als erstes voll wird.
+   */
+  private async capacityForecastAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.metricSamples) return { success: false, error: 'MetricSamplesRepository nicht konfiguriert' };
+    const windowDays = (input.window_days as number) ?? 30;
+    const threshold = (input.threshold as number) ?? 95;
+    const forecasts = await this.metricSamples.forecast(userId, { windowDays, threshold });
+    if (forecasts.length === 0) return { success: true, data: [], display: 'Noch keine ausreichenden Messwerte für Forecast.' };
+
+    const lines: string[] = [
+      `## Capacity Forecast (${windowDays}d Fenster, Threshold ${threshold}%)`,
+      '',
+      '| Metrik | Asset | Aktuell | Trend/Tag | Tage bis Threshold |',
+      '|---|---|---|---|---|',
+    ];
+    for (const f of forecasts.slice(0, 20)) {
+      const aid = f.assetId ? f.assetId.slice(0, 8) : '—';
+      const trend = f.slopePerDay >= 0 ? `+${f.slopePerDay.toFixed(2)}` : f.slopePerDay.toFixed(2);
+      const tts = f.daysUntilThreshold == null ? 'kein Anstieg' :
+                  f.daysUntilThreshold === 0 ? '⚠️ jetzt' :
+                  `${f.daysUntilThreshold}d`;
+      lines.push(`| ${f.metricName} | ${aid} | ${f.latestValue.toFixed(1)}% | ${trend}%/d | ${tts} |`);
+    }
+    return { success: true, data: forecasts, display: lines.join('\n') };
   }
 
   // ── Services ───────────────────────────────────────────────

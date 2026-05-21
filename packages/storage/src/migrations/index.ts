@@ -1595,4 +1595,27 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_host_capabilities_host ON host_capabilities(host)`);
     },
   },
+  {
+    version: 67,
+    description: 'v633 T3 — Incident recurrence_count + cmdb_metric_samples for capacity-forecast',
+    up(db) {
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN recurrence_count INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_incidents ADD COLUMN last_recurrence_at TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE cmdb_change_requests ADD COLUMN pr_url TEXT`); } catch { /* exists */ }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmdb_metric_samples (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_id TEXT,
+          metric_name TEXT NOT NULL,
+          value REAL NOT NULL,
+          unit TEXT,
+          sampled_at TEXT NOT NULL,
+          source TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_metric_samples_asset_metric_time ON cmdb_metric_samples(asset_id, metric_name, sampled_at DESC)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_metric_samples_user_time ON cmdb_metric_samples(user_id, sampled_at DESC)`);
+    },
+  },
 ];

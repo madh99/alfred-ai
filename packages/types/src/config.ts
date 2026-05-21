@@ -709,6 +709,10 @@ export interface CmdbIncident {
   acknowledgedAt?: string;
   resolvedAt?: string;
   closedAt?: string;
+  /** v633 T3.5 — how many times this incident was re-opened from a 24h recurrence window. */
+  recurrenceCount?: number;
+  /** v633 T3.5 — timestamp of the last re-open event (informational). */
+  lastRecurrenceAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -823,6 +827,8 @@ export interface CmdbChangeRequest {
   result?: string;
   linkedIncidentId?: string;
   linkedProblemId?: string;
+  /** v633 T3.6 — GitLab/GitHub Merge-Request URL (auto-populated when change is created by code-agent fix). */
+  prUrl?: string;
   createdAt: string;
   updatedAt: string;
 }

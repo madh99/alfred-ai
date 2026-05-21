@@ -86,6 +86,34 @@ import { InsightTracker } from './insight-tracker.js';
 import { ReflectionEngine } from './reflection-engine.js';
 import { resolveReflectionConfig } from './reflection/index.js';
 
+/**
+ * v633 T3.2 — Look up a known-error Problem whose keyword footprint matches the new
+ * alert message. Used to surface the known workaround at incident-creation time so the
+ * user sees "Bekannte Lösung: …" immediately instead of re-investigating.
+ *
+ * Match criteria: problem is marked `is_known_error=true`, has a `workaround` or
+ * `knownErrorDescription` set, and shares ≥2 distinguishing keywords with the alert.
+ */
+async function findKnownErrorMatch(
+  problemRepo: { listProblems: (uid: string, f?: { isKnownError?: boolean; limit?: number }) => Promise<Array<{ id: string; title: string; workaround?: string; knownErrorDescription?: string; linkedIncidentIds: string[] }>> },
+  userId: string,
+  alertMessage: string,
+  alertKeywords: string[],
+): Promise<{ id: string; title: string; workaround?: string; knownErrorDescription?: string } | null> {
+  const knownErrors = await problemRepo.listProblems(userId, { isKnownError: true, limit: 50 });
+  if (knownErrors.length === 0) return null;
+  const msgLower = alertMessage.toLowerCase();
+  const kwLower = alertKeywords.map(k => k.toLowerCase()).filter(k => k.length >= 4);
+  for (const p of knownErrors) {
+    if (!p.workaround && !p.knownErrorDescription) continue;
+    const titleLower = p.title.toLowerCase();
+    // Cross-match: keywords from alert against problem title
+    const matchCount = kwLower.filter(k => titleLower.includes(k) || msgLower.split(/\s+/).some(w => p.title.toLowerCase().includes(w.toLowerCase()) && w.length >= 4)).length;
+    if (matchCount >= 2) return p;
+  }
+  return null;
+}
+
 /** Get ISO week number for a date. */
 function getISOWeek(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -1384,14 +1412,16 @@ export class Alfred {
         const itsmRepo = new ItsmRepository(adapter);
         itsmRepo.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-        const { ProblemRepository, RunbookRepository } = await import('@alfred/storage');
+        const { ProblemRepository, RunbookRepository, MetricSamplesRepository } = await import('@alfred/storage');
         const problemRepo = new ProblemRepository(adapter);
         const runbookRepo = new RunbookRepository(adapter);
+        const metricSamplesRepo = new MetricSamplesRepository(adapter);
         this.runbookRepo = runbookRepo;
 
         const { CmdbSkill, ItsmSkill, InfraDocsSkill, RunbookSkill } = await import('@alfred/skills');
         const cmdbSkill = new CmdbSkill(cmdbRepo, this.config.cmdb?.staleThresholdDays ?? 7);
         const itsmSkill = new ItsmSkill(itsmRepo, cmdbRepo, problemRepo);
+        itsmSkill.setMetricSamplesRepo(metricSamplesRepo);
         const infraDocsSkill = new InfraDocsSkill(cmdbRepo, itsmRepo);
         const runbookSkill = new RunbookSkill(runbookRepo);
 
@@ -1838,6 +1868,36 @@ export class Alfred {
                     }
                     const affectedAssetIds = [...matchedAssetIds];
 
+                    // v633 T3.4 — Persist numeric sample (xx.x%) into cmdb_metric_samples
+                    // for trend / capacity-forecast (regression über windowDays).
+                    try {
+                      const numMatch = /\b(\d{1,3}(?:[.,]\d{1,3})?)\s*(%|MB|GB|ms|s)\b/i.exec(alert.message);
+                      if (numMatch && metricSamplesRepo) {
+                        const value = parseFloat(numMatch[1].replace(',', '.'));
+                        const unit = numMatch[2];
+                        // Try to derive metric name from message: "RAM usage", "CPU usage", "disk usage"
+                        const metricMatch = /\b(RAM|CPU|disk|memory|GPU|swap|load|temperature)\b\s*(usage|util(?:isation)?|free|used)?/i.exec(alert.message);
+                        const metricName = metricMatch ? `${metricMatch[1].toLowerCase()}${metricMatch[2] ? '_' + metricMatch[2].toLowerCase() : ''}` : 'value';
+                        for (const aid of (affectedAssetIds.length > 0 ? affectedAssetIds : [undefined])) {
+                          await metricSamplesRepo.record(userId, { assetId: aid, metricName, value, unit, source: alert.source });
+                        }
+                      }
+                    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'Metric-sample record failed (non-fatal)'); }
+
+                    // v633 T3.5 — Re-Open statt Duplicate: wenn ein resolved/closed Incident
+                    // mit demselben Pattern in den letzten 24h existiert, re-open + recurrence++
+                    // statt neuen Incident anlegen. Verhindert Flapping-Spam.
+                    const reopenCandidate = await itsmRepo.findRecentResolvedDuplicate(userId, alert.source, keywords, 24);
+                    if (reopenCandidate) {
+                      const reopened = await itsmRepo.reopenIncident(userId, reopenCandidate.id, alert.message);
+                      if (reopened) {
+                        if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, reopened.id);
+                        // High recurrence (≥3 within 24h) → also flag as new for pattern detection
+                        if ((reopened.recurrenceCount ?? 0) >= 3) newIncidentIds.push(reopened.id);
+                        continue;
+                      }
+                    }
+
                     // 1. Check keyword-match against existing open incidents → duplicate → append symptoms
                     const existingInc = await itsmRepo.findOpenIncidentForAsset(userId, alert.source, keywords);
                     if (existingInc) {
@@ -1853,10 +1913,21 @@ export class Alfred {
                       if (recent) relatedId = recent.id;
                     }
 
+                    // v633 T3.2 — Known-Error-Auto-Apply: matched ein bekanntes Problem mit
+                    // is_known_error=true → bekannte Lösung in Symptoms vorabhängen, sodass
+                    // der User direkt sieht was der Workaround ist.
+                    let symptoms = alert.message;
+                    try {
+                      const knownErrorMatch = await findKnownErrorMatch(problemRepo, userId, alert.message, keywords);
+                      if (knownErrorMatch) {
+                        symptoms = `🔁 **Bekannte Lösung aus Problem ${knownErrorMatch.id.slice(0, 8)}** ("${knownErrorMatch.title.slice(0, 60)}"):\n${knownErrorMatch.workaround ?? knownErrorMatch.knownErrorDescription ?? '(siehe Problem-Details)'}\n\n---\n\n${alert.message}`;
+                      }
+                    } catch { /* best effort */ }
+
                     const newInc = await itsmRepo.createIncident(userId, {
                       title: `${alert.source}: ${alert.message.slice(0, 100)}`,
                       severity,
-                      symptoms: alert.message,
+                      symptoms,
                       detectedBy: 'monitor',
                       relatedIncidentId: relatedId,
                       affectedAssetIds,
@@ -1908,6 +1979,9 @@ export class Alfred {
                           for (const incId of p.incidentIds) {
                             try { await problemRepo.linkIncident(userId, problem.id, incId); } catch { /* best effort */ }
                           }
+                          // v633 T3.1 — Auto-RCA: fire-and-forget LLM call to seed root-cause hypothesis
+                          this.runProblemRca(userId, problem.id, problemRepo, itsmRepo).catch(err =>
+                            this.logger.debug({ err, problemId: problem.id }, 'Auto-RCA failed (non-fatal)'));
                           // Notify owner — no confirmation needed
                           const adapter = this.adapters.get(ownerPlatformForPattern as any);
                           if (adapter && ownerChatId) {
@@ -2059,6 +2133,9 @@ export class Alfred {
                     for (const incId of p.incidentIds) {
                       try { await problemRepo.linkIncident(ownerUidForSweep, problem.id, incId); } catch { /* best effort */ }
                     }
+                    // v633 T3.1 — Auto-RCA für Sweep-promoted Problems
+                    this.runProblemRca(ownerUidForSweep, problem.id, problemRepo, itsmRepo).catch(err =>
+                      this.logger.debug({ err, problemId: problem.id }, 'Auto-RCA (sweep) failed (non-fatal)'));
                     const adapter = this.adapters.get(ownerPlatformForSweep as any);
                     if (adapter) {
                       try {
@@ -2073,6 +2150,64 @@ export class Alfred {
             }, 30 * 60_000);
             (sweepInterval as { unref?: () => void }).unref?.();
             this.logger.info('ITSM pattern-sweep registered (30min interval)');
+
+            // v633 T3.7 — Daily ITSM-Reflection (täglich ~23:00 lokal): Top-Wiederkehrer,
+            // neue Problems, MTTR-Trend, Capacity-Forecast → Insight an Owner-Chat.
+            const dailyReflection = async () => {
+              try {
+                const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+                const recentIncidents = await itsmRepo.listIncidents(ownerUidForSweep, { limit: 200 });
+                const last7d = recentIncidents.filter(i => i.openedAt >= since);
+                const closedLast7d = last7d.filter(i => i.status === 'closed' || i.status === 'resolved');
+                const recurrenceTop = last7d
+                  .filter(i => (i.recurrenceCount ?? 0) >= 2)
+                  .sort((a, b) => (b.recurrenceCount ?? 0) - (a.recurrenceCount ?? 0))
+                  .slice(0, 5);
+                const mttr = await itsmRepo.mttrReport(ownerUidForSweep, { windowDays: 7 });
+                const mttrAll = mttr.find(m => m.scope === 'all');
+                const forecast = await metricSamplesRepo.forecast(ownerUidForSweep, { windowDays: 30, threshold: 95 });
+                const urgentForecasts = forecast.filter(f => f.daysUntilThreshold != null && f.daysUntilThreshold <= 30).slice(0, 5);
+
+                const lines: string[] = [];
+                lines.push(`📊 **ITSM Tagesreflexion** (${new Date().toISOString().slice(0, 10)})`);
+                lines.push('');
+                lines.push(`**Letzte 7d**: ${last7d.length} Incidents · ${closedLast7d.length} geschlossen`);
+                if (mttrAll) lines.push(`**MTTR**: ⌀ ${mttrAll.meanMinutes}min · Median ${mttrAll.medianMinutes}min · p95 ${mttrAll.p95Minutes}min`);
+                if (recurrenceTop.length > 0) {
+                  lines.push('');
+                  lines.push(`**Top Wiederkehrer:**`);
+                  for (const r of recurrenceTop) {
+                    lines.push(`- ${r.recurrenceCount}× ${r.title.slice(0, 80)}`);
+                  }
+                }
+                if (urgentForecasts.length > 0) {
+                  lines.push('');
+                  lines.push(`**Capacity-Vorhersage (≤30d zu 95%):**`);
+                  for (const f of urgentForecasts) {
+                    lines.push(`- ${f.metricName}${f.assetId ? ` @ ${f.assetId.slice(0, 8)}` : ''}: aktuell ${f.latestValue.toFixed(1)}%, ${f.daysUntilThreshold}d bis Schwelle`);
+                  }
+                }
+                if (last7d.length === 0 && recurrenceTop.length === 0 && urgentForecasts.length === 0) return; // nothing to say
+
+                const adapter = this.adapters.get(ownerPlatformForSweep as any);
+                if (adapter) {
+                  await adapter.sendMessage(this.config.security?.ownerUserId ?? '', lines.join('\n'));
+                }
+                this.logger.info({ incidents: last7d.length }, 'ITSM daily-reflection sent');
+              } catch (err) { this.logger.debug({ err: (err as Error).message }, 'ITSM daily-reflection failed (non-fatal)'); }
+            };
+            // Schedule for ~23:00 local each day. Compute initial delay so first fire is at the next 23:00.
+            const now = new Date();
+            const next23 = new Date(now);
+            next23.setHours(23, 0, 0, 0);
+            if (next23.getTime() <= now.getTime()) next23.setDate(next23.getDate() + 1);
+            const initialDelay = next23.getTime() - now.getTime();
+            setTimeout(() => {
+              dailyReflection();
+              const dailyInterval = setInterval(dailyReflection, 24 * 3600_000);
+              (dailyInterval as { unref?: () => void }).unref?.();
+            }, initialDelay).unref?.();
+            this.logger.info({ firstRunIn: Math.round(initialDelay / 60_000) + 'min' }, 'ITSM daily-reflection scheduled (23:00 local)');
           }
         }
 
@@ -5047,6 +5182,64 @@ export class Alfred {
     }
     this.logger.debug('Web UI not found — serving API only');
     return undefined;
+  }
+
+  /**
+   * v633 T3.1 — Run an LLM-based root-cause hypothesis for a freshly-created problem.
+   * Fire-and-forget: builds a focused prompt with linked incident titles+symptoms,
+   * sends to the LLM (default tier), persists the response as `analysis_notes` and
+   * tentative `proposedFix`. Skipped if LLM not configured or fewer than 2 linked
+   * incidents (not enough signal to be useful).
+   */
+  private async runProblemRca(
+    userId: string,
+    problemId: string,
+    problemRepo: { getProblemById: (uid: string, id: string) => Promise<any>; updateProblem: (uid: string, id: string, u: Record<string, unknown>) => Promise<any>; appendAnalysisNotes: (uid: string, id: string, note: string) => Promise<void> },
+    itsmRepo: { getIncidentById: (uid: string, id: string) => Promise<any> },
+  ): Promise<void> {
+    if (!this.llmProvider) return;
+    const problem = await problemRepo.getProblemById(userId, problemId);
+    if (!problem || (problem.linkedIncidentIds?.length ?? 0) < 2) return;
+    if (problem.rootCauseDescription) return; // already analyzed
+
+    const incidentDetails: string[] = [];
+    for (const incId of problem.linkedIncidentIds.slice(0, 8)) {
+      try {
+        const inc = await itsmRepo.getIncidentById(userId, incId);
+        if (!inc) continue;
+        incidentDetails.push(`- **${inc.title}** (${inc.openedAt?.slice(0, 16) ?? '?'})\n  Symptoms: ${(inc.symptoms ?? '').slice(0, 200)}`);
+      } catch { /* skip */ }
+    }
+    if (incidentDetails.length === 0) return;
+
+    const prompt = `Du bist ein erfahrener Site-Reliability-Engineer. Analysiere die folgenden ${incidentDetails.length} ähnlichen Incidents und formuliere eine Root-Cause-Hypothese.
+
+**Problem-Titel:** ${problem.title}
+
+**Linked Incidents:**
+${incidentDetails.join('\n')}
+
+Antworte präzise in **3 Abschnitten**, jeder ≤3 Sätze:
+
+1. **Root-Cause-Hypothese:** Was ist die wahrscheinlichste Ursache?
+2. **Untersuchungs-Schritte:** Welche 2-3 konkreten Checks würdest du jetzt machen?
+3. **Vorgeschlagener Fix:** Welche Maßnahme behebt das Problem dauerhaft?
+
+Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generischen Floskeln.`;
+
+    try {
+      const res = await this.llmProvider.complete({ messages: [{ role: 'user', content: prompt }], tier: 'default' as any, maxTokens: 800 });
+      const note = `🤖 Auto-RCA (${new Date().toISOString().slice(0, 16)})\n${res.content}`;
+      await problemRepo.appendAnalysisNotes(userId, problemId, note);
+      // Try to extract the "Vorgeschlagener Fix" section into proposedFix
+      const fixMatch = /Vorgeschlagener Fix[:\s]*([\s\S]+?)(?:\n\n|$)/i.exec(res.content);
+      if (fixMatch) {
+        await problemRepo.updateProblem(userId, problemId, { proposedFix: fixMatch[1].trim().slice(0, 500) });
+      }
+      this.logger.info({ problemId, incidentsAnalyzed: incidentDetails.length }, 'Auto-RCA completed');
+    } catch (err) {
+      this.logger.debug({ err: (err as Error).message, problemId }, 'Auto-RCA LLM call failed');
+    }
   }
 
   private async buildPrometheusMetrics(): Promise<string> {

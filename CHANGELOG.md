@@ -5,6 +5,64 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.633] - 2026-05-21
+
+### Added — Smart ITSM Erweiterungen (T3 vom T1-T4-Quartett)
+
+Sieben Verbesserungen, die den Lifecycle deutlich aufräumen und Alfred dazu bringen, mehr Eigenarbeit zu leisten.
+
+**Migrationen** — SQLite v67, Postgres v70:
+- `cmdb_incidents`: `recurrence_count INTEGER DEFAULT 0`, `last_recurrence_at TEXT`
+- `cmdb_change_requests`: `pr_url TEXT`
+- Neue Tabelle `cmdb_metric_samples (id, user_id, asset_id, metric_name, value, unit, sampled_at, source)` + Indizes
+
+**T3.1 — Auto-RCA bei Problem-Erstellung** (`alfred.ts:runProblemRca`)
+- Bei `auto-promoted` und Sweep-Problems mit ≥2 verlinkten Incidents wird fire-and-forget ein LLM-Call abgesetzt (default tier, 800 Tokens, deutsch).
+- Prompt enthält Problem-Titel + Incident-Titel/Symptoms.
+- Antwort wird in 3 Abschnitten erwartet (Root-Cause-Hypothese, Untersuchungs-Schritte, Vorgeschlagener Fix).
+- Persistenz: `analysisNotes` via `appendAnalysisNotes`, `proposedFix` per regex-Extraktion aus der "Vorgeschlagener Fix"-Sektion.
+- Skipped wenn LLM nicht konfiguriert oder `rootCauseDescription` schon gesetzt.
+
+**T3.2 — Known-Error-Auto-Apply** (`alfred.ts:findKnownErrorMatch`)
+- Beim Erstellen eines neuen Auto-Incidents wird gegen alle `is_known_error=true` Problems gematcht (≥2 shared keywords).
+- Bei Treffer wird der bekannte Workaround mit Problem-ID-Link **vor** den Alert-Text in die `symptoms` geschrieben — User sieht direkt "🔁 Bekannte Lösung aus Problem `<id>`: …".
+
+**T3.3 — MTTR-Tracking** (`itsm-repository.ts:mttrReport`, Skill-Action `mttr_report`)
+- Aggregiert Resolve-Zeiten (`resolved_at - opened_at`) je Asset + Gesamt
+- Mean / Median / p95 in Minuten + `recurrenceTotal`
+- Skill-Display als Markdown-Tabelle, Daten via `mttr_report window_days=30` aufrufbar
+
+**T3.4 — Capacity-Forecast** (`metric-samples-repository.ts`, Skill-Action `capacity_forecast`)
+- Neue Repository `MetricSamplesRepository` mit `record()`, `listRecent()`, `forecast()`
+- Monitor-Hook in `alfred.ts` parsed jetzt numerische Werte aus Alerts (`xx.x%`, MB/GB/ms) + Metric-Name (RAM/CPU/disk/memory/GPU/swap/load/temperature) und schreibt pro Asset einen Sample
+- `forecast()`: lineare Regression über `windowDays` (default 30), liefert `slopePerDay`, `latestValue`, `daysUntilThreshold` (default 95%)
+- Sortiert nach Dringlichkeit (kürzeste Zeit-bis-Threshold zuerst)
+- Use case: "PGSql-P01 RAM stieg von 90→95% in 14d → in ~30d wird OOM erwartet"
+
+**T3.5 — Re-Open statt Duplicate bei Recurrence** (`itsm-repository.ts:findRecentResolvedDuplicate` + `reopenIncident`)
+- Vor jedem Auto-Incident-Create check: existiert ein resolved/closed Incident mit denselben Keywords + Source in den letzten 24h?
+- Wenn ja → re-open + bump `recurrence_count` + append `[Re-Open #N]`-Notiz zu `symptoms`
+- Ergebnis: ein Incident pro echtem Vorfall statt N Duplikate pro Flap-Cycle
+- Bei `recurrence_count ≥ 3` wird der Incident als "neu" markiert sodass Pattern-Detection ihn sieht und Auto-Promotion zünden kann
+
+**T3.6 — Change-PR-Link** (Schema)
+- `cmdb_change_requests.pr_url` Spalte
+- `CmdbChangeRequest.prUrl` Type-Erweiterung
+- `updateChangeRequest({ prUrl })` akzeptiert das Feld
+- Auto-Population aus Code-Agent folgt später; manuell oder via `update_change` heute schon nutzbar
+
+**T3.7 — Daily ITSM-Reflection** (`alfred.ts:dailyReflection`)
+- Täglich um 23:00 lokal: Sammelt 7d-Statistik (Incidents, Closed, Top-Recurrers ≥2×, MTTR-Summary, Capacity-Forecasts ≤30d zu Threshold)
+- Sendet Insight-Message an Owner-Chat (Telegram/Discord/Matrix je nach Config)
+- Skipped wenn nichts zu berichten ist (keine Incidents + keine Recurrer + keine Forecasts)
+- Initial-Delay bis zum nächsten 23:00, danach 24h-Intervall (unref()ed)
+
+### Notes
+- Build grün (12/12)
+- Beim ersten Deploy auf Bestandsdaten: SQLite/Postgres-Migrationen laufen automatisch beim Start, `cmdb_metric_samples` ist leer — Forecast baut sich über die nächsten 14-30d auf
+- Manuell triggerbar: `Alfred, mttr report` und `Alfred, capacity forecast` (Chat) bzw. die Skill-Actions
+- v634 (T4 Operational Excellence: Service-Score, Cascade-Detection, Post-Incident-Review, SLA-Breach-Prediction) folgt
+
 ## [0.19.0-multi-ha.632] - 2026-05-21
 
 ### Added — ITSM WebUI Bulk-Merge + Pattern-Preview (T2 vom T1-T4-Quartett)

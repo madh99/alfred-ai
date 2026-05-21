@@ -911,4 +911,30 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_host_capabilities_host ON host_capabilities(host)`, []);
     },
   },
+  {
+    version: 70,
+    description: 'v633 T3 — Incident recurrence_count + cmdb_metric_samples table for capacity-forecast',
+    async up(db) {
+      await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS recurrence_count INTEGER DEFAULT 0`, []);
+      await db.execute(`ALTER TABLE cmdb_incidents ADD COLUMN IF NOT EXISTS last_recurrence_at TEXT`, []);
+      // Per-incident change-request PR URL (v633 T3.6)
+      await db.execute(`ALTER TABLE cmdb_change_requests ADD COLUMN IF NOT EXISTS pr_url TEXT`, []);
+
+      // Capacity / time-series samples — written by monitor when numeric values are parsed from alerts
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS cmdb_metric_samples (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          asset_id TEXT,
+          metric_name TEXT NOT NULL,
+          value DOUBLE PRECISION NOT NULL,
+          unit TEXT,
+          sampled_at TEXT NOT NULL,
+          source TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_metric_samples_asset_metric_time ON cmdb_metric_samples(asset_id, metric_name, sampled_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_metric_samples_user_time ON cmdb_metric_samples(user_id, sampled_at DESC)`, []);
+    },
+  },
 ];

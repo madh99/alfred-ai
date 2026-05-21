@@ -66,7 +66,9 @@ export { BrainstormingRepository, type BrainstormingSession, type BrainstormingI
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
 export { CmdbRepository } from './repositories/cmdb-repository.js';
 export { ItsmRepository } from './repositories/itsm-repository.js';
-export { ProblemRepository } from './repositories/problem-repository.js';
+export { ProblemRepository, normalizeTitle as normalizeIncidentTitle } from './repositories/problem-repository.js';
+export { MetricSamplesRepository } from './repositories/metric-samples-repository.js';
+export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';
 export { ProjectRepository } from './repositories/project-repository.js';

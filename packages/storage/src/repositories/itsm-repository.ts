@@ -53,6 +53,8 @@ function rowToIncident(r: DbRow): CmdbIncident {
     acknowledgedAt: r.acknowledged_at as string | undefined,
     resolvedAt: r.resolved_at as string | undefined,
     closedAt: r.closed_at as string | undefined,
+    recurrenceCount: r.recurrence_count != null ? Number(r.recurrence_count) : 0,
+    lastRecurrenceAt: r.last_recurrence_at as string | undefined,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -122,6 +124,7 @@ function rowToChangeRequest(r: DbRow): CmdbChangeRequest {
     result: r.result as string | undefined,
     linkedIncidentId: r.linked_incident_id as string | undefined,
     linkedProblemId: r.linked_problem_id as string | undefined,
+    prUrl: r.pr_url as string | undefined,
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -324,6 +327,111 @@ export class ItsmRepository {
     );
   }
 
+  /**
+   * v633 T3.5 — Find a recently-resolved/closed incident that matches the same root cause
+   * (same source-prefix + ≥1 shared distinguishing keyword) within the last `withinHours`
+   * window. Used to prefer "re-open + recurrence_count++" over creating a fresh duplicate
+   * incident every time the same flapping condition fires.
+   */
+  async findRecentResolvedDuplicate(userId: string, sourceLabel: string, titleKeywords: string[], withinHours = 24): Promise<CmdbIncident | null> {
+    const cutoffIso = new Date(Date.now() - withinHours * 3_600_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents
+       WHERE user_id = ? AND status IN ('resolved', 'closed') AND (resolved_at >= ? OR closed_at >= ? OR updated_at >= ?)
+       ORDER BY updated_at DESC LIMIT 50`,
+      [userId, cutoffIso, cutoffIso, cutoffIso],
+    );
+    const all = (rows as any[]).map(rowToIncident);
+    for (const inc of all) {
+      const titleLower = inc.title.toLowerCase();
+      const sourceMatch = sourceLabel ? titleLower.includes(sourceLabel.toLowerCase()) : true;
+      const matchCount = titleKeywords.filter(kw => titleLower.includes(kw.toLowerCase())).length;
+      if (sourceMatch && matchCount >= 1) return inc;
+    }
+    return null;
+  }
+
+  /**
+   * v633 T3.5 — Re-open a resolved/closed incident, bump recurrence_count, append a re-open
+   * note to symptoms with the new alert text. Keeps a single incident over multiple flap
+   * cycles instead of N duplicates.
+   */
+  async reopenIncident(userId: string, id: string, newSymptom: string): Promise<CmdbIncident | null> {
+    const existing = await this.getIncidentById(userId, id);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    const localTs = fmtLocalTime(now, this.timezone);
+    const newCount = (existing.recurrenceCount ?? 0) + 1;
+    const entry = `${localTs} [Re-Open #${newCount}] ${newSymptom}`;
+    const newSymptoms = existing.symptoms ? `${existing.symptoms}\n---\n${entry}` : entry;
+    await this.db.execute(
+      `UPDATE cmdb_incidents SET
+         status = 'open',
+         symptoms = ?,
+         recurrence_count = ?,
+         last_recurrence_at = ?,
+         resolved_at = NULL,
+         closed_at = NULL,
+         updated_at = ?
+       WHERE id = ? AND user_id = ?`,
+      [newSymptoms, newCount, now, now, id, userId],
+    );
+    return this.getIncidentById(userId, id);
+  }
+
+  /**
+   * v633 T3.3 — MTTR aggregation: returns mean/median time-to-resolve per asset (or overall).
+   * Filters to incidents that have both `opened_at` and `resolved_at` within `windowDays`.
+   */
+  async mttrReport(userId: string, opts?: { windowDays?: number }): Promise<Array<{
+    scope: string; assetId?: string; count: number; meanMinutes: number; medianMinutes: number;
+    p95Minutes: number; recurrenceTotal: number;
+  }>> {
+    const windowDays = opts?.windowDays ?? 30;
+    const cutoffIso = new Date(Date.now() - windowDays * 86400_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT affected_asset_ids, opened_at, resolved_at, recurrence_count FROM cmdb_incidents
+       WHERE user_id = ? AND resolved_at IS NOT NULL AND opened_at >= ?`,
+      [userId, cutoffIso],
+    ) as Array<{ affected_asset_ids: string; opened_at: string; resolved_at: string; recurrence_count: number | null }>;
+
+    interface Bucket { durations: number[]; recurrences: number }
+    const byAsset = new Map<string, Bucket>();
+    const overall: Bucket = { durations: [], recurrences: 0 };
+    for (const r of rows) {
+      const durMin = (new Date(r.resolved_at).getTime() - new Date(r.opened_at).getTime()) / 60_000;
+      if (!isFinite(durMin) || durMin < 0) continue;
+      overall.durations.push(durMin);
+      overall.recurrences += Number(r.recurrence_count ?? 0);
+      const assetIds = parseJsonArray(r.affected_asset_ids);
+      for (const aid of assetIds) {
+        const b = byAsset.get(aid) ?? { durations: [], recurrences: 0 };
+        b.durations.push(durMin);
+        b.recurrences += Number(r.recurrence_count ?? 0);
+        byAsset.set(aid, b);
+      }
+    }
+
+    function summarize(b: Bucket, scope: string, assetId?: string) {
+      const sorted = [...b.durations].sort((x, y) => x - y);
+      const n = sorted.length;
+      if (n === 0) return null;
+      const mean = sorted.reduce((s, x) => s + x, 0) / n;
+      const median = sorted[Math.floor(n / 2)];
+      const p95 = sorted[Math.floor(n * 0.95)] ?? sorted[n - 1];
+      return { scope, assetId, count: n, meanMinutes: Math.round(mean), medianMinutes: Math.round(median), p95Minutes: Math.round(p95), recurrenceTotal: b.recurrences };
+    }
+
+    const results: Array<{ scope: string; assetId?: string; count: number; meanMinutes: number; medianMinutes: number; p95Minutes: number; recurrenceTotal: number }> = [];
+    const allRow = summarize(overall, 'all');
+    if (allRow) results.push(allRow);
+    for (const [aid, b] of byAsset) {
+      const row = summarize(b, 'asset', aid);
+      if (row) results.push(row);
+    }
+    return results.sort((a, b) => b.meanMinutes - a.meanMinutes);
+  }
+
   // ── Services ───────────────────────────────────────────────
 
   async createService(userId: string, data: {
@@ -487,7 +595,7 @@ export class ItsmRepository {
     status: ChangeRequestStatus; riskLevel: IncidentSeverity;
     affectedAssetIds: string[]; affectedServiceIds: string[];
     implementationPlan: string; rollbackPlan: string; testPlan: string;
-    scheduledAt: string; result: string;
+    scheduledAt: string; result: string; prUrl: string;
   }>): Promise<CmdbChangeRequest | null> {
     const existing = await this.getChangeRequestById(userId, id);
     if (!existing) return null;
@@ -501,6 +609,7 @@ export class ItsmRepository {
       riskLevel: 'risk_level', implementationPlan: 'implementation_plan',
       rollbackPlan: 'rollback_plan', testPlan: 'test_plan',
       scheduledAt: 'scheduled_at', result: 'result',
+      prUrl: 'pr_url',
     };
 
     for (const [key, col] of Object.entries(simple)) {
