@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.636] - 2026-05-21
+
+### Fixed — Project-Agent-State: v630 reichte nicht. lastBuildActuallyPassed ist sticky.
+
+**Symptom**: Session `82a17860-…` lief 24/28 Phasen, schrieb 77 Dateien, Phase 24 wurde wegen Inactivity gekillt (exitCode=124) — die `❌ Project Agent fehlgeschlagen`-Message wurde geschickt, aber in der DB landete `current_phase='done'` mit `last_build_passed=0`. UI zeigt grünes "done" + Sanduhr.
+
+**Bug** (Fehler in meinem v630-Fix, nicht im v620-Original):
+- Phase-Loop bei exitCode≠0 (line 335): `state.projectPhase = 'failed'` + `break` ✓
+- POST-Loop v630 (line 477): `overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed`
+- **`lastBuildActuallyPassed` ist sticky** — wird in line 360 auf `true` gesetzt sobald **irgendeine** Phase grün baut, **nie zurückgesetzt**
+- Bei Phase 24-Fail nach 23 grünen Phasen: `anyPhaseProducedFiles=true` (77 Files), `lastBuildActuallyPassed=true` (sticky-true) → `overallSuccess=true` → state wieder auf `'done'` zurück
+
+**Fix v636** — expliziter `runFailed` Flag der vor jedem harten break-Pfad gesetzt wird:
+```typescript
+let runFailed = false; // initial
+
+// Coding-Phase exitCode ≠ 0:
+runFailed = true; state.projectPhase = 'failed'; break;
+
+// Fail-Fast (3 consecutive empty phases):
+runFailed = true; break;
+
+// Post-Loop:
+const overallSuccess = !runFailed && anyPhaseProducedFiles && lastBuildActuallyPassed;
+state.projectPhase = overallSuccess ? 'done' : 'failed';
+```
+
+`runFailed` ist eindeutig "hartes Failure", unabhängig von der sticky-Natur von `lastBuildActuallyPassed`. v630-Fix bleibt korrekt für den Catch-Block (Exception) und Pre-Flight-Failure — die berühren `lastBuildActuallyPassed` gar nicht.
+
+### DB-Bereinigung
+- `UPDATE project_agent_sessions SET current_phase='failed' WHERE task_id='82a17860-…'` — direkt auf .91 ausgeführt
+- Andere Bestandssessions waren in v630-DB-Sweep schon korrigiert
+
+### Lehre
+- "Konzept richtig + Bedingung falsch" ist gleich gefährlich wie "Bedingung richtig + Stelle falsch". v630 dachte ich hätte alle drei Sites geändert; die Bedingung an einer dieser Sites war aber nicht ausreichend für alle Failure-Pfade.
+- Mein Fehler — Entschuldigung für die wiederholte Schlamperei in dieser Region.
+
+### Notes
+- Build grün (12/12, nur core touched)
+- Patch ist klein und isoliert — kein Risiko für andere Code-Pfade
+
 ## [0.19.0-multi-ha.635] - 2026-05-21
 
 ### Fixed — Agent-Executor Inactivity-Detection: File-mtime-Heartbeat ergänzt

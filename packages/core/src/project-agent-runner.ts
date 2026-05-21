@@ -122,6 +122,12 @@ export class ProjectAgentRunner {
     // honest success-flag at completion time. The old runner emitted success=true
     // unconditionally after the loop ended, even with 0 file changes.
     let anyPhaseProducedFiles = false;
+    // v636 — runFailed Flag. Wird true bei harten Failures (Coding-Phase exitCode≠0,
+    // fail-fast 3 empty phases, expliziter abort). Verhindert dass der Post-Loop-Code
+    // den schon-auf-'failed'-gesetzten state durch overallSuccess wieder auf 'done'
+    // zieht — denn lastBuildActuallyPassed ist sticky (einmal true von früherer Phase
+    // → immer true). v630 hat diesen Fall übersehen.
+    let runFailed = false;
 
     try {
       await this.sendProgress(platform, chatId, `🚀 Project Agent gestartet: ${config.goal}`);
@@ -332,6 +338,11 @@ export class ProjectAgentRunner {
           // Die UI zeigt 'failed' rot mit 🔴-Build-Icon. Die Post-Loop-Logik
           // (anyPhaseProducedFiles + lastBuildActuallyPassed) ist unabhängig
           // davon — sendet sowieso ❌-Final-Message bei Failure.
+          // v636 — runFailed Flag setzen, damit der Post-Loop-Code NICHT mit
+          // sticky lastBuildActuallyPassed=true (von früherer Phase) auf 'done'
+          // zurückspringt. v630-Fix war richtig im Konzept aber lastBuildActuallyPassed
+          // wird nie auf false zurückgesetzt sobald eine Phase mal grün baute.
+          runFailed = true;
           state.projectPhase = 'failed';
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
           break; // exit the for-loop over phases; finally-block handles cleanup
@@ -460,6 +471,9 @@ export class ProjectAgentRunner {
               sessionId, phasesAttempted: phaseIdx + 1, totalPhases: plan.phases.length,
               errorCode: extracted.code,
             }, 'Project agent: fail-fast triggered');
+            // v636 — fail-fast ist ein hartes Failure → runFailed setzen damit Post-Loop
+            // nicht auf 'done' zurückschwenkt (lastBuildActuallyPassed kann sticky-true sein).
+            runFailed = true;
             break;
           }
         } else {
@@ -470,11 +484,13 @@ export class ProjectAgentRunner {
       }
 
       // ── DONE ──
-      // v630 — Phase MUSS abhängig vom tatsächlichen Erfolg gesetzt werden. Vorher
-      // wurde immer 'done' geschrieben, was die UI grün anzeigte obwohl der Build
-      // nie grün war (Badge=done + Sanduhr=lastBuildPassed-false). Reihenfolge:
-      // overallSuccess ZUERST berechnen, DANN die Phase setzen.
-      const overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed;
+      // v630/v636 — Phase MUSS abhängig vom tatsächlichen Erfolg gesetzt werden.
+      // v630 hat lastBuildActuallyPassed && anyPhaseProducedFiles geprüft — übersah
+      // dass lastBuildActuallyPassed sticky-true ist sobald eine frühere Phase grün
+      // baute. Bei phase-fail in Phase 24 von 28 mit grünen Phasen 1-23 hätte das
+      // immer noch overallSuccess=true ergeben und auf 'done' zurück gesprungen.
+      // v636: runFailed wird VOR jedem harten break-Pfad gesetzt, schließt den Bug.
+      const overallSuccess = !runFailed && anyPhaseProducedFiles && lastBuildActuallyPassed;
       state.projectPhase = overallSuccess ? 'done' : 'failed';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
