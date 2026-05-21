@@ -329,6 +329,78 @@ export class ProjectRepository {
     return rows.map(rowToSession);
   }
 
+  /**
+   * v658 — Work-Stats: Aggregation der Arbeitszeit pro Projekt.
+   *  - Gesamt: Anzahl + Sekunden über alle Sessions
+   *  - byType: project_agent / code_agent / brainstorming / delegate
+   *  - byAgent: claude-code / codex / etc. (LEFT JOIN auf project_agent_sessions)
+   *
+   * Für laufende Sessions (ended_at NULL) wird now() als endedAt genommen damit
+   * der User die Live-Zeit aktiv laufender Agents sieht.
+   */
+  async getWorkStats(projectId: string): Promise<{
+    total: { count: number; totalSeconds: number; runningCount: number };
+    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number }>;
+    byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
+  }> {
+    const now = new Date().toISOString();
+    // Per-session Duration: COALESCE(ended_at, now) - started_at in Sekunden
+    // SQLite: (julianday(end) - julianday(start)) * 86400 — Postgres-kompatibel: 1000 * 60 statt? Wir machen es JS-seitig nach SELECT.
+    const sessionRows = await this.adapter.query(
+      `SELECT id, session_type, source_id, started_at, ended_at
+       FROM project_sessions WHERE project_id = ?`,
+      [projectId],
+    ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null }>;
+
+    // Map source_id → agent_name aus project_agent_sessions (alle in einem Roundtrip, dann lookup)
+    const agentNameByTaskId = new Map<string, string>();
+    try {
+      const agentRows = await this.adapter.query(
+        `SELECT task_id, agent_name FROM project_agent_sessions`,
+      ) as Array<{ task_id: string; agent_name: string }>;
+      for (const r of agentRows) agentNameByTaskId.set(r.task_id, r.agent_name);
+    } catch { /* table may not exist in test contexts */ }
+
+    let totalSeconds = 0;
+    let runningCount = 0;
+    const byTypeMap = new Map<string, { count: number; seconds: number; completed: number }>();
+    const byAgentMap = new Map<string, { count: number; seconds: number }>();
+
+    for (const s of sessionRows) {
+      const start = new Date(s.started_at).getTime();
+      const end = s.ended_at ? new Date(s.ended_at).getTime() : Date.now();
+      const sec = Math.max(0, Math.floor((end - start) / 1000));
+      totalSeconds += sec;
+      if (!s.ended_at) runningCount++;
+
+      const t = byTypeMap.get(s.session_type) ?? { count: 0, seconds: 0, completed: 0 };
+      t.count++;
+      t.seconds += sec;
+      if (s.ended_at) t.completed++;
+      byTypeMap.set(s.session_type, t);
+
+      if (s.source_id) {
+        const agent = agentNameByTaskId.get(s.source_id);
+        if (agent) {
+          const a = byAgentMap.get(agent) ?? { count: 0, seconds: 0 };
+          a.count++;
+          a.seconds += sec;
+          byAgentMap.set(agent, a);
+        }
+      }
+    }
+
+    return {
+      total: { count: sessionRows.length, totalSeconds, runningCount },
+      byType: [...byTypeMap.entries()]
+        .map(([sessionType, v]) => ({ sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed }))
+        .sort((a, b) => b.totalSeconds - a.totalSeconds),
+      byAgent: [...byAgentMap.entries()]
+        .map(([agent, v]) => ({ agent, count: v.count, totalSeconds: v.seconds }))
+        .sort((a, b) => b.totalSeconds - a.totalSeconds),
+    };
+  }
+
   // ── Open Items ──────────────────────────────────────────────────────────
 
   async addOpenItem(projectId: string, input: { title: string; description?: string; priority?: OpenItemPriority; dueAt?: string; sessionId?: string; linkedIncidentId?: string; linkedChangeId?: string }): Promise<ProjectOpenItem> {

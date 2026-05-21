@@ -221,6 +221,8 @@ export class MessagePipeline {
   private reasoningEngine?: import('./reasoning-engine.js').ReasoningEngine;
   private kgService?: import('./knowledge-graph.js').KnowledgeGraphService;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
+  /** v658 — Projekt-Chat: für System-Prompt-Injection des Projekt-Kontextes */
+  private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
@@ -289,6 +291,11 @@ export class MessagePipeline {
 
   setRunbookRepo(repo: import('@alfred/storage').RunbookRepository): void {
     this.runbookRepo = repo;
+  }
+
+  /** v658 — Projekt-Repo für Projekt-Chat-Kontext-Injection */
+  setProjectRepo(repo: import('@alfred/storage').ProjectRepository): void {
+    this.projectRepo = repo;
   }
 
   /** v605 M7 — feed the project-agent session repo so we can list currently
@@ -789,6 +796,60 @@ export class MessagePipeline {
         runningProjectAgentSessions,
         recentHostFailures,
       });
+
+      // v658 — Projekt-Chat: bei projectId in metadata den Projekt-Kontext laden
+      // und in den System-Prompt injizieren. So weiß der LLM cwd, repo, aktive Sessions,
+      // offene Items, letzte Decisions etc. ohne dass der User sie tippen muss.
+      const projectIdForChat = message.metadata?.projectId;
+      if (projectIdForChat && this.projectRepo) {
+        try {
+          const proj = await this.projectRepo.getById(masterUserId, projectIdForChat);
+          if (proj) {
+            const [sessionsRecent, openItems, decisionsRecent] = await Promise.all([
+              this.projectRepo.listSessions(proj.id, 5).catch(() => []),
+              this.projectRepo.listOpenItemsForProject(proj.id, ['open', 'in_progress']).catch(() => []),
+              this.projectRepo.listDecisions(proj.id, 5).catch(() => []),
+            ]);
+            const lines: string[] = [];
+            lines.push(`## Aktiver Projekt-Kontext: **${proj.name}**`);
+            if (proj.cwd) lines.push(`- cwd: \`${proj.cwd}\``);
+            if (proj.repoUrl) lines.push(`- Repo: ${proj.repoUrl}`);
+            if (proj.status) lines.push(`- Status: ${proj.status}`);
+            if (proj.description) lines.push(`- Beschreibung: ${proj.description.slice(0, 200)}`);
+            if (openItems.length > 0) {
+              lines.push(`\n### Offene Punkte (${openItems.length})`);
+              for (const it of openItems.slice(0, 10)) {
+                const icon = it.priority === 'high' ? '🔴' : it.priority === 'low' ? '⚪' : '🟡';
+                lines.push(`- ${icon} [${it.id.slice(0, 8)}] ${it.title.slice(0, 100)}${it.status === 'in_progress' ? ' (in Arbeit)' : ''}`);
+              }
+              if (openItems.length > 10) lines.push(`- … +${openItems.length - 10} weitere`);
+            }
+            if (sessionsRecent.length > 0) {
+              lines.push(`\n### Letzte Sessions`);
+              for (const s of sessionsRecent.slice(0, 5)) {
+                const end = s.endedAt ? new Date(s.endedAt).toLocaleDateString('de-DE') : 'läuft';
+                lines.push(`- ${s.sessionType} (${end})`);
+              }
+            }
+            if (decisionsRecent.length > 0) {
+              lines.push(`\n### Letzte Entscheidungen`);
+              for (const d of decisionsRecent.slice(0, 5)) {
+                lines.push(`- **${d.title}**: ${d.choice.slice(0, 120)}`);
+              }
+            }
+            lines.push(`\n### Anweisungen für diesen Projekt-Chat`);
+            lines.push(`- Du arbeitest gerade an diesem Projekt — nutze cwd, repo und Kontext automatisch.`);
+            lines.push(`- "baue X ein" / "erweitere Y" → project_agent.start mit dem Projekt-cwd.`);
+            lines.push(`- "deploy auf …" → deploy-Skill mit projekt-cwd vorbelegt.`);
+            lines.push(`- "füge … zur Liste" → project.add_open_item.`);
+            lines.push(`- Brainstorming-Anfragen ("lass uns über X nachdenken") → brainstorming.start.`);
+            lines.push(`- Bei Brainstorming-Erkenntnissen: schlage vor sie als Open-Items zu übernehmen.`);
+            system += `\n\n${lines.join('\n')}`;
+          }
+        } catch (err) {
+          this.logger.debug({ err, projectId: projectIdForChat }, 'project-chat: context injection failed (non-critical)');
+        }
+      }
 
       // Inject active ITSM incidents into system prompt so the LLM can reference
       // correct incident IDs when updating. Without this, the LLM guesses IDs and fails.

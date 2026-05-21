@@ -1847,4 +1847,12 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE pending_confirmations ADD COLUMN extra_actions TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 79,
+    description: 'v658 — conversations.project_id für Projekt-Chat (eigene Conversation pro Projekt mit Kontext-Injection)',
+    up(db) {
+      try { db.exec(`ALTER TABLE conversations ADD COLUMN project_id TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)`);
+    },
+  },
 ];

@@ -5,6 +5,75 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.658] - 2026-05-21
+
+### Added — Projekt-Chat + Work-Stats + Session-Duration
+
+**Projekt-Chat (eigene Konversation pro Projekt mit Auto-Kontext-Injection)**:
+- Migration v79/v82: `conversations.project_id TEXT` + Index
+- `Conversation`-Type um `projectId?` erweitert
+- `ConversationRepo.findOrCreateForProject(userId, projectId)` — chatId-Konvention `project:<id>`
+- `/api/message` akzeptiert optionalen `projectId` Body-Param → routet zur Projekt-Conversation
+- `NormalizedMessage.metadata.projectId` durch die Pipeline
+- `message-pipeline`: bei `projectId` lädt Projekt-Kontext (cwd, repo, status, beschreibung,
+  offene Items, letzte Sessions, letzte Decisions) und injiziert als
+  `## Aktiver Projekt-Kontext: <Name>` Block in den System-Prompt
+- LLM-Hint: "baue X ein" → project_agent / "deploy auf …" → deploy / "lass uns über X
+  brainstormen" → brainstorming / "füge … zur Liste" → add_open_item
+- Neue API: `GET /api/projects/:id/chat-history?limit=100`
+- WebUI: neue Komponente `ProjectChat.tsx` collapsible Chat-Pane in Project-Detail
+  - History-Load bei Aufklappen
+  - Stream-Antwort mit Status-Indicator
+  - Stop-Button während streaming
+  - Welcome-Hints mit Beispiel-Inputs
+
+**Work-Stats (Arbeitszeit pro Projekt nach Type + Agent)**:
+- Neue Repository-Methode `ProjectRepository.getWorkStats(projectId)`:
+  - `total`: Anzahl Sessions, Gesamt-Sekunden, laufende Sessions
+  - `byType`: project_agent / code_agent / brainstorming / delegate — count, totalSeconds, completedCount
+  - `byAgent`: claude-code / codex / etc. — count, totalSeconds (LEFT JOIN auf project_agent_sessions)
+  - Laufende Sessions zählen now() als endedAt für Live-Anzeige
+- Neue API: `GET /api/projects/:id/work-stats`
+- WebUI: neue Komponente `ProjectWorkStatsView.tsx` collapsible Section
+  - Top: Gesamtzeit + Sessions-Count + Laufende
+  - Tabelle "Nach Typ" mit Icon-Labels + Done-Counter
+  - Tabelle "Nach Agent" (claude-code, codex, ...)
+  - Duration-Formatter: s/m/h/d
+
+**Session-Duration in ProjectAgentsPage**:
+- Helper `sessionDuration()` berechnet: bei terminal-Phasen (done/failed) updatedAt-createdAt,
+  sonst now()-createdAt mit `running: true`
+- Liste-Row: zusätzliches Feld `⏱ 12m 34s` (live-grün wenn läuft, blau wenn fertig)
+- Tooltip mit "Gestartet: … Beendet: …" Datum/Uhrzeit
+- Detail-Sektion: 3-Spalten-Grid mit Gestartet / Beendet (oder Aktualisiert) / Dauer
+
+**Brainstorming-Integration**:
+- LLM-System-Prompt im Projekt-Chat-Kontext schließt brainstorming als Tool ein
+- Bei Erkenntnissen schlägt der LLM vor sie als Open-Items zu übernehmen
+- Nutzt die existierende v657 Multi-Action Confirmation-Pipeline:
+  `enqueue({skillName:'project', skillParams:{action:'add_open_item',...}, extraActions:[{kind:'dismiss'...},{kind:'defer'...}]})`
+
+### Schema (v79/v82)
+```sql
+ALTER TABLE conversations ADD COLUMN project_id TEXT;
+CREATE INDEX idx_conversations_project ON conversations(project_id);
+```
+
+### Architektur
+- Telegram + WebUI **bleiben funktional unverändert**:
+  - Telegram-Chat (global) und Projekt-Chat sind getrennte Conversations
+  - Wissen wird automatisch via Memory + KG + Project-Repo geteilt
+  - Project-Agent-Starts funktionieren weiterhin via Telegram, im Projekt-Chat ist
+    nur der cwd/repo schon vorbelegt
+- LLM entscheidet pro Input welcher Skill: project_agent, code_agent, deploy, reminder,
+  open_item, brainstorming, oder Direktantwort
+
+### Notes
+- Build grün (12/12)
+- Backwards-compat: bestehende Conversations ohne project_id laufen wie bisher
+- chatHistory-API lädt max 200 Messages (`?limit=N` einstellbar)
+- Project-Chat Frontend lädt History on-demand (beim ersten Aufklappen)
+
 ## [0.19.0-multi-ha.657] - 2026-05-21
 
 ### Added — Multi-Action Confirmations + Reply-Kontext

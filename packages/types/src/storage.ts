@@ -5,6 +5,8 @@ export interface Conversation {
   platform: Platform;
   chatId: string;
   userId: string;
+  /** v658 — Projekt-Bindung. Gesetzt für Projekt-Chats (eine Conversation pro Projekt+User). */
+  projectId?: string;
   createdAt: string;
   updatedAt: string;
   /** v644 — Custom user-facing label (rename) */

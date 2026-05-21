@@ -23,6 +23,25 @@ function relativeTime(iso?: string): string {
   return `${Math.floor(sec / 86400)}d`;
 }
 
+// v658 — Dauer einer Project-Agent-Session: created → updated (oder läuft noch)
+function sessionDuration(s: { createdAt: string; updatedAt: string; currentPhase: string }): { label: string; running: boolean } {
+  const start = new Date(s.createdAt).getTime();
+  const isTerminal = s.currentPhase === 'done' || s.currentPhase === 'failed';
+  const end = isTerminal ? new Date(s.updatedAt).getTime() : Date.now();
+  const sec = Math.max(0, Math.floor((end - start) / 1000));
+  let label: string;
+  if (sec < 60) label = `${sec}s`;
+  else if (sec < 3600) label = `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  else if (sec < 86400) { const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); label = m > 0 ? `${h}h ${m}m` : `${h}h`; }
+  else { const d = Math.floor(sec / 86400); const h = Math.floor((sec % 86400) / 3600); label = h > 0 ? `${d}d ${h}h` : `${d}d`; }
+  return { label, running: !isTerminal };
+}
+
+function formatDateTime(iso?: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 export function ProjectAgentsPage() {
   const { client } = useConfig();
   const [sessions, setSessions] = useState<ProjectAgentSession[]>([]);
@@ -209,7 +228,7 @@ export function ProjectAgentsPage() {
                   </div>
                   <span className="text-xs text-gray-500 shrink-0">{relativeTime(s.lastProgressAt ?? s.updatedAt)} ago</span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-gray-500">
+                <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
                   <span className="font-mono">{s.cwd}</span>
                   <span>·</span>
                   <span>iter {s.currentIteration}</span>
@@ -217,6 +236,20 @@ export function ProjectAgentsPage() {
                   <span>{s.totalFilesChanged} files</span>
                   <span>·</span>
                   <span className="font-mono">{s.agentName}</span>
+                  {(() => {
+                    const d = sessionDuration(s);
+                    return (
+                      <>
+                        <span>·</span>
+                        <span
+                          className={d.running ? 'text-emerald-400' : 'text-gray-400'}
+                          title={`Gestartet: ${formatDateTime(s.createdAt)}${!d.running ? `\nBeendet: ${formatDateTime(s.updatedAt)}` : '\n(läuft noch)'}`}
+                        >
+                          ⏱ {d.label}{d.running ? ' (läuft)' : ''}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -292,14 +325,21 @@ export function ProjectAgentsPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3 pt-2 text-xs">
+            <div className="grid grid-cols-3 gap-3 pt-2 text-xs">
               <div>
-                <div className="text-gray-500 mb-1">Created</div>
-                <div className="text-gray-400">{new Date(selected.createdAt).toLocaleString('de-DE')}</div>
+                <div className="text-gray-500 mb-1">Gestartet</div>
+                <div className="text-gray-400">{formatDateTime(selected.createdAt)}</div>
               </div>
               <div>
-                <div className="text-gray-500 mb-1">Updated</div>
-                <div className="text-gray-400">{new Date(selected.updatedAt).toLocaleString('de-DE')}</div>
+                <div className="text-gray-500 mb-1">{(selected.currentPhase === 'done' || selected.currentPhase === 'failed') ? 'Beendet' : 'Aktualisiert'}</div>
+                <div className="text-gray-400">{formatDateTime(selected.updatedAt)}</div>
+              </div>
+              <div>
+                <div className="text-gray-500 mb-1">Dauer</div>
+                {(() => {
+                  const d = sessionDuration(selected);
+                  return <div className={d.running ? 'text-emerald-400 font-mono' : 'text-blue-400 font-mono'}>⏱ {d.label}{d.running ? ' (läuft)' : ''}</div>;
+                })()}
               </div>
             </div>
 

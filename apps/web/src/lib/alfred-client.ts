@@ -568,6 +568,67 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v658 — Work-Stats pro Projekt
+  async fetchProjectWorkStats(projectId: string): Promise<ProjectWorkStats | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/work-stats`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
+  // v658 — Chat-History für Projekt-Conversation
+  async fetchProjectChatHistory(projectId: string, limit = 100): Promise<ProjectChatHistory | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/chat-history?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return null;
+    return await res.json();
+  }
+
+  // v658 — Stream-Message mit projectId für Projekt-Chat
+  streamProjectMessage(
+    projectId: string,
+    text: string,
+    userId: string,
+    callbacks: StreamCallbacks,
+    replyTo?: { messageId?: string; text?: string; from?: string },
+  ): () => void {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const body: Record<string, unknown> = { text, userId, projectId };
+        if (replyTo?.text) {
+          body.replyToText = replyTo.text;
+          if (replyTo.from) body.replyToFrom = replyTo.from;
+          if (replyTo.messageId) body.replyToMessageId = replyTo.messageId;
+        }
+        const res = await fetch(`${this.baseUrl}/api/message`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (!res.ok) { callbacks.onError(`HTTP ${res.status}: ${res.statusText}`); return; }
+        for await (const { event, data } of readSseStream(res)) {
+          try {
+            const parsed = JSON.parse(data);
+            switch (event) {
+              case 'status': callbacks.onStatus(parsed.text ?? parsed.status ?? data); break;
+              case 'response': callbacks.onResponse(parsed.text ?? data); break;
+              case 'attachment': callbacks.onAttachment(parsed); break;
+              case 'done': callbacks.onDone(); break;
+              case 'error': callbacks.onError(parsed.error ?? parsed.message ?? data); break;
+            }
+          } catch {
+            if (event === 'response') callbacks.onResponse(data);
+            else if (event === 'error') callbacks.onError(data);
+          }
+        }
+        callbacks.onDone();
+      } catch (err) {
+        if ((err as Error).name !== 'AbortError') callbacks.onError((err as Error).message ?? 'Connection failed');
+      }
+    })();
+    return () => controller.abort();
+  }
+
   async createProject(input: { name: string; description?: string; cwd?: string; repoUrl?: string; tags?: string[] }): Promise<Project | null> {
     const res = await fetch(`${this.baseUrl}/api/projects`, {
       method: 'POST',
@@ -1255,6 +1316,18 @@ export interface GoalCheckpointItem {
   checkedAt: string;
   status?: string;
   notes?: string;
+}
+
+// v658 — Project Work-Stats + Chat-History
+export interface ProjectWorkStats {
+  total: { count: number; totalSeconds: number; runningCount: number };
+  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number }>;
+  byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
+}
+
+export interface ProjectChatHistory {
+  conversationId: string;
+  messages: Array<{ id: string; role: string; content: string; createdAt: string }>;
 }
 
 // v629 — Confirmations + Reminders Side-Panel

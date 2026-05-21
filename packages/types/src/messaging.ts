@@ -31,6 +31,8 @@ export interface NormalizedMessage {
     callbackQuery?: boolean;
     /** Real user chatId for scheduled tasks (which use isolated chatIds for conversation). */
     originalChatId?: string;
+    /** v658 — Projekt-Chat: projectId für Kontext-Injection in der Pipeline */
+    projectId?: string;
   };
 }
 

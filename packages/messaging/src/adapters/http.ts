@@ -385,6 +385,14 @@ export class HttpAdapter extends MessagingAdapter {
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
+    /** v658 — Work-Stats Aggregation pro Projekt */
+    workStats?: (id: string) => Promise<{
+      total: { count: number; totalSeconds: number; runningCount: number };
+      byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number }>;
+      byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
+    } | null>;
+    /** v658 — Chat-History für Projekt-Conversation */
+    chatHistory?: (id: string, limit: number) => Promise<{ conversationId: string; messages: Array<{ id: string; role: string; content: string; createdAt: string }> } | null>;
     create: (input: Record<string, unknown>) => Promise<any>;
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
@@ -792,6 +800,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsCommits(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/sessions\/[^/]+\/commits$/) && req.method === 'GET') {
       this.handleProjectsSessionCommits(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-stats$/) && req.method === 'GET') {
+      this.handleProjectsWorkStats(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/chat-history$/) && req.method === 'GET') {
+      this.handleProjectsChatHistory(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -2058,6 +2070,34 @@ export class HttpAdapter extends MessagingAdapter {
     res.end(JSON.stringify({ commits }));
   }
 
+  // v658 — Work-Stats: Aggregation der Arbeitszeit pro Projekt (byType + byAgent)
+  private async handleProjectsWorkStats(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.workStats) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const stats = await this.projectsCallbacks.workStats(projectId);
+    res.writeHead(stats ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(stats ?? { error: 'not-found' }));
+  }
+
+  // v658 — Chat-History für die Projekt-Conversation
+  private async handleProjectsChatHistory(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.chatHistory) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const limitParam = url.searchParams.get('limit');
+    const limit = Math.min(200, Math.max(1, Number(limitParam) || 50));
+    const history = await this.projectsCallbacks.chatHistory(projectId, limit);
+    res.writeHead(history ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(history ?? { error: 'not-found' }));
+  }
+
   // v642 — Bulk-Close handler
   private async handleProjectsBulkCloseItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
@@ -2217,7 +2257,7 @@ export class HttpAdapter extends MessagingAdapter {
     req.on('end', () => {
       if (aborted) return;
       try {
-        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string };
+        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string; projectId?: string };
         const text = parsed.text;
         if (!text || typeof text !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2225,7 +2265,11 @@ export class HttpAdapter extends MessagingAdapter {
           return;
         }
 
-        const chatId = parsed.chatId ?? `api-chat-${crypto.randomUUID()}`;
+        // v658 — Projekt-Chat: wenn projectId gesetzt, chatId = `project:<id>` damit
+        // die ConversationRepo.findOrCreateForProject() trifft. Pipeline injiziert
+        // den Projekt-Kontext basierend auf der projectId.
+        const projectId = typeof parsed.projectId === 'string' && parsed.projectId.length > 0 ? parsed.projectId : undefined;
+        const chatId = projectId ? `project:${projectId}` : (parsed.chatId ?? `api-chat-${crypto.randomUUID()}`);
         const userId = parsed.userId ?? 'api-user';
 
         // Close any existing stream for this chatId
@@ -2270,6 +2314,8 @@ export class HttpAdapter extends MessagingAdapter {
           replyToText: typeof parsed.replyToText === 'string' ? parsed.replyToText : undefined,
           replyToFrom: typeof parsed.replyToFrom === 'string' ? parsed.replyToFrom : undefined,
           replyToMessageId: typeof parsed.replyToMessageId === 'string' ? parsed.replyToMessageId : undefined,
+          // v658 — Projekt-Chat: projectId in metadata damit message-pipeline den Kontext laden kann
+          ...(projectId ? { metadata: { projectId } } : {}),
         };
 
         this.emit('message', message);

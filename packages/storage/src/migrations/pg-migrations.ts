@@ -1166,4 +1166,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS extra_actions TEXT`, []);
     },
   },
+  {
+    version: 82,
+    description: 'v658 — conversations.project_id für Projekt-Chat',
+    async up(db) {
+      await db.execute(`ALTER TABLE conversations ADD COLUMN IF NOT EXISTS project_id TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)`, []);
+    },
+  },
 ];

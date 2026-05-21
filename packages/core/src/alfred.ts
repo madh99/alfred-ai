@@ -153,6 +153,8 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
+  /** v658 — Projekt-Chat: ConversationRepository für chatHistory-Endpoint */
+  private conversationRepo?: import('@alfred/storage').ConversationRepository;
   private insightsRepo?: import('@alfred/storage').InsightsRepository;
   private insightEngine?: import('./insights/insight-engine.js').InsightEngine;
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
@@ -208,6 +210,7 @@ export class Alfred {
     });
     const adapter = this.database.getAdapter();
     const conversationRepo = new ConversationRepository(adapter);
+    this.conversationRepo = conversationRepo;
     const userRepo = new UserRepository(adapter);
     this.userRepo = userRepo;
     const auditRepo = new AuditRepository(adapter);
@@ -3658,6 +3661,11 @@ export class Alfred {
       this.pipeline.setRunbookRepo(this.runbookRepo);
     }
 
+    // v658 — Projekt-Repo damit die Pipeline bei projectId-Messages den Kontext lädt
+    if (this.projectRepo) {
+      this.pipeline.setProjectRepo(this.projectRepo);
+    }
+
     // v605 M7 — feed pipeline the project-agent-session repo so the system
     // prompt enumerates currently running sessions (valid interject targets).
     if (this.config.projectAgents?.enabled && this.config.codeAgents?.agents) {
@@ -4895,6 +4903,38 @@ export class Alfred {
           listSessionCommits: async (sessionId: string) => {
             if (!this.commitsRepoRef) return [];
             try { return await this.commitsRepoRef.listBySession(sessionId); } catch { return []; }
+          },
+          // v658 — Work-Stats Aggregation
+          workStats: async (id: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return null;
+              return await projRepo.getWorkStats(project.id);
+            } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
+          },
+          // v658 — Chat-History für Projekt-Conversation
+          chatHistory: async (id: string, limit: number) => {
+            try {
+              if (!this.conversationRepo) return { conversationId: '', messages: [] };
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return null;
+              const conv = await this.conversationRepo.findOrCreateForProject(uid, project.id);
+              const rawMessages = await this.conversationRepo.getMessages(conv.id, limit);
+              return {
+                conversationId: conv.id,
+                messages: rawMessages.map((m: { id: string; role: string; content: string; createdAt: string }) => ({
+                  id: m.id,
+                  role: m.role,
+                  content: m.content,
+                  createdAt: m.createdAt,
+                })),
+              };
+            } catch (err) {
+              this.logger.warn({ err, id }, 'Projects API chatHistory failed');
+              return null;
+            }
           },
         });
         this.logger.info('Projects API registered');

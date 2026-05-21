@@ -7,6 +7,8 @@ import type {
   HealthProbe,
 } from '@/lib/alfred-client';
 import { AuditModal } from './AuditModal';
+import { ProjectChat } from './ProjectChat';
+import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -755,6 +757,12 @@ export function ProjectsPage() {
                   </div>
                 </div>
               )}
+
+              {/* v658 — Work-Stats (collapsible) */}
+              <ProjectWorkStatsView projectId={detail.project.id} />
+
+              {/* v658 — Projekt-Chat-Pane (collapsible) */}
+              <ProjectChat projectId={detail.project.id} projectName={detail.project.name} />
             </div>
           )}
         </div>

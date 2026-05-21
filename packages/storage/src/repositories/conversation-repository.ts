@@ -49,6 +49,35 @@ export class ConversationRepository {
     return this.mapRow(row);
   }
 
+  /**
+   * v658 — Find-or-create Projekt-Conversation. Eine Conversation pro Projekt+User.
+   * chatId-Konvention: `project:<projectId>` damit Side-Channel/Webhooks die Conv finden.
+   */
+  async findOrCreateForProject(userId: string, projectId: string): Promise<Conversation> {
+    const chatId = `project:${projectId}`;
+    const existing = await this.adapter.queryOne(
+      'SELECT * FROM conversations WHERE project_id = ? AND user_id = ?',
+      [projectId, userId],
+    ) as Record<string, string> | undefined;
+    if (existing) return this.mapRow(existing);
+
+    const now = new Date().toISOString();
+    const id = crypto.randomUUID();
+    try {
+      await this.adapter.execute(`
+        INSERT INTO conversations (id, platform, chat_id, user_id, project_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [id, 'api', chatId, userId, projectId, now, now]);
+    } catch {
+      // Fallback ohne project_id Spalte (DB nicht migriert)
+      await this.adapter.execute(`
+        INSERT INTO conversations (id, platform, chat_id, user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [id, 'api', chatId, userId, now, now]);
+    }
+    return { id, platform: 'api', chatId, userId, projectId, createdAt: now, updatedAt: now } as Conversation;
+  }
+
   async addMessage(conversationId: string, role: ConversationMessage['role'], content: string, toolCalls?: string): Promise<ConversationMessage> {
     const message: ConversationMessage = {
       id: crypto.randomUUID(),
@@ -360,6 +389,7 @@ export class ConversationRepository {
       platform: row.platform as Platform,
       chatId: row.chat_id,
       userId: row.user_id,
+      projectId: (row.project_id as string | undefined) ?? undefined,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       customLabel: (row.custom_label as string | undefined) ?? undefined,
