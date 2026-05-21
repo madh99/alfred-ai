@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.655] - 2026-05-21
+
+### Fixed — Dashboard: Tokens-KPI folgt dem Range-Selector
+
+`DashboardPage.tsx`:
+- Karte „Tokens heute" hing fest auf `today.totalInputTokens` / `today.totalOutputTokens`,
+  während daneben der Range-Selector (today/week/month/year/all) bereits für die
+  Kosten-Karte und das Bucket-Diagramm gilt
+- Karte umgestellt auf `rangeInputTokens` / `rangeOutputTokens` aus
+  `buckets.reduce((s,d) => s + d.totalInputTokens, 0)` analog zu `rangeTotal`/`rangeCalls`
+- Title-Label folgt jetzt `RANGE_LABELS[range]` („Tokens Heute", „Tokens Woche", etc.)
+- Tooltip auf den Token-Werten zeigt die volle Zahl mit DE-Locale-Tausendertrennung
+  (z.B. `1.234.567 Input-Tokens`)
+- Backend-Daten unverändert — `DailyUsageSummary` enthielt `totalInputTokens`/
+  `totalOutputTokens` schon, die wurden nur nicht aggregiert für die KPI-Karte
+
+### Notes
+- Build grün (12/12)
+- Sidebar-Mini-Anzeige bleibt unverändert auf „heute" — User-Request bezog sich
+  explizit auf das Dashboard
+
 ## [0.19.0-multi-ha.654] - 2026-05-21
 
 ### Fixed — WebUI: Projekte erledigte Items + ITSM Aktiv-Filter

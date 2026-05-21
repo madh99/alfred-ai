@@ -73,6 +73,9 @@ export function DashboardPage() {
   const totalByModel = usage?.total ?? [];
   const rangeTotal = buckets.reduce((s, d) => s + d.totalCostUsd, 0);
   const rangeCalls = buckets.reduce((s, d) => s + d.totalCalls, 0);
+  // v654 — Range-aware Token-Summen (vorher fest auf today)
+  const rangeInputTokens = buckets.reduce((s, d) => s + d.totalInputTokens, 0);
+  const rangeOutputTokens = buckets.reduce((s, d) => s + d.totalOutputTokens, 0);
   const bucketGranularity = data.bucketGranularity ?? 'day';
 
   function toggleModel(model: string) {
@@ -202,11 +205,11 @@ export function DashboardPage() {
               <p className="text-xs text-gray-500 mt-1">{rangeCalls} Calls</p>
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
-              <p className="text-xs text-gray-500 mb-1">Tokens heute</p>
+              <p className="text-xs text-gray-500 mb-1">Tokens {RANGE_LABELS[range]}</p>
               <p className="text-lg font-semibold text-gray-200">
-                <span className="text-green-400">{formatTokens(today?.totalInputTokens ?? 0)}</span>
+                <span className="text-green-400" title={`${rangeInputTokens.toLocaleString('de-DE')} Input-Tokens`}>{formatTokens(rangeInputTokens)}</span>
                 <span className="text-gray-500 mx-1">/</span>
-                <span className="text-amber-500">{formatTokens(today?.totalOutputTokens ?? 0)}</span>
+                <span className="text-amber-500" title={`${rangeOutputTokens.toLocaleString('de-DE')} Output-Tokens`}>{formatTokens(rangeOutputTokens)}</span>
               </p>
               <p className="text-xs text-gray-500 mt-1">Input / Output</p>
             </div>
