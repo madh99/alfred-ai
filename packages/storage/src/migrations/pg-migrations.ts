@@ -957,4 +957,33 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_service_cascades_source ON cmdb_service_cascades(user_id, source_service_id)`, []);
     },
   },
+  {
+    version: 72,
+    description: 'v638 — alfred_insights table for cross-domain Insight-Engine',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS alfred_insights (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          category TEXT NOT NULL,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          confidence DOUBLE PRECISION NOT NULL DEFAULT 0.5,
+          source_data TEXT,
+          action_skill TEXT,
+          action_params TEXT,
+          status TEXT NOT NULL DEFAULT 'pending',
+          snoozed_until TEXT,
+          dedupe_key TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          acted_at TEXT,
+          dismissed_at TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_insights_user_status_created ON alfred_insights(user_id, status, created_at DESC)`, []);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_dedupe_unique ON alfred_insights(user_id, dedupe_key) WHERE dedupe_key IS NOT NULL`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_insights_category ON alfred_insights(user_id, category, status)`, []);
+    },
+  },
 ];

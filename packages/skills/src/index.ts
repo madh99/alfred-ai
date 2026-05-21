@@ -61,6 +61,7 @@ export { PfSenseSkill } from './built-in/pfsense.js';
 export { CmdbSkill } from './built-in/cmdb.js';
 export type { DiscoverySource } from './built-in/cmdb.js';
 export { ItsmSkill } from './built-in/itsm.js';
+export { InsightsSkill } from './built-in/insights.js';
 export { InfraDocsSkill } from './built-in/infra-docs.js';
 export { GoeChargerSkill } from './built-in/goe-charger.js';
 export { RoutingSkill } from './built-in/routing.js';

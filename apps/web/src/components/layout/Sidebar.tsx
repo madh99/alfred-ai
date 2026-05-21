@@ -9,6 +9,7 @@ const navItems = [
   { href: `${BASE}/chat/`, label: 'Chat', icon: '💬' },
   { href: `${BASE}/history/`, label: 'History', icon: '📜' },
   { href: `${BASE}/dashboard/`, label: 'Dashboard', icon: '📊' },
+  { href: `${BASE}/insights/`, label: 'Insights', icon: '💡' },
   { href: `${BASE}/knowledge/`, label: 'Knowledge', icon: '🧠' },
   { href: `${BASE}/memories/`, label: 'Memories', icon: '📝' },
   { href: `${BASE}/runbooks/`, label: 'Runbooks', icon: '📖' },

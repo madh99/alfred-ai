@@ -251,6 +251,45 @@ export class AlfredClient {
     return data.success;
   }
 
+  // ── v638 — Insights ──
+  async fetchInsights(filter?: { category?: string; status?: string; limit?: number }): Promise<InsightItem[]> {
+    const params = new URLSearchParams();
+    if (filter?.category) params.set('category', filter.category);
+    if (filter?.status) params.set('status', filter.status);
+    if (filter?.limit) params.set('limit', String(filter.limit));
+    const res = await fetch(`${this.baseUrl}/api/insights${params.toString() ? '?' + params.toString() : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Insights: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.insights ?? [];
+  }
+  async fetchInsightsStats(): Promise<Record<string, number>> {
+    const res = await fetch(`${this.baseUrl}/api/insights/stats`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Insights-stats: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.stats ?? {};
+  }
+  async runInsightsSweep(): Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/insights/sweep`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Insights-sweep: HTTP ${res.status}`);
+    return res.json();
+  }
+  async dismissInsight(id: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/insights/${id}/dismiss`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Dismiss: HTTP ${res.status}`);
+  }
+  async snoozeInsight(id: string, hours: number): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/insights/${id}/snooze`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ hours }),
+    });
+    if (!res.ok) throw new Error(`Snooze: HTTP ${res.status}`);
+  }
+  async actOnInsight(id: string): Promise<{ ok: boolean; result?: any; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/insights/${id}/act`, { method: 'POST', headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+
   // ── v629 — Confirmations + Reminders Side-Panel ──
   async fetchPendingConfirmations(): Promise<PendingConfirmationItem[]> {
     const res = await fetch(`${this.baseUrl}/api/confirmations/pending`, {
@@ -935,6 +974,24 @@ export interface Runbook {
   usageCount: number;
   lastUsedAt?: string;
   status: 'draft' | 'verified' | 'deprecated';
+  createdAt: string;
+  updatedAt: string;
+}
+
+// v638 — Insights
+export interface InsightItem {
+  id: string;
+  userId: string;
+  category: string;
+  title: string;
+  body: string;
+  confidence: number;
+  sourceData?: Record<string, unknown>;
+  actionSkill?: string;
+  actionParams?: Record<string, unknown>;
+  status: 'pending' | 'acted' | 'dismissed' | 'snoozed' | 'expired';
+  snoozedUntil?: string;
+  dedupeKey?: string;
   createdAt: string;
   updatedAt: string;
 }

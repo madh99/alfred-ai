@@ -5,6 +5,71 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.638] - 2026-05-21
+
+### Added — Insight-Engine Foundation (v638 — Teil 1 von 3 für Personal-Optimization)
+
+Cross-Domain-Reflector der aus mehreren Datenquellen Anstöße/Optimierungs-Vorschläge generiert. Erster Teil eines dreiteiligen Ausbaus (v639 Goal-Tracker, v640 Question-Generator folgen).
+
+**Schema** — SQLite Migration v69 / Postgres v72:
+- `alfred_insights` Tabelle mit `category`, `title`, `body`, `confidence`, `source_data` (JSON), `action_skill` + `action_params`, `status` (pending/acted/dismissed/snoozed/expired), `snoozed_until`, `dedupe_key` (unique pro user)
+- 3 Indizes: user+status+created, user+dedupe (unique partial), user+category+status
+
+**Repository** (`packages/storage/src/repositories/insights-repository.ts`):
+- `upsertCandidate(userId, candidate)` — Dedupe-aware Insert; refreshed pending/snoozed Einträge, überspringt acted/dismissed/expired (User hat schon entschieden)
+- `list/getById/dismiss/snooze/markActed`
+- `expireSnoozes` (Snoozes deren `snoozed_until` past) + `expireStale` (pending > 21d)
+- `stats` (Counts pro Status)
+
+**Engine** (`packages/core/src/insights/insight-engine.ts`):
+- `InsightEngine` mit Domain-Adapter-Pattern: jeder Adapter implementiert `generate(ctx)` und liefert Candidates
+- `sweep()` läuft alle Adapter parallel mit Isolation (Promise.allSettled), upsertet alle Candidates, returnt Aggregate
+- Plug-and-play: weitere Adapter registrieren über `engine.register()`
+
+**Fünf Initial-Adapter** (`packages/core/src/insights/adapters/`):
+1. **InfraForecastAdapter** — verkettet Capacity-Forecast (v633) × Pattern-Detection (v633) × Service-Health (v634). Confidence steigt mit Anzahl Co-Signale (0.55/0.75/0.95 bei 1/2/3 Signalen). Bindet `itsm.create_change_request` als Action.
+2. **OpenLoopAdapter** — findet Conversations >7d still mit Frage des Users zuletzt (Heuristik: endet auf "?" oder typische Frage-Keywords). Confidence skaliert mit Tagen-Stille.
+3. **CrossSourceMentionAdapter** — Regex-Heuristik für Termin-Erwähnungen (Klempner kommt, Treffe…am, Termin am…, Arzt, Flug) in Chat-Messages der letzten 14d, ohne passenden Calendar-Eintrag in 30d. Bindet `calendar.create_event` als Action.
+4. **KgGapAdapter** — KG-Self-Audit: Personen ohne Birthday/Relation bei ≥5 Mentions, Orgs ohne URL+Branche bei ≥5 Mentions, Locations ohne Adresse bei ≥3 Mentions. Bindet `memory.add` Aktion vor mit Vorschlags-Template.
+5. **CalendarMismatchAdapter** — Termin in nächsten 24h mit Location × BMW-Range <50km → "vorher laden". Bindet `goecharger.set_charging_window` als Action.
+
+**Skill** (`packages/skills/src/built-in/insights.ts`): `insights list/dismiss/snooze/act/sweep/stats`, akzeptiert truncated ID-Prefixes.
+
+**HTTP-API** (`packages/messaging/src/adapters/http.ts`):
+- `GET /api/insights` — list (filter: category, status, limit)
+- `GET /api/insights/stats` — Counts
+- `POST /api/insights/sweep` — manueller Trigger
+- `POST /api/insights/:id/dismiss`
+- `POST /api/insights/:id/snooze` — Body `{ hours }`
+- `POST /api/insights/:id/act` — führt gebundene Skill-Action aus, markiert acted bei Erfolg
+
+**Wiring** (`packages/core/src/alfred.ts`):
+- Insight-Engine wird im CMDB/ITSM-Block instanziiert (gleicher Lebensbereich)
+- Adapter werden bedingt registriert: KG-Gap nur wenn DB da, Calendar-Mismatch nur wenn Calendar-Skill registriert, BMW-Facade nur wenn BMW-Skill registriert
+- **Daily Sweep**: setTimeout bis nächste 09:00 lokal, danach 24h-Intervall, `unref()`-ed
+- Adapter-Result wird mit linked-user-ids gescoped (v637-Pattern)
+
+**Frontend** (`apps/web/src/components/insights/InsightsPage.tsx`):
+- Neue Route `/alfred/insights`
+- Stats-Bar (pending/snoozed/acted/dismissed/expired)
+- Filter (Kategorie + Status)
+- Insight-Karten mit Farb-Coding nach Confidence (🟢🟡🔴), Expand/Collapse für langen Body
+- Pro-Insight-Buttons: Aktion ausführen (falls gebunden), Snooze 24h/7d, Erledigt
+- Sweep-Now-Button
+- Sidebar-Eintrag `💡 Insights` zwischen Dashboard und Knowledge
+
+### Effekt heute (nach Deploy + erster Sweep)
+- `infra-forecast`: bei dir liefen die `PGSql-P01 RAM`/`git-server RAM`-Patterns aus v631 — der Adapter dürfte 1-2 hochconfidente Insights generieren wenn die Capacity-Samples genug Datenpunkte haben
+- `open-loop`: scannt all deine Telegram/Matrix-Chats nach unbeantworteten Fragen >7d
+- `kg-gap`: liest deine KG-Personen, schlägt Birthday/Relation-Lücken vor
+- `cross-source-mention`: Regex-Match auf letzten 14d Chats — kann an deinem Volume false-positive haben, dafür Snooze/Dismiss
+- `calendar-mismatch`: nur aktiv wenn Calendar UND BMW konfiguriert
+
+### Notes
+- Build grün (12/12)
+- Designed für graceful degradation — fehlt eine Quelle (z.B. BMW), wird der Adapter still übersprungen, andere laufen weiter
+- Nächste Schritte (v639+v640) sind unabhängig nutzbar: v639 fügt GoalDriftAdapter hinzu, v640 KG-Question-Generator
+
 ## [0.19.0-multi-ha.637] - 2026-05-21
 
 ### Fixed — History-Viewer + Confirmations-Panel: Matrix/Discord/WhatsApp Chats waren versteckt

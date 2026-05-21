@@ -298,6 +298,30 @@ export class HttpAdapter extends MessagingAdapter {
     this.remindersListFn = list;
   }
 
+  // v638 — Insights API
+  private insightsListFn?: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
+  private insightsDismissFn?: (id: string) => Promise<void>;
+  private insightsSnoozeFn?: (id: string, hours: number) => Promise<void>;
+  private insightsActFn?: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
+  private insightsSweepFn?: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
+  private insightsStatsFn?: () => Promise<Record<string, number>>;
+
+  setInsightsCallbacks(opts: {
+    list: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
+    dismiss: (id: string) => Promise<void>;
+    snooze: (id: string, hours: number) => Promise<void>;
+    act: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
+    sweep: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
+    stats: () => Promise<Record<string, number>>;
+  }): void {
+    this.insightsListFn = opts.list;
+    this.insightsDismissFn = opts.dismiss;
+    this.insightsSnoozeFn = opts.snooze;
+    this.insightsActFn = opts.act;
+    this.insightsSweepFn = opts.sweep;
+    this.insightsStatsFn = opts.stats;
+  }
+
   private projectsCallbacks?: {
     list: (filter?: { status?: string }) => Promise<any[]>;
     get: (id: string) => Promise<{ project: any; sessions: any[]; openItems: any[]; decisions: any[]; health: Record<string, any> } | null>;
@@ -622,6 +646,19 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConfirmationDecide(req, res, url, 'reject').catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/reminders' && req.method === 'GET') {
       this.handleRemindersList(req, res).catch(err => this.safeError(res, err));
+    // ── Insights API (v638) ──
+    } else if (url.pathname === '/api/insights' && req.method === 'GET') {
+      this.handleInsightsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/insights/stats' && req.method === 'GET') {
+      this.handleInsightsStats(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/insights/sweep' && req.method === 'POST') {
+      this.handleInsightsSweep(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/dismiss$/) && req.method === 'POST') {
+      this.handleInsightsDismiss(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/snooze$/) && req.method === 'POST') {
+      this.handleInsightsSnooze(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/act$/) && req.method === 'POST') {
+      this.handleInsightsAct(req, res, url).catch(err => this.safeError(res, err));
     // ── Projects API ──
     } else if (url.pathname === '/api/projects' && req.method === 'GET') {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1424,6 +1461,66 @@ export class HttpAdapter extends MessagingAdapter {
     const list = await this.remindersListFn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ reminders: list }));
+  }
+
+  // ── Insights handlers (v638) ──
+  private async handleInsightsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsListFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const filter = {
+      category: url.searchParams.get('category') ?? undefined,
+      status: url.searchParams.get('status') ?? undefined,
+      limit: url.searchParams.get('limit') ? Number(url.searchParams.get('limit')) : undefined,
+    };
+    const list = await this.insightsListFn(filter);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ insights: list }));
+  }
+
+  private async handleInsightsStats(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsStatsFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const stats = await this.insightsStatsFn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ stats }));
+  }
+
+  private async handleInsightsSweep(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsSweepFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const result = await this.insightsSweepFn();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleInsightsDismiss(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsDismissFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    await this.insightsDismissFn(id);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private async handleInsightsSnooze(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsSnoozeFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let hours = 24;
+    try { hours = Number(JSON.parse(body).hours ?? 24); } catch { /* default */ }
+    await this.insightsSnoozeFn(id, hours);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true }));
+  }
+
+  private async handleInsightsAct(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsActFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/')[3];
+    const result = await this.insightsActFn(id);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // ── Projects API handlers ──

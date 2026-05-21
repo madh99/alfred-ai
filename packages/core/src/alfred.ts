@@ -153,6 +153,8 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
+  private insightsRepo?: import('@alfred/storage').InsightsRepository;
+  private insightEngine?: import('./insights/insight-engine.js').InsightEngine;
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
@@ -2420,6 +2422,133 @@ export class Alfred {
         skillRegistry.register(infraDocsSkill);
         skillRegistry.register(runbookSkill);
 
+        // v638 — Insight-Engine (Cross-Domain). Lebt im selben Block weil sie auf
+        // CMDB/ITSM/Problem/MetricSamples zugreift. Adapter registriert sich selbst.
+        try {
+          const { InsightsRepository: InsightsRepo } = await import('@alfred/storage');
+          const { InsightEngine } = await import('./insights/insight-engine.js');
+          const { InfraForecastAdapter } = await import('./insights/adapters/infra-forecast-adapter.js');
+          const { OpenLoopAdapter } = await import('./insights/adapters/open-loop-adapter.js');
+          const { CrossSourceMentionAdapter } = await import('./insights/adapters/cross-source-mention-adapter.js');
+          const { KgGapAdapter } = await import('./insights/adapters/kg-gap-adapter.js');
+          const { CalendarMismatchAdapter } = await import('./insights/adapters/calendar-mismatch-adapter.js');
+          const { ConversationRepository: ConvRepoForInsights } = await import('@alfred/storage');
+
+          const insightsRepo = new InsightsRepo(adapter);
+          this.insightsRepo = insightsRepo;
+          const insightEngine = new InsightEngine(insightsRepo, this.logger.child({ component: 'insight-engine' }));
+          this.insightEngine = insightEngine;
+          insightEngine.register(new InfraForecastAdapter(metricSamplesRepo, itsmRepo, problemRepo));
+          insightEngine.register(new OpenLoopAdapter(new ConvRepoForInsights(adapter)));
+
+          // Calendar facade — bündelt was MS-Calendar/Google/CalDAV liefert (sofern aktiviert)
+          const calendarFacade = this.skillRegistry?.has('calendar') ? {
+            listUpcoming: async (uid: string, days: number) => {
+              try {
+                const r = await this.skillRegistry!.get('calendar')!.execute(
+                  { action: 'list_events', days } as Record<string, unknown>,
+                  { userId: uid, masterUserId: uid } as any,
+                );
+                if (Array.isArray(r.data)) return r.data.map((e: any) => ({
+                  id: String(e.id ?? ''), title: String(e.title ?? ''),
+                  startAt: String(e.start ?? e.startAt ?? ''), location: e.location as string | undefined,
+                }));
+              } catch { /* skip */ }
+              return [];
+            },
+          } : undefined;
+          insightEngine.register(new CrossSourceMentionAdapter(new ConvRepoForInsights(adapter), calendarFacade));
+
+          // BMW facade — pulls latest snapshot from BMW telematic log
+          const bmwFacade = this.skillRegistry?.has('bmw') ? {
+            latestStatus: async (uid: string) => {
+              try {
+                const r = await this.skillRegistry!.get('bmw')!.execute(
+                  { action: 'status' } as Record<string, unknown>,
+                  { userId: uid, masterUserId: uid } as any,
+                );
+                if (r.data && typeof r.data === 'object') {
+                  const d = r.data as any;
+                  return {
+                    rangeKm: typeof d.rangeKm === 'number' ? d.rangeKm : (typeof d.range_km === 'number' ? d.range_km : undefined),
+                    soc: typeof d.soc === 'number' ? d.soc : (typeof d.stateOfCharge === 'number' ? d.stateOfCharge : undefined),
+                    mileage: typeof d.mileage === 'number' ? d.mileage : undefined,
+                    updatedAt: d.updatedAt as string | undefined,
+                  };
+                }
+              } catch { /* skip */ }
+              return null;
+            },
+          } : undefined;
+          if (calendarFacade) insightEngine.register(new CalendarMismatchAdapter(calendarFacade, bmwFacade));
+
+          // KG facade — uses KnowledgeGraphRepository (iterates known types)
+          if (this.database) {
+            try {
+              const { KnowledgeGraphRepository } = await import('@alfred/storage');
+              const kgRepoForInsights = new KnowledgeGraphRepository(this.database.getAdapter());
+              const KG_TYPES = ['person', 'location', 'item', 'vehicle', 'event', 'metric', 'organization'] as const;
+              const kgFacade = {
+                listEntities: async (uid: string) => {
+                  const all: Array<{ id: string; name: string; entityType: string; mentionCount: number; confidence: number; attributes: Record<string, unknown> }> = [];
+                  for (const t of KG_TYPES) {
+                    try {
+                      const list = await kgRepoForInsights.getEntitiesByType(uid, t as any);
+                      for (const e of list) {
+                        all.push({
+                          id: e.id, name: e.name, entityType: e.entityType,
+                          mentionCount: (e as any).mentionCount ?? 0,
+                          confidence: (e as any).confidence ?? 0.5,
+                          attributes: (e as any).attributes ?? {},
+                        });
+                      }
+                    } catch { /* skip type */ }
+                  }
+                  return all;
+                },
+              };
+              insightEngine.register(new KgGapAdapter(kgFacade));
+            } catch (err) {
+              this.logger.debug({ err }, 'KG-Gap adapter wiring skipped');
+            }
+          }
+
+          // Skill
+          const { InsightsSkill } = await import('@alfred/skills');
+          const insightsSkill = new InsightsSkill(insightsRepo);
+          insightsSkill.setSweepCallback(async (uid: string) => {
+            const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(uid)).map(u => u.id) : [uid];
+            if (!linked.includes(uid)) linked.push(uid);
+            return insightEngine.sweep({ userId: uid, linkedUserIds: linked, logger: this.logger });
+          });
+          skillRegistry.register(insightsSkill);
+
+          // Daily sweep at 09:00 local
+          const ownerUidForInsights = this.ownerMasterUserId || this.config.security?.ownerUserId;
+          if (ownerUidForInsights) {
+            const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForInsights)).map(u => u.id) : [ownerUidForInsights];
+            if (!linked.includes(ownerUidForInsights)) linked.push(ownerUidForInsights);
+            const sweepNow = async () => {
+              try {
+                await insightEngine.sweep({ userId: ownerUidForInsights, linkedUserIds: linked, logger: this.logger });
+              } catch (err) { this.logger.debug({ err }, 'Insight daily-sweep failed (non-fatal)'); }
+            };
+            // Schedule next 09:00 local, then 24h interval
+            const next09 = new Date();
+            next09.setHours(9, 0, 0, 0);
+            if (next09.getTime() <= Date.now()) next09.setDate(next09.getDate() + 1);
+            const delay = next09.getTime() - Date.now();
+            setTimeout(() => {
+              sweepNow();
+              const intv = setInterval(sweepNow, 24 * 3600_000);
+              (intv as { unref?: () => void }).unref?.();
+            }, delay).unref?.();
+            this.logger.info({ firstSweepIn: Math.round(delay / 60_000) + 'min', adapters: insightEngine.listRegistered() }, 'Insight-Engine scheduled (daily 09:00)');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'Insight-Engine wiring failed (non-fatal)');
+        }
+
         // Schedule periodic auto-discovery
         const discoveryIntervalH = this.config.cmdb?.autoDiscoveryIntervalHours ?? 24;
         if (discoveryIntervalH > 0) {
@@ -4097,6 +4226,59 @@ export class Alfred {
         });
         this.logger.info('Confirmations Side-Panel API registered');
       }
+      // v638 — Wire Insights API
+      if (apiAdapter && this.insightsRepo && this.insightEngine && 'setInsightsCallbacks' in apiAdapter) {
+        const insightsRepo = this.insightsRepo;
+        const insightEngine = this.insightEngine;
+        const ownerUidForInsights = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const resolveLinked = async (): Promise<string[]> => {
+          if (!ownerUidForInsights || !this.userRepo) return ownerUidForInsights ? [ownerUidForInsights] : [];
+          try {
+            const linked = await this.userRepo.getLinkedUsers(ownerUidForInsights);
+            const ids = linked.map(u => u.id);
+            if (!ids.includes(ownerUidForInsights)) ids.push(ownerUidForInsights);
+            return ids;
+          } catch { return [ownerUidForInsights]; }
+        };
+        (apiAdapter as any).setInsightsCallbacks({
+          list: async (filter?: { category?: string; status?: string; limit?: number }) => {
+            if (!ownerUidForInsights) return [];
+            return insightsRepo.list(ownerUidForInsights, {
+              category: filter?.category as any,
+              status: filter?.status as any,
+              limit: filter?.limit ?? 100,
+            });
+          },
+          dismiss: async (id: string) => { if (ownerUidForInsights) await insightsRepo.dismiss(ownerUidForInsights, id); },
+          snooze: async (id: string, hours: number) => { if (ownerUidForInsights) await insightsRepo.snooze(ownerUidForInsights, id, hours); },
+          act: async (id: string) => {
+            if (!ownerUidForInsights) return { ok: false, reason: 'no-owner' };
+            const insight = await insightsRepo.getById(ownerUidForInsights, id);
+            if (!insight) return { ok: false, reason: 'not-found' };
+            if (!insight.actionSkill) return { ok: false, reason: 'no-action' };
+            const skill = this.skillRegistry?.get(insight.actionSkill);
+            if (!skill) return { ok: false, reason: `skill ${insight.actionSkill} not registered` };
+            try {
+              const result = await skill.execute(insight.actionParams ?? {}, { userId: ownerUidForInsights, masterUserId: ownerUidForInsights } as any);
+              await insightsRepo.markActed(ownerUidForInsights, id);
+              return { ok: true, result };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          sweep: async () => {
+            if (!ownerUidForInsights) return { inserted: 0, refreshed: 0, perAdapter: {}, errors: ['no-owner'] };
+            const linked = await resolveLinked();
+            return insightEngine.sweep({ userId: ownerUidForInsights, linkedUserIds: linked, logger: this.logger });
+          },
+          stats: async () => {
+            if (!ownerUidForInsights) return {};
+            return insightsRepo.stats(ownerUidForInsights);
+          },
+        });
+        this.logger.info('Insights API registered');
+      }
+
       if (apiAdapter && this.reminderRepo && 'setRemindersCallback' in apiAdapter) {
         (apiAdapter as any).setRemindersCallback(async () => {
           try {

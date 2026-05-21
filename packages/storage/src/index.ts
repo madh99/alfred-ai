@@ -69,6 +69,8 @@ export { ItsmRepository } from './repositories/itsm-repository.js';
 export { ProblemRepository, normalizeTitle as normalizeIncidentTitle } from './repositories/problem-repository.js';
 export { MetricSamplesRepository } from './repositories/metric-samples-repository.js';
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
+export { InsightsRepository } from './repositories/insights-repository.js';
+export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from './repositories/insights-repository.js';
 export { RunbookRepository } from './repositories/runbook-repository.js';
 export type { Runbook, RunbookCreateInput, RunbookSource, RunbookStatus } from './repositories/runbook-repository.js';
 export { ProjectRepository } from './repositories/project-repository.js';
