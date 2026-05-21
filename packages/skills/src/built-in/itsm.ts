@@ -13,7 +13,8 @@ type Action =
   | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs'
   | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches'
   | 'backfill_assets' | 'bulk_link_to_problem'
-  | 'mttr_report' | 'capacity_forecast';
+  | 'mttr_report' | 'capacity_forecast'
+  | 'service_health_score' | 'list_cascades' | 'sla_breach_risk' | 'pir_pending';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -64,13 +65,17 @@ export class ItsmSkill extends Skill {
       '"backfill_assets" scannt alle Incidents ohne affected_asset_ids und matched Asset-Names im Titel/Symptoms — one-shot DB-Cleanup für Altdaten. ' +
       '"bulk_link_to_problem" verknüpft mehrere Incidents in einem Schritt mit einem bestehenden Problem (problem_id, incident_ids). ' +
       '"mttr_report" zeigt MTTR-Statistik (Mean/Median/p95 in Minuten) je Asset + Recurrence-Counter, Filter window_days. ' +
-      '"capacity_forecast" prognostiziert wann Metrik-Werte (CPU/RAM/disk%) die Schwelle erreichen (window_days, threshold).',
+      '"capacity_forecast" prognostiziert wann Metrik-Werte (CPU/RAM/disk%) die Schwelle erreichen (window_days, threshold). ' +
+      '"service_health_score" berechnet 0-100-Health-Score je Service über Last/Recurrence/Components/Current (window_days). ' +
+      '"list_cascades" listet gelernte Service-zu-Service Failure-Cascades (sortiert nach observed_count). ' +
+      '"sla_breach_risk" listet aktive Incidents mit Projection auf SLA-Bruch. ' +
+      '"pir_pending" listet kürzlich geschlossene Incidents ohne Post-Incident-Review (lessons_learned/postmortem leer).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem', 'mttr_report', 'capacity_forecast', 'service_health_score', 'list_cascades', 'sla_breach_risk', 'pir_pending'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -244,6 +249,10 @@ export class ItsmSkill extends Skill {
         case 'bulk_link_to_problem': return await this.bulkLinkToProblem(userId, input);
         case 'mttr_report': return await this.mttrReportAction(userId, input);
         case 'capacity_forecast': return await this.capacityForecastAction(userId, input);
+        case 'service_health_score': return await this.serviceHealthScoreAction(userId, input);
+        case 'list_cascades': return await this.listCascadesAction(userId, input);
+        case 'sla_breach_risk': return await this.slaBreachRiskAction(userId);
+        case 'pir_pending': return await this.pirPendingAction(userId, input);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
         case 'add_component': return await this.addComponent(userId, input);
@@ -882,6 +891,92 @@ export class ItsmSkill extends Skill {
       lines.push(`| ${f.metricName} | ${aid} | ${f.latestValue.toFixed(1)}% | ${trend}%/d | ${tts} |`);
     }
     return { success: true, data: forecasts, display: lines.join('\n') };
+  }
+
+  /**
+   * v634 T4.1 — Service-Health-Score (0-100 je Service, niedrigster zuerst = größtes Problem).
+   */
+  private async serviceHealthScoreAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const windowDays = (input.window_days as number) ?? 30;
+    const serviceId = input.service_id as string | undefined;
+    const scores = await this.itsm.serviceHealthScore(userId, { windowDays, serviceId });
+    if (scores.length === 0) return { success: true, data: [], display: 'Keine Services konfiguriert.' };
+
+    const lines: string[] = [
+      `## Service-Health-Score (${windowDays}d)`,
+      '',
+      '| Score | Service | Incidents | Sev-Last | Re-Opens | Comp ↓ | Health |',
+      '|---:|---|---:|---:|---:|---:|---|',
+    ];
+    for (const s of scores) {
+      const flag = s.score < 40 ? '🔴' : s.score < 70 ? '🟡' : '🟢';
+      lines.push(`| ${flag} **${s.score}** | ${s.serviceName.slice(0, 30)} | ${s.incidentCount} | ${s.severityWeight.toFixed(1)} | ${s.recurrenceTotal} | ${s.componentDown}+${s.componentDegraded} | ${s.currentHealth} |`);
+    }
+    return { success: true, data: scores, display: lines.join('\n') };
+  }
+
+  /**
+   * v634 T4.2 — Gelernte Service-zu-Service Failure-Cascades.
+   */
+  private async listCascadesAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const minObservations = (input.min_observations as number) ?? 2;
+    const cascades = await this.itsm.listCascades(userId, { minObservations });
+    if (cascades.length === 0) return { success: true, data: [], display: 'Noch keine wiederkehrenden Cascades beobachtet.' };
+
+    const allServices = await this.itsm.listServices(userId);
+    const nameOf = (id: string) => allServices.find(s => s.id === id)?.name ?? id.slice(0, 8);
+
+    const lines: string[] = [
+      `## Service-Cascades (≥${minObservations} Beobachtungen)`,
+      '',
+      '| Source | → | Target | Anzahl | ⌀ Verzögerung | Zuletzt |',
+      '|---|---|---|---:|---:|---|',
+    ];
+    for (const c of cascades) {
+      lines.push(`| ${nameOf(c.sourceServiceId)} | → | ${nameOf(c.targetServiceId)} | ${c.observedCount} | ${Math.round(c.avgDelayMinutes)}min | ${c.lastObservedAt.slice(0, 16)} |`);
+    }
+    return { success: true, data: cascades, display: lines.join('\n') };
+  }
+
+  /**
+   * v634 T4.4 — SLA-Breach-Risk: aktive Incidents auf SLA-Services mit Time-Budget.
+   */
+  private async slaBreachRiskAction(userId: string): Promise<SkillResult> {
+    const risks = await this.itsm.slaBreachRisk(userId);
+    if (risks.length === 0) return { success: true, data: [], display: '✅ Keine SLA-Breach-Risiken bei aktiven Incidents.' };
+
+    const lines: string[] = [
+      '## SLA-Breach-Risiko',
+      '',
+      '| Incident | Verstrichen | SLA-Limit | Bis Bruch | Status |',
+      '|---|---:|---:|---:|---|',
+    ];
+    for (const r of risks) {
+      const flag = r.minutesUntilBreach < 0 ? '🔴 verletzt' : r.minutesUntilBreach < 30 ? '⚠️ kritisch' : '🟡 eng';
+      lines.push(`| ${r.incidentTitle.slice(0, 40)} | ${r.minutesSinceOpened}min | ${r.slaMttrMinutes}min | ${r.minutesUntilBreach}min | ${flag} |`);
+    }
+    return { success: true, data: risks, display: lines.join('\n') };
+  }
+
+  /**
+   * v634 T4.3 — Listet kürzlich geschlossene Incidents ohne Post-Incident-Review.
+   * Schlägt vor jeden zu reviewen — User antwortet mit Notizen oder erstellt direkt Runbook.
+   */
+  private async pirPendingAction(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const withinHours = (input.within_hours as number) ?? 72;
+    const incidents = await this.itsm.findClosedIncidentsWithoutPir(userId, withinHours);
+    if (incidents.length === 0) return { success: true, data: [], display: '✅ Alle kürzlich geschlossenen Incidents haben einen Post-Incident-Review.' };
+
+    const lines: string[] = [
+      `## Offene Post-Incident-Reviews (${incidents.length})`,
+      '',
+      'Pro Incident: \`update_incident incident_id=… lessons_learned=…\` oder \`generate_runbook\` (in Runbook-Skill).',
+      '',
+    ];
+    for (const inc of incidents) {
+      lines.push(`- **${inc.title}** (geschlossen ${inc.closedAt?.slice(0, 16) ?? '?'}) — ID \`${inc.id.slice(0, 8)}\``);
+    }
+    return { success: true, data: incidents, display: lines.join('\n') };
   }
 
   // ── Services ───────────────────────────────────────────────

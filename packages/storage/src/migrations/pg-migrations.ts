@@ -937,4 +937,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_metric_samples_user_time ON cmdb_metric_samples(user_id, sampled_at DESC)`, []);
     },
   },
+  {
+    version: 71,
+    description: 'v634 T4 — Service-Cascade observations for cross-service-dependency learning',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS cmdb_service_cascades (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_service_id TEXT NOT NULL,
+          target_service_id TEXT NOT NULL,
+          observed_count INTEGER NOT NULL DEFAULT 1,
+          first_observed_at TEXT NOT NULL,
+          last_observed_at TEXT NOT NULL,
+          avg_delay_minutes DOUBLE PRECISION NOT NULL DEFAULT 0,
+          UNIQUE(user_id, source_service_id, target_service_id)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_service_cascades_source ON cmdb_service_cascades(user_id, source_service_id)`, []);
+    },
+  },
 ];

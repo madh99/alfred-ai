@@ -1935,6 +1935,34 @@ export class Alfred {
 
                     if (!batchFirstBySource.has(alert.source)) batchFirstBySource.set(alert.source, newInc.id);
                     newIncidentIds.push(newInc.id);
+
+                    // v634 T4.2 — Cascade observation: if there's a different-service incident
+                    // resolved/closed within the last 30 minutes, record the (source→target)
+                    // transition. Over time, repeated observations build a service-dependency
+                    // graph from actual failure patterns (not just configured CMDB relations).
+                    try {
+                      if (newInc.affectedServiceIds.length > 0) {
+                        const cascadeWindow = new Date(Date.now() - 30 * 60_000).toISOString();
+                        const recentRows = await itsmRepo.listIncidents(userId, { limit: 30 });
+                        for (const earlier of recentRows) {
+                          if (earlier.id === newInc.id) continue;
+                          if (!earlier.resolvedAt && !earlier.closedAt) continue;
+                          const resolvedAt = earlier.resolvedAt ?? earlier.closedAt;
+                          if (!resolvedAt || resolvedAt < cascadeWindow) continue;
+                          // Different service?
+                          for (const targetSid of newInc.affectedServiceIds) {
+                            for (const sourceSid of earlier.affectedServiceIds) {
+                              if (sourceSid !== targetSid) {
+                                const delayMin = (new Date(newInc.openedAt).getTime() - new Date(resolvedAt).getTime()) / 60_000;
+                                if (delayMin >= 0 && delayMin <= 30) {
+                                  await itsmRepo.observeCascade(userId, sourceSid, targetSid, delayMin);
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    } catch (err) { this.logger.debug({ err: (err as Error).message }, 'Cascade-observation failed (non-fatal)'); }
                   } catch (err) { this.logger.warn({ err: (err as Error).message, source: alert.source }, 'Auto-incident creation failed'); }
                 }
 
@@ -2187,7 +2215,46 @@ export class Alfred {
                     lines.push(`- ${f.metricName}${f.assetId ? ` @ ${f.assetId.slice(0, 8)}` : ''}: aktuell ${f.latestValue.toFixed(1)}%, ${f.daysUntilThreshold}d bis Schwelle`);
                   }
                 }
-                if (last7d.length === 0 && recurrenceTop.length === 0 && urgentForecasts.length === 0) return; // nothing to say
+
+                // v634 T4.1 — Worst Service-Health-Scores
+                let worstServices: Array<{ serviceName: string; score: number }> = [];
+                try {
+                  const allScores = await itsmRepo.serviceHealthScore(ownerUidForSweep, { windowDays: 30 });
+                  worstServices = allScores.filter(s => s.score < 70).slice(0, 3).map(s => ({ serviceName: s.serviceName, score: s.score }));
+                } catch { /* skip */ }
+                if (worstServices.length > 0) {
+                  lines.push('');
+                  lines.push(`**Service-Health <70:**`);
+                  for (const s of worstServices) {
+                    lines.push(`- ${s.serviceName}: ${s.score}/100`);
+                  }
+                }
+
+                // v634 T4.4 — SLA-Breach-Risk
+                let slaRisks: Awaited<ReturnType<typeof itsmRepo.slaBreachRisk>> = [];
+                try { slaRisks = await itsmRepo.slaBreachRisk(ownerUidForSweep); } catch { /* skip */ }
+                if (slaRisks.length > 0) {
+                  lines.push('');
+                  lines.push(`**SLA-Risiko (${slaRisks.length}):**`);
+                  for (const r of slaRisks.slice(0, 3)) {
+                    const flag = r.minutesUntilBreach < 0 ? '🔴' : r.minutesUntilBreach < 30 ? '⚠️' : '🟡';
+                    lines.push(`- ${flag} ${r.incidentTitle.slice(0, 50)}: noch ${r.minutesUntilBreach}min Budget`);
+                  }
+                }
+
+                // v634 T4.3 — Post-Incident-Review pending
+                let pirPending: Awaited<ReturnType<typeof itsmRepo.findClosedIncidentsWithoutPir>> = [];
+                try { pirPending = await itsmRepo.findClosedIncidentsWithoutPir(ownerUidForSweep, 72); } catch { /* skip */ }
+                if (pirPending.length > 0) {
+                  lines.push('');
+                  lines.push(`**Post-Incident-Review offen (${pirPending.length}):**`);
+                  for (const inc of pirPending.slice(0, 3)) {
+                    lines.push(`- ${inc.title.slice(0, 60)}`);
+                  }
+                  lines.push(`_Mit \`itsm pir_pending\` siehst du alle._`);
+                }
+
+                if (last7d.length === 0 && recurrenceTop.length === 0 && urgentForecasts.length === 0 && worstServices.length === 0 && slaRisks.length === 0 && pirPending.length === 0) return;
 
                 const adapter = this.adapters.get(ownerPlatformForSweep as any);
                 if (adapter) {

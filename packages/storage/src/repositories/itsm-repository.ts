@@ -432,6 +432,196 @@ export class ItsmRepository {
     return results.sort((a, b) => b.meanMinutes - a.meanMinutes);
   }
 
+  /**
+   * v634 T4.1 — Service-Health-Score (0-100, higher = better) je Service.
+   *
+   * Aggregiert über die letzten `windowDays` (default 30):
+   *   - 30 Punkte: Incident-Last (Anzahl × Severity-Gewicht; critical=5/high=3/medium=1)
+   *   - 30 Punkte: Recurrence-Burden (Summe recurrence_count)
+   *   - 20 Punkte: Component-Health (down/degraded/unknown counts)
+   *   - 20 Punkte: Aktuelle health_status des Service (down → 0, degraded → 10, unknown → 14, healthy → 20)
+   *
+   * Reine Heuristik — Ziel ist ein vergleichbarer Indikator pro Service, nicht eine wissenschaftliche Metrik.
+   */
+  async serviceHealthScore(userId: string, opts?: { windowDays?: number; serviceId?: string }): Promise<Array<{
+    serviceId: string; serviceName: string; score: number; incidentCount: number; severityWeight: number;
+    recurrenceTotal: number; componentDown: number; componentDegraded: number; currentHealth: string;
+  }>> {
+    const windowDays = opts?.windowDays ?? 30;
+    const cutoffIso = new Date(Date.now() - windowDays * 86400_000).toISOString();
+    const services = await this.listServices(userId, opts?.serviceId ? undefined : undefined);
+    const filtered = opts?.serviceId ? services.filter(s => s.id === opts.serviceId) : services;
+
+    // Bulk-fetch all incidents in window
+    const incidentRows = await this.db.query(
+      `SELECT affected_service_ids, severity, recurrence_count FROM cmdb_incidents
+       WHERE user_id = ? AND opened_at >= ?`,
+      [userId, cutoffIso],
+    ) as Array<{ affected_service_ids: string; severity: string; recurrence_count: number | null }>;
+
+    const SEV_WEIGHT: Record<string, number> = { critical: 5, high: 3, medium: 1, low: 0.5 };
+    const HEALTH_SCORE: Record<string, number> = { healthy: 20, unknown: 14, degraded: 10, down: 0 };
+
+    const results: Array<{ serviceId: string; serviceName: string; score: number; incidentCount: number; severityWeight: number; recurrenceTotal: number; componentDown: number; componentDegraded: number; currentHealth: string }> = [];
+
+    for (const svc of filtered) {
+      let incidentCount = 0;
+      let severityWeight = 0;
+      let recurrenceTotal = 0;
+      for (const inc of incidentRows) {
+        const services = parseJsonArray(inc.affected_service_ids);
+        if (!services.includes(svc.id)) continue;
+        incidentCount++;
+        severityWeight += SEV_WEIGHT[inc.severity] ?? 1;
+        recurrenceTotal += Number(inc.recurrence_count ?? 0);
+      }
+      // Component-Health
+      const components = svc.components ?? [];
+      const componentDown = components.filter((c: any) => c.healthStatus === 'down').length;
+      const componentDegraded = components.filter((c: any) => c.healthStatus === 'degraded' || c.healthStatus === 'unknown').length;
+
+      const incidentPenalty = Math.min(30, severityWeight * 2);              // up to 30 lost
+      const recurrencePenalty = Math.min(30, recurrenceTotal * 3);            // up to 30 lost
+      const componentPenalty = Math.min(20, componentDown * 5 + componentDegraded * 2); // up to 20 lost
+      const healthPoints = HEALTH_SCORE[svc.healthStatus] ?? 14;              // 0..20
+
+      const score = Math.max(0, Math.round(100 - incidentPenalty - recurrencePenalty - componentPenalty - (20 - healthPoints)));
+      results.push({
+        serviceId: svc.id, serviceName: svc.name, score,
+        incidentCount, severityWeight, recurrenceTotal,
+        componentDown, componentDegraded, currentHealth: svc.healthStatus,
+      });
+    }
+
+    return results.sort((a, b) => a.score - b.score); // worst first
+  }
+
+  /**
+   * v634 T4.2 — Observe a service-to-service cascade. Called when a new incident is
+   * created shortly after a different-service incident — we just upsert the (source,target)
+   * pair and incrementally average the delay.
+   */
+  async observeCascade(userId: string, sourceServiceId: string, targetServiceId: string, delayMinutes: number): Promise<void> {
+    if (sourceServiceId === targetServiceId) return;
+    const existing = await this.db.queryOne(
+      `SELECT * FROM cmdb_service_cascades WHERE user_id = ? AND source_service_id = ? AND target_service_id = ?`,
+      [userId, sourceServiceId, targetServiceId],
+    ) as Record<string, unknown> | undefined;
+    const now = new Date().toISOString();
+    if (existing) {
+      const oldCount = Number(existing.observed_count);
+      const oldAvg = Number(existing.avg_delay_minutes);
+      const newAvg = (oldAvg * oldCount + delayMinutes) / (oldCount + 1);
+      await this.db.execute(
+        `UPDATE cmdb_service_cascades SET observed_count = ?, last_observed_at = ?, avg_delay_minutes = ?
+         WHERE user_id = ? AND source_service_id = ? AND target_service_id = ?`,
+        [oldCount + 1, now, newAvg, userId, sourceServiceId, targetServiceId],
+      );
+    } else {
+      await this.db.execute(
+        `INSERT INTO cmdb_service_cascades (id, user_id, source_service_id, target_service_id, observed_count, first_observed_at, last_observed_at, avg_delay_minutes)
+         VALUES (?, ?, ?, ?, 1, ?, ?, ?)`,
+        [randomUUID(), userId, sourceServiceId, targetServiceId, now, now, delayMinutes],
+      );
+    }
+  }
+
+  async listCascades(userId: string, opts?: { minObservations?: number; limit?: number }): Promise<Array<{
+    sourceServiceId: string; targetServiceId: string; observedCount: number;
+    firstObservedAt: string; lastObservedAt: string; avgDelayMinutes: number;
+  }>> {
+    const minObs = opts?.minObservations ?? 2;
+    const limit = opts?.limit ?? 50;
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_service_cascades WHERE user_id = ? AND observed_count >= ?
+       ORDER BY observed_count DESC, last_observed_at DESC LIMIT ?`,
+      [userId, minObs, limit],
+    ) as Array<Record<string, unknown>>;
+    return rows.map(r => ({
+      sourceServiceId: r.source_service_id as string,
+      targetServiceId: r.target_service_id as string,
+      observedCount: Number(r.observed_count),
+      firstObservedAt: r.first_observed_at as string,
+      lastObservedAt: r.last_observed_at as string,
+      avgDelayMinutes: Number(r.avg_delay_minutes),
+    }));
+  }
+
+  /**
+   * v634 T4.3 — Find recently-closed incidents (last `withinHours`) that have no
+   * `lessons_learned` / `postmortem` filled. Used by the post-incident-review job to
+   * ask the user "Was war die Root-Cause?" once per closed incident.
+   */
+  async findClosedIncidentsWithoutPir(userId: string, withinHours = 24): Promise<CmdbIncident[]> {
+    const cutoffIso = new Date(Date.now() - withinHours * 3_600_000).toISOString();
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents
+       WHERE user_id = ? AND status = 'closed' AND closed_at >= ?
+         AND (lessons_learned IS NULL OR lessons_learned = '')
+         AND (postmortem IS NULL OR postmortem = '')
+       ORDER BY closed_at DESC LIMIT 20`,
+      [userId, cutoffIso],
+    );
+    return (rows as any[]).map(rowToIncident);
+  }
+
+  /**
+   * v634 T4.4 — Find active incidents that risk SLA-breach. For each open/investigating
+   * incident on an asset/service with an `sla.mttrMinutes` target, compute projected
+   * resolution time (`opened_at + mttr_median_for_asset`) and flag if it would exceed SLA.
+   *
+   * Returns a flat list of risk-records that the caller can deliver as escalation reminders.
+   */
+  async slaBreachRisk(userId: string): Promise<Array<{
+    incidentId: string; incidentTitle: string; assetId?: string; serviceId?: string;
+    slaMttrMinutes: number; openedAt: string; minutesSinceOpened: number; minutesUntilBreach: number;
+  }>> {
+    const services = await this.listServices(userId);
+    const mttrByAsset = new Map<string, number>();
+    const mttrReport = await this.mttrReport(userId, { windowDays: 30 });
+    for (const r of mttrReport) {
+      if (r.scope === 'asset' && r.assetId) mttrByAsset.set(r.assetId, r.medianMinutes);
+    }
+
+    const rows = await this.db.query(
+      `SELECT * FROM cmdb_incidents
+       WHERE user_id = ? AND status IN ('open', 'investigating', 'acknowledged', 'mitigating')
+       ORDER BY opened_at ASC LIMIT 100`,
+      [userId],
+    );
+    const activeIncidents = (rows as any[]).map(rowToIncident);
+
+    const results: Array<{ incidentId: string; incidentTitle: string; assetId?: string; serviceId?: string; slaMttrMinutes: number; openedAt: string; minutesSinceOpened: number; minutesUntilBreach: number }> = [];
+    for (const inc of activeIncidents) {
+      // Resolve SLA via service.sla.mttrMinutes
+      let slaMttr: number | undefined;
+      let svcId: string | undefined;
+      for (const sid of inc.affectedServiceIds) {
+        const s = services.find(x => x.id === sid);
+        const m = (s?.sla as any)?.targets?.mttrMinutes;
+        if (typeof m === 'number') { slaMttr = m; svcId = sid; break; }
+      }
+      if (!slaMttr) continue;
+
+      const minutesSinceOpened = Math.round((Date.now() - new Date(inc.openedAt).getTime()) / 60_000);
+      const minutesUntilBreach = slaMttr - minutesSinceOpened;
+      // Use historical median to predict if we'll make it
+      const aid = inc.affectedAssetIds[0];
+      const expectedMinutes = aid ? mttrByAsset.get(aid) : undefined;
+      const projectedMinutes = expectedMinutes ?? slaMttr / 2;
+      // Risk = projected MTTR exceeds remaining budget
+      if (projectedMinutes > minutesUntilBreach || minutesUntilBreach < 0) {
+        results.push({
+          incidentId: inc.id, incidentTitle: inc.title,
+          assetId: aid, serviceId: svcId,
+          slaMttrMinutes: slaMttr, openedAt: inc.openedAt,
+          minutesSinceOpened, minutesUntilBreach,
+        });
+      }
+    }
+    return results.sort((a, b) => a.minutesUntilBreach - b.minutesUntilBreach);
+  }
+
   // ── Services ───────────────────────────────────────────────
 
   async createService(userId: string, data: {

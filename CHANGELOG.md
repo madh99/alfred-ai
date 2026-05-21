@@ -5,6 +5,50 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.634] - 2026-05-21
+
+### Added — ITSM Operational Excellence (T4 vom T1-T4-Quartett, Abschluss)
+
+Vier strukturelle Ergänzungen die ITSM von "Tickets verwalten" zu "Operations-Insight" anheben.
+
+**Migrationen** — SQLite v68, Postgres v71:
+- Neue Tabelle `cmdb_service_cascades(id, user_id, source_service_id, target_service_id, observed_count, first_observed_at, last_observed_at, avg_delay_minutes)` + Index auf `(user_id, source_service_id)`
+
+**T4.1 — Service-Health-Score** (`itsm-repository.ts:serviceHealthScore`, Skill `service_health_score`)
+- 0-100-Score je Service, niedriger = mehr Operations-Druck
+- Aggregiert über `windowDays` (default 30):
+  - bis 30 Punkte Abzug: Incident-Last × Severity-Gewicht (critical=5, high=3, medium=1, low=0.5)
+  - bis 30 Punkte Abzug: Recurrence-Burden (Summe `recurrence_count`)
+  - bis 20 Punkte Abzug: Component-Health (down × 5, degraded × 2)
+  - bis 20 Punkte Abzug: aktueller Health-Status (down → 0, degraded → 10, unknown → 14, healthy → 20)
+- Markdown-Tabelle mit 🔴/🟡/🟢-Flags, sortiert nach schlechtestem zuerst
+
+**T4.2 — Cascade-Detection** (`itsm-repository.ts:observeCascade` + `listCascades`, Skill `list_cascades`)
+- Bei jedem neuen Auto-Incident wird gegen recently-resolved Incidents anderer Services (30min-Fenster) gematcht
+- Pro beobachteten (sourceService → targetService)-Pair wird `observed_count++` und der Average-Delay aktualisiert (`avg_delay_minutes`)
+- Über Zeit lernt das System Service-Failure-Cascades aus echten Beobachtungen — unabhängig von der konfigurierten CMDB-Topologie
+- Skill listet Cascades sortiert nach Häufigkeit mit Service-Namen + ⌀ Verzögerung
+
+**T4.3 — Post-Incident-Review-Skill** (`itsm-repository.ts:findClosedIncidentsWithoutPir`, Skill `pir_pending`)
+- Identifiziert in den letzten 72h geschlossene Incidents ohne `lessons_learned` und ohne `postmortem`
+- Skill listet sie auf — User kann pro Incident `update_incident lessons_learned=…` oder direkt Runbook generieren
+- Daily-Reflection erwähnt offene PIRs
+
+**T4.4 — SLA-Breach-Prediction** (`itsm-repository.ts:slaBreachRisk`, Skill `sla_breach_risk`)
+- Für jeden aktiven Incident: ist auf einem der affected Services ein `sla.targets.mttrMinutes` gesetzt?
+- Vergleich mit historischem MTTR-Median (aus `mttrReport`) → Projektion ob Bruch droht
+- Skill listet Risiken nach Restzeit sortiert mit 🔴 (verletzt) / ⚠️ (<30min) / 🟡 (eng)
+
+**Daily-Reflection erweitert** (`alfred.ts:dailyReflection`):
+- Bestehender 23:00-Job zeigt zusätzlich: Service-Scores <70 (Top 3), SLA-Risiken (Top 3), offene Post-Incident-Reviews (Top 3)
+- Skip-Bedingung erweitert: nur wenn ALLE Sektionen leer sind, wird die Reflection ausgelassen
+
+### Notes
+- Build grün (12/12)
+- Cascade-Tabelle füllt sich erst über Zeit — sinnvolle Daten ab ca. 2-4 Wochen Laufzeit
+- T1-T4-Quartett komplett: v631 Pattern-Detection, v632 WebUI, v633 Smart, v634 Operational Excellence
+- Roadmap-Bonus (nicht in v634): Auto-Capacity-Change-Vorschlag (wenn Forecast <30d), Service-Topology-Visualisierung aus Cascades
+
 ## [0.19.0-multi-ha.633] - 2026-05-21
 
 ### Added — Smart ITSM Erweiterungen (T3 vom T1-T4-Quartett)

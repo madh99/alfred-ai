@@ -1618,4 +1618,24 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_metric_samples_user_time ON cmdb_metric_samples(user_id, sampled_at DESC)`);
     },
   },
+  {
+    version: 68,
+    description: 'v634 T4 — Service-Cascade observations for cross-service-dependency learning',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cmdb_service_cascades (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          source_service_id TEXT NOT NULL,
+          target_service_id TEXT NOT NULL,
+          observed_count INTEGER NOT NULL DEFAULT 1,
+          first_observed_at TEXT NOT NULL,
+          last_observed_at TEXT NOT NULL,
+          avg_delay_minutes REAL NOT NULL DEFAULT 0,
+          UNIQUE(user_id, source_service_id, target_service_id)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_service_cascades_source ON cmdb_service_cascades(user_id, source_service_id)`);
+    },
+  },
 ];
