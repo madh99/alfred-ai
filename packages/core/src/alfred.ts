@@ -6709,12 +6709,33 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       // Already linked to another user
       if (masterUserId !== apiUser.id) return;
 
+      // v667 — Sicherheits-Guard gegen Multi-User-Identity-Leak.
+      // Bisheriges Verhalten: api/cli-User wurden BLIND an den ersten beliebigen
+      // Non-bot User gelinkt. In Multi-User-Setups (matrix + telegram + ...) führte
+      // das dazu, dass ein neuer WebUI-Login die Identität eines FREMDEN Users
+      // übernommen hat — inkl. dessen Memories, KG, etc.
+      //
+      // Neues Verhalten:
+      //  • Wenn EXAKT 1 Master-User existiert → safe auto-link (Single-User-Setup).
+      //  • Wenn mehrere Master-User existieren → KEIN Auto-Link mehr. Der User
+      //    muss sich explizit über /link verbinden.
+      //  • Override via config.users.apiAutoLink = true (Opt-In, falls Legacy-Setup).
+      const apiAutoLink = (this.config as { users?: { apiAutoLink?: boolean } }).users?.apiAutoLink;
+      const masterCount = await (this.userRepo as { countMasterUsersNotIn?: (excl: Array<'api' | 'cli'>) => Promise<number> }).countMasterUsersNotIn?.(['api', 'cli']) ?? 0;
+      if (masterCount > 1 && apiAutoLink !== true) {
+        this.logger.debug(
+          { apiUserId: apiUser.id, masterCount },
+          'Auto-link skipped: multiple master users — explicit /link required (Multi-User Safety)',
+        );
+        return;
+      }
+
       // Find the first non-API/non-CLI user to link with
       const existingUser = await this.userRepo.findFirstByPlatformNotIn(['api', 'cli']);
       if (existingUser) {
         const targetMasterId = await this.userRepo.getMasterUserId(existingUser.id);
         await this.userRepo.setMasterUser(apiUser.id, targetMasterId);
-        this.logger.info({ apiUserId: apiUser.id, masterUserId: targetMasterId }, 'Auto-linked API user');
+        this.logger.info({ apiUserId: apiUser.id, masterUserId: targetMasterId, masterCount }, 'Auto-linked API user');
       }
     } catch (err) {
       this.logger.debug({ err }, 'Auto-link API user failed');

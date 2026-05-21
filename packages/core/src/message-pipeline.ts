@@ -367,6 +367,15 @@ export class MessagePipeline {
     const startTime = Date.now();
     this.logger.info({ platform: message.platform, userId: message.userId, chatId: message.chatId }, 'Processing message');
 
+    // v667 — Phasen-Tracing: nach jeder Pipeline-Phase ein info-log mit Dauer.
+    // Damit ist bei Hängern sofort lokalisierbar in welcher Phase blockiert wurde.
+    let phaseStart = startTime;
+    const tracePhase = (phase: string, extra?: Record<string, unknown>) => {
+      const ms = Date.now() - phaseStart;
+      this.logger.info({ phase, ms, totalMs: Date.now() - startTime, chatId: message.chatId, ...(extra ?? {}) }, 'pipeline.phase');
+      phaseStart = Date.now();
+    };
+
     // Register AbortController for this request (keyed by chatId:userId)
     const requestKey = `${message.chatId}:${message.userId}`;
     const abortController = new AbortController();
@@ -390,6 +399,7 @@ export class MessagePipeline {
       );
       if (handled) return { text: '' }; // confirmation queue already sent its response via adapter
     }
+    tracePhase('confirmation_check');
 
     try {
       // 0b. HA Message dedup — ensure each message is processed by exactly one node
@@ -402,13 +412,14 @@ export class MessagePipeline {
           return { text: '' };
         }
       }
+      tracePhase('ha_dedup');
 
       // 1. Resolve user, master ID, and linked platform IDs via central factory
       // For scheduled tasks, use the real user chatId for skill context (reminders, etc.)
       // but keep the isolated chatId for conversation management.
       const skillChatId = (message.metadata?.originalChatId as string) ?? message.chatId;
 
-      const { user, masterUserId, linkedPlatformUserIds, context: baseContext } = await buildSkillContext(
+      const { user, masterUserId: resolvedMasterUserId, linkedPlatformUserIds, context: baseContext } = await buildSkillContext(
         this.users,
         {
           platformUserId: message.userId,
@@ -419,6 +430,9 @@ export class MessagePipeline {
           displayName: message.displayName,
         },
       );
+      // v667 — masterUserId mutable: bei Project-Chat überschreiben wir es auf den project-owner.
+      let masterUserId = resolvedMasterUserId;
+      tracePhase('skill_context', { masterUserId, linkedCount: linkedPlatformUserIds.length });
 
       // 1a. Track insight reactions (non-blocking, fire-and-forget)
       if (this.insightTracker && message.text) {
@@ -442,6 +456,7 @@ export class MessagePipeline {
           baseContext.userServiceResolver = this.userServiceResolver as SkillContext['userServiceResolver'];
         }
       }
+      tracePhase('alfred_user', { hasRole: !!alfredUser });
 
       // HA context
       if (this.nodeId !== 'single') {
@@ -466,6 +481,33 @@ export class MessagePipeline {
         ? `${message.chatId}:${message.userId}`
         : message.chatId;
 
+      // v667 — Fix C: Project-Chat-Owner-Resolution.
+      // Wenn das WebUI eine Projekt-Chat-Message schickt (metadata.projectId gesetzt),
+      // ist der WebUI-User (api) eventuell nicht der Projekt-Owner. Damit Memory/KG/Project-
+      // Kontext-Loading mit der RICHTIGEN Identität läuft, holen wir den Project ohne
+      // Owner-Filter und überschreiben masterUserId temporär auf den project.userId.
+      // Sonst lädt die Pipeline Daten für einen FREMDEN User (genau dieser Fall hat in
+      // v666 den Hang verursacht: api-User wurde an matrix:@alex1979 auto-gelinkt, das
+      // Memory-Loading für den falschen master_user_id hat geblockt).
+      const projectIdHint = message.metadata?.projectId as string | undefined;
+      let projectOwnerOverride: { id: string; userId: string } | undefined;
+      if (projectIdHint && this.projectRepo) {
+        try {
+          const projAny = await (this.projectRepo as { getByIdAnyOwner?: (id: string) => Promise<{ id: string; userId: string } | null> }).getByIdAnyOwner?.(projectIdHint);
+          if (projAny && projAny.userId !== masterUserId) {
+            this.logger.info(
+              { projectId: projectIdHint, fromUser: masterUserId, toUser: projAny.userId },
+              'project-chat: masterUserId overridden to project owner',
+            );
+            masterUserId = projAny.userId;
+            projectOwnerOverride = projAny;
+          }
+        } catch (err) {
+          this.logger.debug({ err, projectId: projectIdHint }, 'project-chat: any-owner lookup failed');
+        }
+      }
+      tracePhase('project_owner_resolve', { override: !!projectOwnerOverride });
+
       // 2. Find or create conversation
       const conversation = await this.conversationManager.getOrCreateConversation(
         message.platform,
@@ -484,6 +526,7 @@ export class MessagePipeline {
 
       // 4. Save user message
       await this.conversationManager.addMessage(conversation.id, 'user', message.text);
+      tracePhase('conversation', { convId: conversation.id, historyLen: history.length, hasSummary: !!summary });
 
       // 5. Load user memories for prompt injection (hybrid retrieval or fallback)
       //    Uses masterUserId so linked cross-platform accounts share memories.
@@ -542,6 +585,8 @@ export class MessagePipeline {
             .sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
         }
       }
+
+      tracePhase('memories_load', { count: memories?.length ?? 0, skipped: skipMemories });
 
       // 5a. Apply memory token budget: filter low-relevance and cap by token count
       if (memories && memories.length > 0) {
@@ -616,6 +661,7 @@ export class MessagePipeline {
           }
         } catch { /* non-critical */ }
       }
+      tracePhase('rules_load', { count: rules?.length ?? 0 });
 
       // 5b. Load user profile for prompt injection
       let userProfile: import('@alfred/llm').UserProfile | undefined;
@@ -630,6 +676,7 @@ export class MessagePipeline {
           }
         }
       } catch (err) { this.logger.debug({ err }, 'Profile loading failed'); }
+      tracePhase('profile_load', { hasProfile: !!userProfile });
 
       // 5c. Timezone already resolved by buildSkillContext
       const resolvedTimezone = baseContext.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -675,6 +722,8 @@ export class MessagePipeline {
       const tools = skillMetas
         ? this.promptBuilder.buildTools(skillMetas)
         : undefined;
+      tracePhase('skill_filter', { count: skillMetas?.length ?? 0 });
+
       // Load upcoming calendar events from ALL accounts for proactive cross-context awareness
       let upcomingEvents: Array<{ title: string; start: Date; end: Date; location?: string; allDay?: boolean }> | undefined;
       if (this.skillRegistry && this.skillSandbox) {
@@ -797,12 +846,15 @@ export class MessagePipeline {
         recentHostFailures,
       });
 
+      tracePhase('system_prompt_built', { chars: system.length });
+
       // v658 — Projekt-Chat: bei projectId in metadata den Projekt-Kontext laden
       // und in den System-Prompt injizieren. So weiß der LLM cwd, repo, aktive Sessions,
       // offene Items, letzte Decisions etc. ohne dass der User sie tippen muss.
       const projectIdForChat = message.metadata?.projectId;
       if (projectIdForChat && this.projectRepo) {
         try {
+          // v667 — masterUserId ist hier bereits auf project-owner überschrieben (Fix C oben)
           const proj = await this.projectRepo.getById(masterUserId, projectIdForChat);
           if (proj) {
             const [sessionsRecent, openItems, decisionsRecent] = await Promise.all([
@@ -850,13 +902,21 @@ export class MessagePipeline {
           this.logger.debug({ err, projectId: projectIdForChat }, 'project-chat: context injection failed (non-critical)');
         }
       }
+      tracePhase('project_chat_context', { hadProject: !!projectIdForChat });
 
       // Inject active ITSM incidents into system prompt so the LLM can reference
       // correct incident IDs when updating. Without this, the LLM guesses IDs and fails.
       if (this.skillRegistry?.has('itsm') && this.skillSandbox) {
         try {
           const itsmSkill = this.skillRegistry.get('itsm')!;
-          const listResult = await this.skillSandbox.execute(itsmSkill, { action: 'list_incidents' }, baseContext);
+          // v667 — Timeout: list_incidents kann bei DB-Problem hängen und blockiert die ganze Pipeline.
+          const itsmTimeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('ITSM list_incidents timeout (3s)')), 3000),
+          );
+          const listResult = await Promise.race([
+            this.skillSandbox.execute(itsmSkill, { action: 'list_incidents' }, baseContext),
+            itsmTimeoutPromise,
+          ]);
           if (listResult.success && Array.isArray(listResult.data)) {
             const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
             const active = (listResult.data as Array<{ id: string; title: string; severity: string; status: string }>)
@@ -867,8 +927,11 @@ export class MessagePipeline {
               system += `\n\n## Aktive ITSM-Incidents\nNutze die 8-stellige ID in eckigen Klammern für update_incident.\n${lines.join('\n')}`;
             }
           }
-        } catch { /* non-critical — chat works without ITSM context */ }
+        } catch (err) {
+          this.logger.debug({ err: err instanceof Error ? err.message : String(err) }, 'ITSM incident injection skipped');
+        }
       }
+      tracePhase('itsm_inject');
 
       // Inject matching Runbooks (Hermes-style experience memory) — find runbooks whose
       // title/symptom/tags match keywords in the current user message. Lets the LLM
@@ -886,6 +949,7 @@ export class MessagePipeline {
           }
         } catch { /* non-critical */ }
       }
+      tracePhase('runbook_inject');
 
       // Inject active agent status so the LLM can answer "what is the agent doing?"
       const agentStatusBlock = this.buildActiveAgentStatus();
@@ -937,6 +1001,8 @@ export class MessagePipeline {
           // Moderation failure must not block the pipeline
         }
       }
+
+      tracePhase('llm_request_prep', { systemChars: system.length, toolCount: tools?.length ?? 0 });
 
       // 7. Agentic tool-use loop (timeout-based + repeated-error detection)
       let response: LLMResponse;

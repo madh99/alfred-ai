@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.667] - 2026-05-22
+
+### Fixed — Pipeline-Hang im Project-Chat + Multi-User-Identity-Leak
+
+**Bug:** Sendet ein WebUI-User eine Nachricht im Project-Chat, bleibt die Pipeline 5+min ohne Antwort hängen. Ursache: drei zusammenspielende Probleme.
+
+**Fix A — Pipeline-Phasen-Tracing** (`message-pipeline.ts`):
+- Neuer Helper `tracePhase(name, extra)` loggt nach jeder Phase `{ phase, ms, totalMs }` auf info-level.
+- Phasen: `confirmation_check`, `ha_dedup`, `skill_context`, `alfred_user`, `project_owner_resolve`, `conversation`, `memories_load`, `rules_load`, `profile_load`, `skill_filter`, `system_prompt_built`, `project_chat_context`, `itsm_inject`, `runbook_inject`, `llm_request_prep`.
+- Bei jedem zukünftigen Hang sofort sichtbar in welcher Phase blockiert wurde.
+- ITSM-Skill-Lookup mit 3s-Timeout gewrapped — verhinderte vorher, dass ein hängender ITSM-Repo die Pipeline blockiert.
+
+**Fix B — `autoLinkApiUser` abgesichert gegen Multi-User-Identity-Leak** (`alfred.ts`):
+- Bisheriges Verhalten: api/cli-User wurden BLIND an den ersten beliebigen Non-bot User gelinkt (`findFirstByPlatformNotIn(['api','cli'])`).
+- In Multi-User-Setups (matrix + telegram + …) übernahm ein neuer WebUI-Login die Identität eines FREMDEN Users — inkl. dessen Memories, KG und Profil.
+- Neue Logik: Auto-Link nur wenn EXAKT 1 Master-User existiert (Single-User-Setup), sonst ist explizites `/link` erforderlich.
+- Opt-In für Legacy-Setups: `users.apiAutoLink: true` in der yaml-Config.
+- Neue Method `UserRepository.countMasterUsersNotIn(excluded)`.
+
+**Fix C — Project-Chat-Owner-Resolution** (`message-pipeline.ts` + `project-repository.ts`):
+- Wenn das WebUI eine Projekt-Chat-Message schickt (`metadata.projectId` gesetzt), ist der WebUI-User (api-platform) nicht zwangsweise der Projekt-Owner.
+- Vorher: Pipeline lädt Memories/KG/Project-Kontext für den (falschen) auto-gelinkten masterUserId → Project-Block leer, Memories irrelevant.
+- Neu: `ProjectRepository.getByIdAnyOwner(id)` — Lookup ohne Owner-Filter (intern, nicht über API exposed).
+- Pipeline überschreibt nach `buildSkillContext` den `masterUserId` temporär auf `project.userId` wenn `metadata.projectId` gesetzt und Owner-Mismatch.
+- Konsequenz: Memory/KG/Project-Context-Loading läuft mit der korrekten Identität des Projekt-Owners. Das war auch die wahrscheinlichste Ursache des konkreten Hängers: für den ungewollt aufgelinkten Fremd-User wurden große Memory-Sets traversiert.
+
+### Changed
+- `message-pipeline.ts`: System-Prompt-Building gefolgt von einer Reihe atomarer "Inject"-Blöcke (Project-Chat, ITSM, Runbook) — jeder mit eigenem Phase-Marker.
+
 ## [0.19.0-multi-ha.666] - 2026-05-21
 
 ### Added — Project-Mobility: Move local↔shared (v665b)

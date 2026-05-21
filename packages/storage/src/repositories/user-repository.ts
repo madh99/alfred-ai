@@ -131,6 +131,21 @@ export class UserRepository {
     return this.mapRow(row);
   }
 
+  /**
+   * v667 — Anzahl der Nicht-Bot User (für sicheren autoLinkApiUser).
+   * Nur wenn EXAKT 1 zurückkommt sollte ein api/cli User automatisch verlinkt werden,
+   * sonst wird der falsche User getroffen (Multi-User-Identity-Leak).
+   */
+  async countMasterUsersNotIn(excludedPlatforms: Platform[]): Promise<number> {
+    const placeholders = excludedPlatforms.map(() => '?').join(', ');
+    const row = await this.adapter.queryOne(
+      `SELECT COUNT(DISTINCT COALESCE(master_user_id, id)) AS c FROM users WHERE platform NOT IN (${placeholders})`,
+      excludedPlatforms,
+    ) as { c: number | string } | undefined;
+    const c = row?.c;
+    return typeof c === 'number' ? c : parseInt(String(c ?? '0'), 10);
+  }
+
   async getMasterUserId(userId: string): Promise<string> {
     const row = await this.adapter.queryOne('SELECT master_user_id FROM users WHERE id = ?', [userId]) as { master_user_id: string | null } | undefined;
     return row?.master_user_id ?? userId;

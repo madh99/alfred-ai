@@ -291,6 +291,19 @@ export class ProjectRepository {
     return row ? rowToProject(row) : null;
   }
 
+  /**
+   * v667 — Lookup ohne Owner-Filter. Wird von der Pipeline benötigt um bei einem
+   * Project-Chat den echten Project-Owner zu finden, damit Memory/KG-Loading mit
+   * der richtigen Identität läuft (siehe message-pipeline.ts → Fix C).
+   * NICHT für End-User-Endpoints verwenden — die müssen weiterhin getById() nutzen.
+   */
+  async getByIdAnyOwner(id: string): Promise<Project | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM projects WHERE id = ?`, [id],
+    ) as Record<string, unknown> | undefined;
+    return row ? rowToProject(row) : null;
+  }
+
   async getBySlug(userId: string, slug: string): Promise<Project | null> {
     const row = await this.adapter.queryOne(
       `SELECT * FROM projects WHERE user_id = ? AND slug = ?`, [userId, slug],
