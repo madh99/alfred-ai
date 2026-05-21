@@ -4321,6 +4321,36 @@ export class Alfred {
               return false;
             }
           },
+          // v649 — Resume via Skill-Action
+          resume: async (taskId: string, notes?: string) => {
+            try {
+              const skill = this.skillRegistry?.get('project_agent');
+              if (!skill) return { ok: false, error: 'project_agent-Skill nicht registriert' };
+              const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+              const ownerChatId = this.config.security?.ownerUserId ?? '';
+              const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+                : this.config.matrix?.enabled ? 'matrix'
+                : 'api');
+              const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;
+              const r = await skill.execute({ action: 'resume', failed_task_id: taskId, notes }, ctx);
+              if (!r.success) return { ok: false, error: r.error };
+              return { ok: true, taskId: (r.data as any)?.taskId };
+            } catch (err) {
+              return { ok: false, error: (err as Error).message };
+            }
+          },
+          // v649 — Persisted plan listing
+          plan: async (taskId: string) => {
+            try {
+              if (!this.plansRepoRef) return [];
+              const session = await sessionRepo.getByTaskId(taskId);
+              if (!session) return [];
+              return await this.plansRepoRef.listBySession(session.id);
+            } catch (err) {
+              this.logger.warn({ err, taskId }, 'Project-Agent API plan failed');
+              return [];
+            }
+          },
         });
         this.logger.info('Project-Agent API registered');
       }

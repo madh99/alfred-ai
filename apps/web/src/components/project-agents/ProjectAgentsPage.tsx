@@ -66,6 +66,20 @@ export function ProjectAgentsPage() {
     }
   }
 
+  // v649 — Resume + Plan-View
+  async function handleResume(taskId: string) {
+    if (!client) return;
+    const notes = prompt('Optional: Hinweis für den neuen Agent (z.B. "fokus nur auf X")\nLeer = Standard-Continuation.');
+    if (notes === null) return; // cancelled
+    const r = await client.resumeProjectAgent(taskId, notes.trim() || undefined);
+    if (r.ok) {
+      alert(`▶ Resume gestartet: neue Session ${r.taskId?.slice(0, 8)}\nFortsetzung von ${taskId.slice(0, 8)}.`);
+      await load();
+    } else {
+      alert(`Resume fehlgeschlagen: ${r.error}`);
+    }
+  }
+
   const filtered = sessions.filter(s => {
     if (!search) return true;
     const lower = search.toLowerCase();
@@ -245,6 +259,15 @@ export function ProjectAgentsPage() {
                 className="w-full mt-4 px-3 py-2 bg-red-500/10 text-red-400 border border-red-500/40 rounded text-sm hover:bg-red-500/20"
               >
                 Session stoppen
+              </button>
+            )}
+            {/* v649 — Resume Button für failed/done */}
+            {(selected.currentPhase === 'failed' || selected.currentPhase === 'done' || (selected as any).currentPhase === 'awaiting_user') && (
+              <button
+                onClick={() => handleResume(selected.taskId)}
+                className="w-full mt-2 px-3 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 rounded text-sm hover:bg-emerald-500/20"
+              >
+                ▶ Resume / Fortsetzen
               </button>
             )}
           </div>

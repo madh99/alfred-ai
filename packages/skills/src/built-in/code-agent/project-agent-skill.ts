@@ -78,6 +78,104 @@ export function removeAbortController(sessionId: string): void {
   activeAbortControllers.delete(sessionId);
 }
 
+/**
+ * v649 — Auto-Detect für Build/Test-Commands aus dem cwd.
+ * Liest package.json/Cargo.toml/pyproject.toml und mappt sinnvolle Scripts.
+ * Gracefully degrades wenn nichts erkennbar.
+ */
+async function autoDetectBuildCommands(cwd: string): Promise<{ build: string[]; test: string[] } | null> {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  try {
+    const pkgPath = path.join(cwd, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const raw = fs.readFileSync(pkgPath, 'utf8');
+      const pkg = JSON.parse(raw);
+      const scripts = pkg.scripts ?? {};
+      const build: string[] = [];
+      const test: string[] = [];
+      // Install first
+      if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) build.push('pnpm install');
+      else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) build.push('yarn install');
+      else build.push('npm install');
+      // Build/typecheck/lint
+      if (scripts.build) build.push('npm run build');
+      if (scripts.typecheck) build.push('npm run typecheck');
+      else if (scripts['type-check']) build.push('npm run type-check');
+      if (scripts.lint) build.push('npm run lint');
+      // Test commands
+      if (scripts.test && !/^echo\s/.test(scripts.test)) test.push('npm test');
+      return { build, test };
+    }
+    const cargoPath = path.join(cwd, 'Cargo.toml');
+    if (fs.existsSync(cargoPath)) {
+      return { build: ['cargo build'], test: ['cargo test'] };
+    }
+    const pyprojectPath = path.join(cwd, 'pyproject.toml');
+    if (fs.existsSync(pyprojectPath)) {
+      const raw = fs.readFileSync(pyprojectPath, 'utf8');
+      const build: string[] = ['pip install -e .'];
+      const test: string[] = [];
+      if (/pytest/.test(raw)) test.push('pytest');
+      return { build, test };
+    }
+    const gomod = path.join(cwd, 'go.mod');
+    if (fs.existsSync(gomod)) {
+      return { build: ['go build ./...'], test: ['go test ./...'] };
+    }
+    return null;
+  } catch { return null; }
+}
+
+/**
+ * v649 — Erweiterter Pre-Flight-Check: prüft Agent-Binary, Git-Identity, Disk-Space,
+ * Build-Tools (npm/cargo/python). Liefert eine Liste klarer Diagnose-Strings.
+ * Empty array = alles ok.
+ */
+export async function extendedPreflight(cwd: string, agentCommand: string): Promise<string[]> {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { spawnSync } = await import('node:child_process');
+  const issues: string[] = [];
+
+  // Agent-Binary
+  try {
+    const probe = spawnSync(agentCommand, ['--version'], { timeout: 3000, encoding: 'utf8' });
+    if (probe.status !== 0 && !probe.stdout?.trim()) {
+      issues.push(`Agent-Binary "${agentCommand}" antwortet nicht auf --version (status=${probe.status}). Vermutlich nicht installiert oder nicht im PATH.`);
+    }
+  } catch { issues.push(`Agent-Binary "${agentCommand}" konnte nicht ausgeführt werden.`); }
+
+  // Git-Identity (wird vom Runner injected, hier nur Hinweis falls fehlt)
+  try {
+    const userName = spawnSync('git', ['-C', cwd, 'config', 'user.name'], { timeout: 2000, encoding: 'utf8' });
+    if (!userName.stdout?.trim()) issues.push('Git-Identity (user.name) fehlt — Runner setzt Default "Alfred", aber globale Identity wäre besser.');
+  } catch { /* skip */ }
+
+  // Disk-Space (best effort: nur Warnung)
+  try {
+    const stat = fs.statfsSync(cwd);
+    const freeGB = (stat.bavail * stat.bsize) / (1024 ** 3);
+    if (freeGB < 0.5) issues.push(`Wenig Disk-Space im cwd: ${freeGB.toFixed(2)} GB frei. Build kann scheitern.`);
+  } catch { /* statfs not always available */ }
+
+  // Build-Tools je nach erkanntem Projekt-Typ
+  if (fs.existsSync(path.join(cwd, 'package.json'))) {
+    try {
+      const probe = spawnSync('npm', ['--version'], { timeout: 3000, encoding: 'utf8' });
+      if (probe.status !== 0) issues.push('npm nicht im PATH — kann package.json nicht installieren.');
+    } catch { issues.push('npm nicht ausführbar.'); }
+  }
+  if (fs.existsSync(path.join(cwd, 'Cargo.toml'))) {
+    try {
+      const probe = spawnSync('cargo', ['--version'], { timeout: 3000, encoding: 'utf8' });
+      if (probe.status !== 0) issues.push('cargo nicht im PATH — Rust-Project kann nicht gebaut werden.');
+    } catch { issues.push('cargo nicht ausführbar.'); }
+  }
+
+  return issues;
+}
+
 export class ProjectAgentSkill extends Skill {
   readonly metadata: SkillMetadata;
 
@@ -402,10 +500,35 @@ ${planSummary}${commits}${userNotes}
       }
     } catch { /* non-critical */ }
 
+    // v649 — Extended Pre-Flight (Agent-Binary, Git-Identity, Disk-Space, Build-Tools)
+    let preflightWarnings: string[] = [];
+    try {
+      // Resolve binary from agentDef (sudo wrapper aside)
+      let probeCmd = agentDef.command;
+      if (agentDef.command === 'sudo' && Array.isArray(agentDef.argsTemplate)) {
+        const sudoArgs = [...agentDef.argsTemplate];
+        let i = 0;
+        while (i < sudoArgs.length && sudoArgs[i].startsWith('-')) {
+          if (sudoArgs[i] === '-u' || sudoArgs[i] === '--user') { i += 2; continue; }
+          i += 1;
+        }
+        if (i < sudoArgs.length) probeCmd = sudoArgs[i];
+      }
+      preflightWarnings = await extendedPreflight(cwd, probeCmd);
+    } catch { /* non-critical */ }
+
     // Resolve build/test commands from input, template, or defaults
     const template = this.config.templates?.find(t => t.name === input.template);
-    const buildCommands = (input.buildCommands as string[]) ?? template?.buildCommands ?? ['npm install', 'npm run build'];
-    const testCommands = (input.testCommands as string[]) ?? template?.testCommands ?? [];
+    // v649 — Auto-Test-Discovery aus package.json/Cargo.toml/pyproject.toml
+    const autoDetected = await autoDetectBuildCommands(cwd).catch(() => null);
+    const buildCommands = (input.buildCommands as string[])
+      ?? template?.buildCommands
+      ?? autoDetected?.build
+      ?? ['npm install', 'npm run build'];
+    const testCommands = (input.testCommands as string[])
+      ?? template?.testCommands
+      ?? autoDetected?.test
+      ?? [];
 
     // Create session tracking
     const session = await this.sessionRepo.create({
@@ -430,14 +553,16 @@ ${planSummary}${commits}${userNotes}
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
+        (autoDetected ? `🔎 Auto-Detect: ${autoDetected.build.length} Build- + ${autoDetected.test.length} Test-Commands erkannt.\n` : '') +
         (cwdRewriteHint ? `\n⚠️ ${cwdRewriteHint}\n` : '') +
         (previousAttemptHint ? `\nℹ️ ${previousAttemptHint}\n` : '') +
+        (preflightWarnings.length > 0 ? `\n⚠️ Pre-Flight-Warnungen:\n${preflightWarnings.map(w => `  - ${w}`).join('\n')}\n` : '') +
         `Fortschritt wird via Chat gemeldet.`,
     };
   }

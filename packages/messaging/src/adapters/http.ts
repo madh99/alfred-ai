@@ -242,15 +242,21 @@ export class HttpAdapter extends MessagingAdapter {
   private projectAgentsListFn?: (filter?: { phase?: string }) => Promise<any[]>;
   private projectAgentsGetFn?: (taskId: string) => Promise<any | null>;
   private projectAgentsStopFn?: (taskId: string) => Promise<boolean>;
+  private projectAgentsResumeFn?: (taskId: string, notes?: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
+  private projectAgentsPlanFn?: (taskId: string) => Promise<any[]>;
 
   setProjectAgentCallbacks(opts: {
     list: (filter?: { phase?: string }) => Promise<any[]>;
     get: (taskId: string) => Promise<any | null>;
     stop: (taskId: string) => Promise<boolean>;
+    resume?: (taskId: string, notes?: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
+    plan?: (taskId: string) => Promise<any[]>;
   }): void {
     this.projectAgentsListFn = opts.list;
     this.projectAgentsGetFn = opts.get;
     this.projectAgentsStopFn = opts.stop;
+    this.projectAgentsResumeFn = opts.resume;
+    this.projectAgentsPlanFn = opts.plan;
   }
 
   // v623 — Background-Tasks API (WebUI list/inspect/cancel)
@@ -676,6 +682,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectAgentsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/stop$/) && req.method === 'POST') {
       this.handleProjectAgentsStop(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/resume$/) && req.method === 'POST') {
+      this.handleProjectAgentsResume(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/project-agents\/[^/]+\/plan$/) && req.method === 'GET') {
+      this.handleProjectAgentsPlan(req, res, url).catch(err => this.safeError(res, err));
     // ── Background-Tasks API (v623) ──
     } else if (url.pathname === '/api/background-tasks' && req.method === 'GET') {
       this.handleBackgroundTasksList(req, res, url).catch(err => this.safeError(res, err));
@@ -1432,6 +1442,34 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.projectAgentsStopFn(taskId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  // v649 — Resume + Plan
+  private async handleProjectAgentsResume(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsResumeFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Resume not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const taskId = segments[segments.length - 2];
+    const body = await this.readBody(req);
+    let notes: string | undefined;
+    try { notes = JSON.parse(body).notes; } catch { /* skip */ }
+    const result = await this.projectAgentsResumeFn(taskId, notes);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleProjectAgentsPlan(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectAgentsPlanFn) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const segments = url.pathname.split('/');
+    const taskId = segments[segments.length - 2];
+    const phases = await this.projectAgentsPlanFn(taskId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ phases }));
   }
 
   // ── Background-Tasks API handlers (v623) ──

@@ -5,6 +5,43 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.649] - 2026-05-21
+
+### Added — Project-Agent Quick-Wins (Bundle 2 von 5)
+
+**#3 WebUI Resume-Button** im /project-agents Tab:
+- `client.resumeProjectAgent(failedTaskId, notes?)` Client-Methode
+- `POST /api/project-agents/:taskId/resume` Backend-Endpoint
+- `setProjectAgentCallbacks` um `resume` + `plan` erweitert
+- ProjectAgentsPage: Resume-Button erscheint für failed/done/awaiting_user Sessions, fragt nach optionalen Notes via prompt(), zeigt neue Task-ID
+- Plan-Endpoint `GET /api/project-agents/:taskId/plan` liefert den persisted Plan aus v648
+
+**#4 Pre-Flight erweitert** (`extendedPreflight` in project-agent-skill.ts):
+- Agent-Binary-Check (`<command> --version` exit-status)
+- Git-Identity-Probe (`git config user.name` gesetzt?)
+- Disk-Space-Warnung (statfs <0.5GB)
+- Build-Tools (npm/cargo) je nach erkanntem Projekt-Typ
+- Warnungen werden im start-Result als `preflightWarnings` mitgegeben und im Display angezeigt — kein blockender Stop
+
+**#21 Auto-Test-Discovery** (`autoDetectBuildCommands`):
+- Liest `package.json` und mappt Scripts (install / build / typecheck / lint / test)
+- Detect pnpm/yarn/npm via lockfile
+- Fallback `Cargo.toml` → `cargo build` + `cargo test`
+- Fallback `pyproject.toml` → `pip install -e .` + pytest wenn erkannt
+- Fallback `go.mod` → `go build ./... + go test ./...`
+- Override-Priorität: explizite Input-Params > Template > Auto-Detect > Default
+- Display zeigt "🔎 Auto-Detect: N Build- + M Test-Commands erkannt"
+
+**#9 Goal-Templates** — folgen in v651 als Teil der WebUI-Welcome-Erweiterung (Quick-Start-Cards), da hier Skill-Side nichts zu tun ist
+
+**#10 Open-Item-direkter-Start** — kommt in v651, ist ein UI-Refactor in ProjectsPage
+
+### Notes
+- Build grün (12/12)
+- Pre-Flight ist non-blocking — Warnungen werden gezeigt aber Run startet trotzdem
+- Auto-Detect erkennt jetzt: package.json / Cargo.toml / pyproject.toml / go.mod — weitere Projekttypen einfach in `autoDetectBuildCommands` ergänzen
+- v650 (Safety) folgt direkt
+
 ## [0.19.0-multi-ha.648] - 2026-05-21
 
 ### Added — Resume-Foundation (Bundle 1 von 5)

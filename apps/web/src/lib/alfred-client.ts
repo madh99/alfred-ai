@@ -251,6 +251,18 @@ export class AlfredClient {
     return data.success;
   }
 
+  // v649 — Resume eines fehlgeschlagenen Project-Agent-Laufs
+  async resumeProjectAgent(failedTaskId: string, notes?: string): Promise<{ ok: boolean; taskId?: string; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/project-agents/${failedTaskId}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify({ notes }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? `http-${res.status}` };
+    return { ok: true, taskId: data.taskId };
+  }
+
   // ── v638 — Insights ──
   async fetchInsights(filter?: { category?: string; status?: string; limit?: number }): Promise<InsightItem[]> {
     const params = new URLSearchParams();
