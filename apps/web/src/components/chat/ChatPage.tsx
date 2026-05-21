@@ -16,6 +16,8 @@ export function ChatPage() {
   } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [sidePanelOpen, setSidePanelOpen] = useState(false);
+  // v657 — Reply-Kontext (gesetzt durch Reply-Button auf Hover über einer Nachricht)
+  const [replyTo, setReplyTo] = useState<{ messageId?: string; text: string; from?: string } | null>(null);
 
   // Restore side-panel state from localStorage
   useEffect(() => {
@@ -100,6 +102,11 @@ export function ChatPage() {
               isLastAssistant={msg.id === lastAssistantId}
               onRetry={retryLast}
               onEdit={editLastUser}
+              onReply={() => setReplyTo({
+                messageId: msg.id,
+                text: msg.content,
+                from: msg.role === 'assistant' ? 'Alfred' : 'du',
+              })}
               streaming={streaming}
             />
           ))}
@@ -122,6 +129,8 @@ export function ChatPage() {
         onCancel={cancel}
         onClear={clearMessages}
         streaming={streaming}
+        replyTo={replyTo}
+        onClearReplyTo={() => setReplyTo(null)}
       />
       </div>
       <ChatSidePanel

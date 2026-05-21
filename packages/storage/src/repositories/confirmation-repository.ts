@@ -8,10 +8,21 @@ export class ConfirmationRepository {
   async create(input: Omit<PendingConfirmation, 'id' | 'createdAt' | 'resolvedAt' | 'status'>): Promise<PendingConfirmation> {
     const id = randomUUID();
     const now = new Date().toISOString();
-    await this.adapter.execute(`
-      INSERT INTO pending_confirmations (id, chat_id, platform, source, source_id, description, skill_name, skill_params, status, created_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `, [id, input.chatId, input.platform, input.source, input.sourceId, input.description, input.skillName, JSON.stringify(input.skillParams), now, input.expiresAt]);
+    // v657 — extra_actions als JSON. Bei Migration v77 wird die Spalte zugefügt; falls
+    // alfred mit alter DB-Version läuft fängt try/catch das ab und schreibt ohne.
+    const extraJson = input.extraActions && input.extraActions.length > 0 ? JSON.stringify(input.extraActions) : null;
+    try {
+      await this.adapter.execute(`
+        INSERT INTO pending_confirmations (id, chat_id, platform, source, source_id, description, skill_name, skill_params, extra_actions, status, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+      `, [id, input.chatId, input.platform, input.source, input.sourceId, input.description, input.skillName, JSON.stringify(input.skillParams), extraJson, now, input.expiresAt]);
+    } catch {
+      // Fallback ohne extra_actions Spalte (DB nicht migriert)
+      await this.adapter.execute(`
+        INSERT INTO pending_confirmations (id, chat_id, platform, source, source_id, description, skill_name, skill_params, status, created_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+      `, [id, input.chatId, input.platform, input.source, input.sourceId, input.description, input.skillName, JSON.stringify(input.skillParams), now, input.expiresAt]);
+    }
 
     return { id, ...input, status: 'pending', createdAt: now };
   }
@@ -107,6 +118,10 @@ export class ConfirmationRepository {
   private mapRow(row: Record<string, unknown>): PendingConfirmation {
     let skillParams: Record<string, unknown> = {};
     try { skillParams = JSON.parse(row.skill_params as string); } catch { /* empty */ }
+    let extraActions: PendingConfirmation['extraActions'];
+    if (row.extra_actions) {
+      try { extraActions = JSON.parse(row.extra_actions as string); } catch { /* skip */ }
+    }
 
     return {
       id: row.id as string,
@@ -117,6 +132,7 @@ export class ConfirmationRepository {
       description: row.description as string,
       skillName: row.skill_name as string,
       skillParams,
+      extraActions,
       status: row.status as PendingConfirmation['status'],
       createdAt: row.created_at as string,
       expiresAt: row.expires_at as string,

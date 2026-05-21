@@ -62,7 +62,7 @@ export function ChatSidePanel({ visible, onClose }: Props) {
     return () => clearInterval(t);
   }, [visible, load]);
 
-  async function decide(id: string, decision: 'approve' | 'reject') {
+  async function decide(id: string, decision: 'approve' | 'reject' | string) {
     if (!client) return;
     setBusy(id); setError(null);
     try {
@@ -118,22 +118,37 @@ export function ChatSidePanel({ visible, onClose }: Props) {
                 <PlatformBadge platform={c.platform} />
               </div>
               <div className="text-xs text-gray-200 mb-2 whitespace-pre-wrap break-words">{c.description}</div>
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] text-gray-500">
-                  läuft {relativeFuture(c.expiresAt)} ab
-                </span>
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => decide(c.id, 'reject')}
-                    disabled={busy === c.id}
-                    className="text-[11px] px-2 py-1 rounded bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/30 disabled:opacity-40"
-                  >✕ Ablehnen</button>
-                  <button
-                    onClick={() => decide(c.id, 'approve')}
-                    disabled={busy === c.id}
-                    className="text-[11px] px-2 py-1 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-40"
-                  >✓ Freigeben</button>
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-500">
+                    läuft {relativeFuture(c.expiresAt)} ab
+                  </span>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => decide(c.id, 'reject')}
+                      disabled={busy === c.id}
+                      className="text-[11px] px-2 py-1 rounded bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/30 disabled:opacity-40"
+                    >❌ Nein</button>
+                    <button
+                      onClick={() => decide(c.id, 'approve')}
+                      disabled={busy === c.id}
+                      className="text-[11px] px-2 py-1 rounded bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 disabled:opacity-40"
+                    >✅ Ja</button>
+                  </div>
                 </div>
+                {/* v657 — extra Action-Buttons (z.B. Open-Item Ablehnen / Zurückstellen) */}
+                {c.extraActions && c.extraActions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-amber-500/10">
+                    {c.extraActions.map(ea => (
+                      <button
+                        key={ea.key}
+                        onClick={() => decide(c.id, ea.key)}
+                        disabled={busy === c.id}
+                        className="text-[10px] px-2 py-1 rounded bg-blue-500/10 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 disabled:opacity-40"
+                      >{ea.label}</button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}

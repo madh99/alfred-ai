@@ -73,6 +73,8 @@ export interface ReflectorDeps {
   defaultPlatform: Platform;
   /** v614 L1 — owner-scoped reflectors need explicit ownerUserId */
   ownerUserId?: string;
+  /** v657 — ConfirmationQueue für Multi-Action-Eskalationen (Open-Item) */
+  confirmationQueue?: import('../confirmation-queue.js').ConfirmationQueue;
   nodeId: string;
   config: Required<ReflectionConfig>;
 }

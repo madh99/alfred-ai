@@ -1,7 +1,8 @@
 import type { Logger } from 'pino';
 import type { ProjectRepository, MemoryRepository } from '@alfred/storage';
 import type { MessagingAdapter } from '@alfred/messaging';
-import type { Platform } from '@alfred/types';
+import type { Platform, ConfirmationExtraAction } from '@alfred/types';
+import type { ConfirmationQueue } from '../confirmation-queue.js';
 
 /**
  * v614 L1 + L5 — Open-Items-Reflector
@@ -33,6 +34,8 @@ export interface OpenItemsReflectorDeps {
   defaultChatId: string;
   ownerUserId: string;
   logger: Logger;
+  /** v657 — optional: confirmationQueue für Multi-Action-Buttons (Eskalation als Confirmation enqueued). */
+  confirmationQueue?: ConfirmationQueue;
 }
 
 export class OpenItemsReflector {
@@ -88,19 +91,71 @@ export class OpenItemsReflector {
 
       if (alreadyEscalated) continue;
 
+      // v657 — Snooze-Check: wenn der User „⏰ Zurückstellen" gewählt hat, ist ein
+      //   open_item_snoozed:<id> Memory bis zur snoozeUntil-Zeit vorhanden.
+      try {
+        const snoozeKey = `open_item_snoozed:${item.id}`;
+        const snoozeMems = await memoryRepo.search(ownerUserId, snoozeKey);
+        const snooze = snoozeMems.find(m => m.key === snoozeKey);
+        if (snooze) {
+          // value: "Snoozed bis 2026-05-22T18:00:00.000Z"
+          const m = /Snoozed bis (\S+)/.exec(snooze.value);
+          if (m && new Date(m[1]).getTime() > Date.now()) {
+            continue; // noch nicht abgelaufen
+          }
+          // Snooze abgelaufen → Memory löschen (best effort)
+          try { await memoryRepo.delete(ownerUserId, snoozeKey); } catch { /* skip */ }
+        }
+      } catch { /* skip snooze check */ }
+
       const hours = Math.floor(itemAge / 3600_000);
       const project = await projectRepo.getById(ownerUserId, item.projectId).catch(() => null);
       const projectName = project?.name?.slice(0, 60) ?? 'unbekanntes Projekt';
-      const msg =
-        `🔴 **High-Priority Open Item — ${hours}h offen**\n\n` +
+
+      // v657 — Wenn ConfirmationQueue verfügbar: enqueue mit 4 Actions
+      //   ja (approve)  → project_agent.start mit Goal
+      //   nein (reject) → keine Aktion, Eskalation deduped (Marker bleibt)
+      //   ablehnen      → Open-Item.status = cancelled
+      //   zurückstellen → Snooze für 24h
+      const description =
+        `🔴 High-Priority Open Item (${hours}h offen)\n\n` +
         `📋 ${item.title}\n` +
-        `📂 Projekt: ${projectName}\n\n` +
-        (item.description ? `Beschreibung: ${item.description.slice(0, 300)}\n\n` : '') +
-        `Soll ich mich darum kümmern? Antworte mit "ja" / "nein" oder lass es liegen.`;
+        `📂 Projekt: ${projectName}` +
+        (item.description ? `\n\nBeschreibung: ${item.description.slice(0, 300)}` : '');
 
       try {
-        await this.send(msg);
-        sentThisSweep++; // v616 L8 — count actually-sent escalations against the rate-limit
+        if (this.deps.confirmationQueue) {
+          const extraActions: ConfirmationExtraAction[] = [
+            { key: 'cancel_item', label: '🗑 Open-Item ablehnen', kind: 'cancel-item', openItemId: item.id },
+            { key: 'snooze_24h', label: '⏰ 24h zurückstellen', kind: 'defer', openItemId: item.id, deferHours: 24 },
+          ];
+          await this.deps.confirmationQueue.enqueue({
+            chatId: this.deps.defaultChatId,
+            platform: this.deps.defaultPlatform,
+            source: 'reasoning',
+            sourceId: `open_item:${item.id}`,
+            description,
+            // 'ja' startet einen Project-Agent für genau dieses Item
+            skillName: 'project_agent',
+            skillParams: {
+              action: 'start',
+              goal: item.title + (item.description ? `\n\n${item.description}` : ''),
+              cwd: project?.cwd,
+              link_open_item_id: item.id,
+            },
+            extraActions,
+            timeoutMinutes: 24 * 60,
+          });
+        } else {
+          // Fallback ohne ConfirmationQueue (legacy): plain text
+          await this.send(
+            `🔴 **High-Priority Open Item — ${hours}h offen**\n\n` +
+            `📋 ${item.title}\n📂 Projekt: ${projectName}\n\n` +
+            (item.description ? `Beschreibung: ${item.description.slice(0, 300)}\n\n` : '') +
+            `Soll ich mich darum kümmern? Antworte mit "ja" / "nein" oder lass es liegen.`,
+          );
+        }
+        sentThisSweep++;
         await memoryRepo.saveWithMetadata(
           ownerUserId,
           markerKey,

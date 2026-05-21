@@ -292,6 +292,14 @@ export class TelegramAdapter extends MessagingAdapter {
       replyToMessageId: msg.reply_to_message
         ? String(msg.reply_to_message.message_id)
         : undefined,
+      // v657 — Reply-Kontext direkt mitliefern (Telegram-Update enthält das komplette Objekt)
+      replyToText: msg.reply_to_message
+        ? (msg.reply_to_message.text ?? msg.reply_to_message.caption ?? undefined)
+        : undefined,
+      replyToFrom: msg.reply_to_message?.from
+        ? [msg.reply_to_message.from.first_name, msg.reply_to_message.from.last_name]
+            .filter(Boolean).join(' ') || msg.reply_to_message.from.username || undefined
+        : undefined,
       threadId: msg.message_thread_id ? String(msg.message_thread_id) : undefined,
     };
   }

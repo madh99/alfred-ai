@@ -1960,14 +1960,34 @@ export class MessagePipeline {
    * Handles images (as vision blocks), audio (transcribed via Whisper),
    * documents/files (saved to inbox), and plain text.
    */
+  /**
+   * v657 — Baut einen kurzen Reply-Kontext-Prefix für den User-Prompt.
+   * Wenn die Eingabe ein Reply auf eine andere Nachricht ist (Telegram, später WebUI),
+   * sieht der LLM die Vorgängernachricht damit er kontextkohärent antwortet.
+   * Format:
+   *   [User antwortet auf Nachricht von <Name>: "<Text auf 300 Chars geclipt>"]
+   *   <eigentlicher User-Text>
+   */
+  private buildReplyContextPrefix(message: NormalizedMessage): string {
+    if (!message.replyToText || message.replyToText.trim().length === 0) return '';
+    const from = message.replyToFrom?.trim() || 'vorherige Nachricht';
+    const text = message.replyToText.slice(0, 300).replace(/\s+/g, ' ').trim();
+    if (text.length === 0) return '';
+    return `[User antwortet auf Nachricht von ${from}: "${text}${message.replyToText.length > 300 ? '…' : ''}"]\n\n`;
+  }
+
   private async buildUserContent(
     message: NormalizedMessage,
     onProgress?: ProgressCallback,
   ): Promise<string | LLMContentBlock[]> {
     const attachments = message.attachments?.filter(a => a.data) ?? [];
 
+    // v657 — Reply-Kontext (z.B. Telegram-reply): den User-Prompt mit dem
+    // referenzierten Text annotieren damit der LLM versteht worauf der User reagiert.
+    const replyPrefix = this.buildReplyContextPrefix(message);
+
     if (attachments.length === 0) {
-      return message.text;
+      return replyPrefix + message.text;
     }
 
     const blocks: LLMContentBlock[] = [];
@@ -2068,7 +2088,8 @@ export class MessagePipeline {
     // Add the text content — skip synthetic platform labels (e.g. "[Document: file.pdf]", "[Photo]")
     const isSynthetic = this.isSyntheticLabel(message.text);
     if (message.text && !isSynthetic) {
-      blocks.push({ type: 'text', text: message.text });
+      // v657 — Reply-Kontext auch hier voranstellen falls vorhanden
+      blocks.push({ type: 'text', text: replyPrefix + message.text });
     }
 
     // Fallbacks when no real user text is present

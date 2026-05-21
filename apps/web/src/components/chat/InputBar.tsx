@@ -5,11 +5,18 @@ import { SlashCommandPalette, type SlashCommand } from './SlashCommandPalette';
 import { useConfig } from '@/context/ConfigContext';
 
 interface InputBarProps {
-  onSend: (text: string, attachments?: Array<{ name: string; mime: string; dataUrl: string }>) => void;
+  onSend: (
+    text: string,
+    attachments?: Array<{ name: string; mime: string; dataUrl: string }>,
+    replyTo?: { messageId?: string; text?: string; from?: string },
+  ) => void;
   onCancel?: () => void;
   onClear?: () => void;
   streaming?: boolean;
   initialDraft?: string;
+  /** v657 — Reply-Banner über dem Input + onClear callback */
+  replyTo?: { messageId?: string; text: string; from?: string } | null;
+  onClearReplyTo?: () => void;
 }
 
 const DRAFT_KEY = 'alfred-chat-draft';
@@ -34,7 +41,7 @@ function estimateTokens(text: string): number {
 
 interface PendingAttachment { name: string; mime: string; dataUrl: string; sizeKB: number }
 
-export function InputBar({ onSend, onCancel, onClear, streaming, initialDraft }: InputBarProps) {
+export function InputBar({ onSend, onCancel, onClear, streaming, initialDraft, replyTo, onClearReplyTo }: InputBarProps) {
   const { client } = useConfig();
   const [text, setText] = useState(initialDraft ?? '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -205,9 +212,14 @@ export function InputBar({ onSend, onCancel, onClear, streaming, initialDraft }:
       const exact = filteredCommands.find(c => c.cmd === text.trim());
       if (exact) { applyCommand(exact); return; }
     }
-    onSend(text.trim(), attachments.length > 0 ? attachments.map(a => ({ name: a.name, mime: a.mime, dataUrl: a.dataUrl })) : undefined);
+    onSend(
+      text.trim(),
+      attachments.length > 0 ? attachments.map(a => ({ name: a.name, mime: a.mime, dataUrl: a.dataUrl })) : undefined,
+      replyTo ? { messageId: replyTo.messageId, text: replyTo.text, from: replyTo.from } : undefined,
+    );
     setText('');
     setAttachments([]);
+    onClearReplyTo?.();
     textareaRef.current?.focus();
   };
 
@@ -260,6 +272,25 @@ export function InputBar({ onSend, onCancel, onClear, streaming, initialDraft }:
         onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }}
       />
       <div className="max-w-4xl mx-auto">
+        {/* v657 — Reply-Banner über dem Input */}
+        {replyTo && (
+          <div className="flex items-start gap-2 mb-2 bg-blue-500/5 border border-blue-500/30 rounded-lg px-3 py-2">
+            <div className="text-blue-400 text-xs mt-0.5">↩</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-0.5">
+                Antwort auf{replyTo.from ? ` ${replyTo.from}` : ''}
+              </div>
+              <div className="text-xs text-gray-300 truncate">
+                {replyTo.text.length > 120 ? replyTo.text.slice(0, 120) + '…' : replyTo.text}
+              </div>
+            </div>
+            <button
+              onClick={onClearReplyTo}
+              className="text-gray-500 hover:text-red-400 text-xs"
+              title="Reply abbrechen"
+            >✕</button>
+          </div>
+        )}
         {/* v644 — Attachments-Preview */}
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">

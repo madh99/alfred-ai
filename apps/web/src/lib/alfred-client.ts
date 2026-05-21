@@ -29,18 +29,26 @@ export class AlfredClient {
     chatId: string,
     userId: string,
     callbacks: StreamCallbacks,
+    /** v657 — optionaler Reply-Kontext (vom Reply-Button in der Chat-UI) */
+    replyTo?: { messageId?: string; text?: string; from?: string },
   ): () => void {
     const controller = new AbortController();
 
     (async () => {
       try {
+        const body: Record<string, unknown> = { text, chatId, userId };
+        if (replyTo?.text) {
+          body.replyToText = replyTo.text;
+          if (replyTo.from) body.replyToFrom = replyTo.from;
+          if (replyTo.messageId) body.replyToMessageId = replyTo.messageId;
+        }
         const res = await fetch(`${this.baseUrl}/api/message`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
           },
-          body: JSON.stringify({ text, chatId, userId }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
 
@@ -382,7 +390,8 @@ export class AlfredClient {
     return data.confirmations ?? [];
   }
 
-  async decideConfirmation(id: string, decision: 'approve' | 'reject'): Promise<{ ok: boolean; reason?: string }> {
+  async decideConfirmation(id: string, decision: 'approve' | 'reject' | string): Promise<{ ok: boolean; reason?: string }> {
+    // v657 — decision kann auch ein custom-extra-action-key sein (z.B. 'cancel_item', 'snooze_24h')
     const res = await fetch(`${this.baseUrl}/api/confirmations/${id}/${decision}`, {
       method: 'POST',
       headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
@@ -1249,6 +1258,15 @@ export interface GoalCheckpointItem {
 }
 
 // v629 — Confirmations + Reminders Side-Panel
+// v657 — extraActions für Multi-Action-Buttons
+export interface ConfirmationExtraActionItem {
+  key: string;
+  label: string;
+  kind: 'skill' | 'dismiss' | 'cancel-item' | 'defer';
+  openItemId?: string;
+  deferHours?: number;
+}
+
 export interface PendingConfirmationItem {
   id: string;
   chatId: string;
@@ -1258,6 +1276,7 @@ export interface PendingConfirmationItem {
   description: string;
   skillName: string;
   skillParams: Record<string, unknown>;
+  extraActions?: ConfirmationExtraActionItem[];
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   createdAt: string;
   expiresAt: string;

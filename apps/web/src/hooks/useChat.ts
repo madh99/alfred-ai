@@ -171,7 +171,12 @@ export function useChat() {
     })();
   }, [activeConvId, client]);
 
-  const sendMessage = useCallback((text: string, attachments?: Array<{ name: string; mime: string; dataUrl: string }>) => {
+  const sendMessage = useCallback((
+    text: string,
+    attachments?: Array<{ name: string; mime: string; dataUrl: string }>,
+    /** v657 — optional Reply-Kontext (vom Reply-Button in der Chat-UI) */
+    replyTo?: { messageId?: string; text?: string; from?: string },
+  ) => {
     if ((!text.trim() && (!attachments || attachments.length === 0)) || state.streaming) return;
     // v644 — Bilder als Markdown ![]() inlinen, andere Files als download-Tag (best-effort —
     // bei größeren Files sollte später ein Upload-Endpoint genutzt werden).
@@ -195,7 +200,7 @@ export function useChat() {
       onAttachment: (a) => dispatch({ type: 'ADD_ATTACHMENT', attachment: a }),
       onDone: () => dispatch({ type: 'DONE' }),
       onError: (e) => dispatch({ type: 'ERROR', error: e }),
-    });
+    }, replyTo);
   }, [client, chatId, userId, state.streaming]);
 
   const cancel = useCallback(() => {

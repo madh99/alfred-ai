@@ -322,12 +322,12 @@ export class HttpAdapter extends MessagingAdapter {
 
   // v629 — Confirmations + Reminders Side-Panel API
   private confirmationsListFn?: () => Promise<any[]>;
-  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject') => Promise<{ ok: boolean; reason?: string }>;
+  private confirmationsDecideFn?: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string }>;
   private remindersListFn?: () => Promise<any[]>;
 
   setConfirmationCallbacks(opts: {
     list: () => Promise<any[]>;
-    decide: (id: string, decision: 'approve' | 'reject') => Promise<{ ok: boolean; reason?: string }>;
+    decide: (id: string, decision: 'approve' | 'reject' | string) => Promise<{ ok: boolean; reason?: string }>;
   }): void {
     this.confirmationsListFn = opts.list;
     this.confirmationsDecideFn = opts.decide;
@@ -734,6 +734,11 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConfirmationDecide(req, res, url, 'approve').catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/confirmations\/[^/]+\/reject$/) && req.method === 'POST') {
       this.handleConfirmationDecide(req, res, url, 'reject').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/confirmations\/[^/]+\/[a-z0-9_-]+$/i) && req.method === 'POST') {
+      // v657 — custom extraAction key (z.B. cancel_item, snooze_24h)
+      const parts = url.pathname.split('/');
+      const customKey = parts[parts.length - 1];
+      this.handleConfirmationDecide(req, res, url, customKey).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/reminders' && req.method === 'GET') {
       this.handleRemindersList(req, res).catch(err => this.safeError(res, err));
     // ── Insights API (v638) ──
@@ -1765,7 +1770,7 @@ export class HttpAdapter extends MessagingAdapter {
     res.end(JSON.stringify({ confirmations: list }));
   }
 
-  private async handleConfirmationDecide(req: http.IncomingMessage, res: http.ServerResponse, url: URL, decision: 'approve' | 'reject'): Promise<void> {
+  private async handleConfirmationDecide(req: http.IncomingMessage, res: http.ServerResponse, url: URL, decision: 'approve' | 'reject' | string): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.confirmationsDecideFn) {
       res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
@@ -2212,7 +2217,7 @@ export class HttpAdapter extends MessagingAdapter {
     req.on('end', () => {
       if (aborted) return;
       try {
-        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string };
+        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string };
         const text = parsed.text;
         if (!text || typeof text !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2261,6 +2266,10 @@ export class HttpAdapter extends MessagingAdapter {
           displayName: 'API User',
           text,
           timestamp: new Date(),
+          // v657 — Reply-Kontext aus dem WebUI durchreichen
+          replyToText: typeof parsed.replyToText === 'string' ? parsed.replyToText : undefined,
+          replyToFrom: typeof parsed.replyToFrom === 'string' ? parsed.replyToFrom : undefined,
+          replyToMessageId: typeof parsed.replyToMessageId === 'string' ? parsed.replyToMessageId : undefined,
         };
 
         this.emit('message', message);

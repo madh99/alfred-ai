@@ -15,6 +15,12 @@ export interface NormalizedMessage {
   text: string;
   timestamp: Date;
   replyToMessageId?: string;
+  /** v657 — Volltext der referenzierten Nachricht (von Adapter direkt mitgeliefert,
+   *  z.B. Telegram msg.reply_to_message.text). Wird vom message-pipeline in den
+   *  LLM-Prompt als Reply-Kontext injiziert. */
+  replyToText?: string;
+  /** v657 — Sender der referenzierten Nachricht (z.B. 'Madh' oder 'Alfred Test Bot'). */
+  replyToFrom?: string;
   attachments?: Attachment[];
   raw?: unknown;
   threadId?: string;

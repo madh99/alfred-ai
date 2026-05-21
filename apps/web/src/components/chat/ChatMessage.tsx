@@ -65,10 +65,12 @@ interface Props {
   isLastAssistant?: boolean;
   onRetry?: () => void;
   onEdit?: (newText: string) => void;
+  /** v657 — Reply-Button setzt diese Nachricht als Antwort-Kontext für die nächste Eingabe */
+  onReply?: () => void;
   streaming?: boolean;
 }
 
-export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onEdit, streaming }: Props) {
+export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onEdit, onReply, streaming }: Props) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -164,6 +166,14 @@ export function ChatMessage({ message, isLastUser, isLastAssistant, onRetry, onE
                 className="text-[10px] px-2 py-0.5 rounded bg-[#0d0d0d] border border-[#2a2a2a] text-gray-300 hover:bg-[#1f1f1f] hover:border-blue-500/40"
                 title="Antwort neu generieren"
               >↻ Retry</button>
+            )}
+            {/* v657 — Reply auf diese Nachricht */}
+            {onReply && !streaming && (
+              <button
+                onClick={onReply}
+                className="text-[10px] px-2 py-0.5 rounded bg-[#0d0d0d] border border-[#2a2a2a] text-gray-300 hover:bg-[#1f1f1f] hover:border-blue-500/40"
+                title="Auf diese Nachricht antworten"
+              >↩ Reply</button>
             )}
           </div>
         )}

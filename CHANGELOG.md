@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.657] - 2026-05-21
+
+### Added — Multi-Action Confirmations + Reply-Kontext
+
+**Multi-Action Confirmations (`ConfirmationQueue`)**:
+- Migration v78/v81: `pending_confirmations.extra_actions TEXT` (JSON-Array)
+- Neuer Type `ConfirmationExtraAction` mit 4 Kinds:
+  - `skill` — führt skillName/skillParams aus, löst als 'approved'
+  - `dismiss` — markiert als 'rejected', Eskalation bleibt deduped
+  - `cancel-item` — schließt verlinktes Open-Item (`status='cancelled'`)
+  - `defer` — löscht Eskalations-Marker + setzt Snooze-Memory bis +N Stunden
+- `enqueue()` neuer Param `extraActions?` → Telegram Inline-Keyboard wird dynamisch
+  (Standard ✅/❌ Row + extra Rows max 3 Buttons/Row)
+- `checkForConfirmation()` extended Callback-Pattern: `confirm:<id>:<custom-key>`
+- `handleWebDecision()` akzeptiert custom-keys (Side-Panel kann extra-Actions auslösen)
+- ProjectRepo + MemoryRepo via `setProjectRepo()`/`setMemoryRepo()` für cancel/defer-Handler
+
+**Open-Items-Reflector**:
+- Nutzt jetzt `confirmationQueue.enqueue()` statt nackten Adapter-Send
+- 4 Action-Buttons in Telegram + WebUI Side-Panel:
+  - ✅ **Ja** → `project_agent.start` mit Item-Titel als Goal, cwd vom Projekt
+  - ❌ **Nein** → keine Aktion, Dedup-Marker bleibt (keine Re-Eskalation)
+  - 🗑 **Open-Item ablehnen** → `cancel-item`-Handler setzt Item auf `cancelled`
+  - ⏰ **24h zurückstellen** → `defer`-Handler, Snooze-Memory bis +24h
+- Snooze-Check beim hourly Sweep: skipped Items mit aktivem Snooze
+- Fallback auf plain-text wenn confirmationQueue nicht verkabelt (legacy)
+
+**HTTP-API + WebUI Side-Panel**:
+- `POST /api/confirmations/:id/:key` akzeptiert beliebige extraAction-keys (cancel_item, snooze_24h, etc.)
+- `PendingConfirmationItem` mit `extraActions[]` Property
+- Side-Panel rendert die extra-Buttons als zweite Button-Row, blue-Theme
+
+**Telegram Reply-Kontext**:
+- `NormalizedMessage.replyToText` + `replyToFrom` neu im Schema
+- Telegram-Adapter füllt aus `msg.reply_to_message.{text, caption, from}` direkt
+  (keine DB-Lookup nötig — Telegram Update enthält das komplette Objekt)
+- `message-pipeline.buildReplyContextPrefix()`: prependet
+  `[User antwortet auf Nachricht von <Name>: "<Text auf 300 Chars>"]` an User-Prompt
+- Wirkt sowohl im Text-only-Pfad als auch beim multi-modal-Block-Pfad
+
+**WebUI Reply-Funktion**:
+- `↩ Reply`-Knopf in der Hover-Action-Bar jeder Chat-Nachricht (`ChatMessage`)
+- Reply-Banner über dem Input mit `From: ...` + getrimmtem Text + ✕ Button
+- `useChat.sendMessage()` + `client.streamMessage()` nehmen `replyTo` Param
+- `/api/message` POST-Body um `replyToText` / `replyToFrom` / `replyToMessageId` erweitert
+- HTTP-Adapter füllt das in `NormalizedMessage` durch — selber Pipeline-Pfad wie Telegram
+
+### Schema (v78/v81)
+```sql
+ALTER TABLE pending_confirmations ADD COLUMN extra_actions TEXT;
+```
+
+### Notes
+- Build grün (12/12)
+- Multi-Action ist abwärtskompatibel — bestehende Confirmations ohne extra_actions
+  rendern wie bisher (nur Standard ✅/❌)
+- Reply-Kontext ist additiv — Nachrichten ohne replyToText laufen unverändert
+- Andere Adapter (Discord/WhatsApp/Matrix) füllen `replyToText` aktuell nicht;
+  einfache Erweiterung wenn benötigt (siehe Telegram-Adapter als Vorlage)
+- Side-Panel zeigt extra-Actions nur wenn der Server sie liefert (kein Schema-Change im UI nötig)
+
 ## [0.19.0-multi-ha.656] - 2026-05-21
 
 ### Added — Dashboard Stunden-Granularität + Timezone-aware Bucketing

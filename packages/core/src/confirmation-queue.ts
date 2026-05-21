@@ -1,8 +1,8 @@
 import type { Logger } from 'pino';
-import type { ConfirmationRepository, ConversationRepository } from '@alfred/storage';
+import type { ConfirmationRepository, ConversationRepository, ProjectRepository, MemoryRepository } from '@alfred/storage';
 import type { SkillRegistry, SkillSandbox } from '@alfred/skills';
 import type { MessagingAdapter } from '@alfred/messaging';
-import type { Platform, SkillContext, PendingConfirmation } from '@alfred/types';
+import type { Platform, SkillContext, PendingConfirmation, ConfirmationExtraAction } from '@alfred/types';
 import type { ActivityLogger } from './activity-logger.js';
 import type { FeedbackService } from './feedback/feedback-service.js';
 
@@ -62,6 +62,12 @@ export class ConfirmationQueue {
     this.feedbackService = service;
   }
 
+  // v657 — optionale Repos für die extra-Action-Handler (cancel-item / defer)
+  private projectRepo?: ProjectRepository;
+  private memoryRepo?: MemoryRepository;
+  setProjectRepo(repo: ProjectRepository): void { this.projectRepo = repo; }
+  setMemoryRepo(repo: MemoryRepository): void { this.memoryRepo = repo; }
+
   start(): void {
     // Check for expired confirmations every 60s
     this.expireTimer = setInterval(() => this.expireTick(), 60_000);
@@ -83,6 +89,8 @@ export class ConfirmationQueue {
     skillName: string;
     skillParams: Record<string, unknown>;
     timeoutMinutes?: number;
+    /** v657 \u2014 zus\u00E4tzliche Buttons neben approve/reject (z.B. Open-Item-Eskalation: Ablehnen/Zur\u00FCckstellen) */
+    extraActions?: ConfirmationExtraAction[];
   }): Promise<void> {
     const expiresAt = new Date(Date.now() + (opts.timeoutMinutes ?? 30) * 60_000).toISOString();
 
@@ -94,6 +102,7 @@ export class ConfirmationQueue {
       description: opts.description,
       skillName: opts.skillName,
       skillParams: opts.skillParams,
+      extraActions: opts.extraActions,
       expiresAt,
     });
 
@@ -104,13 +113,23 @@ export class ConfirmationQueue {
       try {
         // Use inline buttons for Telegram
         if (opts.platform === 'telegram' && confirmId) {
+          // v657 \u2014 Standard-Buttons + extra Actions (max 3 pro Zeile)
+          const standardRow = [
+            { text: '\u2705 Ja', callbackData: `confirm:${confirmId}:approve` },
+            { text: '\u274C Nein', callbackData: `confirm:${confirmId}:reject` },
+          ];
+          const inlineKeyboard: Array<Array<{ text: string; callbackData: string }>> = [standardRow];
+          if (opts.extraActions && opts.extraActions.length > 0) {
+            // extra actions in eigener Row (oder mehrere wenn viele)
+            let currentRow: Array<{ text: string; callbackData: string }> = [];
+            for (const ea of opts.extraActions) {
+              currentRow.push({ text: ea.label, callbackData: `confirm:${confirmId}:${ea.key}` });
+              if (currentRow.length === 3) { inlineKeyboard.push(currentRow); currentRow = []; }
+            }
+            if (currentRow.length > 0) inlineKeyboard.push(currentRow);
+          }
           await adapter.sendMessage(opts.chatId, msg, {
-            replyMarkup: {
-              inlineKeyboard: [[
-                { text: '\u2705 Approve', callbackData: `confirm:${confirmId}:approve` },
-                { text: '\u274C Reject', callbackData: `confirm:${confirmId}:reject` },
-              ]],
-            },
+            replyMarkup: { inlineKeyboard },
           });
         } else {
           await adapter.sendMessage(opts.chatId, msg);
@@ -154,12 +173,15 @@ export class ConfirmationQueue {
   async checkForConfirmation(chatId: string, platform: string, text: string, context: SkillContext): Promise<boolean> {
     const normalized = text.trim().toLowerCase();
 
-    // Handle inline keyboard callback data: confirm:<id>:approve / confirm:<id>:reject
-    const callbackMatch = /^confirm:([^:]+):(approve|reject)$/.exec(normalized);
-    const isYes = callbackMatch ? callbackMatch[2] === 'approve' : ['ja', 'ok', 'yes', 'best\u00E4tigen', 'j'].includes(normalized);
-    const isNo = callbackMatch ? callbackMatch[2] === 'reject' : ['nein', 'no', 'abbrechen', 'n', 'n\u00F6'].includes(normalized);
+    // Handle inline keyboard callback data: confirm:<id>:<key>
+    // <key> kann 'approve' / 'reject' / oder ein custom extraAction-key sein
+    const callbackMatch = /^confirm:([^:]+):([a-z0-9_-]+)$/i.exec(text.trim());
+    const callbackKey = callbackMatch?.[2]?.toLowerCase();
+    const isYes = callbackKey === 'approve' || (!callbackMatch && ['ja', 'ok', 'yes', 'best\u00E4tigen', 'j'].includes(normalized));
+    const isNo = callbackKey === 'reject' || (!callbackMatch && ['nein', 'no', 'abbrechen', 'n', 'n\u00F6'].includes(normalized));
+    const isExtraAction = callbackMatch && !!callbackKey && callbackKey !== 'approve' && callbackKey !== 'reject';
 
-    if (!isYes && !isNo) return false;
+    if (!isYes && !isNo && !isExtraAction) return false;
 
     // Use specific confirmation ID from callback button, or fall back to most recent pending
     const pending = callbackMatch
@@ -187,6 +209,92 @@ export class ConfirmationQueue {
       return false;
     }
     if (!pending) return false;
+
+    // v657 — Extra-Action: nicht approve/reject, sondern eine custom-action aus extraActions
+    if (isExtraAction && callbackKey) {
+      const ea = pending.extraActions?.find(a => a.key === callbackKey);
+      if (!ea) {
+        if (adapter) await adapter.sendMessage(chatId, `⚠️ Aktion "${callbackKey}" ist nicht mehr verfügbar.`);
+        return true;
+      }
+      try {
+        switch (ea.kind) {
+          case 'skill': {
+            // führe die spezifizierte Skill-Aktion aus, markiere als 'approved'
+            await this.confirmRepo.resolve(pending.id, 'approved');
+            if (ea.skillName) {
+              const skill = this.skillRegistry.get(ea.skillName);
+              if (skill) {
+                const result = await this.skillSandbox.execute(skill, ea.skillParams ?? {}, context);
+                if (adapter) {
+                  const display = result?.display ?? (result?.data ? JSON.stringify(result.data) : '');
+                  const msg = result?.success
+                    ? (display ? `✅ **${ea.label}**\n\n${display}` : `✅ ${ea.label}`)
+                    : `❌ ${ea.label} fehlgeschlagen: ${result?.error ?? 'unknown'}`;
+                  await adapter.sendMessage(chatId, msg);
+                }
+              } else if (adapter) {
+                await adapter.sendMessage(chatId, `❌ Skill "${ea.skillName}" nicht registriert.`);
+              }
+            }
+            break;
+          }
+          case 'dismiss': {
+            await this.confirmRepo.resolve(pending.id, 'rejected');
+            if (adapter) await adapter.sendMessage(chatId, `🙅 ${ea.label}: Aktion verworfen — keine weitere Eskalation.`);
+            break;
+          }
+          case 'cancel-item': {
+            await this.confirmRepo.resolve(pending.id, 'rejected');
+            if (this.projectRepo && ea.openItemId) {
+              try {
+                await this.projectRepo.updateOpenItemStatus(ea.openItemId, 'cancelled');
+                if (adapter) await adapter.sendMessage(chatId, `🗑 Open-Item geschlossen (cancelled).`);
+              } catch (err) {
+                if (adapter) await adapter.sendMessage(chatId, `⚠️ Konnte Item nicht schließen: ${(err as Error).message}`);
+              }
+            } else if (adapter) {
+              await adapter.sendMessage(chatId, `⚠️ ${ea.label}: kein Projekt-Repo verkabelt.`);
+            }
+            break;
+          }
+          case 'defer': {
+            // löscht den Eskalations-Marker → Item wird nach Wartezeit erneut eskaliert
+            await this.confirmRepo.resolve(pending.id, 'expired');
+            const deferHours = ea.deferHours ?? 24;
+            if (this.memoryRepo && ea.openItemId) {
+              try {
+                // Marker-Key Pattern: open_item_escalated:<itemId> (siehe open-items-reflector)
+                // Wir schreiben einen "snooze"-Marker der erst nach deferHours abläuft.
+                // Implementation: existing Marker auf "snoozed_until" mit Zeitstempel updaten.
+                const snoozeUntil = new Date(Date.now() + deferHours * 3600_000).toISOString();
+                await this.memoryRepo.saveWithMetadata(
+                  context.masterUserId || context.userId,
+                  `open_item_snoozed:${ea.openItemId}`,
+                  `Snoozed bis ${snoozeUntil}`,
+                  'general', 'feedback', 1.0, 'auto',
+                );
+                if (adapter) await adapter.sendMessage(chatId, `⏰ Zurückgestellt — Erinnerung in ${deferHours}h.`);
+              } catch (err) {
+                if (adapter) await adapter.sendMessage(chatId, `⚠️ Defer fehlgeschlagen: ${(err as Error).message}`);
+              }
+            } else if (adapter) {
+              await adapter.sendMessage(chatId, `⏰ Zurückgestellt.`);
+            }
+            break;
+          }
+        }
+        this.activityLogger?.logConfirmation({
+          confirmationId: pending.id, skillName: pending.skillName, description: pending.description,
+          source: pending.source, sourceId: pending.sourceId, outcome: 'approved',
+          userId: context.userId, platform, chatId,
+        });
+      } catch (err) {
+        this.logger.error({ err, confirmationId: pending.id, key: callbackKey }, 'Extra-Action fehlgeschlagen');
+        if (adapter) await adapter.sendMessage(chatId, `❌ ${ea.label} fehlgeschlagen: ${(err as Error).message}`);
+      }
+      return true;
+    }
 
     if (isYes) {
       await this.confirmRepo.resolve(pending.id, 'approved');
@@ -287,7 +395,8 @@ export class ConfirmationQueue {
    */
   async handleWebDecision(opts: {
     id: string;
-    decision: 'approve' | 'reject';
+    /** v657 — kann auch ein custom extra-action key sein (z.B. 'cancel_item', 'snooze_24h') */
+    decision: 'approve' | 'reject' | string;
     userId: string;
   }): Promise<{ ok: boolean; reason?: string }> {
     const pending = await this.confirmRepo.getById(opts.id);

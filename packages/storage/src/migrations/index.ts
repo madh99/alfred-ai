@@ -1840,4 +1840,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_llm_usage_hourly_bucket ON llm_usage_hourly(hour_bucket)`);
     },
   },
+  {
+    version: 78,
+    description: 'v657 — pending_confirmations.extra_actions für Multi-Action-Buttons (Open-Item-Eskalation u.a.)',
+    up(db) {
+      try { db.exec(`ALTER TABLE pending_confirmations ADD COLUMN extra_actions TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

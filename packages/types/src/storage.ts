@@ -168,6 +168,26 @@ export interface Watch {
   lastRepairAt?: string;
 }
 
+/**
+ * v657 — Multi-Action: zusätzliche Buttons neben approve/reject.
+ *  - 'skill'        → führt skillName/skillParams aus (wie approve), löst als 'approved'
+ *  - 'dismiss'      → markiert als 'rejected' (Eskalation bleibt deduped, keine Aktion)
+ *  - 'cancel-item'  → setzt das verknüpfte Open-Item auf status='cancelled', löst als 'rejected'
+ *  - 'defer'        → löst als 'expired', löscht open_item_escalated:* Memory-Marker damit
+ *                     der hourly Sweep nach `deferHours` erneut eskalieren kann
+ */
+export interface ConfirmationExtraAction {
+  key: string;
+  label: string;
+  kind: 'skill' | 'dismiss' | 'cancel-item' | 'defer';
+  skillName?: string;
+  skillParams?: Record<string, unknown>;
+  /** v657 — bei kind='cancel-item' / 'defer' die Open-Item-ID die geschlossen / nachgelagert wird. */
+  openItemId?: string;
+  /** v657 — bei kind='defer' die Wartezeit bis zur nächsten Eskalation (Stunden). Default 24. */
+  deferHours?: number;
+}
+
 export interface PendingConfirmation {
   id: string;
   chatId: string;
@@ -177,6 +197,8 @@ export interface PendingConfirmation {
   description: string;
   skillName: string;
   skillParams: Record<string, unknown>;
+  /** v657 — extra Inline-Buttons; null wenn nur Standard-approve/reject angeboten wird */
+  extraActions?: ConfirmationExtraAction[];
   status: 'pending' | 'approved' | 'rejected' | 'expired';
   createdAt: string;
   expiresAt: string;

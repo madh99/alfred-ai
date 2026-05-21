@@ -3334,6 +3334,9 @@ export class Alfred {
     if (activeLearning) {
       activeLearning.setFeedbackService(feedbackService);
     }
+    // v657 — ProjectRepo + MemoryRepo für Multi-Action-Handler (cancel-item / defer) verkabeln
+    if (this.projectRepo) this.confirmationQueue.setProjectRepo(this.projectRepo);
+    if (this.memoryRepo) this.confirmationQueue.setMemoryRepo(this.memoryRepo);
 
     this.watchEngine = new WatchEngine(
       watchRepo,
@@ -4646,7 +4649,7 @@ export class Alfred {
               return [];
             }
           },
-          decide: async (id: string, decision: 'approve' | 'reject') => {
+          decide: async (id: string, decision: 'approve' | 'reject' | string) => {
             try {
               if (!ownerUid) return { ok: false, reason: 'no-owner' };
               return await this.confirmationQueue!.handleWebDecision({ id, decision, userId: ownerUid });
@@ -5653,6 +5656,7 @@ export class Alfred {
           projectRepo: this.projectRepo, // v614 L1
           runbookRepo: this.runbookRepo, // v614 L2 (passed for symmetry, used elsewhere)
           ownerUserId: this.ownerMasterUserId ?? this.config.security?.ownerUserId, // v614 L1
+          confirmationQueue: this.confirmationQueue, // v657 — für Multi-Action-Open-Item-Eskalation
           skillRegistry: this.skillRegistry,
           skillSandbox: this.skillSandbox,
           llm: this.llmProvider,

@@ -1159,4 +1159,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_llm_usage_hourly_bucket ON llm_usage_hourly(hour_bucket)`, []);
     },
   },
+  {
+    version: 81,
+    description: 'v657 — pending_confirmations.extra_actions für Multi-Action-Buttons (Open-Item-Eskalation u.a.)',
+    async up(db) {
+      await db.execute(`ALTER TABLE pending_confirmations ADD COLUMN IF NOT EXISTS extra_actions TEXT`, []);
+    },
+  },
 ];
