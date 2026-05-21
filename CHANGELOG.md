@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.661] - 2026-05-21
+
+### Added — Todos + Notes WebUI
+
+**Backend (API)**:
+- 5 neue Todo-Endpoints: GET/POST `/api/todos`, PATCH/DELETE `/api/todos/:id`, POST `/api/todos/:id/complete`
+- 4 neue Note-Endpoints: GET/POST `/api/notes`, PATCH/DELETE `/api/notes/:id`
+- Callbacks nutzen die bereits vorhandenen `TodoRepository` + `NoteRepository`
+- Owner-scoped (ownerMasterUserId)
+
+**Frontend**:
+- Neue Page `/todos`: 
+  - Add-Form mit Titel/Priority/Due-Date/List
+  - Filter nach Liste + „Erledigte zeigen"-Toggle
+  - Sortierung: Open zuerst, dann nach Priority (urgent/high/normal/low), dann Due-Date
+  - Überfällig-Markierung (⏰ rot)
+  - One-Click-Complete/Reopen via Checkbox
+- Neue Page `/notes`:
+  - Split-View: Liste links, Detail/Editor rechts
+  - Volltext-Search
+  - Markdown-freundlicher Mono-Editor
+  - New/Edit/Delete-Aktionen
+- Sidebar-Einträge: ✅ Todos + 🗒️ Notes
+
+### Notes
+- Build grün (12/12)
+- Repos existierten schon, nur WebUI fehlte — keine Migration nötig
+- TodoRepository hat (noch) keine generic update — Update geht aktuell nur
+  über `completed`-Toggle. Edit-Form für Title/Description/Priority kann später
+  ergänzt werden wenn benötigt
+
 ## [0.19.0-multi-ha.660] - 2026-05-21
 
 ### Improved — Deploy-Modal Runtime Auto-Detect aus Projekt-cwd

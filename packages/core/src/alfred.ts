@@ -175,6 +175,9 @@ export class Alfred {
     getUserByToken: (token: string) => Promise<{ userId: string; username: string; role: string } | null>;
   };
   private reminderRepo?: ReminderRepository;
+  /** v661 — Todos + Notes für WebUI-API */
+  private todoRepo?: TodoRepository;
+  private noteRepo?: NoteRepository;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
   private bmwTelematicRepo?: BmwTelematicRepository;
@@ -221,6 +224,7 @@ export class Alfred {
     const reminderRepo = new ReminderRepository(adapter);
     this.reminderRepo = reminderRepo;
     const noteRepo = new NoteRepository(adapter);
+    this.noteRepo = noteRepo;
     const embeddingRepo = new EmbeddingRepository(adapter);
     const linkTokenRepo = new LinkTokenRepository(adapter);
     const backgroundTaskRepo = new BackgroundTaskRepository(adapter);
@@ -376,6 +380,7 @@ export class Alfred {
     const noteSkill = new NoteSkill(noteRepo);
     skillRegistry.register(noteSkill);
     const todoRepo = new TodoRepository(adapter);
+    this.todoRepo = todoRepo;
     const todoSkill = new TodoSkill(todoRepo);
     skillRegistry.register(todoSkill);
     skillRegistry.register(new WeatherSkill());
@@ -4779,6 +4784,78 @@ export class Alfred {
           }
         });
         this.logger.info('Reminders Side-Panel API registered');
+      }
+
+      // v661 — Todos + Notes API
+      if (apiAdapter && 'setTodosCallbacks' in apiAdapter) {
+        const resolveOwnerTodo = async (): Promise<string> => {
+          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        };
+        (apiAdapter as any).setTodosCallbacks({
+          list: async (opts?: { list?: string; includeCompleted?: boolean }) => {
+            try {
+              const uid = await resolveOwnerTodo();
+              if (!this.todoRepo) return [];
+              return await this.todoRepo.list(uid, opts?.list, opts?.includeCompleted ?? false);
+            } catch (err) { this.logger.warn({ err }, 'Todos API list failed'); return []; }
+          },
+          add: async (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }) => {
+            try {
+              if (!this.todoRepo) return null;
+              const uid = await resolveOwnerTodo();
+              return await this.todoRepo.add(uid, input.title, {
+                list: input.list, description: input.description,
+                priority: input.priority, dueDate: input.dueDate,
+              });
+            } catch (err) { this.logger.warn({ err }, 'Todos API add failed'); return null; }
+          },
+          update: async (id: string, input: Record<string, unknown>) => {
+            try {
+              if (!this.todoRepo) return null;
+              if (typeof input.completed === 'boolean') {
+                if (input.completed) await this.todoRepo.complete(id);
+                else await this.todoRepo.uncomplete(id);
+              }
+              return await this.todoRepo.getById(id);
+            } catch (err) { this.logger.warn({ err }, 'Todos API update failed'); return null; }
+          },
+          complete: async (id: string) => {
+            try { return await this.todoRepo!.complete(id); } catch { return false; }
+          },
+          delete: async (id: string) => {
+            try { return await this.todoRepo!.delete(id); } catch { return false; }
+          },
+        });
+        this.logger.info('Todos API registered');
+      }
+      if (apiAdapter && 'setNotesCallbacks' in apiAdapter) {
+        const resolveOwnerNote = async (): Promise<string> => {
+          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        };
+        (apiAdapter as any).setNotesCallbacks({
+          list: async (opts?: { query?: string; limit?: number }) => {
+            try {
+              if (!this.noteRepo) return [];
+              const uid = await resolveOwnerNote();
+              if (opts?.query) return await this.noteRepo.search(uid, opts.query);
+              return await this.noteRepo.list(uid, opts?.limit ?? 100);
+            } catch (err) { this.logger.warn({ err }, 'Notes API list failed'); return []; }
+          },
+          add: async (input: { title: string; content: string }) => {
+            try {
+              if (!this.noteRepo) return null;
+              const uid = await resolveOwnerNote();
+              return await this.noteRepo.save(uid, input.title, input.content);
+            } catch (err) { this.logger.warn({ err }, 'Notes API add failed'); return null; }
+          },
+          update: async (id: string, input: { title?: string; content?: string }) => {
+            try { return this.noteRepo ? await this.noteRepo.update(id, input.title, input.content) : null; } catch { return null; }
+          },
+          delete: async (id: string) => {
+            try { return this.noteRepo ? await this.noteRepo.delete(id) : false; } catch { return false; }
+          },
+        });
+        this.logger.info('Notes API registered');
       }
 
       // Wire Projects API on HTTP adapter

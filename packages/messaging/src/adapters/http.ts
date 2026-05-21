@@ -337,6 +337,28 @@ export class HttpAdapter extends MessagingAdapter {
     this.remindersListFn = list;
   }
 
+  // v661 — Todos + Notes API
+  private todosCallbacks?: {
+    list: (opts?: { list?: string; includeCompleted?: boolean }) => Promise<any[]>;
+    add: (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }) => Promise<any>;
+    update: (id: string, input: Record<string, unknown>) => Promise<any | null>;
+    complete: (id: string) => Promise<boolean>;
+    delete: (id: string) => Promise<boolean>;
+  };
+  private notesCallbacks?: {
+    list: (opts?: { query?: string; limit?: number }) => Promise<any[]>;
+    add: (input: { title: string; content: string }) => Promise<any>;
+    update: (id: string, input: { title?: string; content?: string }) => Promise<any | null>;
+    delete: (id: string) => Promise<boolean>;
+  };
+
+  setTodosCallbacks(cbs: typeof HttpAdapter.prototype.todosCallbacks): void {
+    this.todosCallbacks = cbs;
+  }
+  setNotesCallbacks(cbs: typeof HttpAdapter.prototype.notesCallbacks): void {
+    this.notesCallbacks = cbs;
+  }
+
   // v638 — Insights API
   private insightsListFn?: (filter?: { category?: string; status?: string; limit?: number }) => Promise<any[]>;
   private insightsDismissFn?: (id: string) => Promise<void>;
@@ -757,6 +779,25 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConfirmationDecide(req, res, url, customKey).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/reminders' && req.method === 'GET') {
       this.handleRemindersList(req, res).catch(err => this.safeError(res, err));
+    // ── Todos + Notes API (v661) ──
+    } else if (url.pathname === '/api/todos' && req.method === 'GET') {
+      this.handleTodosList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/todos' && req.method === 'POST') {
+      this.handleTodosAdd(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleTodosUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/complete$/) && req.method === 'POST') {
+      this.handleTodosComplete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleTodosDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/notes' && req.method === 'GET') {
+      this.handleNotesList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/notes' && req.method === 'POST') {
+      this.handleNotesAdd(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/notes\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleNotesUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/notes\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleNotesDelete(req, res, url).catch(err => this.safeError(res, err));
     // ── Insights API (v638) ──
     } else if (url.pathname === '/api/insights' && req.method === 'GET') {
       this.handleInsightsList(req, res, url).catch(err => this.safeError(res, err));
@@ -1819,6 +1860,111 @@ export class HttpAdapter extends MessagingAdapter {
     const list = await this.remindersListFn();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ reminders: list }));
+  }
+
+  // ── Todos + Notes handlers (v661) ──
+  private async handleTodosList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const list = url.searchParams.get('list') ?? undefined;
+    const includeCompleted = url.searchParams.get('includeCompleted') === '1';
+    const todos = await this.todosCallbacks.list({ list, includeCompleted });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ todos }));
+  }
+
+  private async handleTodosAdd(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let data: { title?: string; description?: string; priority?: string; dueDate?: string; list?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.title?.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title erforderlich' })); return; }
+    const todo = await this.todosCallbacks.add({
+      title: data.title.trim(),
+      description: data.description,
+      priority: data.priority,
+      dueDate: data.dueDate,
+      list: data.list,
+    });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ todo }));
+  }
+
+  private async handleTodosUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const todo = await this.todosCallbacks.update(id, data);
+    res.writeHead(todo ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(todo ? { todo } : { error: 'not-found' }));
+  }
+
+  private async handleTodosComplete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const id = parts[parts.length - 2];
+    const ok = await this.todosCallbacks.complete(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleTodosDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.todosCallbacks.delete(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleNotesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.notesCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const query = url.searchParams.get('q') ?? undefined;
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100));
+    const notes = await this.notesCallbacks.list({ query, limit });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ notes }));
+  }
+
+  private async handleNotesAdd(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.notesCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let data: { title?: string; content?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.title?.trim() || !data.content?.trim()) {
+      res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title + content erforderlich' })); return;
+    }
+    const note = await this.notesCallbacks.add({ title: data.title.trim(), content: data.content });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ note }));
+  }
+
+  private async handleNotesUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.notesCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const body = await this.readBody(req);
+    let data: { title?: string; content?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const note = await this.notesCallbacks.update(id, data);
+    res.writeHead(note ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(note ? { note } : { error: 'not-found' }));
+  }
+
+  private async handleNotesDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.notesCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.notesCallbacks.delete(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
   }
 
   // ── Insights handlers (v638) ──

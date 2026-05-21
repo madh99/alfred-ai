@@ -401,6 +401,62 @@ export class AlfredClient {
     return { ok: true };
   }
 
+  // ── v661 — Todos API ──
+  async fetchTodos(opts?: { list?: string; includeCompleted?: boolean }): Promise<TodoItem[]> {
+    const params = new URLSearchParams();
+    if (opts?.list) params.set('list', opts.list);
+    if (opts?.includeCompleted) params.set('includeCompleted', '1');
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${this.baseUrl}/api/todos${qs}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.todos) ? data.todos : [];
+  }
+  async addTodo(input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }): Promise<TodoItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/todos`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.todo ?? null;
+  }
+  async toggleTodoComplete(id: string, completed: boolean): Promise<TodoItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify({ completed }) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.todo ?? null;
+  }
+  async deleteTodo(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
+  // ── v661 — Notes API ──
+  async fetchNotes(opts?: { query?: string; limit?: number }): Promise<NoteItem[]> {
+    const params = new URLSearchParams();
+    if (opts?.query) params.set('q', opts.query);
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await fetch(`${this.baseUrl}/api/notes${qs}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.notes) ? data.notes : [];
+  }
+  async addNote(input: { title: string; content: string }): Promise<NoteItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/notes`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.note ?? null;
+  }
+  async updateNote(id: string, input: { title?: string; content?: string }): Promise<NoteItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/notes/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(input) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.note ?? null;
+  }
+  async deleteNote(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/notes/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+
   async fetchPendingReminders(): Promise<ReminderListItem[]> {
     const res = await fetch(`${this.baseUrl}/api/reminders`, {
       headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
@@ -1344,6 +1400,29 @@ export interface GoalCheckpointItem {
   checkedAt: string;
   status?: string;
   notes?: string;
+}
+
+// v661 — Todos + Notes Types
+export interface TodoItem {
+  id: string;
+  userId: string;
+  list: string;
+  title: string;
+  description?: string;
+  priority: 'low' | 'normal' | 'high' | 'urgent';
+  dueDate?: string;
+  completed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NoteItem {
+  id: string;
+  userId: string;
+  title: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // v659 — Letzte Deploys aus Memory
