@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.654] - 2026-05-21
+
+### Fixed — WebUI: Projekte erledigte Items + ITSM Aktiv-Filter
+
+**Projekte-WebUI (`ProjectsPage.tsx`)**:
+- Frontend filterte hart `status === 'open'` → erledigte (`done`/`cancelled`) und
+  in-progress Items waren komplett unsichtbar, obwohl die API alle 4 Statuses
+  zurückliefert (`projRepo.listOpenItems(uid, { projectId, limit: 200 })` ohne
+  Status-Filter). Backend war OK, Frontend zeigte Daten nicht.
+- Neue collapsed „Erledigt"-Section unter der offenen-Liste:
+  - Zeigt `resolvedAt` formatiert (DE-Locale), counter mit „zuletzt vor X" Hinweis
+  - Auto-Resolved-Items mit 🤖 Tooltip (voller `autoResolvedBy`-String, Confidence%)
+  - Cancelled-Items mit ✖ statt ☑
+  - max 50 sichtbar, dann „+N weitere" Hinweis
+- `in_progress`-Items in der offenen-Liste mit 🔄 statt Priority-Icon — sieht man
+  dass Project-Agent gerade dran arbeitet
+- Expandable Item-Details (Klick auf Titel klappt Block aus):
+  - `description` (whitespace-preserved)
+  - `dueAt` mit Überfällig-Markierung (🔴 wenn in Vergangenheit)
+  - `linkedIncidentId` → Link `/itsm?incident=...`
+  - `linkedChangeId` → Link `/itsm?change=...`
+  - `sessionId` → Link `/project-agents?task=...`
+  - Voller `autoResolvedBy`-String (statt 40-Char-Trunkierung)
+- Frontend-Type `ProjectOpenItem` (`alfred-client.ts:1410`): fehlende Felder
+  `linkedIncidentId` + `linkedChangeId` ergänzt — waren im Backend-Type vorhanden
+  aber im Frontend-Type nicht spiegelbildlich
+
+**ITSM Changes + Problems wurden nicht angezeigt (`ItsmPage.tsx`)**:
+Root-Cause: Frontend defaultete `chgStatusFilter = 'active'` und `incStatusFilter
+= 'active'` als UI-Pseudo-Status (= Multi-Status-Filter „pending+approved+in_progress"
+bzw. „open+acknowledged+investigating+mitigating"). Diese Pseudo-Werte wurden ungefilter
+an die API geschickt: `loadChanges` Z.417 `filters.status = chgStatusFilter` →
+`GET /api/itsm/changes?status=active` → `WHERE status = 'active'` (existiert nicht im
+DB-Status-Enum) → **0 Treffer**.
+
+Die korrekte Filter-Logik existierte im Frontend (`applyChgFilter` Z.858 mit
+`CHANGE_ACTIVE_STATES`-Set), wurde aber nie aktiv weil API schon leer zurückgab.
+
+- **Fix** in `loadIncidents`/`loadChanges`/`loadProblems`: `'active'` wird **nicht**
+  als API-Filter weitergegeben — alles laden, dann via `applyXxxFilter` client-side
+  filtern. Korrekte Stati (draft/pending/approved/etc.) bleiben unverändert weiter
+  als API-Filter aktiv.
+
+### Notes
+- Build grün (12/12)
+- Backend-Code unverändert — alle Fixes im Frontend
+- Bei Problems war zusätzlich toter Code aufgefallen: zwei doppelte States
+  (`probStatusFilter` ungenutzt + `prbStatusFilter2` der echte) — Fix bleibt
+  defensive auch für `probStatusFilter`, Aufräumen separat
+- userId-Mismatch oder API-Bug war NICHT die Ursache — verifiziert durch Code-Trace
+  (Endpoints `/api/itsm/changes`, `/api/itsm/problems` + Callbacks korrekt verdrahtet)
+
 ## [0.19.0-multi-ha.653] - 2026-05-21
 
 ### Fixed — Reasoning halluziniert keine Entity-IDs mehr

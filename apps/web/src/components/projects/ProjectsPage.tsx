@@ -86,6 +86,27 @@ export function ProjectsPage() {
   const [auditing, setAuditing] = useState(false);
   // v642 — strukturiertes Audit-Modal
   const [auditData, setAuditData] = useState<any | null>(null);
+  // v654 — Expandable Item-Details + Erledigt-Section
+  const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
+  const [showResolvedItems, setShowResolvedItems] = useState(false);
+
+  function toggleItemExpanded(id: string) {
+    setExpandedItemIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function formatDateTime(iso?: string): string {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function isOverdue(iso?: string): boolean {
+    if (!iso) return false;
+    return new Date(iso).getTime() < Date.now();
+  }
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -479,10 +500,17 @@ export function ProjectsPage() {
                 )}
               </div>
 
-              {/* Open Items */}
+              {/* Open Items — v654: open + in_progress in einer Liste, expandable Details */}
               <div className="pt-2 border-t border-[#222]">
+                {(() => {
+                  const activeItems = detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress');
+                  const resolvedItems = detail.openItems
+                    .filter(it => it.status === 'done' || it.status === 'cancelled')
+                    .sort((a, b) => (b.resolvedAt ?? '').localeCompare(a.resolvedAt ?? ''));
+                  return (
+                <>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-gray-400">Offene Punkte ({detail.openItems.filter(it => it.status === 'open').length})</h3>
+                  <h3 className="text-sm font-semibold text-gray-400">Offene Punkte ({activeItems.length})</h3>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={runAudit}
@@ -508,28 +536,85 @@ export function ProjectsPage() {
                 )}
 
                 <div className="space-y-1 mb-2">
-                  {detail.openItems.filter(it => it.status === 'open').map(it => {
+                  {activeItems.map(it => {
                     const possiblyDone = it.autoResolvedBy && it.autoResolvedConfidence != null;
+                    const isExpanded = expandedItemIds.has(it.id);
+                    const hasDetails = !!(it.description || it.dueAt || it.linkedIncidentId || it.linkedChangeId || it.sessionId || it.autoResolvedBy);
+                    const overdue = isOverdue(it.dueAt);
                     return (
-                      <div key={it.id} className={`flex items-center gap-2 text-sm ${selectedItemIds.has(it.id) ? 'bg-blue-500/10 -mx-1 px-1 rounded' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={selectedItemIds.has(it.id)}
-                          onChange={() => toggleItemSelect(it.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          className="mr-0"
-                          title="Für Bulk-Aktion auswählen"
-                        />
-                        <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
-                        <span>{priorityIcon(it.priority)}</span>
-                        <span className="text-gray-300 flex-1">{it.title}</span>
-                        {possiblyDone && (
-                          <span
-                            className="text-[10px] text-amber-400 cursor-help"
-                            title={`Alfred meint: vermutlich erledigt (${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%) durch ${it.autoResolvedBy?.slice(0, 40)}`}
-                          >🤖 ~{Math.round((it.autoResolvedConfidence ?? 0) * 100)}%</span>
+                      <div key={it.id} className={selectedItemIds.has(it.id) ? 'bg-blue-500/10 -mx-1 px-1 rounded' : ''}>
+                        <div className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={selectedItemIds.has(it.id)}
+                            onChange={() => toggleItemSelect(it.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="mr-0"
+                            title="Für Bulk-Aktion auswählen"
+                          />
+                          <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
+                          <span title={it.status === 'in_progress' ? 'in Bearbeitung' : it.priority}>
+                            {it.status === 'in_progress' ? '🔄' : priorityIcon(it.priority)}
+                          </span>
+                          <button
+                            onClick={() => hasDetails && toggleItemExpanded(it.id)}
+                            className={`flex-1 text-left ${hasDetails ? 'text-gray-300 hover:text-gray-100 cursor-pointer' : 'text-gray-300 cursor-default'}`}
+                            title={hasDetails ? (isExpanded ? 'Details ausblenden' : 'Details anzeigen') : ''}
+                          >
+                            {hasDetails && <span className="text-gray-600 mr-1">{isExpanded ? '▾' : '▸'}</span>}
+                            {it.title}
+                          </button>
+                          {overdue && (
+                            <span className="text-[10px] text-red-400" title={`Fällig: ${formatDateTime(it.dueAt)}`}>⏰ überfällig</span>
+                          )}
+                          {possiblyDone && (
+                            <span
+                              className="text-[10px] text-amber-400 cursor-help"
+                              title={`Alfred meint: vermutlich erledigt (${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%) durch ${it.autoResolvedBy?.slice(0, 80)}`}
+                            >🤖 ~{Math.round((it.autoResolvedConfidence ?? 0) * 100)}%</span>
+                          )}
+                          <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
+                        </div>
+                        {isExpanded && hasDetails && (
+                          <div className="ml-12 mt-1 mb-2 text-[11px] text-gray-400 space-y-0.5 border-l border-[#2a2a2a] pl-2">
+                            {it.description && (
+                              <div className="text-gray-300 whitespace-pre-wrap">{it.description}</div>
+                            )}
+                            {it.dueAt && (
+                              <div>
+                                <span className="text-gray-500">Fällig:</span>{' '}
+                                <span className={overdue ? 'text-red-400' : 'text-gray-300'}>{formatDateTime(it.dueAt)}</span>
+                              </div>
+                            )}
+                            {it.linkedIncidentId && (
+                              <div>
+                                <span className="text-gray-500">Incident:</span>{' '}
+                                <a href={`/itsm?incident=${it.linkedIncidentId}`} className="text-blue-400 hover:underline font-mono">{it.linkedIncidentId.slice(0, 8)}</a>
+                              </div>
+                            )}
+                            {it.linkedChangeId && (
+                              <div>
+                                <span className="text-gray-500">Change:</span>{' '}
+                                <a href={`/itsm?change=${it.linkedChangeId}`} className="text-blue-400 hover:underline font-mono">{it.linkedChangeId.slice(0, 8)}</a>
+                              </div>
+                            )}
+                            {it.sessionId && (
+                              <div>
+                                <span className="text-gray-500">Session:</span>{' '}
+                                <a href={`/project-agents?task=${it.sessionId}`} className="text-blue-400 hover:underline font-mono">{it.sessionId.slice(0, 8)}</a>
+                              </div>
+                            )}
+                            {it.autoResolvedBy && (
+                              <div>
+                                <span className="text-gray-500">Auto-Resolve-Quelle:</span>{' '}
+                                <span className="text-amber-300">{it.autoResolvedBy}</span>
+                                {it.autoResolvedConfidence != null && (
+                                  <span className="text-gray-500"> ({Math.round(it.autoResolvedConfidence * 100)}%)</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         )}
-                        <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
                       </div>
                     );
                   })}
@@ -543,6 +628,91 @@ export function ProjectsPage() {
                   </select>
                   <button onClick={addOpenItem} className="px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/30 text-xs">+</button>
                 </div>
+
+                {/* v654 — Erledigt-Section (default collapsed) */}
+                {resolvedItems.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-[#222]">
+                    <button
+                      onClick={() => setShowResolvedItems(v => !v)}
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 mb-1"
+                    >
+                      <span>{showResolvedItems ? '▾' : '▸'}</span>
+                      <span>Erledigt ({resolvedItems.length}{resolvedItems[0]?.resolvedAt ? ` — zuletzt vor ${relativeTime(resolvedItems[0].resolvedAt)}` : ''})</span>
+                    </button>
+                    {showResolvedItems && (
+                      <div className="space-y-0.5">
+                        {resolvedItems.slice(0, 50).map(it => {
+                          const isAuto = !!it.autoResolvedBy;
+                          const isCancelled = it.status === 'cancelled';
+                          const isExpanded = expandedItemIds.has(it.id);
+                          const hasDetails = !!(it.description || it.linkedIncidentId || it.linkedChangeId || it.sessionId || it.autoResolvedBy);
+                          return (
+                            <div key={it.id}>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="w-4 text-center" title={isCancelled ? 'verworfen' : 'erledigt'}>{isCancelled ? '✖' : '☑'}</span>
+                                <span className="opacity-50">{priorityIcon(it.priority)}</span>
+                                <button
+                                  onClick={() => hasDetails && toggleItemExpanded(it.id)}
+                                  className={`flex-1 text-left line-through opacity-60 ${hasDetails ? 'hover:opacity-100 cursor-pointer' : 'cursor-default'} ${isCancelled ? 'text-gray-500' : 'text-gray-400'}`}
+                                  title={hasDetails ? (isExpanded ? 'Details ausblenden' : 'Details anzeigen') : ''}
+                                >
+                                  {hasDetails && <span className="text-gray-600 mr-1 no-underline inline-block">{isExpanded ? '▾' : '▸'}</span>}
+                                  {it.title}
+                                </button>
+                                {isAuto && (
+                                  <span className="text-[10px] text-amber-500/70" title={`Auto-resolved durch ${it.autoResolvedBy?.slice(0, 80)}${it.autoResolvedConfidence != null ? ` (${Math.round(it.autoResolvedConfidence * 100)}%)` : ''}`}>🤖</span>
+                                )}
+                                <span className="text-[10px] text-gray-600" title={it.resolvedAt ? `Erledigt: ${formatDateTime(it.resolvedAt)}` : ''}>
+                                  {it.resolvedAt ? formatDateTime(it.resolvedAt) : '—'}
+                                </span>
+                              </div>
+                              {isExpanded && hasDetails && (
+                                <div className="ml-10 mt-0.5 mb-1 text-[11px] text-gray-500 space-y-0.5 border-l border-[#222] pl-2">
+                                  {it.description && (
+                                    <div className="text-gray-400 whitespace-pre-wrap">{it.description}</div>
+                                  )}
+                                  {it.linkedIncidentId && (
+                                    <div>
+                                      <span className="text-gray-600">Incident:</span>{' '}
+                                      <a href={`/itsm?incident=${it.linkedIncidentId}`} className="text-blue-400 hover:underline font-mono">{it.linkedIncidentId.slice(0, 8)}</a>
+                                    </div>
+                                  )}
+                                  {it.linkedChangeId && (
+                                    <div>
+                                      <span className="text-gray-600">Change:</span>{' '}
+                                      <a href={`/itsm?change=${it.linkedChangeId}`} className="text-blue-400 hover:underline font-mono">{it.linkedChangeId.slice(0, 8)}</a>
+                                    </div>
+                                  )}
+                                  {it.sessionId && (
+                                    <div>
+                                      <span className="text-gray-600">Session:</span>{' '}
+                                      <a href={`/project-agents?task=${it.sessionId}`} className="text-blue-400 hover:underline font-mono">{it.sessionId.slice(0, 8)}</a>
+                                    </div>
+                                  )}
+                                  {it.autoResolvedBy && (
+                                    <div>
+                                      <span className="text-gray-600">Auto-Resolve:</span>{' '}
+                                      <span className="text-amber-400/80">{it.autoResolvedBy}</span>
+                                      {it.autoResolvedConfidence != null && (
+                                        <span className="text-gray-600"> ({Math.round(it.autoResolvedConfidence * 100)}%)</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {resolvedItems.length > 50 && (
+                          <div className="text-[10px] text-gray-600 mt-1">+{resolvedItems.length - 50} weitere</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                </>
+                );
+                })()}
               </div>
 
               {auditData && (

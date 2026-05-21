@@ -1418,6 +1418,10 @@ export interface ProjectOpenItem {
   dueAt?: string;
   createdAt: string;
   resolvedAt?: string;
+  /** ITSM-Incident-ID, falls dieses Open-Item ein bestehender Incident ist (Cross-Link). */
+  linkedIncidentId?: string;
+  /** ITSM-Change-ID, falls dieses Open-Item ein bestehender Change ist. */
+  linkedChangeId?: string;
   /** v641 — wenn Alfred dieses Item nach einem Project-Agent-Run als möglicherweise erledigt erkannt hat. */
   autoResolvedBy?: string;
   /** v641 — Konfidenz (0..1) des Auto-Resolvers. */

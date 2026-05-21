@@ -403,8 +403,9 @@ export function ItsmPage() {
 
   const loadIncidents = useCallback(async () => {
     try {
+      // v654 — 'active' = UI-Pseudo-Status, client-side filter via applyIncFilter.
       const filters: Record<string, string> = {};
-      if (incStatusFilter) filters.status = incStatusFilter;
+      if (incStatusFilter && incStatusFilter !== 'active') filters.status = incStatusFilter;
       if (incSevFilter) filters.severity = incSevFilter;
       const data = await client.itsmListIncidents(Object.keys(filters).length ? filters : undefined);
       setIncidents(Array.isArray(data) ? data : []);
@@ -413,8 +414,11 @@ export function ItsmPage() {
 
   const loadChanges = useCallback(async () => {
     try {
+      // v654 — 'active' ist ein UI-Pseudo-Status (= pending + approved + in_progress),
+      // NICHT im DB-Status-Enum. Nicht als API-Filter weitergeben, sondern client-side
+      // filtern via applyChgFilter. Vorher: ?status=active → SQL WHERE status='active' → 0 Treffer.
       const filters: Record<string, string> = {};
-      if (chgStatusFilter) filters.status = chgStatusFilter;
+      if (chgStatusFilter && chgStatusFilter !== 'active') filters.status = chgStatusFilter;
       if (chgTypeFilter) filters.type = chgTypeFilter;
       const data = await client.itsmListChanges(Object.keys(filters).length ? filters : undefined);
       setChanges(Array.isArray(data) ? data : []);
@@ -437,8 +441,9 @@ export function ItsmPage() {
 
   const loadProblems = useCallback(async () => {
     try {
+      // v654 — 'active' = UI-Pseudo-Status, client-side filter via applyPrbFilter.
       const filters: Record<string, string> = {};
-      if (probStatusFilter) filters.status = probStatusFilter;
+      if (probStatusFilter && probStatusFilter !== 'active') filters.status = probStatusFilter;
       if (probPriorityFilter) filters.priority = probPriorityFilter;
       const data = await client.itsmListProblems(Object.keys(filters).length ? filters : undefined);
       setProblems(Array.isArray(data) ? data : []);
