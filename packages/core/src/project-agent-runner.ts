@@ -161,7 +161,7 @@ export class ProjectAgentRunner {
               `Häufiger Grund: cwd liegt unter /root/ (drwx------) — wähle einen Pfad unter /home/${runAsUser}/.`;
             await this.sendProgress(platform, chatId, msg);
             this.logger.error({ cwd: config.cwd, runAsUser, reason: probe.reason }, 'Project agent: cwd pre-flight failed');
-            state.projectPhase = 'done';
+            state.projectPhase = 'failed';
             await this.updateSession(sessionId, state, lastBuildActuallyPassed);
             if (this.completionCallback) {
               try {
@@ -466,13 +466,13 @@ export class ProjectAgentRunner {
       }
 
       // ── DONE ──
-      state.projectPhase = 'done';
-      await this.updateSession(sessionId, state, lastBuildActuallyPassed);
-
-      // L3 (v604) — honest success-flag: only true if build actually passed AT LEAST
-      // ONCE and files were modified. Replaces the old hardcoded `success=true` after
-      // the for-loop that lied about total-failure runs (alpbyte-games 19.05.).
+      // v630 — Phase MUSS abhängig vom tatsächlichen Erfolg gesetzt werden. Vorher
+      // wurde immer 'done' geschrieben, was die UI grün anzeigte obwohl der Build
+      // nie grün war (Badge=done + Sanduhr=lastBuildPassed-false). Reihenfolge:
+      // overallSuccess ZUERST berechnen, DANN die Phase setzen.
       const overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed;
+      state.projectPhase = overallSuccess ? 'done' : 'failed';
+      await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
       // ── GIT PUSH ── (only on success — pushing an empty repo is just noise)
       if (overallSuccess) {
@@ -511,7 +511,8 @@ export class ProjectAgentRunner {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.error({ err, sessionId }, 'Project agent failed');
-      state.projectPhase = 'done';
+      // v630 — Exception ist ein harter Failure, nicht 'done'.
+      state.projectPhase = 'failed';
       await this.updateSession(sessionId, state, lastBuildActuallyPassed);
       await this.sendProgress(platform, chatId, `💥 Project Agent Fehler: ${msg}`);
       if (this.completionCallback) {

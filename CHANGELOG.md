@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.630] - 2026-05-21
+
+### Fixed — Project-Agent-Session-State: 'done' bei tatsächlichem Failure
+
+v620 hatte den `'failed'`-State in `ProjectAgentMeta` ergänzt und die Coding-Phase-ExitCode≠0-Behandlung darauf umgestellt — **drei weitere End-Pfade** in `project-agent-runner.ts` setzten aber weiterhin unconditional `'done'`, sodass fehlgeschlagene Sessions in der UI als grünes "done" mit Sanduhr-Icon (`lastBuildPassed=false`) erschienen. Genau dieses Symptom hatte der User schon mehrfach (`d116503c`, `4252cf83`, jetzt `f05b0123`); die Quick-Fix-SQL-Updates haben das Symptom behoben, nicht die Ursache.
+
+**Konkret** (`packages/core/src/project-agent-runner.ts`):
+- Zeile 164 (Pre-Flight-Check fehlgeschlagen, cwd nicht erreichbar): `'done'` → `'failed'`
+- Zeile 469 (Post-Loop, alle Phasen durchlaufen): unconditional `'done'` → `overallSuccess ? 'done' : 'failed'`. Dazu wurde die Reihenfolge umgedreht: `overallSuccess = anyPhaseProducedFiles && lastBuildActuallyPassed` wird jetzt **vor** der Phase-Zuweisung berechnet. Die nachgelagerte Logik (Git-Push nur bei Success, End-Message, Completion-Callback) ist unverändert — die hat `overallSuccess` schon vorher korrekt benutzt; lediglich der persistierte Phasen-State lief auseinander.
+- Zeile 514 (Catch-Block bei Exception): `'done'` → `'failed'` (Exception ist per Definition Failure)
+
+### Effekt
+- Sessions, die alle Phasen durchlaufen aber **nie** erfolgreich gebaut haben → DB `current_phase='failed'` (rot, 🔴-Icon)
+- Pre-Flight-Failures (z.B. cwd nicht erreichbar als runAsUser) → `'failed'`
+- Exceptions (`removeAbortController`, completion-callback-throws, etc.) → `'failed'`
+- Erfolgreich gebaute Sessions: weiterhin `'done'` (grün, ✅-Icon)
+
+### Notes
+- Bestehende Sessions mit fälschlich `'done'`-State werden per einmaligem SQL-Update korrigiert: `UPDATE project_agent_sessions SET current_phase='failed' WHERE current_phase='done' AND last_build_passed=false`
+- Build grün (12/12)
+- v620 (Type-Erweiterung) und v630 (alle End-Pfade) zusammen schließen das Thema endgültig
+
 ## [0.19.0-multi-ha.629] - 2026-05-21
 
 ### Added — Structural Integration (C vom A/B/C-Trio)
