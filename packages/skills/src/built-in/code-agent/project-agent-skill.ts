@@ -544,6 +544,9 @@ ${planSummary}${commits}${userNotes}
       maxDurationHours: this.config.defaultMaxDurationHours ?? 8,
       maxFixAttempts: this.config.maxFixAttemptsPerIteration ?? 3,
       buildTimeoutMs: this.config.buildCommandTimeoutMs ?? 300_000,
+      // v650 — opt-in flags
+      branchPerSession: input.branchPerSession === true || input.branch_per_session === true,
+      confirmPlan: input.confirmPlan === true || input.confirm_plan === true,
     };
 
     // Fire-and-forget: start the runner loop asynchronously

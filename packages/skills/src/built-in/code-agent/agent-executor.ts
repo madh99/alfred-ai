@@ -155,6 +155,9 @@ export async function executeAgent(
      *  Without this, long-running claude-code runs get killed by the 120s
      *  inactivity watchdog even though they're working. */
     onActivity?: () => void;
+    /** v650 — AbortSignal vom Runner. Wenn signal aborted: child-process tree
+     *  wird sauber gekillt (SIGTERM, dann SIGKILL nach 3s). */
+    signal?: AbortSignal;
   } = {},
 ): Promise<AgentExecutionResult> {
   const cwd = options.cwd ?? agentDef.cwd ?? process.cwd();
@@ -207,12 +210,33 @@ export async function executeAgent(
       env,
       shell: isWindows,
       stdio: agentDef.promptVia === 'stdin' ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
+      // v650 — detached so we can SIGTERM the whole process group (kill -PGID)
+      detached: !isWindows,
     });
 
     let stdout = '';
     let stderr = '';
     let killed = false;
-    let killReason: 'inactivity' | 'absolute' | undefined;
+    let killReason: 'inactivity' | 'absolute' | 'aborted' | undefined;
+
+    // v650 — Stop-Cleanup: wenn Caller via AbortSignal aborted, child + Process-Tree killen
+    const onAbort = () => {
+      killed = true;
+      killReason = 'aborted';
+      try {
+        if (!isWindows && child.pid) {
+          process.kill(-child.pid, 'SIGTERM');
+          setTimeout(() => { try { if (child.pid) process.kill(-child.pid!, 'SIGKILL'); } catch { /* gone */ } }, 3_000);
+        } else {
+          child.kill('SIGTERM');
+          setTimeout(() => child.kill('SIGKILL'), 3_000);
+        }
+      } catch { /* best effort */ }
+    };
+    if (options.signal) {
+      if (options.signal.aborted) onAbort();
+      else options.signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     // v619 D0 — Sliding inactivity timer statt absolutem Timer.
     // Vorher (Bug): const timer = setTimeout(kill, timeoutMs) — egal wie aktiv
@@ -324,6 +348,8 @@ export async function executeAgent(
         finalStderr = stderr + `\n[agent-executor] killed: no output for ${Math.round(timeoutMs / 1000)}s (inactivity timeout, last-activity=${resetSource})`;
       } else if (killReason === 'absolute') {
         finalStderr = stderr + `\n[agent-executor] killed: ${Math.round(ABSOLUTE_CAP_MS / 60_000)}min absolute cap reached (was active but ran too long)`;
+      } else if (killReason === 'aborted') {
+        finalStderr = stderr + `\n[agent-executor] killed: caller aborted (Stop-Signal)`;
       }
 
       resolve({

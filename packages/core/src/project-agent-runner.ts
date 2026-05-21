@@ -26,6 +26,49 @@ async function gitExec(args: string[], cwd: string, runAsUser?: string): Promise
 }
 
 /**
+ * v650 — Secret-Scan auf den staged diff. Verwendet bekannte Patterns für API-Keys,
+ * Tokens, private Keys. Konservativ — blockt nur bei klaren Treffern, nicht bei
+ * ambiguen Hex-Strings.
+ */
+async function scanDiffForSecrets(cwd: string, runAsUser?: string): Promise<string[]> {
+  let diff: string;
+  try {
+    // Hole UNSTAGED diff (das was gleich committed wird via git add -A)
+    diff = await gitExec(['diff', 'HEAD', '--unified=0'], cwd, runAsUser).catch(() => '');
+    if (!diff) {
+      // Fallback: alle Diffs untracked + staged
+      diff = await gitExec(['diff', '--unified=0'], cwd, runAsUser).catch(() => '');
+    }
+  } catch { return []; }
+  if (!diff) return [];
+
+  const PATTERNS: Array<{ name: string; re: RegExp }> = [
+    { name: 'AWS Access Key', re: /\bAKIA[0-9A-Z]{16}\b/g },
+    { name: 'AWS Secret Key', re: /\b[A-Za-z0-9/+=]{40}\b/g }, // muss zusammen mit AKIA gechecked werden, sonst zu falsch-positiv — skippen unten
+    { name: 'GitHub Token', re: /\bghp_[A-Za-z0-9]{36}\b/g },
+    { name: 'GitHub OAuth', re: /\bgho_[A-Za-z0-9]{36}\b/g },
+    { name: 'GitHub PAT', re: /\bghs_[A-Za-z0-9]{36}\b/g },
+    { name: 'GitLab Token', re: /\bglpat-[A-Za-z0-9_-]{20}\b/g },
+    { name: 'OpenAI API Key', re: /\bsk-[A-Za-z0-9]{48,}\b/g },
+    { name: 'Anthropic API Key', re: /\bsk-ant-[A-Za-z0-9-_]{24,}\b/g },
+    { name: 'Stripe Secret', re: /\bsk_live_[A-Za-z0-9]{24,}\b/g },
+    { name: 'Slack Token', re: /\bxox[abp]-[A-Za-z0-9-]{10,}\b/g },
+    { name: 'Private RSA Key', re: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g },
+    { name: 'JWT Token', re: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g },
+  ];
+  const findings: string[] = [];
+  const lines = diff.split('\n').filter(l => l.startsWith('+') && !l.startsWith('+++'));
+  for (const line of lines) {
+    for (const { name, re } of PATTERNS) {
+      if (name === 'AWS Secret Key') continue; // skip standalone — needs context
+      const m = line.match(re);
+      if (m) findings.push(`${name} in: ${line.slice(0, 120).trim()}`);
+    }
+  }
+  return findings.slice(0, 20);
+}
+
+/**
  * v643 — Like gitExec but returns both stdout AND stderr. Needed for `git push`
  * because GitLab/GitHub MR/PR-creation hints come through stderr.
  */
@@ -75,6 +118,10 @@ export interface ProjectAgentConfig {
   maxDurationHours: number;
   maxFixAttempts: number;
   buildTimeoutMs: number;
+  /** v650 — opt-in: erstellt feature/agent-<taskId>-Branch statt direkt auf default branch */
+  branchPerSession?: boolean;
+  /** v650 — opt-in: User-Confirmation des Plans vor Phase 1 */
+  confirmPlan?: boolean;
 }
 
 export type ProjectAgentCompletionCallback = (
@@ -134,6 +181,8 @@ export class ProjectAgentRunner {
       maxDurationHours: (configInput.maxDurationHours as number) ?? 8,
       maxFixAttempts: (configInput.maxFixAttempts as number) ?? 3,
       buildTimeoutMs: (configInput.buildTimeoutMs as number) ?? 300_000,
+      branchPerSession: configInput.branchPerSession === true,
+      confirmPlan: configInput.confirmPlan === true,
     };
 
     const agentDef = this.agents.get(config.agentName);
@@ -204,6 +253,51 @@ export class ProjectAgentRunner {
         try {
           await this.plansRepo.bulkInsert(sessionId, plan.phases.map((p, i) => ({ phaseIdx: i + 1, description: p })));
         } catch (err) { this.logger.debug({ err, sessionId }, 'Plan-persist failed (non-fatal)'); }
+      }
+
+      // v650 — Plan-Review-Step (opt-in via confirmPlan=true)
+      if (config.confirmPlan) {
+        await this.sendProgress(platform, chatId,
+          `📋 **Plan-Review** — antworte "ok" / "approve" um zu starten, "stop" um abzubrechen, oder schreib was dich am Plan stört (wird als Hint genutzt).`);
+        const reviewTimeout = 30 * 60_000; // 30min review window
+        const reviewStart = Date.now();
+        let approved = false;
+        while (Date.now() - reviewStart < reviewTimeout) {
+          await new Promise(r => setTimeout(r, 5_000));
+          const msgs = await drainInterjections(sessionId);
+          if (msgs.includes('__STOP__')) {
+            await this.sendProgress(platform, chatId, `⏹ Plan abgelehnt — Project Agent gestoppt.`);
+            return;
+          }
+          const reply = msgs.find(m => m && m !== '__STOP__');
+          if (!reply) continue;
+          if (/^\s*(ok|approve|approved|go|los|start|ja)\s*$/i.test(reply)) {
+            approved = true;
+            await this.sendProgress(platform, chatId, `✅ Plan bestätigt — starte Phase 1.`);
+            break;
+          }
+          // Non-approval reply → treat as feedback hint, abort and let user re-start
+          await this.sendProgress(platform, chatId,
+            `📝 Plan-Feedback notiert. Bitte starte neu mit angepasstem Goal:\n> "${reply.slice(0, 200)}"`);
+          return;
+        }
+        if (!approved) {
+          await this.sendProgress(platform, chatId, `⏰ Plan-Review-Timeout (30min) — Run abgebrochen.`);
+          return;
+        }
+      }
+
+      // v650 — Branch-pro-Session (opt-in)
+      if (config.branchPerSession && existsSync(path.join(config.cwd, '.git'))) {
+        try {
+          const sessionShort = sessionId.slice(0, 8);
+          const branchName = `feature/agent-${sessionShort}`;
+          await gitExec(['checkout', '-b', branchName], config.cwd, runAsUser);
+          await this.sendProgress(platform, chatId, `🌿 Branch \`${branchName}\` erstellt — alle Commits laufen jetzt hier rein.`);
+        } catch (err) {
+          this.logger.warn({ err, sessionId }, 'Branch-per-Session: checkout -b failed');
+          await this.sendProgress(platform, chatId, `⚠️ Branch-Erstellung fehlgeschlagen — Commits gehen auf default branch.`);
+        }
       }
 
       const startTime = Date.now();
@@ -313,6 +407,8 @@ export class ProjectAgentRunner {
         // Drain interjections before each coding step (per-iteration, not per-phase)
         const messages = await drainInterjections(sessionId);
         if (messages.includes('__STOP__')) {
+          // v650 — abortController.abort() killt auch laufende Sub-Process-Tree
+          abortController.abort();
           await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt vor Phase ${phaseIdx + 1}/${plan.phases.length}.`);
           return;
         }
@@ -349,6 +445,7 @@ export class ProjectAgentRunner {
         const codeResult = await executeAgent(agentDef, prompt, {
           cwd: config.cwd,
           timeoutMs: phaseTimeout,
+          signal: abortController.signal,
           onProgress: (status) => {
             this.sendProgressThrottled(platform, chatId, `  [${config.agentName}] ${status}`);
           },
@@ -464,6 +561,7 @@ export class ProjectAgentRunner {
           // Drain interjections before fix step
           const fixMessages = await drainInterjections(sessionId);
           if (fixMessages.includes('__STOP__')) {
+            abortController.abort();
             await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt während Fix-Versuch.`);
             return;
           }
@@ -477,6 +575,7 @@ export class ProjectAgentRunner {
             cwd: config.cwd,
             // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout
             timeoutMs: 20 * 60_000,
+            signal: abortController.signal,
             onProgress: (status) => {
               this.sendProgressThrottled(platform, chatId, `  [fix] ${status}`);
             },
@@ -503,6 +602,18 @@ export class ProjectAgentRunner {
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
 
           try {
+            // v650 — Secret-Scan auf Diff vor Commit. Blockt nur bei harten Treffern.
+            const secretIssues = await scanDiffForSecrets(config.cwd, runAsUser).catch(() => [] as string[]);
+            if (secretIssues.length > 0) {
+              await this.sendProgress(platform, chatId,
+                `🚨 **Secret-Scan**: ${secretIssues.length} potenzielle Secrets im Diff gefunden — Commit ABGEBROCHEN.\n${secretIssues.slice(0, 5).map(s => `  - ${s}`).join('\n')}\n\nBitte manuell prüfen und ggf. \`git checkout -- <file>\` oder \`.gitignore\` setzen.`);
+              this.logger.error({ sessionId, phase: phaseIdx + 1, issueCount: secretIssues.length }, 'Secret-scan blocked commit');
+              runFailed = true;
+              state.projectPhase = 'failed';
+              await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+              if (this.plansRepo) { try { await this.plansRepo.markFailed(sessionId, phaseIdx + 1); } catch { /* skip */ } }
+              break;
+            }
             await gitExec(['add', '-A'], config.cwd, runAsUser);
             const commitMsg = `Phase ${phaseIdx + 1}: ${phase}`;
             const stdout = await gitExec(['commit', '-m', commitMsg, '--allow-empty'], config.cwd, runAsUser);

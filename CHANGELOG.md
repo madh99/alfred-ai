@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.650] - 2026-05-21
+
+### Added — Project-Agent Safety (Bundle 3 von 5)
+
+**#8 Secret-Scan vor Commit**:
+- Neue `scanDiffForSecrets(cwd, runAsUser)` Helper im project-agent-runner
+- Pattern-Liste: AWS Access Keys (AKIA…), GitHub Tokens (ghp_/gho_/ghs_), GitLab Tokens (glpat-), OpenAI/Anthropic Keys (sk-…/sk-ant-), Stripe Secret Keys (sk_live_), Slack Tokens (xox[abp]-), Private RSA-Keys, JWT-Tokens
+- Scan läuft auf `git diff HEAD --unified=0` vor jedem Commit
+- Bei Funden: Commit ABGEBROCHEN, Phase → 'failed', runFailed=true, Liste der Funde in Progress-Message + Log
+- Konservativ: standalone "AWS Secret Key" Pattern (40 char Base64) wird explizit übersprungen weil zu false-positive-anfällig
+
+**#6 Branch-per-Session** (opt-in):
+- `ProjectAgentConfig.branchPerSession?` flag
+- Skill-Action akzeptiert `branchPerSession=true` oder `branch_per_session=true`
+- Wenn gesetzt: nach Plan-Persistierung wird `feature/agent-<sessionId-prefix>` per `git checkout -b` erstellt
+- Alle Phase-Commits laufen auf diesen Branch, Push erzeugt Merge-Request via existing `extractPushUrl` (v643)
+
+**#5 Plan-Review-Step** (opt-in):
+- `ProjectAgentConfig.confirmPlan?` flag (`confirm_plan=true` per Skill)
+- Vor Phase 1: Plan-Display + Wartet auf Interjection
+- "ok"/"approve"/"go" → starte Phase 1
+- Beliebiges anderes Feedback → notiert + Run abgebrochen mit Hinweis "starte neu mit angepasstem Goal"
+- 30min Timeout, danach Abbruch
+
+**#23 Stop-Signal-Cleanup**:
+- `executeAgent(opts.signal?: AbortSignal)` neuer Parameter
+- Bei aborted: Process-Tree-Kill via `process.kill(-pid, 'SIGTERM')` (detached spawn macht pid auch zur process-group-id)
+- Nach 3s SIGKILL als Sicherheits-Backup
+- kill-Reason in stderr annotiert: `[agent-executor] killed: caller aborted (Stop-Signal)`
+- Runner: bei `__STOP__`-Interjection wird `abortController.abort()` aufgerufen — laufende Sub-Process-Trees werden sofort sauber beendet
+
+### Notes
+- Build grün (12/12)
+- Secret-Scan ist **konservativ** — Patterns matchen nur eindeutige Token-Formate, kein generischer Hex-/Base64-Scan
+- Branch-per-Session ist opt-in damit existierende Workflows die direkt auf default branch arbeiten unverändert bleiben
+- Plan-Review-Step ist opt-in für die Fälle wo der User explizit Kontrolle will (typisch große Refactorings)
+- Stop-Cleanup beeinflusst nicht den Happy-Path — wirkt nur wenn signal.abort() gefeuert wird
+
 ## [0.19.0-multi-ha.649] - 2026-05-21
 
 ### Added — Project-Agent Quick-Wins (Bundle 2 von 5)
