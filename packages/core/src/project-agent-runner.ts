@@ -127,6 +127,9 @@ export interface ProjectAgentConfig {
   branchPerSession?: boolean;
   /** v650 — opt-in: User-Confirmation des Plans vor Phase 1 */
   confirmPlan?: boolean;
+  /** v652 — opt-in: bei terminal-failure 30s warten dann automatisch resume.
+   *  Hardlimit max 2 Auto-Resumes pro Session-Kette gegen Infinite-Loops. */
+  autoResume?: boolean;
 }
 
 export type ProjectAgentCompletionCallback = (
@@ -176,6 +179,18 @@ export class ProjectAgentRunner {
     this.plansRepo = repo;
   }
 
+  /** v652 — Set by alfred.ts: Lessons-Learned-Store für Pattern-Memorierung. */
+  private lessonsRepo?: import('@alfred/storage').ProjectAgentLessonsRepository;
+  setLessonsRepository(repo: import('@alfred/storage').ProjectAgentLessonsRepository): void {
+    this.lessonsRepo = repo;
+  }
+
+  /** v652 — Set by alfred.ts: Callback der Auto-Resume triggert (project_agent.resume Action). */
+  private autoResumeCallback?: (failedTaskId: string, notes?: string) => Promise<void>;
+  setAutoResumeCallback(cb: (failedTaskId: string, notes?: string) => Promise<void>): void {
+    this.autoResumeCallback = cb;
+  }
+
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
     return currentSession.run({ sessionId }, () => this._runInner(sessionId, configInput, platform, chatId));
   }
@@ -192,6 +207,7 @@ export class ProjectAgentRunner {
       buildTimeoutMs: (configInput.buildTimeoutMs as number) ?? 300_000,
       branchPerSession: configInput.branchPerSession === true,
       confirmPlan: configInput.confirmPlan === true,
+      autoResume: configInput.autoResume === true,
     };
 
     const agentDef = this.agents.get(config.agentName);
@@ -226,6 +242,17 @@ export class ProjectAgentRunner {
     };
 
     let lastBuildActuallyPassed = false;
+    // v652 — Lessons aus früheren Failed-Runs in derselben cwd. Wird einmal pro
+    // Run geladen und in jeder Phase per assemblePrompt eingespeist.
+    let lessonsHint: string[] = [];
+    if (this.lessonsRepo) {
+      try {
+        const lessons = await this.lessonsRepo.listByCwd(config.cwd, 2, 5);
+        lessonsHint = lessons.map(l => `[${l.occurrences}× erlebt] ${l.pattern} → ${l.advice}`);
+      } catch (err) {
+        this.logger.debug({ err }, 'lessons-load skipped');
+      }
+    }
     // L2 (v604) — global counter for consecutive phases that produced 0 files AND no
     // build pass. After 3 such phases in a row we abort instead of slogging through
     // all 13. Counter resets to 0 on any phase that produced files or passed build.
@@ -423,7 +450,7 @@ export class ProjectAgentRunner {
         }
         const userMessages = messages.filter(m => m !== '__STOP__');
 
-        const prompt = this.assemblePrompt(config.goal, phase, state, userMessages);
+        const prompt = this.assemblePrompt(config.goal, phase, state, userMessages, lessonsHint);
         await this.sendProgress(platform, chatId, `🔨 Phase ${phaseIdx + 1}/${plan.phases.length}: ${phase}`);
 
         // v648 — Phase als running markieren
@@ -735,6 +762,57 @@ export class ProjectAgentRunner {
           (extracted ? `**Letzter Build-Output:**\n\`\`\`\n${extracted.contextSnippet}\n\`\`\`` : ''));
       }
 
+      // v652 — #19 Failure-Insight: LLM generiert kompakten Lessons-Learned-Text
+      // v652 — #16 Pattern-Memorierung: häufige Failure-Pattern werden im Lessons-Store
+      // gespeichert damit zukünftige Runs in derselben cwd den Pattern vermeiden
+      try {
+        const insight = await this.generateFailureInsight(
+          config,
+          state,
+          plan.phases,
+          { overallSuccess, runFailed, lastBuildOutput: state.lastBuildOutput },
+        );
+        if (insight) {
+          await this.sessionRepo.setFailureInsight(sessionId, insight);
+          await this.sendProgress(platform, chatId,
+            (overallSuccess ? '💡 Lessons:\n' : '💡 Insight:\n') + insight);
+        }
+        if (!overallSuccess && this.lessonsRepo) {
+          const extracted = state.lastBuildOutput ? extractBuildError(state.lastBuildOutput) : null;
+          if (extracted?.recognized && extracted.summary) {
+            await this.lessonsRepo.upsert({
+              cwd: config.cwd,
+              pattern: extracted.summary.slice(0, 200),
+              advice: insight ?? extracted.summary,
+            });
+          }
+        }
+      } catch (err) {
+        this.logger.debug({ err, sessionId }, 'failure-insight generation skipped');
+      }
+
+      // v652 — #9 Auto-Resume opt-in: bei terminal-failure und autoResume=true
+      // wird die Session-Kette automatisch fortgesetzt. Hardlimit 2 pro Kette.
+      if (!overallSuccess && config.autoResume && this.autoResumeCallback) {
+        try {
+          const sess = await this.sessionRepo.getByTaskId(sessionId);
+          const chainCount = sess?.autoResumeCount ?? 0;
+          if (chainCount >= 2) {
+            await this.sendProgress(platform, chatId, `🛑 Auto-Resume Limit (2) erreicht — keine weitere automatische Fortsetzung.`);
+          } else {
+            await this.sessionRepo.incrementAutoResumeCount(sessionId);
+            await this.sendProgress(platform, chatId, `⏳ Auto-Resume in 30s … (Resume ${chainCount + 1}/2 — abbrechen mit Stop in der WebUI)`);
+            setTimeout(() => {
+              this.autoResumeCallback!(sessionId, `Auto-Resume Versuch ${chainCount + 1}/2 nach Failure.`).catch(err => {
+                this.logger.warn({ err, sessionId }, 'auto-resume callback failed');
+              });
+            }, 30_000);
+          }
+        } catch (err) {
+          this.logger.warn({ err, sessionId }, 'auto-resume scheduling failed');
+        }
+      }
+
       // Trigger B: completion callback with honest success-flag
       if (this.completionCallback) {
         try {
@@ -1016,6 +1094,7 @@ export class ProjectAgentRunner {
     currentPhase: string,
     state: ProjectAgentMeta,
     userMessages: string[],
+    lessonsHint: string[] = [],
   ): string {
     const parts = [
       `PROJEKT-ZIEL: ${goal}`,
@@ -1025,6 +1104,11 @@ export class ProjectAgentRunner {
 
     if (state.lastBuildOutput) {
       parts.push(`LETZTER BUILD-OUTPUT:\n${state.lastBuildOutput.slice(-2000)}`);
+    }
+
+    // v652 — Lessons aus früheren Runs: was hier schon schief ging, vermeide jetzt.
+    if (lessonsHint.length > 0) {
+      parts.push(`LESSONS aus früheren Runs in dieser cwd:\n${lessonsHint.map(l => `- ${l}`).join('\n')}`);
     }
 
     if (userMessages.length > 0) {
@@ -1041,6 +1125,50 @@ export class ProjectAgentRunner {
     );
 
     return parts.join('\n\n');
+  }
+
+  /**
+   * v652 — Generiert einen kompakten Lessons-Learned-Text per LLM. Wird bei
+   * Done UND Failed aufgerufen (Erfolg = "was war effektiv", Misserfolg = "was
+   * blockierte und wie weiter"). 5 Zeilen, deutsch, konkret.
+   */
+  private async generateFailureInsight(
+    config: ProjectAgentConfig,
+    state: ProjectAgentMeta,
+    phases: string[],
+    final: { overallSuccess: boolean; runFailed: boolean; lastBuildOutput?: string },
+  ): Promise<string | null> {
+    try {
+      const extracted = final.lastBuildOutput ? extractBuildError(final.lastBuildOutput) : null;
+      const reachedPhases = phases.slice(0, state.projectIteration);
+      const remainingPhases = phases.slice(state.projectIteration);
+      const sys = `Du bist Senior-Engineer. Analysiere kurz (max 5 Zeilen, deutsch) was der Project-Agent ${final.overallSuccess ? 'gut gemacht' : 'verfehlt'} hat. Konkret, nicht generisch. Bei Fehlschlag: nenne Root-Cause + konkretem nächsten Schritt.`;
+      const user = [
+        `ZIEL: ${config.goal}`,
+        `CWD: ${config.cwd}`,
+        `STATUS: ${final.overallSuccess ? 'done' : 'failed'}`,
+        `PHASEN GEPLANT: ${phases.length}`,
+        `PHASEN VERSUCHT: ${state.projectIteration}`,
+        `DATEIEN GEÄNDERT: ${state.totalFilesChanged}`,
+        `MILESTONES: ${state.milestonesReached.join(', ') || '—'}`,
+        reachedPhases.length ? `ERREICHTE PHASEN:\n${reachedPhases.slice(-5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
+        remainingPhases.length ? `OFFENE PHASEN:\n${remainingPhases.slice(0, 5).map((p, i) => `${i + 1}. ${p}`).join('\n')}` : '',
+        extracted?.recognized ? `BUILD-FEHLER: ${extracted.summary}` : '',
+        extracted ? `BUILD-OUTPUT (Auszug):\n${extracted.contextSnippet}` : '',
+      ].filter(Boolean).join('\n\n');
+      const resp = await this.llm.complete({
+        system: sys,
+        messages: [{ role: 'user', content: user }],
+        tier: 'fast',
+        maxTokens: 600,
+        temperature: 0.3,
+      });
+      const text = (resp.content ?? '').trim();
+      return text.length > 10 ? text.slice(0, 1200) : null;
+    } catch (err) {
+      this.logger.debug({ err }, 'generateFailureInsight failed');
+      return null;
+    }
   }
 
   private async updateSession(sessionId: string, state: ProjectAgentMeta, buildPassed: boolean): Promise<void> {

@@ -16,6 +16,10 @@ export interface ProjectAgentSession {
   lastPushUrl?: string;
   /** v648 — Linked source-session if this is a Resume-Session. */
   resumedFromTaskId?: string;
+  /** v652 — LLM-generierter "Lessons Learned"-Text bei Done/Failed. */
+  failureInsight?: string;
+  /** v652 — Counter wie oft diese Session bereits Auto-Resumed wurde. */
+  autoResumeCount?: number;
   lastProgressAt?: string;
   milestones: string[];
   createdAt: string;
@@ -69,6 +73,28 @@ export class ProjectAgentSessionRepository {
     values.push(now);
     values.push(taskId);
     await this.adapter.execute(`UPDATE project_agent_sessions SET ${sets.join(', ')} WHERE task_id = ?`, values);
+  }
+
+  /** v652 — Persistiert den LLM-generierten Lessons-Learned-Text. */
+  async setFailureInsight(taskId: string, insight: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.adapter.execute(
+      'UPDATE project_agent_sessions SET failure_insight = ?, updated_at = ? WHERE task_id = ?',
+      [insight, now, taskId],
+    );
+  }
+
+  /** v652 — Inkrementiert auto_resume_count atomic (per RMW). */
+  async incrementAutoResumeCount(taskId: string): Promise<number> {
+    const current = await this.getByTaskId(taskId);
+    if (!current) return 0;
+    const next = (current.autoResumeCount ?? 0) + 1;
+    const now = new Date().toISOString();
+    await this.adapter.execute(
+      'UPDATE project_agent_sessions SET auto_resume_count = ?, updated_at = ? WHERE task_id = ?',
+      [next, now, taskId],
+    );
+    return next;
   }
 
   async addMilestone(taskId: string, milestone: string): Promise<void> {
@@ -194,6 +220,8 @@ export class ProjectAgentSessionRepository {
       lastCommitSha: row.last_commit_sha as string | undefined,
       lastPushUrl: (row.last_push_url as string | null) ?? undefined,
       resumedFromTaskId: (row.resumed_from_task_id as string | null) ?? undefined,
+      failureInsight: (row.failure_insight as string | null) ?? undefined,
+      autoResumeCount: (row.auto_resume_count as number | null) ?? 0,
       lastProgressAt: row.last_progress_at as string | undefined,
       milestones,
       createdAt: row.created_at as string,

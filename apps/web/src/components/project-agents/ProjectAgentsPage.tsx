@@ -303,6 +303,14 @@ export function ProjectAgentsPage() {
               </div>
             </div>
 
+            {/* v652 — Failure-Insight / Lessons-Learned */}
+            {(selected as any).failureInsight && (
+              <div className="mt-3 p-3 bg-amber-500/5 border border-amber-500/40 rounded text-xs text-amber-200 whitespace-pre-wrap">
+                <div className="text-amber-400 font-semibold mb-1">💡 Lessons</div>
+                {(selected as any).failureInsight}
+              </div>
+            )}
+
             {/* v651 — Live Output + Interjection für laufende Sessions */}
             {(selected.currentPhase !== 'done' && selected.currentPhase !== 'failed') && (
               <div className="mt-4 space-y-2">

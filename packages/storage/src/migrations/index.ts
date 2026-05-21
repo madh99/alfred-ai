@@ -1798,4 +1798,25 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN resumed_from_task_id TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 76,
+    description: 'v652 — Project-Agent Smart: failure_insight + auto_resume_count + lessons',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN failure_insight TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN auto_resume_count INTEGER NOT NULL DEFAULT 0`); } catch { /* exists */ }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_lessons (
+          id TEXT PRIMARY KEY,
+          cwd TEXT NOT NULL,
+          pattern TEXT NOT NULL,
+          advice TEXT NOT NULL,
+          occurrences INTEGER NOT NULL DEFAULT 1,
+          last_seen_at TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_pa_lessons_cwd ON project_agent_lessons(cwd, last_seen_at DESC)`);
+      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pa_lessons_cwd_pattern ON project_agent_lessons(cwd, pattern)`);
+    },
+  },
 ];

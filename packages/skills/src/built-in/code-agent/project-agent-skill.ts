@@ -594,6 +594,8 @@ ${planSummary}${commits}${userNotes}
       // v650 — opt-in flags
       branchPerSession: input.branchPerSession === true || input.branch_per_session === true,
       confirmPlan: input.confirmPlan === true || input.confirm_plan === true,
+      // v652 — Auto-Resume opt-in
+      autoResume: input.autoResume === true || input.auto_resume === true,
     };
 
     // Fire-and-forget: start the runner loop asynchronously

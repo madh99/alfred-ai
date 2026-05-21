@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.652] - 2026-05-21
+
+### Added — Project-Agent Smart (Bundle 5 von 5)
+
+**#9 Auto-Resume opt-in**:
+- `ProjectAgentConfig.autoResume` flag (`auto_resume=true` per Skill)
+- Bei terminal-Failure: sendet "⏳ Auto-Resume in 30s …" Hinweis, dann
+  ruft `autoResumeCallback(failedTaskId, "Auto-Resume Versuch n/2")` auf
+- `setTimeout(30_000)` damit User noch Stop drücken kann (Live-WebUI v651)
+- Hardlimit: max 2 Auto-Resumes pro Session-Kette gegen Infinite-Loops
+- `auto_resume_count` Spalte auf project_agent_sessions (Migration 76/79),
+  per `incrementAutoResumeCount()` atomic erhöht
+
+**#16 Pattern-Memorierung**:
+- Neue Tabelle `project_agent_lessons` (cwd, pattern, advice, occurrences)
+- `ProjectAgentLessonsRepository.upsert()` mit Counter und Unique(cwd, pattern)
+- Bei Failure: `extractBuildError().summary` wird als Pattern persistiert,
+  Failure-Insight als advice
+- Bei Run-Start: Lessons für die cwd geladen (min 2 occurrences), in jedem
+  Phase-Prompt via `assemblePrompt(…, lessonsHint)` eingespeist:
+  `"LESSONS aus früheren Runs in dieser cwd: [3× erlebt] X → Vermeide Y"`
+
+**#19 Failure-Insight**:
+- LLM-Call (tier='fast', 600 tokens, temp 0.3) generiert kompakten
+  Lessons-Learned-Text — max 5 Zeilen, deutsch, konkret
+- Wird sowohl bei Done als auch Failed aufgerufen (Erfolg = "was war effektiv",
+  Misserfolg = "Root-Cause + nächster Schritt")
+- Persistiert in `project_agent_sessions.failure_insight` (Migration 76/79)
+- Im WebUI: Amber-Karte "💡 Lessons" in der Detail-Ansicht
+- Auch in Chat-Reply nach Session-Ende: "💡 Insight: …"
+
+### Storage
+- SQLite Migration v76 + Postgres Migration v79:
+  - `project_agent_sessions.failure_insight TEXT`
+  - `project_agent_sessions.auto_resume_count INTEGER DEFAULT 0`
+  - Neue Tabelle `project_agent_lessons` (id, cwd, pattern, advice, occurrences, last_seen_at, created_at)
+  - Indizes: `idx_pa_lessons_cwd(cwd, last_seen_at DESC)`, `uq_pa_lessons_cwd_pattern(cwd, pattern)`
+
+### Architecture
+- Lessons werden **einmal pro Run** geladen (am Start), nicht pro Phase — spart DB-Calls
+- Pattern-Mining ist konservativ: nur `extractBuildError.recognized` summaries werden persistiert (keine generischen Stack-Traces als Pattern)
+- Auto-Resume nutzt die existierende `project_agent.resume`-Action (v648), keine Sonderpfade
+- Failure-Insight braucht den LLM-Provider — die `LLMProvider.complete()`-API ist abstrakt und providers- agnostic
+
+### Notes
+- Build grün (12/12)
+- Komplette Bundle-Reihe v648-v652 abgeschlossen
+- Alle drei Features (Auto-Resume, Lessons, Insight) sind opt-in oder rein additiv — bestehende Workflows unverändert
+
 ## [0.19.0-multi-ha.651] - 2026-05-21
 
 ### Added — Project-Agent Live UX (Bundle 4 von 5)

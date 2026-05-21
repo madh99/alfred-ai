@@ -908,6 +908,31 @@ export class Alfred {
         this.plansRepoRef = plansRepo;
       } catch (err) { this.logger.warn({ err }, 'Plans-Repo wiring failed (non-fatal)'); }
 
+      // v652 — Lessons-Repo + Auto-Resume-Callback
+      try {
+        const { ProjectAgentLessonsRepository } = await import('@alfred/storage');
+        const lessonsRepo = new ProjectAgentLessonsRepository(adapter);
+        projectRunner.setLessonsRepository(lessonsRepo);
+        projectRunner.setAutoResumeCallback(async (failedTaskId: string, notes?: string) => {
+          try {
+            const skill = this.skillRegistry?.get('project_agent');
+            if (!skill) {
+              this.logger.warn({ failedTaskId }, 'Auto-Resume: project_agent skill not registered');
+              return;
+            }
+            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const ownerChatId = this.config.security?.ownerUserId ?? '';
+            const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+              : this.config.matrix?.enabled ? 'matrix'
+              : 'api');
+            const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;
+            await skill.execute({ action: 'resume', failed_task_id: failedTaskId, notes }, ctx);
+          } catch (err) {
+            this.logger.warn({ err, failedTaskId }, 'Auto-Resume callback exec failed');
+          }
+        });
+      } catch (err) { this.logger.warn({ err }, 'Lessons-Repo / Auto-Resume wiring failed (non-fatal)'); }
+
       // v643 — Commits-Repo + Project-Id-Resolver für Per-Phase-Commit-Persistence
       try {
         const { ProjectAgentCommitsRepository } = await import('@alfred/storage');
