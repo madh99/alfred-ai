@@ -5,6 +5,13 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.669] - 2026-05-22
+
+### Fixed
+- **Audit-Loading-Indicator (Projects-View):** Beim Klick auf 🔍 Audit gab es keine UI-Rückmeldung — der LLM-Call läuft 10–30s, der User dachte es passiert nichts. Neu: Button-Label wechselt auf "⏳ Audit läuft…", pulsing Banner unterhalb erklärt was gerade passiert.
+- **Automation-Modal (leerer Body):** Wenn die Template-Liste zum Modal-Open-Zeitpunkt noch nicht geladen war (Race-Condition) oder das Backend 0 Templates zurückgab, sah der User nur den Header "22 Templates verfügbar" und keine Auswahl. Hardcoded "22" entfernt. Modal lädt jetzt selbst nach (`fetchAutomationTemplates`), zeigt Loading-Spinner, Empty-State mit Retry-Button und Fehler-Diagnose-Hint.
+- Collapsed-Sidebar-Label und Empty-State-Hint zeigen die echte Template-Anzahl statt der hardcoded "22".
+
 ## [0.19.0-multi-ha.668] - 2026-05-22
 
 ### Fixed

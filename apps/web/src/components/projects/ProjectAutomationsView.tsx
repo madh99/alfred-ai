@@ -90,7 +90,7 @@ export function ProjectAutomationsView({ projectId, projectName }: Props) {
           <span>🤖 Automations</span>
           {automations.length > 0
             ? <span className="text-[10px] text-emerald-400 font-normal">{automations.filter(a => a.enabled).length}/{automations.length} aktiv</span>
-            : <span className="text-[10px] text-gray-600 font-normal">— 22 Templates verfügbar</span>}
+            : <span className="text-[10px] text-gray-600 font-normal">— {templates.length > 0 ? `${templates.length} Templates verfügbar` : 'Templates beim Aufklappen laden'}</span>}
         </button>
       </div>
     );
@@ -112,7 +112,7 @@ export function ProjectAutomationsView({ projectId, projectName }: Props) {
       {loading && <div className="text-xs text-gray-500 italic">Lade…</div>}
       {!loading && automations.length === 0 && (
         <div className="text-xs text-gray-600 italic bg-[#0f0f0f] border border-dashed border-[#222] rounded p-3 text-center">
-          Keine Automations konfiguriert. Klick „+ Add" um aus 22 Templates zu wählen
+          Keine Automations konfiguriert. Klick „+ Add" um aus {templates.length > 0 ? `${templates.length} Templates` : 'den verfügbaren Templates'} zu wählen
           (Standup, Code-Review, Release-Pflege, Security-Audit, …).
         </div>
       )}
@@ -182,7 +182,7 @@ export function ProjectAutomationsView({ projectId, projectName }: Props) {
   );
 }
 
-function AddAutomationModal({ projectId, templates, onClose, onAdded }: {
+function AddAutomationModal({ projectId, templates: initialTemplates, onClose, onAdded }: {
   projectId: string;
   templates: AutomationTemplate[];
   onClose: () => void;
@@ -195,6 +195,29 @@ function AddAutomationModal({ projectId, templates, onClose, onAdded }: {
   const [prompt, setPrompt] = useState('');
   const [destination, setDestination] = useState('telegram');
   const [saving, setSaving] = useState(false);
+  // v668 — Modal lädt Templates selbst nochmal nach. Falls die Parent-Liste
+  // zum Modal-Open-Zeitpunkt noch leer war (Race-Condition oder Endpoint-Fehler),
+  // ist hier ein expliziter Loading-State + Retry-Button.
+  const [templates, setTemplates] = useState<AutomationTemplate[]>(initialTemplates);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const reloadTemplates = useCallback(async () => {
+    if (!client) return;
+    setLoadingTemplates(true);
+    setLoadError(null);
+    try {
+      const t = await client.fetchAutomationTemplates();
+      setTemplates(t);
+      if (t.length === 0) setLoadError('Backend lieferte 0 Templates. Pruefe ob die Automations-Engine im Server verwired ist.');
+    } catch (err) {
+      setLoadError((err as Error).message ?? 'Templates konnten nicht geladen werden.');
+    } finally { setLoadingTemplates(false); }
+  }, [client]);
+
+  useEffect(() => {
+    if (templates.length === 0) reloadTemplates();
+  }, [templates.length, reloadTemplates]);
 
   function pick(t: AutomationTemplate) {
     setPicked(t);
@@ -229,19 +252,47 @@ function AddAutomationModal({ projectId, templates, onClose, onAdded }: {
 
         {!picked && (
           <div>
-            <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-2">22 Templates verfügbar</div>
-            <div className="grid grid-cols-2 gap-1.5 max-h-[60vh] overflow-y-auto">
-              {templates.map(t => (
-                <button key={t.kind} onClick={() => pick(t)} className="text-left bg-[#0d0d0d] border border-[#2a2a2a] rounded p-2 hover:border-blue-500/60 transition-colors">
-                  <div className="flex items-center gap-1.5">
-                    <span>{t.icon}</span>
-                    <span className="text-xs font-medium text-gray-200">{t.label}</span>
-                  </div>
-                  <div className="text-[10px] text-gray-500 mt-0.5">{t.description}</div>
-                  <div className="text-[10px] text-gray-600 mt-0.5 font-mono">{t.defaultSchedule === 'manual' ? 'nur manuell' : `cron: ${t.defaultSchedule}`}</div>
-                </button>
-              ))}
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">
+                {loadingTemplates ? 'Lade Templates…' : `${templates.length} ${templates.length === 1 ? 'Template' : 'Templates'} verfügbar`}
+              </div>
+              <button
+                onClick={reloadTemplates}
+                disabled={loadingTemplates}
+                title="Templates neu laden"
+                className="text-[10px] text-gray-500 hover:text-blue-400 disabled:opacity-40"
+              >↻ Neu laden</button>
             </div>
+            {/* v668 — Loading / Empty / Error States damit der User weiss was passiert */}
+            {loadingTemplates && (
+              <div className="text-xs text-gray-500 italic bg-[#0f0f0f] border border-dashed border-[#222] rounded p-6 text-center animate-pulse">
+                ⏳ Lade Automation-Templates vom Backend…
+              </div>
+            )}
+            {!loadingTemplates && templates.length === 0 && (
+              <div className="text-xs text-amber-300 bg-amber-500/5 border border-amber-500/30 rounded p-4 text-center space-y-2">
+                <div className="font-semibold">⚠️ Keine Templates verfügbar</div>
+                {loadError && <div className="text-amber-300/80 font-mono text-[11px]">{loadError}</div>}
+                <div className="text-gray-500 text-[11px]">
+                  Mögliche Ursachen: Server-Version &lt; v663b · automation-engine nicht initialisiert · Auth-Header fehlt.
+                </div>
+                <button onClick={reloadTemplates} className="text-blue-400 hover:text-blue-300 underline text-[11px]">Erneut versuchen</button>
+              </div>
+            )}
+            {!loadingTemplates && templates.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5 max-h-[60vh] overflow-y-auto">
+                {templates.map(t => (
+                  <button key={t.kind} onClick={() => pick(t)} className="text-left bg-[#0d0d0d] border border-[#2a2a2a] rounded p-2 hover:border-blue-500/60 transition-colors">
+                    <div className="flex items-center gap-1.5">
+                      <span>{t.icon}</span>
+                      <span className="text-xs font-medium text-gray-200">{t.label}</span>
+                    </div>
+                    <div className="text-[10px] text-gray-500 mt-0.5">{t.description}</div>
+                    <div className="text-[10px] text-gray-600 mt-0.5 font-mono">{t.defaultSchedule === 'manual' ? 'nur manuell' : `cron: ${t.defaultSchedule}`}</div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

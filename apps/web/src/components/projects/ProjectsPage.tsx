@@ -568,11 +568,18 @@ export function ProjectsPage() {
                     <button
                       onClick={runAudit}
                       disabled={auditing}
-                      className="px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 rounded"
-                      title="Stale + Duplikate + möglicherweise-erledigte finden"
-                    >🔍 Audit</button>
+                      className="px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
+                      title={auditing ? 'Audit läuft — LLM prüft Items auf Stale/Duplikate/Erledigt' : 'Stale + Duplikate + möglicherweise-erledigte finden'}
+                    >{auditing ? '⏳ Audit läuft…' : '🔍 Audit'}</button>
                   </div>
                 </div>
+                {/* v668 — Audit-Loading-Banner: User sieht sofort dass etwas passiert */}
+                {auditing && (
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 mb-2 text-xs text-blue-200 flex items-center gap-2 animate-pulse">
+                    <span>⏳</span>
+                    <span>Audit läuft… LLM prüft alle offenen Items auf Stale-Indikatoren, Duplikate und mögliche Auto-Resolves. Das kann 10–30 Sekunden dauern.</span>
+                  </div>
+                )}
 
                 {/* Bulk-Toolbar */}
                 {selectedItemIds.size > 0 && (
