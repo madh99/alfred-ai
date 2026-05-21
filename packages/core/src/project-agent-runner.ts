@@ -185,6 +185,12 @@ export class ProjectAgentRunner {
     this.lessonsRepo = repo;
   }
 
+  /** v663a — Conventions-Lookup pro Projekt (cwd → Project mit conventions). */
+  private projectConventionsResolver?: (cwd: string) => Promise<import('@alfred/storage').ProjectConventions | undefined>;
+  setProjectConventionsResolver(resolver: (cwd: string) => Promise<import('@alfred/storage').ProjectConventions | undefined>): void {
+    this.projectConventionsResolver = resolver;
+  }
+
   /** v652 — Set by alfred.ts: Callback der Auto-Resume triggert (project_agent.resume Action). */
   private autoResumeCallback?: (failedTaskId: string, notes?: string) => Promise<void>;
   setAutoResumeCallback(cb: (failedTaskId: string, notes?: string) => Promise<void>): void {
@@ -251,6 +257,25 @@ export class ProjectAgentRunner {
         lessonsHint = lessons.map(l => `[${l.occurrences}× erlebt] ${l.pattern} → ${l.advice}`);
       } catch (err) {
         this.logger.debug({ err }, 'lessons-load skipped');
+      }
+    }
+
+    // v663a — Project-Conventions laden (README/CHANGELOG/Commits/Versioning).
+    // Conventions sind opt-in; bei nicht gesetztem Resolver oder unbekanntem cwd → undefined.
+    let projectConventions: import('@alfred/storage').ProjectConventions | undefined;
+    if (this.projectConventionsResolver) {
+      try {
+        projectConventions = await this.projectConventionsResolver(config.cwd);
+        if (projectConventions) {
+          this.logger.info({ cwd: config.cwd, conventions: Object.keys(projectConventions) }, 'Project-Conventions geladen');
+        }
+        // Implizit: branching=feature-branches → branchPerSession=true
+        if (projectConventions?.branching?.strategy === 'feature-branches' && !config.branchPerSession) {
+          config.branchPerSession = true;
+          this.logger.info({ cwd: config.cwd }, 'feature-branches Convention → branchPerSession aktiviert');
+        }
+      } catch (err) {
+        this.logger.debug({ err }, 'conventions-load skipped');
       }
     }
     // L2 (v604) — global counter for consecutive phases that produced 0 files AND no
@@ -450,7 +475,7 @@ export class ProjectAgentRunner {
         }
         const userMessages = messages.filter(m => m !== '__STOP__');
 
-        const prompt = this.assemblePrompt(config.goal, phase, state, userMessages, lessonsHint);
+        const prompt = this.assemblePrompt(config.goal, phase, state, userMessages, lessonsHint, projectConventions);
         await this.sendProgress(platform, chatId, `🔨 Phase ${phaseIdx + 1}/${plan.phases.length}: ${phase}`);
 
         // v648 — Phase als running markieren
@@ -653,7 +678,20 @@ export class ProjectAgentRunner {
               break;
             }
             await gitExec(['add', '-A'], config.cwd, runAsUser);
-            const commitMsg = `Phase ${phaseIdx + 1}: ${phase}`;
+            // v663a — Conventional Commits: Präfix anhand Heuristik
+            let commitMsg = `Phase ${phaseIdx + 1}: ${phase}`;
+            if (projectConventions?.commits?.convention === 'conventional') {
+              const lower = phase.toLowerCase();
+              let type = 'feat';
+              if (/fix|bug|repariere|behebe|error/.test(lower)) type = 'fix';
+              else if (/refactor|umstrukturier|cleanup|aufräumen/.test(lower)) type = 'refactor';
+              else if (/test|spec/.test(lower)) type = 'test';
+              else if (/doc|readme|comment/.test(lower)) type = 'docs';
+              else if (/style|format|lint/.test(lower)) type = 'style';
+              else if (/perf|optimier/.test(lower)) type = 'perf';
+              else if (/chore|setup|config/.test(lower)) type = 'chore';
+              commitMsg = `${type}: ${phase}`;
+            }
             const stdout = await gitExec(['commit', '-m', commitMsg, '--allow-empty'], config.cwd, runAsUser);
             const shaMatch = stdout.match(/\[[\w-]+ ([a-f0-9]+)\]/);
             state.lastCommitSha = shaMatch?.[1];
@@ -740,6 +778,27 @@ export class ProjectAgentRunner {
         }
         if (this.commitsRepo) {
           try { await this.commitsRepo.markSessionPushed(sessionId, pushUrl); } catch { /* skip */ }
+        }
+        // v663a — Auto-Tag bei aktivierter Convention (SemVer-Patch-Bump)
+        if (projectConventions?.versioning?.autoTag && projectConventions.versioning.scheme === 'semver') {
+          try {
+            const latest = await gitExec(['tag', '--sort=-v:refname'], config.cwd, runAsUser).catch(() => '');
+            const lastTag = latest.split('\n').find(t => /^v?\d+\.\d+\.\d+/.test(t.trim()));
+            let nextTag = 'v0.1.0';
+            if (lastTag) {
+              const m = lastTag.match(/^(v?)(\d+)\.(\d+)\.(\d+)$/);
+              if (m) {
+                const prefix = m[1];
+                const major = Number(m[2]); const minor = Number(m[3]); const patch = Number(m[4]) + 1;
+                nextTag = `${prefix}${major}.${minor}.${patch}`;
+              }
+            }
+            await gitExec(['tag', nextTag], config.cwd, runAsUser);
+            await gitExecBoth(['push', 'origin', nextTag], config.cwd, runAsUser).catch(() => null);
+            await this.sendProgress(platform, chatId, `🏷 Auto-Tag: ${nextTag} (semver patch-bump)`);
+          } catch (err) {
+            this.logger.warn({ err }, 'Project agent: auto-tag failed (non-fatal)');
+          }
         }
       }
 
@@ -1095,6 +1154,7 @@ export class ProjectAgentRunner {
     state: ProjectAgentMeta,
     userMessages: string[],
     lessonsHint: string[] = [],
+    conventions?: import('@alfred/storage').ProjectConventions,
   ): string {
     const parts = [
       `PROJEKT-ZIEL: ${goal}`,
@@ -1115,6 +1175,21 @@ export class ProjectAgentRunner {
       parts.push(`USER-ANFORDERUNGEN:\n${userMessages.map(m => `- ${m}`).join('\n')}`);
     }
 
+    // v663a — Project-Conventions als zusätzliche Anweisungen
+    const conventionInstructions: string[] = [];
+    if (conventions?.readme?.autoUpdate) {
+      const template = conventions.readme.template ?? 'default';
+      conventionInstructions.push(`- README.md pflegen (Template: ${template}). Wenn neue Features/Skripte/Setup-Schritte: README.md aktualisieren (Sections: Features / Setup / Usage).`);
+    }
+    if (conventions?.changelog?.autoUpdate) {
+      const fmt = conventions.changelog.format ?? 'keepachangelog';
+      conventionInstructions.push(`- CHANGELOG.md pflegen (Format: ${fmt}). Trage eine Zeile unter "## [Unreleased]" ein die diese Phase beschreibt (z.B. "### Added/Changed/Fixed").`);
+    }
+    if (conventions?.commits?.convention === 'conventional') {
+      const scope = conventions.commits.scopePolicy;
+      conventionInstructions.push(`- Commits: Conventional Commits Format (feat: / fix: / refactor: / test: / docs: / style: / perf: / chore:)${scope === 'required' ? ' mit Scope: feat(scope): …' : scope === 'forbidden' ? ' OHNE Scope' : ''}.`);
+    }
+
     parts.push(
       'ANWEISUNGEN:',
       '- Implementiere nur diese Phase, nicht das ganze Projekt',
@@ -1122,6 +1197,7 @@ export class ProjectAgentRunner {
       '- Wenn ein package.json existiert, nutze die vorhandene Struktur',
       '- Wenn Build-Fehler im Output stehen, behebe sie zuerst',
       '- Schreibe produktionsreifen Code',
+      ...conventionInstructions,
     );
 
     return parts.join('\n\n');

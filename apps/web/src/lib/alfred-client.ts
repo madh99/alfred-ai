@@ -631,6 +631,28 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v663a — Roadmap-API
+  async fetchProjectRoadmap(projectId: string): Promise<Record<string, ProjectOpenItem[]>> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/roadmap`, { headers: this.authHeaders });
+    if (!res.ok) return {};
+    const data = await res.json();
+    return data.milestones ?? {};
+  }
+  async updateOpenItemRoadmap(itemId: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/open-items/${itemId}/roadmap`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    return res.ok;
+  }
+  async implementMilestone(projectId: string, milestone: string): Promise<{ ok: boolean; taskId?: string; itemCount?: number; error?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/implement-milestone`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ milestone }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  }
+
   // v659 — Letzte Deploys aus deploy_*-Memory + auto-detected Runtime aus cwd
   async fetchProjectLastDeploys(projectId: string): Promise<{ deploys: ProjectLastDeploy[]; detectedRuntime?: string; detectionReason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/last-deploys`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
@@ -1402,6 +1424,15 @@ export interface GoalCheckpointItem {
   notes?: string;
 }
 
+// v663a — Project Conventions Type
+export interface ProjectConventions {
+  readme?: { autoUpdate?: boolean; template?: 'default' | 'minimal' | 'custom' };
+  changelog?: { autoUpdate?: boolean; format?: 'keepachangelog' | 'free' };
+  commits?: { convention?: 'conventional' | 'free'; scopePolicy?: 'required' | 'optional' | 'forbidden' };
+  branching?: { strategy?: 'main-only' | 'feature-branches' | 'gitflow'; prTarget?: string };
+  versioning?: { scheme?: 'semver' | 'date' | 'custom'; autoTag?: boolean };
+}
+
 // v661 — Todos + Notes Types
 export interface TodoItem {
   id: string;
@@ -1591,6 +1622,8 @@ export interface Project {
   createdAt: string;
   lastActiveAt: string;
   nextCheckAt?: string;
+  /** v663a — Optional pro-Projekt Conventions */
+  conventions?: ProjectConventions;
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs
@@ -1645,6 +1678,12 @@ export interface ProjectOpenItem {
   autoResolvedBy?: string;
   /** v641 — Konfidenz (0..1) des Auto-Resolvers. */
   autoResolvedConfidence?: number;
+  /** v663a — Roadmap-Milestone (frei: 'v2.0', 'Beta', 'Q3-2026') */
+  roadmapMilestone?: string;
+  /** v663a — Sortierung innerhalb des Milestones */
+  roadmapOrder?: number;
+  /** v663a — Geschätzte Aufwandsstunden */
+  estimatedHours?: number;
 }
 
 export interface ProjectDecision {

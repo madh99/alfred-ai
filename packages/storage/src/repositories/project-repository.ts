@@ -19,6 +19,37 @@ export interface ProjectHealthEntry {
   checkedAt: string;
 }
 
+/**
+ * v663a — Project Conventions: optional per-project rules für README/CHANGELOG/
+ * Versioning/Branching/Commit-Style. Default = leer (alle opt-in).
+ */
+export interface ProjectConventions {
+  readme?: {
+    autoUpdate?: boolean;
+    /** 'default' = Standard-Struktur, 'minimal' = nur Titel+Description, 'custom' = no-touch */
+    template?: 'default' | 'minimal' | 'custom';
+  };
+  changelog?: {
+    autoUpdate?: boolean;
+    /** 'keepachangelog' = Keep a Changelog 1.1.0 Format mit [Unreleased]/[X.Y.Z] */
+    format?: 'keepachangelog' | 'free';
+  };
+  commits?: {
+    /** 'conventional' = feat:/fix:/refactor:/... Präfix erzwingen */
+    convention?: 'conventional' | 'free';
+    scopePolicy?: 'required' | 'optional' | 'forbidden';
+  };
+  branching?: {
+    /** main-only = direkt auf main, feature-branches = pro Session ein Branch, gitflow = main/develop/feature */
+    strategy?: 'main-only' | 'feature-branches' | 'gitflow';
+    prTarget?: string;
+  };
+  versioning?: {
+    scheme?: 'semver' | 'date' | 'custom';
+    autoTag?: boolean;
+  };
+}
+
 export interface Project {
   id: string;
   userId: string;
@@ -35,6 +66,8 @@ export interface Project {
   createdAt: string;
   lastActiveAt: string;
   nextCheckAt?: string;
+  /** v663a — Optional pro-Projekt Conventions (alle opt-in). */
+  conventions?: ProjectConventions;
 }
 
 export interface ProjectSessionSummary {
@@ -75,6 +108,12 @@ export interface ProjectOpenItem {
   autoResolvedBy?: string;
   /** v641 — Konfidenz des LLM-Auto-Resolvers (0..1). */
   autoResolvedConfidence?: number;
+  /** v663a — Roadmap-Milestone (frei: 'v2.0', 'Beta', 'Q3-2026'). Items mit Milestone = Roadmap-Items. */
+  roadmapMilestone?: string;
+  /** v663a — Sortierung innerhalb des Milestones (0 = oben) */
+  roadmapOrder?: number;
+  /** v663a — Geschätzte Aufwandsstunden (für Burndown/Planung) */
+  estimatedHours?: number;
 }
 
 export interface ProjectDecision {
@@ -109,6 +148,10 @@ function parseSummary(raw: unknown): ProjectSessionSummary | undefined {
 }
 
 function rowToProject(row: Record<string, unknown>): Project {
+  let conventions: ProjectConventions | undefined;
+  if (row.conventions) {
+    try { conventions = JSON.parse(row.conventions as string); } catch { /* skip */ }
+  }
   return {
     id: row.id as string,
     userId: row.user_id as string,
@@ -124,6 +167,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     createdAt: row.created_at as string,
     lastActiveAt: row.last_active_at as string,
     nextCheckAt: (row.next_check_at as string | null) ?? undefined,
+    conventions,
   };
 }
 
@@ -155,6 +199,9 @@ function rowToOpenItem(row: Record<string, unknown>): ProjectOpenItem {
     linkedChangeId: (row.linked_change_id as string | null) ?? undefined,
     autoResolvedBy: (row.auto_resolved_by as string | null) ?? undefined,
     autoResolvedConfidence: row.auto_resolved_confidence != null ? Number(row.auto_resolved_confidence) : undefined,
+    roadmapMilestone: (row.roadmap_milestone as string | null) ?? undefined,
+    roadmapOrder: row.roadmap_order != null ? Number(row.roadmap_order) : undefined,
+    estimatedHours: row.estimated_hours != null ? Number(row.estimated_hours) : undefined,
   };
 }
 
@@ -248,7 +295,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -266,6 +313,11 @@ export class ProjectRepository {
     if (patch.healthMode !== undefined) { sets.push('health_mode = ?'); params.push(patch.healthMode); }
     if (patch.tags !== undefined) { sets.push('tags = ?'); params.push(JSON.stringify(patch.tags)); }
     if (patch.nextCheckAt !== undefined) { sets.push('next_check_at = ?'); params.push(patch.nextCheckAt); }
+    // v663a — Conventions als JSON
+    if (patch.conventions !== undefined) {
+      sets.push('conventions = ?');
+      params.push(patch.conventions ? JSON.stringify(patch.conventions) : null);
+    }
     if (sets.length === 0) return existing;
     params.push(existing.id);
     await this.adapter.execute(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, params);
@@ -493,6 +545,52 @@ export class ProjectRepository {
     const rows = await this.adapter.query(
       `SELECT * FROM project_open_items WHERE project_id = ? AND status IN (${placeholders}) ORDER BY created_at ASC`,
       [projectId, ...statuses],
+    ) as Record<string, unknown>[];
+    return rows.map(rowToOpenItem);
+  }
+
+  /**
+   * v663a — Roadmap-Items eines Projekts (Open-Items mit roadmap_milestone gesetzt),
+   * gruppiert nach Milestone, innerhalb sortiert nach roadmap_order.
+   */
+  async listRoadmap(projectId: string): Promise<Map<string, ProjectOpenItem[]>> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_open_items
+       WHERE project_id = ? AND roadmap_milestone IS NOT NULL AND roadmap_milestone <> ''
+       ORDER BY roadmap_milestone ASC, COALESCE(roadmap_order, 9999) ASC, created_at ASC`,
+      [projectId],
+    ) as Record<string, unknown>[];
+    const items = rows.map(rowToOpenItem);
+    const grouped = new Map<string, ProjectOpenItem[]>();
+    for (const it of items) {
+      const ms = it.roadmapMilestone ?? '__no_milestone__';
+      const arr = grouped.get(ms) ?? [];
+      arr.push(it);
+      grouped.set(ms, arr);
+    }
+    return grouped;
+  }
+
+  /** v663a — Roadmap-Felder eines Open-Items setzen (Milestone-Zuweisung, Order, Aufwand). */
+  async updateOpenItemRoadmap(id: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }): Promise<boolean> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.milestone !== undefined) { sets.push('roadmap_milestone = ?'); params.push(patch.milestone); }
+    if (patch.order !== undefined) { sets.push('roadmap_order = ?'); params.push(patch.order); }
+    if (patch.estimatedHours !== undefined) { sets.push('estimated_hours = ?'); params.push(patch.estimatedHours); }
+    if (sets.length === 0) return false;
+    params.push(id);
+    const r = await this.adapter.execute(`UPDATE project_open_items SET ${sets.join(', ')} WHERE id = ?`, params);
+    return r.changes > 0;
+  }
+
+  /** v663a — Alle open + in_progress Items eines bestimmten Milestones für die Implement-Action. */
+  async listMilestoneItems(projectId: string, milestone: string): Promise<ProjectOpenItem[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_open_items
+       WHERE project_id = ? AND roadmap_milestone = ? AND status IN ('open', 'in_progress')
+       ORDER BY COALESCE(roadmap_order, 9999) ASC, created_at ASC`,
+      [projectId, milestone],
     ) as Record<string, unknown>[];
     return rows.map(rowToOpenItem);
   }

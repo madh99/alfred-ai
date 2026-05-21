@@ -957,6 +957,17 @@ export class Alfred {
         };
         projectRunner.setCommitsRepository(commitsRepo, projectIdResolver);
         this.commitsRepoRef = commitsRepo;
+        // v663a — Conventions-Resolver: cwd → Project.conventions
+        projectRunner.setProjectConventionsResolver(async (cwd: string) => {
+          if (!this.projectRepo) return undefined;
+          const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          if (!uid) return undefined;
+          try {
+            const list = await this.projectRepo.list(uid);
+            const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+            return proj?.conventions;
+          } catch { return undefined; }
+        });
       } catch (err) { this.logger.warn({ err }, 'Commits-Repo wiring failed (non-fatal)'); }
 
       // v642 — LLM-Callback für deep audit der project-skill
@@ -4990,6 +5001,42 @@ export class Alfred {
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
+          // v663a — Roadmap-Items grouped by milestone
+          listRoadmap: async (id: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return {};
+              const grouped = await projRepo.listRoadmap(project.id);
+              const obj: Record<string, any[]> = {};
+              for (const [ms, items] of grouped) obj[ms] = items;
+              return obj;
+            } catch (err) { this.logger.warn({ err, id }, 'Projects API listRoadmap failed'); return {}; }
+          },
+          // v663a — Roadmap-Felder eines Items setzen
+          updateOpenItemRoadmap: async (itemId: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }) => {
+            try { return await projRepo.updateOpenItemRoadmap(itemId, patch); } catch { return false; }
+          },
+          // v663a — Implement-Milestone: aggregiert open items als Goal + startet project_agent
+          implementMilestone: async (id: string, milestone: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return { ok: false, error: 'Projekt nicht gefunden' };
+              const items = await projRepo.listMilestoneItems(project.id, milestone);
+              if (items.length === 0) return { ok: false, error: `Keine offenen Items im Milestone "${milestone}"` };
+              const skill = this.skillRegistry?.get('project_agent');
+              if (!skill) return { ok: false, error: 'project_agent-Skill nicht registriert' };
+              const itemList = items.map((it, i) => `${i + 1}. ${it.title}${it.description ? `\n   ${it.description.slice(0, 200)}` : ''}${it.estimatedHours ? ` (~${it.estimatedHours}h)` : ''}`).join('\n');
+              const goal = `Implementiere folgende Roadmap-Items für Milestone "${milestone}" im Projekt "${project.name}":\n\n${itemList}\n\nBitte arbeite die Items in der angegebenen Reihenfolge ab. Für jeden Item: Implementierung + Test + Commit.`;
+              const ownerChatId = this.config.security?.ownerUserId ?? '';
+              const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.matrix?.enabled ? 'matrix' : 'api');
+              const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;
+              const r = await skill.execute({ action: 'start', goal, cwd: project.cwd, link_open_item_ids: items.map(i => i.id) }, ctx);
+              return { ok: !!r.success, taskId: (r.data as any)?.taskId, itemCount: items.length, error: r.error };
+            } catch (err) { return { ok: false, error: (err as Error).message }; }
+          },
+
           // v659 — Letzte Deploys aus deploy_*-Memories + Runtime-Auto-Detect aus cwd.
           // Memory-Format (siehe packages/skills/.../deploy.ts:425):
           //   key: `deploy_<projectName>_<host_normalized>`

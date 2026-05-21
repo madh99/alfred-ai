@@ -1174,4 +1174,15 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)`, []);
     },
   },
+  {
+    version: 83,
+    description: 'v663a — projects.conventions + project_open_items roadmap-Felder',
+    async up(db) {
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS conventions TEXT`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS roadmap_milestone TEXT`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS roadmap_order INTEGER`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS estimated_hours DOUBLE PRECISION`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_open_items_roadmap ON project_open_items(project_id, roadmap_milestone, roadmap_order)`, []);
+    },
+  },
 ];

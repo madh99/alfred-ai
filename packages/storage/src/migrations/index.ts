@@ -1855,4 +1855,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_project ON conversations(project_id)`);
     },
   },
+  {
+    version: 80,
+    description: 'v663a — projects.conventions (README/CHANGELOG/Versioning) + project_open_items roadmap-Felder',
+    up(db) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN conventions TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN roadmap_milestone TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN roadmap_order INTEGER`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN estimated_hours REAL`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_open_items_roadmap ON project_open_items(project_id, roadmap_milestone, roadmap_order)`);
+    },
+  },
 ];

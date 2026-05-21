@@ -423,6 +423,12 @@ export class HttpAdapter extends MessagingAdapter {
     }>;
     /** v659 — Deploy-Trigger mit Form-Params (process_manager, host, user, port, runtime, branch) */
     triggerDeploy?: (id: string, input: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; error?: string; display?: string }>;
+    /** v663a — Roadmap-Items eines Projekts (grouped by milestone) */
+    listRoadmap?: (id: string) => Promise<Record<string, any[]>>;
+    /** v663a — Roadmap-Felder eines Open-Items setzen (milestone/order/estimated) */
+    updateOpenItemRoadmap?: (itemId: string, patch: { milestone?: string | null; order?: number | null; estimatedHours?: number | null }) => Promise<boolean>;
+    /** v663a — Alle open Items eines Milestones zu einem Project-Agent-Goal aggregieren und starten */
+    implementMilestone?: (id: string, milestone: string) => Promise<{ ok: boolean; taskId?: string; itemCount?: number; error?: string }>;
     create: (input: Record<string, unknown>) => Promise<any>;
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
@@ -857,6 +863,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsLastDeploys(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deploy$/) && req.method === 'POST') {
       this.handleProjectsDeploy(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/roadmap$/) && req.method === 'GET') {
+      this.handleProjectsRoadmap(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/open-items\/[^/]+\/roadmap$/) && req.method === 'PATCH') {
+      this.handleProjectsUpdateOpenItemRoadmap(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/implement-milestone$/) && req.method === 'POST') {
+      this.handleProjectsImplementMilestone(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -2282,6 +2294,44 @@ export class HttpAdapter extends MessagingAdapter {
     try { data = JSON.parse(body); } catch { data = {}; }
     const result = await this.projectsCallbacks.triggerDeploy(projectId, data);
     res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // v663a — Roadmap-Handler
+  private async handleProjectsRoadmap(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listRoadmap) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const milestones = await this.projectsCallbacks.listRoadmap(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ milestones }));
+  }
+
+  private async handleProjectsUpdateOpenItemRoadmap(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.updateOpenItemRoadmap) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const itemId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { milestone?: string | null; order?: number | null; estimatedHours?: number | null };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const ok = await this.projectsCallbacks.updateOpenItemRoadmap(itemId, data);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  private async handleProjectsImplementMilestone(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.implementMilestone) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { milestone?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.milestone?.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'milestone required' })); return; }
+    const result = await this.projectsCallbacks.implementMilestone(projectId, data.milestone.trim());
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 

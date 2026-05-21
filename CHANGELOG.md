@@ -5,6 +5,72 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.663] - 2026-05-21
+
+### Added — Project Conventions + Roadmap (v663a)
+
+**Schema (Migration v80/v83)**:
+- `projects.conventions TEXT` (JSON: readme/changelog/commits/branching/versioning)
+- `project_open_items.roadmap_milestone TEXT`
+- `project_open_items.roadmap_order INTEGER`
+- `project_open_items.estimated_hours REAL`
+- Index `idx_open_items_roadmap`
+
+**Project Conventions (alle opt-in, default = off)**:
+- `readme.autoUpdate` + `template` (default/minimal/custom)
+- `changelog.autoUpdate` + `format` (keepachangelog/free)
+- `commits.convention` (conventional/free) + `scopePolicy` (required/optional/forbidden)
+- `branching.strategy` (main-only/feature-branches/gitflow) + `prTarget`
+- `versioning.scheme` (semver/date/custom) + `autoTag`
+
+**Project-Agent-Integration der Conventions**:
+- `setProjectConventionsResolver(cwd → conventions)` Hook — alfred.ts liefert
+  über `projectRepo.list().find(p => p.cwd === cwd)`
+- `branching.strategy='feature-branches'` → `branchPerSession=true` automatisch
+- `commits.convention='conventional'` → Heuristisches Präfix:
+  fix:/feat:/refactor:/test:/docs:/style:/perf:/chore: aus Phase-Text abgeleitet
+- `readme.autoUpdate=true` → Phase-Prompt-Hint „README.md pflegen (Template: …)"
+- `changelog.autoUpdate=true` → Phase-Prompt-Hint „CHANGELOG.md Eintrag unter
+  [Unreleased] anlegen (Format: …)"
+- `versioning.autoTag=true` + scheme='semver' → bei erfolgreichem Push:
+  letztes Semver-Tag finden, Patch+1, taggen + pushen
+- `commits.scopePolicy='required'` → Prompt-Hint „mit Scope: feat(scope): …"
+
+**Project Roadmap**:
+- Open-Items mit `roadmap_milestone` gesetzt sind Roadmap-Items
+- `listRoadmap(projectId)` gruppiert nach Milestone, intern sortiert nach roadmap_order
+- `listMilestoneItems(projectId, milestone)` für Implement-Aktion
+- `updateOpenItemRoadmap(itemId, {milestone, order, estimatedHours})`
+- `implementMilestone(projectId, milestone)` Action:
+  - aggregiert alle open + in_progress items des Milestones
+  - sortiert nach roadmap_order
+  - Goal-Komposition: nummerierte Item-Liste mit Beschreibungen + estimated hours
+  - Startet `project_agent.start` mit `link_open_item_ids` (für Auto-Resolve v641)
+
+**API-Endpoints**:
+- `GET /api/projects/:id/roadmap` — Items grouped by milestone
+- `PATCH /api/projects/open-items/:id/roadmap` — milestone/order/estimatedHours setzen
+- `POST /api/projects/:id/implement-milestone` Body `{milestone}` — startet Project-Agent
+- `PATCH /api/projects/:id` jetzt mit `conventions` Patch-Field
+
+**WebUI** (`ProjectConventionsView` + `ProjectRoadmapView` in ProjectsPage):
+- ⚙️ Conventions Section: kollabierbar mit Badge „N aktiv", Form für alle 5 Bereiche
+- 🗺️ Roadmap Section: kollabierbar, Milestones gruppiert mit Header (count/hours/done)
+- Pro Milestone: ⚡ Implementieren Button (disabled wenn keine offenen Items)
+- Item-Zeilen mit Status-Badge, Priority-Icon, EstimatedHours, Reihenfolge-Index
+
+### Notes
+- Build grün (12/12)
+- Alles opt-in — bestehende Projekte ohne aktivierte Conventions verhalten sich unverändert
+- README/CHANGELOG-Auto-Update läuft via Phase-Prompt-Hint an den LLM (nicht
+  hardcoded-Edit) — flexibler und respektiert das tatsächliche Repo-Layout
+- v663b folgt mit **22 Automation-Templates** (Standup, Release-Pflege,
+  Wöchentlich, Code-Review, Dependency, Test-Coverage, Activity-Digest,
+  Open-Items-Triage, Doc-Drift, Auto-Rebase, Brainstorming-Pulse, PR-Pflege,
+  Security-Sentinel, Performance-Baseline, Onboarding-Doc, Cost-Tracking,
+  Stakeholder-Briefing, License-Audit, Pre-Mortem, ADR, Demo-Day-Prep,
+  Recurring-Bug-Detector)
+
 ## [0.19.0-multi-ha.662] - 2026-05-21
 
 ### Added — Telegram Reactions als Feedback-Signal
