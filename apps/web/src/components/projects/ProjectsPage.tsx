@@ -13,6 +13,7 @@ import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
+import { ProjectStorageView } from './ProjectStorageView';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -771,6 +772,9 @@ export function ProjectsPage() {
                   </div>
                 </div>
               )}
+
+              {/* v665b — Storage-View (collapsible) */}
+              <ProjectStorageView project={detail.project} onMoved={() => loadDetail(detail.project.id)} />
 
               {/* v663a — Roadmap-View (collapsible) */}
               <ProjectRoadmapView projectId={detail.project.id} projectName={detail.project.name} />

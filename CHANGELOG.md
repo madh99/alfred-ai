@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.666] - 2026-05-21
+
+### Added — Project-Mobility: Move local↔shared (v665b)
+
+**ProjectMoveService** (`cluster/project-move.ts`):
+- `computeTargetPath(project, target)` — leitet Pfad aus storageType+shareId+slug
+- `preflight(project, target, opts)` — 6 Checks:
+  1. **no_active_session** (locked_by_node_id IS NULL OR stale)
+  2. **git_clean** (`git status --porcelain` leer)
+  3. **source_exists** (cwd auf dieser Node erreichbar)
+  4. **target_free** (Target-Pfad noch nicht vorhanden)
+  5. **share_usable** (bei Ziel=shared)
+  6. **disk_space** (du-Quelle * 1.2 < df-avail-Ziel, best-effort)
+- `execute(project, target, opts, userId, onProgress?)`:
+  1. tryLock(180min TTL)
+  2. rsync `-a --info=progress2 --exclude…` + Live-Progress an onProgress
+  3. Verify: `git status` im Ziel (wenn .git existiert)
+  4. DB-Update transaktional (cwd/storage_type/share_id/node_id)
+  5. Source-Cleanup wenn !keepSource
+  6. Lock release (auch im Fehler-Pfad)
+- Rollback-Safety: vor DB-Update bleibt Source unverändert
+
+**API-Endpoints**:
+- `GET /api/cluster/shares` — alle konfigurierten Shares + Status (available/writable/reason)
+- `POST /api/projects/:id/move/preflight` Body `{ storageType, shareId?, nodeId? }`
+  → Liste aller 6 Checks mit pass/fail/detail + sourceCwd + targetCwd
+- `POST /api/projects/:id/move` Body `{ storageType, shareId?, nodeId?, excludes?, keepSource? }`
+  → rsync execution + DB-Update + cleanup
+
+**WebUI** (`ProjectStorageView` + `MoveModal`):
+- 📦 Storage Section in ProjectsPage Detail (collapsible):
+  - Aktueller storageType / shareId / nodeId / cwd-Pfad
+  - 🔒 Lock-Anzeige falls aktive Session (Holder-Node + TTL)
+  - „📤 Move…" Button öffnet Modal
+- Move-Modal:
+  - Aktuelles-Storage-Banner
+  - Ziel-Toggle: 🖥 local (diese Node) / 🗄 shared (Cluster-Share)
+  - Share-Picker (deaktiviert für offline/readonly/not-writable)
+  - „Source behalten" Toggle
+  - **Pre-Flight-Anzeige live** (✓/✗ pro Check, sourceCwd → targetCwd)
+  - „Move starten" Button (disabled wenn !preflight.ok || moving)
+  - Result-Banner mit Duration + Pfaden
+
+### Architektur
+- Default-Excludes: `node_modules`, `dist`, `build`, `.next`, `__pycache__`, `.cache`, `target`, `coverage`
+- Konfigurierbar via `projects.rsyncExcludes` in config
+- rsync mit `-a --info=progress2` (preserves perms/symlinks/times, streamt Progress)
+- Sicher gegen race: kombinierter Pre-Flight + tryLock vor rsync
+- Wenn rsync fehlschlägt: Source bleibt, DB unverändert; Target-Verzeichnis bleibt
+  als Half-Copy (Operator-Cleanup empfohlen)
+
+### Notes
+- Build grün (12/12)
+- NFS + SMB direkt unterstützt sobald die Mounts auf den Nodes existieren —
+  ShareManager prüft existsSync + W_OK
+- Share-Wechsel (z.B. `shared@main` → `shared@archive`) direkt unterstützt
+  (kein zwischen-local-step nötig)
+- `gh`-CLI für PR-Automations läuft auf der Lock-Holder-Node (genau wie git)
+- Owner-Cross-Node-Move (local-zu-anderer-local-Node): aktuell nicht implementiert —
+  bräuchte ssh-rsync; für jetzt: erst auf shared moven, dann anderer Node holt sich's
+
 ## [0.19.0-multi-ha.665] - 2026-05-21
 
 ### Added — Cluster-Shares Foundation für Projekte (v665a)

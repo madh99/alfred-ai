@@ -436,6 +436,10 @@ export class HttpAdapter extends MessagingAdapter {
     updateAutomation?: (id: string, patch: Record<string, unknown>) => Promise<boolean>;
     deleteAutomation?: (id: string) => Promise<boolean>;
     runAutomationNow?: (id: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
+    /** v665b — Cluster-Move: Shares listen + Move preflight + execute */
+    listClusterShares?: () => Promise<Array<{ id: string; name?: string; mountPath: string; type: string; readOnly: boolean; available: boolean; writable: boolean; reason?: string }>>;
+    moveProjectPreflight?: (projectId: string, target: { storageType: string; shareId?: string; nodeId?: string }) => Promise<any>;
+    moveProject?: (projectId: string, target: { storageType: string; shareId?: string; nodeId?: string }, opts: { excludes?: string[]; keepSource?: boolean }) => Promise<{ ok: boolean; sourceCwd?: string; targetCwd?: string; durationMs?: number; error?: string }>;
     create: (input: Record<string, unknown>) => Promise<any>;
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
@@ -888,6 +892,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAutomationsDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/automations\/[^/]+\/run$/) && req.method === 'POST') {
       this.handleAutomationsRun(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/cluster/shares' && req.method === 'GET') {
+      this.handleClusterShares(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/move\/preflight$/) && req.method === 'POST') {
+      this.handleProjectMovePreflight(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/move$/) && req.method === 'POST') {
+      this.handleProjectMove(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -2414,6 +2424,47 @@ export class HttpAdapter extends MessagingAdapter {
     const id = parts[parts.length - 2];
     const result = await this.projectsCallbacks.runAutomationNow(id);
     res.writeHead(result.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // v665b — Cluster-Shares + Project-Move
+  private async handleClusterShares(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listClusterShares) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const shares = await this.projectsCallbacks.listClusterShares();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ shares }));
+  }
+
+  private async handleProjectMovePreflight(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.moveProjectPreflight) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 3]; // /api/projects/:id/move/preflight
+    const body = await this.readBody(req);
+    let data: { storageType?: string; shareId?: string; nodeId?: string };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.storageType) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'storageType required' })); return; }
+    const result = await this.projectsCallbacks.moveProjectPreflight(projectId, data as { storageType: string; shareId?: string; nodeId?: string });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleProjectMove(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.moveProject) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { storageType?: string; shareId?: string; nodeId?: string; excludes?: string[]; keepSource?: boolean };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    if (!data.storageType) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'storageType required' })); return; }
+    const result = await this.projectsCallbacks.moveProject(
+      projectId,
+      { storageType: data.storageType, shareId: data.shareId, nodeId: data.nodeId },
+      { excludes: data.excludes, keepSource: data.keepSource },
+    );
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }
 

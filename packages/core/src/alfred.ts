@@ -183,6 +183,8 @@ export class Alfred {
   private automationEngine?: import('./automation/automation-engine.js').AutomationEngine;
   /** v665a — Cluster-Share Manager (NFS/SMB/etc.) */
   private shareManager?: import('./cluster/share-manager.js').ShareManager;
+  /** v665b — Project-Move (rsync + DB-Update + Cleanup) */
+  private projectMoveService?: import('./cluster/project-move.js').ProjectMoveService;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
   private bmwTelematicRepo?: BmwTelematicRepository;
@@ -639,6 +641,17 @@ export class Alfred {
         );
         await shareManager.checkAll();
         this.shareManager = shareManager;
+
+        // v665b — ProjectMoveService aufsetzen
+        const { ProjectMoveService } = await import('./cluster/project-move.js');
+        const localBase = this.config.projects?.localBase ?? path.join(os.homedir(), 'projects');
+        const defaultExcludes = this.config.projects?.rsyncExcludes ?? ['node_modules', 'dist', 'build', '.next', '__pycache__', '.cache', 'target', 'coverage'];
+        const myNodeId = this.config.cluster?.nodeId ?? 'single';
+        this.projectMoveService = new ProjectMoveService(
+          projectRepo, shareManager, localBase, defaultExcludes, myNodeId,
+          this.logger.child({ component: 'project-move' }),
+        );
+
         // Periodischer Stale-Lock-Sweep alle 5min
         setInterval(() => {
           projectRepo.sweepStaleLocks().then(n => {
@@ -5090,6 +5103,41 @@ export class Alfred {
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
+          // v665b — Cluster-Shares + Project-Move
+          listClusterShares: async () => {
+            if (!this.shareManager) return [];
+            return this.shareManager.listStatuses().map(s => ({
+              id: s.config.id,
+              name: s.config.name,
+              mountPath: s.config.mountPath,
+              type: s.config.type,
+              readOnly: !!s.config.readOnly,
+              available: s.available,
+              writable: s.writable,
+              reason: s.reason,
+            }));
+          },
+          moveProjectPreflight: async (projectId: string, target: { storageType: string; shareId?: string; nodeId?: string }) => {
+            if (!this.projectMoveService) return { ok: false, checks: [{ name: 'service', passed: false, detail: 'MoveService nicht initialisiert' }] };
+            const uid = await resolveOwnerProj();
+            const project = await projRepo.getById(uid, projectId);
+            if (!project) return { ok: false, checks: [{ name: 'project_exists', passed: false }] };
+            return await this.projectMoveService.preflight(project, target as any, {});
+          },
+          moveProject: async (projectId: string, target: { storageType: string; shareId?: string; nodeId?: string }, opts: { excludes?: string[]; keepSource?: boolean }) => {
+            if (!this.projectMoveService) return { ok: false, error: 'MoveService nicht initialisiert' };
+            const uid = await resolveOwnerProj();
+            const project = await projRepo.getById(uid, projectId);
+            if (!project) return { ok: false, error: 'Projekt nicht gefunden' };
+            // Pre-Flight noch einmal validieren bevor wir ausführen
+            const pre = await this.projectMoveService.preflight(project, target as any, opts);
+            if (!pre.ok) {
+              const failed = pre.checks.filter(c => !c.passed).map(c => `${c.name}: ${c.detail ?? 'failed'}`).join('; ');
+              return { ok: false, error: `Pre-Flight nicht bestanden — ${failed}` };
+            }
+            return await this.projectMoveService.execute(project, target as any, opts, uid);
+          },
+
           // v663b — Automations CRUD + Templates + Run-Now
           listAutomationTemplates: async () => {
             try {

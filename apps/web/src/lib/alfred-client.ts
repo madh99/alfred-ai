@@ -631,6 +631,30 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v665b — Cluster-Shares + Project-Move
+  async fetchClusterShares(): Promise<ClusterShareStatus[]> {
+    const res = await fetch(`${this.baseUrl}/api/cluster/shares`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.shares ?? [];
+  }
+  async projectMovePreflight(projectId: string, target: { storageType: 'local' | 'shared'; shareId?: string; nodeId?: string }): Promise<MovePreflightResult> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/move/preflight`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(target),
+    });
+    if (!res.ok) return { ok: false, checks: [] };
+    return await res.json();
+  }
+  async projectMove(projectId: string, target: { storageType: 'local' | 'shared'; shareId?: string; nodeId?: string }, opts?: { excludes?: string[]; keepSource?: boolean }): Promise<MoveResult> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/move`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ ...target, ...(opts ?? {}) }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  }
+
   // v663b — Automations API
   async fetchAutomationTemplates(): Promise<AutomationTemplate[]> {
     const res = await fetch(`${this.baseUrl}/api/projects/automation-templates`, { headers: this.authHeaders });
@@ -1462,6 +1486,31 @@ export interface GoalCheckpointItem {
   notes?: string;
 }
 
+// v665b — Cluster-Shares + Move
+export interface ClusterShareStatus {
+  id: string;
+  name?: string;
+  mountPath: string;
+  type: string;
+  readOnly: boolean;
+  available: boolean;
+  writable: boolean;
+  reason?: string;
+}
+export interface MovePreflightResult {
+  ok: boolean;
+  checks: Array<{ name: string; passed: boolean; detail?: string }>;
+  sourceCwd?: string;
+  targetCwd?: string;
+}
+export interface MoveResult {
+  ok: boolean;
+  sourceCwd?: string;
+  targetCwd?: string;
+  durationMs?: number;
+  error?: string;
+}
+
 // v663b — Project Automations
 export interface AutomationTemplate {
   kind: string;
@@ -1689,6 +1738,16 @@ export interface Project {
   nextCheckAt?: string;
   /** v663a — Optional pro-Projekt Conventions */
   conventions?: ProjectConventions;
+  /** v665a — Storage-Typ 'local' (node-bound) oder 'shared' (auf Cluster-Share) */
+  storageType?: 'local' | 'shared';
+  /** v665a — bei shared: ID des Shares aus infra.shares */
+  shareId?: string;
+  /** v665a — bei local: hostende Cluster-Node */
+  nodeId?: string;
+  /** v665a — Active-Lock holder */
+  lockedByNodeId?: string;
+  /** v665a — Lock-TTL */
+  lockedUntil?: string;
 }
 
 // v643 — Per-Phase Commit eines Project-Agent-Laufs
