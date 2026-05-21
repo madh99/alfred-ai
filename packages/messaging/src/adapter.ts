@@ -6,8 +6,27 @@ import type {
   MessagingAdapterStatus,
 } from '@alfred/types';
 
+/** v662 — Reaction-Event von Plattformen die Reaktionen unterstützen (Telegram >=7.0). */
+export interface ReactionEvent {
+  platform: Platform;
+  chatId: string;
+  chatType: 'dm' | 'group';
+  userId: string;
+  userName?: string;
+  /** Platform-Message-ID auf die reagiert wurde */
+  messageId: string;
+  /** Hinzugefügte Reaktionen (Telegram: emoji-Strings wie '👍', '❤️') */
+  added: string[];
+  /** Entfernte Reaktionen */
+  removed: string[];
+  /** Heuristisches Sentiment basierend auf Standard-Emojis */
+  sentiment: 'positive' | 'negative' | 'neutral';
+  timestamp: Date;
+}
+
 export interface MessagingAdapterEvents {
   message: [message: NormalizedMessage];
+  reaction: [reaction: ReactionEvent];
   error: [error: Error];
   connected: [];
   disconnected: [];

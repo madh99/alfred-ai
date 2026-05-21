@@ -168,11 +168,51 @@ export class TelegramAdapter extends MessagingAdapter {
       this.emit('message', normalized);
     });
 
+    // v662 — Reactions als Feedback-Signal
+    // Telegram Bot API >=7.0 liefert message_reaction Updates. grammy hat dafür
+    // `bot.on('message_reaction')` aber das Event muss explizit in allowed_updates
+    // mit eingeschlossen sein damit Telegram es überhaupt zustellt.
+    this.bot.on('message_reaction', (ctx) => {
+      try {
+        const r = ctx.messageReaction;
+        if (!r) return;
+        const added = (r.new_reaction ?? []).filter((x: any) => x.type === 'emoji').map((x: any) => x.emoji as string);
+        const removed = (r.old_reaction ?? []).filter((x: any) => x.type === 'emoji').map((x: any) => x.emoji as string);
+        // Heuristisches Sentiment-Mapping
+        const POSITIVE = new Set(['👍', '❤', '❤️', '🔥', '🎉', '🥰', '🤩', '👏', '😍', '💯', '✅', '👌', '🙏', '💪']);
+        const NEGATIVE = new Set(['👎', '💩', '😡', '😢', '🤬', '🤮', '😱', '🙄', '😤', '❌']);
+        let sentiment: 'positive' | 'negative' | 'neutral' = 'neutral';
+        if (added.some(e => POSITIVE.has(e))) sentiment = 'positive';
+        else if (added.some(e => NEGATIVE.has(e))) sentiment = 'negative';
+        else if (removed.some(e => POSITIVE.has(e))) sentiment = 'negative'; // entfernte Positiv-Reaktion = ggf. Korrektur
+        this.emit('reaction', {
+          platform: 'telegram',
+          chatId: String(r.chat.id),
+          chatType: r.chat.type === 'private' ? 'dm' : 'group',
+          userId: r.user ? String(r.user.id) : 'anonymous',
+          userName: r.user?.username,
+          messageId: String(r.message_id),
+          added,
+          removed,
+          sentiment,
+          timestamp: new Date(r.date * 1000),
+        });
+      } catch (err) {
+        this.emit('error', err as Error);
+      }
+    });
+
     this.bot.catch((err) => {
       this.emit('error', err.error as Error);
     });
 
     this.bot.start({
+      // v662 — message_reaction muss explizit in allowed_updates damit Telegram
+      // diese Events zustellt. Wir packen alle Standards rein + reactions.
+      allowed_updates: [
+        'message', 'edited_message', 'callback_query',
+        'message_reaction', 'message_reaction_count',
+      ],
       onStart: () => {
         this.status = 'connected';
         this.emit('connected');

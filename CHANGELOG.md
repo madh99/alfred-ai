@@ -5,6 +5,63 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.662] - 2026-05-21
+
+### Added — Telegram Reactions als Feedback-Signal
+
+**Adapter-Layer**:
+- Neuer `ReactionEvent`-Type im `@alfred/messaging` mit platform, chatId,
+  messageId, added/removed emojis, heuristisches `sentiment` und timestamp
+- `MessagingAdapter`-Events um `reaction` erweitert (gehört zum EventEmitter
+  generic — Adapter ohne Reaction-Support emittieren es einfach nie)
+
+**Telegram-Adapter**:
+- `bot.on('message_reaction')` Listener
+- `bot.start({ allowed_updates: ['message', 'edited_message', 'callback_query', 'message_reaction', 'message_reaction_count'] })` — explizit nötig damit
+  Telegram das Update überhaupt zustellt
+- Sentiment-Mapping:
+  - 👍 ❤️ ❤ 🔥 🎉 🥰 🤩 👏 😍 💯 ✅ 👌 🙏 💪 → **positive**
+  - 👎 💩 😡 😢 🤬 🤮 😱 🙄 😤 ❌ → **negative**
+  - entfernte Positiv-Reaktion → negative (Korrektur-Signal)
+  - alles andere → neutral (kein Memory)
+
+**alfred.ts** (Reaction-Handler):
+- Bei `sentiment !== 'neutral'`:
+  - Conversation per `chatId` finden
+  - Letzte assistant-Message holen (pragmatisch — kein Telegram-msg-id → DB
+    Mapping; deckt 99% der Fälle ab da User typisch auf die jüngste Antwort
+    reagiert)
+  - Memory speichern:
+    - **positiv**: `category='feedback'`, `type='pattern'` →
+      „User reagierte positiv (👍) auf Alfred-Antwort: '…'. Vorgehen merken,
+      ähnliche Situation analog handhaben."
+    - **negativ**: `category='feedback'`, `type='correction'` →
+      „User reagierte negativ (👎) auf Alfred-Antwort: '…'. Vorgehen ÜBERDENKEN,
+      ähnliche Situation anders angehen."
+  - confidence 0.85, source 'auto'
+- Type `'correction'` wird vom Reasoning-Context-Collector IMMER geladen
+  (siehe `fetchMemoriesContextAware` Z.1062) — Memory wirkt sofort beim
+  nächsten Reasoning-Cycle
+- Type `'pattern'` wird auch immer geladen (max 5)
+
+### Architektur
+- Memory-basiert statt eigene Reactions-Tabelle — nutzt existierende
+  `fetchMemoriesContextAware`-Pipeline (v653-fix). Reactions = first-class
+  Feedback-Signal genau wie Confirmations (v657).
+- Snippet auf 200 Chars getrimmt, whitespace-normalisiert
+- Key-Format `reaction_<sentiment>_<chatId>_<messageId>` → deterministisch,
+  überschreibt sich bei mehrfacher gleicher Reaktion (idempotent)
+- Andere Adapter (Discord/WhatsApp/Matrix) emittieren `reaction` aktuell nicht
+  — einfache Erweiterung wenn benötigt (Discord MessageReactionAdd Event etc.)
+
+### Notes
+- Build grün (12/12)
+- Telegram Bot API ≥7.0 erforderlich (release Feb 2024)
+- `allowed_updates` muss `message_reaction` enthalten — sonst zustellt Telegram
+  die Reactions nicht (häufige Fehlerquelle)
+- Für Group-Chats: nur Reactions sichtbarer User-Identitäten zählen — Telegram
+  liefert die User-ID nur wenn der Bot Admin ist oder es ein Private-Chat ist
+
 ## [0.19.0-multi-ha.661] - 2026-05-21
 
 ### Added — Todos + Notes WebUI

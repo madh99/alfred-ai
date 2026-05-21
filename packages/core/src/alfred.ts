@@ -6612,6 +6612,56 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
       }
     });
 
+    // v662 — Telegram-Reactions als Feedback-Signal
+    // Wenn der User auf eine Alfred-Antwort mit 👍/❤️/etc. reagiert, speichern
+    // wir das als Memory (type='feedback'). Da wir kein Telegram-msg-id → DB-id
+    // Mapping haben, nehmen wir pragmatisch die LETZTE assistant-Message in der
+    // Conversation als Bezug — funktioniert für den 99%-Fall (User reagiert auf
+    // die jüngste Antwort).
+    adapter.on('reaction', async (reaction) => {
+      try {
+        this.logger.info({
+          platform: reaction.platform, chatId: reaction.chatId,
+          added: reaction.added, removed: reaction.removed, sentiment: reaction.sentiment,
+        }, 'Reaction received');
+
+        if (reaction.sentiment === 'neutral' || !this.memoryRepo || !this.conversationRepo) return;
+
+        // Conversation finden + letzte assistant-Message holen
+        const conv = await this.conversationRepo.findByPlatformChat(reaction.platform as Platform, reaction.chatId);
+        if (!conv) return;
+        const recent = await this.conversationRepo.getMessages(conv.id, 20);
+        const lastAssistant = [...recent].reverse().find((m: { role: string }) => m.role === 'assistant');
+        if (!lastAssistant) return;
+
+        // Owner-Master-User-ID resolven
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        if (!ownerUid) return;
+
+        // Memory speichern: snippet der assistant-message + sentiment
+        const snippet = (lastAssistant as { content: string }).content.slice(0, 200).replace(/\s+/g, ' ').trim();
+        const emojis = reaction.added.join(' ') || '∅';
+        const key = `reaction_${reaction.sentiment}_${reaction.chatId}_${reaction.messageId}`;
+        const value = reaction.sentiment === 'positive'
+          ? `User reagierte positiv (${emojis}) auf Alfred-Antwort: "${snippet}". Vorgehen merken, ähnliche Situation analog handhaben.`
+          : `User reagierte negativ (${emojis}) auf Alfred-Antwort: "${snippet}". Vorgehen ÜBERDENKEN, ähnliche Situation anders angehen.`;
+
+        await this.memoryRepo.saveWithMetadata(
+          ownerUid,
+          key,
+          value,
+          'feedback',
+          reaction.sentiment === 'positive' ? 'pattern' : 'correction',
+          0.85,
+          'auto',
+        );
+        this.logger.info({ sentiment: reaction.sentiment, snippet: snippet.slice(0, 60) },
+          'Reaction-Feedback als Memory gespeichert');
+      } catch (err) {
+        this.logger.warn({ err }, 'Reaction-Handler fehlgeschlagen (non-fatal)');
+      }
+    });
+
     adapter.on('error', (error: Error) => {
       this.logger.error({ platform, err: error }, 'Adapter error');
     });
