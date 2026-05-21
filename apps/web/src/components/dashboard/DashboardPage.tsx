@@ -40,6 +40,13 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+// v668 — Calls/Counts mit K/M-Kompaktformat + Tausender-Trenner im Tooltip
+function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString('de-DE');
+}
+
 function formatUptime(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
@@ -245,13 +252,13 @@ export function DashboardPage() {
           <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-1">Heute</p>
-              <p className="text-2xl font-bold text-blue-400">{today ? formatCost(today.totalCostUsd) : '$0'}</p>
-              <p className="text-xs text-gray-500 mt-1">{today?.totalCalls ?? 0} Calls</p>
+              <p className="text-2xl font-bold text-blue-400 truncate" title={today ? `$${today.totalCostUsd.toFixed(6)}` : undefined}>{today ? formatCost(today.totalCostUsd) : '$0'}</p>
+              <p className="text-xs text-gray-500 mt-1" title={`${(today?.totalCalls ?? 0).toLocaleString('de-DE')} Calls`}>{formatCount(today?.totalCalls ?? 0)} Calls</p>
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-1">{bucketGranularity === 'hour' ? (data.hourlyDate ?? hourlyDate) : RANGE_LABELS[range]}</p>
-              <p className="text-2xl font-bold text-blue-400">{formatCost(rangeTotal)}</p>
-              <p className="text-xs text-gray-500 mt-1">{rangeCalls} Calls</p>
+              <p className="text-2xl font-bold text-blue-400 truncate" title={`$${rangeTotal.toFixed(6)}`}>{formatCost(rangeTotal)}</p>
+              <p className="text-xs text-gray-500 mt-1" title={`${rangeCalls.toLocaleString('de-DE')} Calls`}>{formatCount(rangeCalls)} Calls</p>
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-1">Tokens {bucketGranularity === 'hour' ? (data.hourlyDate ?? hourlyDate) : RANGE_LABELS[range]}</p>
@@ -264,10 +271,10 @@ export function DashboardPage() {
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-1">Gesamt (All-Time)</p>
-              <p className="text-2xl font-bold text-gray-300">
+              <p className="text-2xl font-bold text-gray-300 truncate" title={`$${totalByModel.reduce((s, m) => s + m.costUsd, 0).toFixed(6)}`}>
                 {formatCost(totalByModel.reduce((s, m) => s + m.costUsd, 0))}
               </p>
-              <p className="text-xs text-gray-500 mt-1">{totalByModel.reduce((s, m) => s + m.calls, 0)} Calls</p>
+              <p className="text-xs text-gray-500 mt-1" title={`${totalByModel.reduce((s, m) => s + m.calls, 0).toLocaleString('de-DE')} Calls`}>{formatCount(totalByModel.reduce((s, m) => s + m.calls, 0))} Calls</p>
             </div>
           </div>
 

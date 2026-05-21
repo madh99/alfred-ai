@@ -37,6 +37,9 @@ export function Sidebar() {
   const [pathname, setPathname] = useState('');
   const [toolsOpen, setToolsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  // v668 — Chats & Projekte collapsible (Listen können lang werden)
+  const [chatsOpen, setChatsOpen] = useState(true);
+  const [projectsOpen, setProjectsOpen] = useState(true);
   const [counts, setCounts] = useState<Counts>({ insights: 0, goals: 0 });
   const [projects, setProjects] = useState<ProjectItem[]>([]);
   const [chats, setChats] = useState<ConvItem[]>([]);
@@ -45,13 +48,28 @@ export function Sidebar() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setPathname(window.location.pathname);
-    try { setToolsOpen(localStorage.getItem('alfred-sidebar-tools-open') === '1'); } catch {}
+    try {
+      setToolsOpen(localStorage.getItem('alfred-sidebar-tools-open') === '1');
+      // v668 — Chats/Projekte default offen, aber persistierter Zustand gewinnt
+      const c = localStorage.getItem('alfred-sidebar-chats-open');
+      if (c !== null) setChatsOpen(c === '1');
+      const p = localStorage.getItem('alfred-sidebar-projects-open');
+      if (p !== null) setProjectsOpen(p === '1');
+    } catch {}
   }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try { localStorage.setItem('alfred-sidebar-tools-open', toolsOpen ? '1' : '0'); } catch {}
   }, [toolsOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('alfred-sidebar-chats-open', chatsOpen ? '1' : '0'); } catch {}
+  }, [chatsOpen]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('alfred-sidebar-projects-open', projectsOpen ? '1' : '0'); } catch {}
+  }, [projectsOpen]);
 
   useEffect(() => {
     if (!client) return;
@@ -168,49 +186,67 @@ export function Sidebar() {
 
       {/* Scrollable area with Projekte / Chats / Tools */}
       <div className="flex-1 overflow-y-auto px-2 py-1 space-y-3">
-        {/* Projekte */}
+        {/* Projekte (collapsible) */}
         {projects.length > 0 && (
           <div>
             <div className="flex items-center justify-between px-3 py-1">
-              <span className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Projekte</span>
+              <button
+                onClick={() => setProjectsOpen(o => !o)}
+                className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500 hover:text-gray-300 font-semibold"
+              >
+                <span>{projectsOpen ? '▼' : '▶'}</span>
+                <span>Projekte</span>
+                <span className="text-[10px] text-gray-600 normal-case font-normal">({projects.length})</span>
+              </button>
               <a href={`${BASE}/projects/`} className="text-[10px] text-gray-500 hover:text-blue-400">Alle ›</a>
             </div>
-            <div className="space-y-0.5">
-              {projects.map(p => (
-                <button
-                  key={p.id}
-                  onClick={() => openProject(p.id)}
-                  className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
-                >
-                  <span className="text-[11px]">📁</span>
-                  <span className="truncate flex-1">{p.name}</span>
-                </button>
-              ))}
-            </div>
+            {projectsOpen && (
+              <div className="space-y-0.5">
+                {projects.map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => openProject(p.id)}
+                    className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
+                  >
+                    <span className="text-[11px]">📁</span>
+                    <span className="truncate flex-1">{p.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Chats */}
+        {/* Chats (collapsible) */}
         {chats.length > 0 && (
           <div>
             <div className="flex items-center justify-between px-3 py-1">
-              <span className="text-[11px] uppercase tracking-wide text-gray-500 font-semibold">Chats</span>
+              <button
+                onClick={() => setChatsOpen(o => !o)}
+                className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-gray-500 hover:text-gray-300 font-semibold"
+              >
+                <span>{chatsOpen ? '▼' : '▶'}</span>
+                <span>Chats</span>
+                <span className="text-[10px] text-gray-600 normal-case font-normal">({chats.length})</span>
+              </button>
               <a href={`${BASE}/history/`} className="text-[10px] text-gray-500 hover:text-blue-400">Alle ›</a>
             </div>
-            <div className="space-y-0.5">
-              {chats.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => openConversation(c)}
-                  className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
-                  title={c.platform === 'api' ? 'Im Chat fortsetzen' : 'In History öffnen (read-only)'}
-                >
-                  {c.pinnedAt && <span className="text-amber-400 text-[10px]">📌</span>}
-                  <span className="text-[11px]">{platformIcon(c.platform)}</span>
-                  <span className="truncate flex-1">{c.customLabel ?? c.chatId}</span>
-                </button>
-              ))}
-            </div>
+            {chatsOpen && (
+              <div className="space-y-0.5">
+                {chats.map(c => (
+                  <button
+                    key={c.id}
+                    onClick={() => openConversation(c)}
+                    className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
+                    title={c.platform === 'api' ? 'Im Chat fortsetzen' : 'In History öffnen (read-only)'}
+                  >
+                    {c.pinnedAt && <span className="text-amber-400 text-[10px]">📌</span>}
+                    <span className="text-[11px]">{platformIcon(c.platform)}</span>
+                    <span className="truncate flex-1">{c.customLabel ?? c.chatId}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

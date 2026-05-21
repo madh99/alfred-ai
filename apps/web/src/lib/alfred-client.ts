@@ -1584,8 +1584,9 @@ export interface ProjectLastDeploy {
 
 // v658 — Project Work-Stats + Chat-History
 export interface ProjectWorkStats {
-  total: { count: number; totalSeconds: number; runningCount: number };
-  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number }>;
+  // v668 — failedCount (cancelled/failed Sessions) separat ausgewiesen
+  total: { count: number; totalSeconds: number; runningCount: number; failedCount?: number };
+  byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount?: number }>;
   byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
 }
 

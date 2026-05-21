@@ -98,6 +98,9 @@ export function ProjectsPage() {
   const [showResolvedItems, setShowResolvedItems] = useState(false);
   // v659 — Deploy-Modal
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+  // v668 — Roadmap-Edit pro Open-Item (Inline statt Modal)
+  const [roadmapEditId, setRoadmapEditId] = useState<string | null>(null);
+  const [roadmapForm, setRoadmapForm] = useState<{ milestone: string; order: string; estimatedHours: string }>({ milestone: '', order: '', estimatedHours: '' });
 
   function toggleItemExpanded(id: string) {
     setExpandedItemIds(prev => {
@@ -231,6 +234,39 @@ export function ProjectsPage() {
         ...detail,
         openItems: detail.openItems.map(it => it.id === item.id ? { ...it, status: 'done' as const } : it),
       });
+    }
+  }
+
+  // v668 — Open-Item zur Roadmap hinzufügen / aus der Roadmap entfernen
+  function openRoadmapEdit(item: ProjectOpenItem) {
+    setRoadmapForm({
+      milestone: item.roadmapMilestone ?? '',
+      order: item.roadmapOrder != null ? String(item.roadmapOrder) : '',
+      estimatedHours: item.estimatedHours != null ? String(item.estimatedHours) : '',
+    });
+    setRoadmapEditId(item.id);
+  }
+  async function saveRoadmap(itemId: string) {
+    if (!client || !detail) return;
+    const milestone = roadmapForm.milestone.trim();
+    const order = roadmapForm.order.trim() === '' ? null : Number.parseInt(roadmapForm.order, 10);
+    const estimatedHours = roadmapForm.estimatedHours.trim() === '' ? null : Number.parseFloat(roadmapForm.estimatedHours);
+    const ok = await client.updateOpenItemRoadmap(itemId, {
+      milestone: milestone === '' ? null : milestone,
+      order: order != null && Number.isFinite(order) ? order : null,
+      estimatedHours: estimatedHours != null && Number.isFinite(estimatedHours) ? estimatedHours : null,
+    });
+    if (ok) {
+      setDetail({
+        ...detail,
+        openItems: detail.openItems.map(it => it.id === itemId ? {
+          ...it,
+          roadmapMilestone: milestone === '' ? undefined : milestone,
+          roadmapOrder: order != null && Number.isFinite(order) ? order : undefined,
+          estimatedHours: estimatedHours != null && Number.isFinite(estimatedHours) ? estimatedHours : undefined,
+        } : it),
+      });
+      setRoadmapEditId(null);
     }
   }
 
@@ -570,6 +606,11 @@ export function ProjectsPage() {
                             title="Für Bulk-Aktion auswählen"
                           />
                           <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
+                          <button
+                            onClick={() => openRoadmapEdit(it)}
+                            className={it.roadmapMilestone ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 hover:text-blue-400'}
+                            title={it.roadmapMilestone ? `Roadmap: ${it.roadmapMilestone}${it.roadmapOrder != null ? ` #${it.roadmapOrder}` : ''}` : 'Zur Roadmap hinzufügen'}
+                          >🗺️</button>
                           <span title={it.status === 'in_progress' ? 'in Bearbeitung' : it.priority}>
                             {it.status === 'in_progress' ? '🔄' : priorityIcon(it.priority)}
                           </span>
@@ -592,6 +633,53 @@ export function ProjectsPage() {
                           )}
                           <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
                         </div>
+                        {/* v668 — Roadmap-Edit Inline-Form */}
+                        {roadmapEditId === it.id && (
+                          <div className="ml-12 mt-1 mb-2 p-2 bg-[#0f0f0f] border border-blue-500/30 rounded text-[11px] space-y-1.5">
+                            <div className="text-blue-300 font-semibold">🗺️ Roadmap-Zuordnung</div>
+                            <div className="flex gap-1.5">
+                              <input
+                                value={roadmapForm.milestone}
+                                onChange={e => setRoadmapForm(f => ({ ...f, milestone: e.target.value }))}
+                                placeholder="Milestone (z.B. v2.0, Beta, Q3-2026)"
+                                className="flex-1 px-2 py-0.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200"
+                              />
+                              <input
+                                value={roadmapForm.order}
+                                onChange={e => setRoadmapForm(f => ({ ...f, order: e.target.value }))}
+                                placeholder="Reihenfolge"
+                                inputMode="numeric"
+                                className="w-20 px-2 py-0.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200"
+                              />
+                              <input
+                                value={roadmapForm.estimatedHours}
+                                onChange={e => setRoadmapForm(f => ({ ...f, estimatedHours: e.target.value }))}
+                                placeholder="Stunden"
+                                inputMode="decimal"
+                                className="w-20 px-2 py-0.5 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200"
+                              />
+                            </div>
+                            <div className="flex gap-1.5 justify-end">
+                              <button
+                                onClick={() => setRoadmapEditId(null)}
+                                className="px-2 py-0.5 text-gray-400 hover:text-gray-200"
+                              >Abbrechen</button>
+                              <button
+                                onClick={() => saveRoadmap(it.id)}
+                                className="px-2 py-0.5 bg-blue-500/20 border border-blue-500/40 text-blue-300 rounded hover:bg-blue-500/30"
+                              >Speichern</button>
+                              {it.roadmapMilestone && (
+                                <button
+                                  onClick={() => { setRoadmapForm({ milestone: '', order: '', estimatedHours: '' }); saveRoadmap(it.id); }}
+                                  className="px-2 py-0.5 bg-red-500/10 border border-red-500/30 text-red-300 rounded hover:bg-red-500/20"
+                                >Aus Roadmap entfernen</button>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-gray-500">
+                              Leer lassen = keine Roadmap-Position. Reihenfolge bestimmt Sortierung innerhalb des Milestones.
+                            </div>
+                          </div>
+                        )}
                         {isExpanded && hasDetails && (
                           <div className="ml-12 mt-1 mb-2 text-[11px] text-gray-400 space-y-0.5 border-l border-[#2a2a2a] pl-2">
                             {it.description && (

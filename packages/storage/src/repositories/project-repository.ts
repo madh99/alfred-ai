@@ -429,18 +429,18 @@ export class ProjectRepository {
    * der User die Live-Zeit aktiv laufender Agents sieht.
    */
   async getWorkStats(projectId: string): Promise<{
-    total: { count: number; totalSeconds: number; runningCount: number };
-    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number }>;
+    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number };
+    byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number }>;
     byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
   }> {
-    const now = new Date().toISOString();
-    // Per-session Duration: COALESCE(ended_at, now) - started_at in Sekunden
-    // SQLite: (julianday(end) - julianday(start)) * 86400 — Postgres-kompatibel: 1000 * 60 statt? Wir machen es JS-seitig nach SELECT.
+    // v668 — summary_json enthält status (success/failed/partial). Wir extrahieren das
+    // damit "abgebrochene" Sessions separat zählbar sind. Die Duration kommt aus
+    // (ended_at - started_at) — beide jetzt korrekt gesetzt (v668 Fix in finishSession).
     const sessionRows = await this.adapter.query(
-      `SELECT id, session_type, source_id, started_at, ended_at
+      `SELECT id, session_type, source_id, started_at, ended_at, summary_json
        FROM project_sessions WHERE project_id = ?`,
       [projectId],
-    ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null }>;
+    ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null; summary_json: string | null }>;
 
     // Map source_id → agent_name aus project_agent_sessions (alle in einem Roundtrip, dann lookup)
     const agentNameByTaskId = new Map<string, string>();
@@ -453,7 +453,8 @@ export class ProjectRepository {
 
     let totalSeconds = 0;
     let runningCount = 0;
-    const byTypeMap = new Map<string, { count: number; seconds: number; completed: number }>();
+    let failedCount = 0;
+    const byTypeMap = new Map<string, { count: number; seconds: number; completed: number; failed: number }>();
     const byAgentMap = new Map<string, { count: number; seconds: number }>();
 
     for (const s of sessionRows) {
@@ -463,10 +464,21 @@ export class ProjectRepository {
       totalSeconds += sec;
       if (!s.ended_at) runningCount++;
 
-      const t = byTypeMap.get(s.session_type) ?? { count: 0, seconds: 0, completed: 0 };
+      // v668 — failed/cancelled-Status aus summary_json extrahieren (best-effort)
+      let isFailed = false;
+      if (s.summary_json) {
+        try {
+          const parsed = JSON.parse(s.summary_json) as { status?: string };
+          if (parsed.status === 'failed' || parsed.status === 'cancelled') isFailed = true;
+        } catch { /* ignore parse errors */ }
+      }
+      if (isFailed) failedCount++;
+
+      const t = byTypeMap.get(s.session_type) ?? { count: 0, seconds: 0, completed: 0, failed: 0 };
       t.count++;
       t.seconds += sec;
       if (s.ended_at) t.completed++;
+      if (isFailed) t.failed++;
       byTypeMap.set(s.session_type, t);
 
       if (s.source_id) {
@@ -481,9 +493,9 @@ export class ProjectRepository {
     }
 
     return {
-      total: { count: sessionRows.length, totalSeconds, runningCount },
+      total: { count: sessionRows.length, totalSeconds, runningCount, failedCount },
       byType: [...byTypeMap.entries()]
-        .map(([sessionType, v]) => ({ sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed }))
+        .map(([sessionType, v]) => ({ sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed, failedCount: v.failed }))
         .sort((a, b) => b.totalSeconds - a.totalSeconds),
       byAgent: [...byAgentMap.entries()]
         .map(([agent, v]) => ({ agent, count: v.count, totalSeconds: v.seconds }))

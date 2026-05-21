@@ -805,6 +805,10 @@ export class Alfred {
           const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
           if (!userId) return;
           const sourceId = `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          // v668 — echte Startzeit aus durationMs ableiten
+          const startedAt = info.durationMs != null
+            ? new Date(Date.now() - info.durationMs).toISOString()
+            : undefined;
           try {
             await projectManager.finishOrphanSession({
               userId,
@@ -814,6 +818,7 @@ export class Alfred {
               success: info.success,
               transcript: info.finalResponse,
               totalFilesChanged: info.filesChanged,
+              startedAt,
             });
           } catch (err) { this.logger.debug({ err }, 'delegate completion → project-manager failed'); }
 
@@ -839,6 +844,10 @@ export class Alfred {
           const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
           if (!userId) return;
           try {
+            // v668 — echte Startzeit aus durationMs ableiten
+            const startedAt = info.durationMs != null
+              ? new Date(Date.now() - info.durationMs).toISOString()
+              : undefined;
             if (info.cwd) {
               // cwd present → standard auto-bind by cwd (creates or joins a project)
               await projectManager.finishSession({
@@ -851,6 +860,7 @@ export class Alfred {
                 transcript: info.finalOutput,
                 files: info.modifiedFiles,
                 totalFilesChanged: info.filesChanged,
+                startedAt,
               });
             } else {
               await projectManager.finishOrphanSession({
@@ -862,6 +872,7 @@ export class Alfred {
                 transcript: info.finalOutput,
                 files: info.modifiedFiles,
                 totalFilesChanged: info.filesChanged,
+                startedAt,
               });
             }
           } catch (err) { this.logger.debug({ err }, 'code-agent completion → project-manager failed'); }
@@ -1155,6 +1166,17 @@ export class Alfred {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
+              // v668 — echte Startzeit aus project_agent_sessions lesen damit
+              // Arbeitszeit-Statistik die Agent-Laufzeit zeigt (nicht nur die
+              // Summary-Erstellung). Best-effort; fallback ist now() im Repo.
+              let startedAt: string | undefined;
+              try {
+                const row = await this.database?.getAdapter().queryOne(
+                  `SELECT started_at FROM project_agent_sessions WHERE task_id = ?`,
+                  [sessionId],
+                ) as { started_at?: string } | null;
+                if (row?.started_at) startedAt = row.started_at;
+              } catch { /* non-fatal */ }
               await this.projectManager.finishSession({
                 userId,
                 sessionType: 'project_agent',
@@ -1164,6 +1186,7 @@ export class Alfred {
                 milestones: state.milestonesReached,
                 totalFilesChanged: state.totalFilesChanged,
                 success,
+                startedAt,
               });
             }
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }

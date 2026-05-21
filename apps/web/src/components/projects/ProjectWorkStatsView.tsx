@@ -90,8 +90,8 @@ export function ProjectWorkStatsView({ projectId }: Props) {
       {!stats && loading && <div className="text-xs text-gray-500 italic">Lade…</div>}
       {stats && (
         <div className="space-y-3">
-          {/* Total */}
-          <div className="bg-[#0f0f0f] border border-[#222] rounded p-3 grid grid-cols-3 gap-2 text-xs">
+          {/* Total — v668: failedCount-Spalte ergänzt */}
+          <div className="bg-[#0f0f0f] border border-[#222] rounded p-3 grid grid-cols-4 gap-2 text-xs">
             <div>
               <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Gesamtzeit</div>
               <div className="text-base font-semibold text-blue-400">{formatDuration(stats.total.totalSeconds)}</div>
@@ -104,20 +104,30 @@ export function ProjectWorkStatsView({ projectId }: Props) {
               <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Laufend</div>
               <div className="text-base font-semibold text-emerald-400">{stats.total.runningCount}</div>
             </div>
+            <div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-0.5">Abgebrochen</div>
+              <div className={`text-base font-semibold ${(stats.total.failedCount ?? 0) > 0 ? 'text-red-400' : 'text-gray-500'}`}>{stats.total.failedCount ?? 0}</div>
+            </div>
           </div>
 
-          {/* byType */}
+          {/* byType — v668: fertig/abgebrochen separat anzeigen */}
           {stats.byType.length > 0 && (
             <div>
               <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Nach Typ</div>
               <div className="space-y-0.5">
-                {stats.byType.map(t => (
-                  <div key={t.sessionType} className="flex items-center gap-2 text-xs">
-                    <span className="flex-1 text-gray-300">{typeLabel(t.sessionType)}</span>
-                    <span className="text-gray-500 text-[10px]">{t.count} ({t.completedCount} fertig)</span>
-                    <span className="font-mono text-blue-400">{formatDuration(t.totalSeconds)}</span>
-                  </div>
-                ))}
+                {stats.byType.map(t => {
+                  const failed = t.failedCount ?? 0;
+                  const counts = failed > 0
+                    ? `${t.count} (${t.completedCount} ✓, ${failed} ✗)`
+                    : `${t.count} (${t.completedCount} fertig)`;
+                  return (
+                    <div key={t.sessionType} className="flex items-center gap-2 text-xs">
+                      <span className="flex-1 text-gray-300">{typeLabel(t.sessionType)}</span>
+                      <span className="text-gray-500 text-[10px]" title={failed > 0 ? `${failed} abgebrochen/fehlgeschlagen` : undefined}>{counts}</span>
+                      <span className="font-mono text-blue-400">{formatDuration(t.totalSeconds)}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

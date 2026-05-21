@@ -15,6 +15,13 @@ export interface AttachSessionParams {
   cwd?: string;
   /** Optional repo URL. */
   repoUrl?: string;
+  /**
+   * v668 — Echte Startzeit der Session (ISO-String).
+   * Wird benutzt wenn die Session zum ersten Mal angelegt wird.
+   * Ohne diesen Wert nimmt createSession() now() und die Arbeitszeit-Statistik
+   * zeigt nur die Dauer der Summary-Erstellung statt der echten Agent-Laufzeit.
+   */
+  startedAt?: string;
 }
 
 export interface FinishSessionParams {
@@ -28,6 +35,8 @@ export interface FinishSessionParams {
   success?: boolean;
   transcript?: string;
   files?: string[];
+  /** v668 — Echte Startzeit (siehe AttachSessionParams.startedAt). */
+  startedAt?: string;
 }
 
 /**
@@ -87,6 +96,7 @@ export class ProjectManager {
       session = await this.repo.createSession(project.id, {
         sessionType: params.sessionType,
         sourceId: params.sourceId,
+        startedAt: params.startedAt, // v668 — echte Startzeit durchreichen falls bekannt
       });
     }
     await this.repo.touch(project.id);
@@ -114,6 +124,7 @@ export class ProjectManager {
         sessionType: params.sessionType,
         goal: params.goal,
         cwd: params.cwd,
+        startedAt: params.startedAt, // v668 — echte Startzeit für korrekte Arbeitszeit-Statistik
       });
 
       const summarizerInput: SummarizerInput = {
@@ -265,6 +276,7 @@ export class ProjectManager {
         session = await this.repo.createSession(misc.id, {
           sessionType: params.sessionType,
           sourceId: params.sourceId,
+          startedAt: params.startedAt, // v668 — echte Startzeit auch für orphan-bucket
         });
       }
       await this.repo.touch(misc.id);

@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.668] - 2026-05-22
+
+### Fixed
+- **ITSM Filter:** `'draft'`-Change-Requests und `'logged'`-Probleme wurden vom Aktiv-Filter unsichtbar gemacht. Die Default-Status frisch angelegter Tickets sind jetzt im Active-Set enthalten + jeweils eigene Status-Chips (Draft / Logged) in der Stats-Bar.
+- **Arbeitszeit-Statistik:** Sessions zeigten nur 8–19s statt der echten Agent-Laufzeit. Ursache: `finishSession()` legte den DB-Row erst am Ende an, `started_at` und `ended_at` waren ~gleich. Fix: `FinishSessionParams.startedAt` durchgereicht (Code-Agent: `Date.now() - durationMs`; Project-Agent: aus `project_agent_sessions.started_at` per Lookup; Delegate: ebenfalls aus `info.durationMs`).
+- **Dashboard Number-Formatting:** Hohe Call-Zahlen wurden RAW geprintet (z. B. `123456 Calls`). Neu: `formatCount()` mit K/M-Kompaktformat ab 10k + Tausender-Trenner im Tooltip + `truncate` auf Cost-Werten.
+
+### Added
+- **Sidebar:** Projekte- und Chats-Sections jetzt collapsible (Caret-Toggle + Counter + LocalStorage-Persistenz `alfred-sidebar-chats-open` / `alfred-sidebar-projects-open`).
+- **Roadmap aus Open-Items:** Pro Open-Item im Projekte-Detail neuer 🗺️-Button → Inline-Form für Milestone-Name, Reihenfolge und geschätzte Stunden. Bestehender `updateOpenItemRoadmap`-Endpoint wird genutzt. Button-Color zeigt sofort ob ein Item Teil der Roadmap ist. „Aus Roadmap entfernen"-Aktion entfernt das Milestone-Feld.
+- **Work-Stats: Abgebrochene Sessions:** Vierte Kennzahl "Abgebrochen" im Total-Grid. Pro Session-Type wird `failedCount` aus `summary_json.status === 'failed' \|\| 'cancelled'` extrahiert und als `✓/✗`-Counter ausgewiesen.
+
+### Changed
+- `ProjectRepository.getWorkStats()` Return-Type um `failedCount` erweitert (auf Total- und ByType-Ebene).
+- `ProjectManager.AttachSessionParams` + `FinishSessionParams` um optionalen `startedAt`-Parameter ergänzt.
+
 ## [0.19.0-multi-ha.667] - 2026-05-22
 
 ### Fixed — Pipeline-Hang im Project-Chat + Multi-User-Identity-Leak

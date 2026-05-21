@@ -851,8 +851,10 @@ export function ItsmPage() {
 
   // v645 — Active = nicht-finale Stati
   const INCIDENT_ACTIVE_STATES = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
-  const CHANGE_ACTIVE_STATES = new Set(['pending', 'approved', 'in_progress']);
-  const PROBLEM_ACTIVE_STATES = new Set(['open', 'analyzing', 'root_cause_identified', 'fix_in_progress']);
+  // v668 — 'draft' und 'logged' sind die Default-Status frisch angelegter Records.
+  // Vorher fehlten sie hier, daher hat der Aktiv-Filter alle neuen Tickets ausgeblendet.
+  const CHANGE_ACTIVE_STATES = new Set(['draft', 'pending', 'approved', 'in_progress']);
+  const PROBLEM_ACTIVE_STATES = new Set(['logged', 'open', 'analyzing', 'root_cause_identified', 'fix_in_progress']);
 
   function applyIncFilter(inc: Incident): boolean {
     if (incStatusFilter === 'active') return INCIDENT_ACTIVE_STATES.has(inc.status);
@@ -891,7 +893,8 @@ export function ItsmPage() {
     return stats;
   }, [incidents]);
   const chgStats = useMemo(() => {
-    const s = { pending: 0, approved: 0, in_progress: 0, completed: 0, failed: 0 };
+    // v668 — 'draft' ist der Default-Status frisch angelegter Change Requests, vorher nicht gezählt.
+    const s = { draft: 0, pending: 0, approved: 0, in_progress: 0, completed: 0, failed: 0 };
     for (const c of changes) { if (c.status in s) (s as any)[c.status]++; }
     return s;
   }, [changes]);
@@ -901,7 +904,8 @@ export function ItsmPage() {
     return s;
   }, [services]);
   const prbStats = useMemo(() => {
-    const s = { open: 0, analyzing: 0, root_cause_identified: 0, resolved: 0, closed: 0 };
+    // v668 — 'logged' ist der Default-Status frisch angelegter Probleme, vorher nicht gezählt.
+    const s = { logged: 0, open: 0, analyzing: 0, root_cause_identified: 0, fix_in_progress: 0, resolved: 0, closed: 0 };
     for (const p of problems) { if (p.status in s) (s as any)[p.status]++; }
     return s;
   }, [problems]);
@@ -1346,7 +1350,8 @@ export function ItsmPage() {
           <div className={clsx('space-y-3', selectedChange ? 'w-1/2' : 'w-full')}>
             {/* v645 — Stats */}
             <div className="flex gap-2 flex-wrap text-xs">
-              <StatChip active={chgStatusFilter === 'active'} onClick={() => setChgStatusFilter('active')} label="Aktiv" value={chgStats.pending + chgStats.approved + chgStats.in_progress} tone="blue" />
+              <StatChip active={chgStatusFilter === 'active'} onClick={() => setChgStatusFilter('active')} label="Aktiv" value={chgStats.draft + chgStats.pending + chgStats.approved + chgStats.in_progress} tone="blue" />
+              <StatChip active={chgStatusFilter === 'draft'} onClick={() => setChgStatusFilter('draft')} label="Draft" value={chgStats.draft} tone="gray" />
               <StatChip active={chgStatusFilter === 'pending'} onClick={() => setChgStatusFilter('pending')} label="Pending" value={chgStats.pending} tone="amber" />
               <StatChip active={chgStatusFilter === 'approved'} onClick={() => setChgStatusFilter('approved')} label="Approved" value={chgStats.approved} tone="emerald" />
               <StatChip active={chgStatusFilter === 'in_progress'} onClick={() => setChgStatusFilter('in_progress')} label="In Progress" value={chgStats.in_progress} tone="blue" />
@@ -1814,7 +1819,8 @@ export function ItsmPage() {
           <div className={clsx('space-y-3', selectedProblem ? 'w-1/2' : 'w-full')}>
             {/* v645 — Stats */}
             <div className="flex gap-2 flex-wrap text-xs">
-              <StatChip active={prbStatusFilter2 === 'active'} onClick={() => setPrbStatusFilter2('active')} label="Aktiv" value={prbStats.open + prbStats.analyzing + prbStats.root_cause_identified} tone="blue" />
+              <StatChip active={prbStatusFilter2 === 'active'} onClick={() => setPrbStatusFilter2('active')} label="Aktiv" value={prbStats.logged + prbStats.open + prbStats.analyzing + prbStats.root_cause_identified + prbStats.fix_in_progress} tone="blue" />
+              <StatChip active={prbStatusFilter2 === 'logged'} onClick={() => setPrbStatusFilter2('logged')} label="Logged" value={prbStats.logged} tone="gray" />
               <StatChip active={prbStatusFilter2 === 'open'} onClick={() => setPrbStatusFilter2('open')} label="Open" value={prbStats.open} tone="red" />
               <StatChip active={prbStatusFilter2 === 'analyzing'} onClick={() => setPrbStatusFilter2('analyzing')} label="Analyzing" value={prbStats.analyzing} tone="amber" />
               <StatChip active={prbStatusFilter2 === 'root_cause_identified'} onClick={() => setPrbStatusFilter2('root_cause_identified')} label="Root Cause" value={prbStats.root_cause_identified} tone="amber" />
