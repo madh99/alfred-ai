@@ -191,6 +191,17 @@ export class ProjectAgentRunner {
     this.projectConventionsResolver = resolver;
   }
 
+  /** v665a — Cluster-Lock-Hooks. Bei shared Projekten ist Lock zwingend, bei local optional. */
+  private projectLockAcquire?: (cwd: string, sessionId: string) => Promise<{ acquired: boolean; reason?: string }>;
+  private projectLockRelease?: (cwd: string, sessionId: string) => Promise<void>;
+  setProjectLockHooks(
+    acquire: (cwd: string, sessionId: string) => Promise<{ acquired: boolean; reason?: string }>,
+    release: (cwd: string, sessionId: string) => Promise<void>,
+  ): void {
+    this.projectLockAcquire = acquire;
+    this.projectLockRelease = release;
+  }
+
   /** v652 — Set by alfred.ts: Callback der Auto-Resume triggert (project_agent.resume Action). */
   private autoResumeCallback?: (failedTaskId: string, notes?: string) => Promise<void>;
   setAutoResumeCallback(cb: (failedTaskId: string, notes?: string) => Promise<void>): void {
@@ -227,6 +238,17 @@ export class ProjectAgentRunner {
     const runAsUser = (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1])
       ? agentDef.argsTemplate[1]
       : undefined;
+
+    // v665a — Cluster-Lock acquire (für shared Projekte zwingend, für local no-op wenn Hook
+    // nicht gesetzt). Bei Konflikt: Abort vor Session-Aufbau.
+    if (this.projectLockAcquire) {
+      const lock = await this.projectLockAcquire(config.cwd, sessionId).catch(() => ({ acquired: true } as { acquired: boolean; reason?: string }));
+      if (!lock.acquired) {
+        await this.sendProgress(platform, chatId, `🔒 Projekt-Lock nicht erworben: ${lock.reason ?? 'andere Node hält den Lock'}. Bitte später erneut oder erst andere Session beenden.`);
+        this.logger.warn({ sessionId, cwd: config.cwd, reason: lock.reason }, 'project-lock acquire failed');
+        return;
+      }
+    }
 
     // Register abort controller for stop signals
     const abortController = new AbortController();
@@ -900,6 +922,10 @@ export class ProjectAgentRunner {
     } finally {
       removeAbortController(sessionId);
       try { markOutputEnded(sessionId); } catch { /* best-effort */ }
+      // v665a — Projekt-Lock freigeben
+      if (this.projectLockRelease) {
+        try { await this.projectLockRelease(config.cwd, sessionId); } catch { /* skip */ }
+      }
       // v605 M5 — drain the interjection inbox so any messages that arrive after
       // session termination (e.g. user thinks the agent still runs and sends
       // another file) don't accumulate as orphans. Without this, late

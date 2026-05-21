@@ -577,6 +577,16 @@ export interface PfSenseConfig {
   verifyTls?: boolean;
 }
 
+/** v665a — Ein Cluster-Share-Mount (NFS/SMB/etc.) auf den shared Projekte verweisen. */
+export interface InfraShareConfig {
+  id: string;
+  name?: string;
+  mountPath: string;
+  type: 'nfs' | 'smb' | 'virtiofs' | 'cephfs' | 'local-shared';
+  readOnly?: boolean;
+  preflightCheck?: boolean;
+}
+
 export interface InfraDefaultsConfig {
   network?: string;
   proxmoxNode?: string;
@@ -584,6 +594,8 @@ export interface InfraDefaultsConfig {
   sshKeyPath?: string;
   processManager?: 'pm2' | 'systemd' | 'docker-compose';
   runtime?: 'node' | 'python' | 'static';
+  /** v665a — Cluster-Shares. Identische mountPaths auf allen Nodes erwartet. */
+  shares?: InfraShareConfig[];
 }
 
 // ── CMDB / ITSM ─────────────────────────────────────────────
@@ -902,6 +914,14 @@ export interface ProjectsConfig {
   healthCheckEnabled?: boolean;
   healthCheckIntervalHours?: number;
   healthProbeTimeoutMs?: number;
+  /** v665a — Basis-Pfad für 'local' storage_type (z.B. '/home/alfred/projects') */
+  localBase?: string;
+  /** v665a — Default storage_type für neue Projekte (default: 'local') */
+  defaultStorage?: 'local' | 'shared';
+  /** v665a — Default share_id falls defaultStorage='shared' */
+  defaultShareId?: string;
+  /** v665a — rsync-Excludes-Default beim Move (Default: node_modules, dist, build, etc.) */
+  rsyncExcludes?: string[];
 }
 
 export interface CmdbConfig {

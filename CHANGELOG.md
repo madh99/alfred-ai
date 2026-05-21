@@ -5,6 +5,69 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.665] - 2026-05-21
+
+### Added — Cluster-Shares Foundation für Projekte (v665a)
+
+**Schema (Migration v82/v85)**:
+- `projects.storage_type TEXT NOT NULL DEFAULT 'local'` ('local' | 'shared')
+- `projects.share_id TEXT` (FK auf konfigurierten Share aus infra.shares)
+- `projects.node_id TEXT` (bei storage_type='local': welche Cluster-Node hostet das Projekt)
+- `projects.locked_by_node_id TEXT` (Active-Session-Lock)
+- `projects.locked_until TEXT` (TTL für Stale-Lock-Cleanup)
+- Indizes: `(share_id, storage_type)` und `(locked_by_node_id, locked_until)`
+- **Bestehende Projekte bleiben unverändert** — Default 'local', node_id kann erst beim ersten Adapter-Owner-Run gesetzt werden
+
+**Config-Schema (`infra.shares[]`)**:
+```yaml
+infra:
+  shares:
+    - id: 'main'
+      name: 'Cluster-Hauptshare'
+      mountPath: '/mnt/cluster-projects'   # IDENTISCH auf allen Nodes
+      type: 'nfs'                          # nfs|smb|virtiofs|cephfs|local-shared
+      readOnly: false
+      preflightCheck: true
+projects:
+  localBase: '/home/alfred/projects'
+  defaultStorage: 'local'                  # Default für neue Projekte
+  defaultShareId: 'main'                   # nur bei defaultStorage='shared'
+  rsyncExcludes: ['node_modules', 'dist', 'build', '.next', '__pycache__']
+```
+
+**ShareManager** (`cluster/share-manager.ts`):
+- Startup-Check: existsSync + accessSync(W_OK) pro share.mountPath
+- `getShare(id)`, `isUsable(id)`, `listStatuses()`, `recheckAll()`
+- Logs Warnings bei nicht-vorhandenen Mounts — bricht NICHT ab (Single-Node-Setups laufen weiter)
+
+**ProjectRepository Lock-API**:
+- `tryLock(projectId, nodeId, ttlMinutes=180)` — atomares acquire (UPDATE … WHERE
+  locked_by IS NULL OR locked_by = ? OR locked_until < now())
+- `refreshLock(projectId, nodeId, ttlMinutes)` — Heartbeat
+- `releaseLock(projectId, nodeId)` — idempotent, nur eigener Lock
+- `sweepStaleLocks()` — Cleanup für Crashed-Holder
+
+**Project-Agent Lock-Integration**:
+- `setProjectLockHooks(acquire, release)` — neue Hooks im Runner
+- Vor `_runInner` → Lock acquire. Bei Misserfolg → 🔒-Message + Abort vor Session-Aufbau.
+- Im finally → Lock release
+- **Routing-Reject** bei `storage_type='local'` + falsche `node_id`:
+  Klare Fehlermeldung „Projekt liegt lokal auf node X — diese Node ist Y. Bitte per
+  project.move auf einen shared Mount verschieben."
+
+**Hintergrund-Cleanup**:
+- alle 5min: `projectRepo.sweepStaleLocks()` befreit Locks älterer als TTL
+  (z.B. nach Node-Crash ohne sauberen Release)
+
+### Notes
+- Build grün (12/12)
+- v665a ist **funktional vollständig** für Cluster-Lokal-Routing — Projekte sind
+  jetzt cluster-aware, mehrere Nodes können sicher koexistieren
+- **v665b folgt** mit Move-Operation (local↔shared, NFS+SMB), WebUI Storage-Section
+  + Move-Modal, project_move Skill-Action mit v657 Multi-Action-Confirmation
+- Bestehende lokale Projekte funktionieren unverändert. Erst wenn ein Projekt
+  gemoved wird, kommt der shared-Codepfad zum Einsatz.
+
 ## [0.19.0-multi-ha.664] - 2026-05-21
 
 ### Added — Project Automations mit 22 Templates (v663b)

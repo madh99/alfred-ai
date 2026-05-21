@@ -1893,4 +1893,17 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_project_automations_next ON project_automations(next_run_at, enabled)`);
     },
   },
+  {
+    version: 82,
+    description: 'v665a — projects storage_type/share_id/node_id/locked_by_node_id/locked_until für Cluster-Shares + Project-Lock',
+    up(db) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN storage_type TEXT NOT NULL DEFAULT 'local'`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN share_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN node_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN locked_by_node_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN locked_until TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_share ON projects(share_id, storage_type)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_locks ON projects(locked_by_node_id, locked_until)`);
+    },
+  },
 ];

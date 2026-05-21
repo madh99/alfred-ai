@@ -181,6 +181,8 @@ export class Alfred {
   /** v663b — Project Automations */
   private projectAutomationsRepo?: import('@alfred/storage').ProjectAutomationsRepository;
   private automationEngine?: import('./automation/automation-engine.js').AutomationEngine;
+  /** v665a — Cluster-Share Manager (NFS/SMB/etc.) */
+  private shareManager?: import('./cluster/share-manager.js').ShareManager;
   private spotifySkill?: import('@alfred/skills').SpotifySkill;
   private bmwSkill?: import('@alfred/skills').BMWSkill;
   private bmwTelematicRepo?: BmwTelematicRepository;
@@ -626,6 +628,27 @@ export class Alfred {
       this.projectRepo = projectRepo;
       this.projectManager = projectManager;
 
+      // v665a — Cluster-Share Manager: Startup-Check auf konfigurierte Shares (NFS/SMB).
+      // Bei Single-Node-Setup ohne Shares: no-op. Bei Cluster ohne Mounts: warnt aber blockt nicht.
+      try {
+        const sharesConfig = this.config.infra?.shares ?? [];
+        const { ShareManager } = await import('./cluster/share-manager.js');
+        const shareManager = new ShareManager(
+          sharesConfig as import('./cluster/share-manager.js').ShareConfig[],
+          this.logger.child({ component: 'share-manager' }),
+        );
+        await shareManager.checkAll();
+        this.shareManager = shareManager;
+        // Periodischer Stale-Lock-Sweep alle 5min
+        setInterval(() => {
+          projectRepo.sweepStaleLocks().then(n => {
+            if (n > 0) this.logger.info({ released: n }, 'v665a: stale project-locks freigegeben');
+          }).catch(err => this.logger.debug({ err }, 'sweepStaleLocks failed'));
+        }, 5 * 60_000);
+      } catch (err) {
+        this.logger.warn({ err }, 'ShareManager wiring failed (non-fatal)');
+      }
+
       // v663b — Project Automations Repo + Engine
       try {
         const { ProjectAutomationsRepository } = await import('@alfred/storage');
@@ -998,6 +1021,42 @@ export class Alfred {
             return proj?.conventions;
           } catch { return undefined; }
         });
+
+        // v665a — Cluster-Lock-Hooks: bei shared Projekten zwingend, bei local skip.
+        // Routing-Reject: bei storage_type='local' + falsche node_id → Lock-Verweigerung mit Erklärung.
+        const myNodeId = this.config.cluster?.nodeId ?? 'single';
+        projectRunner.setProjectLockHooks(
+          async (cwd: string, _sessionId: string) => {
+            if (!this.projectRepo) return { acquired: true };
+            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+            if (!uid) return { acquired: true };
+            try {
+              const list = await this.projectRepo.list(uid);
+              const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+              if (!proj) return { acquired: true }; // Projekt nicht persistent — no-op
+              // Routing-Check: local Projekt auf anderer Node
+              if (proj.storageType === 'local' && proj.nodeId && proj.nodeId !== myNodeId) {
+                return { acquired: false, reason: `Projekt liegt lokal auf node "${proj.nodeId}" — diese Node ist "${myNodeId}". Bitte per project.move auf einen shared Mount verschieben.` };
+              }
+              // Lock-Acquire (für shared sowie multi-trigger-Safety auf local)
+              const lock = await this.projectRepo.tryLock(proj.id, myNodeId, 180);
+              if (!lock.acquired) {
+                return { acquired: false, reason: `Lock gehalten von node "${lock.holderNodeId}" bis ${lock.holderUntil ?? '?'}` };
+              }
+              return { acquired: true };
+            } catch { return { acquired: true }; }
+          },
+          async (cwd: string, _sessionId: string) => {
+            if (!this.projectRepo) return;
+            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+            if (!uid) return;
+            try {
+              const list = await this.projectRepo.list(uid);
+              const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+              if (proj) await this.projectRepo.releaseLock(proj.id, myNodeId);
+            } catch { /* skip */ }
+          },
+        );
       } catch (err) { this.logger.warn({ err }, 'Commits-Repo wiring failed (non-fatal)'); }
 
       // v642 — LLM-Callback für deep audit der project-skill

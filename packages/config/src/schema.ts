@@ -556,6 +556,23 @@ export const PfSenseConfigSchema = z.object({
   verifyTls: z.boolean().optional(),
 });
 
+/**
+ * v665a — Cluster-Share: ein gemeinsamer Mount-Pfad (NFS/SMB/CephFS/virtiofs/local-shared)
+ * der auf allen Nodes am selben Pfad eingehängt ist. Projekte mit storage_type='shared'
+ * verweisen via share_id auf einen dieser Einträge.
+ *
+ * Wichtig: der mountPath muss auf ALLEN Cluster-Nodes identisch sein, damit Projekt-cwds
+ * absolut funktionieren. Wir prüfen das beim Startup (Module 1).
+ */
+export const InfraShareConfigSchema = z.object({
+  id: z.string(),
+  name: z.string().optional(),
+  mountPath: z.string(),
+  type: z.enum(['nfs', 'smb', 'virtiofs', 'cephfs', 'local-shared']),
+  readOnly: z.boolean().optional(),
+  preflightCheck: z.boolean().optional(),
+});
+
 export const InfraDefaultsConfigSchema = z.object({
   network: z.string().optional(),
   proxmoxNode: z.string().optional(),
@@ -563,6 +580,8 @@ export const InfraDefaultsConfigSchema = z.object({
   sshKeyPath: z.string().optional(),
   processManager: z.enum(['pm2', 'systemd', 'docker-compose']).optional(),
   runtime: z.enum(['node', 'python', 'static']).optional(),
+  /** v665a — Cluster-Shares für Projekte. Liste oder map-Form. */
+  shares: z.array(InfraShareConfigSchema).optional(),
 });
 
 export const ProjectsConfigSchema = z.object({
@@ -574,6 +593,14 @@ export const ProjectsConfigSchema = z.object({
   healthCheckEnabled: z.boolean().optional(),
   healthCheckIntervalHours: z.number().optional(),
   healthProbeTimeoutMs: z.number().optional(),
+  /** v665a — Default-Basis für 'local' storage_type (z.B. '/home/alfred/projects') */
+  localBase: z.string().optional(),
+  /** v665a — Default storage_type für neue Projekte (default: 'local') */
+  defaultStorage: z.enum(['local', 'shared']).optional(),
+  /** v665a — Default share_id falls defaultStorage='shared' */
+  defaultShareId: z.string().optional(),
+  /** v665a — rsync-Excludes beim Move (Default-Liste). Pro-Move überschreibbar. */
+  rsyncExcludes: z.array(z.string()).optional(),
 });
 
 export const CmdbConfigSchema = z.object({

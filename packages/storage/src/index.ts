@@ -91,4 +91,5 @@ export type {
   ProjectOpenItem, OpenItemStatus, OpenItemPriority, ProjectDecision,
   ProjectHealthEntry, HealthProbe, HealthStatus,
   ProjectConventions,
+  ProjectStorageType,
 } from './repositories/project-repository.js';

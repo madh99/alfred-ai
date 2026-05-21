@@ -1212,4 +1212,17 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_automations_next ON project_automations(next_run_at, enabled)`, []);
     },
   },
+  {
+    version: 85,
+    description: 'v665a — projects storage_type/share_id/node_id/locks für Cluster-Shares',
+    async up(db) {
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS storage_type TEXT NOT NULL DEFAULT 'local'`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS share_id TEXT`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS node_id TEXT`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS locked_by_node_id TEXT`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS locked_until TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_share ON projects(share_id, storage_type)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_locks ON projects(locked_by_node_id, locked_until)`, []);
+    },
+  },
 ];

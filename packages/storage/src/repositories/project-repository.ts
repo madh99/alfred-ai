@@ -3,6 +3,12 @@ import type { AsyncDbAdapter } from '../db-adapter.js';
 
 export type ProjectStatus = 'active' | 'paused' | 'completed' | 'maintenance' | 'archived';
 export type ProjectHealthMode = 'full' | 'minimal' | 'off';
+/**
+ * v665a — Speicher-Typ eines Projekts:
+ *  - 'local'  : an eine Cluster-Node gebunden (node_id gesetzt)
+ *  - 'shared' : auf einem konfigurierten Share (share_id gesetzt), allen Nodes zugänglich
+ */
+export type ProjectStorageType = 'local' | 'shared';
 export type ProjectSessionType = 'project_agent' | 'code_agent' | 'delegate' | 'chat';
 export type OpenItemStatus = 'open' | 'in_progress' | 'done' | 'cancelled';
 export type OpenItemPriority = 'low' | 'normal' | 'high';
@@ -68,6 +74,16 @@ export interface Project {
   nextCheckAt?: string;
   /** v663a — Optional pro-Projekt Conventions (alle opt-in). */
   conventions?: ProjectConventions;
+  /** v665a — Storage-Typ: 'local' an Node gebunden, 'shared' auf einem Cluster-Share */
+  storageType?: ProjectStorageType;
+  /** v665a — bei storageType='shared': ID des Shares aus infra.shares */
+  shareId?: string;
+  /** v665a — bei storageType='local': nodeId die das Projekt physisch hostet */
+  nodeId?: string;
+  /** v665a — Aktive Project-Lock: nodeId die gerade eine Session hält */
+  lockedByNodeId?: string;
+  /** v665a — TTL des Locks (ISO timestamp) — stale-cleanup bei `< now()` */
+  lockedUntil?: string;
 }
 
 export interface ProjectSessionSummary {
@@ -168,6 +184,11 @@ function rowToProject(row: Record<string, unknown>): Project {
     lastActiveAt: row.last_active_at as string,
     nextCheckAt: (row.next_check_at as string | null) ?? undefined,
     conventions,
+    storageType: (row.storage_type as ProjectStorageType | null) ?? 'local',
+    shareId: (row.share_id as string | null) ?? undefined,
+    nodeId: (row.node_id as string | null) ?? undefined,
+    lockedByNodeId: (row.locked_by_node_id as string | null) ?? undefined,
+    lockedUntil: (row.locked_until as string | null) ?? undefined,
   };
 }
 
@@ -295,7 +316,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -318,6 +339,10 @@ export class ProjectRepository {
       sets.push('conventions = ?');
       params.push(patch.conventions ? JSON.stringify(patch.conventions) : null);
     }
+    // v665a — Storage-Felder
+    if (patch.storageType !== undefined) { sets.push('storage_type = ?'); params.push(patch.storageType); }
+    if (patch.shareId !== undefined) { sets.push('share_id = ?'); params.push(patch.shareId); }
+    if (patch.nodeId !== undefined) { sets.push('node_id = ?'); params.push(patch.nodeId); }
     if (sets.length === 0) return existing;
     params.push(existing.id);
     await this.adapter.execute(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, params);
@@ -676,5 +701,68 @@ export class ProjectRepository {
       if (latest) out[probe] = latest;
     }
     return out;
+  }
+
+  // ── v665a — Project-Lock (Cluster-Awareness) ─────────────────────────────
+
+  /**
+   * Atomarer Lock-Acquire. Erfolg wenn locked_by_node_id NULL ODER bereits eigener Lock
+   * ODER stale (locked_until < now). Liefert {acquired, holderNodeId, holderUntil}.
+   *
+   * Wichtig für shared Projekte: verhindert dass mehrere Cluster-Nodes parallel
+   * project_agent auf demselben cwd starten und sich die git-Working-Tree-Locks streiten.
+   */
+  async tryLock(projectId: string, nodeId: string, ttlMinutes = 180): Promise<{ acquired: boolean; holderNodeId?: string; holderUntil?: string }> {
+    const now = new Date().toISOString();
+    const newUntil = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+    // UPDATE only if free OR same node OR stale
+    const res = await this.adapter.execute(
+      `UPDATE projects
+         SET locked_by_node_id = ?, locked_until = ?
+       WHERE id = ?
+         AND (locked_by_node_id IS NULL OR locked_by_node_id = ? OR locked_until IS NULL OR locked_until < ?)`,
+      [nodeId, newUntil, projectId, nodeId, now],
+    );
+    if (res.changes > 0) return { acquired: true };
+    // Lock konnte nicht acquired werden — hole aktuellen Holder
+    const row = await this.adapter.queryOne(
+      `SELECT locked_by_node_id, locked_until FROM projects WHERE id = ?`, [projectId],
+    ) as { locked_by_node_id: string | null; locked_until: string | null } | undefined;
+    return {
+      acquired: false,
+      holderNodeId: row?.locked_by_node_id ?? undefined,
+      holderUntil: row?.locked_until ?? undefined,
+    };
+  }
+
+  /** Lock-Heartbeat: TTL verlängert sich. Schreibt nur wenn Caller noch Holder ist. */
+  async refreshLock(projectId: string, nodeId: string, ttlMinutes = 180): Promise<boolean> {
+    const newUntil = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+    const res = await this.adapter.execute(
+      `UPDATE projects SET locked_until = ? WHERE id = ? AND locked_by_node_id = ?`,
+      [newUntil, projectId, nodeId],
+    );
+    return res.changes > 0;
+  }
+
+  /** Lock freigeben — nur wenn Caller Holder ist. Idempotent. */
+  async releaseLock(projectId: string, nodeId: string): Promise<boolean> {
+    const res = await this.adapter.execute(
+      `UPDATE projects SET locked_by_node_id = NULL, locked_until = NULL
+       WHERE id = ? AND locked_by_node_id = ?`,
+      [projectId, nodeId],
+    );
+    return res.changes > 0;
+  }
+
+  /** Cleanup für Stale-Locks (Crash der Holder-Node ohne Release). */
+  async sweepStaleLocks(): Promise<number> {
+    const now = new Date().toISOString();
+    const res = await this.adapter.execute(
+      `UPDATE projects SET locked_by_node_id = NULL, locked_until = NULL
+       WHERE locked_until IS NOT NULL AND locked_until < ?`,
+      [now],
+    );
+    return res.changes;
   }
 }
