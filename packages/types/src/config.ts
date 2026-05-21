@@ -858,7 +858,7 @@ export interface CmdbProblem {
   linkedChangeRequestId?: string;
   affectedAssetIds: string[];
   affectedServiceIds: string[];
-  detectedBy: 'auto' | 'manual' | 'user_report';
+  detectedBy: 'auto' | 'manual' | 'user_report' | 'pattern_detection';
   detectionMethod?: string;
   detectedAt: string;
   analyzedAt?: string;

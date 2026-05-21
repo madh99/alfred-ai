@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.631] - 2026-05-21
+
+### Added — ITSM Pattern-Detection greift härter (T1 vom T1-T4-Quartett)
+
+User-Befund: 100 Incidents in der DB, 2 Problems, 0 Verknüpfungen. Klare Doppelgänger (`PGSql-P01 RAM 95.x%` 15×, `git-server RAM 95.x%` 16×, `homeassistant Health check` 6×, `unifi Subsystem wlan` 8×) blieben unentdeckt. Vier Verbesserungen, die das Symptom strukturell beheben.
+
+**T1.1 — Title-Normalization vor Keyword-Cluster** (`packages/storage/src/repositories/problem-repository.ts`):
+- Neue Helper `normalizeTitle(title)` strippt `<num>%` (Prozent-Varianten), `<ip>` (IPv4), `<ts>` (ISO-Zeit), `<hex>` (Hex-IDs ≥6 chars), `<num>` (Zahlen ≥3 Stellen).
+- `detectPatterns()` clustert auf normalisiertem Titel → `95.0%`/`95.1%`/`95.2%` haben jetzt identisches Keyword-Set
+- GENERIC-Blacklist um `subsystem`, `usage`, `value` erweitert
+
+**T1.2 — Asset-ID-Backfill für Altdaten** (`packages/skills/src/built-in/itsm.ts`):
+- Neue Skill-Action `backfill_assets`: scannt alle Incidents mit leerem `affected_asset_ids`, matched Asset-Names/Hostnames (≥3 chars, Word-Boundary, Regex-escaped) gegen Title + Symptoms, schreibt Treffer zurück
+- Pattern-Detection clustert damit auch über historische Incidents (Vorher 77/100 nicht clusterbar)
+- Companion-Action `bulk_link_to_problem` (problem_id + incident_ids[]) für WebUI-Bulk-Merge (v632)
+- Neue `detectedBy='pattern_detection'` Variante in `CmdbProblem.detectedBy` Union-Type
+
+**T1.3 — Zwei-Stufen-Promotion statt nur Confirmation** (`packages/core/src/alfred.ts`):
+- `≥5 Incidents innerhalb 7d` ODER `≥8 absolut` → **automatisch** Problem erstellen + alle Incidents verlinken, kurze Info-Message an Owner-Chat ohne Confirmation-Round-Trip
+- `3-4 Incidents in 14d` → weiterhin 24h-Confirmation wie bisher
+- Reasoning: eindeutige High-Count-Cluster sind unstrittig, manueller Approval-Schritt nur Reibung
+
+**T1.4 — Periodische Pattern-Sweep** (`packages/core/src/alfred.ts`):
+- `setInterval(30min)` zusätzlich zum post-monitor-Trigger
+- Fängt Cluster auch wenn keine neuen Monitor-Alerts kommen (nur tägliche Alerts → `minIncidents=3 in 14d` braucht Geduld)
+- Sweep promoviert NUR automatisch (≥5/7d), Confirmations bleiben dem live-Monitor-Pfad vorbehalten
+- `unref()`-ed für sauberen Shutdown
+
+### Notes
+- Build grün (12/12). Neue Skill-Actions sind sofort über LLM/Chat verfügbar (`Alfred, ITSM Backfill ausführen`)
+- Für f05b0123-Bestandsdaten: nach Deploy einmalig `backfill_assets` ausführen, dann `detect_problem_patterns` → die 15+16+8 Cluster werden direkt sichtbar
+- v632 (T2 WebUI Bulk-Merge + Pattern-Preview-Tab) folgt unmittelbar; v633 (T3 Smart features) und v634 (T4 Operational Excellence) danach
+
 ## [0.19.0-multi-ha.630] - 2026-05-21
 
 ### Fixed — Project-Agent-Session-State: 'done' bei tatsächlichem Failure

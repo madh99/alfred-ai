@@ -7,6 +7,22 @@ function parseJsonArray(val: unknown): string[] {
   try { return JSON.parse(val as string); } catch { return []; }
 }
 
+/**
+ * v631 T1.1 — Normalize incident title before keyword extraction so numeric
+ * variants of the same root cause cluster together.
+ *
+ * Exported for use by the live-path in `alfred.ts` (auto-incident flow) so
+ * existing-incident-lookup uses the same normalization as pattern-detection.
+ */
+export function normalizeTitle(title: string): string {
+  return title
+    .replace(/\b\d{1,3}(?:[.,]\d{1,3})?\s*%/g, '<num>%')
+    .replace(/\b\d{1,3}(?:\.\d{1,3}){3}\b/g, '<ip>')
+    .replace(/\b\d{4}-\d{2}-\d{2}T?\d{0,2}:?\d{0,2}:?\d{0,2}Z?\b/g, '<ts>')
+    .replace(/\b[0-9a-f]{6,}\b/gi, '<hex>')
+    .replace(/\b\d{3,}\b/g, '<num>');
+}
+
 function rowToProblem(r: DbRow): CmdbProblem {
   return {
     id: r.id as string,
@@ -228,12 +244,20 @@ export class ProblemRepository {
 
     if (rows.length < minIncidents) return [];
 
-    const GENERIC = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'alert', 'monitor', 'check', 'health', 'warning', 'entities', 'unavailable', 'offline', 'online', 'service', 'critical']);
+    const GENERIC = new Set(['device', 'connected', 'state', 'status', 'failed', 'error', 'alert', 'monitor', 'check', 'health', 'warning', 'entities', 'unavailable', 'offline', 'online', 'service', 'critical', 'subsystem', 'usage', 'value']);
 
-    // Build per-incident data
+    // Build per-incident data.
+    // v631 T1.1 — Title-Normalization VOR Keyword-Extraktion:
+    // - Prozent/Dezimal-Werte → `<num>%`: "95.1%", "95.0%", "95.2%" → identisches Token
+    // - IPv4 → `<ip>`
+    // - Reine Zahlen ≥3 Stellen → `<num>` (Port-Nummern, Timestamps)
+    // - ISO-Zeitstempel → `<ts>`
+    // - Hex-IDs (≥6 chars) → `<hex>`
+    // Damit clustern "proxmox: PGSql-P01 RAM usage 95.1%" und "...95.2%" auf dasselbe
+    // Keyword-Set und werden als ein Problem erkannt — vorher hatten sie disjunkte Keywords.
     const incidents = rows.map(r => ({
       id: r.id as string,
-      keywords: new Set((r.title as string).split(/[\s:_\-]+/).filter((w: string) => w.length >= 4 && !GENERIC.has(w.toLowerCase())).map((w: string) => w.toLowerCase())),
+      keywords: new Set(normalizeTitle(r.title as string).split(/[\s:_\-,;]+/).filter((w: string) => w.length >= 4 && !GENERIC.has(w.toLowerCase())).map((w: string) => w.toLowerCase())),
       assetIds: new Set(parseJsonArray(r.affected_asset_ids)),
       serviceIds: new Set(parseJsonArray(r.affected_service_ids)),
       createdAt: r.created_at as string,

@@ -11,7 +11,8 @@ type Action =
   | 'create_problem' | 'update_problem' | 'get_problem' | 'list_problems' | 'link_incident_to_problem' | 'unlink_incident_from_problem' | 'promote_to_problem' | 'create_fix_change' | 'mark_known_error' | 'detect_problem_patterns' | 'problem_dashboard'
   | 'add_service' | 'update_service' | 'add_component' | 'remove_component' | 'health_check' | 'impact_analysis' | 'dashboard'
   | 'create_service_from_description' | 'add_failure_mode' | 'remove_failure_mode' | 'update_failure_mode' | 'service_impact_analysis' | 'generate_service_docs'
-  | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches';
+  | 'set_sla' | 'get_sla_report' | 'check_sla_compliance' | 'list_sla_breaches'
+  | 'backfill_assets' | 'bulk_link_to_problem';
 
 export class ItsmSkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -58,13 +59,15 @@ export class ItsmSkill extends Skill {
       '"set_sla" setzt SLA auf Service oder Asset (sla_target_type, sla_target_id, sla_name, sla_availability, sla_mttr_minutes, sla_response_minutes, sla_resolution_minutes, sla_breach_alert). ' +
       '"get_sla_report" zeigt SLA-Verfügbarkeits-Report (sla_target_type, sla_target_id, sla_period). ' +
       '"check_sla_compliance" prüft alle aktiven SLAs auf Einhaltung. ' +
-      '"list_sla_breaches" listet SLA-Verletzungen (sla_period).',
+      '"list_sla_breaches" listet SLA-Verletzungen (sla_period). ' +
+      '"backfill_assets" scannt alle Incidents ohne affected_asset_ids und matched Asset-Names im Titel/Symptoms — one-shot DB-Cleanup für Altdaten. ' +
+      '"bulk_link_to_problem" verknüpft mehrere Incidents in einem Schritt mit einem bestehenden Problem (problem_id, incident_ids).',
     riskLevel: 'write',
     version: '1.0.0',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches'] },
+        action: { type: 'string', enum: ['create_incident', 'update_incident', 'list_incidents', 'get_incident', 'close_incident', 'create_change_request', 'update_change', 'get_change', 'approve_change', 'start_change', 'complete_change', 'rollback_change', 'list_changes', 'create_problem', 'update_problem', 'get_problem', 'list_problems', 'link_incident_to_problem', 'unlink_incident_from_problem', 'promote_to_problem', 'create_fix_change', 'mark_known_error', 'detect_problem_patterns', 'problem_dashboard', 'add_service', 'update_service', 'add_component', 'remove_component', 'health_check', 'impact_analysis', 'dashboard', 'create_service_from_description', 'add_failure_mode', 'remove_failure_mode', 'update_failure_mode', 'service_impact_analysis', 'generate_service_docs', 'set_sla', 'get_sla_report', 'check_sla_compliance', 'list_sla_breaches', 'backfill_assets', 'bulk_link_to_problem'] },
         incident_id: { type: 'string' },
         change_id: { type: 'string' },
         problem_id: { type: 'string' },
@@ -231,6 +234,8 @@ export class ItsmSkill extends Skill {
         case 'mark_known_error': return await this.markKnownError(userId, input);
         case 'detect_problem_patterns': return await this.detectProblemPatterns(userId, input);
         case 'problem_dashboard': return await this.problemDashboardAction(userId);
+        case 'backfill_assets': return await this.backfillAssets(userId);
+        case 'bulk_link_to_problem': return await this.bulkLinkToProblem(userId, input);
         case 'add_service': return await this.addService(userId, input);
         case 'update_service': return await this.updateService(userId, input);
         case 'add_component': return await this.addComponent(userId, input);
@@ -737,6 +742,81 @@ export class ItsmSkill extends Skill {
       ...Object.entries(dash.problemsByPriority).map(([p, c]) => `- ${p}: ${c}`),
     ].join('\n');
     return { success: true, data: dash, display };
+  }
+
+  /**
+   * v631 T1.2 — One-Shot-Backfill für historische Incidents mit leerem affected_asset_ids.
+   * Scannt jeden Incident, matched Asset-Namen/Hostnames (≥3 chars, Word-Boundary) gegen
+   * Title und Symptoms, schreibt Treffer als affectedAssetIds zurück. Dadurch werden alte
+   * Incidents pattern-detection-fähig, ohne sie manuell zu editieren.
+   */
+  private async backfillAssets(userId: string): Promise<SkillResult> {
+    const assets = await this.cmdb.listAssets(userId);
+    const assetByLowerName = new Map<string, string>();
+    for (const a of assets) {
+      if (a.name) assetByLowerName.set(a.name.toLowerCase(), a.id);
+      if ((a as any).hostname) assetByLowerName.set(((a as any).hostname as string).toLowerCase(), a.id);
+    }
+    if (assetByLowerName.size === 0) {
+      return { success: true, data: { updated: 0 }, display: 'Keine Assets in CMDB — Backfill übersprungen.' };
+    }
+
+    const incidents = await this.itsm.listIncidents(userId, { limit: 1000 });
+    let updated = 0;
+    let skipped = 0;
+    let unmatched = 0;
+    const escapeRe = (s: string) => s.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+    for (const inc of incidents) {
+      // Skip if already has asset(s)
+      if (Array.isArray(inc.affectedAssetIds) && inc.affectedAssetIds.length > 0) { skipped++; continue; }
+
+      const haystack = `${inc.title ?? ''} ${(inc as any).symptoms ?? ''}`.toLowerCase();
+      const matched = new Set<string>();
+      for (const [name, id] of assetByLowerName) {
+        if (name.length < 3) continue;
+        if (new RegExp(`\\b${escapeRe(name)}\\b`).test(haystack)) matched.add(id);
+      }
+      if (matched.size === 0) { unmatched++; continue; }
+
+      try {
+        await this.itsm.updateIncident(userId, inc.id, { affectedAssetIds: [...matched] });
+        updated++;
+      } catch { /* best effort */ }
+    }
+
+    const display = `## Asset-Backfill abgeschlossen\n\n` +
+      `- **Geprüft:** ${incidents.length} Incidents\n` +
+      `- **Aktualisiert:** ${updated} (Asset-IDs zugeordnet)\n` +
+      `- **Bereits gesetzt:** ${skipped} (kein Update nötig)\n` +
+      `- **Kein Match:** ${unmatched} (kein Asset-Name im Titel/Symptoms)\n\n` +
+      `Pattern-Detection clustert jetzt auch über historische Incidents.`;
+    return { success: true, data: { updated, skipped, unmatched, total: incidents.length }, display };
+  }
+
+  /**
+   * v631 T1.2 (companion) — Mehrere Incidents in einem Call an ein bestehendes Problem hängen.
+   * Wird von der WebUI für Bulk-Merge genutzt und vom Auto-Promote-Flow indirekt (über
+   * ProblemRepository.linkIncident loop, hier nur dünner Skill-Wrapper).
+   */
+  private async bulkLinkToProblem(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.problem) return { success: false, error: 'Problem Management nicht konfiguriert' };
+    const problemId = input.problem_id as string;
+    const incidentIds = input.incident_ids as string[] | undefined;
+    if (!problemId) return { success: false, error: 'problem_id erforderlich' };
+    if (!Array.isArray(incidentIds) || incidentIds.length === 0) return { success: false, error: 'incident_ids (Array) erforderlich' };
+
+    let linked = 0;
+    const failed: string[] = [];
+    for (const incId of incidentIds) {
+      try {
+        const r = await this.problem.linkIncident(userId, problemId, incId);
+        if (r) linked++; else failed.push(incId);
+      } catch (err) { failed.push(incId); }
+    }
+    const display = `## Bulk-Link abgeschlossen\n\n- **Verknüpft:** ${linked}/${incidentIds.length}\n` +
+      (failed.length > 0 ? `- **Fehlgeschlagen:** ${failed.length} (${failed.slice(0, 5).map(i => i.slice(0, 8)).join(', ')}${failed.length > 5 ? '…' : ''})` : '');
+    return { success: linked > 0, data: { linked, failed }, display };
   }
 
   // ── Services ───────────────────────────────────────────────
