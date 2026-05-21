@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.645] - 2026-05-21
+
+### Improved — ITSM-UI: Closed default aus, Bulk-Actions überall, Stats-Bar
+
+**A. Closed Incidents default ausblenden**:
+- Neue Pseudo-Filter-Option `active` als default für Incidents, Changes, Problems
+- Incidents-Active = open/acknowledged/investigating/mitigating
+- Changes-Active = pending/approved/in_progress
+- Problems-Active = open/analyzing/root_cause_identified/fix_in_progress
+- Dropdowns bekommen "⚡ Alle aktiv (default)" als erste Option, "" weiterhin verfügbar für "Alle Status"
+
+**B. Bulk-Actions** — Backend + UI:
+- Generische HTTP-Endpoints: `POST /api/itsm/{incidents,changes,problems,services}/bulk` mit `{ids, action, params}`
+- `ItsmCallbacks` erweitert um `bulkIncidents/bulkChanges/bulkProblems/bulkServices`, jeweils mit Action-Switch im Repository-Layer
+- Frontend Client: `itsmBulkIncidents/Changes/Problems/Services(ids, action, params?)`
+
+**Incidents** (Bulk-Toolbar bei Selection):
+- ✓ **Acknowledge** (status → acknowledged)
+- ⚠ **Severity-Change** (Modal mit Severity-Dropdown)
+- ✕ **Close** (Modal mit Resolution-Pflichtfeld)
+- Plus bestehende v632-Aktionen (Neues Problem / Bestehendes Problem)
+
+**Changes** (Multi-Select neu, Bulk-Toolbar):
+- ✓ Bulk-Approve
+- ✕ Bulk-Reject
+
+**Problems** (Multi-Select neu, Bulk-Toolbar):
+- Status-Change (Modal mit Status-Dropdown analyzing/root_cause_identified/fix_in_progress/resolved/closed)
+- ⚠ Mark Known-Error (Prompt für Beschreibung)
+
+**Services** (Multi-Select neu, Bulk-Toolbar):
+- 🩺 Bulk-Health-Check
+
+**C. Stats-Bar pro Tab** mit Filter-Click:
+- Neue `StatChip`-Komponente: ein Chip pro Status mit Counter, Klick filtert direkt, aktive Auswahl getönt
+- **Incidents**: Aktiv · Open · Ack · Inv · Resolved · Closed (rechts: 🔴 Crit · 🟠 High)
+- **Changes**: Aktiv · Pending · Approved · In Progress · Completed · (Failed wenn >0)
+- **Services**: ✅ Healthy · 🟡 Degraded · 🔴 Down · ❓ Unknown
+- **Problems**: Aktiv · Open · Analyzing · Root Cause · Resolved · Closed
+- Closed-Counter ist grau dargestellt um visuell zurückzunehmen
+
+**D. Schmal-Padding/Severity-Border**: Border-Tönung der Selection-Rows zeigt Multi-Select-Status sofort sichtbar (Blue-Tint statt nur Checkbox).
+
+### Notes
+- Build grün (12/12), ITSM-Route 12.2 → 15.1 kB
+- Backend-Logic generisch im `bulkIncidents/Changes/Problems/Services`-Callback in alfred.ts — neue Aktionen einfach via Switch ergänzbar
+- Bestehende Detail-Actions (Single-Item-Buttons im rechten Panel) bleiben unverändert
+- User-Sicherheit: `close`/`reject`/`mark_known_error` brauchen jeweils Confirm-Dialog oder Modal-Input
+
 ## [0.19.0-multi-ha.644] - 2026-05-21
 
 ### Added — Chat + History vervollständigt (drei Bereiche)

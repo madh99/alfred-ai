@@ -82,6 +82,11 @@ export interface ItsmCallbacks {
   bulkLinkToProblem: (userId: string, problemId: string, incidentIds: string[]) => Promise<{ linked: number; failed: string[] }>;
   promoteIncidentsToProblem: (userId: string, data: { title: string; priority?: string; incidentIds: string[] }) => Promise<any>;
   backfillAssets: (userId: string) => Promise<{ updated: number; skipped: number; unmatched: number; total: number }>;
+  // v645 — Generic Bulk-Actions
+  bulkIncidents: (userId: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => Promise<{ ok: number; failed: string[] }>;
+  bulkChanges: (userId: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => Promise<{ ok: number; failed: string[] }>;
+  bulkProblems: (userId: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => Promise<{ ok: number; failed: string[] }>;
+  bulkServices: (userId: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => Promise<{ ok: number; failed: string[] }>;
   // Service Management
   getService: (userId: string, id: string) => Promise<any>;
   deleteService: (userId: string, id: string) => Promise<boolean>;
@@ -910,6 +915,15 @@ export class HttpAdapter extends MessagingAdapter {
       }));
     } else if (url.pathname === '/api/itsm/incidents/backfill-assets' && req.method === 'POST') {
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.backfillAssets(userId));
+    // v645 — Generic Bulk-Actions
+    } else if (url.pathname === '/api/itsm/incidents/bulk' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.bulkIncidents(userId, body as any));
+    } else if (url.pathname === '/api/itsm/changes/bulk' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.bulkChanges(userId, body as any));
+    } else if (url.pathname === '/api/itsm/problems/bulk' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.bulkProblems(userId, body as any));
+    } else if (url.pathname === '/api/itsm/services/bulk' && req.method === 'POST') {
+      this.handleItsmBodyRoute(req, res, (cbs, userId, body) => cbs.bulkServices(userId, body as any));
     } else if (url.pathname === '/api/itsm/problems/dashboard' && req.method === 'GET') {
       this.handleItsmRoute(req, res, (cbs, userId) => cbs.getProblemDashboard(userId));
     } else if (url.pathname === '/api/itsm/problems' && req.method === 'GET') {

@@ -835,6 +835,40 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v645 — Generic Bulk-Actions
+  async itsmBulkIncidents(ids: string[], action: string, params?: Record<string, unknown>): Promise<{ ok: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/incidents/bulk`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ ids, action, params }),
+    });
+    if (!res.ok) throw new Error(`ITSM bulk: HTTP ${res.status}`);
+    return res.json();
+  }
+  async itsmBulkChanges(ids: string[], action: string, params?: Record<string, unknown>): Promise<{ ok: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/changes/bulk`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ ids, action, params }),
+    });
+    if (!res.ok) throw new Error(`ITSM bulk: HTTP ${res.status}`);
+    return res.json();
+  }
+  async itsmBulkProblems(ids: string[], action: string, params?: Record<string, unknown>): Promise<{ ok: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/problems/bulk`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ ids, action, params }),
+    });
+    if (!res.ok) throw new Error(`ITSM bulk: HTTP ${res.status}`);
+    return res.json();
+  }
+  async itsmBulkServices(ids: string[], action: string, params?: Record<string, unknown>): Promise<{ ok: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/itsm/services/bulk`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ ids, action, params }),
+    });
+    if (!res.ok) throw new Error(`ITSM bulk: HTTP ${res.status}`);
+    return res.json();
+  }
+
   // ── Docs API ──
 
   async docsGenerate(type: string, params?: Record<string, unknown>): Promise<any> {

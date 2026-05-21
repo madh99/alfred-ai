@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
 
@@ -367,10 +367,19 @@ export function ItsmPage() {
   const [selectedService, setSelectedService] = useState<Service | null>(null);
 
   // Filters
-  const [incStatusFilter, setIncStatusFilter] = useState('');
+  // v645 — default 'active' = open/acknowledged/investigating/mitigating (closed/resolved werden ausgeblendet)
+  const [incStatusFilter, setIncStatusFilter] = useState('active');
   const [incSevFilter, setIncSevFilter] = useState('');
-  const [chgStatusFilter, setChgStatusFilter] = useState('');
+  const [chgStatusFilter, setChgStatusFilter] = useState('active');
   const [chgTypeFilter, setChgTypeFilter] = useState('');
+  const [prbStatusFilter2, setPrbStatusFilter2] = useState('active');
+  // v645 — Multi-Select states für Bulk-Actions
+  const [selectedChangeIds, setSelectedChangeIds] = useState<Set<string>>(new Set());
+  const [selectedProblemIds2, setSelectedProblemIds2] = useState<Set<string>>(new Set());
+  const [selectedServiceIds, setSelectedServiceIds] = useState<Set<string>>(new Set());
+  const [bulkBusy2, setBulkBusy2] = useState(false);
+  const [bulkModal, setBulkModal] = useState<null | { kind: 'inc-close' | 'inc-sev' | 'prb-status'; ids: string[] }>(null);
+  const [bulkParams, setBulkParams] = useState<Record<string, string>>({});
 
   // Create modals
   const [showCreateIncident, setShowCreateIncident] = useState(false);
@@ -734,10 +743,163 @@ export function ItsmPage() {
     setGeneratingPostmortem(false);
   }
 
+  // v645 — Bulk-Action handlers
+  async function bulkIncAcknowledge() {
+    if (selectedIncidentIds.size === 0) return;
+    if (!confirm(`${selectedIncidentIds.size} Incidents als acknowledged markieren?`)) return;
+    setBulkBusy2(true);
+    try {
+      const r = await client.itsmBulkIncidents([...selectedIncidentIds], 'acknowledge');
+      alert(`${r.ok}/${selectedIncidentIds.size} acknowledged${r.failed.length > 0 ? ` (${r.failed.length} failed)` : ''}`);
+      setSelectedIncidentIds(new Set());
+      await loadAll();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBulkBusy2(false); }
+  }
+  function startBulkClose() {
+    if (selectedIncidentIds.size === 0) return;
+    setBulkParams({ resolution: '' });
+    setBulkModal({ kind: 'inc-close', ids: [...selectedIncidentIds] });
+  }
+  function startBulkSeverity() {
+    if (selectedIncidentIds.size === 0) return;
+    setBulkParams({ severity: 'high' });
+    setBulkModal({ kind: 'inc-sev', ids: [...selectedIncidentIds] });
+  }
+  async function executeBulkInc() {
+    if (!bulkModal) return;
+    setBulkBusy2(true);
+    try {
+      let r: { ok: number; failed: string[] };
+      if (bulkModal.kind === 'inc-close') {
+        if (!bulkParams.resolution?.trim()) { setError('Resolution-Text fehlt.'); setBulkBusy2(false); return; }
+        r = await client.itsmBulkIncidents(bulkModal.ids, 'close', { resolution: bulkParams.resolution });
+      } else if (bulkModal.kind === 'inc-sev') {
+        r = await client.itsmBulkIncidents(bulkModal.ids, 'change_severity', { severity: bulkParams.severity });
+      } else if (bulkModal.kind === 'prb-status') {
+        r = await client.itsmBulkProblems(bulkModal.ids, 'change_status', { status: bulkParams.status });
+      } else { return; }
+      alert(`${r.ok}/${bulkModal.ids.length} ok${r.failed.length > 0 ? ` (${r.failed.length} failed)` : ''}`);
+      setBulkModal(null);
+      setSelectedIncidentIds(new Set());
+      setSelectedProblemIds2(new Set());
+      await loadAll();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBulkBusy2(false); }
+  }
+
+  async function bulkChangeAction(action: 'approve' | 'reject') {
+    if (selectedChangeIds.size === 0) return;
+    if (!confirm(`${selectedChangeIds.size} Changes ${action === 'approve' ? 'genehmigen' : 'ablehnen'}?`)) return;
+    setBulkBusy2(true);
+    try {
+      const r = await client.itsmBulkChanges([...selectedChangeIds], action);
+      alert(`${r.ok}/${selectedChangeIds.size} ${action}d`);
+      setSelectedChangeIds(new Set());
+      await loadAll();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBulkBusy2(false); }
+  }
+
+  function startBulkProblemStatus() {
+    if (selectedProblemIds2.size === 0) return;
+    setBulkParams({ status: 'analyzing' });
+    setBulkModal({ kind: 'prb-status', ids: [...selectedProblemIds2] });
+  }
+  async function bulkProblemMarkKnownError() {
+    if (selectedProblemIds2.size === 0) return;
+    const desc = prompt('Known-Error-Beschreibung (gilt für alle ausgewählten):');
+    if (!desc) return;
+    setBulkBusy2(true);
+    try {
+      const r = await client.itsmBulkProblems([...selectedProblemIds2], 'mark_known_error', { description: desc });
+      alert(`${r.ok}/${selectedProblemIds2.size} als Known-Error markiert`);
+      setSelectedProblemIds2(new Set());
+      await loadAll();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBulkBusy2(false); }
+  }
+
+  async function bulkServiceHealthCheck() {
+    if (selectedServiceIds.size === 0) return;
+    setBulkBusy2(true);
+    try {
+      const r = await client.itsmBulkServices([...selectedServiceIds], 'health_check');
+      alert(`${r.ok}/${selectedServiceIds.size} Health-Checks ausgeführt`);
+      setSelectedServiceIds(new Set());
+      await loadAll();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBulkBusy2(false); }
+  }
+
+  function toggleChgSel(id: string) {
+    setSelectedChangeIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function togglePrbSel(id: string) {
+    setSelectedProblemIds2(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+  function toggleSvcSel(id: string) {
+    setSelectedServiceIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }
+
   /* ---- Filter helpers ---- */
 
-  const filteredIncidents = incidents;
-  const filteredChanges = changes;
+  // v645 — Active = nicht-finale Stati
+  const INCIDENT_ACTIVE_STATES = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
+  const CHANGE_ACTIVE_STATES = new Set(['pending', 'approved', 'in_progress']);
+  const PROBLEM_ACTIVE_STATES = new Set(['open', 'analyzing', 'root_cause_identified', 'fix_in_progress']);
+
+  function applyIncFilter(inc: Incident): boolean {
+    if (incStatusFilter === 'active') return INCIDENT_ACTIVE_STATES.has(inc.status);
+    if (incStatusFilter && inc.status !== incStatusFilter) return false;
+    if (incSevFilter && inc.severity !== incSevFilter) return false;
+    return true;
+  }
+  function applyChgFilter(chg: ChangeRequest): boolean {
+    if (chgStatusFilter === 'active') return CHANGE_ACTIVE_STATES.has(chg.status);
+    if (chgStatusFilter && chg.status !== chgStatusFilter) return false;
+    if (chgTypeFilter && chg.type !== chgTypeFilter) return false;
+    return true;
+  }
+  function applyPrbFilter(p: Problem): boolean {
+    if (prbStatusFilter2 === 'active') return PROBLEM_ACTIVE_STATES.has(p.status);
+    if (prbStatusFilter2 && p.status !== prbStatusFilter2) return false;
+    return true;
+  }
+
+  const filteredIncidents = incidents.filter(applyIncFilter);
+  const filteredChanges = changes.filter(applyChgFilter);
+  const filteredProblems2 = problems.filter(applyPrbFilter);
+
+  // v645 — Stats für Header
+  const incStats = useMemo(() => {
+    const stats = { open: 0, acknowledged: 0, investigating: 0, resolved: 0, closed: 0, critical: 0, high: 0 };
+    for (const i of incidents) {
+      if (i.status === 'open') stats.open++;
+      else if (i.status === 'acknowledged') stats.acknowledged++;
+      else if (i.status === 'investigating' || i.status === 'mitigating') stats.investigating++;
+      else if (i.status === 'resolved') stats.resolved++;
+      else if (i.status === 'closed') stats.closed++;
+      if (i.severity === 'critical') stats.critical++;
+      else if (i.severity === 'high') stats.high++;
+    }
+    return stats;
+  }, [incidents]);
+  const chgStats = useMemo(() => {
+    const s = { pending: 0, approved: 0, in_progress: 0, completed: 0, failed: 0 };
+    for (const c of changes) { if (c.status in s) (s as any)[c.status]++; }
+    return s;
+  }, [changes]);
+  const svcStats = useMemo(() => {
+    const s = { healthy: 0, degraded: 0, down: 0, unknown: 0 };
+    for (const v of services) { if (v.healthStatus in s) (s as any)[v.healthStatus]++; }
+    return s;
+  }, [services]);
+  const prbStats = useMemo(() => {
+    const s = { open: 0, analyzing: 0, root_cause_identified: 0, resolved: 0, closed: 0 };
+    for (const p of problems) { if (p.status in s) (s as any)[p.status]++; }
+    return s;
+  }, [problems]);
 
   /* ---- Render ---- */
 
@@ -786,9 +948,22 @@ export function ItsmPage() {
         <div className="flex gap-6">
           {/* List */}
           <div className={clsx('space-y-3', selectedIncident ? 'w-1/2' : 'w-full')}>
+            {/* v645 — Stats-Bar */}
+            <div className="flex gap-2 flex-wrap text-xs">
+              <StatChip active={incStatusFilter === 'active'} onClick={() => setIncStatusFilter('active')} label="Aktiv" value={incStats.open + incStats.acknowledged + incStats.investigating} tone="blue" />
+              <StatChip active={incStatusFilter === 'open'} onClick={() => setIncStatusFilter('open')} label="Open" value={incStats.open} tone="red" />
+              <StatChip active={incStatusFilter === 'acknowledged'} onClick={() => setIncStatusFilter('acknowledged')} label="Ack" value={incStats.acknowledged} tone="amber" />
+              <StatChip active={incStatusFilter === 'investigating'} onClick={() => setIncStatusFilter('investigating')} label="Inv" value={incStats.investigating} tone="amber" />
+              <StatChip active={incStatusFilter === 'resolved'} onClick={() => setIncStatusFilter('resolved')} label="Resolved" value={incStats.resolved} tone="emerald" />
+              <StatChip active={incStatusFilter === 'closed'} onClick={() => setIncStatusFilter('closed')} label="Closed" value={incStats.closed} tone="gray" />
+              <div className="flex-1" />
+              <StatChip active={incSevFilter === 'critical'} onClick={() => setIncSevFilter(incSevFilter === 'critical' ? '' : 'critical')} label="🔴 Crit" value={incStats.critical} tone="red" />
+              <StatChip active={incSevFilter === 'high'} onClick={() => setIncSevFilter(incSevFilter === 'high' ? '' : 'high')} label="🟠 High" value={incStats.high} tone="amber" />
+            </div>
             {/* Filters + Create */}
             <div className="flex gap-2 items-center flex-wrap">
               <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={incStatusFilter} onChange={e => setIncStatusFilter(e.target.value)}>
+                <option value="active">⚡ Alle aktiv (default)</option>
                 <option value="">Alle Status</option>
                 <option value="open">Open</option>
                 <option value="acknowledged">Acknowledged</option>
@@ -815,7 +990,7 @@ export function ItsmPage() {
               </button>
             </div>
 
-            {/* v632 \u2014 Bulk-Merge Toolbar */}
+            {/* v632/v645 \u2014 Bulk-Toolbar */}
             {selectedIncidentIds.size > 0 && (
               <div className="flex flex-wrap items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
                 <span className="text-sm text-blue-200">
@@ -823,14 +998,12 @@ export function ItsmPage() {
                 </span>
                 <div className="flex-1" />
                 <button onClick={clearIncSelection} className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200">Auswahl l\u00f6schen</button>
-                <button
-                  onClick={() => { setBulkMergeMode('new-problem'); setBulkMergeTitle(`Wiederkehrender Vorfall (${selectedIncidentIds.size}\u00d7)`); }}
-                  className="px-2 py-1 text-xs bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 rounded hover:bg-emerald-600/50"
-                >+ Neues Problem</button>
-                <button
-                  onClick={() => setBulkMergeMode('existing-problem')}
-                  className="px-2 py-1 text-xs bg-blue-600/30 border border-blue-500/40 text-blue-200 rounded hover:bg-blue-600/50"
-                >\u2192 Bestehendes Problem</button>
+                <button onClick={bulkIncAcknowledge} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-amber-600/30 border border-amber-500/40 text-amber-200 rounded hover:bg-amber-600/50 disabled:opacity-50">\u2713 Acknowledge</button>
+                <button onClick={startBulkSeverity} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-orange-600/30 border border-orange-500/40 text-orange-200 rounded hover:bg-orange-600/50 disabled:opacity-50">\u26a0 Severity</button>
+                <button onClick={startBulkClose} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-zinc-600/30 border border-zinc-500/40 text-zinc-200 rounded hover:bg-zinc-600/50 disabled:opacity-50">\u2715 Close</button>
+                <span className="text-gray-700 mx-1">\u00b7</span>
+                <button onClick={() => { setBulkMergeMode('new-problem'); setBulkMergeTitle(`Wiederkehrender Vorfall (${selectedIncidentIds.size}\u00d7)`); }} className="px-2 py-1 text-xs bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 rounded hover:bg-emerald-600/50">+ Neues Problem</button>
+                <button onClick={() => setBulkMergeMode('existing-problem')} className="px-2 py-1 text-xs bg-blue-600/30 border border-blue-500/40 text-blue-200 rounded hover:bg-blue-600/50">\u2192 Bestehendes Problem</button>
               </div>
             )}
 
@@ -1166,8 +1339,18 @@ export function ItsmPage() {
       {!loading && tab === 'changes' && (
         <div className="flex gap-6">
           <div className={clsx('space-y-3', selectedChange ? 'w-1/2' : 'w-full')}>
+            {/* v645 — Stats */}
+            <div className="flex gap-2 flex-wrap text-xs">
+              <StatChip active={chgStatusFilter === 'active'} onClick={() => setChgStatusFilter('active')} label="Aktiv" value={chgStats.pending + chgStats.approved + chgStats.in_progress} tone="blue" />
+              <StatChip active={chgStatusFilter === 'pending'} onClick={() => setChgStatusFilter('pending')} label="Pending" value={chgStats.pending} tone="amber" />
+              <StatChip active={chgStatusFilter === 'approved'} onClick={() => setChgStatusFilter('approved')} label="Approved" value={chgStats.approved} tone="emerald" />
+              <StatChip active={chgStatusFilter === 'in_progress'} onClick={() => setChgStatusFilter('in_progress')} label="In Progress" value={chgStats.in_progress} tone="blue" />
+              <StatChip active={chgStatusFilter === 'completed'} onClick={() => setChgStatusFilter('completed')} label="Completed" value={chgStats.completed} tone="gray" />
+              {chgStats.failed > 0 && <StatChip active={chgStatusFilter === 'failed'} onClick={() => setChgStatusFilter('failed')} label="Failed" value={chgStats.failed} tone="red" />}
+            </div>
             <div className="flex gap-2 items-center flex-wrap">
               <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={chgStatusFilter} onChange={e => setChgStatusFilter(e.target.value)}>
+                <option value="active">⚡ Alle aktiv (default)</option>
                 <option value="">Alle Status</option>
                 <option value="draft">Draft</option>
                 <option value="pending">Pending</option>
@@ -1188,11 +1371,31 @@ export function ItsmPage() {
                 <span>+</span> Change Request
               </button>
             </div>
+            {/* v645 — Bulk-Toolbar Changes */}
+            {selectedChangeIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
+                <span className="text-sm text-blue-200"><strong>{selectedChangeIds.size}</strong> Change(s) ausgewählt</span>
+                <div className="flex-1" />
+                <button onClick={() => setSelectedChangeIds(new Set())} className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200">Löschen</button>
+                <button onClick={() => bulkChangeAction('approve')} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 rounded hover:bg-emerald-600/50 disabled:opacity-50">✓ Approve</button>
+                <button onClick={() => bulkChangeAction('reject')} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-red-600/30 border border-red-500/40 text-red-200 rounded hover:bg-red-600/50 disabled:opacity-50">✕ Reject</button>
+              </div>
+            )}
 
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-[#0d0d0d] text-gray-400">
                   <tr>
+                    <th className="px-2 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={filteredChanges.length > 0 && filteredChanges.every(c => selectedChangeIds.has(c.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedChangeIds(new Set(filteredChanges.map(c => c.id)));
+                          else setSelectedChangeIds(new Set());
+                        }}
+                      />
+                    </th>
                     <th className="text-left px-4 py-2 font-medium">Status</th>
                     <th className="text-left px-4 py-2 font-medium">Titel</th>
                     <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Typ</th>
@@ -1202,7 +1405,7 @@ export function ItsmPage() {
                 </thead>
                 <tbody>
                   {filteredChanges.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Keine Change Requests gefunden.</td></tr>
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Keine Change Requests gefunden.</td></tr>
                   )}
                   {filteredChanges.map(chg => (
                     <tr
@@ -1210,9 +1413,18 @@ export function ItsmPage() {
                       onClick={() => setSelectedChange(chg)}
                       className={clsx(
                         'border-t border-[#1f1f1f] cursor-pointer transition-colors',
-                        selectedChange?.id === chg.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]',
+                        selectedChangeIds.has(chg.id) ? 'bg-blue-500/10' :
+                          selectedChange?.id === chg.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]',
                       )}
                     >
+                      <td className="px-2 py-2" onClick={(e) => { e.stopPropagation(); toggleChgSel(chg.id); }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedChangeIds.has(chg.id)}
+                          onChange={() => toggleChgSel(chg.id)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </td>
                       <td className="px-4 py-2">
                         <span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(chg.status))}>{chg.status}</span>
                       </td>
@@ -1333,6 +1545,13 @@ export function ItsmPage() {
       {!loading && tab === 'services' && (
         <div className="flex gap-6">
           <div className={clsx('space-y-3', selectedService ? 'w-1/2' : 'w-full')}>
+            {/* v645 — Stats */}
+            <div className="flex gap-2 flex-wrap text-xs">
+              <StatChip active={false} onClick={() => {}} label="✅ Healthy" value={svcStats.healthy} tone="emerald" />
+              <StatChip active={false} onClick={() => {}} label="🟡 Degraded" value={svcStats.degraded} tone="amber" />
+              <StatChip active={false} onClick={() => {}} label="🔴 Down" value={svcStats.down} tone="red" />
+              <StatChip active={false} onClick={() => {}} label="❓ Unknown" value={svcStats.unknown} tone="gray" />
+            </div>
             <div className="flex gap-2 items-center">
               <button onClick={runHealthCheck} className="px-3 py-1.5 text-sm bg-green-700 hover:bg-green-600 text-white rounded">Health Check All</button>
               <div className="flex-1" />
@@ -1340,11 +1559,30 @@ export function ItsmPage() {
                 <span>+</span> Service
               </button>
             </div>
+            {/* v645 — Bulk-Toolbar Services */}
+            {selectedServiceIds.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
+                <span className="text-sm text-blue-200"><strong>{selectedServiceIds.size}</strong> Service(s) ausgewählt</span>
+                <div className="flex-1" />
+                <button onClick={() => setSelectedServiceIds(new Set())} className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200">Löschen</button>
+                <button onClick={bulkServiceHealthCheck} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-emerald-600/30 border border-emerald-500/40 text-emerald-200 rounded hover:bg-emerald-600/50 disabled:opacity-50">🩺 Health-Check</button>
+              </div>
+            )}
 
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-[#0d0d0d] text-gray-400">
                   <tr>
+                    <th className="px-2 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={services.length > 0 && services.every(s => selectedServiceIds.has(s.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedServiceIds(new Set(services.map(s => s.id)));
+                          else setSelectedServiceIds(new Set());
+                        }}
+                      />
+                    </th>
                     <th className="text-left px-4 py-2 font-medium w-8">H</th>
                     <th className="text-left px-4 py-2 font-medium">Name</th>
                     <th className="text-left px-4 py-2 font-medium hidden md:table-cell">Kategorie</th>
@@ -1354,7 +1592,7 @@ export function ItsmPage() {
                 </thead>
                 <tbody>
                   {services.length === 0 && (
-                    <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500">Keine Services gefunden.</td></tr>
+                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Keine Services gefunden.</td></tr>
                   )}
                   {services.map(svc => (
                     <tr
@@ -1362,9 +1600,13 @@ export function ItsmPage() {
                       onClick={() => setSelectedService(svc)}
                       className={clsx(
                         'border-t border-[#1f1f1f] cursor-pointer transition-colors',
+                        selectedServiceIds.has(svc.id) && 'bg-blue-500/10',
                         selectedService?.id === svc.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]',
                       )}
                     >
+                      <td className="px-2 py-2" onClick={(e) => { e.stopPropagation(); toggleSvcSel(svc.id); }}>
+                        <input type="checkbox" checked={selectedServiceIds.has(svc.id)} onChange={() => toggleSvcSel(svc.id)} onClick={(e) => e.stopPropagation()} />
+                      </td>
                       <td className="px-4 py-2">
                         <span className={clsx('w-2.5 h-2.5 rounded-full inline-block', HEALTH_DOT[svc.healthStatus] ?? 'bg-gray-500')} />
                       </td>
@@ -1565,10 +1807,20 @@ export function ItsmPage() {
       {!loading && tab === 'problems' && (
         <div className="flex gap-6">
           <div className={clsx('space-y-3', selectedProblem ? 'w-1/2' : 'w-full')}>
+            {/* v645 — Stats */}
+            <div className="flex gap-2 flex-wrap text-xs">
+              <StatChip active={prbStatusFilter2 === 'active'} onClick={() => setPrbStatusFilter2('active')} label="Aktiv" value={prbStats.open + prbStats.analyzing + prbStats.root_cause_identified} tone="blue" />
+              <StatChip active={prbStatusFilter2 === 'open'} onClick={() => setPrbStatusFilter2('open')} label="Open" value={prbStats.open} tone="red" />
+              <StatChip active={prbStatusFilter2 === 'analyzing'} onClick={() => setPrbStatusFilter2('analyzing')} label="Analyzing" value={prbStats.analyzing} tone="amber" />
+              <StatChip active={prbStatusFilter2 === 'root_cause_identified'} onClick={() => setPrbStatusFilter2('root_cause_identified')} label="Root Cause" value={prbStats.root_cause_identified} tone="amber" />
+              <StatChip active={prbStatusFilter2 === 'resolved'} onClick={() => setPrbStatusFilter2('resolved')} label="Resolved" value={prbStats.resolved} tone="emerald" />
+              <StatChip active={prbStatusFilter2 === 'closed'} onClick={() => setPrbStatusFilter2('closed')} label="Closed" value={prbStats.closed} tone="gray" />
+            </div>
             <div className="flex gap-2 items-center flex-wrap">
-              <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={probStatusFilter} onChange={e => setProbStatusFilter(e.target.value)}>
+              <select className="bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-1.5 text-sm text-gray-200" value={prbStatusFilter2} onChange={e => setPrbStatusFilter2(e.target.value)}>
+                <option value="active">⚡ Alle aktiv (default)</option>
                 <option value="">Alle Status</option>
-                <option value="logged">Logged</option>
+                <option value="open">Open</option>
                 <option value="analyzing">Analyzing</option>
                 <option value="root_cause_identified">Root Cause ID</option>
                 <option value="fix_in_progress">Fix in Progress</option>
@@ -1587,11 +1839,31 @@ export function ItsmPage() {
                 <span>+</span> Problem
               </button>
             </div>
+            {/* v645 — Bulk-Toolbar Problems */}
+            {selectedProblemIds2.size > 0 && (
+              <div className="flex flex-wrap items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded-lg px-3 py-2">
+                <span className="text-sm text-blue-200"><strong>{selectedProblemIds2.size}</strong> Problem(e) ausgewählt</span>
+                <div className="flex-1" />
+                <button onClick={() => setSelectedProblemIds2(new Set())} className="px-2 py-1 text-xs text-gray-400 hover:text-gray-200">Löschen</button>
+                <button onClick={startBulkProblemStatus} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-blue-600/30 border border-blue-500/40 text-blue-200 rounded hover:bg-blue-600/50 disabled:opacity-50">Status</button>
+                <button onClick={bulkProblemMarkKnownError} disabled={bulkBusy2} className="px-2 py-1 text-xs bg-amber-600/30 border border-amber-500/40 text-amber-200 rounded hover:bg-amber-600/50 disabled:opacity-50">⚠ Known-Error</button>
+              </div>
+            )}
 
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-[#0d0d0d] text-gray-400">
                   <tr>
+                    <th className="px-2 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        checked={filteredProblems2.length > 0 && filteredProblems2.every(p => selectedProblemIds2.has(p.id))}
+                        onChange={(e) => {
+                          if (e.target.checked) setSelectedProblemIds2(new Set(filteredProblems2.map(p => p.id)));
+                          else setSelectedProblemIds2(new Set());
+                        }}
+                      />
+                    </th>
                     <th className="text-left px-4 py-2 font-medium w-8">P</th>
                     <th className="text-left px-4 py-2 font-medium">Titel</th>
                     <th className="text-left px-4 py-2 font-medium">Status</th>
@@ -1601,12 +1873,17 @@ export function ItsmPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {problems.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-500">Keine Probleme gefunden.</td></tr>
+                  {filteredProblems2.length === 0 && (
+                    <tr><td colSpan={7} className="px-4 py-6 text-center text-gray-500">Keine Probleme gefunden.</td></tr>
                   )}
-                  {problems.map(prob => (
+                  {filteredProblems2.filter(p => !probPriorityFilter || p.priority === probPriorityFilter).map(prob => (
                     <tr key={prob.id} onClick={() => setSelectedProblem(prob)}
-                      className={clsx('border-t border-[#1f1f1f] cursor-pointer transition-colors', selectedProblem?.id === prob.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]')}>
+                      className={clsx('border-t border-[#1f1f1f] cursor-pointer transition-colors',
+                        selectedProblemIds2.has(prob.id) ? 'bg-blue-500/10' :
+                        selectedProblem?.id === prob.id ? 'bg-blue-500/5' : 'hover:bg-[#1a1a1a]')}>
+                      <td className="px-2 py-2" onClick={(e) => { e.stopPropagation(); togglePrbSel(prob.id); }}>
+                        <input type="checkbox" checked={selectedProblemIds2.has(prob.id)} onChange={() => togglePrbSel(prob.id)} onClick={(e) => e.stopPropagation()} />
+                      </td>
                       <td className="px-4 py-2"><span className={SEV_COLORS[prob.priority]}>{SEV_ICONS[prob.priority] ?? '●'}</span></td>
                       <td className="px-4 py-2 text-gray-200">{prob.title}</td>
                       <td className="px-4 py-2"><span className={clsx('text-xs px-2 py-0.5 rounded-full', statusBadge(prob.status))}>{prob.status}</span></td>
@@ -2028,6 +2305,83 @@ export function ItsmPage() {
           </div>
         </div>
       )}
+
+      {/* v645 — Bulk-Action Modal (Incident-Close / Severity / Problem-Status) */}
+      {bulkModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-[#111] border border-[#1f1f1f] rounded-xl p-5 w-full max-w-md space-y-3">
+            <h3 className="text-lg font-semibold text-white">
+              {bulkModal.kind === 'inc-close' && '✕ Bulk-Close Incidents'}
+              {bulkModal.kind === 'inc-sev' && '⚠ Bulk-Severity-Change'}
+              {bulkModal.kind === 'prb-status' && 'Bulk-Status-Change'}
+            </h3>
+            <p className="text-xs text-gray-400">{bulkModal.ids.length} ausgewählt</p>
+            {bulkModal.kind === 'inc-close' && (
+              <textarea
+                placeholder="Resolution (für alle, Pflicht)"
+                value={bulkParams.resolution ?? ''}
+                onChange={(e) => setBulkParams(p => ({ ...p, resolution: e.target.value }))}
+                rows={4}
+                className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+              />
+            )}
+            {bulkModal.kind === 'inc-sev' && (
+              <select
+                value={bulkParams.severity ?? 'high'}
+                onChange={(e) => setBulkParams(p => ({ ...p, severity: e.target.value }))}
+                className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+              >
+                <option value="critical">🔴 critical</option>
+                <option value="high">🟠 high</option>
+                <option value="medium">🟡 medium</option>
+                <option value="low">⚪ low</option>
+              </select>
+            )}
+            {bulkModal.kind === 'prb-status' && (
+              <select
+                value={bulkParams.status ?? 'analyzing'}
+                onChange={(e) => setBulkParams(p => ({ ...p, status: e.target.value }))}
+                className="w-full bg-[#0a0a0a] border border-[#1f1f1f] rounded px-3 py-2 text-sm text-gray-200"
+              >
+                <option value="analyzing">analyzing</option>
+                <option value="root_cause_identified">root_cause_identified</option>
+                <option value="fix_in_progress">fix_in_progress</option>
+                <option value="resolved">resolved</option>
+                <option value="closed">closed</option>
+              </select>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setBulkModal(null)} disabled={bulkBusy2} className="px-3 py-1.5 text-sm text-gray-400 hover:text-white">Abbrechen</button>
+              <button onClick={executeBulkInc} disabled={bulkBusy2} className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded">
+                {bulkBusy2 ? '…' : 'Ausführen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// v645 — Stats-Chip mit Filter-Click
+function StatChip({ label, value, tone, active, onClick }: { label: string; value: number; tone: 'red' | 'amber' | 'emerald' | 'blue' | 'gray'; active: boolean; onClick: () => void }) {
+  const toneClass: Record<string, string> = {
+    red: 'border-red-500/40 text-red-300',
+    amber: 'border-amber-500/40 text-amber-300',
+    emerald: 'border-emerald-500/40 text-emerald-300',
+    blue: 'border-blue-500/40 text-blue-300',
+    gray: 'border-gray-500/40 text-gray-400',
+  };
+  const activeBg: Record<string, string> = {
+    red: 'bg-red-500/15', amber: 'bg-amber-500/15', emerald: 'bg-emerald-500/15', blue: 'bg-blue-500/15', gray: 'bg-gray-500/15',
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2 py-1 border rounded inline-flex items-baseline gap-1.5 ${toneClass[tone]} ${active ? activeBg[tone] : 'bg-transparent hover:bg-[#161616]'}`}
+    >
+      <span className="text-[11px] uppercase tracking-wide">{label}</span>
+      <span className="text-sm font-mono">{value}</span>
+    </button>
   );
 }

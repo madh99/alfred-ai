@@ -4931,6 +4931,81 @@ export class Alfred {
             const result = await itsmSkill.execute({ action: 'backfill_assets' }, { userId, masterUserId: userId } as any);
             return result.data ?? { updated: 0, skipped: 0, unmatched: 0, total: 0 };
           },
+          // v645 — Generic Bulk-Actions
+          bulkIncidents: async (uid: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => {
+            const userId = await resolveUser(uid);
+            let ok = 0; const failed: string[] = [];
+            for (const id of data.ids) {
+              try {
+                const params: Record<string, unknown> = { ...(data.params ?? {}) };
+                let updates: Record<string, unknown>;
+                switch (data.action) {
+                  case 'acknowledge': updates = { status: 'acknowledged' }; break;
+                  case 'close': updates = { status: 'closed', resolution: (params.resolution as string) ?? 'Bulk-Close', closedAt: new Date().toISOString() }; break;
+                  case 'change_severity': updates = { severity: params.severity }; break;
+                  case 'update': updates = params; break;
+                  default: failed.push(id); continue;
+                }
+                const r = await itsmRepo.updateIncident(userId, id, updates as any);
+                if (r) ok++; else failed.push(id);
+              } catch { failed.push(id); }
+            }
+            return { ok, failed };
+          },
+          bulkChanges: async (uid: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => {
+            const userId = await resolveUser(uid);
+            let ok = 0; const failed: string[] = [];
+            for (const id of data.ids) {
+              try {
+                let updates: Record<string, unknown>;
+                switch (data.action) {
+                  case 'approve': updates = { status: 'approved' }; break;
+                  case 'reject': updates = { status: 'rejected' }; break;
+                  case 'update': updates = (data.params ?? {}); break;
+                  default: failed.push(id); continue;
+                }
+                const r = await itsmRepo.updateChangeRequest(userId, id, updates as any);
+                if (r) ok++; else failed.push(id);
+              } catch { failed.push(id); }
+            }
+            return { ok, failed };
+          },
+          bulkProblems: async (uid: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => {
+            const userId = await resolveUser(uid);
+            let ok = 0; const failed: string[] = [];
+            for (const id of data.ids) {
+              try {
+                let updates: Record<string, unknown>;
+                switch (data.action) {
+                  case 'change_status': updates = { status: (data.params ?? {}).status }; break;
+                  case 'mark_known_error': updates = { isKnownError: true, knownErrorDescription: ((data.params ?? {}) as any).description ?? 'Bulk-marked' }; break;
+                  case 'update': updates = data.params ?? {}; break;
+                  default: failed.push(id); continue;
+                }
+                const r = await problemRepo.updateProblem(userId, id, updates as any);
+                if (r) ok++; else failed.push(id);
+              } catch { failed.push(id); }
+            }
+            return { ok, failed };
+          },
+          bulkServices: async (uid: string, data: { ids: string[]; action: string; params?: Record<string, unknown> }) => {
+            const userId = await resolveUser(uid);
+            void userId;
+            let ok = 0; const failed: string[] = [];
+            for (const id of data.ids) {
+              try {
+                if (data.action === 'health_check') {
+                  const itsmSkill = this.skillRegistry?.get('itsm');
+                  if (itsmSkill) {
+                    const ctx = { userId, masterUserId: userId, chatId: '', platform: 'api', conversationId: '' } as any;
+                    const r = await itsmSkill.execute({ action: 'health_check', service_id: id }, ctx);
+                    if (r.success) ok++; else failed.push(id);
+                  } else { failed.push(id); }
+                } else { failed.push(id); }
+              } catch { failed.push(id); }
+            }
+            return { ok, failed };
+          },
           // SLA Management
           setSla: async (uid: string, targetType: string, targetId: string, sla: Record<string, unknown>) => {
             const userId = await resolveUser(uid);
