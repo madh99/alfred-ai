@@ -1097,4 +1097,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(user_id, pinned_at DESC NULLS LAST, updated_at DESC) WHERE deleted_at IS NULL`, []);
     },
   },
+  {
+    version: 78,
+    description: 'v648 — project_agent_plans + sessions.resumed_from_task_id for Resume-Foundation',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_agent_plans (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          phase_idx INTEGER NOT NULL,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'planned',
+          started_at TEXT,
+          ended_at TEXT,
+          UNIQUE(session_id, phase_idx)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_pa_plans_session ON project_agent_plans(session_id, phase_idx)`, []);
+      await db.execute(`ALTER TABLE project_agent_sessions ADD COLUMN IF NOT EXISTS resumed_from_task_id TEXT`, []);
+    },
+  },
 ];

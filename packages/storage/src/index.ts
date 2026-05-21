@@ -59,6 +59,8 @@ export { ProjectAgentSessionRepository } from './repositories/project-agent-sess
 export { ProjectAgentInterjectionRepository } from './repositories/project-agent-interjection-repository.js';
 export { ProjectAgentCommitsRepository } from './repositories/project-agent-commits-repository.js';
 export type { ProjectAgentCommit } from './repositories/project-agent-commits-repository.js';
+export { ProjectAgentPlansRepository } from './repositories/project-agent-plans-repository.js';
+export type { PlanPhase, PlanPhaseStatus } from './repositories/project-agent-plans-repository.js';
 export { PlanRepository } from './repositories/plan-repository.js';
 export { ProcessedMessageRepository } from './repositories/processed-message-repository.js';
 export type { ProjectAgentSession } from './repositories/project-agent-session-repository.js';

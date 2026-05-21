@@ -1778,4 +1778,24 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_conversations_lifecycle ON conversations(user_id, pinned_at, updated_at DESC)`);
     },
   },
+  {
+    version: 75,
+    description: 'v648 — project_agent_plans + sessions.resumed_from_task_id for Resume-Foundation',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_plans (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          phase_idx INTEGER NOT NULL,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'planned',
+          started_at TEXT,
+          ended_at TEXT,
+          UNIQUE(session_id, phase_idx)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_pa_plans_session ON project_agent_plans(session_id, phase_idx)`);
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN resumed_from_task_id TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

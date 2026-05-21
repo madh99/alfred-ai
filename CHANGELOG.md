@@ -5,6 +5,56 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.648] - 2026-05-21
+
+### Added — Resume-Foundation (Bundle 1 von 5)
+
+Persisted-Plan + Phase-Timing + echte Resume-Action. Voraussetzung für die folgenden v649-v652 Bundles.
+
+**Schema** (SQLite v75 / Postgres v78):
+- Neue Tabelle `project_agent_plans(id, session_id, phase_idx UNIQUE pro session, description, status, started_at, ended_at)` mit Index auf `(session_id, phase_idx)`
+- `project_agent_sessions.resumed_from_task_id` für Traceability
+
+**Repository** `ProjectAgentPlansRepository`:
+- `bulkInsert(sessionId, phases)` — speichert alle Plan-Phasen mit Status='planned'
+- `markRunning/markDone/markFailed(sessionId, phaseIdx)` — Status + Timestamps fortschreiben
+- `listBySession(sessionId)` — komplette Plan-History mit Status/Times
+
+**Runner-Hooks** (`packages/core/src/project-agent-runner.ts`):
+- Nach Plan-Generation: `bulkInsert` aller geplanten Phasen
+- Phase-Loop-Start: `markRunning(phaseIdx + 1)`
+- Phase erfolgreich (nach Milestone-Add): `markDone(phaseIdx + 1)`
+- Phase exitCode≠0: `markFailed(phaseIdx + 1)` (parallel zum existing v636-runFailed-Pattern)
+
+**Resume-Action** `project_agent resume failed_task_id=<id> notes?=<text>`:
+- Erlaubt für Sessions im Status failed/awaiting_user/done
+- Liest persisted Plan via `plansRepo.listBySession`, baut Status-Übersicht (✓ done / ✗ failed / ◐ running / ○ planned)
+- Konstruiert Continuation-Goal mit:
+  - Original-Ziel (gekürzt)
+  - Status zum Abbruch (Phase-Index, Files, Build, Last-Commit)
+  - Plan-Tabelle mit Erfolgs-Markern
+  - Erreichte Milestones (letzte 10)
+  - Optional User-Notes
+  - Explizite "ERSTE PHASE: scanne Repo-Stand + matched gegen Original-Ziel" Anweisung
+- Startet via `startProject` mit `_resumedFromTaskId` Marker
+- Neue Session bekommt `resumed_from_task_id=<old>` für Traceability
+
+### Workflow für 471cd234
+```
+Alfred, resume 471cd234-2499-4e9f-86d5-0f2f3a01117e
+```
+oder mit User-Note:
+```
+Alfred, resume 471cd234 — fokus nur auf französische Übersetzungen, restliches i18n war ok
+```
+
+Der neue Project-Agent bekommt den vollen Plan-Status + Last-Commit als Kontext und untersucht den Repo-Stand als allererste Phase.
+
+### Notes
+- Build grün (12/12)
+- Bestehende Sessions ohne persisted plan (alle Sessions vor v648) funktionieren weiterhin — Resume-Action zeigt dann nur Milestones statt Plan-Tabelle
+- v649-v652 bauen auf diesem Foundation auf
+
 ## [0.19.0-multi-ha.647] - 2026-05-21
 
 ### Fixed — Sidebar-Deep-Links: Klick auf Projekte/Chats öffnet jetzt das gewählte Item

@@ -118,6 +118,12 @@ export class ProjectAgentRunner {
     this.projectIdResolver = resolver;
   }
 
+  /** v648 — Set by alfred.ts: persist planned phases with status/timings. */
+  private plansRepo?: import('@alfred/storage').ProjectAgentPlansRepository;
+  setPlansRepository(repo: import('@alfred/storage').ProjectAgentPlansRepository): void {
+    this.plansRepo = repo;
+  }
+
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
     const config: ProjectAgentConfig = {
       goal: configInput.goal as string,
@@ -192,6 +198,13 @@ export class ProjectAgentRunner {
         `📋 Plan erstellt: ${plan.phases.length} Phasen\n${plan.phases.map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
       state.milestonesReached.push('Plan erstellt');
       await this.sessionRepo.addMilestone(sessionId, 'Plan erstellt');
+
+      // v648 — Plan persistieren mit allen Phasen als 'planned'.
+      if (this.plansRepo) {
+        try {
+          await this.plansRepo.bulkInsert(sessionId, plan.phases.map((p, i) => ({ phaseIdx: i + 1, description: p })));
+        } catch (err) { this.logger.debug({ err, sessionId }, 'Plan-persist failed (non-fatal)'); }
+      }
 
       const startTime = Date.now();
       const maxDurationMs = config.maxDurationHours * 60 * 60 * 1000;
@@ -308,6 +321,11 @@ export class ProjectAgentRunner {
         const prompt = this.assemblePrompt(config.goal, phase, state, userMessages);
         await this.sendProgress(platform, chatId, `🔨 Phase ${phaseIdx + 1}/${plan.phases.length}: ${phase}`);
 
+        // v648 — Phase als running markieren
+        if (this.plansRepo) {
+          try { await this.plansRepo.markRunning(sessionId, phaseIdx + 1); } catch { /* skip */ }
+        }
+
         // v624 D — Phase-Type-aware Inactivity-Timeout. Die meisten Phasen (Inspect,
         // Edit, kleine Patches) laufen <2min und sollen schnell fail-detected werden
         // wenn der Agent hängt. Validierungs-Phasen mit npm install/build/test/lint
@@ -394,6 +412,7 @@ export class ProjectAgentRunner {
           runFailed = true;
           state.projectPhase = 'failed';
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          if (this.plansRepo) { try { await this.plansRepo.markFailed(sessionId, phaseIdx + 1); } catch { /* skip */ } }
           break; // exit the for-loop over phases; finally-block handles cleanup
         }
 
@@ -518,6 +537,8 @@ export class ProjectAgentRunner {
           state.milestonesReached.push(milestone);
           await this.sessionRepo.addMilestone(sessionId, milestone);
           await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          // v648 — Phase als done markieren
+          if (this.plansRepo) { try { await this.plansRepo.markDone(sessionId, phaseIdx + 1); } catch { /* skip */ } }
         }
 
         // L2 (v604) — track per-phase success for fail-fast

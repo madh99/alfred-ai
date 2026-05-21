@@ -160,6 +160,7 @@ export class Alfred {
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
+  private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
@@ -898,6 +899,14 @@ export class Alfred {
       // v604 L8 — file-store is initialized later in init(), so we hold a ref
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
+
+      // v648 — Plans-Repo
+      try {
+        const { ProjectAgentPlansRepository } = await import('@alfred/storage');
+        const plansRepo = new ProjectAgentPlansRepository(adapter);
+        projectRunner.setPlansRepository(plansRepo);
+        this.plansRepoRef = plansRepo;
+      } catch (err) { this.logger.warn({ err }, 'Plans-Repo wiring failed (non-fatal)'); }
 
       // v643 — Commits-Repo + Project-Id-Resolver für Per-Phase-Commit-Persistence
       try {

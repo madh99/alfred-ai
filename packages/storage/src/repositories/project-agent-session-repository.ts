@@ -14,6 +14,8 @@ export interface ProjectAgentSession {
   lastCommitSha?: string;
   /** v643 — Merge-Request / Pull-Request URL extracted from `git push` output. */
   lastPushUrl?: string;
+  /** v648 — Linked source-session if this is a Resume-Session. */
+  resumedFromTaskId?: string;
   lastProgressAt?: string;
   milestones: string[];
   createdAt: string;
@@ -23,17 +25,18 @@ export interface ProjectAgentSession {
 export class ProjectAgentSessionRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string }): Promise<ProjectAgentSession> {
+  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string; resumedFromTaskId?: string }): Promise<ProjectAgentSession> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.adapter.execute(`
-      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, now, now]);
+      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, resumed_from_task_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, opts.resumedFromTaskId ?? null, now, now]);
     return {
       id, taskId: opts.taskId, goal: opts.goal, cwd: opts.cwd, agentName: opts.agentName,
       currentPhase: 'planning', currentIteration: 0, totalFilesChanged: 0,
       lastBuildPassed: false, milestones: [], createdAt: now, updatedAt: now,
+      resumedFromTaskId: opts.resumedFromTaskId,
     };
   }
 
@@ -190,6 +193,7 @@ export class ProjectAgentSessionRepository {
       lastBuildPassed: (row.last_build_passed as number) === 1,
       lastCommitSha: row.last_commit_sha as string | undefined,
       lastPushUrl: (row.last_push_url as string | null) ?? undefined,
+      resumedFromTaskId: (row.resumed_from_task_id as string | null) ?? undefined,
       lastProgressAt: row.last_progress_at as string | undefined,
       milestones,
       createdAt: row.created_at as string,

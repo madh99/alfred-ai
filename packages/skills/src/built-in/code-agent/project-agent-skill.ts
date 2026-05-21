@@ -131,7 +131,7 @@ Actions:
         properties: {
           action: {
             type: 'string',
-            enum: ['start', 'status', 'interject', 'stop'],
+            enum: ['start', 'status', 'interject', 'stop', 'resume'],
             description: 'Project agent action',
           },
           goal: { type: 'string', description: 'What to build (for start)' },
@@ -177,9 +177,95 @@ Actions:
         return this.interject(input, context);
       case 'stop':
         return this.stopProject(input, context);
+      case 'resume':
+        return this.resumeProject(input, context);
       default:
-        return { success: false, error: `Unknown action "${action}". Use start, status, interject, or stop.` };
+        return { success: false, error: `Unknown action "${action}". Use start, status, interject, stop, or resume.` };
     }
+  }
+
+  /**
+   * v648 — Resume eines fehlgeschlagenen Project-Agent-Laufs.
+   * Liest persisted Plan + Commits + Milestones, baut Continuation-Goal, startet neu.
+   */
+  private async resumeProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    const failedTaskId = input.failed_task_id as string | undefined;
+    if (!failedTaskId) return { success: false, error: 'Missing required field "failed_task_id"' };
+    if (!this.runner) return { success: false, error: 'Project agent runner not configured' };
+
+    const failed = await this.sessionRepo.getByTaskId(failedTaskId);
+    if (!failed) return { success: false, error: `Session ${failedTaskId} not found` };
+
+    // Erlaube Resume bei failed/awaiting_user/done (für "more work please")
+    if (failed.currentPhase !== 'failed' && failed.currentPhase !== 'awaiting_user' && failed.currentPhase !== 'done') {
+      return { success: false, error: `Session ${failedTaskId} ist in Phase '${failed.currentPhase}' — Resume nur bei failed/awaiting_user/done.` };
+    }
+
+    // Diagnose-Hint aus dem letzten Build-Output (Auth/Inactivity/etc.)
+    let diagHint = '';
+    if (typeof (this.sessionRepo as any).getByTaskIdWithOutput === 'function') {
+      // not implemented today; leave for future
+    }
+
+    // Load persisted plan if available
+    const plansRepo = (this as { plansRepoRef?: any }).plansRepoRef;
+    let planSummary = '';
+    if (plansRepo) {
+      try {
+        const phases = await plansRepo.listBySession(failed.id);
+        if (phases.length > 0) {
+          const done = phases.filter((p: any) => p.status === 'done').length;
+          const lines = phases.map((p: any) => {
+            const icon = p.status === 'done' ? '✓' : p.status === 'failed' ? '✗' : p.status === 'running' ? '◐' : '○';
+            return `  ${icon} P${p.phaseIdx}: ${p.description.slice(0, 100)}`;
+          }).join('\n');
+          planSummary = `\n**Ursprünglicher Plan (${done}/${phases.length} erledigt)**:\n${lines}\n`;
+        }
+      } catch { /* skip */ }
+    }
+
+    const commits = failed.milestones.length > 0
+      ? `\n**Erreichte Milestones**:\n${failed.milestones.slice(-10).map(m => `  ✓ ${m}`).join('\n')}\n`
+      : '';
+
+    const lastCommit = failed.lastCommitSha
+      ? `\n**Letzter Commit**: ${failed.lastCommitSha.slice(0, 12)}`
+      : '';
+
+    const userNotes = input.notes ? `\n**User-Hinweis**: ${String(input.notes).slice(0, 800)}\n` : '';
+
+    const continuationGoal = `FORTSETZUNG der abgebrochenen Session ${failedTaskId.slice(0, 8)}.
+
+**Original-Ziel**:
+${failed.goal.slice(0, 3000)}
+
+**Status zum Abbruch**:
+- Phase ${failed.currentIteration} (von vermutlich mehr)
+- ${failed.totalFilesChanged} Dateien geändert
+- Build-Status: ${failed.lastBuildPassed ? 'zuletzt grün' : 'zuletzt rot'}${lastCommit}
+${planSummary}${commits}${userNotes}
+
+**ERSTE PHASE deines neuen Plans**:
+1. Untersuche den aktuellen Repo-Stand (\`git log --oneline -20\`, \`ls\`, relevante Source-Files)
+2. Matched gegen das ursprüngliche Ziel: was ist bereits umgesetzt, was fehlt?
+3. Wenn unklar: kurzes Audit als Markdown.
+
+**Danach**: nur die fehlenden Teile umsetzen. Bestehende Arbeit NICHT überschreiben, KEIN Force-Push, KEIN revert von Commits. Build grün bekommen, normal committen+pushen.
+`;
+
+    // Start fresh with same cwd + agent
+    const startInput = {
+      cwd: failed.cwd,
+      goal: continuationGoal,
+      agent: failed.agentName,
+      _resumedFromTaskId: failedTaskId, // internal marker
+    };
+    const result = await this.startProject(startInput, context);
+    if (result.success && result.data) {
+      (result.data as Record<string, unknown>).resumedFromTaskId = failedTaskId;
+      result.display = `▶ Resume gestartet: neue Session ${(result.data as any).taskId?.slice(0, 8)} fortsetzend von ${failedTaskId.slice(0, 8)}.\n\n` + (result.display ?? '');
+    }
+    return result;
   }
 
   private async startProject(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -327,6 +413,7 @@ Actions:
       goal,
       cwd,
       agentName,
+      resumedFromTaskId: input._resumedFromTaskId as string | undefined,
     });
 
     const config = {
