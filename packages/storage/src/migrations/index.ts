@@ -1740,4 +1740,30 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE project_open_items ADD COLUMN auto_resolved_confidence REAL`); } catch { /* exists */ }
     },
   },
+  {
+    version: 73,
+    description: 'v643 — project_agent_commits + session.last_push_url + project.default_branch',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_commits (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          project_id TEXT,
+          sha TEXT NOT NULL,
+          message TEXT NOT NULL,
+          phase_idx INTEGER,
+          phase_description TEXT,
+          files_changed INTEGER NOT NULL DEFAULT 0,
+          branch TEXT,
+          committed_at TEXT NOT NULL,
+          pushed_at TEXT,
+          push_url TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_pa_commits_session ON project_agent_commits(session_id, committed_at)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_pa_commits_project ON project_agent_commits(project_id, committed_at DESC)`);
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN last_push_url TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN default_branch TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

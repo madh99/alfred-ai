@@ -27,6 +27,8 @@ export interface Project {
   description?: string;
   cwd?: string;
   repoUrl?: string;
+  /** v643 — Default-Branch (HEAD), persisted from `git rev-parse --abbrev-ref HEAD`. */
+  defaultBranch?: string;
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];
@@ -115,6 +117,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     description: (row.description as string | null) ?? undefined,
     cwd: (row.cwd as string | null) ?? undefined,
     repoUrl: (row.repo_url as string | null) ?? undefined,
+    defaultBranch: (row.default_branch as string | null) ?? undefined,
     status: (row.status as ProjectStatus) ?? 'active',
     healthMode: (row.health_mode as ProjectHealthMode) ?? 'full',
     tags: parseTags(row.tags),
@@ -245,7 +248,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -258,6 +261,7 @@ export class ProjectRepository {
     if (patch.description !== undefined) { sets.push('description = ?'); params.push(patch.description); }
     if (patch.cwd !== undefined) { sets.push('cwd = ?'); params.push(patch.cwd); }
     if (patch.repoUrl !== undefined) { sets.push('repo_url = ?'); params.push(patch.repoUrl); }
+    if (patch.defaultBranch !== undefined) { sets.push('default_branch = ?'); params.push(patch.defaultBranch); }
     if (patch.status !== undefined) { sets.push('status = ?'); params.push(patch.status); }
     if (patch.healthMode !== undefined) { sets.push('health_mode = ?'); params.push(patch.healthMode); }
     if (patch.tags !== undefined) { sets.push('tags = ?'); params.push(JSON.stringify(patch.tags)); }

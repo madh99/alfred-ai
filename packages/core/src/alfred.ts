@@ -159,6 +159,7 @@ export class Alfred {
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
+  private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   private delegateSkillRef?: import('@alfred/skills').DelegateSkill;
   private codeAgentSkillRef?: import('@alfred/skills').CodeAgentSkill;
   private watchRepo?: WatchRepository;
@@ -898,6 +899,24 @@ export class Alfred {
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
 
+      // v643 — Commits-Repo + Project-Id-Resolver für Per-Phase-Commit-Persistence
+      try {
+        const { ProjectAgentCommitsRepository } = await import('@alfred/storage');
+        const commitsRepo = new ProjectAgentCommitsRepository(adapter);
+        const projectIdResolver = async (cwd: string): Promise<string | undefined> => {
+          if (!this.projectRepo) return undefined;
+          const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          if (!uid) return undefined;
+          try {
+            const list = await this.projectRepo.list(uid);
+            const proj = list.find(p => p.cwd === cwd) ?? list.find(p => p.cwd && cwd.startsWith(p.cwd));
+            return proj?.id;
+          } catch { return undefined; }
+        };
+        projectRunner.setCommitsRepository(commitsRepo, projectIdResolver);
+        this.commitsRepoRef = commitsRepo;
+      } catch (err) { this.logger.warn({ err }, 'Commits-Repo wiring failed (non-fatal)'); }
+
       // v642 — LLM-Callback für deep audit der project-skill
       if (this.projectSkillRef && this.llmProvider) {
         this.projectSkillRef.setLlmCallback(async (prompt: string, tier?: string) => {
@@ -993,6 +1012,41 @@ export class Alfred {
               });
             }
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
+        }
+
+        // v643 — Repo-URL + Default-Branch auto-detect aus cwd
+        if (this.projectRepo && cfg.cwd) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            if (userId) {
+              const { execFile } = await import('node:child_process');
+              const { promisify } = await import('node:util');
+              const exec = promisify(execFile);
+              const projects = await this.projectRepo.list(userId);
+              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => p.cwd && cfg.cwd?.startsWith(p.cwd));
+              if (proj) {
+                const patch: { repoUrl?: string; defaultBranch?: string } = {};
+                if (!proj.repoUrl) {
+                  try {
+                    const { stdout } = await exec('git', ['-C', cfg.cwd, 'remote', 'get-url', 'origin'], { timeout: 5000 });
+                    const url = stdout.trim();
+                    if (url) patch.repoUrl = url.replace(/^https?:\/\/[^@/]+@/, 'https://'); // strip embedded creds
+                  } catch { /* no remote */ }
+                }
+                if (!proj.defaultBranch) {
+                  try {
+                    const { stdout } = await exec('git', ['-C', cfg.cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 3000 });
+                    const branch = stdout.trim();
+                    if (branch && branch !== 'HEAD') patch.defaultBranch = branch;
+                  } catch { /* skip */ }
+                }
+                if (Object.keys(patch).length > 0) {
+                  await this.projectRepo.update(userId, proj.id, patch);
+                  this.logger.debug({ projectId: proj.id, patch }, 'Project: repo-url/branch auto-detected');
+                }
+              }
+            }
+          } catch (err) { this.logger.debug({ err }, 'Project repo-url auto-detect failed (non-fatal)'); }
         }
 
         // v641 — OpenItemMatcher: nach erfolgreichem Lauf prüfen welche der bestehenden
@@ -4614,6 +4668,15 @@ export class Alfred {
               } catch { failed.push(id); }
             }
             return { closed, failed };
+          },
+          // v643 — Commits per Project + Session
+          listProjectCommits: async (projectId: string, limit: number) => {
+            if (!this.commitsRepoRef) return [];
+            try { return await this.commitsRepoRef.listByProject(projectId, limit); } catch { return []; }
+          },
+          listSessionCommits: async (sessionId: string) => {
+            if (!this.commitsRepoRef) return [];
+            try { return await this.commitsRepoRef.listBySession(sessionId); } catch { return []; }
           },
         });
         this.logger.info('Projects API registered');

@@ -25,6 +25,47 @@ async function gitExec(args: string[], cwd: string, runAsUser?: string): Promise
   return stdout.trim();
 }
 
+/**
+ * v643 — Like gitExec but returns both stdout AND stderr. Needed for `git push`
+ * because GitLab/GitHub MR/PR-creation hints come through stderr.
+ */
+async function gitExecBoth(args: string[], cwd: string, runAsUser?: string): Promise<{ stdout: string; stderr: string }> {
+  const cmd = runAsUser ? 'sudo' : 'git';
+  const cmdArgs = runAsUser ? ['-u', runAsUser, 'git', ...args] : args;
+  const { stdout, stderr } = await execFileAsync(cmd, cmdArgs, { cwd, maxBuffer: 10 * 1024 * 1024 });
+  return { stdout: stdout.trim(), stderr: stderr.trim() };
+}
+
+/**
+ * v643 — Parse MR/PR-creation URL out of `git push` output.
+ * GitLab: "remote: To create a merge request for X, visit:\nremote:   https://gitlab.../merge_requests/new?..."
+ * GitHub: "remote: Create a pull request for 'X' on GitHub by visiting:\nremote:   https://github.com/.../pull/new/X"
+ * Gitea:  "remote: Create a new pull request for 'X':\nremote:   https://gitea.../compare/main...X"
+ * Returns the first URL after one of these prefixes, or undefined.
+ */
+function extractPushUrl(stderr: string): string | undefined {
+  const lines = stderr.split('\n');
+  const prefixPatterns = [
+    /create a merge request/i,
+    /create a pull request/i,
+    /create a new pull request/i,
+    /visit:/i,
+  ];
+  for (let i = 0; i < lines.length; i++) {
+    if (prefixPatterns.some(re => re.test(lines[i]))) {
+      // URL kann auf gleicher oder nächster Zeile sein
+      for (let j = i; j < Math.min(i + 3, lines.length); j++) {
+        const m = lines[j].match(/https?:\/\/[^\s]+/);
+        if (m) {
+          // Sanitize trailing punctuation
+          return m[0].replace(/[.,;:]+$/, '');
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 export interface ProjectAgentConfig {
   goal: string;
   cwd: string;
@@ -67,6 +108,14 @@ export class ProjectAgentRunner {
   /** Called when a session completes (success or failure). Set by alfred.ts for runbook capture. */
   setCompletionCallback(cb: ProjectAgentCompletionCallback): void {
     this.completionCallback = cb;
+  }
+
+  /** v643 — Set by alfred.ts: persist per-phase commits with project_id resolution. */
+  private commitsRepo?: import('@alfred/storage').ProjectAgentCommitsRepository;
+  private projectIdResolver?: (cwd: string) => Promise<string | undefined>;
+  setCommitsRepository(repo: import('@alfred/storage').ProjectAgentCommitsRepository, resolver?: (cwd: string) => Promise<string | undefined>): void {
+    this.commitsRepo = repo;
+    this.projectIdResolver = resolver;
   }
 
   async run(sessionId: string, configInput: Record<string, unknown>, platform: string, chatId: string): Promise<void> {
@@ -442,6 +491,24 @@ export class ProjectAgentRunner {
             state.lastCommitSha = shaMatch?.[1];
             if (state.lastCommitSha) {
               await this.sendProgress(platform, chatId, `📦 Commit: ${state.lastCommitSha} — ${phase}`);
+              // v643 — Per-Phase Commit-Eintrag persistieren
+              if (this.commitsRepo) {
+                try {
+                  let branch: string | undefined;
+                  try { branch = await gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], config.cwd, runAsUser); } catch { /* skip */ }
+                  const projectId = this.projectIdResolver ? await this.projectIdResolver(config.cwd).catch(() => undefined) : undefined;
+                  await this.commitsRepo.record({
+                    sessionId,
+                    projectId,
+                    sha: state.lastCommitSha,
+                    message: commitMsg,
+                    phaseIdx: phaseIdx + 1,
+                    phaseDescription: phase.slice(0, 500),
+                    filesChanged: codeResult.modifiedFiles.length,
+                    branch,
+                  });
+                } catch (err) { this.logger.debug({ err, sessionId }, 'Project agent: commit-record failed (non-fatal)'); }
+              }
             }
           } catch (err) {
             this.logger.warn({ err, sessionId }, 'Project agent: git commit failed');
@@ -496,7 +563,14 @@ export class ProjectAgentRunner {
 
       // ── GIT PUSH ── (only on success — pushing an empty repo is just noise)
       if (overallSuccess) {
-        await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+        const pushUrl = await this.pushToRemote(config.cwd, platform, chatId, runAsUser);
+        // v643 — Push-URL auf der Session + auf allen pending Commits speichern
+        if (pushUrl || true) {
+          try { await this.sessionRepo.updateProgress(sessionId, { lastPushUrl: pushUrl ?? undefined }); } catch { /* skip */ }
+        }
+        if (this.commitsRepo) {
+          try { await this.commitsRepo.markSessionPushed(sessionId, pushUrl); } catch { /* skip */ }
+        }
       }
 
       // L6 (v604) — honest end-message: don't celebrate failures
@@ -587,7 +661,7 @@ export class ProjectAgentRunner {
    * - If .git/ but no remote → create repo on forge if configured
    * - If remote exists → push, embedding forge token temporarily if needed
    */
-  private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string): Promise<void> {
+  private async pushToRemote(cwd: string, platform: string, chatId: string, runAsUser?: string): Promise<string | undefined> {
     // Check if this is a git repository — if not, initialize one
     const hasGitDir = existsSync(path.join(cwd, '.git'));
     if (!hasGitDir) {
@@ -717,14 +791,16 @@ export class ProjectAgentRunner {
       // Remote URL already has credentials → push directly
       try {
         await this.sendProgress(platform, chatId, `📤 Pushe nach Remote...`);
-        await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
-        await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+        const result = await gitExecBoth(['push', '-u', 'origin', branch], cwd, runAsUser);
+        const prUrl = extractPushUrl(result.stderr);
+        await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}${prUrl ? `\n🔀 MR/PR: ${prUrl}` : ''}`);
+        return prUrl;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.warn({ err, cwd }, 'Project agent: git push failed');
         await this.sendProgress(platform, chatId, `⚠️ Push fehlgeschlagen: ${msg}`);
       }
-      return;
+      return undefined;
     }
 
     // No auth in URL — try to inject forge token temporarily
@@ -732,6 +808,7 @@ export class ProjectAgentRunner {
       const token = this.forgeConfig.github?.token ?? this.forgeConfig.gitlab?.token;
       if (token) {
         let authedUrl: string | null = null;
+        let prUrl: string | undefined;
         try {
           // Parse remote URL to inject token: http(s)://host/path → http(s)://oauth2:token@host/path
           const urlObj = new URL(remoteUrl);
@@ -744,8 +821,9 @@ export class ProjectAgentRunner {
 
           const providerLabel = this.forgeConfig.provider === 'gitlab' ? 'GitLab' : 'GitHub';
           await this.sendProgress(platform, chatId, `📤 Pushe nach ${providerLabel}...`);
-          await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
-          await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+          const result = await gitExecBoth(['push', '-u', 'origin', branch], cwd, runAsUser);
+          prUrl = extractPushUrl(result.stderr);
+          await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}${prUrl ? `\n🔀 MR/PR: ${prUrl}` : ''}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           this.logger.warn({ err, cwd }, 'Project agent: git push with forge token failed');
@@ -758,20 +836,23 @@ export class ProjectAgentRunner {
             this.logger.error({ err: restoreErr, cwd }, 'Project agent: failed to restore remote URL after push');
           }
         }
-        return;
+        return prUrl;
       }
     }
 
     // No forge config, no auth in URL → try push anyway (might work with credential helper)
     try {
       await this.sendProgress(platform, chatId, `📤 Pushe nach Remote...`);
-      await gitExec(['push', '-u', 'origin', branch], cwd, runAsUser);
-      await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}`);
+      const result = await gitExecBoth(['push', '-u', 'origin', branch], cwd, runAsUser);
+      const prUrl = extractPushUrl(result.stderr);
+      await this.sendProgress(platform, chatId, `📤 Gepusht: ${this.sanitizeUrl(remoteUrl)}${prUrl ? `\n🔀 MR/PR: ${prUrl}` : ''}`);
+      return prUrl;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn({ err, cwd }, 'Project agent: git push failed (no credentials)');
       await this.sendProgress(platform, chatId, `⚠️ Push fehlgeschlagen: ${msg}`);
     }
+    return undefined;
   }
 
   /** Strip credentials from a URL for safe display. */

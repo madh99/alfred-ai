@@ -12,6 +12,8 @@ export interface ProjectAgentSession {
   totalFilesChanged: number;
   lastBuildPassed: boolean;
   lastCommitSha?: string;
+  /** v643 — Merge-Request / Pull-Request URL extracted from `git push` output. */
+  lastPushUrl?: string;
   lastProgressAt?: string;
   milestones: string[];
   createdAt: string;
@@ -49,6 +51,7 @@ export class ProjectAgentSessionRepository {
     totalFilesChanged?: number;
     lastBuildPassed?: boolean;
     lastCommitSha?: string;
+    lastPushUrl?: string;
   }): Promise<void> {
     const now = new Date().toISOString();
     const sets: string[] = ['updated_at = ?'];
@@ -58,6 +61,7 @@ export class ProjectAgentSessionRepository {
     if (update.totalFilesChanged !== undefined) { sets.push('total_files_changed = ?'); values.push(update.totalFilesChanged); }
     if (update.lastBuildPassed !== undefined) { sets.push('last_build_passed = ?'); values.push(update.lastBuildPassed ? 1 : 0); }
     if (update.lastCommitSha !== undefined) { sets.push('last_commit_sha = ?'); values.push(update.lastCommitSha); }
+    if (update.lastPushUrl !== undefined) { sets.push('last_push_url = ?'); values.push(update.lastPushUrl); }
     sets.push('last_progress_at = ?');
     values.push(now);
     values.push(taskId);
@@ -185,6 +189,7 @@ export class ProjectAgentSessionRepository {
       totalFilesChanged: row.total_files_changed as number,
       lastBuildPassed: (row.last_build_passed as number) === 1,
       lastCommitSha: row.last_commit_sha as string | undefined,
+      lastPushUrl: (row.last_push_url as string | null) ?? undefined,
       lastProgressAt: row.last_progress_at as string | undefined,
       milestones,
       createdAt: row.created_at as string,

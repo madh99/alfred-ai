@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.643] - 2026-05-21
+
+### Added — Project-Repo-URL + Commit-Tracking + PR-Detection (v643, vollumfänglich A+B+C+D)
+
+Vorher: pro Project-Agent-Session wurde nur der **letzte** Commit-SHA gespeichert (bei 24-Phasen-Läufen waren 23 Commits "weg"), die Repo-URL war unsichtbar, MR/PR-Links aus git push wurden weggeworfen.
+
+**Schema** — SQLite Migration v73 / Postgres v76:
+- Neue Tabelle `project_agent_commits(id, session_id, project_id, sha, message, phase_idx, phase_description, files_changed, branch, committed_at, pushed_at, push_url)`
+- 2 Indizes: (session_id, committed_at) + (project_id, committed_at DESC)
+- `project_agent_sessions.last_push_url` TEXT — der MR/PR-Link der letzten Push-Operation
+- `projects.default_branch` TEXT — auto-detected via `git rev-parse --abbrev-ref HEAD`
+
+**A. Per-Phase Commit-Tracking** (`packages/storage/src/repositories/project-agent-commits-repository.ts`):
+- `record()` schreibt pro Commit einen Eintrag
+- `markSessionPushed(sessionId, pushUrl?)` markiert alle Session-Commits als pushed
+- `listBySession(sid)` / `listByProject(pid, limit)` für UI-Abfragen
+- `ProjectAgentRunner.setCommitsRepository(repo, resolver)` neuer Injection-Point — wenn gesetzt wird nach jedem `git commit` der Eintrag mit Phase-Index, Branch und Files-Count persistiert
+
+**B. Repo-URL + Branch Auto-Detection** (`packages/core/src/alfred.ts`):
+- Nach jedem Project-Agent-Lauf: wenn das Project noch keine `repo_url` oder `default_branch` hat, wird beides per `git -C <cwd>` aus dem Workspace ausgelesen und ins Project geschrieben
+- Strip von embed-Credentials aus der URL (`https://oauth2:token@…` → `https://…`)
+
+**C. PR/MR-Auto-Detection** (`packages/core/src/project-agent-runner.ts`):
+- Neue `gitExecBoth()` Helper (gibt stdout UND stderr zurück)
+- `extractPushUrl(stderr)` Regex-Heuristik die GitLab/GitHub/Gitea-MR-Create-URLs aus den `remote:`-Lines parsed ("To create a merge request for X, visit:", "Create a pull request for X by visiting:")
+- `pushToRemote()` returnt jetzt die extrahierte URL (oder undefined)
+- Nach Push: `session.last_push_url` updated + alle Session-Commits per `markSessionPushed(url)` als pushed markiert
+- Progress-Message zeigt MR/PR-Link direkt: "📤 Gepusht: … \n🔀 MR/PR: <url>"
+
+**D. WebUI Project-Detail erweitert** (`apps/web/src/components/projects/ProjectsPage.tsx`):
+- **Header** zeigt Repo-URL als klickbarer Link mit Provider-Icon (🐙 GitHub / 🦊 GitLab / 🍵 Gitea / 🪣 Bitbucket / 🔗 sonst) + Short-URL + ⎇ Branch-Badge
+- **Sessions-Liste** umgebaut zu einer eigenen `SessionRow`-Komponente die expandable ist
+- Klick auf Session → lädt Commits per `/api/projects/:id/sessions/:sourceId/commits` → zeigt pro Commit: Phase-Index, SHA (klickbar auf `commitUrlFor(repoUrl, sha)`), Message, Files-Count, ↑-Icon wenn pushed
+- Wenn die Session eine `lastPushUrl` hat: am Ende ein 🔀 "MR/PR öffnen ↗" Button
+
+**HTTP-API**:
+- `GET /api/projects/:id/commits?limit=` — alle Commits des Projects DESC
+- `GET /api/projects/:id/sessions/:sid/commits` — alle Commits einer Session ASC
+
+### Effekt
+- Bei jedem Project-Agent-Lauf wachsen jetzt: `project_agent_commits` (eine Zeile pro Phase), `project_agent_sessions.last_push_url` (eine URL pro Lauf), `projects.repo_url`+`default_branch` (einmalig beim Erstkontakt)
+- Im WebUI: Project-Detail zeigt sofort den Repo-Link, klick darauf öffnet GitLab/GitHub-Repo-Page; jede Session ist expandable und zeigt alle ihre Commits mit klickbaren SHAs
+- Nach erfolgreichem Push: MR/PR-Link prominent in der Session-Detail-View
+
+### Notes
+- Build grün (12/12)
+- Backwards-compatible: alte Sessions ohne Commits zeigen einfach eine leere Liste im Expander
+- `extractPushUrl` ist defensiv — bei unbekanntem Forge-Output bleibt's einfach undefined und der Rest funktioniert weiter
+
 ## [0.19.0-multi-ha.642] - 2026-05-21
 
 ### Improved — Open-Items-Audit deutlich vertieft (war zu oberflächlich)

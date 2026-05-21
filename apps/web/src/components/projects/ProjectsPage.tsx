@@ -42,6 +42,25 @@ function priorityIcon(p: string): string {
   return p === 'high' ? '🔴' : p === 'low' ? '⚪' : '🟡';
 }
 
+// v643 — Repo-URL Helpers
+function repoIconFor(url: string): string {
+  if (/github\.com/.test(url)) return '🐙';
+  if (/gitlab/.test(url)) return '🦊';
+  if (/gitea/.test(url)) return '🍵';
+  if (/bitbucket/.test(url)) return '🪣';
+  return '🔗';
+}
+function shortRepoUrl(url: string): string {
+  // strip protocol + .git suffix; keep last 2 path segments
+  return url.replace(/^https?:\/\/[^/]+\//, '').replace(/\.git$/, '');
+}
+function commitUrlFor(repoUrl: string | undefined, sha: string): string | undefined {
+  if (!repoUrl) return undefined;
+  const base = repoUrl.replace(/\.git$/, '');
+  if (/github\.com|gitlab|gitea|bitbucket/.test(base)) return `${base}/commit/${sha}`;
+  return undefined;
+}
+
 export function ProjectsPage() {
   const { client } = useConfig();
   const [projects, setProjects] = useState<Project[]>([]);
@@ -390,7 +409,21 @@ export function ProjectsPage() {
 
               {detail.project.description && <p className="text-sm text-gray-300">{detail.project.description}</p>}
               {detail.project.cwd && <div className="text-xs text-gray-500"><span className="text-gray-600">cwd:</span> <code className="bg-[#1a1a1a] px-1.5 py-0.5 rounded">{detail.project.cwd}</code></div>}
-              {detail.project.repoUrl && <div className="text-xs text-gray-500"><span className="text-gray-600">repo:</span> <a href={detail.project.repoUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">{detail.project.repoUrl}</a></div>}
+              {detail.project.repoUrl && (
+                <div className="text-xs text-gray-500 flex items-center gap-2 flex-wrap">
+                  <span className="text-gray-600">repo:</span>
+                  <a href={detail.project.repoUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline inline-flex items-center gap-1">
+                    <span>{repoIconFor(detail.project.repoUrl)}</span>
+                    <span>{shortRepoUrl(detail.project.repoUrl)}</span>
+                    <span className="text-[10px] text-gray-600">↗</span>
+                  </a>
+                  {detail.project.defaultBranch && (
+                    <span className="text-[10px] text-gray-600 border border-[#2a2a2a] rounded px-1.5 py-0.5">
+                      ⎇ {detail.project.defaultBranch}
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Status + Health-Mode Switcher */}
               <div className="flex flex-wrap gap-3 pt-2 border-t border-[#222]">
@@ -517,14 +550,12 @@ export function ProjectsPage() {
                   <h3 className="text-sm font-semibold text-gray-400 mb-2">Letzte Sessions ({detail.sessions.length})</h3>
                   <div className="space-y-1.5">
                     {detail.sessions.slice(0, 10).map(s => (
-                      <div key={s.id} className="text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="px-1.5 py-0.5 text-[10px] bg-[#1a1a1a] text-gray-400 border border-[#2a2a2a] rounded font-mono">{s.sessionType}</span>
-                          <span className="text-gray-500">{relativeTime(s.startedAt)}</span>
-                          {s.summary?.status && <span className={`text-[10px] ${s.summary.status === 'success' ? 'text-emerald-400' : s.summary.status === 'failed' ? 'text-red-400' : 'text-amber-400'}`}>{s.summary.status}</span>}
-                        </div>
-                        {s.summary?.whatWasDone && <div className="text-gray-400 mt-0.5 ml-1">{s.summary.whatWasDone}</div>}
-                      </div>
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        projectId={detail.project.id}
+                        repoUrl={detail.project.repoUrl}
+                      />
                     ))}
                   </div>
                 </div>
@@ -548,6 +579,74 @@ export function ProjectsPage() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// v643 — SessionRow mit Commit-Expander
+import type { ProjectCommit, ProjectSession } from '@/lib/alfred-client';
+
+function SessionRow({ session, projectId, repoUrl }: { session: ProjectSession; projectId: string; repoUrl?: string }) {
+  const { client } = useConfig();
+  const [expanded, setExpanded] = useState(false);
+  const [commits, setCommits] = useState<ProjectCommit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  const sourceId = (session as any).sourceId as string | undefined;
+
+  async function toggle() {
+    setExpanded(e => !e);
+    if (expanded || loaded || !client || !sourceId) return;
+    setLoading(true);
+    try {
+      const list = await client.fetchSessionCommits(projectId, sourceId);
+      setCommits(list);
+      setLoaded(true);
+    } catch { /* skip */ }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="text-xs border border-transparent hover:border-[#2a2a2a] rounded p-1.5 -mx-1.5">
+      <div className="flex items-center gap-2 cursor-pointer" onClick={toggle}>
+        <span className="text-gray-500 text-[10px]">{expanded ? '▼' : '▶'}</span>
+        <span className="px-1.5 py-0.5 text-[10px] bg-[#1a1a1a] text-gray-400 border border-[#2a2a2a] rounded font-mono">{session.sessionType}</span>
+        <span className="text-gray-500">{relativeTime(session.startedAt)}</span>
+        {session.summary?.status && (
+          <span className={`text-[10px] ${session.summary.status === 'success' ? 'text-emerald-400' : session.summary.status === 'failed' ? 'text-red-400' : 'text-amber-400'}`}>{session.summary.status}</span>
+        )}
+      </div>
+      {session.summary?.whatWasDone && <div className="text-gray-400 mt-0.5 ml-5">{session.summary.whatWasDone}</div>}
+      {expanded && (
+        <div className="ml-5 mt-1 space-y-0.5">
+          {loading && <div className="text-gray-500 text-[10px]">Lade Commits …</div>}
+          {!loading && commits.length === 0 && loaded && <div className="text-gray-600 text-[10px] italic">Keine Commits gefunden für diese Session.</div>}
+          {commits.map(c => {
+            const url = commitUrlFor(repoUrl, c.sha);
+            return (
+              <div key={c.id} className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-gray-600 font-mono text-[10px]">{c.phaseIdx ? `P${c.phaseIdx}` : '—'}</span>
+                {url ? (
+                  <a href={url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline font-mono text-[10px]">{c.sha.slice(0, 8)}</a>
+                ) : (
+                  <span className="text-gray-500 font-mono text-[10px]">{c.sha.slice(0, 8)}</span>
+                )}
+                <span className="text-gray-300 truncate flex-1">{c.message.slice(0, 80)}</span>
+                {c.filesChanged > 0 && <span className="text-gray-600">·{c.filesChanged}f</span>}
+                {c.pushedAt && <span className="text-emerald-500/70 text-[10px]" title={c.pushedAt}>↑</span>}
+              </div>
+            );
+          })}
+          {(session as any).lastPushUrl && (
+            <div className="pt-1 border-t border-[#222] mt-1">
+              <a href={(session as any).lastPushUrl} target="_blank" rel="noreferrer" className="text-purple-400 hover:underline text-[10px] inline-flex items-center gap-1">
+                🔀 MR/PR öffnen ↗
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

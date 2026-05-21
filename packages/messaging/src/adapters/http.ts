@@ -357,6 +357,9 @@ export class HttpAdapter extends MessagingAdapter {
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
     // v642 — Bulk-Close
     bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
+    // v643 — Commits per Project + per Session
+    listProjectCommits?: (projectId: string, limit: number) => Promise<any[]>;
+    listSessionCommits?: (sessionId: string) => Promise<any[]>;
   };
 
   setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
@@ -719,6 +722,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsAuditItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/bulk-close-items$/) && req.method === 'POST') {
       this.handleProjectsBulkCloseItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/commits$/) && req.method === 'GET') {
+      this.handleProjectsCommits(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/sessions\/[^/]+\/commits$/) && req.method === 'GET') {
+      this.handleProjectsSessionCommits(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -1739,6 +1746,32 @@ export class HttpAdapter extends MessagingAdapter {
     const result = await this.projectsCallbacks.auditOpenItems(projectId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
+  }
+
+  // v643 — Commits handlers
+  private async handleProjectsCommits(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listProjectCommits) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const limit = Number(url.searchParams.get('limit') ?? '100');
+    const commits = await this.projectsCallbacks.listProjectCommits(projectId, limit);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ commits }));
+  }
+
+  private async handleProjectsSessionCommits(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.listSessionCommits) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const sessionId = parts[parts.length - 2];
+    const commits = await this.projectsCallbacks.listSessionCommits(sessionId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ commits }));
   }
 
   // v642 — Bulk-Close handler

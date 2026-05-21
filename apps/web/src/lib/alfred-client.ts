@@ -525,6 +525,20 @@ export class AlfredClient {
     return res.json();
   }
 
+  // v643 — Commits per Project / Session
+  async fetchProjectCommits(projectId: string, limit = 100): Promise<ProjectCommit[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/commits?limit=${limit}`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.commits ?? [];
+  }
+  async fetchSessionCommits(projectId: string, sessionId: string): Promise<ProjectCommit[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/sessions/${sessionId}/commits`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.commits ?? [];
+  }
+
   async fetchProjectHealthLog(id: string, limit = 100): Promise<ProjectHealthEntry[]> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/health-log?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) return [];
@@ -1203,12 +1217,30 @@ export interface Project {
   description?: string;
   cwd?: string;
   repoUrl?: string;
+  /** v643 — Default-Branch (HEAD), auto-detected vom Project-Agent. */
+  defaultBranch?: string;
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];
   createdAt: string;
   lastActiveAt: string;
   nextCheckAt?: string;
+}
+
+// v643 — Per-Phase Commit eines Project-Agent-Laufs
+export interface ProjectCommit {
+  id: string;
+  sessionId: string;
+  projectId?: string;
+  sha: string;
+  message: string;
+  phaseIdx?: number;
+  phaseDescription?: string;
+  filesChanged: number;
+  branch?: string;
+  committedAt: string;
+  pushedAt?: string;
+  pushUrl?: string;
 }
 
 export interface ProjectSession {
