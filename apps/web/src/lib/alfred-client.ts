@@ -87,8 +87,16 @@ export class AlfredClient {
     return () => controller.abort();
   }
 
-  async fetchDashboard(range?: 'today' | 'week' | 'month' | 'year' | 'all'): Promise<DashboardData> {
-    const qs = range ? `?range=${range}` : '';
+  async fetchDashboard(
+    range?: 'today' | 'week' | 'month' | 'year' | 'all',
+    granularity?: 'day' | 'hour',
+    date?: string,
+  ): Promise<DashboardData> {
+    const params = new URLSearchParams();
+    if (range) params.set('range', range);
+    if (granularity === 'hour') params.set('granularity', 'hour');
+    if (date) params.set('date', date);
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const res = await fetch(`${this.baseUrl}/api/dashboard${qs}`, {
       headers: this.token ? { Authorization: `Bearer ${this.token}` } : {},
     });

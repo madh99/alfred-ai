@@ -3483,6 +3483,13 @@ export class Alfred {
           userTimezone = ownerProfile?.timezone;
         } catch { /* fallback to server TZ */ }
 
+        // v656 — Timezone an Usage-Repos reichen, damit Tages/Stunden-Buckets in
+        // Lokalzeit fallen. Vorher: UTC → "kein neuer Tag um 00:00 lokal".
+        try {
+          usageRepo.setTimezone(userTimezone);
+          serviceUsageRepo.setTimezone(userTimezone);
+        } catch { /* repo-Variante ohne setTimezone, ignorierbar */ }
+
         this.reasoningEngine = new ReasoningEngine(
           calendarProvider,
           todoRepo,
@@ -3880,7 +3887,7 @@ export class Alfred {
           };
         },
         metricsCallback: () => this.buildPrometheusMetrics(),
-        dashboardCallback: async (opts?: { range?: string }) => {
+        dashboardCallback: async (opts?: { range?: string; granularity?: string; date?: string }) => {
           // v622 — range-aware Dashboard. Default 'week' für Backwärts-Kompatibilität.
           // Berechnung des Datums-Fensters + Bucket-Granularität:
           //   today  → 1 Tag (heute), daily-buckets
@@ -3888,27 +3895,62 @@ export class Alfred {
           //   month  → 30 Tage, daily-buckets
           //   year   → 365 Tage, MONATS-buckets (12 statt 365 Balken)
           //   all    → ab earliest llm_usage.date, MONATS-buckets
-          const today = new Date().toISOString().slice(0, 10);
+          // v656 — today wird jetzt lokal aufgelöst (Owner-Timezone), Bug-Fix für
+          // "kein neuer Tag um 00:00 lokal" (vorher: UTC).
+          const ownerTz = await (async () => {
+            try {
+              const ownerIdLocal = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+              const p = await this.userRepo?.getProfile?.(ownerIdLocal);
+              return p?.timezone;
+            } catch { return undefined; }
+          })();
+          const localToday = (() => {
+            try {
+              return new Intl.DateTimeFormat('en-CA', { timeZone: ownerTz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+            } catch {
+              return new Date().toISOString().slice(0, 10);
+            }
+          })();
+          const today = localToday;
           const range = (opts?.range ?? 'week') as 'today' | 'week' | 'month' | 'year' | 'all';
+          const granularity = (opts?.granularity ?? 'day') as 'day' | 'hour' | 'month';
+
+          // v656 — Hourly-Modus: 24 Stunden-Buckets für einen lokalen Tag.
+          //   Datum wählbar via opts.date (Format YYYY-MM-DD), default = today.
+          //   Retention 62d (siehe cleanupHourly()).
+          //   Ersetzt nur usageBuckets + bucketGranularity, rest des Dashboards bleibt gleich.
+          let hourlyMode = false;
+          let hourlyTargetDate = '';
+          if (granularity === 'hour') {
+            hourlyMode = true;
+            hourlyTargetDate = opts?.date && /^\d{4}-\d{2}-\d{2}$/.test(opts.date) ? opts.date : today;
+          }
+
           let startDate: string;
           let useMonthBuckets = false;
           if (range === 'today') {
             startDate = today;
           } else if (range === 'week') {
-            startDate = new Date(Date.now() - 6 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+            // 7 Tages-Fenster relativ zur Lokal-TZ
+            const past = new Date(Date.now() - 6 * 24 * 60 * 60_000);
+            startDate = (() => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: ownerTz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(past); } catch { return past.toISOString().slice(0, 10); } })();
           } else if (range === 'month') {
-            startDate = new Date(Date.now() - 29 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+            const past = new Date(Date.now() - 29 * 24 * 60 * 60_000);
+            startDate = (() => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: ownerTz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(past); } catch { return past.toISOString().slice(0, 10); } })();
           } else if (range === 'year') {
-            startDate = new Date(Date.now() - 364 * 24 * 60 * 60_000).toISOString().slice(0, 10);
+            const past = new Date(Date.now() - 364 * 24 * 60 * 60_000);
+            startDate = (() => { try { return new Intl.DateTimeFormat('en-CA', { timeZone: ownerTz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).format(past); } catch { return past.toISOString().slice(0, 10); } })();
             useMonthBuckets = true;
           } else { // 'all'
             startDate = (await this.usageRepo?.getEarliestDate()) ?? today;
             useMonthBuckets = true;
           }
 
-          const usageBuckets = useMonthBuckets
-            ? (await this.usageRepo?.getRangeByMonth(startDate, today)) ?? []
-            : (await this.usageRepo?.getRange(startDate, today)) ?? [];
+          const usageBuckets = hourlyMode
+            ? (await this.usageRepo?.getHourly(hourlyTargetDate)) ?? []
+            : useMonthBuckets
+              ? (await this.usageRepo?.getRangeByMonth(startDate, today)) ?? []
+              : (await this.usageRepo?.getRange(startDate, today)) ?? [];
 
           // Service-usage uses the daily getRange; for monthly views we still render
           // them as a flat aggregate (Tabelle nach Range gefiltert, kein Stacking).
@@ -3917,18 +3959,19 @@ export class Alfred {
 
           return {
             range,
-            startDate,
-            endDate: today,
-            bucketGranularity: useMonthBuckets ? 'month' : 'day',
+            startDate: hourlyMode ? hourlyTargetDate : startDate,
+            endDate: hourlyMode ? hourlyTargetDate : today,
+            bucketGranularity: (hourlyMode ? 'hour' : (useMonthBuckets ? 'month' : 'day')) as 'hour' | 'day' | 'month',
+            hourlyDate: hourlyMode ? hourlyTargetDate : undefined,
             watches: await this.watchRepo?.getEnabled() ?? [],
             scheduled: await this.scheduledActionRepo?.getAll() ?? [],
             skillHealth: await this.skillHealthRepo?.getAll() ?? [],
             reminders: await this.reminderRepo?.getAllPending() ?? [],
             usage: {
-              today: await this.usageRepo?.getDaily(today) ?? null,
+              today: await this.usageRepo?.getDaily(hourlyMode ? hourlyTargetDate : today) ?? null,
               buckets: usageBuckets,
               // Legacy field für non-updated Clients
-              week: range === 'week' ? usageBuckets : [],
+              week: !hourlyMode && range === 'week' ? usageBuckets : [],
               total: await this.usageRepo?.getTotal() ?? [],
             },
             uptime: Math.floor(process.uptime()),
@@ -5356,12 +5399,14 @@ export class Alfred {
         summaries: await this.summaryRepo?.cleanup(180) ?? 0,
         activity: await this.activityRepo?.cleanup(90) ?? 0,
         usage: await this.usageRepo?.cleanup(365) ?? 0,
+        // v656 — Hourly Buckets: aktueller + Vormonat (≥ 62d) reicht für Dashboard
+        usageHourly: await this.usageRepo?.cleanupHourly(62) ?? 0,
         expiredMemories: await this.memoryRepo?.cleanupExpired() ?? 0,
         processedMessages: this.config.cluster?.enabled
           ? await new (await import('@alfred/storage')).ProcessedMessageRepository(this.database.getAdapter()).cleanup()
           : 0,
       };
-      if (cleaned.audit || cleaned.summaries || cleaned.activity || cleaned.usage) {
+      if (cleaned.audit || cleaned.summaries || cleaned.activity || cleaned.usage || cleaned.usageHourly) {
         this.logger.info(cleaned, 'Startup DB cleanup completed');
       }
     } catch (err) {

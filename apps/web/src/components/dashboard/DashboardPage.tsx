@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { useDashboard, type DashboardRange } from '@/hooks/useDashboard';
+import { useDashboard, type DashboardRange, type DashboardGranularity } from '@/hooks/useDashboard';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
 import type { DailyUsageSummary, UsageRecord } from '@/types/api';
@@ -47,12 +47,33 @@ function formatUptime(seconds: number): string {
   return `${h}h ${m}m`;
 }
 
+// v656 — Helper für YYYY-MM-DD heute in Browser-Lokalzeit
+function todayLocalISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export function DashboardPage() {
   const { user: authUser } = useConfig();
   const [range, setRange] = useState<DashboardRange>('week');
-  const { data, loading, error, refresh } = useDashboard(30_000, range);
+  // v656 — Hourly-Modus: Sub-Toggle, aktiv nur bei range='today' (oder freier Tag)
+  const [granularity, setGranularity] = useState<DashboardGranularity>('day');
+  const [hourlyDate, setHourlyDate] = useState<string>(todayLocalISO());
+  const effectiveGranularity = granularity === 'hour' ? 'hour' : 'day';
+  const effectiveHourlyDate = effectiveGranularity === 'hour' ? hourlyDate : undefined;
+  const { data, loading, error, refresh } = useDashboard(30_000, range, effectiveGranularity, effectiveHourlyDate);
   // v622 — toggled-off Models (hidden in stacked chart). Default: alle sichtbar.
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
+
+  // v656 — Min-Datum für Hourly-Picker (62d Retention)
+  const hourlyMinDate = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 62);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }, []);
 
   // Compute the list of all distinct models present in the buckets, for legend + colour assignment.
   // Memoized so it stays stable across re-renders (legend doesn't flicker).
@@ -175,22 +196,50 @@ export function DashboardPage() {
         <section>
           <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
             <h2 className="text-lg font-medium text-gray-300">LLM Kosten &amp; Token-Verbrauch</h2>
-            {/* v622 — Time-Range-Picker */}
-            <div className="flex bg-[#0d0d0d] border border-[#1f1f1f] rounded-lg p-0.5">
-              {(['today', 'week', 'month', 'year', 'all'] as DashboardRange[]).map(r => (
+            {/* v622 — Time-Range-Picker + v656 Hourly-Toggle */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex bg-[#0d0d0d] border border-[#1f1f1f] rounded-lg p-0.5">
+                {(['today', 'week', 'month', 'year', 'all'] as DashboardRange[]).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => { setRange(r); if (granularity === 'hour') setGranularity('day'); }}
+                    className={clsx(
+                      'px-3 py-1 text-xs rounded-md transition-colors',
+                      range === r && granularity !== 'hour'
+                        ? 'bg-blue-500/20 text-blue-400'
+                        : 'text-gray-400 hover:text-gray-200',
+                    )}
+                  >
+                    {RANGE_LABELS[r]}
+                  </button>
+                ))}
+              </div>
+              {/* v656 — Hourly-Toggle + Datum-Picker (62d Retention) */}
+              <div className="flex bg-[#0d0d0d] border border-[#1f1f1f] rounded-lg p-0.5 items-center gap-1">
                 <button
-                  key={r}
-                  onClick={() => setRange(r)}
+                  onClick={() => setGranularity(granularity === 'hour' ? 'day' : 'hour')}
                   className={clsx(
                     'px-3 py-1 text-xs rounded-md transition-colors',
-                    range === r
+                    granularity === 'hour'
                       ? 'bg-blue-500/20 text-blue-400'
                       : 'text-gray-400 hover:text-gray-200',
                   )}
+                  title="Stundenweise Darstellung eines Tages"
                 >
-                  {RANGE_LABELS[r]}
+                  ⏱ Stündlich
                 </button>
-              ))}
+                {granularity === 'hour' && (
+                  <input
+                    type="date"
+                    value={hourlyDate}
+                    min={hourlyMinDate}
+                    max={todayLocalISO()}
+                    onChange={(e) => setHourlyDate(e.target.value || todayLocalISO())}
+                    className="bg-[#111] border border-[#1f1f1f] rounded px-2 py-0.5 text-xs text-gray-200"
+                    title="Tag wählen (max. 62 Tage rückwirkend)"
+                  />
+                )}
+              </div>
             </div>
           </div>
           <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
@@ -200,12 +249,12 @@ export function DashboardPage() {
               <p className="text-xs text-gray-500 mt-1">{today?.totalCalls ?? 0} Calls</p>
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
-              <p className="text-xs text-gray-500 mb-1">{RANGE_LABELS[range]}</p>
+              <p className="text-xs text-gray-500 mb-1">{bucketGranularity === 'hour' ? (data.hourlyDate ?? hourlyDate) : RANGE_LABELS[range]}</p>
               <p className="text-2xl font-bold text-blue-400">{formatCost(rangeTotal)}</p>
               <p className="text-xs text-gray-500 mt-1">{rangeCalls} Calls</p>
             </div>
             <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
-              <p className="text-xs text-gray-500 mb-1">Tokens {RANGE_LABELS[range]}</p>
+              <p className="text-xs text-gray-500 mb-1">Tokens {bucketGranularity === 'hour' ? (data.hourlyDate ?? hourlyDate) : RANGE_LABELS[range]}</p>
               <p className="text-lg font-semibold text-gray-200">
                 <span className="text-green-400" title={`${rangeInputTokens.toLocaleString('de-DE')} Input-Tokens`}>{formatTokens(rangeInputTokens)}</span>
                 <span className="text-gray-500 mx-1">/</span>
@@ -227,9 +276,11 @@ export function DashboardPage() {
             <div className="mt-4 bg-[#111111] border border-[#1f1f1f] rounded-xl p-4">
               <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
                 <p className="text-sm text-gray-400">
-                  Kosten — {RANGE_LABELS[range]} ({bucketGranularity === 'month' ? 'Monats' : 'Tages'}-Buckets, {buckets.length})
+                  Kosten — {bucketGranularity === 'hour'
+                    ? `Stündlich (${data.hourlyDate ?? hourlyDate})`
+                    : `${RANGE_LABELS[range]} (${bucketGranularity === 'month' ? 'Monats' : 'Tages'}-Buckets, ${buckets.length})`}
                 </p>
-                {data.startDate && (
+                {data.startDate && bucketGranularity !== 'hour' && (
                   <p className="text-xs text-gray-600">
                     {data.startDate} → {data.endDate}
                   </p>
@@ -306,7 +357,11 @@ export function DashboardPage() {
                         })}
                       </div>
                       <span className="text-[10px] text-gray-500 mt-1 truncate w-full text-center">
-                        {bucketGranularity === 'month' ? bucket.date.slice(2, 7) : bucket.date.slice(5)}
+                        {bucketGranularity === 'month'
+                          ? bucket.date.slice(2, 7)
+                          : bucketGranularity === 'hour'
+                            ? `${bucket.date.slice(-2)}h`
+                            : bucket.date.slice(5)}
                       </span>
                     </div>
                   );

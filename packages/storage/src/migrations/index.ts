@@ -1819,4 +1819,25 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pa_lessons_cwd_pattern ON project_agent_lessons(cwd, pattern)`);
     },
   },
+  {
+    version: 77,
+    description: 'v656 — llm_usage_hourly für stundenweise Darstellung (Retention 62 Tage, Lokalzeit)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS llm_usage_hourly (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          hour_bucket TEXT NOT NULL,
+          model TEXT NOT NULL,
+          calls INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER NOT NULL DEFAULT 0,
+          output_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+          cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+          cost_usd REAL NOT NULL DEFAULT 0,
+          UNIQUE(hour_bucket, model)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_llm_usage_hourly_bucket ON llm_usage_hourly(hour_bucket)`);
+    },
+  },
 ];

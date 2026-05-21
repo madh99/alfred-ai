@@ -24,7 +24,14 @@ const SERVICE_PRICING: Record<string, { costPer: number; unitSize: number; unitT
 };
 
 export class ServiceUsageRepository {
+  /** v656 — Owner-Timezone für Lokal-Bucketing (vorher UTC → "kein neuer Tag um 00:00 lokal"). */
+  private timezone: string | undefined;
+
   constructor(private readonly adapter: AsyncDbAdapter) {}
+
+  setTimezone(tz: string | undefined): void {
+    this.timezone = tz;
+  }
 
   /** Calculate cost for a given model and unit count. */
   static calculateCost(model: string, units: number): number {
@@ -40,7 +47,15 @@ export class ServiceUsageRepository {
 
   /** Record a service usage event (UPSERT — aggregates per day+service+model+user). */
   async record(service: string, model: string, units: number, userId?: string): Promise<void> {
-    const date = new Date().toISOString().slice(0, 10);
+    // v656 — Lokal-Datum statt UTC; bei nicht-gesetzter TZ Fallback auf UTC
+    const now = new Date();
+    const tz = this.timezone || 'UTC';
+    let date: string;
+    try {
+      date = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+    } catch {
+      date = now.toISOString().slice(0, 10);
+    }
     const unitType = ServiceUsageRepository.getUnitType(model);
     const cost = ServiceUsageRepository.calculateCost(model, units);
     const uid = userId ?? '';

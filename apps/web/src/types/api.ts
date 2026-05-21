@@ -94,7 +94,9 @@ export interface DashboardData {
   range?: 'today' | 'week' | 'month' | 'year' | 'all';
   startDate?: string;
   endDate?: string;
-  bucketGranularity?: 'day' | 'month';
+  bucketGranularity?: 'day' | 'month' | 'hour';
+  /** v656 — set when granularity='hour' — the local YYYY-MM-DD viewed */
+  hourlyDate?: string;
   watches: WatchItem[];
   scheduled: ScheduledItem[];
   skillHealth: SkillHealthItem[];

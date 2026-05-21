@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.656] - 2026-05-21
+
+### Added — Dashboard Stunden-Granularität + Timezone-aware Bucketing
+
+**Befund (Timezone-Bug):**
+`usage-repository.ts:32` und `service-usage-repository.ts:43` nutzten
+`new Date().toISOString().slice(0,10)` → **UTC-Datum**. In Europe/Vienna
+(CEST=UTC+2) wurden die ersten 2h des lokalen Tages noch unter dem UTC-Datum
+des Vortags gebucht → User-Report „um 00:00 lokal kein neuer Tag".
+Profile-Timezone existierte schon (`getProfile().timezone`, wird in alfred.ts
+für Reasoning genutzt), aber Usage-Repos hatten keinen Bezug dazu.
+
+**Fix Timezone:**
+- `UsageRepository.setTimezone(tz)` und `ServiceUsageRepository.setTimezone(tz)`
+- Bucketing via `Intl.DateTimeFormat('en-CA', { timeZone })` → YYYY-MM-DD lokal
+- `alfred.ts` reicht `userTimezone` an beide Repos durch (nach Profile-Resolve)
+- Dashboard-Callback: `today` wird jetzt lokal aufgelöst, alle `startDate`-
+  Berechnungen für week/month/year sind lokal-relativ
+- `cleanup()` Cutoff in Lokalzeit
+
+**Neu (Hourly Buckets):**
+- Migration SQLite v77 / PG v80: neue Tabelle `llm_usage_hourly`
+  - `hour_bucket TEXT` (Format `YYYY-MM-DDTHH`, Lokalzeit), UNIQUE(hour_bucket, model)
+  - Index `idx_llm_usage_hourly_bucket`
+- `UsageRepository.record()` schreibt **parallel** in `llm_usage` (Tag) und
+  `llm_usage_hourly` (Stunde). Backward-compat: try/catch falls Migration noch
+  nicht durch.
+- `UsageRepository.getHourly(date)` liefert exakt 24 Buckets (leere Stunden = 0)
+- `UsageRepository.cleanupHourly(62)` — Retention für aktueller + Vormonat
+- Dashboard-Endpoint nimmt neue Query-Params:
+  - `granularity=hour` → Stundenmodus
+  - `date=YYYY-MM-DD` → wählbarer Tag (sonst heute)
+- Response enthält `bucketGranularity: 'hour'` und `hourlyDate`
+
+**Frontend (Dashboard):**
+- Neuer „⏱ Stündlich"-Toggle neben dem Range-Selector
+- Bei aktivem Toggle: HTML5 Date-Picker mit `min=heute-62d`, `max=heute`
+- 24 Balken statt 1, Bucket-Label „HH" (z.B. „14h")
+- KPI-Karten zeigen Datum statt Range-Label im Hourly-Modus
+- Range + Hourly mutually exclusive (Range-Click resettet Hourly)
+
+**Schema (Hourly-Tabelle):**
+```sql
+CREATE TABLE llm_usage_hourly (
+  id, hour_bucket TEXT, model TEXT,
+  calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd,
+  UNIQUE(hour_bucket, model)
+);
+```
+
+### Notes
+- Build grün (12/12)
+- Historische Daten (vor v656) haben keine Stunden-Auflösung → bei Datum < v656-Deploy
+  zeigt Hourly-Modus 0-Buckets bzw. lückenhaft. Frontend zeigt das transparent.
+- TZ-Fix wirkt sich auch auf die **bestehende** Tages-Aggregation (`llm_usage`) aus —
+  ab v656 fallen Buckets nach Lokal-Datum statt UTC. Alte UTC-Buckets bleiben
+  unverändert in der DB (keine destruktive Migration). Drift maximal ein paar
+  Stunden bei Tagesgrenzen.
+- HA-Cluster: beide Nodes schreiben in dieselbe Tabelle → `ON CONFLICT(hour_bucket, model)
+  DO UPDATE` löst Race-Conditions.
+
 ## [0.19.0-multi-ha.655] - 2026-05-21
 
 ### Fixed — Dashboard: Tokens-KPI folgt dem Range-Selector

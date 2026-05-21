@@ -114,7 +114,7 @@ export interface HttpAdapterOptions {
   webhooks?: WebhookHandler[];
   // v622 — optionaler `opts` mit `range`-Query-Param wird vom dashboardCallback
   // genutzt um den Zeitraum (today/week/month/year/all) zu wählen.
-  dashboardCallback?: (opts?: { range?: string }) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  dashboardCallback?: (opts?: { range?: string; granularity?: string; date?: string }) => Record<string, unknown> | Promise<Record<string, unknown>>;
   webUiPath?: string;
   tls?: TlsOptions;
   authCallback?: {
@@ -1133,11 +1133,20 @@ export class HttpAdapter extends MessagingAdapter {
     }
     try {
       // v622 — Range-Param aus Query-String extrahieren und an Callback weiterreichen.
+      // v656 — Zusätzlich granularity=hour + date=YYYY-MM-DD für stundenweise Darstellung.
       const url = new URL(req.url ?? '', `http://${req.headers.host ?? 'localhost'}`);
       const rangeParam = url.searchParams.get('range') ?? undefined;
       const allowed = ['today', 'week', 'month', 'year', 'all'];
       const range = rangeParam && allowed.includes(rangeParam) ? rangeParam : undefined;
-      const data = await this.dashboardFn(range ? { range } : undefined) as Record<string, unknown>;
+      const granularityParam = url.searchParams.get('granularity') ?? undefined;
+      const granularity = granularityParam === 'hour' ? 'hour' : undefined;
+      const dateParam = url.searchParams.get('date') ?? undefined;
+      const date = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : undefined;
+      const opts: Record<string, string> = {};
+      if (range) opts.range = range;
+      if (granularity) opts.granularity = granularity;
+      if (date) opts.date = date;
+      const data = await this.dashboardFn(Object.keys(opts).length ? opts : undefined) as Record<string, unknown>;
 
       // Strip admin-only data for non-admin users
       const authHeader = req.headers['authorization'];
