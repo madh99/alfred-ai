@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.653] - 2026-05-21
+
+### Fixed — Reasoning halluziniert keine Entity-IDs mehr
+
+**Root-Cause-Befund:**
+Im Reasoning-Pfad zur Confirmation-Queue gab es drei verkettete Fehler die zusammen
+zur Symptomatik „Incident 4b304796 nicht gefunden — passiert immer wieder" führten:
+
+1. `reasoning-context-collector.ts` rief vier ITSM-Listen-Skills mit `{} as any` als
+   Context auf (`list_incidents`, `list_changes`, `list_problems`, `check_sla_compliance`).
+   ITSM-Skill resolved `userId = context.masterUserId || context.userId` → `undefined`.
+   SQL-Param `[undefined]` → SQLite TypeError (gecatcht → success:false) bzw. Postgres
+   NULL-Compare (immer false). **Resultat: leere Listen, keine echten IDs im Reasoning-Context.**
+
+2. System-Prompt zeigte konkrete Beispiel-Hex-IDs (`"0815bc66"`, `"a3f2c8e1"`) als
+   Action-Template. Ohne reale IDs im Context: **LLM imitiert das Muster und erfindet
+   plausibel aussehende 8-Hex-Strings** (Mustermimikry).
+
+3. Validator vor `enqueue` prüfte nur den Action-Namen gegen das Skill-Enum, **NICHT**
+   ob referenzierte `incident_id` / `change_id` / `problem_id` real existieren.
+   → Confirmation 24h pending, beim „ja" findet die Skill nichts → 404.
+
+**Fixes (Bundle):**
+
+- **P0a** (`reasoning-context-collector.ts:670-783`): 4× `{} as any` durch
+  `buildSkillContext(userRepo, {userId: defaultChatId, platform: defaultPlatform, ...})`
+  ersetzt. Context wird einmal pro Reasoning-Tick gebaut und für alle ITSM-Listen
+  wiederverwendet. → echte Incident/Change/Problem-IDs im LLM-Kontext.
+
+- **P0b** (`reasoning-engine.ts:1629`): Action-Validator erweitert. Bei
+  `skillName === 'itsm'` und gesetzter `incident_id`/`change_id`/`problem_id` wird
+  vor `confirmationQueue.enqueue()` ein `get_incident`/`get_change`/`get_problem`-Lookup
+  ausgeführt. Bei `success:false`: Action **gedroppt, NICHT enqueued**, WARN-Log mit
+  `halluzinatedRef`. Bei Lookup-Exception (Network/DB-Fehler): Check übersprungen
+  (treated as valid — fail-open damit transiente Fehler keine validen Aktionen blocken).
+
+- **P1** (`reasoning-engine.ts:880-888`): Konkrete Beispiel-Hex-IDs (`0815bc66`,
+  `a3f2c8e1`) durch Platzhalter `<id-aus-liste>` ersetzt. WICHTIG-Hinweis verschärft:
+  „nicht aus dem Beispiel-Platzhalter ableiten — wenn KEINE passende ID in der Liste
+  steht: KEIN update_incident enqueuen, stattdessen create_incident". Entzieht dem
+  LLM die Schablone für Halluzination.
+
+### Notes
+- Build grün (12/12)
+- P0a + P0b sind die strukturellen Fixes — selbst wenn Beobachtung 1 jemals
+  regressiert, fängt der Validator (P0b) halluzinierte IDs ab
+- P1 ist Defense-in-depth — reduziert Wahrscheinlichkeit dass der LLM überhaupt
+  versucht zu halluzinieren
+- Owner-Chat-Resolve-Pfad ist KORREKT (Monitor-Auto-Incident und Confirmation-Execution
+  nutzen dieselbe `ownerMasterUserId`) — die ursprüngliche userId-Mismatch-Hypothese
+  war eine **ungeprüfte Vermutung** und wurde durch Code-Trace widerlegt
+
 ## [0.19.0-multi-ha.652] - 2026-05-21
 
 ### Added — Project-Agent Smart (Bundle 5 von 5)

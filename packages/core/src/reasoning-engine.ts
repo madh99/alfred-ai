@@ -877,15 +877,15 @@ AKTIONSTYPEN:
 3. Watch erstellen: {"type":"execute_skill","description":"...","skillName":"watch","skillParams":{"action":"create","name":"...","skill_name":"...","skill_params":{...},"condition_field":"...","condition_operator":"lt","condition_value":20,"interval_minutes":30}}
 4. Komplexe Aufgabe delegieren: {"type":"execute_skill","description":"...","skillName":"delegate","skillParams":{"task":"...","max_iterations":10}}
 5. Erinnerung erstellen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"set","message":"...","triggerAt":"2026-04-03T09:00"}}
-5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","reminderId":"a3f2c8e1"}}
-    WICHTIG: reminderId MUSS die exakte 8-stellige Hex-ID aus der Erinnerungen-Liste sein (z.B. "ef6e21fd"). NIEMALS erfinden!
+5b. Erinnerung löschen: {"type":"execute_skill","description":"...","skillName":"reminder","skillParams":{"action":"cancel","reminderId":"<id-aus-liste>"}}
+    WICHTIG: reminderId MUSS eine reale 8-stellige Hex-ID aus der oben gelisteten Erinnerungen-Section sein. NIEMALS erfinden, nicht aus dem Beispiel-Platzhalter ableiten — wenn keine passende ID in der Liste steht: NICHT enqueuen!
     WICHTIG: id MUSS die exakte 8-stellige Hex-ID aus der Erinnerungen-Liste sein. NIEMALS erfinden!
 
 ${this.skillRegistry.has('cmdb') ? `6. CMDB Discovery: {"type":"execute_skill","description":"...","skillName":"cmdb","skillParams":{"action":"discover"}}` : ''}
 ${this.skillRegistry.has('itsm') ? `7. ITSM Incident erstellen: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_incident","title":"...","severity":"high","symptoms":"..."}}
-7b. ITSM Incident aktualisieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"0815bc66","root_cause":"...","severity":"high"}}
-7c. ITSM Investigation Notes: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"0815bc66","investigation_notes":"SSH-Verbindung zum Server getestet, Port 22 offen, CPU bei 98%","status":"investigating"}}
-    WICHTIG: incident_id MUSS die exakte 8-stellige Hex-ID aus der Aktive-Incidents-Liste sein (z.B. "0815bc66"). NIEMALS eine ID erfinden!
+7b. ITSM Incident aktualisieren: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"<id-aus-liste>","root_cause":"...","severity":"high"}}
+7c. ITSM Investigation Notes: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"update_incident","incident_id":"<id-aus-liste>","investigation_notes":"SSH-Verbindung zum Server getestet, Port 22 offen, CPU bei 98%","status":"investigating"}}
+    WICHTIG: incident_id MUSS eine reale 8-stellige Hex-ID aus der oben gelisteten Aktive-Incidents-Section sein. NIEMALS erfinden, nicht aus dem Beispiel-Platzhalter ableiten — wenn KEINE passende Incident-ID in der Liste steht: KEIN update_incident enqueuen, stattdessen create_incident verwenden!
 8. ITSM Change Request: {"type":"execute_skill","description":"...","skillName":"itsm","skillParams":{"action":"create_change_request","title":"...","type":"normal","risk_level":"medium"}}` : ''}
 
 9. PLAN ERSTELLEN (für Szenarien die MEHRERE zusammenhängende Schritte erfordern):
@@ -1635,6 +1635,39 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
             continue;
           }
         }
+
+        // v653 — Validate referenced entity IDs. Bug-Befund: ohne IDs im
+        // Reasoning-Kontext erfindet der LLM 8-stellige Hex-Strings (Mustermimikry
+        // der Beispiel-IDs im System-Prompt). Confirmation bleibt 24h pending,
+        // beim "ja" findet die Skill den Eintrag nicht. → vor Enqueue prüfen
+        // ob jede *_id im skillParams real existiert.
+        if (queueSkill && action.skillName === 'itsm' && action.skillParams) {
+          const idChecks: Array<{ field: string; lookupAction: string }> = [
+            { field: 'incident_id', lookupAction: 'get_incident' },
+            { field: 'change_id', lookupAction: 'get_change' },
+            { field: 'problem_id', lookupAction: 'get_problem' },
+          ];
+          let halluzinatedRef: string | undefined;
+          for (const chk of idChecks) {
+            const idVal = (action.skillParams as Record<string, unknown>)[chk.field];
+            if (typeof idVal !== 'string' || idVal.length === 0) continue;
+            try {
+              const { context: vCtx } = await buildSkillContext(this.userRepo, {
+                userId: this.defaultChatId, platform: this.defaultPlatform, chatId: this.defaultChatId, chatType: 'dm',
+              });
+              const r = await this.skillSandbox.execute(queueSkill, { action: chk.lookupAction, [chk.field]: idVal }, vCtx);
+              if (!r.success) { halluzinatedRef = `${chk.field}=${idVal}`; break; }
+            } catch (err) {
+              this.logger.debug({ err, field: chk.field, idVal }, 'Reasoning: entity-validation lookup failed — skipping check (treated as valid)');
+            }
+          }
+          if (halluzinatedRef) {
+            this.logger.warn({ skillName: action.skillName, action: action.skillParams.action, halluzinatedRef, description: action.description },
+              'Reasoning: action references unknown entity — dropped before enqueue');
+            continue;
+          }
+        }
+
         if (!this.confirmationQueue) continue;
         await this.confirmationQueue.enqueue({
           chatId: this.defaultChatId,

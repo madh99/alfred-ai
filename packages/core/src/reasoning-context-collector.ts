@@ -668,9 +668,15 @@ export class ReasoningContextCollector {
               // Include active + recently resolved incidents so LLM can update/avoid duplicates
               const skill = this.skillRegistry.get('itsm');
               if (skill) {
+                // v653 — bauen Skill-Context einmal mit echter masterUserId. Vorher 4× `{} as any`,
+                // wodurch `userId = context.masterUserId || context.userId` undefined wurde und
+                // alle Listen leer blieben → LLM halluzinierte Incident-IDs.
+                const { context: itsmCtx } = await buildSkillContext(this.userRepo, {
+                  userId: this.defaultChatId, platform: this.defaultPlatform, chatId: this.defaultChatId, chatType: 'dm',
+                });
                 {
                   // Single fetch: all incidents, then filter by status in code
-                  const allRaw = await this.skillSandbox.execute(skill, { action: 'list_incidents' }, {} as any);
+                  const allRaw = await this.skillSandbox.execute(skill, { action: 'list_incidents' }, itsmCtx);
                   if (allRaw.success && Array.isArray(allRaw.data)) {
                     const allInc = allRaw.data as Array<{ id: string; title: string; severity: string; status: string; rootCause?: string; resolvedAt?: string; createdAt?: string; resolution?: string }>;
                     const activeStatuses = new Set(['open', 'acknowledged', 'investigating', 'mitigating']);
@@ -753,7 +759,7 @@ export class ReasoningContextCollector {
                 }
                 {
                   // Also include pending Change Requests
-                  const crRaw = await this.skillSandbox.execute(skill, { action: 'list_changes', status: 'draft' }, {} as any);
+                  const crRaw = await this.skillSandbox.execute(skill, { action: 'list_changes', status: 'draft' }, itsmCtx);
                   if (crRaw.success && Array.isArray(crRaw.data)) {
                     const pending = (crRaw.data as Array<{ id: string; title: string; type: string; status: string }>)
                       .slice(0, 5)
@@ -764,7 +770,7 @@ export class ReasoningContextCollector {
 
                 // Active problems + known errors
                 {
-                  const probRaw = await this.skillSandbox.execute(skill, { action: 'list_problems' }, {} as any);
+                  const probRaw = await this.skillSandbox.execute(skill, { action: 'list_problems' }, itsmCtx);
                   if (probRaw.success && Array.isArray(probRaw.data)) {
                     const activeProbs = (probRaw.data as any[]).filter((p: any) => !['resolved', 'closed'].includes(p.status));
                     const probLines = activeProbs.slice(0, 10).map((p: any) => {
@@ -780,7 +786,7 @@ export class ReasoningContextCollector {
 
                 // SLA Breaches
                 {
-                  const slaRaw = await this.skillSandbox.execute(skill, { action: 'check_sla_compliance' }, {} as any);
+                  const slaRaw = await this.skillSandbox.execute(skill, { action: 'check_sla_compliance' }, itsmCtx);
                   if (slaRaw.success && Array.isArray(slaRaw.data)) {
                     const breaches = (slaRaw.data as any[]).filter((r: any) => !r.compliant);
                     if (breaches.length > 0) {
