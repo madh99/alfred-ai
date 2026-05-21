@@ -75,9 +75,15 @@ export class ConversationRepository {
   /**
    * v627 — List conversations with optional filters + last-message + message-count.
    * Used by the WebUI history viewer to populate the sidebar without N+1 queries.
+   *
+   * v637 — `userIds` (Plural) ergänzt. Bei verlinkten Accounts (Telegram + Matrix +
+   * Discord etc.) speichert `conversations.user_id` die platform-spezifische ID, nicht
+   * den Master. Caller liefert alle linked-User-IDs damit Matrix/Discord-Chats nicht
+   * aus dem Filter fallen. Der alte `userId` bleibt erhalten für die Single-User-Fälle.
    */
   async listConversations(opts?: {
     userId?: string;
+    userIds?: string[];
     platform?: Platform;
     limit?: number;
     offset?: number;
@@ -86,7 +92,13 @@ export class ConversationRepository {
     const offset = opts?.offset ?? 0;
     const where: string[] = [];
     const params: unknown[] = [];
-    if (opts?.userId) { where.push('c.user_id = ?'); params.push(opts.userId); }
+    const allUserIds = (opts?.userIds && opts.userIds.length > 0) ? opts.userIds : (opts?.userId ? [opts.userId] : []);
+    if (allUserIds.length === 1) {
+      where.push('c.user_id = ?'); params.push(allUserIds[0]);
+    } else if (allUserIds.length > 1) {
+      where.push(`c.user_id IN (${allUserIds.map(() => '?').join(',')})`);
+      params.push(...allUserIds);
+    }
     if (opts?.platform) { where.push('c.platform = ?'); params.push(opts.platform); }
     const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
 
@@ -175,7 +187,7 @@ export class ConversationRepository {
    *   - Postgres: uses `tsvector` column + `ts_rank` scoring
    */
   async searchMessages(
-    userId: string,
+    userId: string | string[],
     query: string,
     opts?: { limit?: number; roles?: Array<'user' | 'assistant' | 'system' | 'tool'>; sinceDays?: number; timeDecay?: boolean },
   ): Promise<Array<{ id: string; conversationId: string; role: string; content: string; createdAt: string; score: number; platform: string; chatId: string }>> {
@@ -187,6 +199,11 @@ export class ConversationRepository {
       : null;
     const decay = opts?.timeDecay ?? true;
 
+    // v637 — userId akzeptiert jetzt auch string[] (linked-User-IDs für Matrix/Discord/WhatsApp).
+    const userIds = Array.isArray(userId) ? userId : [userId];
+    const userPlaceholders = userIds.map(() => '?').join(',');
+    const userInClause = userIds.length === 1 ? 'c.user_id = ?' : `c.user_id IN (${userPlaceholders})`;
+
     if (this.adapter.type === 'postgres') {
       // Postgres: ts_rank with optional exponential time-decay multiplier
       // Decay factor: exp(-age_days / 30) — recent messages weight ~1, 30d-old ~0.37, 90d ~0.05
@@ -197,7 +214,7 @@ export class ConversationRepository {
       const params: unknown[] = [query, query]; // rankExpr + plainto_tsquery
       params.push(...roles);
       if (sinceCutoff) params.push(sinceCutoff);
-      params.push(userId, limit);
+      params.push(...userIds, limit);
       const sql = `
         SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,
                ${rankExpr} AS score, c.platform, c.chat_id
@@ -206,7 +223,7 @@ export class ConversationRepository {
         WHERE content_tsv @@ plainto_tsquery('simple', ?)
           AND m.role IN (${placeholders})
           ${sinceClause}
-          AND c.user_id = ?
+          AND ${userInClause}
         ORDER BY score DESC, m.created_at DESC
         LIMIT ?
       `;
@@ -224,7 +241,7 @@ export class ConversationRepository {
     const params: unknown[] = [query];
     params.push(...roles);
     if (sinceCutoff) params.push(sinceCutoff);
-    params.push(userId, Math.min(limit * 3, 200)); // over-fetch for re-ranking
+    params.push(...userIds, Math.min(limit * 3, 200)); // over-fetch for re-ranking
     const sql = `
       SELECT m.id, m.conversation_id, m.role, m.content, m.created_at,
              bm25(messages_fts) AS bm25_score, c.platform, c.chat_id
@@ -234,7 +251,7 @@ export class ConversationRepository {
       WHERE messages_fts MATCH ?
         AND m.role IN (${placeholders})
         ${sinceClause}
-        AND c.user_id = ?
+        AND ${userInClause}
       ORDER BY bm25_score ASC
       LIMIT ?
     `;

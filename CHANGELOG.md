@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.637] - 2026-05-21
+
+### Fixed — History-Viewer + Confirmations-Panel: Matrix/Discord/WhatsApp Chats waren versteckt
+
+**Symptom**: WebUI History-Tab zeigt nur Telegram-Chatverlauf, Matrix-Conversations bleiben unsichtbar. Gleicher Bug im Confirmations-Side-Panel.
+
+**Ursache** (Multi-User-Linking-Asymmetrie):
+- `conversations.user_id` speichert die **platform-spezifische** Alfred-User-UUID (z.B. Matrix-User `12d88202-…`)
+- `users.master_user_id` linkt diese auf den Owner-Master (z.B. Telegram-User `f165df7a-…`)
+- v627/v629 filterten in der DB-Query strikt mit `WHERE user_id = ownerMasterUserId` — Telegram-Conversations matchen (weil dort `user_id == master`), Matrix-Conversations nicht (weil `user_id` die platform-Variante ist).
+
+**Fix v637** — Linked-User-IDs als Filter-Set:
+
+1. `ConversationRepository.listConversations()` akzeptiert jetzt zusätzlich `userIds: string[]` (single `userId` bleibt für rückwärtskompatible Aufrufe)
+2. `ConversationRepository.searchMessages()` `userId` ist jetzt `string | string[]` — gleiche Logik für FTS-Search (Postgres + SQLite)
+3. `ConfirmationRepository.findAllPendingForUser()` `userId` akzeptiert ebenfalls `string | string[]`
+4. `ConfirmationQueue.listPendingForUser()` Signatur entsprechend erweitert
+5. `alfred.ts` Wiring — neuer Helper `resolveLinkedUserIds()` ruft `userRepo.getLinkedUsers(ownerMasterUid)` (`SELECT … WHERE master_user_id = ? OR id = ?`) und reicht alle IDs in die Callbacks weiter. Identisches Pattern für History-Callbacks und Confirmations-Side-Panel.
+
+### Effekt
+- Im History-Tab erscheinen jetzt deine Matrix-Räume (`!ZPGQNbIwbLWeULnGBZ:…`, `!aRXNPPnPhMEnMgeUkr:…`, `!NBdczIlAsusdPxkfWh:…`) neben Telegram-Chats
+- Volltext-Suche (Ctrl+K) durchsucht jetzt **alle** linked Plattformen
+- Pending-Confirmations im Side-Panel zeigt auch Matrix-/Discord-Bestätigungen
+- Funktioniert für jeden zukünftigen Adapter, der Conversations mit platform-spezifischer User-ID schreibt (Discord, WhatsApp, Signal etc.)
+
+### Notes
+- Build grün (12/12)
+- Kein DB-Cleanup nötig — der Fix ändert nur die Filter-Logik, nicht die Daten
+- `getLinkedUsers()` existiert seit dem Multi-User-Branch und liefert sauber alle verknüpften IDs für einen gegebenen Master
+
 ## [0.19.0-multi-ha.636] - 2026-05-21
 
 ### Fixed — Project-Agent-State: v630 reichte nicht. lastBuildActuallyPassed ist sticky.

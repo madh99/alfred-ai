@@ -324,11 +324,11 @@ export class ConfirmationQueue {
     return handled ? { ok: true } : { ok: false, reason: 'not-handled' };
   }
 
-  async listPendingForUser(userId: string, limit = 50): Promise<PendingConfirmation[]> {
+  async listPendingForUser(userId: string | string[], limit = 50): Promise<PendingConfirmation[]> {
     if (typeof (this.confirmRepo as unknown as { findAllPendingForUser?: unknown }).findAllPendingForUser !== 'function') {
       return [];
     }
-    return (this.confirmRepo as unknown as { findAllPendingForUser: (u: string, l: number) => Promise<PendingConfirmation[]> }).findAllPendingForUser(userId, limit);
+    return (this.confirmRepo as unknown as { findAllPendingForUser: (u: string | string[], l: number) => Promise<PendingConfirmation[]> }).findAllPendingForUser(userId, limit);
   }
 
   private async expireTick(): Promise<void> {

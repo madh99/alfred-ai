@@ -3997,11 +3997,25 @@ export class Alfred {
         const convRepo = new ConversationRepository(this.database.getAdapter());
         const summaryRepo = new SummaryRepository(this.database.getAdapter());
         const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        // v637 — Resolve linked user-IDs for matrix/discord/whatsapp etc.
+        // `conversations.user_id` stores the platform-specific user UUID, not the
+        // master. ohne diese Auflösung wurden Matrix/Discord-Chats des Owners als
+        // "fremd" gefiltert und versteckt.
+        const resolveLinkedUserIds = async (): Promise<string[]> => {
+          if (!ownerUid || !this.userRepo) return ownerUid ? [ownerUid] : [];
+          try {
+            const linked = await this.userRepo.getLinkedUsers(ownerUid);
+            const ids = linked.map(u => u.id);
+            if (!ids.includes(ownerUid)) ids.push(ownerUid);
+            return ids;
+          } catch { return [ownerUid]; }
+        };
         (apiAdapter as any).setConversationCallbacks({
           list: async (filter?: { platform?: string; limit?: number }) => {
             try {
+              const userIds = await resolveLinkedUserIds();
               return await convRepo.listConversations({
-                userId: ownerUid,
+                userIds,
                 platform: filter?.platform as any,
                 limit: filter?.limit ?? 100,
               });
@@ -4022,8 +4036,9 @@ export class Alfred {
           },
           search: async (query: string, opts?: { limit?: number }) => {
             try {
-              if (!ownerUid) return [];
-              return await convRepo.searchMessages(ownerUid, query, {
+              const userIds = await resolveLinkedUserIds();
+              if (userIds.length === 0) return [];
+              return await convRepo.searchMessages(userIds, query, {
                 limit: opts?.limit ?? 30,
                 timeDecay: true,
               });
@@ -4050,11 +4065,21 @@ export class Alfred {
           }
         }
         const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const resolveLinkedConfirmUserIds = async (): Promise<string[]> => {
+          if (!ownerUid || !this.userRepo) return ownerUid ? [ownerUid] : [];
+          try {
+            const linked = await this.userRepo.getLinkedUsers(ownerUid);
+            const ids = linked.map(u => u.id);
+            if (!ids.includes(ownerUid)) ids.push(ownerUid);
+            return ids;
+          } catch { return [ownerUid]; }
+        };
         (apiAdapter as any).setConfirmationCallbacks({
           list: async () => {
             try {
-              if (!ownerUid) return [];
-              return await this.confirmationQueue!.listPendingForUser(ownerUid, 50);
+              const userIds = await resolveLinkedConfirmUserIds();
+              if (userIds.length === 0) return [];
+              return await this.confirmationQueue!.listPendingForUser(userIds, 50);
             } catch (err) {
               this.logger.warn({ err }, 'Confirmations API list failed');
               return [];

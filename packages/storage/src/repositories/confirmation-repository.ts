@@ -43,14 +43,19 @@ export class ConfirmationRepository {
    * Joins `conversations` to verify ownership so a user can never approve another
    * user's pending confirmation via the web UI.
    */
-  async findAllPendingForUser(userId: string, limit = 50): Promise<PendingConfirmation[]> {
+  async findAllPendingForUser(userId: string | string[], limit = 50): Promise<PendingConfirmation[]> {
+    // v637 — accept linked-user-IDs array, sodass Matrix/Discord-Confirmations
+    // des Owners auch im Side-Panel landen (conversations.user_id ist platform-spezifisch).
+    const userIds = Array.isArray(userId) ? userId : [userId];
+    if (userIds.length === 0) return [];
+    const userClause = userIds.length === 1 ? 'c.user_id = ?' : `c.user_id IN (${userIds.map(() => '?').join(',')})`;
     const rows = await this.adapter.query(
       `SELECT pc.* FROM pending_confirmations pc
        JOIN conversations c ON c.chat_id = pc.chat_id AND c.platform = pc.platform
-       WHERE c.user_id = ? AND pc.status = 'pending'
+       WHERE ${userClause} AND pc.status = 'pending'
        ORDER BY pc.created_at DESC
        LIMIT ?`,
-      [userId, limit],
+      [...userIds, limit],
     ) as Record<string, unknown>[];
     return rows.map(r => this.mapRow(r));
   }
