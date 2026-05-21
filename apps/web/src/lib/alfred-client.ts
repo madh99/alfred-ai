@@ -497,6 +497,25 @@ export class AlfredClient {
     return data.success;
   }
 
+  // v641 — Bulk-Work + Audit für Open-Items
+  async projectWorkOnOpenItems(projectId: string, itemIds: string[], maxItems = 10): Promise<{ ok: boolean; taskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/work-on-items`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ item_ids: itemIds, max_items: maxItems }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.error ?? `http-${res.status}` };
+    return { ok: true, taskId: data.taskId };
+  }
+
+  async projectAuditOpenItems(projectId: string): Promise<{ data?: any; display?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/audit-items`, {
+      method: 'POST', headers: this.authHeaders,
+    });
+    if (!res.ok) throw new Error(`Audit: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchProjectHealthLog(id: string, limit = 100): Promise<ProjectHealthEntry[]> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/health-log?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) return [];
@@ -1211,6 +1230,10 @@ export interface ProjectOpenItem {
   dueAt?: string;
   createdAt: string;
   resolvedAt?: string;
+  /** v641 — wenn Alfred dieses Item nach einem Project-Agent-Run als möglicherweise erledigt erkannt hat. */
+  autoResolvedBy?: string;
+  /** v641 — Konfidenz (0..1) des Auto-Resolvers. */
+  autoResolvedConfidence?: number;
 }
 
 export interface ProjectDecision {

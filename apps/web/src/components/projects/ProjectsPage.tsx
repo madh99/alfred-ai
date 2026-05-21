@@ -60,6 +60,11 @@ export function ProjectsPage() {
   const [nameInput, setNameInput] = useState('');
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemPriority, setNewItemPriority] = useState<'low' | 'normal' | 'high'>('normal');
+  // v641 — Multi-Select + Bulk-Work + Audit
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [workingOnItems, setWorkingOnItems] = useState(false);
+  const [auditResult, setAuditResult] = useState<string | null>(null);
+  const [auditing, setAuditing] = useState(false);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -166,6 +171,42 @@ export function ProjectsPage() {
         openItems: detail.openItems.map(it => it.id === item.id ? { ...it, status: 'done' as const } : it),
       });
     }
+  }
+
+  function toggleItemSelect(id: string) {
+    setSelectedItemIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  async function bulkWorkOnSelected() {
+    if (!client || !detail || selectedItemIds.size === 0) return;
+    if (!confirm(`Project-Agent mit ${selectedItemIds.size} ausgewählten Items als Goal starten?`)) return;
+    setWorkingOnItems(true);
+    try {
+      const r = await client.projectWorkOnOpenItems(detail.project.id, [...selectedItemIds]);
+      if (r.ok) {
+        alert(`▶ Project-Agent gestartet${r.taskId ? ` (taskId ${r.taskId.slice(0, 8)})` : ''}.\nNach Abschluss prüft Alfred automatisch welche Items erledigt wurden.`);
+        setSelectedItemIds(new Set());
+      } else {
+        alert(`Fehler: ${r.reason}`);
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally { setWorkingOnItems(false); }
+  }
+
+  async function runAudit() {
+    if (!client || !detail) return;
+    setAuditing(true); setAuditResult(null);
+    try {
+      const r = await client.projectAuditOpenItems(detail.project.id);
+      setAuditResult(r.display ?? JSON.stringify(r.data, null, 2));
+    } catch (e) {
+      setAuditResult(e instanceof Error ? e.message : String(e));
+    } finally { setAuditing(false); }
   }
 
   // v602 P5 — Tabs trennen normale Projekte vom Misc-Sammel-Bucket.
@@ -373,16 +414,58 @@ export function ProjectsPage() {
 
               {/* Open Items */}
               <div className="pt-2 border-t border-[#222]">
-                <h3 className="text-sm font-semibold text-gray-400 mb-2">Offene Punkte ({detail.openItems.filter(it => it.status === 'open').length})</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-gray-400">Offene Punkte ({detail.openItems.filter(it => it.status === 'open').length})</h3>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={runAudit}
+                      disabled={auditing}
+                      className="px-2 py-0.5 text-[10px] text-blue-400 hover:bg-blue-500/10 border border-blue-500/30 rounded"
+                      title="Stale + Duplikate + möglicherweise-erledigte finden"
+                    >🔍 Audit</button>
+                  </div>
+                </div>
+
+                {/* Bulk-Toolbar */}
+                {selectedItemIds.size > 0 && (
+                  <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded px-2 py-1.5 mb-2">
+                    <span className="text-xs text-blue-200"><strong>{selectedItemIds.size}</strong> ausgewählt</span>
+                    <div className="flex-1" />
+                    <button onClick={() => setSelectedItemIds(new Set())} className="text-[10px] text-gray-400 hover:text-gray-200">Auswahl löschen</button>
+                    <button
+                      onClick={bulkWorkOnSelected}
+                      disabled={workingOnItems}
+                      className="px-2 py-0.5 text-[10px] bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded"
+                    >{workingOnItems ? 'Starte …' : '▶ Mit Project-Agent abarbeiten'}</button>
+                  </div>
+                )}
+
                 <div className="space-y-1 mb-2">
-                  {detail.openItems.filter(it => it.status === 'open').map(it => (
-                    <div key={it.id} className="flex items-center gap-2 text-sm">
-                      <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
-                      <span>{priorityIcon(it.priority)}</span>
-                      <span className="text-gray-300 flex-1">{it.title}</span>
-                      <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
-                    </div>
-                  ))}
+                  {detail.openItems.filter(it => it.status === 'open').map(it => {
+                    const possiblyDone = it.autoResolvedBy && it.autoResolvedConfidence != null;
+                    return (
+                      <div key={it.id} className={`flex items-center gap-2 text-sm ${selectedItemIds.has(it.id) ? 'bg-blue-500/10 -mx-1 px-1 rounded' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={selectedItemIds.has(it.id)}
+                          onChange={() => toggleItemSelect(it.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="mr-0"
+                          title="Für Bulk-Aktion auswählen"
+                        />
+                        <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
+                        <span>{priorityIcon(it.priority)}</span>
+                        <span className="text-gray-300 flex-1">{it.title}</span>
+                        {possiblyDone && (
+                          <span
+                            className="text-[10px] text-amber-400 cursor-help"
+                            title={`Alfred meint: vermutlich erledigt (${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%) durch ${it.autoResolvedBy?.slice(0, 40)}`}
+                          >🤖 ~{Math.round((it.autoResolvedConfidence ?? 0) * 100)}%</span>
+                        )}
+                        <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="flex gap-1.5">
                   <input value={newItemTitle} onChange={e => setNewItemTitle(e.target.value)} placeholder="Neuer Punkt..." className="flex-1 px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-xs text-gray-200" />
@@ -394,6 +477,18 @@ export function ProjectsPage() {
                   <button onClick={addOpenItem} className="px-2 py-1 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/30 text-xs">+</button>
                 </div>
               </div>
+
+              {auditResult && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setAuditResult(null)}>
+                  <div onClick={(e) => e.stopPropagation()} className="bg-[#111] border border-[#1f1f1f] rounded-xl p-5 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+                    <div className="flex justify-between items-center mb-3">
+                      <h3 className="text-lg font-semibold text-white">🔍 Audit-Ergebnis</h3>
+                      <button onClick={() => setAuditResult(null)} className="text-gray-500 hover:text-gray-300 text-xl">×</button>
+                    </div>
+                    <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans">{auditResult}</pre>
+                  </div>
+                </div>
+              )}
 
               {/* Sessions */}
               {detail.sessions.length > 0 && (

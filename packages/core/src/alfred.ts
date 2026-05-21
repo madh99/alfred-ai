@@ -898,6 +898,25 @@ export class Alfred {
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
 
+      // v641 — wire ProjectSkill.setProjectAgentStarter so `project work_on_open_items`
+      // kann den Project-Agent direkt starten ohne LLM-Round-Trip.
+      if (this.projectSkillRef) {
+        this.projectSkillRef.setProjectAgentStarter(async ({ cwd, goal, projectId }) => {
+          const ownerChatId = this.config.security?.ownerUserId ?? '';
+          const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.matrix?.enabled ? 'matrix'
+            : this.config.discord?.enabled ? 'discord'
+            : 'api');
+          const ctx = { userId: this.ownerMasterUserId ?? ownerChatId, masterUserId: this.ownerMasterUserId ?? ownerChatId, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+          const result = await projectAgentSkill.execute({ action: 'start', goal, cwd }, ctx);
+          if (!result.success) throw new Error(result.error ?? 'project-agent start failed');
+          const taskId = (result.data as any)?.taskId as string;
+          if (!taskId) throw new Error('no taskId returned');
+          void projectId;
+          return { taskId };
+        });
+      }
+
       // v615 M1 — Wire project-lookup so startProject can reject a cwd that
       // conflicts with an existing project's known workspace. ProjectRepo is
       // set later in init(); we pass `this` as ref-holder and the skill
@@ -962,6 +981,41 @@ export class Alfred {
               });
             }
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
+        }
+
+        // v641 — OpenItemMatcher: nach erfolgreichem Lauf prüfen welche der bestehenden
+        // open Items des Projekts durch die Milestones+Files erledigt wurden. LLM-Pass
+        // mit konservativer Confidence (≥0.6 → auto-done, sonst nur markieren).
+        if (success && this.projectRepo && this.llmProvider) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            if (userId) {
+              // Find project for this cwd (project-manager.finishSession attached it via cwd)
+              const projects = await this.projectRepo.list(userId);
+              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => cfg.cwd?.includes(p.cwd ?? ''));
+              if (proj) {
+                const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
+                const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+                // Best-effort fetch changed files from the latest session row
+                let changedFiles: string[] = [];
+                try {
+                  const sessRow = await this.database?.getAdapter().queryOne(
+                    `SELECT total_files_changed FROM project_agent_sessions WHERE task_id = ?`,
+                    [sessionId],
+                  );
+                  void sessRow;
+                } catch { /* skip */ }
+                await matcher.matchAfterSession({
+                  projectId: proj.id,
+                  sessionId,
+                  goal: cfg.goal,
+                  milestones: state.milestonesReached,
+                  changedFiles,
+                  totalFilesChanged: state.totalFilesChanged,
+                });
+              }
+            }
+          } catch (err) { this.logger.debug({ err, sessionId }, 'OpenItemMatcher failed (non-fatal)'); }
         }
 
         // v610 G5 — On failure, neither runbook nor deploy proposal makes sense.
@@ -4505,6 +4559,36 @@ export class Alfred {
               if (!project) return [];
               return await projRepo.listHealthLog(project.id, limit);
             } catch { return []; }
+          },
+          // v641 — Bulk-Work-On-Items + Audit
+          workOnOpenItems: async (projectId: string, itemIds: string[], maxItems: number) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { ok: false, reason: 'project-skill not registered' };
+              const result = await skill.execute(
+                { action: 'work_on_open_items', project_id: projectId, item_ids: itemIds, max_items: maxItems },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              if (!result.success) return { ok: false, reason: result.error };
+              return { ok: true, taskId: (result.data as any)?.taskId };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
+          auditOpenItems: async (projectId: string) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const skill = this.skillRegistry?.get('project');
+              if (!skill) return { display: 'project-skill nicht registriert' };
+              const result = await skill.execute(
+                { action: 'audit_open_items', project_id: projectId },
+                { userId: uid, masterUserId: uid } as any,
+              );
+              return { data: result.data, display: result.display ?? '' };
+            } catch (err) {
+              return { display: `Audit fehlgeschlagen: ${(err as Error).message}` };
+            }
           },
         });
         this.logger.info('Projects API registered');

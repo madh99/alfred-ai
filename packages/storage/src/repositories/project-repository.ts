@@ -69,6 +69,10 @@ export interface ProjectOpenItem {
   linkedIncidentId?: string;
   /** ITSM-Change-ID, falls dieses Open-Item ein bestehender Change ist. */
   linkedChangeId?: string;
+  /** v641 — wenn ≠ null wurde der Item auto-erkannt-als-erledigt (z.B. "project_agent_session:<id>"). */
+  autoResolvedBy?: string;
+  /** v641 — Konfidenz des LLM-Auto-Resolvers (0..1). */
+  autoResolvedConfidence?: number;
 }
 
 export interface ProjectDecision {
@@ -146,6 +150,8 @@ function rowToOpenItem(row: Record<string, unknown>): ProjectOpenItem {
     resolvedAt: (row.resolved_at as string | null) ?? undefined,
     linkedIncidentId: (row.linked_incident_id as string | null) ?? undefined,
     linkedChangeId: (row.linked_change_id as string | null) ?? undefined,
+    autoResolvedBy: (row.auto_resolved_by as string | null) ?? undefined,
+    autoResolvedConfidence: row.auto_resolved_confidence != null ? Number(row.auto_resolved_confidence) : undefined,
   };
 }
 
@@ -381,6 +387,38 @@ export class ProjectRepository {
       [status, resolved, id],
     );
     return result.changes > 0;
+  }
+
+  /**
+   * v641 — Markiert ein OpenItem als done und attributiert die automatische Quelle
+   * (z.B. "project_agent_session:<id>"). Wenn `confidence < 0.6` bleibt der Status
+   * auf `open` aber `auto_resolved_*` werden trotzdem gefüllt — UI kann das anzeigen
+   * als "möglicherweise erledigt, bitte prüfen".
+   */
+  async autoResolveOpenItem(id: string, source: string, confidence: number, markDone = true): Promise<boolean> {
+    const now = new Date().toISOString();
+    if (markDone && confidence >= 0.6) {
+      const result = await this.adapter.execute(
+        `UPDATE project_open_items SET status = 'done', resolved_at = ?, auto_resolved_by = ?, auto_resolved_confidence = ? WHERE id = ?`,
+        [now, source, confidence, id],
+      );
+      return result.changes > 0;
+    }
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items SET auto_resolved_by = ?, auto_resolved_confidence = ? WHERE id = ?`,
+      [source, confidence, id],
+    );
+    return result.changes > 0;
+  }
+
+  /** Helper: alle nicht-erledigten Items eines Projekts holen für den Matcher. */
+  async listOpenItemsForProject(projectId: string, statuses: OpenItemStatus[] = ['open', 'in_progress']): Promise<ProjectOpenItem[]> {
+    const placeholders = statuses.map(() => '?').join(',');
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_open_items WHERE project_id = ? AND status IN (${placeholders}) ORDER BY created_at ASC`,
+      [projectId, ...statuses],
+    ) as Record<string, unknown>[];
+    return rows.map(rowToOpenItem);
   }
 
   // ── Decisions ───────────────────────────────────────────────────────────

@@ -5,6 +5,64 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.641] - 2026-05-21
+
+### Added — Open-Items: Auto-Resolve nach Project-Agent + Bulk-Work + Audit
+
+User-Befund: Project-Agent läuft, danach bleiben 84 offene Punkte einfach offen — Alfred prüft nicht ob Punkte erledigt wurden. Es gibt auch keinen Workflow "arbeite Punkte X-Z mit Project-Agent ab" und keinen Cleanup für stale/duplicate Items.
+
+**Schema** (SQLite v72 / Postgres v75):
+- `project_open_items.auto_resolved_by` (TEXT) — Attribution wenn Alfred ein Item automatisch als erledigt erkannt hat
+- `project_open_items.auto_resolved_confidence` (REAL) — 0-1 Confidence des LLM-Matchers
+
+**OpenItemMatcher** (`packages/core/src/projects/open-item-matcher.ts`):
+- Fire-and-forget Pass nach jedem **erfolgreichen** Project-Agent-Run (Skip wenn 0 Files geändert)
+- Holt alle 'open'/'in_progress' Items des Projekts, schickt sie mit Goal+Milestones+ChangedFiles an default-LLM
+- LLM antwortet als JSON-Array: pro Item `{item_id, resolved: bool, confidence: 0-1, reason}`
+- Confidence ≥ 0.6 + resolved=true → **status='done'** + `auto_resolved_by=project_agent_session:<id>` + `auto_resolved_confidence=…`
+- Confidence < 0.6 aber Indizien → bleibt 'open' aber `auto_resolved_*` markiert für UI-Hinweis
+- System-Prompt ist konservativ formuliert ("im Zweifel resolved=false")
+
+**Skill-Aktionen** (`packages/skills/src/built-in/project.ts`):
+- `work_on_open_items project_id item_ids? max_items=10`
+  - Sammelt N offene Items (high-prio first, dann oldest-first), capped auf max_items
+  - Konstruiert einen Goal-Text aus allen Item-Titeln + Descriptions ("Arbeite die folgenden offenen Punkte ab. Pro Punkt: prüfe ob er noch zutrifft, implementiere…")
+  - Startet Project-Agent mit Project-cwd via dem neuen `setProjectAgentStarter`-Callback
+  - Nach dem Lauf macht der OpenItemMatcher automatisch sein Ding — Kreis schließt sich
+- `audit_open_items project_id?`
+  - Findet **stale** (≥30d offen ohne Updates)
+  - Findet **Duplikate** (Title-Token-Jaccard ≥ 0.7)
+  - Findet **possibly-done** (auto_resolved_by gesetzt aber status noch open — Matcher hatte Unsicherheit)
+  - Liefert strukturierten Markdown-Report ohne destruktive Aktionen — User entscheidet
+
+**HTTP-API** (`packages/messaging/src/adapters/http.ts`):
+- `POST /api/projects/:id/work-on-items` — Body `{ item_ids[], max_items }`, returns `{ ok, taskId }`
+- `POST /api/projects/:id/audit-items` — returns `{ data, display }`
+- `ProjectsCallbacks` um `workOnOpenItems` + `auditOpenItems` erweitert
+- Beide route über die Skill-API (single source of truth, kein Code-Duplikat)
+
+**Frontend** (`apps/web/src/components/projects/ProjectsPage.tsx`):
+- **Multi-Select-Checkbox** pro Open-Item-Zeile (Auswahl wird blau hinterlegt)
+- **Bulk-Toolbar** erscheint bei ≥1 Selection: Counter + "Auswahl löschen" + "▶ Mit Project-Agent abarbeiten"
+- **🤖-Marker** mit Tooltip an Items die `auto_resolved_by` gesetzt haben aber noch open sind (zeigt Confidence in %)
+- **🔍 Audit-Button** im OpenItems-Header öffnet Modal mit dem Report
+- Confirmation-Dialog vor Bulk-Start
+
+**Wiring** (`packages/core/src/alfred.ts`):
+- `OpenItemMatcher` Import + Call im `projectRunner.setCompletionCallback`-Block, gated auf `success=true` und `llmProvider+projectRepo+totalFilesChanged>0`
+- `projectSkill.setProjectAgentStarter(...)` neuer Callback der `projectAgentSkill.execute({action:'start',goal,cwd})` aufruft → Bulk-Workflow geht durch die normale Pipeline
+
+### Workflow
+1. **Auto-Close nach Lauf**: User startet Project-Agent → 24 Phasen, 77 Files → bei Success vergleicht der Matcher die 12 offenen Items mit dem Erreichten → 5 mit Confidence ≥0.6 werden auto-done mit 🤖-Marker; 2 weitere bekommen den Marker bei Confidence 0.45-0.59 für späteren manuellen Review.
+2. **Bulk-Work über UI**: User wählt 5 Items per Checkbox → klickt "▶ Mit Project-Agent abarbeiten" → Confirmation → Project-Agent startet mit konstruiertem Multi-Item-Goal.
+3. **Audit**: User klickt "🔍 Audit" → sieht 8 stale Items (>30d), 3 Duplikat-Gruppen, 2 möglicherweise-erledigte → kann gezielt aufräumen.
+
+### Notes
+- Build grün (12/12)
+- Matcher läuft NUR bei `success && totalFilesChanged > 0` — keine LLM-Kosten für fehlgeschlagene Läufe
+- Audit ist read-only — Cleanup-Aktionen bleiben dem User vorbehalten
+- v638 InfraForecast-Adapter funktioniert parallel weiter — Insights und Open-Item-Matching sind getrennte Systeme mit unterschiedlichem Scope
+
 ## [0.19.0-multi-ha.640] - 2026-05-21
 
 ### Added — KG Question-Generator + Self-Audit (v640 — Teil 3 von 3 für Personal-Optimization, Abschluss)

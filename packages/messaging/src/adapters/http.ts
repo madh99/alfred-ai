@@ -352,6 +352,9 @@ export class HttpAdapter extends MessagingAdapter {
     addOpenItem: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
     updateOpenItem: (itemId: string, status: string) => Promise<boolean>;
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
+    // v641 — Bulk-Work + Audit
+    workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
+    auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
   };
 
   setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
@@ -708,6 +711,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsUpdateOpenItem(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-log$/) && req.method === 'GET') {
       this.handleProjectsHealthLog(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
+      this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/audit-items$/) && req.method === 'POST') {
+      this.handleProjectsAuditItems(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -1700,6 +1707,34 @@ export class HttpAdapter extends MessagingAdapter {
     const entries = await this.projectsCallbacks.listHealthLog(projectId, limit);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ entries }));
+  }
+
+  // v641 — Bulk-Work + Audit handlers
+  private async handleProjectsWorkOnItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.workOnOpenItems) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { item_ids?: string[]; max_items?: number };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.workOnOpenItems(projectId, data.item_ids ?? [], data.max_items ?? 10);
+    res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  private async handleProjectsAuditItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.auditOpenItems) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const result = await this.projectsCallbacks.auditOpenItems(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // ── CMDB/ITSM/Docs generic handlers ──

@@ -11,7 +11,8 @@ export type IncidentCascadeFn = (incidentId: string, status: 'resolved' | 'close
 type Action =
   | 'list' | 'get' | 'create' | 'rename' | 'set_status' | 'set_health_mode'
   | 'list_open_items' | 'add_open_item' | 'resolve_open_item'
-  | 'list_sessions' | 'list_decisions' | 'archive';
+  | 'list_sessions' | 'list_decisions' | 'archive'
+  | 'work_on_open_items' | 'audit_open_items';
 
 const VALID_STATUS: ProjectStatus[] = ['active', 'paused', 'completed', 'maintenance', 'archived'];
 const VALID_HEALTH: ProjectHealthMode[] = ['full', 'minimal', 'off'];
@@ -45,6 +46,7 @@ export class ProjectSkill extends Skill {
             'list', 'get', 'create', 'rename', 'set_status', 'set_health_mode',
             'list_open_items', 'add_open_item', 'resolve_open_item',
             'list_sessions', 'list_decisions', 'archive',
+            'work_on_open_items', 'audit_open_items',
           ],
         },
         project_id: { type: 'string', description: 'Project-ID oder Prefix (für get/rename/...)' },
@@ -67,6 +69,9 @@ export class ProjectSkill extends Skill {
   /** Set by alfred.ts — called when an open-item with linkedIncidentId is resolved. */
   private incidentCascade?: IncidentCascadeFn;
 
+  /** v641 — Callback to start a Project-Agent with a constructed goal. Set by alfred.ts. */
+  private startProjectAgent?: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>;
+
   constructor(private readonly repo: ProjectRepository) {
     super();
   }
@@ -74,6 +79,11 @@ export class ProjectSkill extends Skill {
   /** Inject the cascade callback for ITSM linked open-items. */
   setIncidentCascade(fn: IncidentCascadeFn): void {
     this.incidentCascade = fn;
+  }
+
+  /** v641 — Inject the start-project-agent callback. */
+  setProjectAgentStarter(fn: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>): void {
+    this.startProjectAgent = fn;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -94,6 +104,8 @@ export class ProjectSkill extends Skill {
       case 'list_sessions': return this.listSessions(userId, input);
       case 'list_decisions': return this.listDecisions(userId, input);
       case 'archive': return this.archiveProject(userId, input);
+      case 'work_on_open_items': return this.workOnOpenItems(userId, input);
+      case 'audit_open_items': return this.auditOpenItems(userId, input);
       default:
         return { success: false, error: `Unbekannte action "${String(action)}".` };
     }
@@ -349,5 +361,150 @@ ${decLines.join('\n') || '  _keine_'}`;
     if (d < 30) return `vor ${d}d`;
     const mo = Math.floor(d / 30);
     return `vor ${mo}mo`;
+  }
+
+  /**
+   * v641 — Project-Agent mit den ausgewählten Open-Items als Goal starten.
+   * Wenn `item_ids` fehlt: nimm alle 'open'-Items des Projekts (capped auf max_items, default 10).
+   * Sortierung: high priority zuerst, dann älteste zuerst.
+   */
+  private async workOnOpenItems(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    if (!this.startProjectAgent) return { success: false, error: 'Project-Agent-Starter nicht verkabelt' };
+    const projectId = await this.resolveProjectId(userId, input.project_id as string);
+    if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+
+    const project = await this.repo.getById(userId, projectId);
+    if (!project) return { success: false, error: 'Project nicht gefunden' };
+    if (!project.cwd) return { success: false, error: 'Project hat keinen cwd → Project-Agent kann nicht starten' };
+
+    const requestedIds = input.item_ids as string[] | undefined;
+    const maxItems = (input.max_items as number) ?? 10;
+
+    let items = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']);
+    if (requestedIds && requestedIds.length > 0) {
+      items = items.filter(i => requestedIds.includes(i.id) || requestedIds.some(p => i.id.startsWith(p)));
+    }
+    // Sort: high prio first, then oldest first
+    items.sort((a, b) => {
+      const pri = { high: 0, normal: 1, low: 2 } as Record<string, number>;
+      const dp = (pri[a.priority] ?? 1) - (pri[b.priority] ?? 1);
+      if (dp !== 0) return dp;
+      return a.createdAt.localeCompare(b.createdAt);
+    });
+    items = items.slice(0, maxItems);
+    if (items.length === 0) return { success: false, error: 'Keine offenen Items zum Abarbeiten gefunden' };
+
+    const goalLines = [
+      `Arbeite die folgenden offenen Punkte des Projekts "${project.name}" ab. Pro Punkt: prüfe ob er noch zutrifft, implementiere die Änderung sauber, schreibe ggf. Tests. Halte dich an den bestehenden Code-Stil im Repo.`,
+      '',
+      ...items.map((it, idx) => {
+        const lines = [`${idx + 1}. **${it.title}**`];
+        if (it.description) lines.push(`   ${it.description}`);
+        if (it.priority === 'high') lines.push('   _(high priority)_');
+        return lines.join('\n');
+      }),
+      '',
+      `Wenn ein Punkt nicht (mehr) zutrifft, dokumentiere kurz warum statt ihn blind umzusetzen.`,
+    ];
+    const goal = goalLines.join('\n');
+
+    try {
+      const { taskId } = await this.startProjectAgent({ cwd: project.cwd, goal, projectId });
+      return {
+        success: true,
+        data: { taskId, projectId, items: items.map(i => i.id) },
+        display: `▶ Project-Agent gestartet (taskId ${taskId.slice(0, 8)}) mit ${items.length} Items als Goal.\n\nNach Abschluss versucht der OpenItemMatcher automatisch zu erkennen, welche Items erledigt wurden, und markiert sie als done.`,
+      };
+    } catch (err) {
+      return { success: false, error: `Project-Agent-Start fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
+
+  /**
+   * v641 — Audit offener Items:
+   *  - **stale**: ≥30d ohne Updates
+   *  - **duplikat**: Title-Similarity ≥0.7 mit anderem open-Item
+   *  - **possibly-done**: auto_resolved_by gesetzt aber status noch open (Matcher hatte Unsicherheit)
+   * Liefert eine Übersicht — kein Auto-Cleanup ohne User-Entscheidung.
+   */
+  private async auditOpenItems(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const projectIdInput = input.project_id as string | undefined;
+    let allItems: ProjectOpenItem[];
+    if (projectIdInput) {
+      const projectId = await this.resolveProjectId(userId, projectIdInput);
+      if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+      allItems = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']);
+    } else {
+      allItems = await this.repo.listOpenItems(userId, { status: 'open' });
+    }
+    if (allItems.length === 0) return { success: true, data: [], display: 'Keine offenen Items.' };
+
+    const now = Date.now();
+    const stale: ProjectOpenItem[] = [];
+    const possiblyDone: ProjectOpenItem[] = [];
+    const duplicateGroups: Array<ProjectOpenItem[]> = [];
+
+    for (const it of allItems) {
+      const ageDays = (now - new Date(it.createdAt).getTime()) / 86400_000;
+      if (ageDays >= 30) stale.push(it);
+      if (it.autoResolvedBy && it.status === 'open') possiblyDone.push(it);
+    }
+
+    // Title-Similarity-Duplikat-Detektion (simpler Jaccard auf Token)
+    const used = new Set<string>();
+    for (let i = 0; i < allItems.length; i++) {
+      if (used.has(allItems[i].id)) continue;
+      const tokA = new Set(allItems[i].title.toLowerCase().split(/\s+/).filter(t => t.length >= 4));
+      const group: ProjectOpenItem[] = [allItems[i]];
+      for (let j = i + 1; j < allItems.length; j++) {
+        if (used.has(allItems[j].id)) continue;
+        const tokB = new Set(allItems[j].title.toLowerCase().split(/\s+/).filter(t => t.length >= 4));
+        const intersection = [...tokA].filter(t => tokB.has(t)).length;
+        const union = new Set([...tokA, ...tokB]).size;
+        const jaccard = union === 0 ? 0 : intersection / union;
+        if (jaccard >= 0.7) { group.push(allItems[j]); used.add(allItems[j].id); }
+      }
+      if (group.length >= 2) { duplicateGroups.push(group); used.add(allItems[i].id); }
+    }
+
+    const lines: string[] = [`## Open-Items-Audit (${allItems.length} offen)`, ''];
+    if (possiblyDone.length > 0) {
+      lines.push(`### 🤖 Vermutlich bereits erledigt (${possiblyDone.length})`);
+      lines.push(`_Der Matcher hat Indizien gefunden, aber Confidence zu niedrig für Auto-Done._`);
+      for (const it of possiblyDone) {
+        lines.push(`- \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)} (conf ${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%)`);
+      }
+      lines.push('');
+    }
+    if (stale.length > 0) {
+      lines.push(`### 🕸️ Stale (≥30d offen, ${stale.length})`);
+      for (const it of stale) {
+        const days = Math.round((now - new Date(it.createdAt).getTime()) / 86400_000);
+        lines.push(`- \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)} (${days}d)`);
+      }
+      lines.push('');
+    }
+    if (duplicateGroups.length > 0) {
+      lines.push(`### 👯 Mögliche Duplikate (${duplicateGroups.length} Gruppe(n))`);
+      for (const group of duplicateGroups) {
+        lines.push(`- Gruppe (${group.length}):`);
+        for (const it of group) lines.push(`  - \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)}`);
+      }
+      lines.push('');
+    }
+    if (stale.length === 0 && possiblyDone.length === 0 && duplicateGroups.length === 0) {
+      lines.push('✓ Keine Auffälligkeiten — Open-Items sehen sauber aus.');
+    } else {
+      lines.push(`---\n**Aktion**: \`project resolve_open_item item_id=…\` zum Schließen, oder \`project work_on_open_items project_id=…\` um den Stapel abzuarbeiten.`);
+    }
+
+    return { success: true, data: { stale, possiblyDone, duplicateGroups }, display: lines.join('\n') };
+  }
+
+  private async resolveProjectId(userId: string, input: string): Promise<string | null> {
+    if (!input) return null;
+    if (input.length === 36) return input;
+    const all = await this.repo.list(userId);
+    return all.find(p => p.id.startsWith(input) || p.name.toLowerCase().includes(input.toLowerCase()))?.id ?? null;
   }
 }

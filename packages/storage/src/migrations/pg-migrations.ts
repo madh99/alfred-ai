@@ -1051,4 +1051,12 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_kg_questions_user_status ON kg_questions(user_id, status, asked_at DESC)`, []);
     },
   },
+  {
+    version: 75,
+    description: 'v641 — project_open_items.auto_resolved_by for OpenItemMatcher attribution',
+    async up(db) {
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS auto_resolved_by TEXT`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS auto_resolved_confidence DOUBLE PRECISION`, []);
+    },
+  },
 ];

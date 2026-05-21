@@ -1732,4 +1732,12 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_kg_questions_user_status ON kg_questions(user_id, status, asked_at DESC)`);
     },
   },
+  {
+    version: 72,
+    description: 'v641 — project_open_items.auto_resolved_by for OpenItemMatcher attribution',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN auto_resolved_by TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN auto_resolved_confidence REAL`); } catch { /* exists */ }
+    },
+  },
 ];
