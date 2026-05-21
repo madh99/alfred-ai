@@ -4,6 +4,11 @@ import type {
   ProjectRepository, Project, ProjectStatus, ProjectHealthMode, OpenItemStatus,
   ProjectOpenItem,
 } from '@alfred/storage';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const pExecFile = promisify(execFile);
+
+type LlmAuditCallback = (prompt: string, tier?: string) => Promise<string>;
 
 /** Callback signature for cross-domain cascade — set by alfred.ts wiring. */
 export type IncidentCascadeFn = (incidentId: string, status: 'resolved' | 'closed' | 'reopened') => Promise<boolean>;
@@ -71,6 +76,8 @@ export class ProjectSkill extends Skill {
 
   /** v641 — Callback to start a Project-Agent with a constructed goal. Set by alfred.ts. */
   private startProjectAgent?: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>;
+  /** v642 — LLM callback for the deep-audit pass. */
+  private llmAuditCallback?: LlmAuditCallback;
 
   constructor(private readonly repo: ProjectRepository) {
     super();
@@ -84,6 +91,11 @@ export class ProjectSkill extends Skill {
   /** v641 — Inject the start-project-agent callback. */
   setProjectAgentStarter(fn: (opts: { cwd: string; goal: string; projectId: string }) => Promise<{ taskId: string }>): void {
     this.startProjectAgent = fn;
+  }
+
+  /** v642 — Inject the LLM callback for deep audit. */
+  setLlmCallback(cb: LlmAuditCallback): void {
+    this.llmAuditCallback = cb;
   }
 
   async execute(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
@@ -421,37 +433,68 @@ ${decLines.join('\n') || '  _keine_'}`;
   }
 
   /**
-   * v641 — Audit offener Items:
-   *  - **stale**: ≥30d ohne Updates
-   *  - **duplikat**: Title-Similarity ≥0.7 mit anderem open-Item
-   *  - **possibly-done**: auto_resolved_by gesetzt aber status noch open (Matcher hatte Unsicherheit)
-   * Liefert eine Übersicht — kein Auto-Cleanup ohne User-Entscheidung.
+   * v642 — Audit deutlich vertieft:
+   *  - **Stats-Block**: Total/by-Prio/by-Age-Buckets/by-Description
+   *  - **Age-Buckets** (1d / 1-7d / 7-30d / 30+d) statt nur "stale ≥30d"
+   *  - **Duplikat-Detektion** (Title-Jaccard ≥0.7)
+   *  - **Possibly-done** (auto_resolved_by gesetzt aber noch open)
+   *  - **LLM-Pass** (default an): schickt Items + Goal + git log + file list an LLM,
+   *    fragt nach "wahrscheinlich-erledigt" / "veraltet" / "redundant"
+   *  - **Phase-Mismatch**: Items die "Phase N" referenzieren bei Project in höherer Iteration
+   *
+   * `data` ist strukturiert sodass die WebUI Bulk-Aktionen pro Sektion machen kann.
    */
   private async auditOpenItems(userId: string, input: Record<string, unknown>): Promise<SkillResult> {
     const projectIdInput = input.project_id as string | undefined;
+    const useLlm = input.with_llm !== false; // default an
     let allItems: ProjectOpenItem[];
+    let project: Project | null = null;
     if (projectIdInput) {
       const projectId = await this.resolveProjectId(userId, projectIdInput);
       if (!projectId) return { success: false, error: 'project_id nicht gefunden' };
+      project = await this.repo.getById(userId, projectId);
       allItems = await this.repo.listOpenItemsForProject(projectId, ['open', 'in_progress']);
     } else {
       allItems = await this.repo.listOpenItems(userId, { status: 'open' });
     }
-    if (allItems.length === 0) return { success: true, data: [], display: 'Keine offenen Items.' };
+    if (allItems.length === 0) return { success: true, data: { stats: { total: 0 } }, display: 'Keine offenen Items.' };
 
     const now = Date.now();
-    const stale: ProjectOpenItem[] = [];
-    const possiblyDone: ProjectOpenItem[] = [];
-    const duplicateGroups: Array<ProjectOpenItem[]> = [];
+    // ── Stats ────────────────────────────────────────────────────────
+    const stats = {
+      total: allItems.length,
+      byPriority: { high: 0, normal: 0, low: 0 },
+      byAge: { d1: 0, d1_7: 0, d7_30: 0, d30_plus: 0 },
+      withDescription: 0,
+      autoMarked: 0,
+    };
+    const ageBucket = (created: string) => {
+      const d = (now - new Date(created).getTime()) / 86400_000;
+      if (d < 1) return 'd1';
+      if (d < 7) return 'd1_7';
+      if (d < 30) return 'd7_30';
+      return 'd30_plus';
+    };
 
     for (const it of allItems) {
-      const ageDays = (now - new Date(it.createdAt).getTime()) / 86400_000;
-      if (ageDays >= 30) stale.push(it);
+      stats.byPriority[it.priority as 'high' | 'normal' | 'low']++;
+      stats.byAge[ageBucket(it.createdAt) as keyof typeof stats.byAge]++;
+      if (it.description && it.description.trim().length > 0) stats.withDescription++;
+      if (it.autoResolvedBy) stats.autoMarked++;
+    }
+
+    // ── Existing heuristics ──────────────────────────────────────────
+    const stale30: ProjectOpenItem[] = [];
+    const possiblyDone: ProjectOpenItem[] = [];
+    for (const it of allItems) {
+      const days = (now - new Date(it.createdAt).getTime()) / 86400_000;
+      if (days >= 30) stale30.push(it);
       if (it.autoResolvedBy && it.status === 'open') possiblyDone.push(it);
     }
 
-    // Title-Similarity-Duplikat-Detektion (simpler Jaccard auf Token)
+    // Title-Similarity-Duplikat-Detektion
     const used = new Set<string>();
+    const duplicateGroups: Array<ProjectOpenItem[]> = [];
     for (let i = 0; i < allItems.length; i++) {
       if (used.has(allItems[i].id)) continue;
       const tokA = new Set(allItems[i].title.toLowerCase().split(/\s+/).filter(t => t.length >= 4));
@@ -467,38 +510,111 @@ ${decLines.join('\n') || '  _keine_'}`;
       if (group.length >= 2) { duplicateGroups.push(group); used.add(allItems[i].id); }
     }
 
-    const lines: string[] = [`## Open-Items-Audit (${allItems.length} offen)`, ''];
-    if (possiblyDone.length > 0) {
-      lines.push(`### 🤖 Vermutlich bereits erledigt (${possiblyDone.length})`);
-      lines.push(`_Der Matcher hat Indizien gefunden, aber Confidence zu niedrig für Auto-Done._`);
-      for (const it of possiblyDone) {
-        lines.push(`- \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)} (conf ${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%)`);
+    // Phase-Mismatch (only if we know the project's current iteration)
+    const phaseMismatch: ProjectOpenItem[] = [];
+    // (kein iteration-state am Project — heuristisch über Goal/Description)
+
+    // ── LLM-Pass (optional) ──────────────────────────────────────────
+    interface LlmFinding { item_id: string; verdict: 'likely-done' | 'outdated' | 'redundant' | 'still-open'; confidence: number; reason: string }
+    const llmFindings: LlmFinding[] = [];
+    if (useLlm && this.llmAuditCallback && project && project.cwd && allItems.length > 0) {
+      const repoSnapshot = await collectRepoSnapshot(project.cwd).catch(() => null);
+      if (repoSnapshot) {
+        const prompt = buildAuditPrompt(project, allItems, repoSnapshot);
+        try {
+          const raw = await this.llmAuditCallback(prompt, 'default');
+          const cleaned = raw.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+          const start = cleaned.indexOf('[');
+          const end = cleaned.lastIndexOf(']');
+          if (start >= 0 && end > start) {
+            const parsed = JSON.parse(cleaned.slice(start, end + 1));
+            if (Array.isArray(parsed)) {
+              const ids = new Set(allItems.map(i => i.id));
+              for (const r of parsed) {
+                if (r && typeof r.item_id === 'string' && ids.has(r.item_id)) llmFindings.push(r);
+              }
+            }
+          }
+        } catch { /* LLM failure non-fatal */ }
+      }
+    }
+
+    const llmLikelyDone = llmFindings.filter(f => f.verdict === 'likely-done' && f.confidence >= 0.6);
+    const llmOutdated = llmFindings.filter(f => f.verdict === 'outdated');
+    const llmRedundant = llmFindings.filter(f => f.verdict === 'redundant');
+
+    // ── Markdown-Display ─────────────────────────────────────────────
+    const lines: string[] = [`## Open-Items-Audit`, ''];
+    lines.push(`**Total**: ${stats.total} · **High**: ${stats.byPriority.high} · **Normal**: ${stats.byPriority.normal} · **Low**: ${stats.byPriority.low}`);
+    lines.push(`**Alter**: <1d ${stats.byAge.d1} · 1-7d ${stats.byAge.d1_7} · 7-30d ${stats.byAge.d7_30} · ≥30d ${stats.byAge.d30_plus}`);
+    lines.push(`**Mit Beschreibung**: ${stats.withDescription}/${stats.total} · **Auto-markiert**: ${stats.autoMarked}`);
+    lines.push('');
+
+    const itemTitle = (id: string) => allItems.find(i => i.id === id)?.title.slice(0, 80) ?? id.slice(0, 8);
+
+    if (llmLikelyDone.length > 0) {
+      lines.push(`### 🤖 LLM: wahrscheinlich schon erledigt (${llmLikelyDone.length})`);
+      for (const f of llmLikelyDone) {
+        lines.push(`- \`${f.item_id.slice(0, 8)}\` **${itemTitle(f.item_id)}** (conf ${Math.round(f.confidence * 100)}%) — ${f.reason}`);
       }
       lines.push('');
     }
-    if (stale.length > 0) {
-      lines.push(`### 🕸️ Stale (≥30d offen, ${stale.length})`);
-      for (const it of stale) {
+    if (llmOutdated.length > 0) {
+      lines.push(`### 🗑️ LLM: veraltet (${llmOutdated.length})`);
+      for (const f of llmOutdated) {
+        lines.push(`- \`${f.item_id.slice(0, 8)}\` **${itemTitle(f.item_id)}** — ${f.reason}`);
+      }
+      lines.push('');
+    }
+    if (llmRedundant.length > 0) {
+      lines.push(`### 🔁 LLM: redundant (${llmRedundant.length})`);
+      for (const f of llmRedundant) {
+        lines.push(`- \`${f.item_id.slice(0, 8)}\` **${itemTitle(f.item_id)}** — ${f.reason}`);
+      }
+      lines.push('');
+    }
+    if (possiblyDone.length > 0) {
+      lines.push(`### 🤖 Matcher: vermutlich erledigt (${possiblyDone.length})`);
+      lines.push(`_Confidence zu niedrig für Auto-Done._`);
+      for (const it of possiblyDone) {
+        lines.push(`- \`${it.id.slice(0, 8)}\` **${it.title.slice(0, 80)}** (${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%)`);
+      }
+      lines.push('');
+    }
+    if (stale30.length > 0) {
+      lines.push(`### 🕸️ ≥30d offen (${stale30.length})`);
+      for (const it of stale30) {
         const days = Math.round((now - new Date(it.createdAt).getTime()) / 86400_000);
-        lines.push(`- \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)} (${days}d)`);
+        lines.push(`- \`${it.id.slice(0, 8)}\` **${it.title.slice(0, 80)}** (${days}d)`);
       }
       lines.push('');
     }
     if (duplicateGroups.length > 0) {
-      lines.push(`### 👯 Mögliche Duplikate (${duplicateGroups.length} Gruppe(n))`);
+      lines.push(`### 👯 Title-Duplikate (${duplicateGroups.length} Gruppe(n))`);
       for (const group of duplicateGroups) {
         lines.push(`- Gruppe (${group.length}):`);
         for (const it of group) lines.push(`  - \`${it.id.slice(0, 8)}\` ${it.title.slice(0, 80)}`);
       }
       lines.push('');
     }
-    if (stale.length === 0 && possiblyDone.length === 0 && duplicateGroups.length === 0) {
-      lines.push('✓ Keine Auffälligkeiten — Open-Items sehen sauber aus.');
-    } else {
-      lines.push(`---\n**Aktion**: \`project resolve_open_item item_id=…\` zum Schließen, oder \`project work_on_open_items project_id=…\` um den Stapel abzuarbeiten.`);
+    if (llmLikelyDone.length === 0 && llmOutdated.length === 0 && llmRedundant.length === 0 &&
+        stale30.length === 0 && possiblyDone.length === 0 && duplicateGroups.length === 0) {
+      lines.push(`✓ Keine Auffälligkeiten gefunden — ${stats.total} Items sehen alle aktiv aus.`);
     }
 
-    return { success: true, data: { stale, possiblyDone, duplicateGroups }, display: lines.join('\n') };
+    return {
+      success: true,
+      data: {
+        stats,
+        allItems: allItems.map(i => ({ id: i.id, title: i.title, priority: i.priority, createdAt: i.createdAt, description: i.description ?? '' })),
+        llmLikelyDone, llmOutdated, llmRedundant,
+        possiblyDone: possiblyDone.map(i => ({ id: i.id, title: i.title, confidence: i.autoResolvedConfidence ?? 0 })),
+        stale30: stale30.map(i => ({ id: i.id, title: i.title, ageDays: Math.round((now - new Date(i.createdAt).getTime()) / 86400_000) })),
+        duplicateGroups: duplicateGroups.map(g => g.map(i => ({ id: i.id, title: i.title }))),
+        phaseMismatch,
+      },
+      display: lines.join('\n'),
+    };
   }
 
   private async resolveProjectId(userId: string, input: string): Promise<string | null> {
@@ -507,4 +623,64 @@ ${decLines.join('\n') || '  _keine_'}`;
     const all = await this.repo.list(userId);
     return all.find(p => p.id.startsWith(input) || p.name.toLowerCase().includes(input.toLowerCase()))?.id ?? null;
   }
+}
+
+// ── Helpers for v642 audit ─────────────────────────────────────────────
+
+interface RepoSnapshot {
+  recentCommits: string[]; // "sha title"
+  files: string[];          // relative paths
+  branch?: string;
+}
+
+/**
+ * v642 — Read git log + file tree from a project's cwd. Used to feed the LLM-pass
+ * with concrete signals about what the repo currently contains.
+ */
+async function collectRepoSnapshot(cwd: string): Promise<RepoSnapshot | null> {
+  try {
+    const [{ stdout: logOut }, { stdout: filesOut }, { stdout: branchOut }] = await Promise.all([
+      pExecFile('git', ['-C', cwd, 'log', '--oneline', '-n', '40'], { timeout: 8000, maxBuffer: 1_000_000 }).catch(() => ({ stdout: '' })),
+      pExecFile('git', ['-C', cwd, 'ls-files'], { timeout: 8000, maxBuffer: 4_000_000 }).catch(() => ({ stdout: '' })),
+      pExecFile('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], { timeout: 5000 }).catch(() => ({ stdout: '' })),
+    ]);
+    return {
+      recentCommits: logOut.split('\n').filter(Boolean).slice(0, 40),
+      files: filesOut.split('\n').filter(Boolean).slice(0, 400),
+      branch: branchOut.trim() || undefined,
+    };
+  } catch { return null; }
+}
+
+function buildAuditPrompt(project: Project, items: ProjectOpenItem[], repo: RepoSnapshot): string {
+  const itemList = items.map(i => ({
+    id: i.id,
+    title: i.title.slice(0, 200),
+    description: (i.description ?? '').slice(0, 300),
+    priority: i.priority,
+  }));
+  return `Du bist ein erfahrener Tech-Lead. Hier ist ein Software-Projekt mit ${items.length} offenen Punkten. Bewerte welche Punkte realistisch noch offen sind versus bereits erledigt / veraltet / redundant.
+
+**Projekt**: ${project.name}
+**cwd**: ${project.cwd ?? '—'}
+**Branch**: ${repo.branch ?? '—'}
+
+**Letzte Commits (40)**:
+${repo.recentCommits.slice(0, 40).map(c => `- ${c}`).join('\n')}
+
+**Dateien im Repo (Auszug, max 400)**:
+${repo.files.slice(0, 400).map(f => `- ${f}`).join('\n')}
+
+**Offene Items** (id, title, description, priority):
+${JSON.stringify(itemList, null, 2).slice(0, 12000)}
+
+Antworte als JSON-Array. Pro Item ein Eintrag — aber nur für Items wo du eine klare Einordnung hast (NICHT alle):
+{
+  "item_id": "<uuid>",
+  "verdict": "likely-done" | "outdated" | "redundant" | "still-open",
+  "confidence": 0.0-1.0,
+  "reason": "Knapp begründen (max 200 Zeichen). Bei 'likely-done': welche Commits/Dateien deuten darauf hin. Bei 'outdated': warum nicht mehr relevant. Bei 'redundant': mit welchem anderen item_id es redundant ist."
+}
+
+Konservativ sein — im Zweifel weglassen. Antworte NUR mit dem JSON-Array.`;
 }

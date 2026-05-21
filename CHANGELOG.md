@@ -5,6 +5,54 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.642] - 2026-05-21
+
+### Improved — Open-Items-Audit deutlich vertieft (war zu oberflächlich)
+
+User-Report v641: bei 83+ offenen Items lieferte das Audit nur 2 Duplikat-Gruppen — nichtssagend. Realdaten-Check zeigte: 114 Items, fast alle ≤2d alt → Stale-30d-Heuristik greift gar nicht, Title-Jaccard ≥0.7 ist auch zu strikt.
+
+**Backend** (`packages/skills/src/built-in/project.ts`):
+- **Stats-Block**: total, byPriority (high/normal/low), byAge (4 Buckets <1d / 1-7d / 7-30d / ≥30d), withDescription, autoMarked
+- **LLM-Pass** (default an, `with_llm=false` zum Skippen):
+  - Sammelt git log (`git log --oneline -n 40`) + `git ls-files` aus Project-cwd
+  - Schickt alle Items + Projekt-Info + Repo-Snapshot an default-LLM
+  - Erwartet JSON-Array mit `{item_id, verdict, confidence, reason}`, Verdict in `likely-done | outdated | redundant | still-open`
+  - Konservativ ("im Zweifel weglassen"), nur Items mit klarer Einordnung
+- **Strukturierte Response** in `data` (statt nur Markdown): UI kann pro Sektion eigene Bulk-Aktionen anbieten
+- `setLlmCallback()` Injection — wird in alfred.ts mit `llmProvider.complete` verbunden
+
+**Frontend** — neues `AuditModal.tsx` (Component):
+- **Stats-Header** mit 4 Karten (Total, Priorität-Aufteilung, Alter-Buckets, Qualität)
+- **Sticky Bulk-Toolbar** erscheint bei ≥1 Auswahl: "✓ Als erledigt markieren" + "▶ Mit Project-Agent abarbeiten"
+- **Section-Komponente** pro Verdict-Klasse mit eigenem "+ Alle auswählen"-Button:
+  - 🤖 LLM: wahrscheinlich erledigt (mit Confidence + Begründung)
+  - 🗑️ LLM: veraltet
+  - 🔁 LLM: redundant
+  - 🤖 Matcher: vermutlich erledigt (aus v641 OpenItemMatcher)
+  - 🕸️ ≥30d offen
+  - 👯 Title-Duplikate
+- **Per-Item Checkbox** zur granularen Auswahl
+- Empty-State: "✓ Keine Auffälligkeiten gefunden mit N aktiven Items"
+
+**HTTP-API**:
+- Neu: `POST /api/projects/:id/bulk-close-items` Body `{item_ids[]}` returns `{closed, failed}`
+- `ProjectsCallbacks.bulkCloseItems` (optional) routet auf `projRepo.updateOpenItemStatus`
+
+**Wiring** (`packages/core/src/alfred.ts`):
+- `projectSkill.setLlmCallback(...)` direkt nach Skill-Creation
+- `bulkCloseItems` als neue Projects-Callback registriert
+
+### Effekt
+- Statt "nur 2 Duplikat-Gruppen" liefert das Audit jetzt eine echte Übersicht: Stats-Breakdown + LLM-Bewertung gegen Repo-State
+- LLM matched Items wie "Docker-Setup erstellen" gegen tatsächlich vorhandenes `docker-compose.yml`+`Dockerfile` → markiert als likely-done
+- Bulk-Actions direkt im Modal — kein Modal-Schließen mehr zwischen Audit und Aufräum-Aktion
+
+### Notes
+- Build grün (12/12)
+- LLM-Pass kostet pro Audit-Run ~1-3k Tokens (default tier) bei deinen ~100 Items
+- Bei Project ohne cwd oder ohne git: LLM-Pass wird übersprungen, Audit zeigt nur Heuristiken
+- `auditOpenItems({with_llm: false})` skippt den LLM-Call falls jemand das via Skill direkt steuern will
+
 ## [0.19.0-multi-ha.641] - 2026-05-21
 
 ### Added — Open-Items: Auto-Resolve nach Project-Agent + Bulk-Work + Audit

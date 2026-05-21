@@ -6,6 +6,7 @@ import type {
   Project, ProjectDetail, ProjectStatus, ProjectHealthMode, ProjectOpenItem,
   HealthProbe,
 } from '@/lib/alfred-client';
+import { AuditModal } from './AuditModal';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -63,8 +64,9 @@ export function ProjectsPage() {
   // v641 — Multi-Select + Bulk-Work + Audit
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [workingOnItems, setWorkingOnItems] = useState(false);
-  const [auditResult, setAuditResult] = useState<string | null>(null);
   const [auditing, setAuditing] = useState(false);
+  // v642 — strukturiertes Audit-Modal
+  const [auditData, setAuditData] = useState<any | null>(null);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -200,13 +202,35 @@ export function ProjectsPage() {
 
   async function runAudit() {
     if (!client || !detail) return;
-    setAuditing(true); setAuditResult(null);
+    setAuditing(true); setAuditData(null);
     try {
       const r = await client.projectAuditOpenItems(detail.project.id);
-      setAuditResult(r.display ?? JSON.stringify(r.data, null, 2));
+      if (r.data) setAuditData(r.data);
+      else alert(r.display ?? 'Audit lieferte keine Daten');
     } catch (e) {
-      setAuditResult(e instanceof Error ? e.message : String(e));
+      alert(e instanceof Error ? e.message : String(e));
     } finally { setAuditing(false); }
+  }
+
+  async function handleAuditBulkClose(ids: string[]) {
+    if (!client || !detail) return;
+    const r = await client.projectBulkCloseItems(detail.project.id, ids);
+    alert(`${r.closed}/${ids.length} Items als erledigt markiert${r.failed.length > 0 ? `\n${r.failed.length} fehlgeschlagen` : ''}`);
+    await loadDetail(detail.project.id);
+    // Refresh audit data
+    const r2 = await client.projectAuditOpenItems(detail.project.id);
+    if (r2.data) setAuditData(r2.data);
+  }
+
+  async function handleAuditBulkWork(ids: string[]) {
+    if (!client || !detail) return;
+    const r = await client.projectWorkOnOpenItems(detail.project.id, ids);
+    if (r.ok) {
+      alert(`▶ Project-Agent gestartet${r.taskId ? ` (taskId ${r.taskId.slice(0, 8)})` : ''}.\nNach Abschluss prüft Alfred automatisch welche Items erledigt wurden.`);
+      setAuditData(null);
+    } else {
+      alert(`Fehler: ${r.reason}`);
+    }
   }
 
   // v602 P5 — Tabs trennen normale Projekte vom Misc-Sammel-Bucket.
@@ -478,16 +502,13 @@ export function ProjectsPage() {
                 </div>
               </div>
 
-              {auditResult && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={() => setAuditResult(null)}>
-                  <div onClick={(e) => e.stopPropagation()} className="bg-[#111] border border-[#1f1f1f] rounded-xl p-5 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-                    <div className="flex justify-between items-center mb-3">
-                      <h3 className="text-lg font-semibold text-white">🔍 Audit-Ergebnis</h3>
-                      <button onClick={() => setAuditResult(null)} className="text-gray-500 hover:text-gray-300 text-xl">×</button>
-                    </div>
-                    <pre className="text-xs text-gray-300 whitespace-pre-wrap font-sans">{auditResult}</pre>
-                  </div>
-                </div>
+              {auditData && (
+                <AuditModal
+                  data={auditData}
+                  onClose={() => setAuditData(null)}
+                  onBulkClose={handleAuditBulkClose}
+                  onBulkWork={handleAuditBulkWork}
+                />
               )}
 
               {/* Sessions */}

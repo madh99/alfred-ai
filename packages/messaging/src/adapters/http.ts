@@ -355,6 +355,8 @@ export class HttpAdapter extends MessagingAdapter {
     // v641 — Bulk-Work + Audit
     workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
     auditOpenItems?: (projectId: string) => Promise<{ data?: any; display?: string }>;
+    // v642 — Bulk-Close
+    bulkCloseItems?: (projectId: string, itemIds: string[]) => Promise<{ closed: number; failed: string[] }>;
   };
 
   setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
@@ -715,6 +717,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsWorkOnItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/audit-items$/) && req.method === 'POST') {
       this.handleProjectsAuditItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/bulk-close-items$/) && req.method === 'POST') {
+      this.handleProjectsBulkCloseItems(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -1733,6 +1737,22 @@ export class HttpAdapter extends MessagingAdapter {
     const parts = url.pathname.split('/');
     const projectId = parts[parts.length - 2];
     const result = await this.projectsCallbacks.auditOpenItems(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  }
+
+  // v642 — Bulk-Close handler
+  private async handleProjectsBulkCloseItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.bulkCloseItems) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { item_ids?: string[] };
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.bulkCloseItems(projectId, data.item_ids ?? []);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

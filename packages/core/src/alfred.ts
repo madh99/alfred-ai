@@ -898,6 +898,18 @@ export class Alfred {
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
 
+      // v642 — LLM-Callback für deep audit der project-skill
+      if (this.projectSkillRef && this.llmProvider) {
+        this.projectSkillRef.setLlmCallback(async (prompt: string, tier?: string) => {
+          const res = await this.llmProvider!.complete({
+            messages: [{ role: 'user', content: prompt }],
+            tier: (tier as any) ?? 'default',
+            maxTokens: 3000,
+          });
+          return res.content;
+        });
+      }
+
       // v641 — wire ProjectSkill.setProjectAgentStarter so `project work_on_open_items`
       // kann den Project-Agent direkt starten ohne LLM-Round-Trip.
       if (this.projectSkillRef) {
@@ -4589,6 +4601,19 @@ export class Alfred {
             } catch (err) {
               return { display: `Audit fehlgeschlagen: ${(err as Error).message}` };
             }
+          },
+          // v642 — Bulk-Close
+          bulkCloseItems: async (projectId: string, itemIds: string[]) => {
+            void projectId;
+            let closed = 0;
+            const failed: string[] = [];
+            for (const id of itemIds) {
+              try {
+                const ok = await projRepo.updateOpenItemStatus(id, 'done');
+                if (ok) closed++; else failed.push(id);
+              } catch { failed.push(id); }
+            }
+            return { closed, failed };
           },
         });
         this.logger.info('Projects API registered');

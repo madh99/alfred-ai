@@ -516,6 +516,15 @@ export class AlfredClient {
     return res.json();
   }
 
+  async projectBulkCloseItems(projectId: string, itemIds: string[]): Promise<{ closed: number; failed: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/bulk-close-items`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ item_ids: itemIds }),
+    });
+    if (!res.ok) throw new Error(`Bulk-Close: HTTP ${res.status}`);
+    return res.json();
+  }
+
   async fetchProjectHealthLog(id: string, limit = 100): Promise<ProjectHealthEntry[]> {
     const res = await fetch(`${this.baseUrl}/api/projects/${id}/health-log?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
     if (!res.ok) return [];
