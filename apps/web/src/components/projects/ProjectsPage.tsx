@@ -9,6 +9,7 @@ import type {
 import { AuditModal } from './AuditModal';
 import { ProjectChat } from './ProjectChat';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
+import { ProjectDeployModal } from './ProjectDeployModal';
 
 const STATUS_BADGES: Record<string, string> = {
   active: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40',
@@ -91,6 +92,8 @@ export function ProjectsPage() {
   // v654 — Expandable Item-Details + Erledigt-Section
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
   const [showResolvedItems, setShowResolvedItems] = useState(false);
+  // v659 — Deploy-Modal
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
 
   function toggleItemExpanded(id: string) {
     setExpandedItemIds(prev => {
@@ -427,6 +430,14 @@ export function ProjectsPage() {
                   </h2>
                 )}
                 <div className="flex gap-2 flex-wrap">
+                  {/* v659 — Deploy-Trigger */}
+                  {detail.project.status !== 'archived' && (
+                    <button
+                      onClick={() => setDeployModalOpen(true)}
+                      className="px-3 py-1 text-xs text-blue-400 hover:bg-blue-500/10 rounded border border-blue-500/30"
+                      title="Deploy mit konfigurierbaren Parametern (pm2/docker/systemd, host, user, port)"
+                    >🚀 Deploy</button>
+                  )}
                   {detail.project.status !== 'archived' && (
                     <button onClick={() => archiveProject(detail.project)} className="px-3 py-1 text-xs text-red-400 hover:bg-red-500/10 rounded border border-red-500/30">Archivieren</button>
                   )}
@@ -763,6 +774,16 @@ export function ProjectsPage() {
 
               {/* v658 — Projekt-Chat-Pane (collapsible) */}
               <ProjectChat projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v659 — Deploy-Modal */}
+              {deployModalOpen && (
+                <ProjectDeployModal
+                  projectId={detail.project.id}
+                  projectName={detail.project.name}
+                  defaultRepoUrl={detail.project.repoUrl}
+                  onClose={() => setDeployModalOpen(false)}
+                />
+              )}
             </div>
           )}
         </div>

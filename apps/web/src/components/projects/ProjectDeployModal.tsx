@@ -1,0 +1,244 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { useConfig } from '@/context/ConfigContext';
+import type { ProjectLastDeploy } from '@/lib/alfred-client';
+
+interface Props {
+  projectId: string;
+  projectName: string;
+  defaultRepoUrl?: string;
+  onClose: () => void;
+}
+
+type ProcessManager = 'pm2' | 'docker-compose' | 'systemd';
+type Runtime = 'node' | 'python' | 'docker' | 'static';
+
+/**
+ * v659 — Deploy-Trigger pro Projekt mit Form-basierten Parametern.
+ * Zeigt die letzten Deploys aus deploy_*-Memory (auch chat-getriggerte) als
+ * One-Click-Reuse-Buttons. Form-Defaults werden aus dem letzten Deploy auf
+ * dem gewählten Host vorbelegt.
+ */
+export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onClose }: Props) {
+  const { client } = useConfig();
+  const [lastDeploys, setLastDeploys] = useState<ProjectLastDeploy[]>([]);
+  const [loadingDeploys, setLoadingDeploys] = useState(false);
+
+  // Form state
+  const [host, setHost] = useState('');
+  const [user, setUser] = useState('root');
+  const [processManager, setProcessManager] = useState<ProcessManager>('docker-compose');
+  const [runtime, setRuntime] = useState<Runtime>('node');
+  const [appPort, setAppPort] = useState<string>('');
+  const [branch, setBranch] = useState('main');
+  const [repoUrl, setRepoUrl] = useState(defaultRepoUrl ?? '');
+
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<{ success: boolean; display?: string; error?: string; data?: unknown } | null>(null);
+
+  const loadDeploys = useCallback(async () => {
+    if (!client) return;
+    setLoadingDeploys(true);
+    try {
+      const list = await client.fetchProjectLastDeploys(projectId);
+      setLastDeploys(list);
+      // Auto-Prefill aus dem aktuellsten Deploy
+      if (list.length > 0 && !host) {
+        applyDeploy(list[0]);
+      }
+    } finally {
+      setLoadingDeploys(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, projectId]);
+
+  useEffect(() => { loadDeploys(); }, [loadDeploys]);
+
+  function applyDeploy(d: ProjectLastDeploy) {
+    setHost(d.host);
+    setUser(d.user || 'root');
+    if (d.processManager) {
+      // 'docker compose' → 'docker-compose' für select
+      const pm = d.processManager.replace(/\s+/g, '-');
+      if (pm === 'pm2' || pm === 'docker-compose' || pm === 'systemd') setProcessManager(pm);
+    }
+    if (d.runtime === 'node' || d.runtime === 'python' || d.runtime === 'docker' || d.runtime === 'static') {
+      setRuntime(d.runtime);
+    }
+    if (d.port != null) setAppPort(String(d.port));
+  }
+
+  async function submit() {
+    if (!client || !host.trim() || submitting) return;
+    setSubmitting(true);
+    setResult(null);
+    try {
+      const r = await client.triggerProjectDeploy(projectId, {
+        host: host.trim(),
+        user: user.trim() || 'root',
+        process_manager: processManager,
+        runtime,
+        app_port: appPort ? Number(appPort) : undefined,
+        branch: branch.trim() || undefined,
+        repo_url: repoUrl.trim() || undefined,
+      });
+      setResult(r);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div
+        className="bg-[#111] border border-[#2a2a2a] rounded-lg p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-100">🚀 Deploy — {projectName}</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-red-400 text-lg">✕</button>
+        </div>
+
+        {/* Letzte Deploys */}
+        <div className="mb-4">
+          <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1.5">
+            Letzte Deploys {loadingDeploys && <span className="italic">(lade…)</span>}
+          </div>
+          {lastDeploys.length === 0 && !loadingDeploys && (
+            <div className="text-xs text-gray-600 italic">Noch keine deploy-Memories für dieses Projekt.</div>
+          )}
+          <div className="space-y-1.5">
+            {lastDeploys.slice(0, 5).map((d, i) => (
+              <button
+                key={`${d.host}-${i}`}
+                onClick={() => applyDeploy(d)}
+                className={`w-full text-left bg-[#0d0d0d] border rounded px-3 py-2 hover:border-blue-500/60 transition-colors ${
+                  host === d.host ? 'border-blue-500/60' : 'border-[#2a2a2a]'
+                }`}
+              >
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="font-mono text-blue-400">{d.host}</span>
+                  <span className="text-gray-500">·</span>
+                  <span className="text-gray-300">{d.user}</span>
+                  <span className="text-gray-500">·</span>
+                  <span className="text-gray-300">{d.processManager ?? 'pm2'}</span>
+                  {d.runtime && (<><span className="text-gray-500">·</span><span className="text-gray-300">{d.runtime}</span></>)}
+                  {d.port && (<><span className="text-gray-500">·</span><span className="text-gray-300">:{d.port}</span></>)}
+                  {d.verified && <span className="ml-auto text-emerald-400 text-[10px]">✓ verified</span>}
+                  {d.date && <span className="text-[10px] text-gray-600">{d.date}</span>}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="border-t border-[#222] pt-3 space-y-2.5">
+          {/* Host + User in einer Zeile */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Host *</label>
+              <input
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="z.B. 192.168.1.96"
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">User</label>
+              <input
+                value={user}
+                onChange={(e) => setUser(e.target.value)}
+                placeholder="root / ubuntu / ..."
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* PM + Runtime + Port in einer Zeile */}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Process-Manager</label>
+              <select
+                value={processManager}
+                onChange={(e) => setProcessManager(e.target.value as ProcessManager)}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+              >
+                <option value="docker-compose">🐳 docker-compose</option>
+                <option value="pm2">⚙️ pm2</option>
+                <option value="systemd">🛠 systemd</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Runtime</label>
+              <select
+                value={runtime}
+                onChange={(e) => setRuntime(e.target.value as Runtime)}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+              >
+                <option value="node">Node.js</option>
+                <option value="python">Python</option>
+                <option value="docker">Docker</option>
+                <option value="static">Static</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">App-Port</label>
+              <input
+                type="number"
+                value={appPort}
+                onChange={(e) => setAppPort(e.target.value)}
+                placeholder="3000"
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Branch + Repo-URL */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Branch</label>
+              <input
+                value={branch}
+                onChange={(e) => setBranch(e.target.value)}
+                placeholder="main"
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Repo-URL (optional)</label>
+              <input
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                placeholder={defaultRepoUrl ?? 'https://…'}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Result */}
+        {result && (
+          <div className={`mt-3 p-3 rounded text-xs ${result.success ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-200' : 'bg-red-500/10 border border-red-500/30 text-red-200'}`}>
+            <div className="font-semibold mb-1">{result.success ? '✅ Deploy erfolgreich' : '❌ Deploy fehlgeschlagen'}</div>
+            {result.display && <div className="whitespace-pre-wrap text-gray-300">{result.display}</div>}
+            {!result.success && result.error && <div className="text-red-300">{result.error}</div>}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[#222]">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded"
+          >Schließen</button>
+          <button
+            onClick={submit}
+            disabled={!host.trim() || submitting}
+            className="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded font-semibold"
+          >{submitting ? '⏳ Deploying…' : '🚀 Deploy starten'}</button>
+        </div>
+      </div>
+    </div>
+  );
+}

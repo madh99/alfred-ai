@@ -393,6 +393,10 @@ export class HttpAdapter extends MessagingAdapter {
     } | null>;
     /** v658 — Chat-History für Projekt-Conversation */
     chatHistory?: (id: string, limit: number) => Promise<{ conversationId: string; messages: Array<{ id: string; role: string; content: string; createdAt: string }> } | null>;
+    /** v659 — Letzte Deploys aus Memory parsed */
+    lastDeploys?: (id: string) => Promise<Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string }>>;
+    /** v659 — Deploy-Trigger mit Form-Params (process_manager, host, user, port, runtime, branch) */
+    triggerDeploy?: (id: string, input: Record<string, unknown>) => Promise<{ success: boolean; data?: unknown; error?: string; display?: string }>;
     create: (input: Record<string, unknown>) => Promise<any>;
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
@@ -804,6 +808,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsWorkStats(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/chat-history$/) && req.method === 'GET') {
       this.handleProjectsChatHistory(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/last-deploys$/) && req.method === 'GET') {
+      this.handleProjectsLastDeploys(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/deploy$/) && req.method === 'POST') {
+      this.handleProjectsDeploy(req, res, url).catch(err => this.safeError(res, err));
     // ── Log Viewer API ──
     } else if (url.pathname === '/api/logs/app' && req.method === 'GET') {
       this.handleLogApp(req, res, url).catch(err => this.safeError(res, err));
@@ -2096,6 +2104,35 @@ export class HttpAdapter extends MessagingAdapter {
     const history = await this.projectsCallbacks.chatHistory(projectId, limit);
     res.writeHead(history ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(history ?? { error: 'not-found' }));
+  }
+
+  // v659 — Letzte Deploys aus deploy_*-Memories parsen
+  private async handleProjectsLastDeploys(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.lastDeploys) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const deploys = await this.projectsCallbacks.lastDeploys(projectId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ deploys }));
+  }
+
+  // v659 — Deploy-Trigger mit Form-Params
+  private async handleProjectsDeploy(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.triggerDeploy) {
+      res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Deploy nicht konfiguriert' })); return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: Record<string, unknown>;
+    try { data = JSON.parse(body); } catch { data = {}; }
+    const result = await this.projectsCallbacks.triggerDeploy(projectId, data);
+    res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
   }
 
   // v642 — Bulk-Close handler

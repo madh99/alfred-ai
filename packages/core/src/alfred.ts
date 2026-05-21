@@ -4913,6 +4913,90 @@ export class Alfred {
               return await projRepo.getWorkStats(project.id);
             } catch (err) { this.logger.warn({ err, id }, 'Projects API workStats failed'); return null; }
           },
+          // v659 — Letzte Deploys aus deploy_*-Memories für das Projekt parsen.
+          // Memory-Format (siehe packages/skills/.../deploy.ts:425):
+          //   key: `deploy_<projectName>_<host_normalized>`
+          //   value: `Deployed X → HOST (user=U, runtime=R, pm=P, compose=…, port=N, verified=ok, am=YYYY-MM-DD)`
+          lastDeploys: async (id: string) => {
+            try {
+              if (!this.memoryRepo) return [];
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return [];
+              const keyPrefix = `deploy_${project.name}_`;
+              const mems = await this.memoryRepo.search(uid, keyPrefix);
+              const filtered = mems.filter(m => m.key.startsWith(keyPrefix) && m.category === 'deployment');
+              return filtered.map(m => {
+                const v = m.value;
+                const hostMatch = v.match(/→\s*([\w.-]+)\s*\(/);
+                const userMatch = v.match(/user=([^,)]+)/);
+                const runtimeMatch = v.match(/runtime=([^,)]+)/);
+                const pmMatch = v.match(/pm=([^,)]+)/);
+                const composeMatch = v.match(/compose=([^,)]+)/);
+                const portMatch = v.match(/port=(\d+)/);
+                const verifiedMatch = /verified=ok/.test(v);
+                const dateMatch = v.match(/am=([\d-]+)/);
+                return {
+                  host: hostMatch?.[1] ?? '',
+                  user: userMatch?.[1]?.trim() ?? 'root',
+                  runtime: runtimeMatch?.[1]?.trim(),
+                  processManager: pmMatch?.[1]?.trim(),
+                  composeVariant: composeMatch?.[1]?.trim(),
+                  port: portMatch ? Number(portMatch[1]) : undefined,
+                  verified: verifiedMatch,
+                  date: dateMatch?.[1],
+                  updatedAt: m.updatedAt,
+                };
+              }).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+            } catch (err) {
+              this.logger.warn({ err, id }, 'Projects API lastDeploys failed');
+              return [];
+            }
+          },
+
+          // v659 — Deploy-Trigger via deploy-Skill mit Form-Params.
+          // Validiert Felder, ruft skillSandbox.execute(deploySkill, params, ctx).
+          triggerDeploy: async (id: string, input: Record<string, unknown>) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, id);
+              if (!project) return { success: false, error: 'Projekt nicht gefunden' };
+              const skill = this.skillRegistry?.get('deploy');
+              if (!skill) return { success: false, error: 'Deploy-Skill nicht registriert' };
+              // Mandatory: host. Defaults: action=deploy, user=root, pm aus input.
+              const host = String(input.host ?? '').trim();
+              if (!host) return { success: false, error: 'host ist erforderlich' };
+              const params: Record<string, unknown> = {
+                action: 'deploy',
+                project: project.name,
+                host,
+                user: input.user ?? 'root',
+              };
+              if (input.process_manager) params.process_manager = input.process_manager;
+              if (input.runtime) params.runtime = input.runtime;
+              if (input.app_port) params.app_port = Number(input.app_port);
+              if (input.branch) params.branch = input.branch;
+              if (input.repo_url) params.repo_url = input.repo_url;
+              else if (project.repoUrl) params.repo_url = project.repoUrl;
+              if (input.install_command) params.install_command = input.install_command;
+              if (input.build_command) params.build_command = input.build_command;
+              if (input.start_command) params.start_command = input.start_command;
+              if (!this.skillSandbox) return { success: false, error: 'SkillSandbox nicht verfügbar' };
+              const ownerChatId = this.config.security?.ownerUserId ?? '';
+              const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
+              const result = await this.skillSandbox.execute(skill, params, ctx);
+              return {
+                success: result.success,
+                data: result.data,
+                error: result.error,
+                display: result.display,
+              };
+            } catch (err) {
+              this.logger.warn({ err, id }, 'Projects API triggerDeploy failed');
+              return { success: false, error: (err as Error).message };
+            }
+          },
+
           // v658 — Chat-History für Projekt-Conversation
           chatHistory: async (id: string, limit: number) => {
             try {

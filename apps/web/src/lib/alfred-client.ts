@@ -575,6 +575,30 @@ export class AlfredClient {
     return await res.json();
   }
 
+  // v659 — Letzte Deploys aus deploy_*-Memory parsed
+  async fetchProjectLastDeploys(projectId: string): Promise<ProjectLastDeploy[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/last-deploys`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.deploys) ? data.deploys : [];
+  }
+
+  // v659 — Deploy-Trigger mit Form-Params
+  async triggerProjectDeploy(projectId: string, input: {
+    host: string; user?: string; process_manager?: string; runtime?: string;
+    app_port?: number; branch?: string; repo_url?: string;
+    install_command?: string; build_command?: string; start_command?: string;
+  }): Promise<{ success: boolean; data?: unknown; error?: string; display?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { success: false, error: data.error ?? `HTTP ${res.status}` };
+    return data;
+  }
+
   // v658 — Chat-History für Projekt-Conversation
   async fetchProjectChatHistory(projectId: string, limit = 100): Promise<ProjectChatHistory | null> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/chat-history?limit=${limit}`, { headers: this.token ? { Authorization: `Bearer ${this.token}` } : {} });
@@ -1316,6 +1340,18 @@ export interface GoalCheckpointItem {
   checkedAt: string;
   status?: string;
   notes?: string;
+}
+
+// v659 — Letzte Deploys aus Memory
+export interface ProjectLastDeploy {
+  host: string;
+  user: string;
+  runtime?: string;
+  processManager?: string;
+  composeVariant?: string;
+  port?: number;
+  verified?: boolean;
+  date?: string;
 }
 
 // v658 — Project Work-Stats + Chat-History

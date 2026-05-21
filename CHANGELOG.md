@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.659] - 2026-05-21
+
+### Added — Deploy-Trigger pro Projekt in ProjectsPage
+
+**Backend**:
+- Neue Projects-Callbacks:
+  - `lastDeploys(id)` — parsed alle `deploy_<project>_*`-Memories (Format aus
+    deploy.ts:425: `Deployed X → HOST (user=…, runtime=…, pm=…, port=…, am=…)`)
+    → liefert sortierte Liste mit host, user, runtime, processManager, composeVariant, port, verified, date
+  - `triggerDeploy(id, params)` — führt deploy-Skill via SkillSandbox aus mit
+    Form-Params (action='deploy', project, host, user, process_manager, runtime,
+    app_port, branch, repo_url). Repo-URL aus Projekt vorbelegt falls nicht
+    explizit gesetzt.
+- Neue HTTP-Endpoints:
+  - `GET /api/projects/:id/last-deploys`
+  - `POST /api/projects/:id/deploy`
+
+**Frontend (`ProjectDeployModal.tsx`)**:
+- 🚀 Deploy-Button im ProjectsPage Detail Header (rechts neben „Archivieren")
+- Modal mit Form:
+  - Host * (Pflichtfeld) + User
+  - Process-Manager (🐳 docker-compose / ⚙️ pm2 / 🛠 systemd)
+  - Runtime (Node / Python / Docker / Static)
+  - App-Port + Branch + Repo-URL (default: project.repoUrl)
+- Letzte Deploys werden als klickbare Cards angezeigt:
+  - Format: `<host> · <user> · <pm> · <runtime> · :<port>` mit ✓ verified + Datum
+  - Klick füllt das Form-Felder automatisch aus (One-Click-Reuse)
+- Auto-Prefill: aktuellster Deploy wird beim Öffnen automatisch ins Form geladen
+- Result-Panel zeigt success/error + display-String vom Deploy-Skill
+- Modal-Close via ✕, Klick außerhalb oder „Schließen"
+
+### Notes
+- Build grün (12/12)
+- Funktioniert auch mit Memories aus Chat-getriggerten Deploys (Telegram, Web-Chat)
+  — sie sind dieselben `deploy_*`-Memories
+- LLM-Bias zu pm2 ist umgangen: User wählt explizit per Dropdown
+- Bei fehlerhaftem Memory-Format wird das Item übersprungen (try/parse silent)
+
 ## [0.19.0-multi-ha.658] - 2026-05-21
 
 ### Added — Projekt-Chat + Work-Stats + Session-Duration
