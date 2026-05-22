@@ -1,9 +1,11 @@
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import type { Duplex } from 'node:stream';
 import type { Platform, NormalizedMessage, SendMessageOptions } from '@alfred/types';
 import { MessagingAdapter } from '../adapter.js';
 
@@ -394,6 +396,12 @@ export class HttpAdapter extends MessagingAdapter {
   // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup nach v695)
   private insightsDismissCategoryFn?: (category: string) => Promise<number>;
 
+  // v698 — Sandbox-Proxy: löst sandboxId+token → upstreamPort + ownership
+  private sandboxProxyResolve?: (sandboxId: string, token: string | null) => Promise<
+    | { ok: true; hostPort: number; userId: string }
+    | { ok: false; status: number; message: string }
+  >;
+
   // v639 — Goals API
   private goalsListFn?: (filter?: { status?: string; category?: string }) => Promise<any[]>;
   private goalsGetFn?: (id: string) => Promise<{ goal: any; checkpoints: any[] } | null>;
@@ -413,6 +421,16 @@ export class HttpAdapter extends MessagingAdapter {
     this.goalsAddFn = opts.add;
     this.goalsUpdateFn = opts.update;
     this.goalsCheckFn = opts.check;
+  }
+
+  // v698 — Sandbox-Proxy: aus alfred.ts gerufen, validiert sandboxId + Token gegen DB
+  setSandboxProxyResolver(
+    resolve: (sandboxId: string, token: string | null) => Promise<
+      | { ok: true; hostPort: number; userId: string }
+      | { ok: false; status: number; message: string }
+    >,
+  ): void {
+    this.sandboxProxyResolve = resolve;
   }
 
   setInsightsCallbacks(opts: {
@@ -536,6 +554,25 @@ export class HttpAdapter extends MessagingAdapter {
     } else {
       this.server = http.createServer(handler);
     }
+
+    // v698 — WebSocket-Upgrade-Handler für Sandbox-Preview (HMR via WebSocket)
+    this.server.on('upgrade', (req, socket, head) => {
+      try {
+        const u = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        const m = u.pathname.match(/^\/preview\/([a-zA-Z0-9-]{8,})(\/.*)?$/);
+        if (m) {
+          this.handleSandboxProxyUpgrade(req, socket, head, u, m[1], m[2] ?? '/').catch(err => {
+            try { socket.write(`HTTP/1.1 500 Internal Server Error\r\n\r\nUpgrade failed: ${(err as Error).message}\n`); socket.destroy(); } catch { /* */ }
+          });
+          return;
+        }
+        // Andere upgrade-Requests verwerfen (no native WebSocket-API in Alfred außer Sandbox)
+        socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+        socket.destroy();
+      } catch {
+        try { socket.destroy(); } catch { /* */ }
+      }
+    });
 
     await new Promise<void>((resolve, reject) => {
       this.server!.listen(this.port, this.host, () => {
@@ -728,6 +765,16 @@ export class HttpAdapter extends MessagingAdapter {
     }
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    // v698 — Sandbox-Preview-Proxy: matched ALLES unter /preview/<sandboxId>/...
+    // (HTTP-Methoden + Pfade transparent zum Upstream-Dev-Server)
+    const previewMatch = url.pathname.match(/^\/preview\/([a-zA-Z0-9-]{8,})(\/.*)?$/);
+    if (previewMatch) {
+      this.handleSandboxProxyHttp(req, res, url, previewMatch[1], previewMatch[2] ?? '/').catch(err => {
+        try { if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(`Preview proxy error: ${(err as Error).message}`); } catch { /* */ }
+      });
+      return;
+    }
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res).catch(err => this.safeError(res, err));
@@ -2823,6 +2870,181 @@ export class HttpAdapter extends MessagingAdapter {
       }
       res.end(JSON.stringify({ error: 'Internal server error' }));
     } catch { /* response already closed */ }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // v698 — Sandbox-Preview-Proxy (HTTP + WebSocket)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Cookie-Name für preview-token. Path-scoped damit nicht in andere Pfade leakt. */
+  private readonly PREVIEW_COOKIE = '__alfred_preview_token';
+
+  /** Liest preview-token aus Cookie ODER aus ?_alfred_auth=... (initial-load). */
+  private extractPreviewToken(req: http.IncomingMessage, url: URL): { token: string | null; viaQuery: boolean } {
+    const queryToken = url.searchParams.get('_alfred_auth');
+    if (queryToken) return { token: queryToken, viaQuery: true };
+    const cookieHeader = req.headers['cookie'] ?? '';
+    for (const c of cookieHeader.split(';')) {
+      const [name, ...rest] = c.trim().split('=');
+      if (name === this.PREVIEW_COOKIE) return { token: rest.join('='), viaQuery: false };
+    }
+    return { token: null, viaQuery: false };
+  }
+
+  /**
+   * Beim ersten Hit mit `?_alfred_auth=TOKEN`: setzt path-scoped Cookie und
+   * 302-redirected auf dieselbe URL ohne Query — danach trägt der Browser
+   * den Cookie automatisch zu allen sub-resources (inkl. WebSocket-HMR).
+   */
+  private writePreviewCookieAndRedirect(
+    res: http.ServerResponse,
+    sandboxId: string,
+    token: string,
+    pathInsideSandbox: string,
+    url: URL,
+  ): void {
+    const target = new URL(url.toString());
+    target.searchParams.delete('_alfred_auth');
+    const cookieParts = [
+      `${this.PREVIEW_COOKIE}=${encodeURIComponent(token)}`,
+      `Path=/preview/${sandboxId}/`,
+      `HttpOnly`,
+      `SameSite=Strict`,
+    ];
+    // Secure-Flag wenn TLS aktiv (https-Server hat setSecureContext)
+    if (this.server && typeof (this.server as { setSecureContext?: unknown }).setSecureContext === 'function') cookieParts.push('Secure');
+    void pathInsideSandbox;
+    res.writeHead(302, {
+      'Set-Cookie': cookieParts.join('; '),
+      'Location': target.pathname + target.search,
+      'Cache-Control': 'no-store',
+    });
+    res.end();
+  }
+
+  private writePreviewError(res: http.ServerResponse, status: number, title: string, message: string): void {
+    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(`<!DOCTYPE html><html><head><title>${title}</title><meta charset="utf-8"></head>
+<body style="font-family:system-ui;padding:2rem;background:#111;color:#ddd">
+<h1 style="margin-top:0">${title}</h1>
+<p>${message.replace(/</g, '&lt;')}</p>
+<p style="opacity:0.6;font-size:0.9em">Alfred Sandbox-Preview</p>
+</body></html>`);
+  }
+
+  private async handleSandboxProxyHttp(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: URL,
+    sandboxId: string,
+    upstreamPath: string,
+  ): Promise<void> {
+    if (!this.sandboxProxyResolve) {
+      return this.writePreviewError(res, 503, 'Sandbox-Proxy nicht aktiv', 'Das Sandbox-Feature ist auf diesem Alfred-Node nicht aktiv.');
+    }
+    const { token, viaQuery } = this.extractPreviewToken(req, url);
+    if (!token) {
+      return this.writePreviewError(res, 401, 'Nicht angemeldet', 'Bitte öffne die Preview aus dem Alfred-WebUI heraus.');
+    }
+
+    const r = await this.sandboxProxyResolve(sandboxId, token);
+    if (!r.ok) {
+      return this.writePreviewError(res, r.status, `Preview nicht verfügbar (${r.status})`, r.message);
+    }
+
+    // Wenn token via Query kam: Cookie setzen + redirect auf clean-URL
+    if (viaQuery) {
+      this.writePreviewCookieAndRedirect(res, sandboxId, token, upstreamPath, url);
+      return;
+    }
+
+    // Proxy-Request an Upstream
+    const upstreamUrl = new URL(upstreamPath + (url.search ? url.search.replace(/[?&]_alfred_auth=[^&]*/g, '') : ''), `http://127.0.0.1:${r.hostPort}`);
+    const headers: Record<string, string | string[]> = {};
+    for (const [k, v] of Object.entries(req.headers)) { if (v != null) headers[k] = v; }
+    // Cookie für Upstream bereinigen — Alfred-Cookies sollen nicht zum dev-server lecken
+    delete headers['cookie'];
+    delete headers['authorization'];
+    headers['host'] = `127.0.0.1:${r.hostPort}`;
+    headers['x-forwarded-host'] = String(req.headers['host'] ?? '');
+    headers['x-forwarded-proto'] = this.server instanceof https.Server ? 'https' : 'http';
+    headers['x-forwarded-prefix'] = `/preview/${sandboxId}`;
+
+    const upstreamReq = http.request({
+      host: '127.0.0.1',
+      port: r.hostPort,
+      method: req.method,
+      path: upstreamUrl.pathname + upstreamUrl.search,
+      headers,
+      timeout: 60_000,
+    }, upstreamRes => {
+      // Status + Headers durchreichen
+      const respHeaders: Record<string, string | string[]> = {};
+      for (const [k, v] of Object.entries(upstreamRes.headers)) {
+        if (v == null) continue;
+        // Hop-by-hop-Headers verwerfen
+        const lk = k.toLowerCase();
+        if (lk === 'connection' || lk === 'keep-alive' || lk === 'transfer-encoding' || lk === 'upgrade') continue;
+        respHeaders[k] = v as string | string[];
+      }
+      res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);
+      upstreamRes.pipe(res);
+    });
+
+    upstreamReq.on('error', err => {
+      this.writePreviewError(res, 502, 'Dev-Server nicht erreichbar', `Upstream-Fehler: ${(err as Error).message}`);
+    });
+    upstreamReq.on('timeout', () => {
+      upstreamReq.destroy(new Error('Timeout to upstream dev-server'));
+    });
+
+    req.pipe(upstreamReq);
+  }
+
+  private async handleSandboxProxyUpgrade(
+    req: http.IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    url: URL,
+    sandboxId: string,
+    upstreamPath: string,
+  ): Promise<void> {
+    if (!this.sandboxProxyResolve) { socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n'); socket.destroy(); return; }
+    const { token } = this.extractPreviewToken(req, url);
+    if (!token) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+    const r = await this.sandboxProxyResolve(sandboxId, token);
+    if (!r.ok) { socket.write(`HTTP/1.1 ${r.status} ${r.message}\r\n\r\n`); socket.destroy(); return; }
+
+    const upstream = net.connect({ host: '127.0.0.1', port: r.hostPort }, () => {
+      // Original-Request rebuilden für upstream — bereinigt um alfred-cookies
+      const headers = { ...req.headers };
+      delete headers['cookie'];
+      delete headers['authorization'];
+      headers['host'] = `127.0.0.1:${r.hostPort}`;
+      const cleanQuery = (url.search ?? '').replace(/[?&]_alfred_auth=[^&]*/g, '');
+      const upstreamUrl = upstreamPath + cleanQuery;
+      const lines: string[] = [`${req.method ?? 'GET'} ${upstreamUrl} HTTP/${req.httpVersion}`];
+      for (const [k, v] of Object.entries(headers)) {
+        if (v == null) continue;
+        if (Array.isArray(v)) {
+          for (const vv of v) lines.push(`${k}: ${vv}`);
+        } else {
+          lines.push(`${k}: ${v}`);
+        }
+      }
+      upstream.write(lines.join('\r\n') + '\r\n\r\n');
+      if (head && head.length > 0) upstream.write(head);
+      // Duplex-pipe
+      socket.pipe(upstream);
+      upstream.pipe(socket);
+    });
+
+    upstream.on('error', err => {
+      try { socket.write(`HTTP/1.1 502 Bad Gateway\r\n\r\nUpstream socket error: ${(err as Error).message}\n`); } catch { /* */ }
+      try { socket.destroy(); } catch { /* */ }
+    });
+    socket.on('error', () => { try { upstream.destroy(); } catch { /* */ } });
+    socket.on('close', () => { try { upstream.destroy(); } catch { /* */ } });
   }
 
   private async handleHealth(res: http.ServerResponse): Promise<void> {

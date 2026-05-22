@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.698] - 2026-05-22
+
+### Added — Sandbox-Preview Internal Proxy (Phase 3/5)
+
+Internal HTTP- + WebSocket-Proxy für `/preview/<sandboxId>/*` direkt im Alfred-HTTP-Server. Keine externe NPM/Nginx-Komponente nötig, Auth über existing Session-Token, Same-Origin → keine Cookie-/CORS-Sorgen.
+
+**Wie es funktioniert:**
+
+1. WebUI mountet iframe mit `src="/preview/<sandboxId>/?_alfred_auth=<token>"`
+2. Alfred-Proxy liest Query-Token, validiert (Token → User → Sandbox-Ownership → Status='running' → hostPort)
+3. Setzt path-scoped Cookie `__alfred_preview_token=<token>; Path=/preview/<sid>/; HttpOnly; SameSite=Strict; Secure` und redirected auf URL ohne Query
+4. Subsequent Requests carry Cookie automatisch (auch Sub-Resources des Dev-Servers + WebSocket-Upgrade)
+5. Jeder Request: gleicher Auth-Check, dann HTTP-Proxy via `http.request()` zu `localhost:hostPort` mit Path-Rewriting
+6. WebSocket-Upgrade (HMR): hijackt den Socket, baut TCP-Connect zu Upstream, pipet beide Sockets bidirectional
+
+**Sicherheit:**
+- Auth-Subrequest pro Request: Token + Ownership + Status → 401/403/404/409 mit klarer HTML-Error-Page
+- Alfred-Cookies + Authorization-Header werden zum Dev-Server NICHT weitergegeben (kein Cross-Origin-Leak)
+- X-Forwarded-Proto/Host/Prefix korrekt gesetzt
+- Cookie ist `HttpOnly` + `SameSite=Strict` + `Secure` (bei HTTPS)
+- Activity-Touch pro Request (resets idle-timer für v700-Cleanup)
+
+**Was funktioniert:**
+- HTTP-GET/POST/PUT/DELETE/PATCH/HEAD → transparent durchgereicht
+- WebSocket-Upgrade für HMR (Vite/Next/Astro)
+- Sub-Resources des Dev-Servers (relative URLs funktionieren wegen `Path=/preview/<sid>/`)
+- Hop-by-hop-Headers korrekt entfernt (Connection, Upgrade, Transfer-Encoding)
+
+**Was NICHT funktioniert (out-of-scope):**
+- Andere WebSocket-Routes als Sandbox-Preview (Server-Upgrade-Handler verwirft alles andere mit 404)
+- Streaming-Responses mit Server-Sent-Events durch den Proxy — werden trotzdem geforwarded, aber nicht aktiv getestet
+
+**Geänderte Dateien:**
+- `packages/messaging/src/adapters/http.ts`:
+  - Neues Callback-Feld `sandboxProxyResolve` + Setter `setSandboxProxyResolver`
+  - Path-Match `/preview/<sandboxId>/...` (mindestens 8 Zeichen sandboxId) im handleRequest
+  - `server.on('upgrade')` für WebSocket-Upgrade-Hijack
+  - `handleSandboxProxyHttp` (Cookie-flow + http-proxy)
+  - `handleSandboxProxyUpgrade` (TCP-tunnel mit HTTP-handshake-rebuild)
+- `packages/core/src/alfred.ts`: Proxy-Resolver registriert nach Sandbox-Skill-Wiring
+
+### Backward-Compatibility — weiterhin garantiert
+- ProjectAgentRunner: unverändert
+- `/preview/*`-Path war vorher nicht belegt → keine Kollision
+- Wenn Sandbox-Feature disabled: Proxy-Resolver wird nicht gesetzt → jeder /preview/-Request landet auf der 503-Page
+- Existierende WebSocket-Endpunkte? Es gibt keine — der Upgrade-Handler wirft alle anderen Pfade mit 404 zurück
+
+### Test-Möglichkeit nach Deploy
+1. Sandbox via API/Skill erstellen (v697-Pfad)
+2. Status checken: `sandbox list` → host_port + status='running'
+3. WebUI hat noch keinen iframe-Embed (v699), aber manuell testbar:
+   `curl -L 'https://alfred.local/preview/<SANDBOX_ID>/?_alfred_auth=<TOKEN>'`
+4. HTML des Dev-Servers sollte zurückkommen
+5. WS-Test via `wscat` oder Browser-DevTools sobald iframe da ist
+
 ## [0.19.0-multi-ha.697] - 2026-05-22
 
 ### Added — Sandbox Lifecycle: Worktree + Container + Dev-Server (Phase 2/5)

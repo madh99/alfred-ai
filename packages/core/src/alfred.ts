@@ -3161,6 +3161,31 @@ export class Alfred {
               } catch (err) {
                 this.logger.warn({ err }, 'v697 Sandbox-Skill registration failed (non-fatal)');
               }
+
+              // v698 — Sandbox-Preview-Proxy-Resolver registrieren. Validiert pro Request:
+              // (a) Token → User, (b) Sandbox-Ownership, (c) Status === 'running'.
+              try {
+                const httpAdapter = this.adapters.get('api') as { setSandboxProxyResolver?: (fn: (id: string, token: string | null) => Promise<unknown>) => void } | undefined;
+                if (httpAdapter && typeof httpAdapter.setSandboxProxyResolver === 'function' && this.webAuthCallback) {
+                  const authCb = this.webAuthCallback;
+                  httpAdapter.setSandboxProxyResolver(async (sandboxId, token) => {
+                    if (!token) return { ok: false, status: 401, message: 'Missing token' };
+                    const user = await authCb.getUserByToken(token);
+                    if (!user) return { ok: false, status: 401, message: 'Invalid or expired token' };
+                    const sb = await sandboxRepo.getById(sandboxId);
+                    if (!sb) return { ok: false, status: 404, message: 'Sandbox not found' };
+                    if (sb.userId !== user.userId) return { ok: false, status: 403, message: 'You do not own this sandbox' };
+                    if (sb.status !== 'running') return { ok: false, status: 409, message: `Sandbox is ${sb.status} — not running` };
+                    if (typeof sb.hostPort !== 'number') return { ok: false, status: 503, message: 'Sandbox has no host port' };
+                    // Activity-Touch (idle-timer-Reset)
+                    sandboxRepo.touchActivity(sandboxId).catch(() => { /* */ });
+                    return { ok: true, hostPort: sb.hostPort, userId: sb.userId };
+                  });
+                  this.logger.info('v698 Sandbox-Preview-Proxy registered (/preview/<sandboxId>/*)');
+                }
+              } catch (err) {
+                this.logger.warn({ err }, 'v698 Sandbox-Proxy resolver registration failed (non-fatal)');
+              }
             } else {
               this.logger.warn({ reasons: hc.reasons }, 'v697 Sandbox-Manager disabled (health-check failed) — classic-only mode');
             }
