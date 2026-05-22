@@ -5,6 +5,16 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.682] - 2026-05-22
+
+### Fixed — Project-Chat: Alfred behauptete „kein Tool zur Verfügung"
+
+**Diagnose:** Bei Project-Chat-Messages filterte der Pipeline-`selectCategories(text)` die Tools nach Kategorie-Keywords im User-Text. Ein UI-Bug-Report („das Modal hat keinen Hintergrund...") matched keine Kategorie wie `code` oder `agent` → `project_agent`/`code_agent`/`shell`/`deploy` wurden weggefiltert → LLM bekam nur generische Tools → antwortete „kein Code-/Project-Agent-Tool zur Verfügung".
+
+**Fix:**
+- Skill-Filter wird bei Project-Chat (`metadata.projectId` gesetzt) **komplett übersprungen** — der LLM bekommt ALLE Tools. Analoges Verhalten wie bei Voice-Messages (`hasAudioAttachment`).
+- System-Prompt für Project-Chats explizit erweitert: „**ALLE Tools** sind verfügbar: project_agent, code_agent, shell, deploy, file, git, brainstorming. Behaupte NIEMALS ‚kein Tool zur Verfügung'." Plus expliziter Hinweis dass UI-/Code-Bugs ebenfalls über `project_agent`/`code_agent` gefixt werden.
+
 ## [0.19.0-multi-ha.681] - 2026-05-22
 
 ### Fixed — Log-Viewer zeigte nur die aktuelle Stunde

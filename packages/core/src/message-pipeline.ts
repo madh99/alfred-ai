@@ -688,9 +688,14 @@ export class MessagePipeline {
         ? this.skillRegistry.getAll().map(s => s.metadata)
         : undefined;
       let skillMetas = allSkillMetas;
+      // v682 — Bei Project-Chat NICHT filtern: der User erwartet dass Alfred
+      // project_agent, code_agent, shell, deploy, git etc. nutzen kann, auch wenn
+      // sein Text wie ein UI-Bug-Report klingt. Sonst sagt Alfred fälschlich
+      // „kein Code-/Project-Agent-Tool zur Verfügung".
+      const isProjectChat = !!message.metadata?.projectId;
       if (allSkillMetas && message.text) {
         // Voice messages: skip skill filter — text is not yet transcribed
-        if (hasAudioAttachment) {
+        if (hasAudioAttachment || isProjectChat) {
           skillMetas = allSkillMetas;
         } else {
           const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
@@ -891,7 +896,9 @@ export class MessagePipeline {
             }
             lines.push(`\n### Anweisungen für diesen Projekt-Chat`);
             lines.push(`- Du arbeitest gerade an diesem Projekt — nutze cwd, repo und Kontext automatisch.`);
-            lines.push(`- "baue X ein" / "erweitere Y" → project_agent.start mit dem Projekt-cwd.`);
+            lines.push(`- **ALLE Tools** sind verfügbar: project_agent, code_agent, shell, deploy, file, git, brainstorming. Behaupte NIEMALS „kein Tool zur Verfügung" — wenn du eine Aufgabe nicht direkt erledigen kannst, ruf das passende Tool auf.`);
+            lines.push(`- "baue X ein" / "fix Y" / "implementiere Z" → project_agent.start mit dem Projekt-cwd. Direkter Code-Eingriff geht via code_agent + shell.`);
+            lines.push(`- UI-/Code-Bugs werden ebenfalls über project_agent oder code_agent gefixt — kein Tool fehlt.`);
             lines.push(`- "deploy auf …" → deploy-Skill mit projekt-cwd vorbelegt.`);
             lines.push(`- "füge … zur Liste" → project.add_open_item.`);
             lines.push(`- Brainstorming-Anfragen ("lass uns über X nachdenken") → brainstorming.start.`);
