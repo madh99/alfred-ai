@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.691] - 2026-05-22
+
+### Fixed — Deploy-Skill: Memory-Save lief silent ins Leere bei Chat/Telegram-Triggern
+
+**Root-Cause:** Der Deploy-Skill schreibt seine Erfolgs-Memory in einem stillen try-catch ohne jegliches Logging. Wenn der Save scheiterte (z.B. `ownerUserId` undefined, oder UPSERT-Guard greift weil ein alter `source='manual'`-Eintrag den Key blockiert), wusste niemand davon.
+
+Konkret heute beobachtet: Drei Deploys, nur EINER hat die Memory aktualisiert (der WebUI-Modal-Deploy via v679-Backup-Pfad in `alfred.ts`). Project-Chat-Deploy und Telegram-Action-Card-Deploy → Skill-Aufruf success=true, aber DB-Row unverändert.
+
+**Fix in `deploy.ts:425`:**
+- `upsertSystemMemory()` (v689) statt `saveWithMetadata()` → umgeht manual-/correction-Guards, sodass System-Auto-Writes greifen auch wenn der Key schonmal manuell belegt war. Fallback auf `saveWithMetadata` falls die Repo-Version die neue Methode nicht hat.
+- Bei `!memoryRepo || !ownerUserId` → `console.warn` mit Diagnose (statt silent skip)
+- Bei Erfolg → `console.info "memory written via upsertSystemMemory key=…"` damit man im Log nachvollziehen kann
+- Bei Fehler → `console.warn` mit `err.message` (kein silent catch mehr)
+
+**Wirkung:**
+- WebUI-Modal-Deploys: unverändert (Pfad B in alfred.ts schreibt eh)
+- Chat-/Telegram-/Confirmation-Deploys: Memory wird jetzt zuverlässig geschrieben (Pfad A repariert)
+- Bei zukünftigen Memory-Problemen sehen wir im Log sofort den Grund statt rätselraten
+
 ## [0.19.0-multi-ha.690] - 2026-05-22
 
 ### Added — Project-Chat: Expand-Mode mit Side-Panel + Live-View

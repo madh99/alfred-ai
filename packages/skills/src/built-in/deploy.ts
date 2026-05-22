@@ -196,11 +196,18 @@ export class DeploySkill extends Skill {
   // v609 — auto-memory: after a successful deploy, persist a fact-memory so the
   // LLM can later reason "you previously deployed alpbyte-games to 192.168.1.96
   // as ubuntu with docker-compose" without trawling activity_log.
+  // v691 — Interface erweitert um optional upsertSystemMemory (v689 MemoryRepo-Methode
+  // ohne manual-/correction-Guards). Notwendig damit Auto-Writes vom Skill auch dann
+  // greifen wenn der User mal einen manuellen Memory-Eintrag mit gleichem Key hat.
   private memoryRepo?: {
     saveWithMetadata(
       userId: string, key: string, value: string, category: string,
       type: 'fact' | 'preference' | 'correction' | 'entity' | 'decision' | 'relationship' | 'principle' | 'commitment' | 'moment' | 'skill' | 'pattern' | 'connection' | 'feedback' | 'rule' | 'general',
       confidence: number, source: 'manual' | 'auto',
+    ): Promise<unknown>;
+    upsertSystemMemory?(
+      userId: string, key: string, value: string, category: string,
+      type?: string, confidence?: number,
     ): Promise<unknown>;
   };
   private ownerUserId?: string;
@@ -419,10 +426,15 @@ export class DeploySkill extends Skill {
       }
     }
 
-    // v609 — auto-memory: persist the successful deploy as a fact-memory so
-    // future reasoning can answer "where/how did I deploy this last time"
-    // without scanning activity_log. Replaces older entry for same (project,host).
-    if (this.memoryRepo && this.ownerUserId) {
+    // v609/v691 — auto-memory: persist the successful deploy as a fact-memory.
+    // v691: upsertSystemMemory bevorzugt (umgeht manual-Guard, sodass auch ein
+    // früher vom User manuell angelegter Eintrag überschrieben wird). Bei
+    // missing-Repo / missing-OwnerId / Fehler wird das nicht mehr silent
+    // verschluckt — bewusster console-Log damit Diagnose möglich ist.
+    if (!this.memoryRepo || !this.ownerUserId) {
+      console.warn('[deploy-skill] memory-save skipped: memoryRepo=%s ownerUserId=%s',
+        !!this.memoryRepo, !!this.ownerUserId);
+    } else {
       try {
         const safeKey = `deploy_${project}_${host.replace(/[^a-zA-Z0-9]/g, '_')}`;
         const composeVariant = pm === 'docker-compose'
@@ -437,16 +449,17 @@ export class DeploySkill extends Skill {
           ...(verifyOk ? ['verified=ok'] : []),
           `am=${new Date().toISOString().slice(0, 10)})`,
         ];
-        await this.memoryRepo.saveWithMetadata(
-          this.ownerUserId,
-          safeKey,
-          valueParts.join(', '),
-          'deployment',
-          'fact',
-          0.95,
-          'auto',
-        );
-      } catch { /* best-effort, never fail a deploy on memory issues */ }
+        const value = valueParts.join(', ');
+        if (typeof this.memoryRepo.upsertSystemMemory === 'function') {
+          await this.memoryRepo.upsertSystemMemory(this.ownerUserId, safeKey, value, 'deployment', 'fact', 0.95);
+          console.info('[deploy-skill] memory written via upsertSystemMemory key=%s', safeKey);
+        } else {
+          await this.memoryRepo.saveWithMetadata(this.ownerUserId, safeKey, value, 'deployment', 'fact', 0.95, 'auto');
+          console.info('[deploy-skill] memory written via saveWithMetadata (fallback) key=%s', safeKey);
+        }
+      } catch (err) {
+        console.warn('[deploy-skill] memory-save failed:', err instanceof Error ? err.message : String(err));
+      }
     }
 
     return {
