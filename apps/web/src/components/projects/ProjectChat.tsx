@@ -478,6 +478,7 @@ export function ProjectChat({ projectId, projectName }: Props) {
                   session={selectedSession}
                   onChanged={() => { /* triggert kein Reload — polling läuft */ }}
                   compact
+                  projectId={projectId}
                 />
               ) : (
                 <div className="text-[11px] text-gray-600 italic h-full flex items-center justify-center text-center px-4">

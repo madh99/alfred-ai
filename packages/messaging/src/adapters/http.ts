@@ -402,6 +402,19 @@ export class HttpAdapter extends MessagingAdapter {
     | { ok: false; status: number; message: string }
   >;
 
+  // v699 — Sandbox-CRUD-Callbacks (Wire-Up von alfred.ts → SandboxManager)
+  private sandboxCallbacks?: {
+    status: () => Promise<Record<string, unknown>>;
+    list: (filter: { projectId?: string; sessionId?: string }) => Promise<unknown[]>;
+    getById: (sandboxId: string) => Promise<unknown | null>;
+    create: (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => Promise<unknown>;
+    pause: (sandboxId: string) => Promise<void>;
+    resume: (sandboxId: string) => Promise<void>;
+    discard: (sandboxId: string) => Promise<void>;
+    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
+    diff: (sandboxId: string) => Promise<string>;
+  };
+
   // v639 — Goals API
   private goalsListFn?: (filter?: { status?: string; category?: string }) => Promise<any[]>;
   private goalsGetFn?: (id: string) => Promise<{ goal: any; checkpoints: any[] } | null>;
@@ -431,6 +444,21 @@ export class HttpAdapter extends MessagingAdapter {
     >,
   ): void {
     this.sandboxProxyResolve = resolve;
+  }
+
+  // v699 — Sandbox-CRUD-Callbacks (alle laufen mit checkAuth)
+  setSandboxCallbacks(cb: {
+    status: () => Promise<Record<string, unknown>>;
+    list: (filter: { projectId?: string; sessionId?: string }) => Promise<unknown[]>;
+    getById: (sandboxId: string) => Promise<unknown | null>;
+    create: (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => Promise<unknown>;
+    pause: (sandboxId: string) => Promise<void>;
+    resume: (sandboxId: string) => Promise<void>;
+    discard: (sandboxId: string) => Promise<void>;
+    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
+    diff: (sandboxId: string) => Promise<string>;
+  }): void {
+    this.sandboxCallbacks = cb;
   }
 
   setInsightsCallbacks(opts: {
@@ -932,6 +960,25 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInsightsSweep(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/insights/dismiss-category' && req.method === 'POST') {
       this.handleInsightsDismissCategory(req, res, url).catch(err => this.safeError(res, err));
+    // v699 — Sandbox-CRUD-API
+    } else if (url.pathname === '/api/sandbox/status' && req.method === 'GET') {
+      this.handleSandboxStatus(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/sandbox/list' && req.method === 'GET') {
+      this.handleSandboxList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/sandbox/create' && req.method === 'POST') {
+      this.handleSandboxCreate(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/pause$/) && req.method === 'POST') {
+      this.handleSandboxAction(req, res, url, 'pause').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/resume$/) && req.method === 'POST') {
+      this.handleSandboxAction(req, res, url, 'resume').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/discard$/) && req.method === 'POST') {
+      this.handleSandboxAction(req, res, url, 'discard').catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/merge$/) && req.method === 'POST') {
+      this.handleSandboxMerge(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/diff$/) && req.method === 'GET') {
+      this.handleSandboxDiff(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+$/) && req.method === 'GET') {
+      this.handleSandboxGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/dismiss$/) && req.method === 'POST') {
       this.handleInsightsDismiss(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/snooze$/) && req.method === 'POST') {
@@ -3045,6 +3092,122 @@ export class HttpAdapter extends MessagingAdapter {
     });
     socket.on('error', () => { try { upstream.destroy(); } catch { /* */ } });
     socket.on('close', () => { try { upstream.destroy(); } catch { /* */ } });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // v699 — Sandbox CRUD API
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private async handleSandboxStatus(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ enabled: false, available: false, reason: 'feature-disabled' }));
+      return;
+    }
+    const s = await this.sandboxCallbacks.status();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(s));
+  }
+
+  private async handleSandboxList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const projectId = url.searchParams.get('projectId') ?? undefined;
+    const sessionId = url.searchParams.get('sessionId') ?? undefined;
+    const sandboxes = await this.sandboxCallbacks.list({ projectId, sessionId });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ sandboxes }));
+  }
+
+  private async handleSandboxGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    const sb = await this.sandboxCallbacks.getById(sandboxId);
+    if (!sb) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ sandbox: sb }));
+  }
+
+  private async handleSandboxCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const body = await this.readBody(req);
+    let input: { projectId: string; sessionId: string; mode: string; slug?: string };
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      if (typeof parsed.projectId !== 'string' || typeof parsed.sessionId !== 'string' || typeof parsed.mode !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'projectId, sessionId, mode required' }));
+        return;
+      }
+      input = {
+        projectId: parsed.projectId,
+        sessionId: parsed.sessionId,
+        mode: parsed.mode,
+        slug: typeof parsed.slug === 'string' ? parsed.slug : undefined,
+      };
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+      return;
+    }
+    try {
+      const sb = await this.sandboxCallbacks.create(input);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sandbox: sb }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleSandboxAction(req: http.IncomingMessage, res: http.ServerResponse, url: URL, action: 'pause' | 'resume' | 'discard'): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    try {
+      if (action === 'pause') await this.sandboxCallbacks.pause(sandboxId);
+      else if (action === 'resume') await this.sandboxCallbacks.resume(sandboxId);
+      else if (action === 'discard') await this.sandboxCallbacks.discard(sandboxId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleSandboxMerge(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default empty */ }
+    try {
+      const r = await this.sandboxCallbacks.merge(sandboxId, opts);
+      res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleSandboxDiff(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    try {
+      const diff = await this.sandboxCallbacks.diff(sandboxId);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(diff);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
   }
 
   private async handleHealth(res: http.ServerResponse): Promise<void> {

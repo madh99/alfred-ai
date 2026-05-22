@@ -5,6 +5,67 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.699] - 2026-05-22
+
+### Added — Sandbox WebUI: CRUD-API + SandboxPanel in ProjectChat + Settings-Status (Phase 4/5)
+
+Backend-API + Frontend-Integration für Sandbox-Management. **Sichtbar in der WebUI ab dieser Version** (sofern Feature aktiviert). User kann pro Session eine Sandbox starten, Live-Preview im iframe sehen, pausieren/discarden, Diff einsehen, und Merge versuchen (Merge-Endpoint ruft noch v700-Throw bis dahin).
+
+**Backend (`packages/messaging/src/adapters/http.ts` + `packages/core/src/alfred.ts`):**
+- 8 neue API-Endpoints unter `/api/sandbox/`:
+  - `GET /api/sandbox/status` — Feature-Verfügbarkeit (Docker, Worktree, Defaults)
+  - `GET /api/sandbox/list?projectId=…&sessionId=…` — Filter-Liste
+  - `GET /api/sandbox/:id` — Einzeldatensatz
+  - `POST /api/sandbox/create` — Body `{ projectId, sessionId, mode, slug? }`
+  - `POST /api/sandbox/:id/pause` / `/resume` / `/discard`
+  - `POST /api/sandbox/:id/merge` — Body `{ strategy?, commitMessage?, prTitle?, prBody? }` (v700)
+  - `GET /api/sandbox/:id/diff` — `text/plain` git diff baseCommit..HEAD
+- Alle mit `checkAuth` geschützt
+- Wiring in `alfred.ts`: callbacks rufen SandboxManager + sandboxRepo + ProjectRepository.getByIdAnyOwner
+
+**Frontend (`apps/web/src/lib/alfred-client.ts` + `apps/web/src/components/`):**
+- 10 neue Client-Methoden: `fetchSandboxStatus`, `listSandboxes`, `getSandbox`, `createSandbox`, `pauseSandbox`, `resumeSandbox`, `discardSandbox`, `mergeSandbox`, `fetchSandboxDiff`, `buildSandboxPreviewUrl`
+- Neue Types: `SandboxItem`, `SandboxStatus`, `SandboxStatusResponse`
+- **Neue Komponente `SandboxPanel.tsx`** (~270 LOC):
+  - Auto-Refresh bei status='creating' oder 'merging'
+  - „Create"-Button mit Mode-Picker (sandbox | sandbox-preview | interactive-chat)
+  - Status-Badge, Branch/Project-Type/Host-Port-Anzeige
+  - **Live-Preview iframe** mit `?_alfred_auth=<token>` (Cookie-Bridge via v698-Proxy)
+  - Iframe-Sandbox-Attrs: `allow-scripts allow-forms allow-same-origin allow-popups` (KEIN `allow-top-navigation` aus Sicherheitsgründen)
+  - „Neuer Tab"-Button + „Reload"-Button für iframe
+  - Pause/Resume/Discard/Diff/Merge-Buttons mit klaren Confirm-Dialogs
+  - Inline-Diff-View (text/plain, max-h-64, scroll)
+  - Error-Card für Failed-State
+- **Integration in SessionLivePane.tsx**: neue optionale Prop `projectId`. Wenn gesetzt → SandboxPanel wird am unteren Ende gerendert. Wenn nicht (Standalone-Use): unverändertes Verhalten.
+- **ProjectChat.tsx**: übergibt `projectId={projectId}` an SessionLivePane, damit der Panel im Live-View jeder Session sichtbar ist
+- **SettingsPage.tsx**: neue Sektion „📦 Project-Agent Sandbox" mit Feature-Status, Docker/Worktree-Check, Default-Werte und ENV-Hinweisen für Aktivierung (incl. NFS-Tipp für HA-Cluster)
+
+### Was funktioniert nach v699
+- Sandbox-Status auf Settings-Page sichtbar (Feature-Verfügbarkeit, Defaults)
+- Pro Session in ProjectChat-Expand-Mode: Sandbox-Panel mit Create-Button
+- Live-Preview iframe inkl. HMR via v698-Proxy
+- Pause/Resume/Discard/Diff via Buttons
+- Mode-Wahl beim Create (sandbox-only / mit-Preview / Interactive — letzteres erstellt Sandbox, dedizierte Interactive-Route folgt)
+
+### Out-of-Scope für v699 (kommt in v699b oder v700)
+- **Interactive-Chat-Mode dedizierte Route** `/projects/:id/interactive/:sessionId` mit Chat-Layout + Agent-Execution-Loop — UI-Mode aktuell wählbar aber Verhalten identisch zu sandbox-preview, Chat-Loop kommt nach
+- **New-Session-Dialog mit Mode-Picker** — Sessions starten weiterhin im classic-Modus; Sandbox wird per Button parallel attached
+- **Project-Settings-Toggle** für Sandbox-Default-Mode — kann via API gesetzt werden, UI-Toggle folgt
+- **Merge-Flow** (PR-Erstellung + Secret-Scan) — Backend throws bis v700
+
+### Backward-Compatibility — weiterhin garantiert
+- Wenn `config.sandbox.enabled = false` (Default): Status-Endpunkt liefert `{ available: false }`, Panel zeigt nur kurze Info-Box, keine Buttons. Keine UI-Disruption.
+- SessionLivePane ohne `projectId`-Prop: SandboxPanel nicht gerendert
+- Existierende Sessions im classic-Modus laufen unverändert
+
+### Test-Anleitung nach Deploy
+1. Settings-Page → „📦 Project-Agent Sandbox" prüft Feature-Verfügbarkeit
+2. Bei Sandbox-Status not-available: ENV-Variablen + Docker prüfen
+3. Project-Chat öffnen, laufende Session selektieren
+4. SandboxPanel scrollen, Mode wählen → „+ Sandbox erstellen"
+5. ~1-3 min warten (Image-Build + npm install + dev-server)
+6. Iframe sollte erscheinen, HMR aktiv
+
 ## [0.19.0-multi-ha.698] - 2026-05-22
 
 ### Added — Sandbox-Preview Internal Proxy (Phase 3/5)

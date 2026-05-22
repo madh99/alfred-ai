@@ -355,6 +355,62 @@ export class AlfredClient {
     return res.json();
   }
 
+  // ── v699 — Sandbox (Project-Agent Live-Preview) ──
+  async fetchSandboxStatus(): Promise<SandboxStatusResponse> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/status`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-status: HTTP ${res.status}`);
+    return res.json();
+  }
+  async listSandboxes(filter: { projectId?: string; sessionId?: string }): Promise<SandboxItem[]> {
+    const params = new URLSearchParams();
+    if (filter.projectId) params.set('projectId', filter.projectId);
+    if (filter.sessionId) params.set('sessionId', filter.sessionId);
+    const res = await fetch(`${this.baseUrl}/api/sandbox/list?${params.toString()}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-list: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.sandboxes ?? [];
+  }
+  async getSandbox(sandboxId: string): Promise<SandboxItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}`, { headers: this.authHeaders });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`Sandbox-get: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.sandbox ?? null;
+  }
+  async createSandbox(input: { projectId: string; sessionId: string; mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat'; slug?: string }): Promise<SandboxItem> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/create`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? `Sandbox-create: HTTP ${res.status}`);
+    return data.sandbox;
+  }
+  async pauseSandbox(sandboxId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/pause`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-pause: HTTP ${res.status}`);
+  }
+  async resumeSandbox(sandboxId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/resume`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-resume: HTTP ${res.status}`);
+  }
+  async discardSandbox(sandboxId: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/discard`, { method: 'POST', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-discard: HTTP ${res.status}`);
+  }
+  async mergeSandbox(sandboxId: string, opts: { strategy?: 'direct' | 'pr'; commitMessage?: string; prTitle?: string; prBody?: string }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/merge`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(opts) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async fetchSandboxDiff(sandboxId: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/diff`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-diff: HTTP ${res.status}`);
+    return res.text();
+  }
+  /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
+  buildSandboxPreviewUrl(sandboxId: string): string {
+    return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
+  }
+
   // ── v639 — Goals ──
   async fetchGoals(filter?: { status?: string; category?: string }): Promise<GoalItem[]> {
     const params = new URLSearchParams();
@@ -1980,4 +2036,42 @@ export interface ProjectDetail {
   openItems: ProjectOpenItem[];
   decisions: ProjectDecision[];
   health: Partial<Record<HealthProbe, ProjectHealthEntry>>;
+}
+
+// v699 — Sandbox-Types
+export type SandboxStatus = 'creating' | 'running' | 'paused' | 'merging' | 'discarded' | 'failed' | 'cleaned';
+export interface SandboxItem {
+  id: string;
+  projectId: string;
+  sessionId: string | null;
+  userId: string;
+  worktreePath: string;
+  branchName: string;
+  baseCommitSha: string;
+  containerId: string | null;
+  containerImage: string;
+  hostPort: number | null;
+  internalPort: number;
+  projectType: string | null;
+  status: SandboxStatus;
+  statusReason: string | null;
+  nodeId: string;
+  ramPeakMb: number | null;
+  diskUsedMb: number | null;
+  createdAt: string;
+  lastActiveAt: string;
+  destroyedAt: string | null;
+  result: string | null;
+  resultPrUrl: string | null;
+}
+
+export interface SandboxStatusResponse {
+  enabled: boolean;
+  available: boolean;
+  dockerAvailable?: boolean;
+  worktreeBaseWritable?: boolean;
+  healthCheckedAt?: string;
+  defaultMode?: string;
+  defaultMergeStrategy?: string;
+  reason?: string;
 }

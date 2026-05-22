@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import type { ProjectAgentSession } from '@/lib/alfred-client';
+import { SandboxPanel } from './SandboxPanel';
 
 const PHASE_BADGES: Record<string, string> = {
   planning: 'bg-blue-500/20 text-blue-400 border-blue-500/40',
@@ -38,6 +39,8 @@ interface Props {
   onChanged?: () => void;
   /** v690 — kompakt: kürzere Section-Spacing für Embed-Use-Cases (z.B. ProjectChat-Side-Panel) */
   compact?: boolean;
+  /** v699 — Project-ID für Sandbox-Panel (nur dann sichtbar wenn gesetzt). */
+  projectId?: string;
 }
 
 /**
@@ -54,7 +57,7 @@ interface Props {
  *  - Interject-Input (nur bei laufend)
  *  - Stop-Button (laufend) / Resume-Button (done/failed)
  */
-export function SessionLivePane({ session, onClose, onChanged, compact }: Props) {
+export function SessionLivePane({ session, onClose, onChanged, compact, projectId }: Props) {
   const { client } = useConfig();
   const [liveLines, setLiveLines] = useState<Array<{ ts: number; source: string; text: string }>>([]);
   const [interjectText, setInterjectText] = useState('');
@@ -259,6 +262,16 @@ export function SessionLivePane({ session, onClose, onChanged, compact }: Props)
           onClick={handleResume}
           className="w-full px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/40 rounded text-xs hover:bg-emerald-500/20"
         >▶ Resume / Fortsetzen</button>
+      )}
+
+      {/* v699 — Sandbox + Live-Preview Panel (nur wenn projectId bekannt) */}
+      {projectId && (
+        <SandboxPanel
+          projectId={projectId}
+          sessionId={session.taskId}
+          slug={session.goal.slice(0, 20).replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase()}
+          compact={compact}
+        />
       )}
     </div>
   );
