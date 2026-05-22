@@ -5067,6 +5067,51 @@ export class Alfred {
               return await this.todoRepo.deleteNote(noteId, uid);
             } catch (err) { this.logger.warn({ err }, 'Todo-Notes delete failed'); return false; }
           },
+          // v672 — Todo ↔ Note M:N Verknüpfung (User-Notes aus notes-Tabelle)
+          listLinkedNotes: async (todoId: string) => {
+            try {
+              if (!this.todoRepo || !this.noteRepo) return [];
+              const ids = await this.todoRepo.listLinkedNoteIds(todoId);
+              const notes: any[] = [];
+              for (const nid of ids) {
+                const n = await this.noteRepo.getById(nid);
+                if (n) notes.push(n);
+              }
+              return notes;
+            } catch (err) { this.logger.warn({ err }, 'Todo linked-notes list failed'); return []; }
+          },
+          linkNote: async (todoId: string, noteId: string) => {
+            try {
+              if (!this.todoRepo || !this.noteRepo) return false;
+              const uid = await resolveOwnerTodo();
+              // beide müssen dem User gehören (Anti-Tampering)
+              const todo = await this.todoRepo.getByIdForUser(todoId, uid);
+              const note = await this.noteRepo.getByIdForUser(noteId, uid);
+              if (!todo || !note) return false;
+              return await this.todoRepo.linkNote(todoId, noteId);
+            } catch (err) { this.logger.warn({ err }, 'Todo-Note link failed'); return false; }
+          },
+          unlinkNote: async (todoId: string, noteId: string) => {
+            try {
+              if (!this.todoRepo) return false;
+              const uid = await resolveOwnerTodo();
+              const todo = await this.todoRepo.getByIdForUser(todoId, uid);
+              if (!todo) return false;
+              return await this.todoRepo.unlinkNote(todoId, noteId);
+            } catch (err) { this.logger.warn({ err }, 'Todo-Note unlink failed'); return false; }
+          },
+          listLinkedTodos: async (noteId: string) => {
+            try {
+              if (!this.todoRepo) return [];
+              const ids = await this.todoRepo.listLinkedTodoIds(noteId);
+              const todos: any[] = [];
+              for (const tid of ids) {
+                const t = await this.todoRepo.getById(tid);
+                if (t) todos.push(t);
+              }
+              return todos;
+            } catch (err) { this.logger.warn({ err }, 'Note linked-todos list failed'); return []; }
+          },
         });
         this.logger.info('Todos API registered');
       }

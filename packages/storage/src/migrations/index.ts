@@ -1934,4 +1934,21 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_project_open_items_linked_todo ON project_open_items(linked_todo_id) WHERE linked_todo_id IS NOT NULL`);
     },
   },
+  {
+    version: 85,
+    description: 'v672 — todo_note_links: Many-to-many Verknüpfung zwischen Todos und Notes',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS todo_note_links (
+          todo_id TEXT NOT NULL,
+          note_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (todo_id, note_id),
+          FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE,
+          FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_todo_note_links_note ON todo_note_links(note_id)`);
+    },
+  },
 ];

@@ -180,6 +180,48 @@ export class TodoRepository {
     return result.changes > 0;
   }
 
+  // ── v672: M:N-Verknüpfung Todo ↔ Note (User-Notes aus notes-Tabelle, nicht todo_notes) ──
+
+  async linkNote(todoId: string, noteId: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    try {
+      await this.adapter.execute(
+        'INSERT INTO todo_note_links (todo_id, note_id, created_at) VALUES (?, ?, ?)',
+        [todoId, noteId, now],
+      );
+      return true;
+    } catch {
+      // Duplikat (Composite-PK) → schon verknüpft, gilt als erfolgreich
+      return false;
+    }
+  }
+
+  async unlinkNote(todoId: string, noteId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'DELETE FROM todo_note_links WHERE todo_id = ? AND note_id = ?',
+      [todoId, noteId],
+    );
+    return result.changes > 0;
+  }
+
+  /** Liste der noteIds die mit einem Todo verknüpft sind, neueste Verknüpfung zuerst. */
+  async listLinkedNoteIds(todoId: string): Promise<string[]> {
+    const rows = await this.adapter.query(
+      'SELECT note_id FROM todo_note_links WHERE todo_id = ? ORDER BY created_at DESC',
+      [todoId],
+    ) as Array<{ note_id: string }>;
+    return rows.map(r => r.note_id);
+  }
+
+  /** Liste der todoIds die eine bestimmte Note referenzieren. */
+  async listLinkedTodoIds(noteId: string): Promise<string[]> {
+    const rows = await this.adapter.query(
+      'SELECT todo_id FROM todo_note_links WHERE note_id = ? ORDER BY created_at DESC',
+      [noteId],
+    ) as Array<{ todo_id: string }>;
+    return rows.map(r => r.todo_id);
+  }
+
   async clearCompleted(userId: string, list?: string): Promise<number> {
     let sql = 'DELETE FROM todos WHERE user_id = ? AND completed = 1';
     const params: unknown[] = [userId];

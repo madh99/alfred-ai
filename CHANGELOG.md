@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.672] - 2026-05-22
+
+### Added — Notes ↔ Todos M:N-Verknüpfung
+
+Eine User-Notiz (aus dem `/notes`-Bereich) kann jetzt mit beliebig vielen Todos verknüpft werden — und ein Todo kann beliebig viele Notizen als Kontext referenzieren. Anders als die Arbeits-Notizen aus v670 (Verlaufseinträge AM Todo) sind das eigenständige Wissens-Notizen die als Referenz dienen.
+
+**Migration v85 (SQLite) + v88 (PG):** Join-Tabelle `todo_note_links` mit Composite-PK, FK-Cascade auf beide Richtungen.
+
+**Backend:**
+- `TodoRepository.linkNote / unlinkNote / listLinkedNoteIds / listLinkedTodoIds`.
+- Resolver in `alfred.ts` löst IDs zu vollen Note-Objekten auf.
+
+**API:**
+- `POST /api/todos/:todoId/note-links/:noteId` — verknüpfen
+- `DELETE /api/todos/:todoId/note-links/:noteId` — lösen
+- `GET /api/todos/:todoId/linked-notes` — verknüpfte Notes
+- `GET /api/notes/:noteId/linked-todos` — verknüpfte Todos
+
+**WebUI:**
+- TodosPage Detail: neue Section „🔖 Verknüpfte Notizen" mit Picker-Modal (Volltext-Suche über alle eigenen Notes).
+- NotesPage Detail: Section „🔖 Verknüpfte Todos" listet alle Todos die diese Note referenzieren (Status sichtbar).
+
 ## [0.19.0-multi-ha.671] - 2026-05-22
 
 ### Added — Todo ↔ Project-Open-Item Spiegel-Link

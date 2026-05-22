@@ -349,6 +349,11 @@ export class HttpAdapter extends MessagingAdapter {
     listNotes?: (todoId: string) => Promise<any[]>;
     addNote?: (todoId: string, content: string) => Promise<any | null>;
     deleteNote?: (noteId: string) => Promise<boolean>;
+    // v672 — M:N-Verknüpfung Todo ↔ User-Note (gibt aufgelöste Note-Objekte zurück)
+    listLinkedNotes?: (todoId: string) => Promise<any[]>;
+    linkNote?: (todoId: string, noteId: string) => Promise<boolean>;
+    unlinkNote?: (todoId: string, noteId: string) => Promise<boolean>;
+    listLinkedTodos?: (noteId: string) => Promise<any[]>;
   };
   private notesCallbacks?: {
     list: (opts?: { query?: string; limit?: number }) => Promise<any[]>;
@@ -819,6 +824,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTodoNotesAdd(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/todos\/notes\/[^/]+$/) && req.method === 'DELETE') {
       this.handleTodoNotesDelete(req, res, url).catch(err => this.safeError(res, err));
+    // v672 — Todo ↔ Note Cross-Link (M:N)
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/linked-notes$/) && req.method === 'GET') {
+      this.handleTodoLinkedNotes(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/note-links\/[^/]+$/) && req.method === 'POST') {
+      this.handleTodoNoteLinkAdd(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/note-links\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleTodoNoteLinkRemove(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/notes\/[^/]+\/linked-todos$/) && req.method === 'GET') {
+      this.handleNoteLinkedTodos(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'GET') {
       this.handleNotesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'POST') {
@@ -2009,6 +2023,46 @@ export class HttpAdapter extends MessagingAdapter {
     const ok = await this.todosCallbacks.deleteNote(noteId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
+  }
+
+  // v672 — Todo ↔ Note M:N Verknüpfung
+  private async handleTodoLinkedNotes(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.listLinkedNotes) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const todoId = parts[parts.length - 2];
+    const notes = await this.todosCallbacks.listLinkedNotes(todoId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ notes }));
+  }
+  private async handleTodoNoteLinkAdd(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.linkNote) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const noteId = parts[parts.length - 1];
+    const todoId = parts[parts.length - 3];
+    const ok = await this.todosCallbacks.linkNote(todoId, noteId);
+    res.writeHead(ok ? 201 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, created: ok }));
+  }
+  private async handleTodoNoteLinkRemove(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.unlinkNote) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const noteId = parts[parts.length - 1];
+    const todoId = parts[parts.length - 3];
+    const ok = await this.todosCallbacks.unlinkNote(todoId, noteId);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+  private async handleNoteLinkedTodos(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.listLinkedTodos) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const noteId = parts[parts.length - 2];
+    const todos = await this.todosCallbacks.listLinkedTodos(noteId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ todos }));
   }
 
   private async handleNotesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

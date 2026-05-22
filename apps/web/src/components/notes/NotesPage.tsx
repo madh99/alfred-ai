@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { NoteItem } from '@/lib/alfred-client';
+import type { NoteItem, TodoItem } from '@/lib/alfred-client';
 
 function formatDateTime(iso?: string): string {
   if (!iso) return '—';
@@ -18,6 +18,9 @@ export function NotesPage() {
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editContent, setEditContent] = useState('');
+  // v672 — Verknüpfte Todos pro Note
+  const [linkedTodos, setLinkedTodos] = useState<TodoItem[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -31,6 +34,18 @@ export function NotesPage() {
   }, [client, search]);
 
   useEffect(() => { load(); }, [load]);
+
+  // v672 — verknüpfte Todos laden wenn eine Note ausgewählt ist
+  useEffect(() => {
+    if (!client || !selected) { setLinkedTodos([]); return; }
+    let cancelled = false;
+    setLoadingLinks(true);
+    client.fetchNoteLinkedTodos(selected.id)
+      .then(list => { if (!cancelled) setLinkedTodos(list); })
+      .catch(() => { /* nicht-kritisch */ })
+      .finally(() => { if (!cancelled) setLoadingLinks(false); });
+    return () => { cancelled = true; };
+  }, [client, selected]);
 
   function newNote() {
     setSelected(null);
@@ -164,6 +179,33 @@ export function NotesPage() {
             </div>
             <div className="text-sm text-gray-300 whitespace-pre-wrap font-mono bg-[#0d0d0d] border border-[#1f1f1f] rounded p-3">
               {selected.content}
+            </div>
+            {/* v672 — verknüpfte Todos */}
+            <div className="mt-4">
+              <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">
+                🔖 Verknüpfte Todos {!loadingLinks && `(${linkedTodos.length})`}
+              </div>
+              {loadingLinks && <div className="text-[11px] text-gray-500 italic">Lade …</div>}
+              {!loadingLinks && linkedTodos.length === 0 && (
+                <div className="text-[11px] text-gray-600 italic">
+                  Keine Todos verknüpft. Im Todo-Detail kannst du diese Notiz verknüpfen.
+                </div>
+              )}
+              <div className="space-y-1">
+                {linkedTodos.map(t => (
+                  <a
+                    key={t.id}
+                    href="/todos"
+                    className="block bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1.5 hover:border-blue-500/40"
+                  >
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className={`w-3 h-3 rounded border ${t.completed ? 'bg-emerald-500/30 border-emerald-500/60' : 'border-[#3a3a3a]'}`}>{t.completed ? '✓' : ''}</span>
+                      <span className={t.completed ? 'line-through text-gray-500' : 'text-gray-200'}>{t.title}</span>
+                      <span className="text-[10px] text-gray-600 ml-auto">{t.list}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
             </div>
           </div>
         )}

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { TodoItem, TodoNote, Project } from '@/lib/alfred-client';
+import type { TodoItem, TodoNote, Project, NoteItem } from '@/lib/alfred-client';
 
 type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -76,6 +76,11 @@ export function TodosPage() {
   const [loadingNotes, setLoadingNotes] = useState<Record<string, boolean>>({});
   const [newNoteContent, setNewNoteContent] = useState('');
   const [addingNote, setAddingNote] = useState(false);
+  // v672 — Verknüpfte User-Notes pro Todo + Picker-State
+  const [linkedNotesByTodo, setLinkedNotesByTodo] = useState<Record<string, NoteItem[]>>({});
+  const [allNotes, setAllNotes] = useState<NoteItem[]>([]);
+  const [showNotePicker, setShowNotePicker] = useState<string | null>(null); // todoId mit offenem Picker
+  const [notePickerQuery, setNotePickerQuery] = useState('');
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -159,10 +164,47 @@ export function TodosPage() {
     if (!client) return;
     setLoadingNotes(prev => ({ ...prev, [todoId]: true }));
     try {
-      const list = await client.fetchTodoNotes(todoId);
-      setNotesByTodo(prev => ({ ...prev, [todoId]: list }));
+      const [arbNotes, linkedNotes] = await Promise.all([
+        client.fetchTodoNotes(todoId),
+        client.fetchTodoLinkedNotes(todoId),
+      ]);
+      setNotesByTodo(prev => ({ ...prev, [todoId]: arbNotes }));
+      setLinkedNotesByTodo(prev => ({ ...prev, [todoId]: linkedNotes }));
     } finally {
       setLoadingNotes(prev => ({ ...prev, [todoId]: false }));
+    }
+  }
+
+  // v672 — alle User-Notes laden (lazy beim ersten Picker-Open)
+  async function loadAllNotes() {
+    if (!client || allNotes.length > 0) return;
+    const list = await client.fetchNotes({ limit: 500 });
+    setAllNotes(list);
+  }
+
+  async function linkNote(todoId: string, noteId: string) {
+    if (!client) return;
+    const ok = await client.linkTodoNote(todoId, noteId);
+    if (ok) {
+      const note = allNotes.find(n => n.id === noteId);
+      if (note) {
+        setLinkedNotesByTodo(prev => ({
+          ...prev,
+          [todoId]: [note, ...(prev[todoId] ?? []).filter(n => n.id !== noteId)],
+        }));
+      }
+      setShowNotePicker(null);
+      setNotePickerQuery('');
+    }
+  }
+  async function unlinkNote(todoId: string, noteId: string) {
+    if (!client) return;
+    const ok = await client.unlinkTodoNote(todoId, noteId);
+    if (ok) {
+      setLinkedNotesByTodo(prev => ({
+        ...prev,
+        [todoId]: (prev[todoId] ?? []).filter(n => n.id !== noteId),
+      }));
     }
   }
 
@@ -507,6 +549,68 @@ export function TodosPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* v672 — Verknüpfte User-Notes (M:N) */}
+                  <div className="space-y-2">
+                    <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold flex items-center justify-between">
+                      <span>🔖 Verknüpfte Notizen ({(linkedNotesByTodo[t.id] ?? []).length})</span>
+                      <button
+                        onClick={() => { setShowNotePicker(showNotePicker === t.id ? null : t.id); loadAllNotes(); setNotePickerQuery(''); }}
+                        className="text-blue-400 hover:text-blue-300 text-[10px]"
+                      >{showNotePicker === t.id ? 'Abbrechen' : '+ Notiz verknüpfen'}</button>
+                    </div>
+                    {showNotePicker === t.id && (
+                      <div className="bg-[#0a0a0a] border border-blue-500/30 rounded p-2 space-y-1.5">
+                        <input
+                          value={notePickerQuery}
+                          onChange={(e) => setNotePickerQuery(e.target.value)}
+                          placeholder="Notiz suchen (Titel oder Inhalt) …"
+                          autoFocus
+                          className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200"
+                        />
+                        <div className="max-h-48 overflow-y-auto space-y-0.5">
+                          {(() => {
+                            const linkedIds = new Set((linkedNotesByTodo[t.id] ?? []).map(n => n.id));
+                            const q = notePickerQuery.trim().toLowerCase();
+                            const candidates = allNotes
+                              .filter(n => !linkedIds.has(n.id))
+                              .filter(n => q === '' || n.title.toLowerCase().includes(q) || (n.content ?? '').toLowerCase().includes(q))
+                              .slice(0, 30);
+                            if (candidates.length === 0) return (
+                              <div className="text-[11px] text-gray-500 italic px-2 py-1">
+                                {allNotes.length === 0 ? 'Keine Notizen vorhanden. Lege erst eine Note an unter /notes.' : 'Keine Treffer.'}
+                              </div>
+                            );
+                            return candidates.map(n => (
+                              <button
+                                key={n.id}
+                                onClick={() => linkNote(t.id, n.id)}
+                                className="w-full text-left px-2 py-1 bg-[#0d0d0d] hover:bg-blue-500/10 border border-transparent hover:border-blue-500/40 rounded text-xs"
+                              >
+                                <div className="font-medium text-gray-200 truncate">{n.title}</div>
+                                {n.content && <div className="text-[10px] text-gray-500 truncate">{n.content.slice(0, 100)}</div>}
+                              </button>
+                            ));
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                    {(linkedNotesByTodo[t.id] ?? []).length === 0 && showNotePicker !== t.id && (
+                      <div className="text-[11px] text-gray-600 italic">Noch keine Notiz verknüpft.</div>
+                    )}
+                    <div className="space-y-1">
+                      {(linkedNotesByTodo[t.id] ?? []).map(n => (
+                        <div key={n.id} className="flex items-start gap-2 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1.5">
+                          <span className="text-[10px] text-blue-400 mt-0.5">🔖</span>
+                          <div className="flex-1 min-w-0">
+                            <a href={`/notes`} className="text-xs text-gray-200 font-medium hover:text-blue-400 truncate block">{n.title}</a>
+                            {n.content && <div className="text-[10px] text-gray-500 truncate">{n.content.slice(0, 150)}</div>}
+                          </div>
+                          <button onClick={() => unlinkNote(t.id, n.id)} className="text-gray-600 hover:text-red-400 text-[10px] shrink-0" title="Verknüpfung lösen">✕</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
 
                   {/* Notes-Section */}
                   <div className="space-y-2">

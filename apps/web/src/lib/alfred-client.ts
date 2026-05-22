@@ -452,6 +452,27 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/todos/notes/${noteId}`, { method: 'DELETE', headers: this.authHeaders });
     return res.ok;
   }
+  // v672 — Todo ↔ Note M:N Verknüpfung (User-Notes)
+  async fetchTodoLinkedNotes(todoId: string): Promise<NoteItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${todoId}/linked-notes`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.notes) ? data.notes : [];
+  }
+  async linkTodoNote(todoId: string, noteId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${todoId}/note-links/${noteId}`, { method: 'POST', headers: this.authHeaders });
+    return res.ok;
+  }
+  async unlinkTodoNote(todoId: string, noteId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${todoId}/note-links/${noteId}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+  async fetchNoteLinkedTodos(noteId: string): Promise<TodoItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/notes/${noteId}/linked-todos`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.todos) ? data.todos : [];
+  }
 
   // ── v661 — Notes API ──
   async fetchNotes(opts?: { query?: string; limit?: number }): Promise<NoteItem[]> {

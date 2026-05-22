@@ -1252,4 +1252,19 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_open_items_linked_todo ON project_open_items(linked_todo_id) WHERE linked_todo_id IS NOT NULL`, []);
     },
   },
+  {
+    version: 88,
+    description: 'v672 — todo_note_links: Many-to-many Verknüpfung zwischen Todos und Notes',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS todo_note_links (
+          todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+          note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (todo_id, note_id)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_todo_note_links_note ON todo_note_links(note_id)`, []);
+    },
+  },
 ];
