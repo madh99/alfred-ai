@@ -5569,6 +5569,22 @@ export class Alfred {
               const uid = await resolveOwnerProj();
               const project = await projRepo.getById(uid, id);
               if (!project) return { deploys: [] };
+              // v677 — Slug konsistent mit triggerDeploy ableiten, sonst niemals Treffer
+              // (Deploy-Skill schreibt Memory mit Slug, nicht mit project.name).
+              const sanitizeSlugLD = (s: string): string => s
+                .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+                .replace(/[^a-zA-Z0-9.\-]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .toLowerCase()
+                .slice(0, 60);
+              const cwdBaseLD = project.cwd ? project.cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop() : undefined;
+              const slugLooksSemanticLD = project.slug
+                && /^[a-zA-Z0-9.\-]+$/.test(project.slug)
+                && project.slug.length <= 30
+                && !/^(starte|erstelle|bearbeite|im-|bitte-)/i.test(project.slug);
+              const deployProjectKey = cwdBaseLD
+                ? sanitizeSlugLD(cwdBaseLD)
+                : (slugLooksSemanticLD ? project.slug : sanitizeSlugLD(project.name));
 
               // v659 — Runtime aus cwd auto-detecten
               let detectedRuntime: string | undefined;
@@ -5598,9 +5614,9 @@ export class Alfred {
 
               let deploys: Array<{ host: string; user: string; runtime?: string; processManager?: string; composeVariant?: string; port?: number; verified?: boolean; date?: string; updatedAt?: string }> = [];
               if (this.memoryRepo) {
-                const keyPrefix = `deploy_${project.name}_`;
+                const keyPrefix = `deploy_${deployProjectKey}_`;
                 const mems = await this.memoryRepo.search(uid, keyPrefix);
-                const filtered = mems.filter(m => m.key.startsWith(keyPrefix) && m.category === 'deployment');
+                const filtered = mems.filter(m => m.key.startsWith(keyPrefix) && (m.category === 'deployment' || m.category === 'deploy'));
                 deploys = filtered.map(m => {
                   const v = m.value;
                   const hostMatch = v.match(/→\s*([\w.-]+)\s*\(/);
@@ -5611,6 +5627,9 @@ export class Alfred {
                   const portMatch = v.match(/port=(\d+)/);
                   const verifiedMatch = /verified=ok/.test(v);
                   const dateMatch = v.match(/am=([\d-]+)/);
+                  // v677 — failed-Memory hat 'FAILED' im Text + category='deploy' (Success: 'deployment')
+                  const failed = m.category === 'deploy' || /Deploy FAILED/i.test(v);
+                  const errorMatch = failed ? v.match(/\):\s*(.+)$/) : null;
                   return {
                     host: hostMatch?.[1] ?? '',
                     user: userMatch?.[1]?.trim() ?? 'root',
@@ -5621,6 +5640,8 @@ export class Alfred {
                     verified: verifiedMatch,
                     date: dateMatch?.[1],
                     updatedAt: m.updatedAt,
+                    failed,
+                    error: errorMatch?.[1]?.trim(),
                   };
                 }).sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
               }
@@ -5644,9 +5665,12 @@ export class Alfred {
               // Mandatory: host. Defaults: action=deploy, user=root, pm aus input.
               const host = String(input.host ?? '').trim();
               if (!host) return { success: false, error: 'host ist erforderlich' };
-              // v676 — Der Deploy-Skill verlangt einen "project"-Slug (nur a-z, 0-9, ., -),
-              // aber project.name kann ein langer LLM-Goal-Text mit Sonderzeichen sein.
-              // Priorität: input.project (User-Override) → project.slug → basename(cwd) → name-sanitized.
+              // v677 — Der Deploy-Skill verlangt einen "project"-Slug (nur a-z, 0-9, ., -).
+              // Priorität: input.project (User-Override) → basename(cwd) → project.slug (falls
+              // sinnvoll kurz) → name-sanitized. basename(cwd) ist semantisch der ECHTE
+              // Projekt-Ordnername am Target-Host — der LLM-generierte slug aus dem
+              // ursprünglichen Goal-Text wäre zwar validate-konform, ist aber praktisch
+              // nutzlos (z.B. "starte-einen-neuen-projekt-agent-lauf-...").
               const sanitizeSlug = (s: string): string => s
                 .normalize('NFKD').replace(/[̀-ͯ]/g, '') // Umlaute → ascii
                 .replace(/[^a-zA-Z0-9.\-]+/g, '-')
@@ -5654,9 +5678,15 @@ export class Alfred {
                 .toLowerCase()
                 .slice(0, 60);
               const cwdBase = project.cwd ? project.cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop() : undefined;
+              const slugLooksSemantic = project.slug
+                && /^[a-zA-Z0-9.\-]+$/.test(project.slug)
+                && project.slug.length <= 30
+                && !/^(starte|erstelle|bearbeite|im-|bitte-)/i.test(project.slug);
               const projectSlug = (typeof input.project === 'string' && input.project.trim())
                 ? sanitizeSlug(input.project as string)
-                : (project.slug && /^[a-zA-Z0-9.\-]+$/.test(project.slug) ? project.slug : (cwdBase ? sanitizeSlug(cwdBase) : sanitizeSlug(project.name)));
+                : (cwdBase
+                    ? sanitizeSlug(cwdBase)
+                    : (slugLooksSemantic ? project.slug : sanitizeSlug(project.name)));
               if (!projectSlug) return { success: false, error: 'Projekt-Slug konnte nicht abgeleitet werden' };
               const params: Record<string, unknown> = {
                 action: 'deploy',
@@ -5677,6 +5707,41 @@ export class Alfred {
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
               const result = await this.skillSandbox.execute(skill, params, ctx);
+
+              // v677 — Auch bei Failure eine deploy_*-Memory speichern damit „Letzte Deploys"
+              // den aktuellen Status zeigt (nicht nur Erfolge). Der Deploy-Skill schreibt
+              // bei Erfolg category='deployment' am SELBEN Key — überschreibt also automatisch
+              // die failure-Memory beim nächsten erfolgreichen Run.
+              if (!result.success && this.memoryRepo) {
+                try {
+                  const safeHost = host.replace(/[^a-zA-Z0-9]/g, '_');
+                  const failKey = `deploy_${projectSlug}_${safeHost}`;
+                  const errSnippet = (result.error ?? 'unknown').split('\n')[0].slice(0, 300);
+                  const now = new Date().toISOString().slice(0, 10);
+                  await this.memoryRepo.saveWithMetadata(
+                    uid, failKey,
+                    `Deploy FAILED → ${host} (user=${input.user ?? 'root'}, runtime=${input.runtime ?? '?'}, pm=${input.process_manager ?? '?'}${input.app_port ? `, port=${input.app_port}` : ''}, am=${now}): ${errSnippet}`,
+                    'deploy', 'fact', 0.95, 'auto',
+                  );
+                } catch (memErr) { this.logger.debug({ memErr }, 'Failed-Deploy memory write failed'); }
+              }
+
+              // v677 — Bei Deploy-Fehler optional Telegram-DM an den Owner senden.
+              // Erfolgs-Notifications nicht (würde spammen) — nur Fehler, weil der User
+              // im WebUI das Feedback bekommt, aber bei Off-WebUI-Triggern (Skill) keine
+              // andere Rückmeldung hätte.
+              if (!result.success && this.adapters && this.config.security?.ownerUserId) {
+                try {
+                  const tg = this.adapters.get('telegram');
+                  if (tg && 'sendDirectMessage' in tg) {
+                    const owner = this.config.security.ownerUserId;
+                    const errSnippet = (result.error ?? 'unknown').split('\n')[0].slice(0, 300);
+                    await (tg as { sendDirectMessage(userId: string, text: string): Promise<unknown> })
+                      .sendDirectMessage(owner, `🚨 Deploy fehlgeschlagen\n\nProjekt: ${project.name.slice(0, 60)}\nHost: ${host}\nSlug: ${projectSlug}\n\nFehler: ${errSnippet}`);
+                  }
+                } catch (tgErr) { this.logger.debug({ tgErr }, 'Deploy-Failure Telegram-DM failed'); }
+              }
+
               return {
                 success: result.success,
                 data: result.data,

@@ -1699,6 +1699,10 @@ export interface ProjectLastDeploy {
   port?: number;
   verified?: boolean;
   date?: string;
+  // v677 — Failure-Status + Snippet
+  failed?: boolean;
+  error?: string;
+  updatedAt?: string;
 }
 
 // v658 — Project Work-Stats + Chat-History

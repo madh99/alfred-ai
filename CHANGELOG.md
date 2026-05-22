@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.677] - 2026-05-22
+
+### Fixed — Deploy: vier zusammenhängende Bugs
+
+**1) Slug-Priorität korrigiert:** `triggerDeploy` priorisierte den Projekt-`slug` über `basename(cwd)`. Bei alten Projekten ist `slug` der sanitized LLM-Goal-Text (z. B. `starte-einen-neuen-projekt-agent-lauf-fur-alpbyte-games-unte`) → validate-konform aber semantisch nutzlos. Neue Reihenfolge: `input.project` → `basename(cwd)` → `slug` (nur wenn ≤30 chars und nicht mit `starte/erstelle/bearbeite` startet) → `sanitized(name)`. Bei Projekt mit `cwd=/home/madh/projects/alpbyte-games` ergibt das jetzt `alpbyte-games` ✅.
+
+**2) „Letzte Deploys" zeigte 0 trotz Deploys:** `lastDeploys` suchte nach Memory-Key `deploy_${project.name}_…`, der Deploy-Skill schreibt aber `deploy_${slug}_${host_sanitized}` — niemals Match. Jetzt nutzt `lastDeploys` dieselbe Slug-Ableitung wie `triggerDeploy`.
+
+**3) Memory bei Failure:** Bisher schrieb der Deploy-Skill nur bei Erfolg Memory (category=`deployment`). Bei Fehler wusste „Letzte Deploys" nichts. Neu: `triggerDeploy` schreibt bei Fehler eine Memory mit category=`deploy` am SELBEN Key — beim nächsten erfolgreichen Run wird sie automatisch von der `deployment`-Memory überschrieben. UI zeigt jetzt ❌ + Fehler-Snippet bei failed-Einträgen.
+
+**4) Telegram-Benachrichtigung bei Deploy-Fehler:** Bei Off-WebUI-Triggern (Skill via Chat) hatte der User keine Rückmeldung. Neu: bei `!result.success` wird eine DM an den `ownerUserId` gesendet mit Projekt-Name, Host, Slug und der ersten Fehler-Zeile. Erfolg wird NICHT per DM gemeldet (würde spammen).
+
 ## [0.19.0-multi-ha.676] - 2026-05-22
 
 ### Fixed

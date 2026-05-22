@@ -127,10 +127,13 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
                 key={`${d.host}-${i}`}
                 onClick={() => applyDeploy(d)}
                 className={`w-full text-left bg-[#0d0d0d] border rounded px-3 py-2 hover:border-blue-500/60 transition-colors ${
-                  host === d.host ? 'border-blue-500/60' : 'border-[#2a2a2a]'
+                  d.failed
+                    ? (host === d.host ? 'border-red-500/60' : 'border-red-500/30')
+                    : (host === d.host ? 'border-blue-500/60' : 'border-[#2a2a2a]')
                 }`}
               >
                 <div className="flex items-center gap-2 text-xs">
+                  {d.failed && <span className="text-red-400">❌</span>}
                   <span className="font-mono text-blue-400">{d.host}</span>
                   <span className="text-gray-500">·</span>
                   <span className="text-gray-300">{d.user}</span>
@@ -139,8 +142,12 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
                   {d.runtime && (<><span className="text-gray-500">·</span><span className="text-gray-300">{d.runtime}</span></>)}
                   {d.port && (<><span className="text-gray-500">·</span><span className="text-gray-300">:{d.port}</span></>)}
                   {d.verified && <span className="ml-auto text-emerald-400 text-[10px]">✓ verified</span>}
-                  {d.date && <span className="text-[10px] text-gray-600">{d.date}</span>}
+                  {d.date && <span className={`text-[10px] ${d.verified ? '' : 'ml-auto'} text-gray-600`}>{d.date}</span>}
                 </div>
+                {/* v677 — Bei failed-Memory den Fehler-Snippet als Sub-Zeile zeigen */}
+                {d.failed && d.error && (
+                  <div className="text-[10px] text-red-300/80 mt-1 truncate" title={d.error}>↳ {d.error}</div>
+                )}
               </button>
             ))}
           </div>
