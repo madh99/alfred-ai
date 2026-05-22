@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.697] - 2026-05-22
+
+### Added — Sandbox Lifecycle: Worktree + Container + Dev-Server (Phase 2/5)
+
+Auf v696-Foundation aufbauend: vollständiger Sandbox-Lebenszyklus inkl. Worktree-Verwaltung, Docker-Container-Orchestrierung, Project-Type-Detection und Dev-Server-Health-Check. Weiterhin **kein User-facing Verhalten in der WebUI** — Lifecycle nur via neuem `sandbox`-Skill oder direkter SandboxManager-API ansprechbar.
+
+**Neue Files:**
+- `packages/core/src/sandbox/worktree.ts` — `createWorktree`, `destroyWorktree`, `listWorktrees`, `validateGitRepo` mit atomarem Rollback und Branch-Konflikt-Handling (Suffix-Fallback)
+- `packages/core/src/sandbox/project-detect.ts` — `detectProjectType` mit Heuristiken für Next/Astro/Remix/CRA/Vite + generic Node, inkl. Package-Manager-Detection (pnpm/npm/yarn) via Lockfile
+- `packages/core/src/sandbox/port-allocator.ts` — `findFreePort` mit DB-Check + OS-TCP-Bind-Test, Range 9100-9199 default
+- `packages/core/src/sandbox/docker.ts` — `runSandboxContainer`, `stopContainer`, `startContainer`, `removeContainer`, `getContainerStats`, `waitForDevServer` (HTTP-Probe mit 5 min Timeout), `ensureImage` (auto-build on first use), `streamContainerLogs` (AsyncIterable)
+- `packages/cli/sandbox-images/Dockerfile.node-22` — Base-Image (Alpine + Node 22 + pnpm + git + dumb-init), non-root user, no-new-privileges, cap-drop ALL
+- `packages/skills/src/built-in/sandbox.ts` — `SandboxSkill` (Actions: status, list, pause, resume, discard, destroy, cleanup_idle) für CLI/Memory-Skill-Trigger und v700-Cleanup-Worker
+- `scripts/bundle.mjs` — kopiert nun auch `sandbox-images/` ins Bundle
+
+**Erweitert:**
+- `SandboxManager.createForSession()` — voller Flow: Quota-Check → Worktree → DB-Insert → (optional) Image-Build → Port-Allocation → Container-Run → Health-Wait → DB-Update. Bei jedem Fehler vollständiger Rollback (Container weg, Worktree weg, Branch weg, Status='failed').
+- `SandboxManager.pause()` / `resume()` / `discard()` / `destroy()` implementiert
+- `SandboxManager.merge()` bleibt für v700 (PR-API + Pre-Merge-Secret-Scan)
+- `alfred.ts`: registriert `SandboxSkill` mit allen Callbacks (incl. Project-Cwd-Resolver via `ProjectRepository.getByIdAnyOwner`)
+
+**Container-Konfiguration:**
+- Resource-Limits: 2 GB RAM, 2 CPU-Cores, no-swap
+- Security: `--security-opt=no-new-privileges`, `--cap-drop ALL`, non-root UID/GID 1000
+- Volumes: worktree → `/workspace`, optional shared pnpm-store → `/pnpm-store`
+- Network: standard bridge, Outbound erlaubt (npm install), Inbound nur via Port-Forward
+- Default-Command: `pnpm install && exec <devCommand>` (devCommand aus project-detect)
+
+**Lifecycle-Übersicht:**
+| Action | Worktree | Container | Branch | Status |
+|---|---|---|---|---|
+| create | erstellt | gestartet (preview/interactive) | erstellt | creating → running |
+| pause | bleibt | stop | bleibt | paused |
+| resume | bleibt | start | bleibt | paused → running |
+| discard | weg | weg | weg | discarded |
+| destroy | weg | weg | weg | cleaned |
+| merge (v700) | weg | weg | gepusht/gemerged | merging → cleaned |
+
+### Backward-Compatibility — weiterhin garantiert
+- ProjectAgentRunner v697-Code-Pfad unverändert (Sandbox-Mode-Switch kommt erst in v699 mit UI)
+- Wenn `config.sandbox.enabled` false oder Docker fehlt: SandboxManager bleibt undefined, `SandboxSkill` wird nicht registriert
+- Existierende Sessions: `mode='classic'` durch v696-Migration
+
+### Manueller Test ab v697 möglich
+Nach Aktivierung via `ALFRED_SANDBOX_ENABLED=true` + `ALFRED_SANDBOX_WORKTREE_BASE_PATH=...`:
+1. Image-Build automatisch beim ersten Sandbox-Create (~1-3 min initial)
+2. Sandbox-Status via Skill: `sandbox status` → zeigt available + dockerAvailable + worktreeBaseWritable
+3. Aktive Sandboxes auflisten: `sandbox list`
+4. Pause/Resume/Discard via `sandbox pause sandbox_id=…`
+
+`createForSession` selbst ist API-only — UI-Trigger kommt in v699.
+
 ## [0.19.0-multi-ha.696] - 2026-05-22
 
 ### Added — Project-Agent Sandbox + Live-Preview: Foundation (Phase 1/5)

@@ -1,0 +1,25 @@
+# v697 — Alfred Sandbox Image: Node 22 + pnpm + git
+# Used by Project-Agent Sandbox + Live-Preview Feature
+FROM node:22-alpine
+
+# Tools für dev-server + git operations + dumb-init für proper signal-handling
+RUN apk add --no-cache git dumb-init bash curl \
+  && corepack enable \
+  && corepack prepare pnpm@latest --activate
+
+# pnpm-Store global vorbereiten (kann via bind-mount überschrieben werden)
+RUN mkdir -p /pnpm-store && pnpm config set store-dir /pnpm-store
+
+# Standard-Workdir, wird via -v bind-mount überschrieben
+WORKDIR /workspace
+
+# Sicherheits-Hardening: non-root user (UID 1000 matched typischen host-user)
+RUN addgroup -g 1000 -S alfred && adduser -u 1000 -S -G alfred alfred \
+  && chown -R alfred:alfred /workspace /pnpm-store
+USER alfred
+
+# Container darf nicht mit pid 1 hängenbleiben → dumb-init übernimmt
+ENTRYPOINT ["dumb-init", "--"]
+
+# Default-command wird von docker run überschrieben (sh -c "pnpm install && pnpm dev")
+CMD ["sh"]

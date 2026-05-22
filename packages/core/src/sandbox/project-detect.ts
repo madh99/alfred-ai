@@ -1,0 +1,157 @@
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import type { SandboxProjectType } from '@alfred/storage';
+
+export interface ProjectDetection {
+  type: SandboxProjectType;
+  /** Befehl der im Container läuft (nach pnpm install). */
+  devCommand: string[];
+  /** Port den der dev-server intern lauscht. */
+  internalPort: number;
+  /** Hat das Projekt überhaupt ein dev-Script? Bei `false` lohnt sich kein preview-Container. */
+  hasDevServer: boolean;
+  /** Roh-Info für Debug/UI. */
+  diagnostics: {
+    packageManager: 'pnpm' | 'npm' | 'yarn';
+    devScript?: string;
+    framework?: string;
+  };
+}
+
+/**
+ * v697 — Erkennt Project-Type aus package.json + Lockfiles. Heuristisch, aber
+ * deckt 95% der Web-Projekte ab. Bei Unklarheit: 'node-generic' mit dem
+ * vorhandenen dev-Script und Port 3000 (Next.js-Default).
+ *
+ * Wenn KEIN package.json existiert oder kein dev-Script vorhanden ist:
+ * type='unknown', hasDevServer=false → sandbox-preview wird im UI deaktiviert,
+ * `sandbox`-Modus (nur Worktree-Isolation, kein Container) bleibt verfügbar.
+ */
+export function detectProjectType(worktreePath: string): ProjectDetection {
+  const pkgPath = path.join(worktreePath, 'package.json');
+  if (!existsSync(pkgPath)) {
+    return {
+      type: 'unknown',
+      devCommand: [],
+      internalPort: 0,
+      hasDevServer: false,
+      diagnostics: { packageManager: 'pnpm' },
+    };
+  }
+
+  let pkg: Record<string, unknown>;
+  try {
+    pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    return {
+      type: 'unknown',
+      devCommand: [],
+      internalPort: 0,
+      hasDevServer: false,
+      diagnostics: { packageManager: 'pnpm' },
+    };
+  }
+
+  const deps = {
+    ...(pkg.dependencies as Record<string, string> | undefined),
+    ...(pkg.devDependencies as Record<string, string> | undefined),
+  };
+  const scripts = (pkg.scripts as Record<string, string> | undefined) ?? {};
+
+  // Package-Manager via Lockfile
+  let packageManager: 'pnpm' | 'npm' | 'yarn' = 'pnpm';
+  if (existsSync(path.join(worktreePath, 'pnpm-lock.yaml'))) packageManager = 'pnpm';
+  else if (existsSync(path.join(worktreePath, 'yarn.lock'))) packageManager = 'yarn';
+  else if (existsSync(path.join(worktreePath, 'package-lock.json'))) packageManager = 'npm';
+
+  // Framework-Erkennung (Reihenfolge wichtig: spezifischer zuerst)
+  // Next.js
+  if (deps.next) {
+    return {
+      type: 'node-next',
+      devCommand: [packageManager, 'dev', '--', '--hostname', '0.0.0.0', '--port', '3000'],
+      internalPort: 3000,
+      hasDevServer: Boolean(scripts.dev || scripts.start),
+      diagnostics: { packageManager, devScript: scripts.dev ?? scripts.start, framework: 'next' },
+    };
+  }
+  // Astro
+  if (deps.astro) {
+    return {
+      type: 'node-astro',
+      devCommand: [packageManager, 'dev', '--', '--host', '0.0.0.0', '--port', '4321'],
+      internalPort: 4321,
+      hasDevServer: Boolean(scripts.dev),
+      diagnostics: { packageManager, devScript: scripts.dev, framework: 'astro' },
+    };
+  }
+  // Remix
+  if (deps['@remix-run/dev'] || deps['@remix-run/serve']) {
+    return {
+      type: 'node-remix',
+      devCommand: [packageManager, 'dev'],
+      internalPort: 3000,
+      hasDevServer: Boolean(scripts.dev),
+      diagnostics: { packageManager, devScript: scripts.dev, framework: 'remix' },
+    };
+  }
+  // Create React App (legacy aber noch häufig)
+  if (deps['react-scripts']) {
+    return {
+      type: 'node-cra',
+      devCommand: [packageManager, 'start'],
+      internalPort: 3000,
+      hasDevServer: Boolean(scripts.start),
+      diagnostics: { packageManager, devScript: scripts.start, framework: 'cra' },
+    };
+  }
+  // Vite (sehr verbreitet — nach den spezifischeren Frameworks)
+  if (deps.vite) {
+    return {
+      type: 'node-vite',
+      devCommand: [packageManager, 'dev', '--', '--host', '0.0.0.0', '--port', '5173'],
+      internalPort: 5173,
+      hasDevServer: Boolean(scripts.dev),
+      diagnostics: { packageManager, devScript: scripts.dev, framework: 'vite' },
+    };
+  }
+  // Generic Node-Projekt mit dev-Script
+  if (scripts.dev) {
+    return {
+      type: 'node-generic',
+      devCommand: [packageManager, 'dev'],
+      internalPort: tryParsePortFromScript(scripts.dev) ?? 3000,
+      hasDevServer: true,
+      diagnostics: { packageManager, devScript: scripts.dev, framework: 'generic' },
+    };
+  }
+  // Generic Node-Projekt mit start-Script
+  if (scripts.start) {
+    return {
+      type: 'node-generic',
+      devCommand: [packageManager, 'start'],
+      internalPort: tryParsePortFromScript(scripts.start) ?? 3000,
+      hasDevServer: true,
+      diagnostics: { packageManager, devScript: scripts.start, framework: 'generic-start' },
+    };
+  }
+
+  // Kein dev-Script → kein preview-Container (sandbox-only Mode wäre noch ok)
+  return {
+    type: 'node-generic',
+    devCommand: [],
+    internalPort: 0,
+    hasDevServer: false,
+    diagnostics: { packageManager, framework: 'no-dev-script' },
+  };
+}
+
+/** Versucht einen Port aus einem npm-Script zu parsen ("--port 3000", "PORT=3000", "-p 3000"). */
+function tryParsePortFromScript(script: string): number | null {
+  const portMatch = script.match(/(?:--port|-p|PORT=)\s*(\d{2,5})/);
+  if (portMatch) {
+    const p = parseInt(portMatch[1], 10);
+    if (p >= 1024 && p <= 65535) return p;
+  }
+  return null;
+}

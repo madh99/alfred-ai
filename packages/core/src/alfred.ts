@@ -3102,6 +3102,7 @@ export class Alfred {
         }
 
         // v696 — Project-Agent Sandbox + Live-Preview Foundation.
+        // v697 — Lifecycle (Worktree + Container) + Sandbox-Skill.
         // Opt-in via config.sandbox.enabled. Solange disabled oder Docker fehlt:
         // sandboxManager bleibt undefined → ProjectAgentRunner sieht es nicht → classic-Pfad.
         if (this.config.sandbox?.enabled) {
@@ -3119,12 +3120,52 @@ export class Alfred {
             const hc = await sandboxManager.runHealthCheck();
             if (hc.dockerAvailable && hc.worktreeBaseWritable) {
               this.sandboxManager = sandboxManager;
-              this.logger.info({ ...sandboxManager.getStatus() }, 'v696 Sandbox-Manager initialized');
+              this.logger.info({ ...sandboxManager.getStatus() }, 'v697 Sandbox-Manager initialized');
+
+              // v697 — Sandbox-Skill für CLI-Trigger/Memory-Skill/Cleanup-Worker registrieren.
+              try {
+                const { SandboxSkill } = await import('@alfred/skills');
+                const sandboxSkill = new SandboxSkill(sandboxRepo);
+                const projectsRepo = this.projectRepo;
+                const resolveProjectCwd = async (projectId: string): Promise<string | null> => {
+                  if (!projectsRepo) return null;
+                  try {
+                    const proj = await projectsRepo.getByIdAnyOwner(projectId);
+                    return proj?.cwd ?? null;
+                  } catch { return null; }
+                };
+                sandboxSkill.setCallbacks({
+                  getStatus: () => sandboxManager.getStatus(),
+                  pause: (sid) => sandboxManager.pause(sid),
+                  resume: (sid) => sandboxManager.resume(sid),
+                  discard: async (sid) => {
+                    const sb = await sandboxRepo.getById(sid);
+                    if (!sb) throw new Error(`Sandbox not found: ${sid}`);
+                    const cwd = await resolveProjectCwd(sb.projectId);
+                    if (!cwd) throw new Error(`Project cwd unknown for project ${sb.projectId}`);
+                    await sandboxManager.discard(sid, cwd);
+                  },
+                  destroy: async (sid) => {
+                    const sb = await sandboxRepo.getById(sid);
+                    if (!sb) return;
+                    const cwd = await resolveProjectCwd(sb.projectId);
+                    if (!cwd) throw new Error(`Project cwd unknown for project ${sb.projectId}`);
+                    await sandboxManager.destroy(sid, cwd);
+                  },
+                  cleanupIdle: async () => {
+                    // v700 — periodischer Cleanup-Worker wird hier andocken.
+                    return { paused: 0, cleaned: 0 };
+                  },
+                });
+                skillRegistry.register(sandboxSkill);
+              } catch (err) {
+                this.logger.warn({ err }, 'v697 Sandbox-Skill registration failed (non-fatal)');
+              }
             } else {
-              this.logger.warn({ reasons: hc.reasons }, 'v696 Sandbox-Manager disabled (health-check failed) — classic-only mode');
+              this.logger.warn({ reasons: hc.reasons }, 'v697 Sandbox-Manager disabled (health-check failed) — classic-only mode');
             }
           } catch (err) {
-            this.logger.warn({ err }, 'v696 Sandbox-Manager wiring failed (non-fatal, classic-only mode)');
+            this.logger.warn({ err }, 'v697 Sandbox-Manager wiring failed (non-fatal, classic-only mode)');
           }
         }
 

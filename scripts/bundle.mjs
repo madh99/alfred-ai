@@ -52,6 +52,14 @@ writeFileSync(outfile, code);
 
 console.log('✓ Bundle created: packages/cli/bundle/index.js');
 
+// v697 — Copy sandbox-images (Dockerfiles for Project-Agent Sandbox)
+const sandboxImagesSrc = resolve(root, 'packages/cli/sandbox-images');
+const sandboxImagesDest = resolve(root, 'packages/cli/bundle/sandbox-images');
+if (existsSync(sandboxImagesSrc)) {
+  cpSync(sandboxImagesSrc, sandboxImagesDest, { recursive: true });
+  console.log('✓ Sandbox images copied to: packages/cli/bundle/sandbox-images/');
+}
+
 // Copy web UI static files if built
 const webUiSrc = resolve(root, 'apps/web/out');
 const webUiDest = resolve(root, 'packages/cli/bundle/web-ui');
