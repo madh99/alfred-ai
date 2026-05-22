@@ -5644,9 +5644,23 @@ export class Alfred {
               // Mandatory: host. Defaults: action=deploy, user=root, pm aus input.
               const host = String(input.host ?? '').trim();
               if (!host) return { success: false, error: 'host ist erforderlich' };
+              // v676 — Der Deploy-Skill verlangt einen "project"-Slug (nur a-z, 0-9, ., -),
+              // aber project.name kann ein langer LLM-Goal-Text mit Sonderzeichen sein.
+              // Priorität: input.project (User-Override) → project.slug → basename(cwd) → name-sanitized.
+              const sanitizeSlug = (s: string): string => s
+                .normalize('NFKD').replace(/[̀-ͯ]/g, '') // Umlaute → ascii
+                .replace(/[^a-zA-Z0-9.\-]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .toLowerCase()
+                .slice(0, 60);
+              const cwdBase = project.cwd ? project.cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop() : undefined;
+              const projectSlug = (typeof input.project === 'string' && input.project.trim())
+                ? sanitizeSlug(input.project as string)
+                : (project.slug && /^[a-zA-Z0-9.\-]+$/.test(project.slug) ? project.slug : (cwdBase ? sanitizeSlug(cwdBase) : sanitizeSlug(project.name)));
+              if (!projectSlug) return { success: false, error: 'Projekt-Slug konnte nicht abgeleitet werden' };
               const params: Record<string, unknown> = {
                 action: 'deploy',
-                project: project.name,
+                project: projectSlug,
                 host,
                 user: input.user ?? 'root',
               };

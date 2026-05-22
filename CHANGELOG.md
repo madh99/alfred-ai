@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.676] - 2026-05-22
+
+### Fixed
+- **Deploy-Trigger schlug fehl mit „project erforderlich":** `triggerDeploy` schickte `project.name` an den Deploy-Skill, der aber `validateName` (nur a-z, 0-9, ., -) erwartet. Bei alten Projekten ist `project.name` der lange LLM-Goal-Text ("Starte einen NEUEN Projekt-Agent-Lauf für…") → Validation fail → 400. Neu: Slug-Ableitung mit Priorität `input.project` → `project.slug` (falls validate-konform) → `basename(project.cwd)` → sanitized `project.name`. NFKD-Normalisierung räumt Umlaute weg, Whitespace/Sonderzeichen werden zu `-` ersetzt, max 60 Zeichen.
+
 ## [0.19.0-multi-ha.675] - 2026-05-22
 
 ### Fixed
