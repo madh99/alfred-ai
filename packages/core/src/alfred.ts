@@ -3798,6 +3798,12 @@ export class Alfred {
     this.pipeline.setConfirmationQueue(this.confirmationQueue);
     this.pipeline.setActivityLogger(activityLogger);
     this.pipeline.setSkillHealthTracker(skillHealthTracker);
+    // v685 — Owner-Master-User-ID an Pipeline durchreichen für Role-Fallback.
+    // Wenn ein User ohne alfred_users-Eintrag (z.B. WebUI-User) der gelinkte Owner ist,
+    // erbt er admin-Rechte statt auf 'guest' zu fallen.
+    if (this.pipeline.setOwnerMasterUserId) {
+      this.pipeline.setOwnerMasterUserId(this.ownerMasterUserId);
+    }
     if (this.skillHealthRepo) this.pipeline.setSkillHealthRepo(this.skillHealthRepo);
     if (insightTracker) this.pipeline.setInsightTracker(insightTracker);
 

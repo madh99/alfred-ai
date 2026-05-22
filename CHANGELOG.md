@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.685] - 2026-05-22
+
+### Fixed — System-weiter Root-Cause: WebUI-Owner fiel auf Role „guest" zurück
+
+**Echtes Root-Cause (v682-684 waren Workarounds):** Alfred hat zwei parallele User-Tabellen, die nicht miteinander reden:
+- `users` (Kerngebrauch, mit `master_user_id`-Verlinkung) — WebUI-User ist hier korrekt am Owner gelinkt
+- `alfred_users` (Multi-User-Rollen-Feature, später dazu gekommen) — WebUI-User hat **keinen Eintrag**
+
+Die Pipeline las Role nur aus `alfred_users` und fiel sonst auf `'guest'` zurück — auch wenn `users.master_user_id` korrekt auf den `ownerUserId` zeigte. Konsequenz: Owner im WebUI hatte nur die 9 guest-Skills.
+
+**Fix:** Wenn `alfred_users`-Lookup leer UND `masterUserId === ownerMasterUserId` → fallback auf Role `'admin'` (statt `'guest'`). Damit ist die Owner-Erkennung konsistent über alle Pfade (Telegram-Owner war OK weil dort ein expliziter `alfred_users`-admin-Eintrag existiert; jetzt funktioniert WebUI-Owner äquivalent).
+
+**Konsequenz:** Die v682-684 Project-Chat-Workarounds (`!isProjectChat`-Bypass etc.) sind jetzt nicht mehr nötig — bleiben aber als zusätzliche Sicherheitsschicht im Code (kein Schaden, kostet keine Performance).
+
+**Wirkung über Project-Chat hinaus:**
+- WebUI normaler Chat (`/chat`) hat jetzt Owner-Rechte
+- WebUI Project-Chat hat jetzt Owner-Rechte
+- Telegram-Owner: unverändert (admin via alfred_users)
+- Andere User (linked an anderen Master, nicht-Owner): bleiben guest wie vorher
+
 ## [0.19.0-multi-ha.684] - 2026-05-22
 
 ### Fixed — Project-Chat: 0 Skills durchs role-based Filter (FORTSETZUNG zu v683)

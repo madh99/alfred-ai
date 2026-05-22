@@ -226,6 +226,11 @@ export class MessagePipeline {
   private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
+  // v685 — Owner-Master-User-ID (vom alfred.ts gesetzt). Wenn die Pipeline-Message
+  // für diesen Master-User läuft UND kein expliziter alfred_users-Eintrag existiert,
+  // erbt der User die Owner-Role ('admin') statt auf 'guest' zurückzufallen.
+  private ownerMasterUserId?: string;
+  setOwnerMasterUserId(id: string | undefined): void { this.ownerMasterUserId = id; }
   private usageRepo?: import('@alfred/storage').UsageRepository;
   private userServiceResolver?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
 
@@ -727,14 +732,22 @@ export class MessagePipeline {
       }
 
       // 6b. Role-based skill filtering (multi-user)
-      // v684 — Bei Project-Chat (metadata.projectId gesetzt) den Role-Filter ÜBERSPRINGEN.
-      // Der WebUI-User hat oft keinen alfred_users-Eintrag → Pipeline fällt auf 'guest'
-      // zurück → guest darf project_agent/code_agent/shell nicht → Schnittmenge mit
-      // Whitelist ist 0 Skills → Alfred sagt „kein Tool zur Verfügung".
-      // Project-Chat-Aufrufe sind durch WebUI-Token-Auth bereits abgesichert, der
-      // Caller ist der Owner. Die Skill-Whitelist aus 6 ist schon kuratiert genug.
-      if (skillMetas && this.roleSkillAccess && !isProjectChat) {
-        const role = alfredUser?.role ?? (this.alfredUserRepo ? 'guest' : undefined);
+      // v685 — Owner-Fallback: wenn kein expliziter alfred_users-Eintrag existiert
+      // und die Message vom Owner kommt (masterUserId == ownerMasterUserId), erbt
+      // der User die admin-Role. Vorher: fallback auf 'guest' → Owner verlor seine
+      // eigenen Project-Agent-/Shell-Tools im WebUI (während Telegram-Owner ok war,
+      // weil Telegram-User explizit als admin in alfred_users registriert ist).
+      if (skillMetas && this.roleSkillAccess) {
+        let role: string | undefined = alfredUser?.role;
+        if (!role && this.alfredUserRepo) {
+          // Fallback-Cascade: Owner → admin, sonst guest
+          if (this.ownerMasterUserId && masterUserId === this.ownerMasterUserId) {
+            role = 'admin';
+            this.logger.debug({ masterUserId }, 'role-fallback: owner-master detected, granting admin');
+          } else {
+            role = 'guest';
+          }
+        }
         if (role) {
           const allowed = this.roleSkillAccess[role];
           if (allowed && allowed !== '*') {
