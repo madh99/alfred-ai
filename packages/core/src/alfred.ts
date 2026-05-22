@@ -157,6 +157,10 @@ export class Alfred {
   private conversationRepo?: import('@alfred/storage').ConversationRepository;
   private insightsRepo?: import('@alfred/storage').InsightsRepository;
   private insightEngine?: import('./insights/insight-engine.js').InsightEngine;
+  /** v694 — Legacy-Daten-UIDs: pre-multi-user user-ids die KG/Conversation-Daten halten
+   *  aber nicht (mehr) in alfred_users stehen. Werden nur dann via linkedUserIds in
+   *  Sweeps/Question-Generator gemerged, wenn der sweepende UID === ownerMasterUserId. */
+  private legacyDataUids: string[] = [];
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
@@ -208,6 +212,18 @@ export class Alfred {
   private ownerMasterUserId?: string;
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
+
+  /**
+   * v694 — Erweitert eine linkedUserIds-Liste um Legacy-Daten-UIDs, ABER nur wenn der
+   * sweepende UID === ownerMasterUserId. Verhindert dass Gast-User auf Owner-Daten zugreifen.
+   */
+  private withLegacyForOwner(uid: string, linkedIds: string[]): string[] {
+    if (!this.ownerMasterUserId || uid !== this.ownerMasterUserId) return linkedIds;
+    if (this.legacyDataUids.length === 0) return linkedIds;
+    const merged = [...linkedIds];
+    for (const lid of this.legacyDataUids) if (!merged.includes(lid)) merged.push(lid);
+    return merged;
+  }
 
   constructor(private config: AlfredConfig) {
     this.logger = createLogger('alfred', config.logger.level);
@@ -2844,23 +2860,46 @@ export class Alfred {
               const { KnowledgeGraphRepository } = await import('@alfred/storage');
               const kgRepoForInsights = new KnowledgeGraphRepository(this.database.getAdapter());
               const KG_TYPES = ['person', 'location', 'item', 'vehicle', 'event', 'metric', 'organization'] as const;
+              // v694 — Canonical-merge per (type + normalized_name) across alle uids.
+              // Verhindert Insight-Spam wenn User Birthday auf einem uid-Zwilling füllt aber
+              // der andere ohne Birthday bleibt.
               const kgFacade = {
-                listEntities: async (uid: string) => {
-                  const all: Array<{ id: string; name: string; entityType: string; mentionCount: number; confidence: number; attributes: Record<string, unknown> }> = [];
-                  for (const t of KG_TYPES) {
-                    try {
-                      const list = await kgRepoForInsights.getEntitiesByType(uid, t as any);
-                      for (const e of list) {
-                        all.push({
-                          id: e.id, name: e.name, entityType: e.entityType,
-                          mentionCount: (e as any).mentionCount ?? 0,
-                          confidence: (e as any).confidence ?? 0.5,
-                          attributes: (e as any).attributes ?? {},
-                        });
-                      }
-                    } catch { /* skip type */ }
+                listEntities: async (uids: string[]) => {
+                  const byKey = new Map<string, { id: string; name: string; entityType: string; mentionCount: number; confidence: number; attributes: Record<string, unknown> }>();
+                  for (const uid of uids) {
+                    for (const t of KG_TYPES) {
+                      try {
+                        const list = await kgRepoForInsights.getEntitiesByType(uid, t as any);
+                        for (const e of list) {
+                          const norm = ((e as any).normalizedName ?? e.name).toString().toLowerCase().trim();
+                          const key = `${e.entityType}::${norm}`;
+                          const incoming = {
+                            id: e.id, name: e.name, entityType: e.entityType,
+                            mentionCount: (e as any).mentionCount ?? 0,
+                            confidence: (e as any).confidence ?? 0.5,
+                            attributes: ((e as any).attributes ?? {}) as Record<string, unknown>,
+                          };
+                          const existing = byKey.get(key);
+                          if (!existing) { byKey.set(key, incoming); continue; }
+                          // Merge attributes: existing non-null wins, incoming fills gaps
+                          const mergedAttrs = { ...existing.attributes };
+                          for (const [k, v] of Object.entries(incoming.attributes)) {
+                            if ((mergedAttrs[k] == null || mergedAttrs[k] === '') && v != null && v !== '') mergedAttrs[k] = v;
+                          }
+                          // Stable id: lowest alphabetical → deterministic dedupeKey across sweeps
+                          const stableId = existing.id < incoming.id ? existing.id : incoming.id;
+                          byKey.set(key, {
+                            ...existing,
+                            id: stableId,
+                            attributes: mergedAttrs,
+                            mentionCount: Math.max(existing.mentionCount, incoming.mentionCount),
+                            confidence: Math.max(existing.confidence, incoming.confidence),
+                          });
+                        }
+                      } catch { /* skip type */ }
+                    }
                   }
-                  return all;
+                  return Array.from(byKey.values());
                 },
               };
               insightEngine.register(new KgGapAdapter(kgFacade));
@@ -2891,13 +2930,30 @@ export class Alfred {
               const kgQuestRepo = new KgQuestionsRepository(adapter);
               const kgRepoForQg = new KGRepoQg(adapter);
               const KG_TYPES_QG = ['person', 'location', 'organization'] as const;
+              // v694 — Canonical-merge wie kgFacade oben, damit der Question-Generator
+              // nicht für jeden uid-Zwilling separat fragt.
               const facadeQg = {
-                listEntities: async (uid: string) => {
-                  const all: any[] = [];
-                  for (const t of KG_TYPES_QG) {
-                    try { for (const e of await kgRepoForQg.getEntitiesByType(uid, t as any)) all.push({ id: e.id, name: e.name, entityType: e.entityType, mentionCount: (e as any).mentionCount ?? 0, attributes: (e as any).attributes ?? {} }); } catch { /* skip */ }
+                listEntities: async (uids: string[]) => {
+                  const byKey = new Map<string, { id: string; name: string; entityType: string; mentionCount: number; attributes: Record<string, unknown> }>();
+                  for (const uid of uids) {
+                    for (const t of KG_TYPES_QG) {
+                      try {
+                        for (const e of await kgRepoForQg.getEntitiesByType(uid, t as any)) {
+                          const norm = ((e as any).normalizedName ?? e.name).toString().toLowerCase().trim();
+                          const key = `${e.entityType}::${norm}`;
+                          const incoming = { id: e.id, name: e.name, entityType: e.entityType, mentionCount: (e as any).mentionCount ?? 0, attributes: ((e as any).attributes ?? {}) as Record<string, unknown> };
+                          const existing = byKey.get(key);
+                          if (!existing) { byKey.set(key, incoming); continue; }
+                          const mergedAttrs = { ...existing.attributes };
+                          for (const [k, v] of Object.entries(incoming.attributes)) {
+                            if ((mergedAttrs[k] == null || mergedAttrs[k] === '') && v != null && v !== '') mergedAttrs[k] = v;
+                          }
+                          byKey.set(key, { ...existing, id: existing.id < incoming.id ? existing.id : incoming.id, attributes: mergedAttrs, mentionCount: Math.max(existing.mentionCount, incoming.mentionCount) });
+                        }
+                      } catch { /* skip */ }
+                    }
                   }
-                  return all;
+                  return Array.from(byKey.values());
                 },
               };
               const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, new ConfRepoQg(adapter), this.logger.child({ component: 'kg-question-gen' }));
@@ -2908,7 +2964,11 @@ export class Alfred {
                 : 'api');
               if (ownerUidQg && this.config.security?.ownerUserId) {
                 const ownerChat = this.config.security.ownerUserId;
-                const runDailyQg = () => generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3 }).catch(err =>
+                // v694 — linkedUserIds inkl. Legacy-Data-UIDs durchreichen
+                const linkedQgBase = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidQg)).map(u => u.id) : [ownerUidQg];
+                if (!linkedQgBase.includes(ownerUidQg)) linkedQgBase.push(ownerUidQg);
+                const linkedQg = this.withLegacyForOwner(ownerUidQg, linkedQgBase);
+                const runDailyQg = () => generator.run(ownerUidQg, { platform: ownerPlatformQg, chatId: ownerChat, maxPerRun: 3, linkedUserIds: linkedQg }).catch(err =>
                   this.logger.debug({ err }, 'KG-question-generator failed (non-fatal)'));
                 // Schedule next 18:00 local
                 const next18 = new Date();
@@ -2943,8 +3003,9 @@ export class Alfred {
               if (ownerUidForGoals) {
                 const linkedForGoals = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForGoals)).map(u => u.id) : [ownerUidForGoals];
                 if (!linkedForGoals.includes(ownerUidForGoals)) linkedForGoals.push(ownerUidForGoals);
+                const linkedForGoalsWithLegacy = this.withLegacyForOwner(ownerUidForGoals, linkedForGoals);
                 const runWeekly = async () => {
-                  try { await extractor.run(ownerUidForGoals, linkedForGoals, { lookbackDays: 7 }); }
+                  try { await extractor.run(ownerUidForGoals, linkedForGoalsWithLegacy, { lookbackDays: 7 }); }
                   catch (err) { this.logger.debug({ err }, 'Weekly goal-extraction failed (non-fatal)'); }
                 };
                 // Next Sunday 21:00
@@ -2972,7 +3033,8 @@ export class Alfred {
           insightsSkill.setSweepCallback(async (uid: string) => {
             const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(uid)).map(u => u.id) : [uid];
             if (!linked.includes(uid)) linked.push(uid);
-            return insightEngine.sweep({ userId: uid, linkedUserIds: linked, logger: this.logger });
+            const linkedWithLegacy = this.withLegacyForOwner(uid, linked);
+            return insightEngine.sweep({ userId: uid, linkedUserIds: linkedWithLegacy, logger: this.logger });
           });
           skillRegistry.register(insightsSkill);
 
@@ -2981,9 +3043,10 @@ export class Alfred {
           if (ownerUidForInsights) {
             const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForInsights)).map(u => u.id) : [ownerUidForInsights];
             if (!linked.includes(ownerUidForInsights)) linked.push(ownerUidForInsights);
+            const linkedWithLegacy = this.withLegacyForOwner(ownerUidForInsights, linked);
             const sweepNow = async () => {
               try {
-                await insightEngine.sweep({ userId: ownerUidForInsights, linkedUserIds: linked, logger: this.logger });
+                await insightEngine.sweep({ userId: ownerUidForInsights, linkedUserIds: linkedWithLegacy, logger: this.logger });
               } catch (err) { this.logger.debug({ err }, 'Insight daily-sweep failed (non-fatal)'); }
             };
             // Schedule next 09:00 local, then 24h interval
@@ -3112,6 +3175,30 @@ export class Alfred {
           this.ownerMasterUserId = ownerUser.masterUserId ?? ownerUser.id;
         } catch {
           this.ownerMasterUserId = adminUser.id; // fallback
+        }
+
+        // v694 — Legacy-Daten-UIDs aufspüren. Pre-multi-user-Migration hat KG/Conversation-
+        // Daten unter alten user-ids hinterlassen, die nicht (mehr) in alfred_users stehen.
+        // Wir ziehen sie nur dann in Sweeps/Question-Generator rein, wenn der sweepende UID
+        // === ownerMasterUserId (sonst würde Gast-User Owner-Daten sehen).
+        try {
+          const rows = await adapter.query(`
+            SELECT user_id, SUM(n) AS total FROM (
+              SELECT user_id, COUNT(*) AS n FROM kg_entities GROUP BY user_id
+              UNION ALL
+              SELECT user_id, COUNT(*) AS n FROM conversations GROUP BY user_id
+            ) t
+            WHERE user_id NOT IN (SELECT id FROM alfred_users)
+              AND user_id != ?
+            GROUP BY user_id
+            HAVING SUM(n) > 50
+          `, [this.ownerMasterUserId]);
+          this.legacyDataUids = rows.map(r => String(r.user_id)).filter(Boolean);
+          if (this.legacyDataUids.length > 0) {
+            this.logger.info({ legacyUids: this.legacyDataUids, count: this.legacyDataUids.length }, 'v694 Legacy data UIDs discovered — will be merged into owner sweeps');
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v694 Legacy-UID discovery skipped');
         }
       }
 
@@ -4886,8 +4973,8 @@ export class Alfred {
             const linked = await this.userRepo.getLinkedUsers(ownerUidForInsights);
             const ids = linked.map(u => u.id);
             if (!ids.includes(ownerUidForInsights)) ids.push(ownerUidForInsights);
-            return ids;
-          } catch { return [ownerUidForInsights]; }
+            return this.withLegacyForOwner(ownerUidForInsights, ids);
+          } catch { return this.withLegacyForOwner(ownerUidForInsights, [ownerUidForInsights]); }
         };
         (apiAdapter as any).setInsightsCallbacks({
           list: async (filter?: { category?: string; status?: string; limit?: number }) => {

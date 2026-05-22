@@ -5,6 +5,48 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.694] - 2026-05-22
+
+### Fixed — Insight-Engine produziert 0 Insights: Legacy-UID-Brücke + Canonical-Merge
+
+Live-Befund: Tabelle `alfred_insights` ist leer, alle 6 Adapter (kg-gap, open-loop, cross-source-mention, calendar-mismatch, goal-drift, infra-forecast) liefern 0 — obwohl 2460 KG-Entities, 17 Conversations und reichlich BMW-Telemetrie vorhanden sind. Root-Cause: Sweep läuft mit `ownerMasterUserId` (admin in alfred_users), aber alle Quelldaten leben unter einer Legacy-UID aus der Zeit vor der Multi-User-Migration. Diese Legacy-UID steht nicht in `alfred_users` und nicht in `user_platform_links` → linkedUserIds enthielt sie nicht → Adapter sahen nichts.
+
+**A — Legacy-Data-UID-Discovery (alfred.ts):** Beim Startup wird einmal gescannt, ob in `kg_entities` / `conversations` user-ids mit >50 Zeilen existieren, die NICHT in `alfred_users` stehen und NICHT die owner-uid sind. Diese werden als `legacyDataUids` gecacht. Discovery ist read-only und Idempotent.
+
+**B — Owner-Gate (Risk-Mitigation):** Neue Helper-Methode `withLegacyForOwner(uid, linked)` erweitert linkedUserIds nur dann um Legacy-UIDs, wenn `uid === ownerMasterUserId`. Verhindert dass Gast-User (z.B. `alex`) Owner-Daten in ihren Insights sehen.
+
+**C — Brücke an allen Sweep-Callsites:** Drei Sweep-Aufrufe in `alfred.ts` ziehen die Legacy-Brücke jetzt mit:
+- Daily 09:00 lokal-Timer
+- `insightsSkill.setSweepCallback` (manuelle Trigger via Memory-Skill)
+- `/api/insights/sweep` Endpoint (WebUI „🔄 Sweep jetzt"-Button)
+
+Zusätzlich gleiche Brücke im wöchentlichen Goal-Extractor (So 21:00) + täglichen KG-Question-Generator (18:00).
+
+**D — KG-Facade Canonical-Merge (Risk A — Infinite-Re-Surface verhindert):** Die Facade-Signatur wechselt von `listEntities(userId: string)` auf `listEntities(userIds: string[])`. Beim Merge werden Entities mit gleichem `(entity_type + normalized_name)` über alle UIDs zusammengeführt:
+- attributes-merge: erstes nicht-leeres Value gewinnt pro Attribut
+- mention_count = max
+- stable id = lexikalisch kleinste id der Duplikate → deterministisches dedupeKey über Sweeps hinweg
+
+Effekt: Wenn der User Birthday via Memory-Skill auf der NEUEN Master-UID ergänzt, aber die OLD-Legacy-UID-Entity ohne Birthday bleibt, sieht der Adapter dank Merge die gefüllte Variante → kein Spam mehr.
+
+**E — Cross-Source-Mention KEYWORD_PATTERNS erweitert (5 → 15):** Zusätzliche Patterns für Lieferungen (DPD/Hermes/Post), Kulturevents, Fahrzeug-Service (TÜV/Pickerl/§57a), Feiern, Trainings, Abholungen, Schule/Kita, Behörden, Beauty/Wellness, Job-Interviews. Alle harten Time-Anchors (am/um/nächst…/Wochentag) reduzieren False-Positives drastisch.
+
+### Berücksichtigte Risiken
+- **Risk A (Infinite-Re-Surface):** durch Canonical-Merge in KG-Facade abgefangen
+- **Risk B (Multi-User-Kontamination):** durch Owner-Gate (`withLegacyForOwner`) abgefangen
+- **Risk C (Question-Generator + Insights-Callback):** alle 3 Sweep-Callsites + Question-Generator + Goal-Extractor migriert; Facade-Signaturänderung an beiden Call-Sites synchron
+- **Risk D (WebUI):** geprüft — `/insights`-Seite existiert bereits vollständig (Sweep/Snooze/Dismiss/Act/Filter); keine UI-Arbeit nötig
+- `cmdb_metric_samples` und `alfred_goals` bleiben leer — separate PRs (infra-forecast und Goals brauchen eigene Data-Sourcen, außerhalb v694-Scope)
+
+### Beobachtbar im Server-Log
+- `"v694 Legacy data UIDs discovered"` — beim Startup, mit count + uid-Liste
+- `"Insight sweep complete"` mit `inserted: >0` und nicht mehr alle Adapter auf 0
+
+### Beeinträchtigt nichts
+- Briefing-Queue (`deferred_insights`, 458 Zeilen) ist unabhängig — Reasoning-Briefings auf Telegram laufen unverändert
+- Wenn keine Legacy-UID gefunden wird (frische Installation): Verhalten identisch zu v693
+- Gast-User-Insights bleiben strikt auf eigene Daten beschränkt
+
 ## [0.19.0-multi-ha.693] - 2026-05-22
 
 ### Changed — Reasoning-Engine: gibt nicht mehr beim ersten Fail auf

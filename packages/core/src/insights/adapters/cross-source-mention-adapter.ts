@@ -10,12 +10,26 @@ export interface CalendarFacade {
   }>>;
 }
 
+// v694 — von 5 auf 15 Patterns erweitert: deckt mehr Alltag-Themen ab.
+// Alle anchorieren auf konkrete Zeitangaben (am/um/nächst/morgen/heute/diese Woche/
+// kommend) um False-Positives ("ich war gestern beim Arzt") zu reduzieren.
+const TIME_ANCHOR = '(am|um|nächst\\w*|kommend\\w*|morgen|heute|übermorgen|diese\\s+woche|nächste\\s+woche|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag)';
 const KEYWORD_PATTERNS: Array<{ re: RegExp; topic: string }> = [
   { re: /\b(klempner|installateur|sanitär|monteur|techniker|elektriker)\s+kommt?\b/i, topic: 'handwerker-termin' },
-  { re: /\b(treffe(?:n)?|treffen?\s+mich|sehe)\s+\w+\s+(am|um|nächst)/i, topic: 'soziales-treffen' },
-  { re: /\b(termin|meeting|besprechung|interview)\s+(am|um|nächst|morgen|heute)/i, topic: 'meeting' },
-  { re: /\b(arzt|doktor|zahnarzt|untersuchung)\b/i, topic: 'arzt-termin' },
-  { re: /\b(flug|abflug|landung|hotel)\b/i, topic: 'reise' },
+  { re: new RegExp(`\\b(treffe(?:n)?|treffen?\\s+mich|sehe)\\s+\\w+\\s+${TIME_ANCHOR}`, 'i'), topic: 'soziales-treffen' },
+  { re: new RegExp(`\\b(termin|meeting|besprechung|interview|jour\\s*fixe)\\s+${TIME_ANCHOR}`, 'i'), topic: 'meeting' },
+  { re: /\b(arzt|doktor|zahnarzt|untersuchung|röntgen|blutabnahme|impfung|kontrolle)\b/i, topic: 'arzt-termin' },
+  { re: /\b(flug|abflug|landung|abreise|anreise|check-in|hotel|airbnb)\b/i, topic: 'reise' },
+  { re: new RegExp(`\\b(lieferung|paket|zustellung|dpd|hermes|post|spediteur)\\s+(kommt|kommt\\s+an|wird\\s+geliefert|liefert)\\s+${TIME_ANCHOR}`, 'i'), topic: 'lieferung' },
+  { re: new RegExp(`\\b(konzert|festival|aufführung|theater|kino|oper)\\s+${TIME_ANCHOR}`, 'i'), topic: 'event-kultur' },
+  { re: new RegExp(`\\b(wartung|service|inspektion|tüv|pickerl|§57a|reifenwechsel)\\s+${TIME_ANCHOR}`, 'i'), topic: 'fahrzeug-service' },
+  { re: new RegExp(`\\b(geburtstag|hochzeit|taufe|jubiläum|feier|party)\\s+(von|für)?\\s*\\w+\\s+${TIME_ANCHOR}`, 'i'), topic: 'feier' },
+  { re: new RegExp(`\\b(training|workout|kurs|workshop|schulung|seminar)\\s+${TIME_ANCHOR}`, 'i'), topic: 'training' },
+  { re: new RegExp(`\\b(abholen?|abgeholt|holen|holt\\s+ab)\\s+\\w+\\s+${TIME_ANCHOR}`, 'i'), topic: 'abholung' },
+  { re: new RegExp(`\\b(elterngespräch|elternabend|schule|kita|kindergarten)\\s+${TIME_ANCHOR}`, 'i'), topic: 'schule-kita' },
+  { re: new RegExp(`\\b(behörde|amt|magistrat|bezirksamt|finanzamt|gemeinde)\\s+${TIME_ANCHOR}`, 'i'), topic: 'behörden' },
+  { re: new RegExp(`\\b(friseur|frisör|coiffeur|kosmetik|massage|physio)\\s+${TIME_ANCHOR}`, 'i'), topic: 'beauty-wellness' },
+  { re: new RegExp(`\\b(bewerbungsgespräch|vorstellung|jobinterview)\\s+${TIME_ANCHOR}`, 'i'), topic: 'job-interview' },
 ];
 
 /**

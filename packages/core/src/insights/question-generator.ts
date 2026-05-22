@@ -9,7 +9,9 @@ interface KgEntity {
   attributes: Record<string, unknown>;
 }
 interface KgFacade {
-  listEntities(userId: string): Promise<KgEntity[]>;
+  /** v694 — accepts array (owner master + linked + legacy data-uids).
+   *  Implementation MUST canonical-merge identical entities by (type + normalized_name). */
+  listEntities(userIds: string[]): Promise<KgEntity[]>;
 }
 
 interface GapCandidate {
@@ -43,10 +45,11 @@ export class KgQuestionGenerator {
     private readonly logger: Logger,
   ) {}
 
-  async run(userId: string, opts: { platform: string; chatId: string; maxPerRun?: number }): Promise<{ asked: number; skipped: number; ignored: number }> {
+  async run(userId: string, opts: { platform: string; chatId: string; maxPerRun?: number; linkedUserIds?: string[] }): Promise<{ asked: number; skipped: number; ignored: number }> {
     const maxPerRun = opts.maxPerRun ?? 3;
+    const uids = opts.linkedUserIds && opts.linkedUserIds.length > 0 ? opts.linkedUserIds : [userId];
     let entities: KgEntity[] = [];
-    try { entities = await this.kg.listEntities(userId); } catch { return { asked: 0, skipped: 0, ignored: 0 }; }
+    try { entities = await this.kg.listEntities(uids); } catch { return { asked: 0, skipped: 0, ignored: 0 }; }
 
     const candidates = await this.buildCandidates(userId, entities);
     candidates.sort((a, b) => b.score - a.score);

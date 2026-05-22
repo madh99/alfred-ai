@@ -11,7 +11,12 @@ interface KgEntity {
 }
 
 export interface KgFacade {
-  listEntities(userId: string): Promise<KgEntity[]>;
+  /** v694 — accepts array (owner master + linked + legacy data-uids).
+   *  Implementation MUST canonical-merge identical entities across uids by
+   *  (entity_type + normalized_name): attributes union (first-non-null wins),
+   *  mention_count = max, stable id (lowest alphabetical) — to prevent
+   *  insight-spam when the user fills the gap on a different uid-twin. */
+  listEntities(userIds: string[]): Promise<KgEntity[]>;
 }
 
 /**
@@ -29,7 +34,7 @@ export class KgGapAdapter implements DomainAdapter {
 
   async generate(ctx: AdapterContext): Promise<InsightCandidate[]> {
     let entities: KgEntity[] = [];
-    try { entities = await this.kg.listEntities(ctx.userId); } catch { return []; }
+    try { entities = await this.kg.listEntities(ctx.linkedUserIds); } catch { return []; }
 
     const out: InsightCandidate[] = [];
 
