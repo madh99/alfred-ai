@@ -1906,4 +1906,21 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_locks ON projects(locked_by_node_id, locked_until)`);
     },
   },
+  {
+    version: 83,
+    description: 'v670 — todo_notes: Arbeitsnotizen/Fortschritte pro Todo (mit Verlauf + Timestamps)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS todo_notes (
+          id TEXT PRIMARY KEY,
+          todo_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (todo_id) REFERENCES todos(id) ON DELETE CASCADE
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_todo_notes_todo ON todo_notes(todo_id, created_at DESC)`);
+    },
+  },
 ];

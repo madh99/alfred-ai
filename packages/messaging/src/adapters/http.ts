@@ -344,6 +344,10 @@ export class HttpAdapter extends MessagingAdapter {
     update: (id: string, input: Record<string, unknown>) => Promise<any | null>;
     complete: (id: string) => Promise<boolean>;
     delete: (id: string) => Promise<boolean>;
+    // v670 — Arbeitsnotizen / Fortschritte pro Todo
+    listNotes?: (todoId: string) => Promise<any[]>;
+    addNote?: (todoId: string, content: string) => Promise<any | null>;
+    deleteNote?: (noteId: string) => Promise<boolean>;
   };
   private notesCallbacks?: {
     list: (opts?: { query?: string; limit?: number }) => Promise<any[]>;
@@ -807,6 +811,13 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTodosComplete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/todos\/[^/]+$/) && req.method === 'DELETE') {
       this.handleTodosDelete(req, res, url).catch(err => this.safeError(res, err));
+    // v670 — Todo-Notes (Arbeitsnotizen / Fortschritte)
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/notes$/) && req.method === 'GET') {
+      this.handleTodoNotesList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/[^/]+\/notes$/) && req.method === 'POST') {
+      this.handleTodoNotesAdd(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/todos\/notes\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleTodoNotesDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'GET') {
       this.handleNotesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'POST') {
@@ -1959,6 +1970,40 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const id = url.pathname.split('/').pop()!;
     const ok = await this.todosCallbacks.delete(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
+  }
+
+  // v670 — Todo-Notes (Arbeitsnotizen / Fortschritts-Verlauf)
+  private async handleTodoNotesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.listNotes) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const todoId = parts[parts.length - 2];
+    const notes = await this.todosCallbacks.listNotes(todoId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ notes }));
+  }
+  private async handleTodoNotesAdd(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.addNote) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const todoId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let data: { content?: unknown };
+    try { data = JSON.parse(body); }
+    catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    const content = typeof data?.content === 'string' ? data.content.trim() : '';
+    if (!content) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'content required' })); return; }
+    const note = await this.todosCallbacks.addNote(todoId, content);
+    res.writeHead(note ? 201 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(note ? { note } : { error: 'todo-not-found' }));
+  }
+  private async handleTodoNotesDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.todosCallbacks?.deleteNote) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const noteId = url.pathname.split('/').pop()!;
+    const ok = await this.todosCallbacks.deleteNote(noteId);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }

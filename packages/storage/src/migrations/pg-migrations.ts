@@ -1225,4 +1225,20 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_projects_locks ON projects(locked_by_node_id, locked_until)`, []);
     },
   },
+  {
+    version: 86,
+    description: 'v670 — todo_notes: Arbeitsnotizen/Fortschritte pro Todo',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS todo_notes (
+          id TEXT PRIMARY KEY,
+          todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_todo_notes_todo ON todo_notes(todo_id, created_at DESC)`, []);
+    },
+  },
 ];

@@ -4948,9 +4948,21 @@ export class Alfred {
           update: async (id: string, input: Record<string, unknown>) => {
             try {
               if (!this.todoRepo) return null;
+              const uid = await resolveOwnerTodo();
+              // v670 — completed weiterhin via complete/uncomplete (eigene Audit-Pfade)
               if (typeof input.completed === 'boolean') {
                 if (input.completed) await this.todoRepo.complete(id);
                 else await this.todoRepo.uncomplete(id);
+              }
+              // v670 — alle anderen bearbeitbaren Felder
+              const patch: Record<string, unknown> = {};
+              if (typeof input.title === 'string') patch.title = input.title;
+              if (input.description === null || typeof input.description === 'string') patch.description = input.description;
+              if (typeof input.priority === 'string') patch.priority = input.priority;
+              if (input.dueDate === null || typeof input.dueDate === 'string') patch.dueDate = input.dueDate;
+              if (typeof input.list === 'string') patch.list = input.list;
+              if (Object.keys(patch).length > 0) {
+                return await this.todoRepo.update(id, uid, patch);
               }
               return await this.todoRepo.getById(id);
             } catch (err) { this.logger.warn({ err }, 'Todos API update failed'); return null; }
@@ -4960,6 +4972,27 @@ export class Alfred {
           },
           delete: async (id: string) => {
             try { return await this.todoRepo!.delete(id); } catch { return false; }
+          },
+          // v670 — Arbeitsnotizen / Fortschritte
+          listNotes: async (todoId: string) => {
+            try { return this.todoRepo ? await this.todoRepo.listNotes(todoId) : []; }
+            catch (err) { this.logger.warn({ err }, 'Todo-Notes list failed'); return []; }
+          },
+          addNote: async (todoId: string, content: string) => {
+            try {
+              if (!this.todoRepo) return null;
+              const uid = await resolveOwnerTodo();
+              const todo = await this.todoRepo.getByIdForUser(todoId, uid);
+              if (!todo) return null;
+              return await this.todoRepo.addNote(todoId, uid, content);
+            } catch (err) { this.logger.warn({ err }, 'Todo-Notes add failed'); return null; }
+          },
+          deleteNote: async (noteId: string) => {
+            try {
+              if (!this.todoRepo) return false;
+              const uid = await resolveOwnerTodo();
+              return await this.todoRepo.deleteNote(noteId, uid);
+            } catch (err) { this.logger.warn({ err }, 'Todo-Notes delete failed'); return false; }
           },
         });
         this.logger.info('Todos API registered');

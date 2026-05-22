@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.670] - 2026-05-22
+
+### Added — Todos: Bearbeiten + Arbeitsnotizen
+- **Edit-Mode pro Todo:** Klick auf Todo öffnet einen ausklappbaren Detail-Bereich. „✏ Bearbeiten" gibt einen Edit-Modus mit allen Feldern (Titel, Beschreibung, Priorität, Fälligkeit, Liste).
+- **Beschreibung beim Anlegen:** Im Add-Form zusätzlicher Toggle „▸ Mit Beschreibung anlegen" für direkten Multiline-Eingang.
+- **Arbeitsnotizen / Fortschritts-Verlauf:** Neue Tabelle `todo_notes` (Migration v83 SQLite + v86 PG). Pro Todo lassen sich beliebig viele zeitgestempelte Notizen anlegen — z. B. Zwischenstände, Blocker, Entscheidungen, Recherche-Links. Sichtbar im expandierten Detail, sortiert nach „neueste zuerst". Cmd/Ctrl+Enter speichert direkt aus dem Eingabe-Feld. Jede Notiz ist einzeln löschbar.
+- **Sichtbarer Notizen-Counter:** Pro Todo zeigt das Listing 📝 N falls Notizen vorhanden.
+
+### Added — Backend
+- `TodoRepository.update(todoId, userId, patch)` — Update aller Felder mit User-Scope-Check.
+- `TodoRepository.addNote / listNotes / deleteNote`.
+- HTTP-Endpoints `GET/POST /api/todos/:id/notes`, `DELETE /api/todos/notes/:noteId`.
+- PATCH `/api/todos/:id` reicht jetzt alle Felder durch (vorher nur `completed`).
+
 ## [0.19.0-multi-ha.669] - 2026-05-22
 
 ### Fixed

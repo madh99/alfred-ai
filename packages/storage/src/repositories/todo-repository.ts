@@ -14,6 +14,15 @@ export interface TodoEntry {
   updatedAt: string;
 }
 
+/** v670 — Arbeits-/Fortschritts-Notiz an einem Todo. */
+export interface TodoNote {
+  id: string;
+  todoId: string;
+  userId: string;
+  content: string;
+  createdAt: string;
+}
+
 export class TodoRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
@@ -83,6 +92,68 @@ export class TodoRepository {
 
   async delete(todoId: string): Promise<boolean> {
     const result = await this.adapter.execute('DELETE FROM todos WHERE id = ?', [todoId]);
+    return result.changes > 0;
+  }
+
+  /** v670 — alle bearbeitbaren Felder aktualisieren. Nur die in patch enthaltenen Keys werden überschrieben. */
+  async update(todoId: string, userId: string, patch: {
+    title?: string;
+    description?: string | null;
+    priority?: TodoEntry['priority'];
+    dueDate?: string | null;
+    list?: string;
+  }): Promise<TodoEntry | null> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.title !== undefined) { sets.push('title = ?'); params.push(patch.title); }
+    if (patch.description !== undefined) { sets.push('description = ?'); params.push(patch.description); }
+    if (patch.priority !== undefined) { sets.push('priority = ?'); params.push(patch.priority); }
+    if (patch.dueDate !== undefined) { sets.push('due_date = ?'); params.push(patch.dueDate); }
+    if (patch.list !== undefined) { sets.push('list = ?'); params.push(patch.list); }
+    if (sets.length === 0) return (await this.getByIdForUser(todoId, userId)) ?? null;
+    const now = new Date().toISOString();
+    sets.push('updated_at = ?'); params.push(now);
+    params.push(todoId, userId);
+    await this.adapter.execute(
+      `UPDATE todos SET ${sets.join(', ')} WHERE id = ? AND user_id = ?`,
+      params,
+    );
+    return (await this.getByIdForUser(todoId, userId)) ?? null;
+  }
+
+  // ── v670: Arbeits-/Fortschritts-Notizen ─────────────────────────────────
+
+  async addNote(todoId: string, userId: string, content: string): Promise<TodoNote> {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    await this.adapter.execute(
+      'INSERT INTO todo_notes (id, todo_id, user_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+      [id, todoId, userId, content, now],
+    );
+    // updated_at am Parent bumpen, damit Todo-Sortierung den letzten Aktivitätsstand reflektiert
+    await this.adapter.execute('UPDATE todos SET updated_at = ? WHERE id = ?', [now, todoId]);
+    return { id, todoId, userId, content, createdAt: now };
+  }
+
+  async listNotes(todoId: string): Promise<TodoNote[]> {
+    const rows = await this.adapter.query(
+      'SELECT * FROM todo_notes WHERE todo_id = ? ORDER BY created_at DESC',
+      [todoId],
+    ) as Record<string, unknown>[];
+    return rows.map(r => ({
+      id: r.id as string,
+      todoId: r.todo_id as string,
+      userId: r.user_id as string,
+      content: r.content as string,
+      createdAt: r.created_at as string,
+    }));
+  }
+
+  async deleteNote(noteId: string, userId: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      'DELETE FROM todo_notes WHERE id = ? AND user_id = ?',
+      [noteId, userId],
+    );
     return result.changes > 0;
   }
 

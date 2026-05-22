@@ -428,6 +428,30 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/todos/${id}`, { method: 'DELETE', headers: this.authHeaders });
     return res.ok;
   }
+  // v670 — Edit aller Todo-Felder
+  async updateTodo(id: string, patch: { title?: string; description?: string | null; priority?: string; dueDate?: string | null; list?: string }): Promise<TodoItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${id}`, { method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.todo ?? null;
+  }
+  // v670 — Arbeitsnotizen / Fortschritte pro Todo
+  async fetchTodoNotes(todoId: string): Promise<TodoNote[]> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${todoId}/notes`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.notes) ? data.notes : [];
+  }
+  async addTodoNote(todoId: string, content: string): Promise<TodoNote | null> {
+    const res = await fetch(`${this.baseUrl}/api/todos/${todoId}/notes`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ content }) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.note ?? null;
+  }
+  async deleteTodoNote(noteId: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/todos/notes/${noteId}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
 
   // ── v661 — Notes API ──
   async fetchNotes(opts?: { query?: string; limit?: number }): Promise<NoteItem[]> {
@@ -1559,6 +1583,15 @@ export interface TodoItem {
   completed: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// v670 — Arbeits-/Fortschritts-Notiz an einem Todo
+export interface TodoNote {
+  id: string;
+  todoId: string;
+  userId: string;
+  content: string;
+  createdAt: string;
 }
 
 export interface NoteItem {
