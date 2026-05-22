@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.693] - 2026-05-22
+
+### Changed — Reasoning-Engine: gibt nicht mehr beim ersten Fail auf
+
+Drei Erweiterungen damit das LLM proaktive Aktionen kreativer löst statt früh „Aktion nicht möglich" zu antworten:
+
+**A — LLM-Self-Heal:** Wenn `executeDirectly()` failed (z.B. weil eine Skill-Action nicht existiert, Permissions fehlen, oder ein anderer Skill-Fehler kommt), wird ein **zweiter LLM-Pass** gestartet mit:
+- Original-Action (description, skillName, skillParams)
+- Konkrete Fehlermeldung
+- Liste aller Skills + ihrer echten Actions (max 12 pro Skill)
+- Instruktion: Schlage eine korrigierte Action vor ODER antworte mit `GIVE_UP`
+
+Bei valider JSON-Antwort wird die alternative Action ausgeführt. Bei Erfolg sieht der User „⚡ Proaktiv ausgeführt: …" mit der gehealten Description. Bei wiederholtem Fail kommt jetzt eine ehrliche Nachricht („… auch eine Alternative gesucht — keiner der Wege funktioniert mit den aktuellen Skills") inklusive Error-Details.
+
+**B — Prompt-Improvement:** Reasoning-Detail-Prompt um `ACTION-DESIGN-REGELN`-Block erweitert: „GIB NIEMALS AUF wenn ein Tool nicht direkt passt. Probiere 2-3 Wege (watch, scheduled_task, workflow) bevor du eine Aktion verwirfst. NIEMALS Action-Namen erfinden — verwende nur die in den Skill-Descriptions gelisteten."
+
+**C — Pattern-Cookbook im Prompt:** Konkrete Beispiele für typische Use-Cases:
+- „Täglich X-Anzahl beobachten" → `watch.create` mit `list_X` + `count`/`length` als condition_field
+- „Wert regelmäßig irgendwo hinschreiben" → `scheduled_task.create` mit Prompt
+- „Schritt-Folge automatisieren" → `workflow.create`
+- Plus expliziter UniFi-Hinweis: `list_alerts` (NICHT `get_alerts`)
+
+### Beobachtbar im Server-Log
+- `"Reasoning: trying LLM self-heal"` — wenn ein erster Versuch failed
+- `"Reasoning: LLM proposed alternative — retrying"` — wenn der zweite Pass eine Korrektur lieferte
+- `"Reasoning: proactive action failed (after self-heal)"` — wenn auch der zweite Pass nicht helfen konnte
+
+### Beeinträchtigt nichts
+- Confirmation-Queue / direkter Skill-Call / WebUI-Modal: unverändert
+- Self-Heal-LLM-Pass kostet nur 1 zusätzlichen LLM-Call PRO FAILED proaktiver Action (selten)
+- v692 Fuzzy-Match bleibt als erste Verteidigung — v693 ist die zweite (LLM-basierte) Schicht
+
 ## [0.19.0-multi-ha.692] - 2026-05-22
 
 ### Fixed — Reasoning-Engine: Halluzinierte Skill-Action-Namen führten zu „Aktion nicht möglich"

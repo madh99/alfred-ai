@@ -871,6 +871,22 @@ ${this.confirmationQueue ? `
 Du kannst Aktionen vorschlagen. Max 5. Nur wenn JETZT sinnvoll.
 Alle nutzen type: "execute_skill". Format: nach Text-Insights, trenne mit "${ACTION_MARKER}", dann JSON-Array.
 
+v693 — ACTION-DESIGN-REGELN (WICHTIG):
+- GIB NIEMALS AUF wenn ein Tool/Skill nicht direkt zu deinem Wunsch passt. Probiere 2-3 Wege bevor du den Vorschlag verwirfst:
+  1. Existiert eine Watch (action_field + condition)? Watch ist DAS Tool für „X überwachen, alarmiere wenn Y".
+  2. Existiert ein scheduled_task? Das ist DAS Tool für „täglich/wöchentlich Y prüfen und Ergebnis loggen".
+  3. Kombiniere mehrere Skills via workflow.
+- BEVOR du eine action im skill_params eintippst: schau in der unten gelisteten Skill-Description nach den EXAKTEN Action-Namen. NIEMALS Action-Namen erfinden oder Patterns von anderen APIs übertragen (z.B. NICHT "get_X" wenn der Skill "list_X" hat).
+- Wenn unsicher welcher Skill-Aufruf richtig ist: lieber konservative Aktion (memory speichern, todo anlegen) als gar nichts.
+
+PATTERN-COOKBOOK (vermeidet typische Halluzinationen):
+- "Täglich X-Anzahl beobachten" → watch.create mit skill_name=X, skill_params={action: 'list_X'}, condition_field='length' oder 'count', condition_operator='increased'/'gt', interval_minutes=1440
+- "Wenn X passiert: Y ausführen" → watch.create mit action_skill_name=Y, action_on_trigger='alert_and_action'
+- "Wert regelmäßig irgendwo hinschreiben" → scheduled_task.create mit Cron + Prompt der den Wert liest und in eine memory speichert
+- "Schritt-Folge automatisieren" → workflow.create mit steps[]
+- "Erinnern an Datum" → reminder.set mit triggerAt
+- UniFi-Skill action für IPS-Alerts: list_alerts (NICHT get_alerts). Andere UniFi-Actions: list_devices, list_clients, list_events, archive_alerts.
+
 AKTIONSTYPEN:
 1. Skill direkt ausführen: {"type":"execute_skill","description":"...","skillName":"homeassistant","skillParams":{"action":"turn_on","entity_id":"switch.wallbox"}}
 2. Workflow erstellen: {"type":"execute_skill","description":"...","skillName":"workflow","skillParams":{"action":"create","name":"...","steps":[...]}}
@@ -1434,7 +1450,8 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
       }
     }
 
-    for (const action of limit) {
+    for (const _origAction of limit) {
+      let action = _origAction; // v693 — mutable damit self-heal die action ersetzen kann
       if ((action as any).type === 'execute_plan') continue; // already handled above
       // Normalize reminder params: LLM sometimes uses wrong field names
       if (action.skillName === 'reminder' && action.skillParams) {
@@ -1601,7 +1618,21 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
         }
 
         if (executeDirectly) {
-          const result = await this.executeDirectly(action);
+          let result = await this.executeDirectly(action);
+
+          // v693 — Self-Heal mit zweitem LLM-Pass: wenn execute failed, das LLM
+          // mit konkretem Error + Skill-Übersicht erneut fragen ob es eine
+          // korrigierte Action vorschlagen kann. Statt sofort aufzugeben.
+          if (!result.success && result.error) {
+            this.logger.info({ action: action.description, firstError: result.error }, 'Reasoning: trying LLM self-heal');
+            const healed = await this.tryLlmSelfHeal(action, result.error);
+            if (healed) {
+              this.logger.info({ originalAction: action.description, healed: healed.description }, 'Reasoning: LLM proposed alternative — retrying');
+              result = await this.executeDirectly(healed);
+              if (result.success) action = healed;
+            }
+          }
+
           await this.markActionProposed(action);
 
           if (informUser) {
@@ -1613,9 +1644,9 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
               } else {
                 // Show user-friendly message + learning prompt instead of technical error
                 this.logger.warn({ action: action.description, error: result.error, skillName: action.skillName },
-                  'Reasoning: proactive action failed');
+                  'Reasoning: proactive action failed (after self-heal)');
                 await adapter.sendMessage(this.defaultChatId,
-                  `\u26A0\uFE0F **Aktion nicht möglich:** ${action.description}\nIch konnte das nicht ausführen. Sag mir wie ich "${action.description}" umsetzen soll, dann merke ich es mir für nächstes Mal.`);
+                  `\u26A0\uFE0F **Aktion nicht möglich:** ${action.description}\nIch habe es probiert und auch eine Alternative gesucht — keiner der Wege funktioniert mit den aktuellen Skills. Sag mir wie ich "${action.description}" umsetzen soll, dann merke ich es mir für nächstes Mal.\n\n_Details: ${(result.error ?? '').slice(0, 200)}_`);
               }
             }
           }
@@ -1756,6 +1787,86 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     } catch {
       // On memory lookup error → be cautious, ask
       return 'confirm';
+    }
+  }
+
+  /**
+   * v693 — LLM-Self-Heal nach failed action: zweiter LLM-Pass mit
+   * konkretem Error + Liste der relevanten Skills/Actions → soll
+   * eine korrigierte/alternative Action vorschlagen. Returns die neue
+   * ProposedAction wenn das LLM eine valide Alternative gefunden hat, sonst null.
+   *
+   * Diese Methode ist bewusst eng gehalten:
+   *  - Single LLM-Call (kein Loop)
+   *  - Erwartet exakt EINE JSON-Action zurück
+   *  - Validation via validateAndHealAction (rejects offensichtlich Müll)
+   *  - Kein UI-Output, nur Background
+   */
+  private async tryLlmSelfHeal(failed: ProposedAction, error: string): Promise<ProposedAction | null> {
+    try {
+      // Skill-Kurzliste mit ihren Actions als Hint
+      const skillList: string[] = [];
+      for (const s of this.skillRegistry.getAll().slice(0, 30)) {
+        const schema = s.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
+        const actions = schema?.properties?.action?.enum;
+        if (actions && actions.length > 0) {
+          skillList.push(`- ${s.metadata.name}: ${actions.slice(0, 12).join(', ')}`);
+        } else {
+          skillList.push(`- ${s.metadata.name}`);
+        }
+      }
+
+      const prompt = `Eine proaktive Aktion ist fehlgeschlagen. Schlage EINE alternative Action vor die das gleiche Ziel mit den verfügbaren Skills erreicht.
+
+URSPRÜNGLICHE ACTION (gescheitert):
+${JSON.stringify({ description: failed.description, skillName: failed.skillName, skillParams: failed.skillParams }, null, 2)}
+
+FEHLER:
+${error.slice(0, 800)}
+
+VERFÜGBARE SKILLS + ACTIONS:
+${skillList.join('\n')}
+
+REGELN:
+- Nutze NUR exakte Action-Namen aus der Liste (NICHT erfinden, NICHT aus anderen APIs übertragen).
+- Wenn der Fehler "has no action X" sagt: schau in der Skill-Liste welche Actions wirklich existieren und wähle die passende.
+- Wenn der Skill nicht das richtige Tool ist: probiere watch/scheduled_task/workflow als Wrapper.
+- Wenn KEIN Weg möglich ist: antworte mit dem String "GIVE_UP".
+
+ANTWORT: NUR JSON, kein Text drumherum:
+{"description":"...","skillName":"...","skillParams":{...}}`;
+
+      const res = await this.llm.complete({
+        messages: [{ role: 'user', content: prompt }],
+        maxTokens: 400,
+        tier: this.tier,
+      });
+      const text = res.content.trim();
+      if (!text || text.includes('GIVE_UP')) return null;
+
+      // Parse JSON aus der Antwort
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return null;
+      let parsed: { description?: string; skillName?: string; skillParams?: Record<string, unknown> };
+      try { parsed = JSON.parse(jsonMatch[0]); } catch { return null; }
+      if (!parsed.skillName || !parsed.skillParams) return null;
+
+      const candidate: ProposedAction = {
+        description: parsed.description || failed.description,
+        skillName: parsed.skillName,
+        skillParams: parsed.skillParams,
+        type: 'execute_skill',
+      } as ProposedAction;
+
+      // Final sanity-check: nicht dieselbe Action nochmal probieren
+      if (candidate.skillName === failed.skillName
+        && JSON.stringify(candidate.skillParams) === JSON.stringify(failed.skillParams)) {
+        return null;
+      }
+      return candidate;
+    } catch (err) {
+      this.logger.debug({ err }, 'Reasoning: LLM self-heal threw');
+      return null;
     }
   }
 
