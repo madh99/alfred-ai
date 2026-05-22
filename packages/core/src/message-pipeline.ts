@@ -727,7 +727,13 @@ export class MessagePipeline {
       }
 
       // 6b. Role-based skill filtering (multi-user)
-      if (skillMetas && this.roleSkillAccess) {
+      // v684 — Bei Project-Chat (metadata.projectId gesetzt) den Role-Filter ÜBERSPRINGEN.
+      // Der WebUI-User hat oft keinen alfred_users-Eintrag → Pipeline fällt auf 'guest'
+      // zurück → guest darf project_agent/code_agent/shell nicht → Schnittmenge mit
+      // Whitelist ist 0 Skills → Alfred sagt „kein Tool zur Verfügung".
+      // Project-Chat-Aufrufe sind durch WebUI-Token-Auth bereits abgesichert, der
+      // Caller ist der Owner. Die Skill-Whitelist aus 6 ist schon kuratiert genug.
+      if (skillMetas && this.roleSkillAccess && !isProjectChat) {
         const role = alfredUser?.role ?? (this.alfredUserRepo ? 'guest' : undefined);
         if (role) {
           const allowed = this.roleSkillAccess[role];

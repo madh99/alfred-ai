@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.684] - 2026-05-22
+
+### Fixed — Project-Chat: 0 Skills durchs role-based Filter (FORTSETZUNG zu v683)
+
+**Live-Diagnose:** Server-Log zeigte `phase: skill_filter, count: 0` nach v683-Deploy — meine 18er Whitelist matched zwar `project_agent`/`code_agent`/`shell`, aber der NACHFOLGENDE role-based Filter (`6b`) hat alles wieder weggekürzt.
+
+**Root-Cause:** Der WebUI-User fällt im `alfredUser`-Lookup auf `undefined` zurück (kein expliziter `alfred_users`-Eintrag, nur Master-Link). Pipeline default: `role = 'guest'`. Guest-Whitelist in `user-management.ts` enthält nur 9 Skills (`calculator, weather, web_search, routing, transit, energy_price, youtube, user_management, help`) — `project_agent` ist NICHT dabei. Schnittmenge mit meiner v683-Whitelist = ∅ → 0 Skills → „kein Tool zur Verfügung".
+
+**Fix:** Bei Project-Chat (`metadata.projectId` gesetzt) den role-based Filter (`6b`) komplett überspringen. Der Project-Chat ist durch WebUI-Token-Auth schon abgesichert — der Caller ist der Owner, und die v683-Whitelist aus Schritt 6 ist bereits kurz und kuratiert.
+
+**Konsistenz:** Telegram/Matrix/Discord/WhatsApp/Signal/normaler Web-Chat → role-based Filter läuft weiter wie vorher. NUR Project-Chat ist betroffen.
+
 ## [0.19.0-multi-ha.683] - 2026-05-22
 
 ### Changed — Project-Chat: Kuratierte Skill-Whitelist statt aller 76
