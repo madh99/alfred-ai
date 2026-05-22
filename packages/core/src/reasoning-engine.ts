@@ -1759,21 +1759,147 @@ ${this.confirmationQueue ? `\nWenn eine sinnvolle Aktion möglich ist (Skill, Wa
     }
   }
 
+  /**
+   * v692 — Fuzzy-Match einer halluzinierten Action gegen valid actions.
+   * 1) Substring/Token-Match (z.B. "get_alerts" matched "list_alerts" via Token "alerts")
+   * 2) Fallback: Levenshtein-Edit-Distance (max 4 edits)
+   * Returns null wenn nichts plausibel passt.
+   */
+  private findClosestAction(hallucinated: string, validActions: string[]): string | null {
+    if (!hallucinated || validActions.length === 0) return null;
+    const h = hallucinated.toLowerCase();
+    if (validActions.includes(hallucinated)) return hallucinated;
+
+    // Phase 1: Token-Match (Skill-Actions sind oft snake_case → tokenize)
+    const hTokens = h.split(/[_-]/).filter(t => t.length >= 3);
+    let bestTok: { action: string; score: number } | null = null;
+    for (const valid of validActions) {
+      const v = valid.toLowerCase();
+      const vTokens = v.split(/[_-]/);
+      const matched = hTokens.filter(t => vTokens.includes(t) || v.includes(t)).length;
+      if (matched === 0) continue;
+      const score = matched / Math.max(hTokens.length, vTokens.length);
+      if (!bestTok || score > bestTok.score) bestTok = { action: valid, score };
+    }
+    if (bestTok && bestTok.score >= 0.5) return bestTok.action;
+
+    // Phase 2: Levenshtein
+    const lev = (a: string, b: string): number => {
+      const m = a.length, n = b.length;
+      if (m === 0) return n; if (n === 0) return m;
+      const dp: number[] = Array(n + 1).fill(0).map((_, i) => i);
+      for (let i = 1; i <= m; i++) {
+        let prev = dp[0]; dp[0] = i;
+        for (let j = 1; j <= n; j++) {
+          const tmp = dp[j];
+          dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j], dp[j - 1]) + 1;
+          prev = tmp;
+        }
+      }
+      return dp[n];
+    };
+    let bestLev: { action: string; dist: number } | null = null;
+    for (const valid of validActions) {
+      const d = lev(h, valid.toLowerCase());
+      if (!bestLev || d < bestLev.dist) bestLev = { action: valid, dist: d };
+    }
+    if (bestLev && bestLev.dist <= Math.max(3, Math.floor(h.length * 0.4))) return bestLev.action;
+    return null;
+  }
+
+  /** v692 — Speichert eine Correction-Memory damit das LLM beim nächsten Mal die richtige Action wählt. */
+  private async saveActionCorrection(skillName: string, hallucinated: string, corrected: string): Promise<void> {
+    if (!this.memoryRepo) return;
+    try {
+      const key = `correction_skill_action_${skillName}_${hallucinated}`;
+      const value = `Skill ${skillName}: Action "${hallucinated}" existiert nicht — verwende stattdessen "${corrected}".`;
+      const upsert = (this.memoryRepo as { upsertSystemMemory?: (uid: string, k: string, v: string, c: string, t?: string, conf?: number) => Promise<unknown> }).upsertSystemMemory;
+      const uid = this.resolvedOwnerUserId ?? this.defaultChatId;
+      if (upsert) {
+        await upsert.call(this.memoryRepo, uid, key, value, 'correction', 'correction', 0.95);
+      } else if ('saveWithMetadata' in this.memoryRepo) {
+        await (this.memoryRepo as { saveWithMetadata: (u: string, k: string, v: string, c: string, t: string, conf: number, s: string) => Promise<unknown> })
+          .saveWithMetadata(uid, key, value, 'correction', 'correction', 0.95, 'auto');
+      }
+      this.logger.info({ skillName, hallucinated, corrected }, 'Reasoning: action correction saved');
+    } catch (err) {
+      this.logger.debug({ err, skillName }, 'Reasoning: correction memory save failed (non-fatal)');
+    }
+  }
+
+  /**
+   * v692 — Pre-validation für nested skill_params.action (z.B. watch.create mit
+   * skill_name + skill_params.action) UND Top-Level-action. Bei Mismatch: Fuzzy-Match
+   * versuchen → wenn Match: auto-korrigieren + correction-memory. Sonst: reject.
+   */
+  private validateAndHealAction(action: ProposedAction): { corrected?: ProposedAction; reject?: string } {
+    const skill = this.skillRegistry.get(action.skillName);
+    if (!skill) return { reject: `Skill "${action.skillName}" nicht gefunden` };
+
+    // Top-Level-Action validieren (existing logic)
+    const actionParam = action.skillParams?.action as string | undefined;
+    const schema = skill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
+    const validActions = schema?.properties?.action?.enum;
+    if (actionParam && validActions && !validActions.includes(actionParam)) {
+      const match = this.findClosestAction(actionParam, validActions);
+      if (match) {
+        this.logger.info({ skillName: action.skillName, was: actionParam, now: match }, 'Reasoning: action auto-corrected via fuzzy-match');
+        void this.saveActionCorrection(action.skillName, actionParam, match);
+        action = { ...action, skillParams: { ...action.skillParams, action: match } };
+      } else {
+        return { reject: `Action "${actionParam}" für Skill "${action.skillName}" existiert nicht. Valid: ${validActions.slice(0, 8).join(', ')}` };
+      }
+    }
+
+    // v692 — Nested skill_params.action validieren (für watch/scheduled_task die einen Target-Skill referenzieren)
+    const NESTED_SKILLS = new Set(['watch', 'scheduled_task']);
+    if (NESTED_SKILLS.has(action.skillName)) {
+      const nestedSkillName = action.skillParams?.skill_name as string | undefined;
+      const nestedParams = action.skillParams?.skill_params as Record<string, unknown> | undefined;
+      const nestedAction = nestedParams?.action as string | undefined;
+      if (nestedSkillName && nestedAction) {
+        const targetSkill = this.skillRegistry.get(nestedSkillName);
+        if (targetSkill) {
+          const targetSchema = targetSkill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } } | undefined;
+          const targetValid = targetSchema?.properties?.action?.enum;
+          if (targetValid && !targetValid.includes(nestedAction)) {
+            const match = this.findClosestAction(nestedAction, targetValid);
+            if (match) {
+              this.logger.info({ targetSkill: nestedSkillName, was: nestedAction, now: match }, 'Reasoning: nested action auto-corrected via fuzzy-match');
+              void this.saveActionCorrection(nestedSkillName, nestedAction, match);
+              action = {
+                ...action,
+                skillParams: {
+                  ...action.skillParams,
+                  skill_params: { ...nestedParams, action: match },
+                },
+              };
+            } else {
+              return { reject: `Nested action "${nestedAction}" für Target-Skill "${nestedSkillName}" existiert nicht. Valid: ${targetValid.slice(0, 8).join(', ')}` };
+            }
+          }
+        }
+      }
+    }
+
+    return { corrected: action };
+  }
+
   private async executeDirectly(action: ProposedAction): Promise<{ success: boolean; error?: string }> {
+    // v692 — Validation + Self-Heal vor dem eigentlichen Execute
+    const validated = this.validateAndHealAction(action);
+    if (validated.reject) {
+      this.logger.warn({ skillName: action.skillName, error: validated.reject }, 'Reasoning: action rejected after validation');
+      return { success: false, error: validated.reject };
+    }
+    if (validated.corrected) action = validated.corrected;
+
     const skill = this.skillRegistry.get(action.skillName);
     if (!skill) return { success: false, error: `Skill "${action.skillName}" nicht gefunden` };
 
-    // Validate action against skill schema (prevent hallucinated actions)
+    // Legacy-Check entfällt — von validateAndHealAction abgedeckt
     const actionParam = action.skillParams?.action as string | undefined;
-    if (actionParam && skill.metadata.inputSchema) {
-      const schema = skill.metadata.inputSchema as { properties?: { action?: { enum?: string[] } } };
-      const validActions = schema.properties?.action?.enum;
-      if (validActions && !validActions.includes(actionParam)) {
-        this.logger.warn({ skillName: action.skillName, action: actionParam, validActions: validActions.join(',') },
-          'Reasoning: hallucinated action rejected — not in skill schema');
-        return { success: false, error: `Action "${actionParam}" existiert nicht` };
-      }
-    }
+    void actionParam; // unused since v692-Refactor — bleibt für Compat
 
     // Normalize snake_case → camelCase ONLY for skills that use camelCase params.
     // Skills like watch, itsm use snake_case intentionally — don't convert those.

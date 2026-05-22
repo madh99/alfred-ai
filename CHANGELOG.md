@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.692] - 2026-05-22
+
+### Fixed — Reasoning-Engine: Halluzinierte Skill-Action-Namen führten zu „Aktion nicht möglich"
+
+**Root-Cause:** Das Reasoning-LLM hat in seinen proaktiven Aktionen Skill-Action-Namen halluziniert (z. B. `unifi.get_alerts` statt korrekt `unifi.list_alerts`). Die Reasoning-Engine validierte nur das **eigene** Skill-Schema (z. B. `watch.action=create` war OK), nicht aber **nested** `skill_params.action` für Target-Skills. Beim echten Skill-Run schlug es dann fehl mit `Skill "unifi" has no action "get_alerts"` — User bekam eine „Aktion nicht möglich"-Meldung statt der gewünschten Watch.
+
+**Fix (Variante B+C kombiniert):**
+- **B — Pre-Validation:** Neue Methode `validateAndHealAction()` prüft VOR dem Execute beide Action-Schichten (Top-Level + nested `skill_params.action` für `watch` und `scheduled_task`).
+- **C — Self-Heal mit Fuzzy-Match:** Bei Mismatch wird `findClosestAction()` aufgerufen:
+  1. Token-Match: Snake-case-tokens vergleichen (`get_alerts` → Token `alerts` matched `list_alerts`)
+  2. Levenshtein-Fallback: max 3-4 Edits oder 40% der String-Länge
+  - Bei Match → Action automatisch korrigiert, Memory `correction_skill_action_<skill>_<wrong>` gespeichert mit category=`correction`
+  - Bei kein Match → klare Reject-Nachricht mit Valid-Actions-Liste
+- **Correction-Memory:** Wird via `upsertSystemMemory` geschrieben (umgeht Guards), erscheint im Prompt-Block beim nächsten Reasoning-Run → LLM lernt die richtige Action.
+
+### Wirkung
+- **Direkt:** „Aktion nicht möglich"-Meldungen sollten praktisch verschwinden — entweder Auto-Korrektur oder klare Reject-Begründung
+- **Lernend:** Beim nächsten gleichen Skill kennt das LLM die richtige Action (Correction-Block im Prompt)
+- **Andere Pfade:** Confirmation-Queue / direkter Skill-Call / WebUI-Modal unverändert
+
 ## [0.19.0-multi-ha.691] - 2026-05-22
 
 ### Fixed — Deploy-Skill: Memory-Save lief silent ins Leere bei Chat/Telegram-Triggern
