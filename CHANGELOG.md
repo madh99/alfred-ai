@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.688] - 2026-05-22
+
+### Added — Projekte-Seite: Info-Banner „Aktuell laufend"
+
+Auf der `/projects/`-Übersicht zwischen Suchleiste und Projekt-Liste erscheint jetzt ein Banner mit allen laufenden Project-Agent-Sessions (alle currentPhase außer `done`/`failed`/`aborted`):
+
+- Pulsing 🟢 Indicator + Counter „Aktuell laufend (N)"
+- Pro Session: Phase-Badge (planning/coding/validating/…), Goal-Snippet, Projekt-Ordner (basename(cwd)), Iter-Counter, Files-Counter, Zeit seit letztem Progress
+- Polling alle 5s (refresh ohne Reload nötig)
+- ↻-Refresh-Button
+- Klick auf eine Karte → `/project-agents?task=<taskId>` mit dem Detail-Pane automatisch geöffnet
+
+### Geändert
+- `ProjectAgentsPage`: Liest jetzt `?task=<id>` aus der URL und wählt das passende Session-Detail automatisch aus (matched auch auf Prefix). Wird vom Banner-Klick und potenziellen anderen Deep-Links genutzt.
+
 ## [0.19.0-multi-ha.687] - 2026-05-22
 
 ### Added — Project-Chat: Context-Refs (Toolbar + @-Mention + Drag&Drop)

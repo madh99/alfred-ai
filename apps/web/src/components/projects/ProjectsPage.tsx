@@ -8,6 +8,7 @@ import type {
 } from '@/lib/alfred-client';
 import { AuditModal } from './AuditModal';
 import { ProjectChat } from './ProjectChat';
+import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
@@ -418,6 +419,9 @@ export function ProjectsPage() {
         onChange={e => setSearch(e.target.value)}
         className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none mb-4"
       />
+
+      {/* v688 — Info-Banner: laufende Project-Agent/Code-Agent-Sessions */}
+      <RunningAgentsBanner />
 
       {loading && <div className="text-gray-500 text-sm">Lade...</div>}
       {error && <div className="text-red-400 text-sm">Fehler: {error}</div>}

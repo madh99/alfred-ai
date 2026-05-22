@@ -66,6 +66,19 @@ export function ProjectAgentsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // v688 — Wenn ?task=<id> in der URL: auto-select das passende Session-Detail.
+  // Wird vom RunningAgentsBanner auf der Projekte-Seite genutzt.
+  useEffect(() => {
+    if (typeof window === 'undefined' || sessions.length === 0 || selected) return;
+    try {
+      const taskParam = new URLSearchParams(window.location.search).get('task');
+      if (taskParam) {
+        const match = sessions.find(s => s.taskId === taskParam || s.taskId.startsWith(taskParam));
+        if (match) setSelected(match);
+      }
+    } catch { /* ignore */ }
+  }, [sessions, selected]);
+
   // Re-fetch every 10s while at least one non-terminal session is visible
   useEffect(() => {
     const hasRunning = sessions.some(s => s.currentPhase !== 'done' && s.currentPhase !== 'failed');
