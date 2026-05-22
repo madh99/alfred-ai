@@ -94,6 +94,44 @@ export class MemoryRepository {
     return this.mapRow(row);
   }
 
+  /**
+   * v689 — Wie saveWithMetadata aber OHNE manual-/correction-Guards.
+   * Gedacht für system-managed Keys (z.B. deploy_*, project_workspace_*) wo das
+   * System die Single-Source-of-Truth ist und ein vom User früher manuell angelegter
+   * Eintrag dieselbe Information weniger strukturiert enthält. Vorsicht: damit kann
+   * theoretisch ein manueller User-Eintrag überschrieben werden — Verantwortung liegt
+   * beim Caller, nur bei eindeutig system-managed Keys zu verwenden.
+   */
+  async upsertSystemMemory(
+    userId: string,
+    key: string,
+    value: string,
+    category: string,
+    type: MemoryType = 'fact',
+    confidence: number = 0.95,
+  ): Promise<MemoryEntry> {
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    await this.adapter.execute(
+      `INSERT INTO memories (id, user_id, key, value, category, type, confidence, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'auto', ?, ?)
+       ON CONFLICT(user_id, key) DO UPDATE SET
+         value = excluded.value,
+         category = excluded.category,
+         type = excluded.type,
+         confidence = excluded.confidence,
+         source = 'auto',
+         updated_at = excluded.updated_at,
+         expires_at = NULL`,
+      [id, userId, key, value, category, type, confidence, now, now],
+    );
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM memories WHERE user_id = ? AND key = ?',
+      [userId, key],
+    ) as Record<string, unknown>;
+    return this.mapRow(row);
+  }
+
   async saveWithTTL(
     userId: string,
     key: string,

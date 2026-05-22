@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.689] - 2026-05-22
+
+### Fixed — Letzte Deploys: alter manueller Memory-Eintrag blockierte Auto-Updates
+
+**Root-Cause:** `saveWithMetadata` hat zwei Guards (sinnvoll für User-Schutz):
+- `auto` darf `manual` NICHT überschreiben
+- `auto` darf `correction`-Typen NICHT überschreiben
+
+Der `deploy_alpbyte-games_192_168_1_96`-Eintrag wurde am 20.05. vom User im Chat manuell angelegt mit `source='manual'`. Mein v679/v686-Memory-Write läuft durch (Log `Deploy memory written`), aber UPDATE-SET wird vom Guard übersprungen → DB-Row bleibt mit altem freitext + `category='general'`. `lastDeploys`-Parser filtert `category!='deployment'` raus → Modal leer.
+
+**Fix:**
+- **A — One-shot SQL** (bereits ausgeführt): existierender Alpbyte-Eintrag umgestellt auf `source='auto'`, `category='deployment'`, strukturiertes Format. Sofort lesbar im Modal.
+- **B — v689 Code-Fix:** Neue Methode `memoryRepo.upsertSystemMemory()` ohne Guards für system-managed Keys. `triggerDeploy` und `project-workspace-Auto-Save` nutzen sie jetzt. Künftige Deploys auf andere Projekte mit alten manuellen Memory-Einträgen funktionieren ohne weiteren Eingriff.
+
+**Konsequenz:**
+- WebUI Modal „Letzte Deploys" zeigt jetzt deinen aktuellen Alpbyte-Deploy
+- Nächster Deploy überschreibt automatisch (kein manual-Guard mehr für system-Keys)
+
 ## [0.19.0-multi-ha.688] - 2026-05-22
 
 ### Added — Projekte-Seite: Info-Banner „Aktuell laufend"

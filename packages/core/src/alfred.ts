@@ -1162,10 +1162,10 @@ export class Alfred {
               ];
               if (latestSession?.last_commit_sha) parts.push(`last_commit=${latestSession.last_commit_sha.slice(0, 8)}`);
               parts.push(`HINWEIS: Das ist der LOKALE Workspace zum Entwickeln, NICHT der Deploy-Target-Pfad`);
-              await this.memoryRepo.saveWithMetadata(
-                userId, safeKey, parts.join(', '),
-                'workspace', 'fact', 0.95, 'auto',
-              );
+              // v689 — system-managed Key, override Guards (siehe upsertSystemMemory)
+              const upsertWS = (this.memoryRepo as { upsertSystemMemory?: (uid: string, k: string, v: string, c: string, t?: string, conf?: number) => Promise<unknown> }).upsertSystemMemory;
+              if (upsertWS) await upsertWS.call(this.memoryRepo, userId, safeKey, parts.join(', '), 'workspace', 'fact', 0.95);
+              else await this.memoryRepo.saveWithMetadata(userId, safeKey, parts.join(', '), 'workspace', 'fact', 0.95, 'auto');
             }
           } catch (err) { this.logger.debug({ err }, 'project-agent workspace-memory auto-save failed'); }
         }
@@ -5764,16 +5764,16 @@ export class Alfred {
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
               const result = await this.skillSandbox.execute(skill, params, ctx);
 
-              // v679 — Backup-Memory IMMER hier schreiben (Skill-internes try-catch
-               // schluckt Fehler silent, wir wissen nicht ob Memory ankommt). Hier haben
-               // wir uid garantiert + Logging bei Fehler. Bei Success category='deployment'
-               // damit lastDeploys-Parser den als Erfolg erkennt; bei Failure 'deploy' für
-               // den UI-Failure-Indicator.
+              // v689 — Backup-Memory via upsertSystemMemory() ohne manual-/correction-
+              // Guards: deploy_*-Keys sind system-managed. Vorher überschrieb saveWithMetadata
+              // einen früher vom User manuell angelegten Eintrag NICHT (Guard) → lastDeploys
+              // las den alten freitext-Eintrag mit category='general' und filterte ihn raus.
               if (this.memoryRepo) {
                 try {
                   const safeHost = host.replace(/[^a-zA-Z0-9]/g, '_');
                   const memKey = `deploy_${projectSlug}_${safeHost}`;
                   const now = new Date().toISOString().slice(0, 10);
+                  const upsert = (this.memoryRepo as { upsertSystemMemory?: (uid: string, k: string, v: string, c: string, t?: string, conf?: number) => Promise<unknown> }).upsertSystemMemory;
                   if (result.success) {
                     const parts = [
                       `Deployed ${projectSlug} → ${host} (user=${input.user ?? 'root'}`,
@@ -5783,14 +5783,13 @@ export class Alfred {
                       `verified=ok`,
                       `am=${now})`,
                     ];
-                    await this.memoryRepo.saveWithMetadata(uid, memKey, parts.join(', '), 'deployment', 'fact', 0.95, 'auto');
+                    if (upsert) await upsert.call(this.memoryRepo, uid, memKey, parts.join(', '), 'deployment', 'fact', 0.95);
+                    else await this.memoryRepo.saveWithMetadata(uid, memKey, parts.join(', '), 'deployment', 'fact', 0.95, 'auto');
                   } else {
                     const errSnippet = (result.error ?? 'unknown').split('\n')[0].slice(0, 300);
-                    await this.memoryRepo.saveWithMetadata(
-                      uid, memKey,
-                      `Deploy FAILED → ${host} (user=${input.user ?? 'root'}, runtime=${input.runtime ?? '?'}, pm=${input.process_manager ?? '?'}${input.app_port ? `, port=${input.app_port}` : ''}, am=${now}): ${errSnippet}`,
-                      'deploy', 'fact', 0.95, 'auto',
-                    );
+                    const msg = `Deploy FAILED → ${host} (user=${input.user ?? 'root'}, runtime=${input.runtime ?? '?'}, pm=${input.process_manager ?? '?'}${input.app_port ? `, port=${input.app_port}` : ''}, am=${now}): ${errSnippet}`;
+                    if (upsert) await upsert.call(this.memoryRepo, uid, memKey, msg, 'deploy', 'fact', 0.95);
+                    else await this.memoryRepo.saveWithMetadata(uid, memKey, msg, 'deploy', 'fact', 0.95, 'auto');
                   }
                   this.logger.info({ memKey, success: result.success }, 'Deploy memory written');
                 } catch (memErr) {
