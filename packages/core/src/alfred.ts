@@ -6128,10 +6128,10 @@ export class Alfred {
         return files.map(({ mtime: _, ...rest }) => rest);
       };
 
-      const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string, fileIndex?: number) => {
+      // v681 — since (Unix-ms cutoff) + offsetFromTail (Pagination: skip die N neuesten Zeilen)
+      const readLogFile = async (filePath: string, maxLines: number, levelFilter?: string, textFilter?: string, fileIndex?: number, since?: number, offsetFromTail?: number) => {
         const allFiles = listLogFiles(filePath);
         if (allFiles.length === 0) return { lines: [], total: 0, file: filePath, files: [] };
-        // fileIndex 0 = newest (default), 1 = second newest, etc.
         const idx = Math.min(fileIndex ?? 0, allFiles.length - 1);
         const actualFile = allFiles[idx].path;
 
@@ -6153,17 +6153,25 @@ export class Alfred {
             return msg.includes(lower) || comp.includes(lower) || JSON.stringify(l).toLowerCase().includes(lower);
           });
         }
+        if (since != null && since > 0) {
+          parsed = parsed.filter(l => typeof l.time === 'number' && l.time >= since);
+        }
 
         const total = parsed.length;
-        const lines = parsed.slice(-maxLines);
+        // Pagination: erst die N neuesten überspringen, dann die nächsten maxLines davor nehmen.
+        // offset=0 = newest chunk; offset=5000 = ältere 5000 dahinter; etc.
+        const offset = Math.max(0, offsetFromTail ?? 0);
+        const end = total - offset;
+        const start = Math.max(0, end - maxLines);
+        const lines = parsed.slice(start, end);
         return { lines, total, file: actualFile, files: allFiles };
       };
 
       (logApiAdapter as any).setLogCallbacks({
-        readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number) =>
-          readLogFile(logFilePath, lines, level, filter, fileIndex),
-        readAuditLog: (lines: number, _level?: string, _filter?: string, fileIndex?: number) =>
-          readLogFile(auditLogPath, lines, undefined, undefined, fileIndex),
+        readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number, since?: number, offsetFromTail?: number) =>
+          readLogFile(logFilePath, lines, level, filter, fileIndex, since, offsetFromTail),
+        readAuditLog: (lines: number, _level?: string, _filter?: string, fileIndex?: number, since?: number, offsetFromTail?: number) =>
+          readLogFile(auditLogPath, lines, undefined, undefined, fileIndex, since, offsetFromTail),
         streamAppLog: (res: import('http').ServerResponse, level?: string, filter?: string) => {
           // Find the current (newest) log file via listLogFiles
           const logFilesList = listLogFiles(logFilePath);

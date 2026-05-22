@@ -34,20 +34,43 @@ export function LogViewerPage() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [logFiles, setLogFiles] = useState<LogFile[]>([]);
   const [selectedFileIdx, setSelectedFileIdx] = useState(0); // 0 = newest (current)
+  // v681 — Page-Size + Time-Range + Total für nachhaltiges Log-Browsing
+  const [pageSize, setPageSize] = useState(5000); // statt vorher hardcoded 500
+  const [offsetFromTail, setOffsetFromTail] = useState(0);
+  const [totalLines, setTotalLines] = useState(0);
+  const [timeRange, setTimeRange] = useState<'all' | 'today' | '24h' | 'week'>('all');
   const scrollRef = useRef<HTMLDivElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+
+  function rangeToSince(r: typeof timeRange): number | undefined {
+    if (r === 'all') return undefined;
+    const now = Date.now();
+    if (r === '24h') return now - 24 * 3600_000;
+    if (r === 'week') return now - 7 * 24 * 3600_000;
+    if (r === 'today') {
+      const d = new Date(); d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    return undefined;
+  }
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      const since = rangeToSince(timeRange);
       if (activeTab === 'app') {
-        const res = await client.fetchLogs({ lines: 500, level: levelFilter, filter: textFilter || undefined, fileIndex: selectedFileIdx });
+        const res = await client.fetchLogs({
+          lines: pageSize, level: levelFilter, filter: textFilter || undefined,
+          fileIndex: selectedFileIdx, since, offset: offsetFromTail,
+        });
         setLogs(res.lines);
+        setTotalLines((res as { total?: number }).total ?? res.lines.length);
         if (res.files) setLogFiles(res.files);
       } else {
-        const res = await client.fetchAuditLogs(200, selectedFileIdx);
+        const res = await client.fetchAuditLogs(pageSize, selectedFileIdx, { since, offset: offsetFromTail });
         setLogs(res.lines);
+        setTotalLines((res as { total?: number }).total ?? res.lines.length);
         if (res.files) setLogFiles(res.files);
       }
     } catch (err) {
@@ -55,7 +78,7 @@ export function LogViewerPage() {
     } finally {
       setLoading(false);
     }
-  }, [client, activeTab, levelFilter, textFilter, selectedFileIdx]);
+  }, [client, activeTab, levelFilter, textFilter, selectedFileIdx, pageSize, offsetFromTail, timeRange]);
 
   useEffect(() => { fetchLogs(); }, [fetchLogs]);
 
@@ -165,9 +188,63 @@ export function LogViewerPage() {
           </button>
         )}
 
+        {/* v681 — Time-Range */}
+        <select
+          value={timeRange}
+          onChange={e => { setTimeRange(e.target.value as typeof timeRange); setOffsetFromTail(0); }}
+          className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-300"
+          title="Zeitraum-Filter (clientseitig, basiert auf Log-Time-Field)"
+        >
+          <option value="all">Ganze Datei</option>
+          <option value="today">Heute</option>
+          <option value="24h">Letzte 24h</option>
+          <option value="week">Letzte 7 Tage</option>
+        </select>
+
+        {/* v681 — Page Size */}
+        <select
+          value={pageSize}
+          onChange={e => { setPageSize(Number(e.target.value)); setOffsetFromTail(0); }}
+          className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-300"
+          title="Zeilen pro Seite"
+        >
+          <option value="500">500 Zeilen</option>
+          <option value="2000">2.000 Zeilen</option>
+          <option value="5000">5.000 Zeilen</option>
+          <option value="20000">20.000 Zeilen</option>
+          <option value="100000">100.000 (alles)</option>
+        </select>
+
         {error && <span className="text-xs text-red-400">{error}</span>}
-        <span className="text-xs text-gray-500 ml-auto">{logs.length} Eintr.</span>
+        {/* v681 — bessere Status-Anzeige: Range + Total */}
+        <span className="text-xs text-gray-500 ml-auto" title={`Zeige ${logs.length} Zeilen, ${offsetFromTail > 0 ? `Offset ${offsetFromTail}, ` : ''}gefiltert auf ${totalLines} von der Datei`}>
+          {offsetFromTail > 0
+            ? `${offsetFromTail + 1}–${offsetFromTail + logs.length} von ${totalLines}`
+            : `${logs.length} von ${totalLines}`}
+        </span>
       </div>
+
+      {/* v681 — Pagination */}
+      {totalLines > pageSize && (
+        <div className="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-[#1f1f1f] bg-[#0a0a0a]">
+          <button
+            onClick={() => setOffsetFromTail(o => Math.min(o + pageSize, totalLines - pageSize))}
+            disabled={offsetFromTail + pageSize >= totalLines}
+            className="px-2 py-0.5 bg-[#141414] border border-[#2a2a2a] rounded hover:border-blue-500/40 disabled:opacity-40 text-gray-300"
+          >← Ältere {pageSize}</button>
+          <button
+            onClick={() => setOffsetFromTail(o => Math.max(0, o - pageSize))}
+            disabled={offsetFromTail === 0}
+            className="px-2 py-0.5 bg-[#141414] border border-[#2a2a2a] rounded hover:border-blue-500/40 disabled:opacity-40 text-gray-300"
+          >Neuere {pageSize} →</button>
+          <button
+            onClick={() => setOffsetFromTail(0)}
+            disabled={offsetFromTail === 0}
+            className="px-2 py-0.5 text-gray-500 hover:text-gray-200 disabled:opacity-40"
+          >Zum Aktuellen</button>
+          <span className="text-gray-600 ml-auto">Aktive Datei: {logFiles[selectedFileIdx]?.name ?? '?'} ({Math.round((logFiles[selectedFileIdx]?.size ?? 0) / 1024)} KB)</span>
+        </div>
+      )}
 
       {/* Log Table */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto font-mono text-xs">

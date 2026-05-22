@@ -491,7 +491,8 @@ export class HttpAdapter extends MessagingAdapter {
 
   // ── Log Viewer + Cluster Operations ────────────────────────
   private logCallbacks?: {
-    readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string; files?: Array<{ name: string; size: number; modified: string }> }>;
+    // v681 — since (Unix-ms cutoff) + offset (skip N newest, dann lines davor)
+    readAppLog: (lines: number, level?: string, filter?: string, fileIndex?: number, since?: number, offsetFromTail?: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string; files?: Array<{ name: string; size: number; modified: string }> }>;
     readAuditLog: (lines: number, level?: string, filter?: string, fileIndex?: number) => Promise<{ lines: Array<Record<string, unknown>>; total: number; file: string; files?: Array<{ name: string; size: number; modified: string }> }>;
     streamAppLog: (res: http.ServerResponse, level?: string, filter?: string) => () => void;
   };
@@ -3039,11 +3040,18 @@ export class HttpAdapter extends MessagingAdapter {
       res.end(JSON.stringify({ error: 'Log viewer not configured' }));
       return;
     }
-    const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '200', 10) || 200, 5000);
+    // v681 — Caps deutlich erhöht: tägliche Logs haben oft 5000+ Zeilen, alte 500 zeigten
+    // nur die letzte Stunde. Neue Defaults: 5000 Zeilen, hartes Cap 100k.
+    const lines = Math.min(parseInt(url.searchParams.get('lines') ?? '5000', 10) || 5000, 100000);
     const level = url.searchParams.get('level') ?? undefined;
     const filter = url.searchParams.get('filter') ?? undefined;
     const fileIndex = url.searchParams.has('file') ? parseInt(url.searchParams.get('file')!, 10) || 0 : undefined;
-    const result = await this.logCallbacks.readAppLog(lines, level, filter, fileIndex);
+    // v681 — since=<unixMs>: nur Log-Einträge ab dieser Zeit. Erlaubt Time-Range im UI.
+    const since = url.searchParams.has('since') ? parseInt(url.searchParams.get('since')!, 10) || undefined : undefined;
+    // v681 — beforeLines=<n>: skippe die letzten N Zeilen, dann nimm `lines` Zeilen DAVOR
+    // (Pagination "ältere laden"). 0 = newest, >0 = ältere blättern.
+    const offsetFromTail = url.searchParams.has('offset') ? parseInt(url.searchParams.get('offset')!, 10) || 0 : 0;
+    const result = await this.logCallbacks.readAppLog(lines, level, filter, fileIndex, since, offsetFromTail);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
   }

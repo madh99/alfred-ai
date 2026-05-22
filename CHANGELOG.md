@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.681] - 2026-05-22
+
+### Fixed — Log-Viewer zeigte nur die aktuelle Stunde
+
+**Diagnose:** Heutige Log-Datei `alfred.2026-05-22.1.log` hat 5485 Zeilen, WebUI fragte hardcoded `lines: 500` an. Backend macht `parsed.slice(-500)` = nur letzte 500 Zeilen ≈ 1 Stunde sichtbar. Datei-Rotation funktionierte korrekt (täglich pro Date+Index), nur das Viewer-Limit war zu klein.
+
+**Fix:**
+- WebUI default `lines: 5000` (vorher 500). Page-Size-Dropdown 500/2k/5k/20k/100k.
+- Backend cap 5000 → **100.000 Zeilen** pro Request.
+- Neue Query-Params: `?since=<unixMs>` (Time-Cutoff) und `?offset=<n>` (Pagination — skip die N neuesten Zeilen, dann hole `lines` davor).
+- **Time-Range-Dropdown** im UI: Ganze Datei / Heute / Letzte 24h / Letzte 7 Tage.
+- **Pagination-Bar** (sichtbar wenn total > pageSize): „← Ältere 5000" / „Neuere 5000 →" / „Zum Aktuellen" + aktive Datei + Größe.
+- Status-Zeile rechts oben zeigt jetzt `X–Y von N` statt nur `N Eintr.`
+
+### Konsequenz
+- Zum Tag-Überblick: Dropdown auf "Heute" + Page-Size "20.000". Du siehst dann die ganze Tagessicht in einem Rutsch.
+- Zum Älteren scrollen: Pagination-Bar „← Ältere 5000".
+
 ## [0.19.0-multi-ha.680] - 2026-05-22
 
 ### Fixed — Project-Chat hängt ohne UI-Feedback (Root-Cause + UX)
