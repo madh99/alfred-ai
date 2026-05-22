@@ -900,6 +900,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/projects' && req.method === 'POST') {
       this.handleProjectsCreate(req, res).catch(err => this.safeError(res, err));
+    // v675 — Spezifische Routes MÜSSEN vor der generic /api/projects/:id Route stehen,
+    // sonst matched die generic Route und interpretiert z.B. "automation-templates" als Projekt-ID.
+    } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
+      this.handleAutomationTemplates(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'GET') {
       this.handleProjectsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+$/) && req.method === 'PATCH') {
@@ -936,8 +940,6 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsUpdateOpenItemRoadmap(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/implement-milestone$/) && req.method === 'POST') {
       this.handleProjectsImplementMilestone(req, res, url).catch(err => this.safeError(res, err));
-    } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
-      this.handleAutomationTemplates(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/automations$/) && req.method === 'GET') {
       this.handleAutomationsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/automations$/) && req.method === 'POST') {

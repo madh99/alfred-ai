@@ -5443,11 +5443,25 @@ export class Alfred {
           },
 
           // v663b — Automations CRUD + Templates + Run-Now
+          // v675 — Inline Object.values(AUTOMATION_TEMPLATES) + Diagnostik-Log um
+          // Bundler-Tree-Shaking-Edge-Cases sicher zu vermeiden + bei zukünftigen
+          // Leere-Templates-Reports sofort zu sehen ob's am Backend oder Frontend liegt.
           listAutomationTemplates: async () => {
             try {
               const mod = await import('./automation/automation-templates.js');
-              return mod.listAutomationTemplates();
-            } catch { return []; }
+              const templates = Object.values(mod.AUTOMATION_TEMPLATES);
+              // v675 — info-level (temporär) bis das WebUI-Modal stabil 22 Templates zeigt.
+              // Beim nächsten Empty-Report sehen wir sofort ob das Backend liefert
+              // oder ob das Frontend den Response falsch verarbeitet.
+              this.logger.info(
+                { count: templates.length, sample: templates[0]?.kind ?? null },
+                'listAutomationTemplates served',
+              );
+              return templates;
+            } catch (err) {
+              this.logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'listAutomationTemplates failed');
+              return [];
+            }
           },
           listAutomations: async (projectId: string) => {
             try {

@@ -5,6 +5,15 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.675] - 2026-05-22
+
+### Fixed
+- **Automation-Templates 404 (Route-Order-Bug):** Im HTTP-Adapter stand die generic Route `/api/projects/:id` (Zeile 903) VOR der spezifischen `/api/projects/automation-templates` (Zeile 939). Dadurch matched die generic Route zuerst, `:id = "automation-templates"` wurde an `handleProjectsGet` weitergereicht, das natürlich kein Projekt mit dieser ID fand → 404. Fix: spezifische Route nach `/api/projects` (GET/POST) eingefügt, vor der `[^/]+`-Match-Zeile. Klassischer Routing-Reihenfolge-Fehler.
+- **listAutomationTemplates-Callback (vorsorglich):** Statt `mod.listAutomationTemplates()` zu rufen (was esbuild's Module-Namespace-Getter durchläuft) greife ich direkt auf `mod.AUTOMATION_TEMPLATES` zu und mache `Object.values()` selbst — umgeht jede Bundler-Optimization.
+
+### Diagnostik
+- Temporärer info-Log `listAutomationTemplates served` mit count + sample-kind. Beim nächsten Empty-Modal sieht man im Server-Log sofort ob's am Backend oder Frontend liegt.
+
 ## [0.19.0-multi-ha.674] - 2026-05-22
 
 ### Added — Attachment Downloads, Image-Previews & Drag-and-Drop
