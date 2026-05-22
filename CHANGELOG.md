@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.680] - 2026-05-22
+
+### Fixed — Project-Chat hängt ohne UI-Feedback (Root-Cause + UX)
+
+**Root-Cause:** `NormalizedMessage.id` für API-Adapter war `api-${messageCounter}`. Der Counter ist instance-state, startet bei jedem Alfred-Restart bei 1. Der HA-Dedup-Store (`processed_messages`) speichert verarbeitete Message-Keys 24h lang. Heißt: jede erste WebUI-Message nach einem Restart bekommt `id=api-1`, ihre Key ist `api:api-1` — schon claimed → `markProcessed` returnt false → Pipeline returnt `{ text: '' }` ohne weiteren Log-Output → leere ALFRED-Bubble.
+
+**Live-Befund:** Im Pipeline-Log sieht man `Processing message` + `phase: confirmation_check` und danach NICHTS mehr — exakt das Symptom dieses Pfads.
+
+**Fix:** `id: \`api-${crypto.randomUUID()}\`` statt counter. Global eindeutig, restart-stabil.
+
+### UX-Verbesserungen ProjectChat
+- Beim Send sofortiges Status `⏳ Sende an Alfred…` (vorher: leere assistant-Bubble bis Backend-Status kommt — bei HA-Dedup-Fail kam GAR NICHT).
+- Animierte 3-Punkt-Pulse-Bubble (statt statisches `…`) während leerer assistant-Bubble streamed.
+- Status-Banner mit Indicator-Dot zusätzlich zu animate-pulse.
+- Wenn der Stream OHNE Antwort schließt: explizite Fehlermeldung statt leerer Bubble (`Backend hat keine Antwort gesendet…`) + Bubble wird entfernt.
+
 ## [0.19.0-multi-ha.679] - 2026-05-22
 
 ### Fixed

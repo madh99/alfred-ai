@@ -93,12 +93,26 @@ export function ProjectChat({ projectId, projectName }: Props) {
       { id: asstMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString() },
     ]);
     setStreaming(true);
-    setStatus(null);
+    // v680 — Sofort einen sichtbaren Status setzen damit der User Feedback hat (selbst
+    // bevor das Backend einen status-Event sendet — bei HA-Dedup-Fail sehen wir sonst nichts).
+    setStatus('⏳ Sende an Alfred…');
+    let gotAnyResponse = false;
     cancelRef.current = client.streamProjectMessage(projectId, text, userId, {
       onStatus: (t) => setStatus(t),
-      onResponse: (t) => setMessages(prev => prev.map(m => m.id === asstMsgId ? { ...m, content: m.content + t } : m)),
+      onResponse: (t) => {
+        gotAnyResponse = true;
+        setMessages(prev => prev.map(m => m.id === asstMsgId ? { ...m, content: m.content + t } : m));
+      },
       onAttachment: () => { /* not needed in project-chat */ },
-      onDone: () => { setStreaming(false); setStatus(null); },
+      onDone: () => {
+        setStreaming(false);
+        setStatus(null);
+        // v680 — Wenn der Stream OHNE Antwort schließt: explizit melden statt leerer Bubble
+        if (!gotAnyResponse) {
+          setError('Backend hat keine Antwort gesendet. Möglicherweise wurde die Nachricht von einem anderen Cluster-Node verarbeitet oder ein Pipeline-Fehler ist aufgetreten. Schau ins Server-Log für pipeline.phase-Einträge.');
+          setMessages(prev => prev.filter(m => m.id !== asstMsgId)); // leere ALFRED-Bubble entfernen
+        }
+      },
       onError: (e) => { setError(e); setStreaming(false); setStatus(null); },
     });
   }
@@ -161,10 +175,24 @@ export function ProjectChat({ projectId, projectName }: Props) {
             <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-1">
               {m.role === 'user' ? 'du' : m.role === 'assistant' ? 'alfred' : m.role}
             </span>
-            <span className="whitespace-pre-wrap">{m.content || (streaming && m.role === 'assistant' ? '…' : '')}</span>
+            {/* v680 — Animierte Pulse-Bubble während leere ALFRED-Antwort streamed */}
+            {m.content
+              ? <span className="whitespace-pre-wrap">{m.content}</span>
+              : (streaming && m.role === 'assistant'
+                ? <span className="inline-flex items-center gap-1 text-gray-500">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '150ms' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '300ms' }} />
+                  </span>
+                : null)}
           </div>
         ))}
-        {status && <div className="text-[10px] text-amber-400 italic animate-pulse">{status}</div>}
+        {status && (
+          <div className="text-[10px] text-amber-400 italic animate-pulse flex items-center gap-1.5">
+            <span className="w-1 h-1 rounded-full bg-amber-400 inline-block" />
+            <span>{status}</span>
+          </div>
+        )}
       </div>
 
       {error && (

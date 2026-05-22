@@ -2889,9 +2889,13 @@ export class HttpAdapter extends MessagingAdapter {
         });
 
         // Emit normalized message for processing
+        // v680 — UUID statt Counter: Counter startet bei jedem Alfred-Restart bei 1.
+        // `api-1` ist dann im processed_messages-Cluster-Store als bereits-verarbeitet
+        // markiert → HA-Dedup verwirft die Message → Pipeline returnt leer (kein Feedback im UI).
+        // UUID macht jede Message global eindeutig über Restarts hinweg.
         this.messageCounter++;
         const message: NormalizedMessage = {
-          id: `api-${this.messageCounter}`,
+          id: `api-${crypto.randomUUID()}`,
           platform: 'api',
           chatId,
           chatType: 'dm',
