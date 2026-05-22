@@ -5,6 +5,11 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.679] - 2026-05-22
+
+### Fixed
+- **„Letzte Deploys" leer nach erfolgreichem Deploy:** Der Deploy-Skill hat die Memory-Schreibung in einem stillen `try-catch` (`/* best-effort */`), das alle Fehler schluckt. War der Memory-Save aus irgendeinem Grund nicht erfolgreich (z. B. ownerUserId-Mismatch), gab's keine Spur. v679 verlegt die Memory-Schreibung in `triggerDeploy` (alfred.ts) — wir haben dort die User-ID garantiert + emittieren `Deploy memory written` als info-Log bei Erfolg und `Deploy memory write failed` mit Stack bei Fehler. Bei Success category=`deployment`, bei Failure `deploy` (UI-Failure-Indicator). Selber Key wie der Skill-interne Save, eventuelle Duplicate werden vom UNIQUE-Constraint auf `memories(user_id, key)` zu einem UPSERT.
+
 ## [0.19.0-multi-ha.678] - 2026-05-22
 
 ### Fixed

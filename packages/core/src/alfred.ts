@@ -5708,22 +5708,38 @@ export class Alfred {
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
               const result = await this.skillSandbox.execute(skill, params, ctx);
 
-              // v677 — Auch bei Failure eine deploy_*-Memory speichern damit „Letzte Deploys"
-              // den aktuellen Status zeigt (nicht nur Erfolge). Der Deploy-Skill schreibt
-              // bei Erfolg category='deployment' am SELBEN Key — überschreibt also automatisch
-              // die failure-Memory beim nächsten erfolgreichen Run.
-              if (!result.success && this.memoryRepo) {
+              // v679 — Backup-Memory IMMER hier schreiben (Skill-internes try-catch
+               // schluckt Fehler silent, wir wissen nicht ob Memory ankommt). Hier haben
+               // wir uid garantiert + Logging bei Fehler. Bei Success category='deployment'
+               // damit lastDeploys-Parser den als Erfolg erkennt; bei Failure 'deploy' für
+               // den UI-Failure-Indicator.
+              if (this.memoryRepo) {
                 try {
                   const safeHost = host.replace(/[^a-zA-Z0-9]/g, '_');
-                  const failKey = `deploy_${projectSlug}_${safeHost}`;
-                  const errSnippet = (result.error ?? 'unknown').split('\n')[0].slice(0, 300);
+                  const memKey = `deploy_${projectSlug}_${safeHost}`;
                   const now = new Date().toISOString().slice(0, 10);
-                  await this.memoryRepo.saveWithMetadata(
-                    uid, failKey,
-                    `Deploy FAILED → ${host} (user=${input.user ?? 'root'}, runtime=${input.runtime ?? '?'}, pm=${input.process_manager ?? '?'}${input.app_port ? `, port=${input.app_port}` : ''}, am=${now}): ${errSnippet}`,
-                    'deploy', 'fact', 0.95, 'auto',
-                  );
-                } catch (memErr) { this.logger.debug({ memErr }, 'Failed-Deploy memory write failed'); }
+                  if (result.success) {
+                    const parts = [
+                      `Deployed ${projectSlug} → ${host} (user=${input.user ?? 'root'}`,
+                      `runtime=${input.runtime ?? '?'}`,
+                      `pm=${input.process_manager ?? '?'}`,
+                      ...(input.app_port ? [`port=${input.app_port}`] : []),
+                      `verified=ok`,
+                      `am=${now})`,
+                    ];
+                    await this.memoryRepo.saveWithMetadata(uid, memKey, parts.join(', '), 'deployment', 'fact', 0.95, 'auto');
+                  } else {
+                    const errSnippet = (result.error ?? 'unknown').split('\n')[0].slice(0, 300);
+                    await this.memoryRepo.saveWithMetadata(
+                      uid, memKey,
+                      `Deploy FAILED → ${host} (user=${input.user ?? 'root'}, runtime=${input.runtime ?? '?'}, pm=${input.process_manager ?? '?'}${input.app_port ? `, port=${input.app_port}` : ''}, am=${now}): ${errSnippet}`,
+                      'deploy', 'fact', 0.95, 'auto',
+                    );
+                  }
+                  this.logger.info({ memKey, success: result.success }, 'Deploy memory written');
+                } catch (memErr) {
+                  this.logger.warn({ err: memErr instanceof Error ? memErr.message : String(memErr) }, 'Deploy memory write failed');
+                }
               }
 
               // v677 — Bei Deploy-Fehler optional Telegram-DM an den Owner senden.
