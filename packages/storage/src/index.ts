@@ -22,7 +22,9 @@ export { BackgroundTaskRepository } from './repositories/background-task-reposit
 export { ScheduledActionRepository } from './repositories/scheduled-action-repository.js';
 export { DocumentRepository } from './repositories/document-repository.js';
 export { TodoRepository } from './repositories/todo-repository.js';
-export type { TodoEntry } from './repositories/todo-repository.js';
+export type { TodoEntry, TodoNote } from './repositories/todo-repository.js';
+export { AttachmentRepository } from './repositories/attachment-repository.js';
+export type { AttachmentEntry, AttachmentEntityType, AttachmentSourceKind } from './repositories/attachment-repository.js';
 export { WatchRepository } from './repositories/watch-repository.js';
 export { ConfirmationRepository } from './repositories/confirmation-repository.js';
 export { SummaryRepository } from './repositories/summary-repository.js';

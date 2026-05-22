@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.673] - 2026-05-22
+
+### Added — Generisches Attachment-System für Todos + Notes
+
+Todos und Notes können jetzt Anhänge aus 4 Quellen referenzieren:
+
+- **📄 Documents** — RAG-indizierte Dokumente aus der `documents`-Tabelle (Such-Picker mit Filename-Filter)
+- **📁 Frühere Uploads** — Files die bereits im FileStore (lokal / NFS / S3) gespeichert sind
+- **🔗 URLs** — externe Links (http/https)
+- **⬆ Direct-Upload** — Datei direkt im Detail-View per File-Picker hochladen (Base64-Body, max 25 MB), landet im FileStore und steht künftig auch als „Frühere Uploads" zur Verfügung
+
+**Migration v86 (SQLite) + v89 (PG):** generische `attachments`-Tabelle mit `entity_type`/`entity_id`-Pattern — ist später ohne Schema-Change auch für Open-Items, Reminders etc. nutzbar.
+
+**Backend:**
+- Neues `AttachmentRepository` (add / listForEntity / delete / deleteForEntity).
+- Neue HTTP-Endpoints:
+  - `GET /api/documents` (User-Documents für Picker)
+  - `GET /api/files` (FileStore-List)
+  - `POST /api/uploads` (Base64-Upload, 25 MB Limit)
+  - `GET|POST /api/{todos|notes}/:id/attachments`
+  - `DELETE /api/attachments/:id`
+- `alfred.ts` wired `setAttachmentsCallbacks` mit Anti-Tampering (Entity muss User gehören) und URL-Validierung (nur http/https).
+
+**WebUI:**
+- Neue Komponente `AttachmentSection` (wiederverwendbar). In TodosPage Detail + NotesPage Detail integriert.
+- 4-Tab-Modal mit Auswahl pro Quelle, Drag-and-Drop für Upload nicht enthalten (File-Picker reicht).
+
+**Limitations (Phase 1):**
+- Kein dedizierter Download-Endpoint für `file`/`upload`-Attachments — die UI verlinkt nicht direkt zum Binary. Folgt als v674 falls gewünscht.
+- Keine Volltextsuche in Attachments — nur Filename-Filter im Picker.
+
 ## [0.19.0-multi-ha.672] - 2026-05-22
 
 ### Added — Notes ↔ Todos M:N-Verknüpfung

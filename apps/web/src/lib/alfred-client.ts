@@ -474,6 +474,47 @@ export class AlfredClient {
     return Array.isArray(data.todos) ? data.todos : [];
   }
 
+  // ── v673 — Attachments (Documents, Files, URLs, Uploads) ──
+  async fetchAttachments(entityType: 'todo' | 'note', entityId: string): Promise<AttachmentItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/${entityType}s/${entityId}/attachments`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.attachments) ? data.attachments : [];
+  }
+  async addAttachment(entityType: 'todo' | 'note', entityId: string, input: { sourceKind: 'document' | 'file' | 'url' | 'upload'; sourceRef: string; label?: string; mimeType?: string; sizeBytes?: number }): Promise<AttachmentItem | null> {
+    const res = await fetch(`${this.baseUrl}/api/${entityType}s/${entityId}/attachments`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.attachment ?? null;
+  }
+  async deleteAttachment(id: string): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/attachments/${id}`, { method: 'DELETE', headers: this.authHeaders });
+    return res.ok;
+  }
+  async fetchAvailableDocuments(): Promise<Array<{ id: string; filename: string; mimeType?: string; sizeBytes?: number; createdAt: string }>> {
+    const res = await fetch(`${this.baseUrl}/api/documents`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.documents) ? data.documents : [];
+  }
+  async fetchStoredFiles(): Promise<Array<{ key: string; fileName: string; size: number; createdAt: string }>> {
+    const res = await fetch(`${this.baseUrl}/api/files`, { headers: this.authHeaders });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data.files) ? data.files : [];
+  }
+  async uploadFileBase64(filename: string, mimeType: string, base64Data: string): Promise<{ key: string; fileName: string; size: number; mimeType: string } | null> {
+    const res = await fetch(`${this.baseUrl}/api/uploads`, {
+      method: 'POST', headers: this.jsonHeaders,
+      body: JSON.stringify({ filename, mimeType, base64Data }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.file ?? null;
+  }
+
   // ── v661 — Notes API ──
   async fetchNotes(opts?: { query?: string; limit?: number }): Promise<NoteItem[]> {
     const params = new URLSearchParams();
@@ -1615,6 +1656,20 @@ export interface TodoNote {
   todoId: string;
   userId: string;
   content: string;
+  createdAt: string;
+}
+
+// v673 — Attachment an Todo oder Note (Document / FileStore-File / URL / Upload)
+export interface AttachmentItem {
+  id: string;
+  userId: string;
+  entityType: 'todo' | 'note';
+  entityId: string;
+  sourceKind: 'document' | 'file' | 'url' | 'upload';
+  sourceRef: string;
+  label?: string;
+  mimeType?: string;
+  sizeBytes?: number;
   createdAt: string;
 }
 

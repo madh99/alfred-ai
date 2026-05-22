@@ -178,6 +178,10 @@ export class Alfred {
   /** v661 — Todos + Notes für WebUI-API */
   private todoRepo?: TodoRepository;
   private noteRepo?: NoteRepository;
+  // v673 — Attachments
+  private attachmentRepo?: import('@alfred/storage').AttachmentRepository;
+  private documentRepoRef?: DocumentRepository;
+  private fileStoreRef?: import('@alfred/storage').FileStore;
   /** v663b — Project Automations */
   private projectAutomationsRepo?: import('@alfred/storage').ProjectAutomationsRepository;
   private automationEngine?: import('./automation/automation-engine.js').AutomationEngine;
@@ -505,6 +509,10 @@ export class Alfred {
 
     // 4a. Document intelligence
     const documentRepo = new DocumentRepository(adapter);
+    this.documentRepoRef = documentRepo;
+    // v673 — AttachmentRepository für Todos + Notes (Lazy-Import um Bundle-Reihenfolge zu schonen)
+    const { AttachmentRepository } = await import('@alfred/storage');
+    this.attachmentRepo = new AttachmentRepository(adapter);
     const documentProcessor = new DocumentProcessor(documentRepo, embeddingService, this.logger.child({ component: 'documents' }));
 
     // 4a-ocr. Wire up Mistral OCR if a Mistral LLM provider is configured
@@ -3301,6 +3309,7 @@ export class Alfred {
     if (this.config.fileStore) {
       const { createFileStore } = await import('@alfred/storage');
       fileStore = createFileStore(this.config.fileStore);
+      this.fileStoreRef = fileStore; // v673 — auch im Adapter-Wiring nutzbar
       this.logger.info({ backend: this.config.fileStore.backend }, 'File store initialized');
     }
     // v604 L8 — inject file-store into project-agent-runner if both are present.
@@ -5143,6 +5152,83 @@ export class Alfred {
           },
         });
         this.logger.info('Notes API registered');
+      }
+
+      // v673 — Attachments API (Documents/Files/URLs/Uploads für Todos + Notes)
+      if (apiAdapter && 'setAttachmentsCallbacks' in apiAdapter) {
+        const resolveOwnerAtt = async (): Promise<string> => {
+          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        };
+        (apiAdapter as any).setAttachmentsCallbacks({
+          list: async (entityType: 'todo' | 'note', entityId: string) => {
+            try {
+              if (!this.attachmentRepo) return [];
+              return await this.attachmentRepo.listForEntity(entityType, entityId);
+            } catch (err) { this.logger.warn({ err }, 'Attachments list failed'); return []; }
+          },
+          add: async (input: { entityType: 'todo' | 'note'; entityId: string; sourceKind: string; sourceRef: string; label?: string; mimeType?: string; sizeBytes?: number }) => {
+            try {
+              if (!this.attachmentRepo) return null;
+              const uid = await resolveOwnerAtt();
+              // Anti-Tampering: Entity muss dem User gehören
+              if (input.entityType === 'todo') {
+                const t = await this.todoRepo?.getByIdForUser(input.entityId, uid);
+                if (!t) return null;
+              } else if (input.entityType === 'note') {
+                const n = await this.noteRepo?.getByIdForUser(input.entityId, uid);
+                if (!n) return null;
+              }
+              // URL-Quellen: nur http(s)
+              if (input.sourceKind === 'url' && !/^https?:\/\//i.test(input.sourceRef)) {
+                return null;
+              }
+              return await this.attachmentRepo.add({
+                userId: uid,
+                entityType: input.entityType,
+                entityId: input.entityId,
+                sourceKind: input.sourceKind as any,
+                sourceRef: input.sourceRef,
+                label: input.label, mimeType: input.mimeType, sizeBytes: input.sizeBytes,
+              });
+            } catch (err) { this.logger.warn({ err }, 'Attachment add failed'); return null; }
+          },
+          delete: async (id: string) => {
+            try {
+              if (!this.attachmentRepo) return false;
+              const uid = await resolveOwnerAtt();
+              return await this.attachmentRepo.delete(id, uid);
+            } catch (err) { this.logger.warn({ err }, 'Attachment delete failed'); return false; }
+          },
+          listDocuments: async () => {
+            try {
+              if (!this.documentRepoRef) return [];
+              const uid = await resolveOwnerAtt();
+              return await this.documentRepoRef.listByUser(uid);
+            } catch (err) { this.logger.warn({ err }, 'Documents list failed'); return []; }
+          },
+          listFiles: async () => {
+            try {
+              if (!this.fileStoreRef) return [];
+              const uid = await resolveOwnerAtt();
+              return await this.fileStoreRef.list(uid);
+            } catch (err) { this.logger.warn({ err }, 'Files list failed'); return []; }
+          },
+          uploadFile: async (input: { filename: string; mimeType: string; base64Data: string }) => {
+            try {
+              if (!this.fileStoreRef) return null;
+              const uid = await resolveOwnerAtt();
+              // Base64 → Buffer + Size-Limit (25 MB)
+              const buf = Buffer.from(input.base64Data, 'base64');
+              if (buf.length > 25 * 1024 * 1024) {
+                this.logger.warn({ size: buf.length, filename: input.filename }, 'Upload rejected: size > 25MB');
+                return null;
+              }
+              const saved = await this.fileStoreRef.save(uid, input.filename, buf);
+              return { ...saved, mimeType: input.mimeType };
+            } catch (err) { this.logger.warn({ err }, 'Upload failed'); return null; }
+          },
+        });
+        this.logger.info('Attachments API registered');
       }
 
       // Wire Projects API on HTTP adapter

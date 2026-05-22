@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import type { TodoItem, TodoNote, Project, NoteItem } from '@/lib/alfred-client';
+import { AttachmentSection } from '@/components/attachments/AttachmentSection';
 
 type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -549,6 +550,9 @@ export function TodosPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* v673 — Anhänge (Documents/Files/URLs/Uploads) */}
+                  <AttachmentSection entityType="todo" entityId={t.id} />
 
                   {/* v672 — Verknüpfte User-Notes (M:N) */}
                   <div className="space-y-2">

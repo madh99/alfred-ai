@@ -1951,4 +1951,26 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_todo_note_links_note ON todo_note_links(note_id)`);
     },
   },
+  {
+    version: 86,
+    description: 'v673 — generische attachments-Tabelle für Todos + Notes (Documents, Files, URLs, Uploads)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS attachments (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT NOT NULL,
+          source_kind TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          label TEXT,
+          mime_type TEXT,
+          size_bytes INTEGER,
+          created_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_attachments_entity ON attachments(entity_type, entity_id, created_at DESC)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC)`);
+    },
+  },
 ];

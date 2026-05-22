@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import type { NoteItem, TodoItem } from '@/lib/alfred-client';
+import { AttachmentSection } from '@/components/attachments/AttachmentSection';
 
 function formatDateTime(iso?: string): string {
   if (!iso) return '—';
@@ -180,6 +181,11 @@ export function NotesPage() {
             <div className="text-sm text-gray-300 whitespace-pre-wrap font-mono bg-[#0d0d0d] border border-[#1f1f1f] rounded p-3">
               {selected.content}
             </div>
+            {/* v673 — Anhänge */}
+            <div className="mt-4">
+              <AttachmentSection entityType="note" entityId={selected.id} />
+            </div>
+
             {/* v672 — verknüpfte Todos */}
             <div className="mt-4">
               <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-1.5">

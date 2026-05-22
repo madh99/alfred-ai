@@ -365,6 +365,19 @@ export class HttpAdapter extends MessagingAdapter {
   setTodosCallbacks(cbs: typeof HttpAdapter.prototype.todosCallbacks): void {
     this.todosCallbacks = cbs;
   }
+  // v673 — Attachments (Documents/Files/URLs/Uploads für Todos + Notes)
+  private attachmentsCallbacks?: {
+    list: (entityType: 'todo' | 'note', entityId: string) => Promise<any[]>;
+    add: (input: { entityType: 'todo' | 'note'; entityId: string; sourceKind: string; sourceRef: string; label?: string; mimeType?: string; sizeBytes?: number }) => Promise<any | null>;
+    delete: (id: string) => Promise<boolean>;
+    listDocuments?: () => Promise<any[]>;
+    listFiles?: () => Promise<any[]>;
+    uploadFile?: (input: { filename: string; mimeType: string; base64Data: string }) => Promise<any | null>;
+  };
+  setAttachmentsCallbacks(cbs: typeof HttpAdapter.prototype.attachmentsCallbacks): void {
+    this.attachmentsCallbacks = cbs;
+  }
+
   setNotesCallbacks(cbs: typeof HttpAdapter.prototype.notesCallbacks): void {
     this.notesCallbacks = cbs;
   }
@@ -833,6 +846,19 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleTodoNoteLinkRemove(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/notes\/[^/]+\/linked-todos$/) && req.method === 'GET') {
       this.handleNoteLinkedTodos(req, res, url).catch(err => this.safeError(res, err));
+    // v673 — Attachments (Documents, Files, URLs, Uploads)
+    } else if (url.pathname === '/api/documents' && req.method === 'GET') {
+      this.handleDocumentsList(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/files' && req.method === 'GET') {
+      this.handleStoredFilesList(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/uploads' && req.method === 'POST') {
+      this.handleBase64Upload(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/(todos|notes)\/[^/]+\/attachments$/) && req.method === 'GET') {
+      this.handleAttachmentsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/(todos|notes)\/[^/]+\/attachments$/) && req.method === 'POST') {
+      this.handleAttachmentsAdd(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/attachments\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleAttachmentDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'GET') {
       this.handleNotesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/notes' && req.method === 'POST') {
@@ -2063,6 +2089,71 @@ export class HttpAdapter extends MessagingAdapter {
     const todos = await this.todosCallbacks.listLinkedTodos(noteId);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ todos }));
+  }
+
+  // v673 — Attachment-Handler (Documents, FileStore, URLs, Base64-Upload)
+  private async handleDocumentsList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks?.listDocuments) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const documents = await this.attachmentsCallbacks.listDocuments();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ documents }));
+  }
+  private async handleStoredFilesList(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks?.listFiles) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const files = await this.attachmentsCallbacks.listFiles();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ files }));
+  }
+  private async handleBase64Upload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks?.uploadFile) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured (FileStore disabled)' })); return; }
+    const body = await this.readBody(req);
+    let data: { filename?: string; mimeType?: string; base64Data?: string };
+    try { data = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!data.filename || !data.base64Data) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'filename + base64Data erforderlich' })); return; }
+    const result = await this.attachmentsCallbacks.uploadFile({
+      filename: data.filename, mimeType: data.mimeType ?? 'application/octet-stream', base64Data: data.base64Data,
+    });
+    res.writeHead(result ? 201 : 500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result ? { file: result } : { error: 'upload failed' }));
+  }
+  private async handleAttachmentsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const entityType = parts[2] === 'todos' ? 'todo' : 'note';
+    const entityId = parts[3];
+    const attachments = await this.attachmentsCallbacks.list(entityType, entityId);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ attachments }));
+  }
+  private async handleAttachmentsAdd(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const entityType = parts[2] === 'todos' ? 'todo' : 'note';
+    const entityId = parts[3];
+    const body = await this.readBody(req);
+    let data: { sourceKind?: string; sourceRef?: string; label?: string; mimeType?: string; sizeBytes?: number };
+    try { data = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!data.sourceKind || !data.sourceRef) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'sourceKind + sourceRef erforderlich' })); return; }
+    if (!['document', 'file', 'url', 'upload'].includes(data.sourceKind)) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'invalid sourceKind' })); return; }
+    const att = await this.attachmentsCallbacks.add({
+      entityType, entityId, sourceKind: data.sourceKind, sourceRef: data.sourceRef,
+      label: data.label, mimeType: data.mimeType, sizeBytes: data.sizeBytes,
+    });
+    res.writeHead(att ? 201 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(att ? { attachment: att } : { error: 'entity not found' }));
+  }
+  private async handleAttachmentDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const id = url.pathname.split('/').pop()!;
+    const ok = await this.attachmentsCallbacks.delete(id);
+    res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: ok }));
   }
 
   private async handleNotesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
