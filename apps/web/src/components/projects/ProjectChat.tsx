@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { ProjectOpenItem, NoteItem } from '@/lib/alfred-client';
+import type { ProjectOpenItem, NoteItem, ProjectAgentSession } from '@/lib/alfred-client';
+import { SessionLivePane } from '@/components/project-agents/SessionLivePane';
 
 interface Msg { id: string; role: string; content: string; createdAt: string; }
 
@@ -54,6 +55,11 @@ export function ProjectChat({ projectId, projectName }: Props) {
   const [mentionStart, setMentionStart] = useState(-1);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [allNotes, setAllNotes] = useState<NoteItem[]>([]);
+  // v690 — Expand-Mode + Side-Panel
+  const [expandedFull, setExpandedFull] = useState(false);
+  const [runningSessions, setRunningSessions] = useState<ProjectAgentSession[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<ProjectAgentSession | null>(null);
 
   const userId = user?.userId ?? 'web-user';
 
@@ -96,6 +102,46 @@ export function ProjectChat({ projectId, projectName }: Props) {
     })();
     return () => { cancelled = true; };
   }, [expanded, client, projectId]);
+
+  // v690 — Im Expand-Mode laufende Sessions polling (alle 5s)
+  useEffect(() => {
+    if (!expandedFull || !client) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const all = await client.fetchProjectAgents();
+        if (cancelled) return;
+        const running = all.filter(s => s.currentPhase !== 'done' && s.currentPhase !== 'failed' && s.currentPhase !== 'aborted');
+        setRunningSessions(running);
+      } catch { /* non-critical */ }
+    };
+    load();
+    const iv = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [expandedFull, client]);
+
+  // v690 — Wenn selectedTaskId gesetzt → die Session-Details laden
+  useEffect(() => {
+    if (!selectedTaskId || !client) { setSelectedSession(null); return; }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const s = await client.fetchProjectAgent(selectedTaskId);
+        if (!cancelled) setSelectedSession(s);
+      } catch { /* non-critical */ }
+    };
+    load();
+    const iv = setInterval(load, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [selectedTaskId, client]);
+
+  // v690 — Esc schließt den Expand-Mode
+  useEffect(() => {
+    if (!expandedFull) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpandedFull(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandedFull]);
 
   // v678 — Beim Auto-Open (Sidebar-Navigation) zum Chat-Element scrollen damit
   // der User es sofort sieht (sonst ist es weit unten in der Projects-Detail-View)
@@ -245,6 +291,208 @@ export function ProjectChat({ projectId, projectName }: Props) {
     );
   }
 
+  // v690 — Wiederverwendbarer Chat-Body (Messages + Toolbar + Input).
+  // Wird vom Default-Render und vom Expand-Mode aufgerufen.
+  function renderChatBody(opts?: { fillHeight?: boolean }): React.ReactElement {
+    const fill = !!opts?.fillHeight;
+    return (
+      <>
+        <div
+          ref={scrollRef}
+          className={fill
+            ? "bg-black/30 border border-[#2a2a2a] rounded p-2 flex-1 overflow-y-auto text-xs"
+            : "bg-black/30 border border-[#2a2a2a] rounded p-2 h-72 overflow-y-auto text-xs"}
+        >
+          {loadingHistory && messages.length === 0 && <div className="text-gray-600 italic">Lade History…</div>}
+          {!loadingHistory && messages.length === 0 && (
+            <div className="text-gray-600 italic">
+              <p>Frage Alfred zu diesem Projekt:</p>
+              <span className="text-gray-400">• &quot;baue Feature X ein&quot;</span><br />
+              <span className="text-gray-400">• &quot;deploy auf 192.168.1.96 als docker-compose user ubuntu&quot;</span><br />
+              <span className="text-gray-400">• &quot;was ist der aktuelle Build-Stand?&quot;</span>
+            </div>
+          )}
+          {messages.map(m => (
+            <div key={m.id} className={`mb-2 ${m.role === 'user' ? 'text-blue-200' : 'text-gray-200'}`}>
+              <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-1">
+                {m.role === 'user' ? 'du' : m.role === 'assistant' ? 'alfred' : m.role}
+              </span>
+              {m.content
+                ? <span className="whitespace-pre-wrap">{m.content}</span>
+                : (streaming && m.role === 'assistant'
+                  ? <span className="inline-flex items-center gap-1 text-gray-500">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  : null)}
+            </div>
+          ))}
+          {status && (
+            <div className="text-[10px] text-amber-400 italic animate-pulse flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-amber-400 inline-block" />
+              <span>{status}</span>
+            </div>
+          )}
+        </div>
+
+        {error && (
+          <div className="text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1 mt-1">{error}</div>
+        )}
+
+        {/* Toolbar + Chips */}
+        <div className="mt-2" onDragOver={(e) => { e.preventDefault(); }} onDrop={handleDrop}>
+          <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+            <button onClick={() => setShowOpenItemPicker(true)} disabled={streaming} className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded hover:bg-amber-500/20 disabled:opacity-40" title="Open-Item">📌 Open-Item</button>
+            <button onClick={() => setShowAttachmentPicker(true)} disabled={streaming} className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded hover:bg-blue-500/20 disabled:opacity-40" title="Anhang">📎 Anhang</button>
+            <span className="text-[10px] text-gray-600">Tipp: <code>@</code> im Text, Drag&amp;Drop für Files</span>
+            {contextRefs.map((r, i) => (
+              <span key={`${r.kind}-${r.refId}-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-[#0d0d0d] border border-blue-500/40 text-blue-200 rounded">
+                <span>{r.kind === 'open_item' ? '📌' : r.kind === 'note' ? '🔖' : r.kind === 'url' ? '🔗' : r.kind === 'document' ? '📄' : '📎'}</span>
+                <span className="truncate max-w-[180px]">{r.label}</span>
+                <button onClick={() => removeRef(i)} className="text-gray-500 hover:text-red-400">✕</button>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Input + @-Mention */}
+        <div className="flex gap-1.5 mt-1 relative">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={(e) => onInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (mentionOpen && e.key === 'Escape') { setMentionOpen(false); return; }
+              if (!mentionOpen && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+            }}
+            placeholder="Nachricht an Alfred zum Projekt … (Enter = senden, Shift+Enter = neue Zeile, @ = Referenz)"
+            rows={2}
+            disabled={streaming}
+            className="flex-1 bg-[#1a1a1a] text-gray-200 border border-[#2a2a2a] rounded px-2 py-1 text-xs resize-none focus:outline-none focus:border-blue-500 placeholder-gray-500"
+          />
+          {mentionOpen && (() => {
+            const q = mentionQuery.toLowerCase();
+            const itemMatches = openItems.filter(it => it.title.toLowerCase().includes(q)).slice(0, 6);
+            const noteMatches = allNotes.filter(n => n.title.toLowerCase().includes(q)).slice(0, 4);
+            if (itemMatches.length + noteMatches.length === 0) return null;
+            return (
+              <div className="absolute bottom-full left-0 mb-1 w-[400px] max-h-[260px] overflow-y-auto bg-[#111] border border-blue-500/40 rounded shadow-lg z-10">
+                {itemMatches.length > 0 && <div className="px-2 py-1 text-[9px] uppercase text-gray-500 border-b border-[#1f1f1f]">📌 Open-Items</div>}
+                {itemMatches.map(it => (
+                  <button key={it.id} onClick={() => applyMention(it.title.slice(0, 30), { kind: 'open_item', refId: it.id, label: it.title.slice(0, 50) })} className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate">📌 {it.title}</button>
+                ))}
+                {noteMatches.length > 0 && <div className="px-2 py-1 text-[9px] uppercase text-gray-500 border-b border-[#1f1f1f]">🔖 Notes</div>}
+                {noteMatches.map(n => (
+                  <button key={n.id} onClick={() => applyMention(n.title.slice(0, 30), { kind: 'note', refId: n.id, label: n.title.slice(0, 50) })} className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate">🔖 {n.title}</button>
+                ))}
+              </div>
+            );
+          })()}
+          {streaming ? (
+            <button onClick={cancel} className="px-3 py-1 bg-red-500/15 border border-red-500/40 text-red-300 rounded text-xs hover:bg-red-500/25">Stop</button>
+          ) : (
+            <button onClick={send} disabled={!input.trim()} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded text-xs">Senden</button>
+          )}
+        </div>
+      </>
+    );
+  }
+
+  // v690 — Wenn expandedFull: render als Overlay mit Chat + Side-Panel
+  if (expandedFull) {
+    return (
+      <div className="fixed inset-2 z-50 bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg shadow-2xl flex flex-col" role="dialog" aria-modal="true">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-[#1f1f1f]">
+          <div className="flex items-center gap-2 text-sm font-semibold text-gray-200">
+            <span>💬</span>
+            <span>Projekt-Chat — {projectName}</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={loadHistory}
+              disabled={loadingHistory}
+              title="History neu laden"
+              className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]"
+            >↻</button>
+            <button
+              onClick={() => setExpandedFull(false)}
+              title="Verkleinern (Esc)"
+              className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]"
+            >🗗 Verkleinern</button>
+            <button
+              onClick={() => { setExpandedFull(false); setExpanded(false); }}
+              title="Schließen"
+              className="text-gray-500 hover:text-red-400 text-lg px-1"
+            >✕</button>
+          </div>
+        </div>
+
+        {/* Body: 2 Spalten */}
+        <div className="flex-1 grid grid-cols-[1fr_420px] gap-0 overflow-hidden">
+          {/* Linke Spalte: Chat */}
+          <div className="flex flex-col p-3 overflow-hidden border-r border-[#1f1f1f]">
+            {renderChatBody({ fillHeight: true })}
+          </div>
+
+          {/* Rechte Spalte: Running Sessions + Live-View */}
+          <div className="flex flex-col overflow-hidden">
+            <div className="px-3 py-2 border-b border-[#1f1f1f]">
+              <div className="text-xs font-semibold text-emerald-300 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                🤖 Running ({runningSessions.length})
+              </div>
+            </div>
+            <div className="overflow-y-auto px-3 py-2 max-h-[40%] border-b border-[#1f1f1f]">
+              {runningSessions.length === 0 && (
+                <div className="text-[11px] text-gray-600 italic">Keine laufenden Sessions.</div>
+              )}
+              <div className="space-y-1">
+                {runningSessions.map(s => {
+                  const folder = s.cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? '?';
+                  const active = s.taskId === selectedTaskId;
+                  return (
+                    <button
+                      key={s.taskId}
+                      onClick={() => setSelectedTaskId(s.taskId)}
+                      className={`w-full text-left rounded px-2 py-1.5 text-[11px] transition-colors ${
+                        active
+                          ? 'bg-emerald-500/20 border border-emerald-500/60'
+                          : 'bg-[#0d0d0d] border border-[#1f1f1f] hover:border-emerald-500/40'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-[9px] uppercase px-1 py-px rounded font-mono ${active ? 'bg-emerald-500/30 text-emerald-200' : 'bg-emerald-500/15 text-emerald-300'}`}>{s.currentPhase}</span>
+                        <span className="text-gray-200 flex-1 truncate">{s.goal.slice(0, 60)}</span>
+                      </div>
+                      <div className="text-[9px] text-gray-500 mt-0.5">{folder} · iter {s.currentIteration} · {s.totalFilesChanged} files</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {selectedSession ? (
+                <SessionLivePane
+                  session={selectedSession}
+                  onChanged={() => { /* triggert kein Reload — polling läuft */ }}
+                  compact
+                />
+              ) : (
+                <div className="text-[11px] text-gray-600 italic h-full flex items-center justify-center text-center px-4">
+                  {runningSessions.length > 0
+                    ? 'Klick links auf eine Session für die Live-Ansicht.'
+                    : 'Sobald ein Project-Agent läuft, erscheint er hier mit Live-Output, Interject-Input und Stop-Button.'}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={rootRef} className="pt-2 border-t border-[#222]">
       <div className="flex items-center justify-between mb-2">
@@ -255,146 +503,22 @@ export function ProjectChat({ projectId, projectName }: Props) {
           <span>▾</span>
           <span>💬 Projekt-Chat — {projectName}</span>
         </button>
-        <button
-          onClick={loadHistory}
-          disabled={loadingHistory}
-          title="History neu laden"
-          className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]"
-        >↻</button>
-      </div>
-
-      <div
-        ref={scrollRef}
-        className="bg-black/30 border border-[#2a2a2a] rounded p-2 h-72 overflow-y-auto text-xs"
-      >
-        {loadingHistory && messages.length === 0 && <div className="text-gray-600 italic">Lade History…</div>}
-        {!loadingHistory && messages.length === 0 && (
-          <div className="text-gray-600 italic">
-            Noch keine Nachrichten. Versuche z.B.:<br />
-            <span className="text-gray-400">• "baue Login-Feature ein"</span><br />
-            <span className="text-gray-400">• "lass uns über DB-Schema brainstormen"</span><br />
-            <span className="text-gray-400">• "deploy auf 192.168.1.96 als docker-compose user ubuntu"</span><br />
-            <span className="text-gray-400">• "was ist der aktuelle Build-Stand?"</span>
-          </div>
-        )}
-        {messages.map(m => (
-          <div key={m.id} className={`mb-2 ${m.role === 'user' ? 'text-blue-200' : 'text-gray-200'}`}>
-            <span className="text-[10px] uppercase tracking-wider text-gray-600 mr-1">
-              {m.role === 'user' ? 'du' : m.role === 'assistant' ? 'alfred' : m.role}
-            </span>
-            {/* v680 — Animierte Pulse-Bubble während leere ALFRED-Antwort streamed */}
-            {m.content
-              ? <span className="whitespace-pre-wrap">{m.content}</span>
-              : (streaming && m.role === 'assistant'
-                ? <span className="inline-flex items-center gap-1 text-gray-500">
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '150ms' }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: '300ms' }} />
-                  </span>
-                : null)}
-          </div>
-        ))}
-        {status && (
-          <div className="text-[10px] text-amber-400 italic animate-pulse flex items-center gap-1.5">
-            <span className="w-1 h-1 rounded-full bg-amber-400 inline-block" />
-            <span>{status}</span>
-          </div>
-        )}
-      </div>
-
-      {error && (
-        <div className="text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1 mt-1">{error}</div>
-      )}
-
-      {/* v687 — Context-Refs Toolbar + Chips */}
-      <div
-        className="mt-2"
-        onDragOver={(e) => { e.preventDefault(); }}
-        onDrop={handleDrop}
-      >
-        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+        <div className="flex items-center gap-1">
           <button
-            onClick={() => setShowOpenItemPicker(true)}
-            disabled={streaming}
-            className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded hover:bg-amber-500/20 disabled:opacity-40"
-            title="Offenen Punkt referenzieren (oder @ im Text)"
-          >📌 Open-Item</button>
+            onClick={() => setExpandedFull(true)}
+            title="Vergrößern (Side-Panel mit laufenden Agents)"
+            className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]"
+          >🔲 Vergrößern</button>
           <button
-            onClick={() => setShowAttachmentPicker(true)}
-            disabled={streaming}
-            className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded hover:bg-blue-500/20 disabled:opacity-40"
-            title="Datei / Document / URL anhängen"
-          >📎 Anhang</button>
-          <span className="text-[10px] text-gray-600">Tipp: <code>@</code> im Text zeigt eine Auswahl-Liste, Drag&amp;Drop für Files</span>
-          {contextRefs.map((r, i) => (
-            <span key={`${r.kind}-${r.refId}-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-[#0d0d0d] border border-blue-500/40 text-blue-200 rounded">
-              <span>{r.kind === 'open_item' ? '📌' : r.kind === 'note' ? '🔖' : r.kind === 'url' ? '🔗' : r.kind === 'document' ? '📄' : '📎'}</span>
-              <span className="truncate max-w-[180px]">{r.label}</span>
-              <button onClick={() => removeRef(i)} className="text-gray-500 hover:text-red-400" title="Entfernen">✕</button>
-            </span>
-          ))}
+            onClick={loadHistory}
+            disabled={loadingHistory}
+            title="History neu laden"
+            className="text-[10px] text-gray-500 hover:text-blue-400 px-2 py-0.5 rounded border border-[#1f1f1f]"
+          >↻</button>
         </div>
       </div>
 
-      <div className="flex gap-1.5 mt-1 relative">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={(e) => onInputChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (mentionOpen && (e.key === 'Escape')) { setMentionOpen(false); return; }
-            if (!mentionOpen && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-          }}
-          placeholder="Nachricht an Alfred zum Projekt … (Enter = senden, Shift+Enter = neue Zeile, @ = Referenz)"
-          rows={2}
-          disabled={streaming}
-          className="flex-1 bg-[#1a1a1a] text-gray-200 border border-[#2a2a2a] rounded px-2 py-1 text-xs resize-none focus:outline-none focus:border-blue-500 placeholder-gray-500"
-        />
-        {/* v687 — @-Mention Popover */}
-        {mentionOpen && (() => {
-          const q = mentionQuery.toLowerCase();
-          const itemMatches = openItems.filter(it => it.title.toLowerCase().includes(q)).slice(0, 6);
-          const noteMatches = allNotes.filter(n => n.title.toLowerCase().includes(q)).slice(0, 4);
-          const totalMatches = itemMatches.length + noteMatches.length;
-          if (totalMatches === 0) return null;
-          return (
-            <div className="absolute bottom-full left-0 mb-1 w-[400px] max-h-[260px] overflow-y-auto bg-[#111] border border-blue-500/40 rounded shadow-lg z-10">
-              {itemMatches.length > 0 && (
-                <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-gray-500 border-b border-[#1f1f1f]">📌 Open-Items</div>
-              )}
-              {itemMatches.map(it => (
-                <button
-                  key={it.id}
-                  onClick={() => applyMention(it.title.slice(0, 30), { kind: 'open_item', refId: it.id, label: it.title.slice(0, 50) })}
-                  className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate"
-                >📌 {it.title}</button>
-              ))}
-              {noteMatches.length > 0 && (
-                <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-gray-500 border-b border-[#1f1f1f]">🔖 Notes</div>
-              )}
-              {noteMatches.map(n => (
-                <button
-                  key={n.id}
-                  onClick={() => applyMention(n.title.slice(0, 30), { kind: 'note', refId: n.id, label: n.title.slice(0, 50) })}
-                  className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate"
-                >🔖 {n.title}</button>
-              ))}
-            </div>
-          );
-        })()}
-        {streaming ? (
-          <button
-            onClick={cancel}
-            className="px-3 py-1 bg-red-500/15 border border-red-500/40 text-red-300 rounded text-xs hover:bg-red-500/25"
-          >Stop</button>
-        ) : (
-          <button
-            onClick={send}
-            disabled={!input.trim()}
-            className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded text-xs"
-          >Senden</button>
-        )}
-      </div>
+      {renderChatBody()}
 
       {/* v687 — Open-Item-Picker (einfaches Dropdown-Modal) */}
       {showOpenItemPicker && (

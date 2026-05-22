@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.690] - 2026-05-22
+
+### Added — Project-Chat: Expand-Mode mit Side-Panel + Live-View
+
+Neuer 🔲 **Vergrößern**-Button im Project-Chat öffnet den Chat als Full-Screen-Overlay mit zweispaltigem Layout:
+
+- **Links (60%):** Chat mit allen Features (Messages, Toolbar 📌 📎, @-Mention, Drag&Drop)
+- **Rechts (40%):**
+  - 🟢 **Running**-Liste oben: alle aktuell laufenden Project-Agent-Sessions (Polling alle 5s)
+  - Klick auf eine Session → unten die **Live-View** mit Header (Phase/Iter/Files/Dauer), Live-Output-Stream, Interject-Input, Stop-Button (oder Resume bei done/failed)
+- **Esc** oder ✕ schließt den Expand-Mode
+
+**Architektur:**
+- Neue Komponente `SessionLivePane` (extrahiert aus ProjectAgentsPage in einen wiederverwendbaren Block, kompakt-mode für Side-Panel)
+- ProjectAgentsPage bleibt unverändert in Funktion (keine Regression)
+- ProjectChat erweitert um `expandedFull`-State + Overlay-Layout + Polling für running sessions
+- `renderChatBody({ fillHeight })`-Helper, beide Modi (Default + Expand) nutzen dasselbe JSX
+
 ## [0.19.0-multi-ha.689] - 2026-05-22
 
 ### Fixed — Letzte Deploys: alter manueller Memory-Eintrag blockierte Auto-Updates
