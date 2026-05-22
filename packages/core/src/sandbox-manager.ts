@@ -386,14 +386,261 @@ export class SandboxManager {
     await this.deps.repo.updateStatus(sandboxId, 'cleaned');
   }
 
-  /** Merge wird in v700 implementiert (PR-API + secret-scan). */
-  async merge(_sandboxId: string, _opts: { strategy: 'direct' | 'pr'; commitMessage?: string; prTitle?: string; prBody?: string }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
-    throw new Error('SandboxManager.merge not implemented yet (v700)');
+  /**
+   * v700 — Merge: bringt die Sandbox-Änderungen in main (direct-push) ODER
+   * pusht den Branch und erstellt PR/MR auf der konfigurierten Forge.
+   *
+   * Schritte:
+   *  1. Pre-Checks (status running/paused)
+   *  2. Pre-merge-secret-scan auf den diff baseCommit..HEAD
+   *  3. Optional: uncommitted changes committen (sicherheitshalber)
+   *  4. Container stoppen (Push-Lock-Konflikt vermeiden)
+   *  5. Strategy 'direct': checkout main + merge --squash + commit + push
+   *     Strategy 'pr': push branch + Forge-API createPullRequest
+   *  6. Cleanup (Worktree + Container + DB markDestroyed)
+   */
+  async merge(
+    sandboxId: string,
+    opts: { strategy: 'direct' | 'pr'; commitMessage?: string; prTitle?: string; prBody?: string; projectCwd: string; forgeConfig?: import('@alfred/types').ForgeConfig; defaultBranch?: string; repoUrl?: string },
+  ): Promise<{ ok: boolean; prUrl?: string; reason?: string; mergedSha?: string }> {
+    const sb = await this.deps.repo.getById(sandboxId);
+    if (!sb) return { ok: false, reason: 'Sandbox not found' };
+    if (sb.status !== 'running' && sb.status !== 'paused') {
+      return { ok: false, reason: `Sandbox in status '${sb.status}' — only running/paused can be merged` };
+    }
+
+    await this.deps.repo.updateStatus(sandboxId, 'merging', `strategy=${opts.strategy}`);
+
+    try {
+      // (1) Container stoppen vor git operations (Lock-Konflikte vermeiden)
+      if (sb.containerId) {
+        try { await stopContainer(sb.containerId, 5); } catch { /* ignore */ }
+      }
+
+      // (2) Uncommitted changes committen
+      try {
+        const status = await runGit(['status', '--porcelain'], sb.worktreePath);
+        if (status.trim()) {
+          await runGit(['add', '-A'], sb.worktreePath);
+          const msg = opts.commitMessage ?? `Sandbox session ${sandboxId.slice(0, 8)} — auto-commit`;
+          // Identity sicherstellen (Worktree erbt von main, aber für sicher)
+          await runGit(['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', 'commit', '-m', msg], sb.worktreePath);
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err }, 'Auto-commit before merge failed (continuing)');
+      }
+
+      // (3) Pre-Merge-Secret-Scan
+      try {
+        const diff = await runGit(['diff', `${sb.baseCommitSha}..HEAD`, '--unified=0'], sb.worktreePath);
+        const findings = scanForSecrets(diff);
+        if (findings.length > 0) {
+          await this.deps.repo.updateStatus(sandboxId, 'paused', `secret-scan: ${findings.length} findings`);
+          return { ok: false, reason: `Secrets detected in diff (${findings.length}):\n- ${findings.slice(0, 5).join('\n- ')}` };
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err }, 'Pre-merge secret-scan failed (continuing without block)');
+      }
+
+      // (4) Strategy
+      if (opts.strategy === 'pr') {
+        const result = await this.mergeViaPr(sb, opts);
+        if (!result.ok) {
+          await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'pr-failed');
+          return result;
+        }
+        await this.cleanupAfterMerge(sb, opts.projectCwd);
+        await this.deps.repo.markDestroyed(sandboxId, 'merged_via_pr', result.prUrl);
+        return result;
+      } else {
+        const result = await this.mergeDirect(sb, opts);
+        if (!result.ok) {
+          await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'direct-failed');
+          return result;
+        }
+        await this.cleanupAfterMerge(sb, opts.projectCwd);
+        await this.deps.repo.markDestroyed(sandboxId, 'merged_to_main');
+        return result;
+      }
+    } catch (err) {
+      await this.deps.repo.updateStatus(sandboxId, 'paused', `merge-error: ${(err as Error).message.slice(0, 200)}`);
+      return { ok: false, reason: (err as Error).message };
+    }
+  }
+
+  private async mergeDirect(sb: Sandbox, opts: { commitMessage?: string; projectCwd: string; defaultBranch?: string }): Promise<{ ok: boolean; reason?: string; mergedSha?: string }> {
+    const baseBranch = opts.defaultBranch ?? 'main';
+    try {
+      // Im MAIN-Repo (projectCwd), nicht im worktree
+      await runGit(['fetch', 'origin'], opts.projectCwd);
+      const currentBranch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], opts.projectCwd)).trim();
+      if (currentBranch !== baseBranch) {
+        await runGit(['checkout', baseBranch], opts.projectCwd);
+      }
+      await runGit(['merge', '--squash', sb.branchName], opts.projectCwd);
+      const msg = opts.commitMessage ?? `Squash-merge from sandbox ${sb.id.slice(0, 8)} (${sb.branchName})`;
+      await runGit(['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', 'commit', '-m', msg], opts.projectCwd);
+      const sha = (await runGit(['rev-parse', 'HEAD'], opts.projectCwd)).trim();
+      // Push wenn remote vorhanden
+      try {
+        await runGit(['push', 'origin', baseBranch], opts.projectCwd);
+      } catch (err) {
+        this.deps.logger.warn({ err }, 'Direct-merge push failed — commit ist lokal, manueller Push nötig');
+        return { ok: true, mergedSha: sha, reason: 'Local commit OK, push failed — push manually' };
+      }
+      return { ok: true, mergedSha: sha };
+    } catch (err) {
+      return { ok: false, reason: `Direct merge failed: ${(err as Error).message.slice(0, 300)}` };
+    }
+  }
+
+  private async mergeViaPr(sb: Sandbox, opts: { prTitle?: string; prBody?: string; projectCwd: string; forgeConfig?: import('@alfred/types').ForgeConfig; defaultBranch?: string; repoUrl?: string }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
+    try {
+      // Branch pushen vom WORKTREE aus (dort lebt der Branch)
+      const { stderr } = await runGitBoth(['push', '-u', 'origin', sb.branchName], sb.worktreePath);
+      // PR-URL aus stderr extrahieren (GitLab/GitHub schreiben das hin)
+      const urlMatch = stderr.match(/https?:\/\/[^\s]+(?:merge_requests\/new|pull\/new|compare)[^\s]*/);
+      const hintedUrl = urlMatch ? urlMatch[0] : undefined;
+
+      // Forge-API für echten PR-Create wenn konfiguriert
+      if (opts.forgeConfig && opts.repoUrl) {
+        try {
+          const { createForgeClient } = await import('@alfred/skills');
+          const client = createForgeClient(opts.forgeConfig);
+          const repo = parseRepoFromUrl(opts.repoUrl);
+          if (repo) {
+            const title = opts.prTitle ?? `Sandbox session ${sb.id.slice(0, 8)}: ${sb.branchName}`;
+            const body = opts.prBody ?? `Auto-created from Alfred Sandbox session.\n\nBranch: \`${sb.branchName}\`\nBase commit: \`${sb.baseCommitSha.slice(0, 8)}\``;
+            const pr = await client.createPullRequest(repo, { title, body, head: sb.branchName, base: opts.defaultBranch ?? 'main' });
+            return { ok: true, prUrl: pr.url };
+          }
+        } catch (err) {
+          this.deps.logger.warn({ err }, 'Forge-API PR-create failed, falling back to push-hint URL');
+        }
+      }
+
+      // Fallback: keine Forge-API → liefere die Push-Hint-URL
+      if (hintedUrl) return { ok: true, prUrl: hintedUrl };
+      return { ok: true, reason: 'Branch pushed — please create PR manually on the forge' };
+    } catch (err) {
+      return { ok: false, reason: `PR push failed: ${(err as Error).message.slice(0, 300)}` };
+    }
+  }
+
+  private async cleanupAfterMerge(sb: Sandbox, projectCwd: string): Promise<void> {
+    // Container weg
+    if (sb.containerId) {
+      try { await removeContainer(sb.containerId, true); } catch { /* */ }
+    }
+    // Worktree weg — Branch behalten falls direct-push (history bleibt), bei PR auch behalten (Forge zeigt's)
+    try {
+      const { destroyWorktree } = await import('./sandbox/worktree.js');
+      await destroyWorktree({
+        projectCwd,
+        worktreePath: sb.worktreePath,
+        branchName: sb.branchName,
+        deleteBranch: false, // bei merge bleibt der Branch (für history/PR-View)
+        force: true,
+        logger: this.deps.logger,
+      });
+    } catch (err) {
+      this.deps.logger.warn({ err }, 'Cleanup after merge partially failed');
+    }
+  }
+
+  /**
+   * v700 — Cleanup-Worker: pausiert idle-running Sandboxes und entfernt
+   * lange-pausierte. Wird vom Watch-Skill periodisch gerufen.
+   */
+  async cleanupIdle(projectCwdResolver: (projectId: string) => Promise<string | null>): Promise<{ paused: number; cleaned: number }> {
+    const idleMin = this.deps.config.idleTimeoutMin ?? 30;
+    const cleanupHours = this.deps.config.cleanupAfterHours ?? 24;
+    const now = Date.now();
+
+    let paused = 0;
+    let cleaned = 0;
+
+    // Pause idle-running
+    const idleCutoff = new Date(now - idleMin * 60_000).toISOString();
+    const idleRunning = await this.deps.repo.listIdleSince(idleCutoff, ['running']);
+    for (const sb of idleRunning) {
+      try { await this.pause(sb.id); paused++; }
+      catch (err) { this.deps.logger.debug({ err, sandboxId: sb.id }, 'cleanup pause failed'); }
+    }
+
+    // Cleanup stale-paused
+    const staleCutoff = new Date(now - cleanupHours * 3600_000).toISOString();
+    const stalePaused = await this.deps.repo.listIdleSince(staleCutoff, ['paused', 'failed']);
+    for (const sb of stalePaused) {
+      try {
+        const cwd = await projectCwdResolver(sb.projectId);
+        if (!cwd) continue;
+        await this.destroy(sb.id, cwd);
+        cleaned++;
+      } catch (err) {
+        this.deps.logger.debug({ err, sandboxId: sb.id }, 'cleanup destroy failed');
+      }
+    }
+
+    if (paused + cleaned > 0) {
+      this.deps.logger.info({ paused, cleaned, idleMin, cleanupHours }, 'Sandbox cleanup-worker pass complete');
+    }
+    return { paused, cleaned };
   }
 
   async touchActivity(sandboxId: string): Promise<void> {
     await this.deps.repo.touchActivity(sandboxId);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v700 — Merge-Helpers (git/secret-scan/repo-parsing)
+// ─────────────────────────────────────────────────────────────────────────
+
+async function runGit(args: string[], cwd: string, timeoutMs = 60_000): Promise<string> {
+  const { stdout } = await execFileAsync('git', args, { cwd, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 });
+  return stdout;
+}
+
+async function runGitBoth(args: string[], cwd: string, timeoutMs = 120_000): Promise<{ stdout: string; stderr: string }> {
+  const { stdout, stderr } = await execFileAsync('git', args, { cwd, timeout: timeoutMs, maxBuffer: 10 * 1024 * 1024 });
+  return { stdout, stderr };
+}
+
+const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
+  { name: 'AWS Access Key', re: /\bAKIA[0-9A-Z]{16}\b/g },
+  { name: 'GitHub Token', re: /\bghp_[A-Za-z0-9]{36}\b/g },
+  { name: 'GitHub PAT', re: /\bghs_[A-Za-z0-9]{36}\b/g },
+  { name: 'GitLab Token', re: /\bglpat-[A-Za-z0-9_-]{20}\b/g },
+  { name: 'OpenAI Key', re: /\bsk-[A-Za-z0-9]{48,}\b/g },
+  { name: 'Anthropic Key', re: /\bsk-ant-[A-Za-z0-9-_]{24,}\b/g },
+  { name: 'Stripe Secret', re: /\bsk_live_[A-Za-z0-9]{24,}\b/g },
+  { name: 'Slack Token', re: /\bxox[abp]-[A-Za-z0-9-]{10,}\b/g },
+  { name: 'Private Key', re: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g },
+  { name: 'JWT Token', re: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g },
+];
+
+function scanForSecrets(diff: string): string[] {
+  if (!diff) return [];
+  const findings: string[] = [];
+  for (const line of diff.split('\n')) {
+    if (!line.startsWith('+') || line.startsWith('+++')) continue;
+    for (const { name, re } of SECRET_PATTERNS) {
+      if (re.test(line)) findings.push(`${name} in: ${line.slice(0, 120).trim()}`);
+    }
+  }
+  return findings.slice(0, 20);
+}
+
+/** Parst Owner+Repo aus einem repoUrl (GitHub/GitLab SSH oder HTTPS). */
+function parseRepoFromUrl(url: string): { owner: string; repo: string } | null {
+  // git@github.com:owner/repo.git → owner/repo
+  let m = url.match(/^git@[^:]+:([^/]+)\/([^/]+?)(?:\.git)?$/);
+  if (m) return { owner: m[1], repo: m[2] };
+  // https://github.com/owner/repo(.git)
+  m = url.match(/^https?:\/\/[^/]+\/(?:[^/]+\/)*([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+  if (m) return { owner: m[1], repo: m[2] };
+  return null;
 }
 
 /** Findet den sandbox-images-Ordner relativ zum laufenden bundle. */

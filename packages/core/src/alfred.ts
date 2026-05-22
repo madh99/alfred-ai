@@ -3122,6 +3122,42 @@ export class Alfred {
               this.sandboxManager = sandboxManager;
               this.logger.info({ ...sandboxManager.getStatus() }, 'v697 Sandbox-Manager initialized');
 
+              // v700 — NFS-Detection (best-effort, nur logging — hilft bei HA-Cluster-Diagnose)
+              try {
+                const { readFileSync } = await import('node:fs');
+                const mounts = readFileSync('/proc/mounts', 'utf-8');
+                const wtBase = this.config.sandbox.worktreeBasePath ?? '/var/alfred/worktrees';
+                const onNfs = mounts.split('\n').some(line => {
+                  const parts = line.split(/\s+/);
+                  if (parts.length < 3) return false;
+                  return wtBase.startsWith(parts[1]) && (parts[2] === 'nfs' || parts[2] === 'nfs4');
+                });
+                if (onNfs) {
+                  this.logger.info({ worktreeBase: wtBase }, 'v700 Worktree-Base ist auf NFS — HA-Failover-Migration möglich (Container neu starten auf anderem Node)');
+                }
+              } catch { /* not on Linux or no /proc/mounts — ignore */ }
+
+              // v700 — Cleanup-Worker via setInterval (alle 15 min). Pausiert idle-running,
+              // entfernt stale-paused. Lebt nur auf einem Node via Adapter-Claim wäre besser,
+              // aber für jetzt: jeder Node arbeitet nur die Sandboxes mit eigener node_id.
+              const cleanupIntervalMs = 15 * 60 * 1000;
+              const runCleanup = async () => {
+                try {
+                  await sandboxManager.cleanupIdle(async (pid: string) => {
+                    if (!this.projectRepo) return null;
+                    try { const p = await this.projectRepo.getByIdAnyOwner(pid); return p?.cwd ?? null; }
+                    catch { return null; }
+                  });
+                } catch (err) { this.logger.debug({ err }, 'v700 Sandbox cleanup-worker tick failed (non-fatal)'); }
+              };
+              // Erster Tick nach 5 Minuten Startup-Pause
+              setTimeout(() => {
+                runCleanup();
+                const t = setInterval(runCleanup, cleanupIntervalMs);
+                (t as { unref?: () => void }).unref?.();
+              }, 5 * 60 * 1000).unref?.();
+              this.logger.info({ intervalMin: 15 }, 'v700 Sandbox cleanup-worker scheduled');
+
               // v697 — Sandbox-Skill für CLI-Trigger/Memory-Skill/Cleanup-Worker registrieren.
               try {
                 const { SandboxSkill } = await import('@alfred/skills');
@@ -3153,8 +3189,12 @@ export class Alfred {
                     await sandboxManager.destroy(sid, cwd);
                   },
                   cleanupIdle: async () => {
-                    // v700 — periodischer Cleanup-Worker wird hier andocken.
-                    return { paused: 0, cleaned: 0 };
+                    // v700 — pausiert idle-running Sandboxes + entfernt stale-paused
+                    return sandboxManager.cleanupIdle(async (pid: string) => {
+                      if (!projectsRepo) return null;
+                      try { const p = await projectsRepo.getByIdAnyOwner(pid); return p?.cwd ?? null; }
+                      catch { return null; }
+                    });
                   },
                 });
                 skillRegistry.register(sandboxSkill);
@@ -3213,8 +3253,22 @@ export class Alfred {
                       await sandboxManager.discard(sandboxId, cwd);
                     },
                     merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => {
+                      const sb = await sandboxRepo.getById(sandboxId);
+                      if (!sb) return { ok: false, reason: 'Sandbox not found' };
+                      const cwd = await resolveProjectCwdCrud(sb.projectId);
+                      if (!cwd) return { ok: false, reason: 'Project cwd unknown' };
+                      const proj = projectsRepoCrud ? await projectsRepoCrud.getByIdAnyOwner(sb.projectId) : null;
                       const strat = (opts.strategy === 'direct' ? 'direct' : 'pr') as 'direct' | 'pr';
-                      return sandboxManager.merge(sandboxId, { strategy: strat, commitMessage: opts.commitMessage, prTitle: opts.prTitle, prBody: opts.prBody });
+                      return sandboxManager.merge(sandboxId, {
+                        strategy: strat,
+                        commitMessage: opts.commitMessage,
+                        prTitle: opts.prTitle,
+                        prBody: opts.prBody,
+                        projectCwd: cwd,
+                        forgeConfig: this.config.codeAgents?.forge,
+                        defaultBranch: proj?.defaultBranch ?? this.config.codeAgents?.forge?.baseBranch,
+                        repoUrl: proj?.repoUrl,
+                      });
                     },
                     diff: async (sandboxId: string) => {
                       const sb = await sandboxRepo.getById(sandboxId);

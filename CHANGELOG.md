@@ -5,6 +5,87 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.700] - 2026-05-22
+
+### Added — Sandbox Hardening: Merge-Flow + Cleanup-Worker + Interactive-Route (Phase 5/5 — Wrap-Up)
+
+Finalisiert die 5-phasige Sandbox-Implementierung (v696→v700). Merge-Flow funktioniert (Direct + PR via Forge-API), Cleanup-Worker läuft periodisch, NFS-aware-Detection für HA-Cluster, dedizierte Interactive-Chat-Route.
+
+**SandboxManager.merge() voll implementiert** (`packages/core/src/sandbox-manager.ts`):
+- Pre-Checks: status muss running oder paused sein
+- Auto-Commit: uncommitted changes im Worktree werden vor Merge committed
+- **Pre-Merge-Secret-Scan**: scannt diff(baseCommit..HEAD) auf AWS/GitHub/GitLab/OpenAI/Anthropic/Stripe/Slack/Private-Key/JWT-Patterns. Bei Treffern: Merge blockiert, status → paused mit klarer Findings-Liste
+- **Strategy `direct`**: im Main-Checkout `git fetch + checkout main + merge --squash <branch> + commit -m <message> + push origin main`. Bei Push-Fehler: lokaler Commit bleibt, klare Meldung „push manually"
+- **Strategy `pr`**: `git push -u origin <branch>` aus dem Worktree, dann optional Forge-API (createForgeClient aus @alfred/skills) für echten PR/MR-Create. Fallback bei fehlender Forge-Config: extrahiert PR-Hint-URL aus stderr von git push
+- Repository-URL → Owner/Repo Parsing für GitHub/GitLab (SSH + HTTPS)
+- Nach erfolgreichem Merge: Cleanup (Container + Worktree weg, Branch bleibt für PR-History), DB-Status → `cleaned` mit result `merged_to_main` oder `merged_via_pr` + PR-URL
+
+**SandboxManager.cleanupIdle()** (`packages/core/src/sandbox-manager.ts`):
+- Pausiert alle running-Sandboxes mit `last_active_at < now - idleTimeoutMin` (default 30 min)
+- Entfernt komplett alle paused/failed-Sandboxes mit `last_active_at < now - cleanupAfterHours` (default 24h)
+- Logging nur wenn Aktivität (paused+cleaned > 0)
+- Aufgerufen vom Watch-Skill via `sandbox cleanup_idle` ODER vom periodischen Cleanup-Worker in alfred.ts
+
+**Cleanup-Worker in alfred.ts**:
+- `setInterval(runCleanup, 15 min)` nach 5 min Startup-Pause
+- Resolver für project.cwd → SandboxManager nutzt destroy() pro stale Sandbox
+- Lebt parallel auf jedem Node — jeder kümmert sich um Sandboxes mit eigener node_id
+
+**NFS-Detection beim Startup**:
+- Liest `/proc/mounts` und prüft ob `worktreeBasePath` auf `nfs`/`nfs4` mount liegt
+- Wenn ja: Log-Hinweis „HA-Failover-Migration möglich" (für Cluster-Diagnose)
+- Linux-only, Windows-Fallback: silent skip
+
+**Interactive-Chat-Mode dedizierte Route** (`apps/web/src/app/interactive/page.tsx`):
+- Route: `/interactive?sandboxId=<id>` (Query-Param weil Next.js `output:export` keine dynamic-params unterstützt)
+- Layout: Chat links (40%) + Live-Preview iframe rechts (60%)
+- Header: Branch-Name, Status-Badge, Project-Type, Port, Merge/Discard-Buttons
+- Chat-UI: Textarea + Submit (Enter/Shift+Enter)
+- 🚧 **Agent-Loop in v700 als Skelett** — pro Nachricht erscheint ein Hinweis dass Project-Chat im Worktree-cwd genutzt werden soll. Voller Agent-Spawn pro Nachricht (mit cwd=worktree) wird in v701 nachgeliefert wenn ProjectAgentRunner saubere cwd-Override pro Task akzeptiert.
+- Link zum Interactive-Mode aus SandboxPanel-Preview-Header
+
+### Geänderte Dateien
+- `packages/core/src/sandbox-manager.ts`: ~+220 LOC für merge, cleanupIdle, helpers (runGit, runGitBoth, scanForSecrets, parseRepoFromUrl)
+- `packages/core/src/alfred.ts`: Merge-Callback mit forge/repoUrl/defaultBranch, NFS-Detection, Cleanup-Worker setInterval
+- `apps/web/src/app/interactive/page.tsx`: neue Route
+- `apps/web/src/components/project-agents/SandboxPanel.tsx`: Interactive-Mode-Link im Preview-Header
+
+### Was die 5 Phasen v696→v700 jetzt liefern (vollständige Übersicht)
+| Phase | Lieferung |
+|---|---|
+| v696 | Schema, Repository, Config, ENV, Manager-Skelett (Foundation, opt-in) |
+| v697 | Worktree-Mgmt, Project-Type-Detection, Container-Lifecycle, Image-Auto-Build, Sandbox-Skill |
+| v698 | Internal HTTP+WebSocket-Proxy `/preview/<id>/*`, Auth-Cookie-Bridge |
+| v699 | 8 CRUD-API-Endpoints, Frontend-Client-Methoden, SandboxPanel mit Live-Preview iframe, Settings-Status |
+| v700 | Merge-Flow (Direct + PR + Secret-Scan), Cleanup-Worker, NFS-Detection, Interactive-Route |
+
+### Roadmap nach v700 (post-v700 Polish)
+Verbleibende Items aus dem Brainstorm in `MEMORY.md` unter „Sandbox-Roadmap":
+- DevTools-Inspector im Preview
+- Interactive-Mode Agent-Loop (Spawn pro Chat-Message mit cwd=worktree)
+- HA-Migration-Polish (port-stability, HMR-Reconnect nach Failover)
+- Custom-Dockerfiles pro Projekt
+- Visual-Diff Sandbox vs Baseline
+- Test-Runner-Integration im Preview
+- Mobile-Device-Emulation
+- Storybook-Modus
+- Sandbox-Templates
+
+### Backward-Compatibility — weiterhin garantiert
+- Wenn `config.sandbox.enabled = false`: kein Verhalten ändert sich
+- Wenn Docker fehlt: Feature deaktiviert, classic-Pfad läuft
+- ProjectAgentRunner: unverändert seit v695
+- Cleanup-Worker registriert sich nur bei erfolgreichem SandboxManager-Init
+
+### Test-Anleitung nach Deploy
+1. **Aktivieren**: `ALFRED_SANDBOX_ENABLED=true`, `ALFRED_SANDBOX_WORKTREE_BASE_PATH=/var/alfred/worktrees`
+2. **Settings-Page** → Sandbox-Status alle ✓
+3. **Sandbox erstellen** über SandboxPanel im Project-Chat → Mode `sandbox-preview`
+4. **Live-Preview** sollte erscheinen + HMR funktionieren bei Datei-Edits
+5. **Interactive-Mode** öffnen via Link im SandboxPanel
+6. **Merge testen** — entweder Direct (in main pushen) oder PR (Branch + Forge-Call)
+7. **Cleanup** nach 30 min idle → automatisch paused; nach 24h paused → entfernt
+
 ## [0.19.0-multi-ha.699] - 2026-05-22
 
 ### Added — Sandbox WebUI: CRUD-API + SandboxPanel in ProjectChat + Settings-Status (Phase 4/5)

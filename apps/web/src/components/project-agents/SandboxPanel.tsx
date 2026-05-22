@@ -217,6 +217,12 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
               <div className="flex items-center justify-between text-[10px] text-gray-500">
                 <span>📺 Live-Preview</span>
                 <div className="flex gap-2">
+                  <a
+                    href={`/interactive?sandboxId=${sandbox.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-purple-400 hover:text-purple-300"
+                  >💬 Interactive-Mode</a>
                   <button
                     onClick={() => window.open(previewUrl, '_blank')}
                     className="text-blue-400 hover:text-blue-300"
