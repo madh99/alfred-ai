@@ -688,16 +688,30 @@ export class MessagePipeline {
         ? this.skillRegistry.getAll().map(s => s.metadata)
         : undefined;
       let skillMetas = allSkillMetas;
-      // v682 — Bei Project-Chat NICHT filtern: der User erwartet dass Alfred
-      // project_agent, code_agent, shell, deploy, git etc. nutzen kann, auch wenn
-      // sein Text wie ein UI-Bug-Report klingt. Sonst sagt Alfred fälschlich
-      // „kein Code-/Project-Agent-Tool zur Verfügung".
+      // v683 — Project-Chat (metadata.projectId gesetzt — NUR vom WebUI ProjectChat-
+      // Komponente via HTTP-Adapter, NICHT von Telegram/Matrix/Discord/normalem Web-Chat)
+      // bekommt eine kuratierte Whitelist statt der Keyword-basierten selectCategories-
+      // Heuristik. Sonst filtert die Heuristik project_agent/code_agent/shell bei
+      // Bug-Report-artigem Wortlaut weg und Alfred behauptet „kein Tool zur Verfügung".
+      // Wichtig: 18 Skills statt aller 76 — spart ~12k input-tokens pro Message und
+      // hält den LLM fokussiert auf Project-Arbeit.
       const isProjectChat = !!message.metadata?.projectId;
+      const PROJECT_CHAT_WHITELIST = new Set([
+        'project_agent', 'code_agent', 'shell', 'deploy', 'file',
+        'git', 'brainstorming', 'memory', 'note', 'todo', 'reminder',
+        'document', 'project', 'knowledge', 'watch',
+        // Infra-Kontext kommt im Deploy oft mit
+        'homeassistant', 'monitor', 'cmdb',
+      ]);
       if (allSkillMetas && message.text) {
-        // Voice messages: skip skill filter — text is not yet transcribed
-        if (hasAudioAttachment || isProjectChat) {
+        if (hasAudioAttachment) {
+          // Voice messages: skip skill filter — text is not yet transcribed
           skillMetas = allSkillMetas;
+        } else if (isProjectChat) {
+          // Project-Chat: Whitelist statt Keyword-Filter
+          skillMetas = allSkillMetas.filter(s => PROJECT_CHAT_WHITELIST.has(s.name));
         } else {
+          // Default (alle anderen Chats: Telegram, Matrix, Web, Signal, …) — UNVERÄNDERT
           const availableCategories = new Set(allSkillMetas.map(s => s.category ?? 'core' as const));
           // Include recent user messages from conversation history so follow-up
           // questions retain the skill category context of earlier messages.

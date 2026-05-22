@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.683] - 2026-05-22
+
+### Changed — Project-Chat: Kuratierte Skill-Whitelist statt aller 76
+
+**Hintergrund:** v682 hatte Project-Chat-Messages ALLE 76 Skills durchgereicht. Das spart zwar das "kein Tool"-Problem, kostet aber ~12k extra Input-Tokens pro Message (~$0.18/Msg bei Claude Opus). Außerdem erhöhte es das Hallucination-Risiko (BMW/Spotify im Code-Kontext).
+
+**Neu in v683:** Project-Chat bekommt eine **kuratierte 18-Skill-Whitelist** der für Project-Arbeit relevanten Tools:
+- Code: `project_agent`, `code_agent`, `shell`, `deploy`, `file`, `git`
+- Wissen: `memory`, `note`, `todo`, `reminder`, `document`, `knowledge`
+- Project: `project`, `brainstorming`, `watch`
+- Infra (oft Deploy-Kontext): `homeassistant`, `monitor`, `cmdb`
+
+**Nicht im Project-Chat:** BMW, Spotify, Sonos, Crypto, Travel, Recipe, Shopping, EnergyPrice, Transit, YouTube, FeedReader — die kommen im Project-Arbeitskontext praktisch nie vor.
+
+### Wichtig: Blast-Radius isoliert
+- `metadata.projectId` wird AUSSCHLIESSLICH vom HTTP-Adapter (`/api/message`) gesetzt, und auch nur wenn der Request-Body explizit `projectId` enthält (= NUR die `ProjectChat.tsx`-Komponente macht das).
+- **Telegram, Matrix, Discord, WhatsApp, Signal, normaler Web-Chat: alle UNVERÄNDERT** — sie nutzen weiterhin den keyword-basierten `selectCategories`-Filter wie zuvor.
+- Voice-Messages (`hasAudioAttachment`): unverändert (alle Skills).
+
 ## [0.19.0-multi-ha.682] - 2026-05-22
 
 ### Fixed — Project-Chat: Alfred behauptete „kein Tool zur Verfügung"
