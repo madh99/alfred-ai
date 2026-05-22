@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.686] - 2026-05-22
+
+### Fixed
+- **Arbeitszeit-Statistik (v668 Bug-Korrektur):** Completion-Callback las `SELECT started_at FROM project_agent_sessions` — das Feld heißt aber `created_at`. Die Query throw'd silent, `startedAt = undefined`, DB-Default `now()` → Project-Agent-Sessions zeigten 8-19s statt der echten 1-2h. Jetzt `created_at` korrekt. **Wirkt ab v686 NUR auf neue Sessions** — die alten 19 Einträge bleiben so wie sie in der DB stehen (Reparatur-SQL auf Anfrage).
+
+### Added — Project-Agent Completion-Notifications
+- **Telegram-DM:** Bei jedem Project-Agent-Completion (Erfolg oder Failure) wird eine DM an `config.security.ownerUserId` gesendet — egal welcher Trigger-Channel (WebUI / Telegram / Matrix). Format `🎉 Project-Agent fertig — Projekt-Name • N Phasen, X Files. Task-ID …` oder `❌ Project-Agent fehlgeschlagen — …`. Best-effort: schluckt Fehler ohne den Completion-Flow zu blockieren.
+- **Project-Chat-Persistierung:** Completion-Summary wird als `assistant`-Message in die Project-Chat-Conversation eingefügt. Beim nächsten Öffnen des Project-Chats sieht der User in der History den Run-Abschluss mit Phasen-Count, Files und Task-ID.
+
+### Bewusst NICHT umgesetzt: Insight-Badge
+Insights sind Lessons-Learned/Pattern-Erkennung, nicht Activity-Notifications. Den Pending-Counter mit Completion-Events zu mischen würde die Semantik des `pending`-Badge entwerten. Falls eine eigene WebUI-Notification gewünscht ist, kommt das als dedizierte Bell-View in einer separaten Version (z. B. v687).
+
 ## [0.19.0-multi-ha.685] - 2026-05-22
 
 ### Fixed — System-weiter Root-Cause: WebUI-Owner fiel auf Role „guest" zurück

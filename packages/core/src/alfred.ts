@@ -1174,17 +1174,20 @@ export class Alfred {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
-              // v668 — echte Startzeit aus project_agent_sessions lesen damit
+              // v668/v686 — echte Startzeit aus project_agent_sessions lesen damit
               // Arbeitszeit-Statistik die Agent-Laufzeit zeigt (nicht nur die
-              // Summary-Erstellung). Best-effort; fallback ist now() im Repo.
+              // Summary-Erstellung). v686-Fix: das Feld heißt `created_at` nicht
+              // `started_at` — die alte Query throw'd silent, fallback war now().
               let startedAt: string | undefined;
               try {
                 const row = await this.database?.getAdapter().queryOne(
-                  `SELECT started_at FROM project_agent_sessions WHERE task_id = ?`,
+                  `SELECT created_at FROM project_agent_sessions WHERE task_id = ?`,
                   [sessionId],
-                ) as { started_at?: string } | null;
-                if (row?.started_at) startedAt = row.started_at;
-              } catch { /* non-fatal */ }
+                ) as { created_at?: string } | null;
+                if (row?.created_at) startedAt = row.created_at;
+              } catch (err) {
+                this.logger.debug({ err, sessionId }, 'project_agent_sessions created_at lookup failed');
+              }
               await this.projectManager.finishSession({
                 userId,
                 sessionType: 'project_agent',
@@ -1198,6 +1201,53 @@ export class Alfred {
               });
             }
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
+        }
+
+        // v686 — A) Telegram-DM bei Completion (egal welcher Trigger-Channel),
+        // damit der User nicht in die Project-Agents-Page wechseln muss um den Status zu sehen.
+        // Nur bei Telegram-konfiguriertem Owner; Erfolg + Fehler.
+        if (this.adapters && this.config.security?.ownerUserId) {
+          try {
+            const tg = this.adapters.get('telegram');
+            const owner = this.config.security.ownerUserId;
+            if (tg && 'sendDirectMessage' in tg) {
+              const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? 'Projekt';
+              const milestonesText = state.milestonesReached.length > 0
+                ? `\nMilestones: ${state.milestonesReached.slice(0, 5).join(', ')}`
+                : '';
+              const msg = success
+                ? `🎉 Project-Agent fertig — *${projectName}*\n${state.projectIteration} Phasen, ${state.totalFilesChanged} Files geändert.${milestonesText}\n\nTask-ID: \`${sessionId.slice(0, 8)}\``
+                : `❌ Project-Agent fehlgeschlagen — *${projectName}*\n${state.projectIteration} Phasen versucht, ${state.totalFilesChanged} Files geändert.\n\nTask-ID: \`${sessionId.slice(0, 8)}\``;
+              await (tg as { sendDirectMessage(userId: string, text: string, opts?: { parseMode?: string }): Promise<unknown> })
+                .sendDirectMessage(owner, msg, { parseMode: 'markdown' });
+            }
+          } catch (tgErr) { this.logger.debug({ tgErr }, 'project-agent completion Telegram-DM failed'); }
+        }
+
+        // v686 — B) Completion-Message in die Project-Chat-Conversation persistieren.
+        // Damit beim nächsten Öffnen des Project-Chats die History den Run-Abschluss zeigt.
+        if (this.conversationRepo && cfg.cwd && this.projectRepo) {
+          try {
+            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            if (userId) {
+              const projects = await this.projectRepo.list(userId);
+              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => p.cwd && cfg.cwd?.startsWith(p.cwd));
+              if (proj) {
+                const conv = await this.conversationRepo.findOrCreateForProject(userId, proj.id);
+                const summary = success
+                  ? `✅ **Project-Agent fertig**\n\n` +
+                    `- Phasen: ${state.projectIteration}\n` +
+                    `- Geänderte Dateien: ${state.totalFilesChanged}\n` +
+                    (state.milestonesReached.length > 0 ? `- Milestones: ${state.milestonesReached.slice(0, 5).join(', ')}\n` : '') +
+                    `- Task-ID: \`${sessionId.slice(0, 8)}\``
+                  : `❌ **Project-Agent fehlgeschlagen**\n\n` +
+                    `- Phasen versucht: ${state.projectIteration}\n` +
+                    `- Geänderte Dateien: ${state.totalFilesChanged}\n` +
+                    `- Task-ID: \`${sessionId.slice(0, 8)}\``;
+                await this.conversationRepo.addMessage(conv.id, 'assistant', summary);
+              }
+            }
+          } catch (convErr) { this.logger.debug({ convErr }, 'project-agent completion Project-Chat persist failed'); }
         }
 
         // v643 — Repo-URL + Default-Branch auto-detect aus cwd
