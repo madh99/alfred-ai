@@ -850,6 +850,8 @@ export class AlfredClient {
     userId: string,
     callbacks: StreamCallbacks,
     replyTo?: { messageId?: string; text?: string; from?: string },
+    /** v687 — Context-Refs (Open-Items, Notes, Documents, Files) die per Toolbar/@-Mention angefügt wurden */
+    contextRefs?: Array<{ kind: string; refId: string; label?: string }>,
   ): () => void {
     const controller = new AbortController();
     (async () => {
@@ -859,6 +861,9 @@ export class AlfredClient {
           body.replyToText = replyTo.text;
           if (replyTo.from) body.replyToFrom = replyTo.from;
           if (replyTo.messageId) body.replyToMessageId = replyTo.messageId;
+        }
+        if (contextRefs && contextRefs.length > 0) {
+          body.contextRefs = contextRefs;
         }
         const res = await fetch(`${this.baseUrl}/api/message`, {
           method: 'POST',

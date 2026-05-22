@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.687] - 2026-05-22
+
+### Added — Project-Chat: Context-Refs (Toolbar + @-Mention + Drag&Drop)
+
+Im Project-Chat können jetzt **Open-Items, Notes, Documents, Files und URLs** direkt mit der Nachricht referenziert werden — ohne den Inhalt manuell kopieren zu müssen.
+
+**A — Toolbar:**
+- 📌 **Open-Item-Button:** Dropdown mit allen aktiven Open-Items des Projekts. Klick fügt eine Ref hinzu, sichtbar als Chip.
+- 📎 **Anhang-Button:** Modal mit 4 Tabs — Documents (RAG, mit Suche) / Files (FileStore) / URL (http/https + Label) / Upload (max 25 MB).
+- Chip-Anzeige mit ✕ zum Entfernen pro Ref.
+- **Drag&Drop:** Dateien direkt ins Chat-Fenster fallen lassen → Auto-Upload + Ref hinzugefügt.
+
+**B — @-Mention-Autocomplete:**
+- User tippt `@` → Popover über dem Input mit Search-Filtered Open-Items + Notes.
+- Klick fügt Token in Text ein + Ref im State.
+- `Escape` schließt das Popover.
+
+**Backend:**
+- `/api/message`-Body um `contextRefs: Array<{ kind, refId, label? }>` erweitert. Übergeben via `message.metadata.contextRefs`.
+- Pipeline-Phase `context_refs_resolved`: Refs werden zu Markdown-Blöcken expandiert und an die User-Message angehängt:
+  ```
+  ## Mitgegebener Kontext (2 Refs)
+  ### 📌 Open-Item: Modal-Hintergrund fixen
+  - Status: open · Priority: high
+  - [Description]
+  ### 📎 Datei: screenshot.png
+  - file-key: …
+  ```
+- Open-Items: `projectRepo.getOpenItemById()` lädt Titel + Beschreibung
+- Notes: best-effort über `noteRepo.getById()` falls verfügbar
+- Documents / Files / URLs: als Reference-Hinweis (Backend lädt nicht den File-Inhalt, der LLM kann via Tools nachfragen)
+- TypeScript: `NormalizedMessage.metadata.contextRefs` Type ergänzt
+
 ## [0.19.0-multi-ha.686] - 2026-05-22
 
 ### Fixed

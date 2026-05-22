@@ -944,6 +944,48 @@ export class MessagePipeline {
       }
       tracePhase('project_chat_context', { hadProject: !!projectIdForChat });
 
+      // v687 — Project-Chat: Context-Refs auflösen (Open-Items, Notes, Attachments).
+      // User hat im WebUI explizit Refs angefügt — die zugehörigen Inhalte werden hier
+      // als strukturierter Markdown-Block in die User-Message eingefügt, damit der LLM
+      // den Kontext sieht ohne dass der User ihn kopieren/tippen muss.
+      const contextRefs = message.metadata?.contextRefs as Array<{ kind: string; refId: string; label?: string }> | undefined;
+      if (Array.isArray(contextRefs) && contextRefs.length > 0 && message.text != null) {
+        try {
+          const refBlocks: string[] = [];
+          for (const ref of contextRefs.slice(0, 20)) {
+            try {
+              if (ref.kind === 'open_item' && this.projectRepo) {
+                const item = await (this.projectRepo as { getOpenItemById?: (id: string) => Promise<{ id: string; title: string; description?: string; status: string; priority: string } | null> }).getOpenItemById?.(ref.refId);
+                if (item) {
+                  refBlocks.push(`### 📌 Open-Item: ${item.title}\n- Status: \`${item.status}\` · Priority: \`${item.priority}\`\n${item.description ? '\n' + item.description.slice(0, 1500) : ''}`);
+                }
+              } else if (ref.kind === 'note' && (this as { noteRepo?: { getById: (id: string) => Promise<{ id: string; title: string; content: string } | undefined> } }).noteRepo) {
+                const note = await ((this as unknown as { noteRepo: { getById: (id: string) => Promise<{ id: string; title: string; content: string } | undefined> } }).noteRepo).getById(ref.refId);
+                if (note) {
+                  refBlocks.push(`### 🔖 Notiz: ${note.title}\n${note.content.slice(0, 2000)}`);
+                }
+              } else if (ref.kind === 'document') {
+                refBlocks.push(`### 📄 Document: ${ref.label ?? ref.refId}\n- document-id: \`${ref.refId}\` (RAG-indexiert, frage explizit nach Inhalten falls relevant)`);
+              } else if (ref.kind === 'file' || ref.kind === 'upload') {
+                refBlocks.push(`### 📎 Datei: ${ref.label ?? ref.refId}\n- file-key: \`${ref.refId}\` (im FileStore, frage falls Inhalt benötigt)`);
+              } else if (ref.kind === 'url') {
+                refBlocks.push(`### 🔗 URL: ${ref.label ?? ref.refId}\n${ref.refId}`);
+              }
+            } catch (refErr) {
+              this.logger.debug({ refErr, ref }, 'context-ref resolution failed');
+            }
+          }
+          if (refBlocks.length > 0) {
+            const contextBlock = `\n\n## Mitgegebener Kontext (${refBlocks.length} Ref${refBlocks.length === 1 ? '' : 's'})\n\n${refBlocks.join('\n\n')}`;
+            // user message text is later used as-is — wir hängen den Block an.
+            message.text = (message.text ?? '') + contextBlock;
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'context-refs resolution failed');
+        }
+      }
+      tracePhase('context_refs_resolved', { count: contextRefs?.length ?? 0 });
+
       // Inject active ITSM incidents into system prompt so the LLM can reference
       // correct incident IDs when updating. Without this, the LLM guesses IDs and fails.
       if (this.skillRegistry?.has('itsm') && this.skillSandbox) {

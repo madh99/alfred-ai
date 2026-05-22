@@ -33,6 +33,10 @@ export interface NormalizedMessage {
     originalChatId?: string;
     /** v658 — Projekt-Chat: projectId für Kontext-Injection in der Pipeline */
     projectId?: string;
+    /** v687 — Project-Chat: Refs auf Open-Items/Notes/Documents/Files die vom User
+     *  via Toolbar oder @-Mention in den Chat eingefügt wurden. Pipeline löst sie
+     *  zu Markdown-Blöcken in die User-Message vor dem LLM-Call. */
+    contextRefs?: Array<{ kind: string; refId: string; label?: string }>;
   };
 }
 

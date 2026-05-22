@@ -2,8 +2,16 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
+import type { ProjectOpenItem, NoteItem } from '@/lib/alfred-client';
 
 interface Msg { id: string; role: string; content: string; createdAt: string; }
+
+/** v687 — Context-Ref: vom User per Toolbar/@-Mention angefügter Bezug auf Open-Item / Note / File / URL. */
+interface ContextRef {
+  kind: 'open_item' | 'note' | 'document' | 'file' | 'upload' | 'url';
+  refId: string;
+  label: string;
+}
 
 interface Props {
   projectId: string;
@@ -35,6 +43,17 @@ export function ProjectChat({ projectId, projectName }: Props) {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<(() => void) | null>(null);
+  // v687 — Context-Refs State + Picker-States
+  const [contextRefs, setContextRefs] = useState<ContextRef[]>([]);
+  const [openItems, setOpenItems] = useState<ProjectOpenItem[]>([]);
+  const [showOpenItemPicker, setShowOpenItemPicker] = useState(false);
+  const [showAttachmentPicker, setShowAttachmentPicker] = useState(false);
+  // v687 — @-Mention-State
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionStart, setMentionStart] = useState(-1);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [allNotes, setAllNotes] = useState<NoteItem[]>([]);
 
   const userId = user?.userId ?? 'web-user';
 
@@ -57,6 +76,26 @@ export function ProjectChat({ projectId, projectName }: Props) {
       loadHistory();
     }
   }, [expanded, messages.length, loadHistory]);
+
+  // v687 — Beim Aufklappen Open-Items + Notes laden (für Toolbar + @-Mention)
+  useEffect(() => {
+    if (!expanded || !client) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await client.fetchProject(projectId);
+        if (!cancelled && detail) {
+          const active = detail.openItems.filter(it => it.status === 'open' || it.status === 'in_progress');
+          setOpenItems(active);
+        }
+      } catch { /* non-critical */ }
+      try {
+        const notes = await client.fetchNotes({ limit: 200 });
+        if (!cancelled) setAllNotes(notes);
+      } catch { /* non-critical */ }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, client, projectId]);
 
   // v678 — Beim Auto-Open (Sidebar-Navigation) zum Chat-Element scrollen damit
   // der User es sofort sieht (sonst ist es weit unten in der Projects-Detail-View)
@@ -93,10 +132,10 @@ export function ProjectChat({ projectId, projectName }: Props) {
       { id: asstMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString() },
     ]);
     setStreaming(true);
-    // v680 — Sofort einen sichtbaren Status setzen damit der User Feedback hat (selbst
-    // bevor das Backend einen status-Event sendet — bei HA-Dedup-Fail sehen wir sonst nichts).
     setStatus('⏳ Sende an Alfred…');
     let gotAnyResponse = false;
+    // v687 — ContextRefs mitschicken
+    const refsToSend = contextRefs.length > 0 ? contextRefs.map(r => ({ kind: r.kind, refId: r.refId, label: r.label })) : undefined;
     cancelRef.current = client.streamProjectMessage(projectId, text, userId, {
       onStatus: (t) => setStatus(t),
       onResponse: (t) => {
@@ -107,14 +146,82 @@ export function ProjectChat({ projectId, projectName }: Props) {
       onDone: () => {
         setStreaming(false);
         setStatus(null);
-        // v680 — Wenn der Stream OHNE Antwort schließt: explizit melden statt leerer Bubble
         if (!gotAnyResponse) {
           setError('Backend hat keine Antwort gesendet. Möglicherweise wurde die Nachricht von einem anderen Cluster-Node verarbeitet oder ein Pipeline-Fehler ist aufgetreten. Schau ins Server-Log für pipeline.phase-Einträge.');
-          setMessages(prev => prev.filter(m => m.id !== asstMsgId)); // leere ALFRED-Bubble entfernen
+          setMessages(prev => prev.filter(m => m.id !== asstMsgId));
         }
       },
       onError: (e) => { setError(e); setStreaming(false); setStatus(null); },
-    });
+    }, undefined, refsToSend);
+    // v687 — Refs nach Send zurücksetzen
+    setContextRefs([]);
+  }
+
+  // v687 — Helper-Funktionen für Refs hinzufügen/entfernen
+  function addRef(ref: ContextRef) {
+    setContextRefs(prev => prev.find(r => r.kind === ref.kind && r.refId === ref.refId) ? prev : [...prev, ref]);
+  }
+  function removeRef(idx: number) {
+    setContextRefs(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  // v687 — Direct-Upload via Drag&Drop ins Chat
+  async function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    if (!client) return;
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    if (file.size > 25 * 1024 * 1024) { setError('Datei zu groß (max 25 MB).'); return; }
+    setStatus(`⬆ Lade ${file.name} hoch…`);
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = r.result as string;
+          const idx = s.indexOf(',');
+          resolve(idx >= 0 ? s.slice(idx + 1) : s);
+        };
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(file);
+      });
+      const uploaded = await client.uploadFileBase64(file.name, file.type || 'application/octet-stream', base64Data);
+      if (uploaded) {
+        addRef({ kind: 'upload', refId: uploaded.key, label: uploaded.fileName });
+      } else {
+        setError('Upload fehlgeschlagen (FileStore aktiv?)');
+      }
+    } finally { setStatus(null); }
+  }
+
+  // v687 — @-Mention: Cursor-Position prüfen + Popup auf/zu
+  function onInputChange(value: string) {
+    setInput(value);
+    // suche letztes @ vor cursor
+    const cursor = inputRef.current?.selectionStart ?? value.length;
+    const before = value.slice(0, cursor);
+    const at = before.lastIndexOf('@');
+    if (at >= 0 && (at === 0 || /\s/.test(before[at - 1]))) {
+      const query = before.slice(at + 1);
+      if (!/\s/.test(query)) {
+        setMentionOpen(true);
+        setMentionStart(at);
+        setMentionQuery(query);
+        return;
+      }
+    }
+    setMentionOpen(false);
+    setMentionStart(-1);
+  }
+
+  function applyMention(label: string, ref: ContextRef) {
+    if (mentionStart < 0) return;
+    const before = input.slice(0, mentionStart);
+    const after = input.slice((inputRef.current?.selectionStart ?? input.length));
+    setInput(`${before}@${label}${after}`);
+    addRef(ref);
+    setMentionOpen(false);
+    setMentionStart(-1);
+    setTimeout(() => inputRef.current?.focus(), 0);
   }
 
   function cancel() {
@@ -199,16 +306,82 @@ export function ProjectChat({ projectId, projectName }: Props) {
         <div className="text-[11px] text-red-400 bg-red-500/10 rounded px-2 py-1 mt-1">{error}</div>
       )}
 
-      <div className="flex gap-1.5 mt-2">
+      {/* v687 — Context-Refs Toolbar + Chips */}
+      <div
+        className="mt-2"
+        onDragOver={(e) => { e.preventDefault(); }}
+        onDrop={handleDrop}
+      >
+        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+          <button
+            onClick={() => setShowOpenItemPicker(true)}
+            disabled={streaming}
+            className="text-[10px] px-1.5 py-0.5 bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded hover:bg-amber-500/20 disabled:opacity-40"
+            title="Offenen Punkt referenzieren (oder @ im Text)"
+          >📌 Open-Item</button>
+          <button
+            onClick={() => setShowAttachmentPicker(true)}
+            disabled={streaming}
+            className="text-[10px] px-1.5 py-0.5 bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded hover:bg-blue-500/20 disabled:opacity-40"
+            title="Datei / Document / URL anhängen"
+          >📎 Anhang</button>
+          <span className="text-[10px] text-gray-600">Tipp: <code>@</code> im Text zeigt eine Auswahl-Liste, Drag&amp;Drop für Files</span>
+          {contextRefs.map((r, i) => (
+            <span key={`${r.kind}-${r.refId}-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] bg-[#0d0d0d] border border-blue-500/40 text-blue-200 rounded">
+              <span>{r.kind === 'open_item' ? '📌' : r.kind === 'note' ? '🔖' : r.kind === 'url' ? '🔗' : r.kind === 'document' ? '📄' : '📎'}</span>
+              <span className="truncate max-w-[180px]">{r.label}</span>
+              <button onClick={() => removeRef(i)} className="text-gray-500 hover:text-red-400" title="Entfernen">✕</button>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex gap-1.5 mt-1 relative">
         <textarea
+          ref={inputRef}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="Nachricht an Alfred zum Projekt … (Enter = senden, Shift+Enter = neue Zeile)"
+          onChange={(e) => onInputChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (mentionOpen && (e.key === 'Escape')) { setMentionOpen(false); return; }
+            if (!mentionOpen && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+          }}
+          placeholder="Nachricht an Alfred zum Projekt … (Enter = senden, Shift+Enter = neue Zeile, @ = Referenz)"
           rows={2}
           disabled={streaming}
           className="flex-1 bg-[#1a1a1a] text-gray-200 border border-[#2a2a2a] rounded px-2 py-1 text-xs resize-none focus:outline-none focus:border-blue-500 placeholder-gray-500"
         />
+        {/* v687 — @-Mention Popover */}
+        {mentionOpen && (() => {
+          const q = mentionQuery.toLowerCase();
+          const itemMatches = openItems.filter(it => it.title.toLowerCase().includes(q)).slice(0, 6);
+          const noteMatches = allNotes.filter(n => n.title.toLowerCase().includes(q)).slice(0, 4);
+          const totalMatches = itemMatches.length + noteMatches.length;
+          if (totalMatches === 0) return null;
+          return (
+            <div className="absolute bottom-full left-0 mb-1 w-[400px] max-h-[260px] overflow-y-auto bg-[#111] border border-blue-500/40 rounded shadow-lg z-10">
+              {itemMatches.length > 0 && (
+                <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-gray-500 border-b border-[#1f1f1f]">📌 Open-Items</div>
+              )}
+              {itemMatches.map(it => (
+                <button
+                  key={it.id}
+                  onClick={() => applyMention(it.title.slice(0, 30), { kind: 'open_item', refId: it.id, label: it.title.slice(0, 50) })}
+                  className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate"
+                >📌 {it.title}</button>
+              ))}
+              {noteMatches.length > 0 && (
+                <div className="px-2 py-1 text-[9px] uppercase tracking-wider text-gray-500 border-b border-[#1f1f1f]">🔖 Notes</div>
+              )}
+              {noteMatches.map(n => (
+                <button
+                  key={n.id}
+                  onClick={() => applyMention(n.title.slice(0, 30), { kind: 'note', refId: n.id, label: n.title.slice(0, 50) })}
+                  className="w-full text-left px-2 py-1 text-xs text-gray-200 hover:bg-blue-500/10 truncate"
+                >🔖 {n.title}</button>
+              ))}
+            </div>
+          );
+        })()}
         {streaming ? (
           <button
             onClick={cancel}
@@ -221,6 +394,153 @@ export function ProjectChat({ projectId, projectName }: Props) {
             className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded text-xs"
           >Senden</button>
         )}
+      </div>
+
+      {/* v687 — Open-Item-Picker (einfaches Dropdown-Modal) */}
+      {showOpenItemPicker && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setShowOpenItemPicker(false)}>
+          <div className="bg-[#111] border border-[#2a2a2a] rounded-lg p-3 max-w-md w-full max-h-[70vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-100">📌 Open-Item referenzieren</h3>
+              <button onClick={() => setShowOpenItemPicker(false)} className="text-gray-500 hover:text-red-400">✕</button>
+            </div>
+            {openItems.length === 0 ? (
+              <div className="text-[11px] text-gray-500 italic py-3 text-center">Keine offenen Items in diesem Projekt.</div>
+            ) : (
+              <div className="space-y-1">
+                {openItems.map(it => (
+                  <button
+                    key={it.id}
+                    onClick={() => {
+                      addRef({ kind: 'open_item', refId: it.id, label: it.title.slice(0, 50) });
+                      setShowOpenItemPicker(false);
+                    }}
+                    className="w-full text-left bg-[#0d0d0d] border border-[#2a2a2a] hover:border-blue-500/40 rounded px-2 py-1.5 text-xs"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span>{it.priority === 'high' ? '🔴' : it.priority === 'low' ? '⚪' : '🟡'}</span>
+                      <span className="text-gray-200 truncate">{it.title}</span>
+                    </div>
+                    {it.description && <div className="text-[10px] text-gray-500 mt-0.5 truncate">{it.description.slice(0, 80)}</div>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* v687 — Attachment-Picker (wieder verwendet v673-Style mit 4 Tabs) */}
+      {showAttachmentPicker && (
+        <ChatAttachmentPicker
+          onClose={() => setShowAttachmentPicker(false)}
+          onPicked={(ref) => { addRef(ref); setShowAttachmentPicker(false); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** v687 — Vereinfachter Attachment-Picker für Project-Chat. 4 Quellen: Documents, Files, URL, Upload. */
+function ChatAttachmentPicker({ onClose, onPicked }: {
+  onClose: () => void;
+  onPicked: (ref: ContextRef) => void;
+}) {
+  const { client } = useConfig();
+  const [tab, setTab] = useState<'documents' | 'files' | 'url' | 'upload'>('documents');
+  const [docs, setDocs] = useState<Array<{ id: string; filename: string }>>([]);
+  const [files, setFiles] = useState<Array<{ key: string; fileName: string; size: number }>>([]);
+  const [search, setSearch] = useState('');
+  const [urlInput, setUrlInput] = useState('');
+  const [urlLabel, setUrlLabel] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!client) return;
+    if (tab === 'documents' && docs.length === 0) client.fetchAvailableDocuments().then(setDocs).catch(() => {});
+    if (tab === 'files' && files.length === 0) client.fetchStoredFiles().then(setFiles).catch(() => {});
+  }, [client, tab, docs.length, files.length]);
+
+  async function handleUpload(file: File) {
+    if (!client) return;
+    if (file.size > 25 * 1024 * 1024) { setErr('Datei zu groß (max 25 MB).'); return; }
+    setUploading(true); setErr(null);
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => {
+          const s = r.result as string;
+          const idx = s.indexOf(',');
+          resolve(idx >= 0 ? s.slice(idx + 1) : s);
+        };
+        r.onerror = () => reject(r.error);
+        r.readAsDataURL(file);
+      });
+      const uploaded = await client.uploadFileBase64(file.name, file.type || 'application/octet-stream', base64Data);
+      if (!uploaded) { setErr('Upload fehlgeschlagen (FileStore aktiv?)'); return; }
+      onPicked({ kind: 'upload', refId: uploaded.key, label: uploaded.fileName });
+    } finally { setUploading(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-[#111] border border-[#2a2a2a] rounded-lg p-3 max-w-xl w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-100">📎 Anhang anhängen</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-red-400">✕</button>
+        </div>
+        <div className="flex gap-1 border-b border-[#1f1f1f] mb-2">
+          {([
+            { key: 'documents', label: '📄 Documents' },
+            { key: 'files', label: '📁 Files' },
+            { key: 'url', label: '🔗 URL' },
+            { key: 'upload', label: '⬆ Upload' },
+          ] as const).map(t => (
+            <button key={t.key} onClick={() => { setTab(t.key); setErr(null); }} className={`px-2 py-1 text-xs border-b-2 ${tab === t.key ? 'border-blue-500 text-blue-400' : 'border-transparent text-gray-400'}`}>{t.label}</button>
+          ))}
+        </div>
+        {err && <div className="bg-red-500/10 text-red-300 rounded px-2 py-1 text-xs mb-1">{err}</div>}
+        <div className="flex-1 overflow-y-auto">
+          {tab === 'documents' && (
+            <>
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Suchen…" className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mb-2" />
+              {docs.filter(d => search === '' || d.filename.toLowerCase().includes(search.toLowerCase())).slice(0, 30).map(d => (
+                <button key={d.id} onClick={() => onPicked({ kind: 'document', refId: d.id, label: d.filename })} className="w-full text-left bg-[#0d0d0d] hover:bg-blue-500/10 border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mb-1">📄 {d.filename}</button>
+              ))}
+              {docs.length === 0 && <div className="text-[11px] text-gray-500 italic">Keine Documents.</div>}
+            </>
+          )}
+          {tab === 'files' && (
+            <>
+              {files.length === 0 && <div className="text-[11px] text-gray-500 italic">Keine Files im Store.</div>}
+              {files.map(f => (
+                <button key={f.key} onClick={() => onPicked({ kind: 'file', refId: f.key, label: f.fileName })} className="w-full text-left bg-[#0d0d0d] hover:bg-blue-500/10 border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 mb-1">📁 {f.fileName}</button>
+              ))}
+            </>
+          )}
+          {tab === 'url' && (
+            <div className="space-y-2">
+              <input value={urlInput} onChange={(e) => setUrlInput(e.target.value)} placeholder="https://…" className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+              <input value={urlLabel} onChange={(e) => setUrlLabel(e.target.value)} placeholder="Anzeige-Name (optional)" className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200" />
+              <button
+                onClick={() => {
+                  if (!/^https?:\/\//i.test(urlInput.trim())) { setErr('URL muss mit http(s)://'); return; }
+                  onPicked({ kind: 'url', refId: urlInput.trim(), label: urlLabel.trim() || urlInput.trim().slice(0, 50) });
+                }}
+                disabled={!urlInput.trim()}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded text-xs"
+              >Anhängen</button>
+            </div>
+          )}
+          {tab === 'upload' && (
+            <div className="space-y-2">
+              <div className="text-[11px] text-gray-500">Datei auswählen (max 25 MB) — wird im FileStore gespeichert.</div>
+              <input type="file" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); }} disabled={uploading} className="text-xs text-gray-300" />
+              {uploading && <div className="text-[11px] text-blue-300 italic animate-pulse">⏳ Lade hoch…</div>}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -2848,7 +2848,10 @@ export class HttpAdapter extends MessagingAdapter {
     req.on('end', () => {
       if (aborted) return;
       try {
-        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string; projectId?: string };
+        const parsed = JSON.parse(body) as { text?: string; chatId?: string; userId?: string; replyToText?: string; replyToFrom?: string; replyToMessageId?: string; projectId?: string;
+          // v687 — Project-Chat: optionale Context-Refs für In-Chat-Attachments/@-Mentions
+          contextRefs?: Array<{ kind: string; refId: string; label?: string }>;
+        };
         const text = parsed.text;
         if (!text || typeof text !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -2910,7 +2913,13 @@ export class HttpAdapter extends MessagingAdapter {
           replyToFrom: typeof parsed.replyToFrom === 'string' ? parsed.replyToFrom : undefined,
           replyToMessageId: typeof parsed.replyToMessageId === 'string' ? parsed.replyToMessageId : undefined,
           // v658 — Projekt-Chat: projectId in metadata damit message-pipeline den Kontext laden kann
-          ...(projectId ? { metadata: { projectId } } : {}),
+          // v687 — contextRefs (Open-Items / Attachments / Notes) ebenfalls über metadata
+          ...((projectId || (Array.isArray(parsed.contextRefs) && parsed.contextRefs.length > 0))
+            ? { metadata: {
+                ...(projectId ? { projectId } : {}),
+                ...(Array.isArray(parsed.contextRefs) && parsed.contextRefs.length > 0 ? { contextRefs: parsed.contextRefs } : {}),
+              } }
+            : {}),
         };
 
         this.emit('message', message);
