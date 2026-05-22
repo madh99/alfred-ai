@@ -373,6 +373,8 @@ export class HttpAdapter extends MessagingAdapter {
     listDocuments?: () => Promise<any[]>;
     listFiles?: () => Promise<any[]>;
     uploadFile?: (input: { filename: string; mimeType: string; base64Data: string }) => Promise<any | null>;
+    // v674 — Download eines FileStore-Files (User-Scope-Check inside)
+    readFile?: (key: string) => Promise<{ data: Buffer; fileName: string; mimeType?: string } | null>;
   };
   setAttachmentsCallbacks(cbs: typeof HttpAdapter.prototype.attachmentsCallbacks): void {
     this.attachmentsCallbacks = cbs;
@@ -851,6 +853,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDocumentsList(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/files' && req.method === 'GET') {
       this.handleStoredFilesList(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/files/download' && req.method === 'GET') {
+      this.handleFileDownload(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/uploads' && req.method === 'POST') {
       this.handleBase64Upload(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/(todos|notes)\/[^/]+\/attachments$/) && req.method === 'GET') {
@@ -2105,6 +2109,27 @@ export class HttpAdapter extends MessagingAdapter {
     const files = await this.attachmentsCallbacks.listFiles();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ files }));
+  }
+
+  // v674 — Download eines im FileStore gespeicherten Files
+  private async handleFileDownload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.attachmentsCallbacks?.readFile) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const key = url.searchParams.get('key');
+    if (!key) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'key required' })); return; }
+    const result = await this.attachmentsCallbacks.readFile(key);
+    if (!result) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'File not found or access denied' })); return; }
+    // Sicheres Content-Disposition: RFC 5987 UTF-8 + ASCII-Fallback ohne CR/LF (Header-Injection-Schutz)
+    const safeName = result.fileName.replace(/[^\w.\-]/g, '_').replace(/_{2,}/g, '_');
+    const utf8Name = encodeURIComponent(result.fileName);
+    res.writeHead(200, {
+      'Content-Type': result.mimeType ?? 'application/octet-stream',
+      'Content-Length': String(result.data.length),
+      'Content-Disposition': `attachment; filename="${safeName}"; filename*=UTF-8''${utf8Name}`,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=0, no-cache',
+    });
+    res.end(result.data);
   }
   private async handleBase64Upload(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;

@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.674] - 2026-05-22
+
+### Added — Attachment Downloads, Image-Previews & Drag-and-Drop
+
+**Download-Endpoint:**
+- `GET /api/files/download?key=<key>` streamt ein FileStore-File mit User-Scope-Check (FileStore prüft Key-Prefix gegen User-ID).
+- Sichere `Content-Disposition` (RFC 5987 UTF-8 + ASCII-Fallback gegen Header-Injection).
+- `X-Content-Type-Options: nosniff` + `Cache-Control: private, no-cache`.
+- Token-Auth via Bearer ODER `?token=…` Query-Param (für `<a href>`-Downloads ohne JS-Header).
+- Best-effort MIME-Detection aus File-Extension (PNG/JPG/GIF/PDF/MD/JSON/MP4/MP3/DOCX/XLSX …).
+
+**WebUI:**
+- `file`/`upload`-Attachments haben jetzt einen klickbaren Download-Link.
+- Bilder (`image/*` oder Extension PNG/JPG/GIF/WebP/SVG) werden als 40×40 Thumbnail inline angezeigt.
+- Upload-Tab: Drag-and-Drop-Area mit visuellem Hover-State, File-Picker als Fallback.
+- `<a download>`-Attribut sorgt dafür dass der Browser den Filename behält statt URL-encoded Key zu speichern.
+
 ## [0.19.0-multi-ha.673] - 2026-05-22
 
 ### Added — Generisches Attachment-System für Todos + Notes

@@ -57,10 +57,19 @@ export function AttachmentSection({ entityType, entityId }: Props) {
 
   function attachmentUrl(att: AttachmentItem): string | null {
     if (att.sourceKind === 'url') return att.sourceRef;
-    // Document → eigentliche Anzeige nur via Skill — wir öffnen die Docs-Seite
     if (att.sourceKind === 'document') return `/docs?doc=${encodeURIComponent(att.sourceRef)}`;
-    // File / Upload → kein direkter Download-Endpoint in dieser Phase (kommt v674)
+    // v674 — file / upload → direkter Download via FileStore
+    if ((att.sourceKind === 'file' || att.sourceKind === 'upload') && client) {
+      return client.fileDownloadUrl(att.sourceRef);
+    }
     return null;
+  }
+
+  function isImage(att: AttachmentItem): boolean {
+    if (att.sourceKind !== 'file' && att.sourceKind !== 'upload') return false;
+    if (att.mimeType?.startsWith('image/')) return true;
+    const ext = att.sourceRef.toLowerCase().split('.').pop() ?? '';
+    return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
   }
 
   return (
@@ -79,9 +88,19 @@ export function AttachmentSection({ entityType, entityId }: Props) {
         {items.map(a => {
           const url = attachmentUrl(a);
           const display = a.label ?? a.sourceRef;
+          const showPreview = isImage(a) && url;
           const inner = (
             <>
-              <span className="text-base shrink-0">{KIND_ICON[a.sourceKind] ?? '📎'}</span>
+              {showPreview ? (
+                <img
+                  src={url ?? undefined}
+                  alt={display}
+                  className="w-10 h-10 object-cover rounded border border-[#1f1f1f] shrink-0"
+                  loading="lazy"
+                />
+              ) : (
+                <span className="text-base shrink-0">{KIND_ICON[a.sourceKind] ?? '📎'}</span>
+              )}
               <div className="flex-1 min-w-0">
                 <div className="text-xs text-gray-200 truncate">{display}</div>
                 <div className="text-[10px] text-gray-600 flex items-center gap-1.5 flex-wrap">
@@ -95,7 +114,14 @@ export function AttachmentSection({ entityType, entityId }: Props) {
           return (
             <div key={a.id} className="flex items-center gap-2 bg-[#0a0a0a] border border-[#1f1f1f] rounded px-2 py-1.5">
               {url ? (
-                <a href={url} target={a.sourceKind === 'url' ? '_blank' : undefined} rel="noopener noreferrer" className="flex items-center gap-2 flex-1 min-w-0 hover:bg-[#141414] -mx-1 px-1 py-0.5 rounded">
+                <a
+                  href={url}
+                  target={a.sourceKind === 'url' ? '_blank' : '_self'}
+                  download={a.sourceKind === 'file' || a.sourceKind === 'upload' ? (a.label ?? undefined) : undefined}
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 flex-1 min-w-0 hover:bg-[#141414] -mx-1 px-1 py-0.5 rounded"
+                  title={(a.sourceKind === 'file' || a.sourceKind === 'upload') ? 'Herunterladen' : (a.sourceKind === 'url' ? 'Externen Link öffnen' : 'Document öffnen')}
+                >
                   {inner}
                 </a>
               ) : (
@@ -276,22 +302,59 @@ function AttachmentPickerModal({ entityType, entityId, onClose, onAdded }: {
             </div>
           )}
           {tab === 'upload' && (
-            <div className="space-y-2">
-              <div className="text-[11px] text-gray-500">Lade eine Datei direkt hoch (max 25 MB). Sie wird im FileStore gespeichert und kann später aus „Frühere Uploads" wiederverwendet werden.</div>
-              <input
-                type="file"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleUpload(f);
-                }}
-                disabled={uploading}
-                className="text-xs text-gray-300"
-              />
-              {uploading && <div className="text-[11px] text-blue-300 italic animate-pulse">⏳ Lade hoch …</div>}
-            </div>
+            <UploadTab uploading={uploading} onFile={handleUpload} />
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** v674 — Upload-Tab mit Drag-and-Drop + File-Picker als Fallback. */
+function UploadTab({ uploading, onFile }: { uploading: boolean; onFile: (f: File) => void }) {
+  const [dragOver, setDragOver] = useState(false);
+  return (
+    <div className="space-y-2">
+      <div className="text-[11px] text-gray-500">
+        Datei direkt hochladen (max 25 MB). Wird im FileStore gespeichert und steht auch als „Frühere Uploads" zur Verfügung.
+      </div>
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f && !uploading) onFile(f);
+        }}
+        className={`border-2 border-dashed rounded p-6 text-center transition-colors ${
+          dragOver ? 'border-blue-500 bg-blue-500/10' : 'border-[#2a2a2a] bg-[#0a0a0a]'
+        } ${uploading ? 'opacity-60' : ''}`}
+      >
+        <div className="text-2xl mb-1">⬆</div>
+        <div className="text-xs text-gray-300 mb-2">
+          {uploading ? 'Lade hoch …' : 'Datei hier hineinziehen oder klicken um auszuwählen'}
+        </div>
+        <input
+          type="file"
+          id="attachment-upload-input"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onFile(f);
+          }}
+          disabled={uploading}
+          className="hidden"
+        />
+        <label
+          htmlFor="attachment-upload-input"
+          className={`inline-block px-3 py-1 text-xs rounded border ${
+            uploading
+              ? 'border-[#2a2a2a] text-gray-600 cursor-not-allowed'
+              : 'border-blue-500/40 text-blue-300 hover:bg-blue-500/10 cursor-pointer'
+          }`}
+        >Datei auswählen</label>
+      </div>
+      {uploading && <div className="text-[11px] text-blue-300 italic animate-pulse">⏳ Upload läuft … bitte warten</div>}
     </div>
   );
 }

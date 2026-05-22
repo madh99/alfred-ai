@@ -514,6 +514,13 @@ export class AlfredClient {
     const data = await res.json();
     return data.file ?? null;
   }
+  /** v674 — Download-URL für ein FileStore-File. Token wird als query-param mitgegeben damit
+   *  <img src=...> / <a href=...> ohne extra-headers funktionieren. */
+  fileDownloadUrl(key: string): string {
+    const qs = new URLSearchParams({ key });
+    if (this.token) qs.set('token', this.token);
+    return `${this.baseUrl}/api/files/download?${qs.toString()}`;
+  }
 
   // ── v661 — Notes API ──
   async fetchNotes(opts?: { query?: string; limit?: number }): Promise<NoteItem[]> {

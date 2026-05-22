@@ -5227,6 +5227,34 @@ export class Alfred {
               return { ...saved, mimeType: input.mimeType };
             } catch (err) { this.logger.warn({ err }, 'Upload failed'); return null; }
           },
+          // v674 — Download mit User-Scope-Check (FileStore prüft das key-Prefix)
+          readFile: async (key: string) => {
+            try {
+              if (!this.fileStoreRef) return null;
+              const uid = await resolveOwnerAtt();
+              const data = await this.fileStoreRef.read(key, uid);
+              // Filename aus key extrahieren (key-Format: <userId>/<timestamp>_<filename>)
+              const lastSlash = key.lastIndexOf('/');
+              const rawName = lastSlash >= 0 ? key.slice(lastSlash + 1) : key;
+              // timestamp-Prefix entfernen wenn vorhanden (Format: YYYY-MM-DDTHH-MM-SS-MMMZ_filename)
+              const tsMatch = rawName.match(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d+Z_(.+)$/);
+              const fileName = tsMatch ? tsMatch[1] : rawName;
+              // Best-effort MIME aus Extension
+              const ext = fileName.toLowerCase().split('.').pop() ?? '';
+              const mimeMap: Record<string, string> = {
+                png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+                webp: 'image/webp', svg: 'image/svg+xml', pdf: 'application/pdf',
+                txt: 'text/plain', md: 'text/markdown', json: 'application/json',
+                csv: 'text/csv', html: 'text/html', mp4: 'video/mp4', mp3: 'audio/mpeg',
+                docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              };
+              return { data, fileName, mimeType: mimeMap[ext] };
+            } catch (err) {
+              this.logger.debug({ err, key }, 'File download denied/failed');
+              return null;
+            }
+          },
         });
         this.logger.info('Attachments API registered');
       }
