@@ -340,7 +340,8 @@ export class HttpAdapter extends MessagingAdapter {
   // v661 — Todos + Notes API
   private todosCallbacks?: {
     list: (opts?: { list?: string; includeCompleted?: boolean }) => Promise<any[]>;
-    add: (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }) => Promise<any>;
+    // v671 — projectId optional für Spiegel-Open-Item beim Anlegen
+    add: (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string; projectId?: string }) => Promise<any>;
     update: (id: string, input: Record<string, unknown>) => Promise<any | null>;
     complete: (id: string) => Promise<boolean>;
     delete: (id: string) => Promise<boolean>;
@@ -1929,7 +1930,7 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.todosCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const body = await this.readBody(req);
-    let data: { title?: string; description?: string; priority?: string; dueDate?: string; list?: string };
+    let data: { title?: string; description?: string; priority?: string; dueDate?: string; list?: string; projectId?: string };
     try { data = JSON.parse(body); } catch { data = {}; }
     if (!data.title?.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title erforderlich' })); return; }
     const todo = await this.todosCallbacks.add({
@@ -1938,6 +1939,8 @@ export class HttpAdapter extends MessagingAdapter {
       priority: data.priority,
       dueDate: data.dueDate,
       list: data.list,
+      // v671 — optional Projekt-Verknüpfung beim Anlegen
+      projectId: data.projectId,
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ todo }));

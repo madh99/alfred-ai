@@ -412,7 +412,7 @@ export class AlfredClient {
     const data = await res.json();
     return Array.isArray(data.todos) ? data.todos : [];
   }
-  async addTodo(input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }): Promise<TodoItem | null> {
+  async addTodo(input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string; projectId?: string }): Promise<TodoItem | null> {
     const res = await fetch(`${this.baseUrl}/api/todos`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
     if (!res.ok) return null;
     const data = await res.json();
@@ -1583,6 +1583,9 @@ export interface TodoItem {
   completed: boolean;
   createdAt: string;
   updatedAt: string;
+  // v671 — Spiegel-Link zu Project-Open-Item
+  linkedProjectId?: string;
+  linkedOpenItemId?: string;
 }
 
 // v670 — Arbeits-/Fortschritts-Notiz an einem Todo
@@ -1842,6 +1845,8 @@ export interface ProjectOpenItem {
   roadmapOrder?: number;
   /** v663a — Geschätzte Aufwandsstunden */
   estimatedHours?: number;
+  /** v671 — Spiegel-Link zu einem Todo */
+  linkedTodoId?: string;
 }
 
 export interface ProjectDecision {

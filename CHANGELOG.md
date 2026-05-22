@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.671] - 2026-05-22
+
+### Added — Todo ↔ Project-Open-Item Spiegel-Link
+
+Beim Anlegen eines Todos kann nun optional ein Projekt gewählt werden. Alfred legt dann parallel ein **Open-Item im Projekt** an und verlinkt beide Einträge bidirektional. Status- und Inhalts-Änderungen synchronisieren sich automatisch.
+
+**Migration v84 (SQLite) + v87 (PG):**
+- `todos.linked_project_id`, `todos.linked_open_item_id`
+- `project_open_items.linked_todo_id`
+- Partial Indizes für schnellen Reverse-Lookup
+
+**Sync-Regeln (entschieden mit User):**
+- **Delete:** beim Löschen eines Todos wird nur die Verlinkung am Open-Item entfernt — das Open-Item bleibt erhalten.
+- **Cancel:** wird ein Open-Item als `cancelled` markiert, bleibt das Todo offen (nur `done` propagiert).
+- **Edit:** Titel + Beschreibung werden Todo → Open-Item synchronisiert. Idempotenz-Check verhindert Loops (Update wird nur ausgeführt wenn Werte tatsächlich differieren).
+- **Status:** `completed`/`done` propagiert in beide Richtungen.
+
+**Backend:**
+- `TodoRepository`: `setLink`, `findByLinkedOpenItem`, `add()` um `linkedProjectId`/`linkedOpenItemId` erweitert.
+- `ProjectRepository`: `updateOpenItemFields`, `setOpenItemTodoLink`, `findOpenItemByLinkedTodo`, `getOpenItemByIdRaw`.
+- `alfred.ts` Sync-Layer in `todosCallbacks.add/update/complete/delete` + `projectsCallbacks.updateOpenItem`.
+
+**WebUI:**
+- TodosPage Add-Form: optionaler Projekt-Dropdown (lädt aktive Projekte).
+- TodosPage Detail: 🔗-Badge in Listenzeile, Link zum Projekt im Detail, Info-Banner zur Sync-Mechanik.
+- ProjectsPage Open-Item: 🔗-Symbol bei verlinkten Items + Eintrag „Verknüpftes Todo: …" im Expanded-Detail.
+
 ## [0.19.0-multi-ha.670] - 2026-05-22
 
 ### Added — Todos: Bearbeiten + Arbeitsnotizen

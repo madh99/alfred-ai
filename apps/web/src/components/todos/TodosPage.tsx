@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { TodoItem, TodoNote } from '@/lib/alfred-client';
+import type { TodoItem, TodoNote, Project } from '@/lib/alfred-client';
 
 type Priority = 'low' | 'normal' | 'high' | 'urgent';
 
@@ -62,8 +62,11 @@ export function TodosPage() {
   const [newPriority, setNewPriority] = useState<Priority>('normal');
   const [newDueDate, setNewDueDate] = useState('');
   const [newList, setNewList] = useState('default');
+  const [newProjectId, setNewProjectId] = useState(''); // v671 — optional Projekt-Verknüpfung
   const [adding, setAdding] = useState(false);
   const [showAddDetails, setShowAddDetails] = useState(false);
+  // v671 — Liste der aktiven Projekte für Dropdown
+  const [projects, setProjects] = useState<Project[]>([]);
 
   // Expandable Detail / Edit / Notes
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -87,6 +90,16 @@ export function TodosPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // v671 — Projekte laden (für Dropdown im Add-Form + Detail-View)
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    client.fetchProjects({ status: 'active' }).then(list => {
+      if (!cancelled) setProjects(list);
+    }).catch(() => { /* nicht-kritisch */ });
+    return () => { cancelled = true; };
+  }, [client]);
+
   async function addTodo() {
     if (!client || !newTitle.trim() || adding) return;
     setAdding(true);
@@ -97,13 +110,15 @@ export function TodosPage() {
         priority: newPriority,
         dueDate: newDueDate || undefined,
         list: newList,
+        // v671 — optional Spiegel-Open-Item im Projekt anlegen
+        projectId: newProjectId || undefined,
       });
       if (t) {
         setTodos(prev => [t, ...prev]);
         setNewTitle('');
         setNewDescription('');
         setNewDueDate('');
-        // Priority & List behalten — User legt oft mehrere in derselben Liste an
+        // Priority, List & ProjectId behalten — User legt oft mehrere im selben Kontext an
       }
     } finally {
       setAdding(false);
@@ -278,20 +293,41 @@ export function TodosPage() {
           >{adding ? '…' : '+ Add'}</button>
         </div>
 
-        {/* v670 — Optional: Beschreibung beim Anlegen */}
-        <div className="mt-2">
+        {/* v670 — Optional: Beschreibung beim Anlegen
+            v671 — Optional: Projekt-Verknüpfung (Spiegel-Open-Item) */}
+        <div className="mt-2 space-y-2">
           <button
             onClick={() => setShowAddDetails(s => !s)}
             className="text-[11px] text-gray-500 hover:text-blue-400"
-          >{showAddDetails ? '▾ Beschreibung ausblenden' : '▸ Mit Beschreibung anlegen'}</button>
+          >{showAddDetails ? '▾ Details ausblenden' : '▸ Mit Details anlegen (Beschreibung + Projekt-Verknüpfung)'}</button>
           {showAddDetails && (
-            <textarea
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              placeholder="Optionale Beschreibung (Kontext, Akzeptanzkriterien, Links …)"
-              rows={3}
-              className="mt-1 w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200 resize-y"
-            />
+            <>
+              <textarea
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                placeholder="Optionale Beschreibung (Kontext, Akzeptanzkriterien, Links …)"
+                rows={3}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200 resize-y"
+              />
+              <div className="flex items-center gap-2">
+                <label className="text-[11px] text-gray-500 shrink-0">📁 Verknüpftes Projekt:</label>
+                <select
+                  value={newProjectId}
+                  onChange={(e) => setNewProjectId(e.target.value)}
+                  className="bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200 flex-1 max-w-md"
+                >
+                  <option value="">— Kein Projekt (nur Todo)</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                {newProjectId && (
+                  <span className="text-[10px] text-amber-300" title="Alfred legt parallel ein Open-Item im Projekt an. Status wird in beide Richtungen synchronisiert.">
+                    🔗 Spiegel-Open-Item wird angelegt
+                  </span>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -367,6 +403,12 @@ export function TodosPage() {
                 {notes.length > 0 && (
                   <span className="text-[10px] text-amber-400" title={`${notes.length} Notizen`}>📝 {notes.length}</span>
                 )}
+                {t.linkedProjectId && (
+                  <span
+                    className="text-[10px] text-blue-300"
+                    title={`Verknüpft mit Projekt: ${projects.find(p => p.id === t.linkedProjectId)?.name ?? t.linkedProjectId.slice(0, 8)}`}
+                  >🔗</span>
+                )}
                 <button
                   onClick={() => remove(t)}
                   className="text-gray-500 hover:text-red-400 text-xs"
@@ -385,10 +427,22 @@ export function TodosPage() {
                       ) : (
                         <div className="text-xs text-gray-600 italic">Keine Beschreibung.</div>
                       )}
-                      <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                      <div className="flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
                         <span>Angelegt: {formatDateTime(t.createdAt)}</span>
                         {t.updatedAt !== t.createdAt && <span>· Zuletzt: {formatDateTime(t.updatedAt)}</span>}
+                        {t.linkedProjectId && (
+                          <a
+                            href={`/projects/?id=${encodeURIComponent(t.linkedProjectId)}`}
+                            className="text-blue-300 hover:text-blue-200 underline"
+                            title="Zum verknüpften Projekt springen"
+                          >🔗 Projekt: {projects.find(p => p.id === t.linkedProjectId)?.name ?? t.linkedProjectId.slice(0, 8)}</a>
+                        )}
                       </div>
+                      {t.linkedOpenItemId && (
+                        <div className="text-[10px] text-blue-300/80 bg-blue-500/5 border border-blue-500/20 rounded px-2 py-1">
+                          🔗 Spiegel-Open-Item aktiv — Status (offen/erledigt) wird automatisch in beide Richtungen synchronisiert. Cancelled im Projekt setzt das Todo NICHT auf erledigt.
+                        </div>
+                      )}
                       <button
                         onClick={() => startEdit(t)}
                         className="px-2 py-1 bg-blue-500/10 border border-blue-500/40 text-blue-300 rounded text-xs hover:bg-blue-500/20"

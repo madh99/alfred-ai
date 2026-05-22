@@ -1923,4 +1923,15 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_todo_notes_todo ON todo_notes(todo_id, created_at DESC)`);
     },
   },
+  {
+    version: 84,
+    description: 'v671 — Spiegel-Link Todo ↔ Project-Open-Item (bidirektionale Referenz)',
+    up(db) {
+      try { db.exec(`ALTER TABLE todos ADD COLUMN linked_project_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE todos ADD COLUMN linked_open_item_id TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_open_items ADD COLUMN linked_todo_id TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_todos_linked_open_item ON todos(linked_open_item_id) WHERE linked_open_item_id IS NOT NULL`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_open_items_linked_todo ON project_open_items(linked_todo_id) WHERE linked_todo_id IS NOT NULL`);
+    },
+  },
 ];

@@ -638,6 +638,9 @@ export function ProjectsPage() {
                               title={`Alfred meint: vermutlich erledigt (${Math.round((it.autoResolvedConfidence ?? 0) * 100)}%) durch ${it.autoResolvedBy?.slice(0, 80)}`}
                             >🤖 ~{Math.round((it.autoResolvedConfidence ?? 0) * 100)}%</span>
                           )}
+                          {it.linkedTodoId && (
+                            <a href="/todos" className="text-[10px] text-blue-300" title="Verknüpft mit Todo (Status-Sync aktiv)">🔗</a>
+                          )}
                           <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
                         </div>
                         {/* v668 — Roadmap-Edit Inline-Form */}
@@ -708,6 +711,12 @@ export function ProjectsPage() {
                               <div>
                                 <span className="text-gray-500">Change:</span>{' '}
                                 <a href={`/itsm?change=${it.linkedChangeId}`} className="text-blue-400 hover:underline font-mono">{it.linkedChangeId.slice(0, 8)}</a>
+                              </div>
+                            )}
+                            {it.linkedTodoId && (
+                              <div>
+                                <span className="text-gray-500">Verknüpftes Todo:</span>{' '}
+                                <a href={`/todos`} className="text-blue-400 hover:underline font-mono" title="Spiegel-Eintrag im Todos-Bereich (Status synchronisiert in beide Richtungen, Notizen am Todo)">🔗 {it.linkedTodoId.slice(0, 8)}</a>
                               </div>
                             )}
                             {it.sessionId && (

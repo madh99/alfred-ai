@@ -4935,24 +4935,56 @@ export class Alfred {
               return await this.todoRepo.list(uid, opts?.list, opts?.includeCompleted ?? false);
             } catch (err) { this.logger.warn({ err }, 'Todos API list failed'); return []; }
           },
-          add: async (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string }) => {
+          add: async (input: { title: string; description?: string; priority?: string; dueDate?: string; list?: string; projectId?: string }) => {
             try {
               if (!this.todoRepo) return null;
               const uid = await resolveOwnerTodo();
-              return await this.todoRepo.add(uid, input.title, {
+              const todo = await this.todoRepo.add(uid, input.title, {
                 list: input.list, description: input.description,
                 priority: input.priority, dueDate: input.dueDate,
               });
+              // v671 — wenn projectId angegeben: parallel Open-Item anlegen + bidirektional verlinken
+              if (input.projectId && this.projectRepo) {
+                try {
+                  const proj = await this.projectRepo.getById(uid, input.projectId);
+                  if (proj) {
+                    const oi = await this.projectRepo.addOpenItem(proj.id, {
+                      title: todo.title,
+                      description: todo.description,
+                      priority: (todo.priority === 'urgent' ? 'high' : todo.priority) as 'low' | 'normal' | 'high',
+                      dueAt: todo.dueDate,
+                    });
+                    await this.projectRepo.setOpenItemTodoLink(oi.id, todo.id);
+                    await this.todoRepo.setLink(todo.id, proj.id, oi.id);
+                    return { ...todo, linkedProjectId: proj.id, linkedOpenItemId: oi.id };
+                  }
+                } catch (err) { this.logger.warn({ err, projectId: input.projectId }, 'Todo→OpenItem mirror create failed'); }
+              }
+              return todo;
             } catch (err) { this.logger.warn({ err }, 'Todos API add failed'); return null; }
           },
           update: async (id: string, input: Record<string, unknown>) => {
             try {
               if (!this.todoRepo) return null;
               const uid = await resolveOwnerTodo();
+              const before = await this.todoRepo.getByIdForUser(id, uid);
               // v670 — completed weiterhin via complete/uncomplete (eigene Audit-Pfade)
               if (typeof input.completed === 'boolean') {
                 if (input.completed) await this.todoRepo.complete(id);
                 else await this.todoRepo.uncomplete(id);
+                // v671 — Status-Sync zum gelinkten Open-Item (nur Übergang offen↔done)
+                if (before?.linkedOpenItemId && this.projectRepo) {
+                  try {
+                    const oi = await this.projectRepo.getOpenItemByIdRaw(before.linkedOpenItemId);
+                    if (oi) {
+                      const targetStatus = input.completed ? 'done' : 'open';
+                      // Nur syncen wenn nötig (Idempotenz)
+                      if (oi.status !== targetStatus) {
+                        await this.projectRepo.updateOpenItemStatus(oi.id, targetStatus);
+                      }
+                    }
+                  } catch (err) { this.logger.debug({ err }, 'Todo→OpenItem status-sync failed'); }
+                }
               }
               // v670 — alle anderen bearbeitbaren Felder
               const patch: Record<string, unknown> = {};
@@ -4961,17 +4993,58 @@ export class Alfred {
               if (typeof input.priority === 'string') patch.priority = input.priority;
               if (input.dueDate === null || typeof input.dueDate === 'string') patch.dueDate = input.dueDate;
               if (typeof input.list === 'string') patch.list = input.list;
+              let updated: typeof before | null = before ?? null;
               if (Object.keys(patch).length > 0) {
-                return await this.todoRepo.update(id, uid, patch);
+                updated = await this.todoRepo.update(id, uid, patch);
+                // v671 — Edit-Sync (Titel + Beschreibung) zum gelinkten Open-Item
+                if (updated?.linkedOpenItemId && this.projectRepo && (patch.title !== undefined || patch.description !== undefined)) {
+                  try {
+                    const oi = await this.projectRepo.getOpenItemByIdRaw(updated.linkedOpenItemId);
+                    if (oi) {
+                      const oiPatch: { title?: string; description?: string | null } = {};
+                      if (patch.title !== undefined && oi.title !== updated.title) oiPatch.title = updated.title;
+                      if (patch.description !== undefined && oi.description !== (updated.description ?? undefined)) {
+                        oiPatch.description = updated.description === undefined ? null : updated.description;
+                      }
+                      if (Object.keys(oiPatch).length > 0) {
+                        await this.projectRepo.updateOpenItemFields(oi.id, oiPatch);
+                      }
+                    }
+                  } catch (err) { this.logger.debug({ err }, 'Todo→OpenItem field-sync failed'); }
+                }
               }
-              return await this.todoRepo.getById(id);
+              return updated ?? (await this.todoRepo.getById(id));
             } catch (err) { this.logger.warn({ err }, 'Todos API update failed'); return null; }
           },
           complete: async (id: string) => {
-            try { return await this.todoRepo!.complete(id); } catch { return false; }
+            try {
+              if (!this.todoRepo) return false;
+              const before = await this.todoRepo.getById(id);
+              const ok = await this.todoRepo.complete(id);
+              // v671 — Status-Sync zum gelinkten Open-Item
+              if (ok && before?.linkedOpenItemId && this.projectRepo) {
+                try {
+                  const oi = await this.projectRepo.getOpenItemByIdRaw(before.linkedOpenItemId);
+                  if (oi && oi.status !== 'done') {
+                    await this.projectRepo.updateOpenItemStatus(oi.id, 'done');
+                  }
+                } catch { /* sync-best-effort */ }
+              }
+              return ok;
+            } catch { return false; }
           },
           delete: async (id: string) => {
-            try { return await this.todoRepo!.delete(id); } catch { return false; }
+            try {
+              if (!this.todoRepo) return false;
+              const before = await this.todoRepo.getById(id);
+              const ok = await this.todoRepo.delete(id);
+              // v671 — beim Delete NUR Verlinkung entfernen (Open-Item bleibt)
+              if (ok && before?.linkedOpenItemId && this.projectRepo) {
+                try { await this.projectRepo.setOpenItemTodoLink(before.linkedOpenItemId, null); }
+                catch { /* best-effort */ }
+              }
+              return ok;
+            } catch { return false; }
           },
           // v670 — Arbeitsnotizen / Fortschritte
           listNotes: async (todoId: string) => {
@@ -5087,7 +5160,23 @@ export class Alfred {
           },
           updateOpenItem: async (itemId: string, status: string) => {
             try {
-              return await projRepo.updateOpenItemStatus(itemId, status as any);
+              const ok = await projRepo.updateOpenItemStatus(itemId, status as any);
+              // v671 — Spiegel-Sync: wenn Open-Item ein verlinktes Todo hat → Todo-Status mit-toggle'n.
+              // Nur 'done' propagiert (cancelled ≠ done, das Todo soll dann offen bleiben wie vereinbart).
+              if (ok && this.todoRepo) {
+                try {
+                  const oi = await projRepo.getOpenItemByIdRaw(itemId);
+                  if (oi?.linkedTodoId) {
+                    const t = await this.todoRepo.getById(oi.linkedTodoId);
+                    if (t) {
+                      if (status === 'done' && !t.completed) await this.todoRepo.complete(t.id);
+                      else if (status === 'open' && t.completed) await this.todoRepo.uncomplete(t.id);
+                      // 'cancelled' / 'in_progress' werden NICHT zum Todo propagiert
+                    }
+                  }
+                } catch (err) { this.logger.debug({ err }, 'OpenItem→Todo status-sync failed'); }
+              }
+              return ok;
             } catch { return false; }
           },
           listHealthLog: async (id: string, limit: number) => {

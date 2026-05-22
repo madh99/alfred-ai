@@ -130,6 +130,8 @@ export interface ProjectOpenItem {
   roadmapOrder?: number;
   /** v663a — Geschätzte Aufwandsstunden (für Burndown/Planung) */
   estimatedHours?: number;
+  /** v671 — Spiegel-Link zu einem Todo. Wenn gesetzt: Todo-Eintrag in todos-Tabelle, Status-Sync. */
+  linkedTodoId?: string;
 }
 
 export interface ProjectDecision {
@@ -223,6 +225,8 @@ function rowToOpenItem(row: Record<string, unknown>): ProjectOpenItem {
     roadmapMilestone: (row.roadmap_milestone as string | null) ?? undefined,
     roadmapOrder: row.roadmap_order != null ? Number(row.roadmap_order) : undefined,
     estimatedHours: row.estimated_hours != null ? Number(row.estimated_hours) : undefined,
+    // v671 — Spiegel-Link zu Todo
+    linkedTodoId: (row.linked_todo_id as string | null) ?? undefined,
   };
 }
 
@@ -565,6 +569,47 @@ export class ProjectRepository {
       [status, resolved, id],
     );
     return result.changes > 0;
+  }
+
+  /** v671 — Titel + Beschreibung eines Open-Items aktualisieren (für Cross-Sync mit Todo). */
+  async updateOpenItemFields(id: string, patch: { title?: string; description?: string | null }): Promise<boolean> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (patch.title !== undefined) { sets.push('title = ?'); params.push(patch.title); }
+    if (patch.description !== undefined) { sets.push('description = ?'); params.push(patch.description); }
+    if (sets.length === 0) return false;
+    params.push(id);
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items SET ${sets.join(', ')} WHERE id = ?`,
+      params,
+    );
+    return result.changes > 0;
+  }
+
+  /** v671 — Spiegel-Link explizit setzen oder entfernen (linked_todo_id). */
+  async setOpenItemTodoLink(id: string, linkedTodoId: string | null): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items SET linked_todo_id = ? WHERE id = ?`,
+      [linkedTodoId, id],
+    );
+    return result.changes > 0;
+  }
+
+  /** v671 — Lookup Open-Item per linked_todo_id. */
+  async findOpenItemByLinkedTodo(todoId: string): Promise<ProjectOpenItem | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM project_open_items WHERE linked_todo_id = ?`,
+      [todoId],
+    ) as Record<string, unknown> | undefined;
+    return row ? rowToOpenItem(row) : null;
+  }
+
+  /** v671 — Get Open-Item by ID (raw, no user filter — caller muss berechtigen). */
+  async getOpenItemByIdRaw(id: string): Promise<ProjectOpenItem | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM project_open_items WHERE id = ?`, [id],
+    ) as Record<string, unknown> | undefined;
+    return row ? rowToOpenItem(row) : null;
   }
 
   /**

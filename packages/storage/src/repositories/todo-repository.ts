@@ -12,6 +12,9 @@ export interface TodoEntry {
   completed: boolean;
   createdAt: string;
   updatedAt: string;
+  // v671 — Spiegel-Link zu Project-Open-Item (optional)
+  linkedProjectId?: string;
+  linkedOpenItemId?: string;
 }
 
 /** v670 — Arbeits-/Fortschritts-Notiz an einem Todo. */
@@ -29,19 +32,39 @@ export class TodoRepository {
   async add(
     userId: string,
     title: string,
-    opts?: { list?: string; description?: string; priority?: string; dueDate?: string },
+    opts?: { list?: string; description?: string; priority?: string; dueDate?: string; linkedProjectId?: string; linkedOpenItemId?: string },
   ): Promise<TodoEntry> {
     const now = new Date().toISOString();
     const id = randomUUID();
     const list = opts?.list ?? 'default';
     const priority = opts?.priority ?? 'normal';
 
+    // v671 — linked_project_id / linked_open_item_id mitanlegen
     await this.adapter.execute(
-      'INSERT INTO todos (id, user_id, list, title, description, priority, due_date, completed, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)',
-      [id, userId, list, title, opts?.description ?? null, priority, opts?.dueDate ?? null, now, now],
+      'INSERT INTO todos (id, user_id, list, title, description, priority, due_date, completed, created_at, updated_at, linked_project_id, linked_open_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)',
+      [id, userId, list, title, opts?.description ?? null, priority, opts?.dueDate ?? null, now, now, opts?.linkedProjectId ?? null, opts?.linkedOpenItemId ?? null],
     );
 
-    return { id, userId, list, title, description: opts?.description, priority: priority as TodoEntry['priority'], dueDate: opts?.dueDate, completed: false, createdAt: now, updatedAt: now };
+    return { id, userId, list, title, description: opts?.description, priority: priority as TodoEntry['priority'], dueDate: opts?.dueDate, completed: false, createdAt: now, updatedAt: now, linkedProjectId: opts?.linkedProjectId, linkedOpenItemId: opts?.linkedOpenItemId };
+  }
+
+  /** v671 — Spiegel-Link explizit setzen oder entfernen. Wird vom alfred.ts-Layer
+   *  benutzt nachdem ein Open-Item parallel angelegt wurde, damit die Referenz
+   *  in beiden Tabellen konsistent ist. */
+  async setLink(todoId: string, linkedProjectId: string | null, linkedOpenItemId: string | null): Promise<void> {
+    const now = new Date().toISOString();
+    await this.adapter.execute(
+      `UPDATE todos SET linked_project_id = ?, linked_open_item_id = ?, updated_at = ? WHERE id = ?`,
+      [linkedProjectId, linkedOpenItemId, now, todoId],
+    );
+  }
+
+  /** v671 — Finde Todo per linked_open_item_id (Reverse-Lookup für Cross-Sync). */
+  async findByLinkedOpenItem(openItemId: string): Promise<TodoEntry | null> {
+    const row = await this.adapter.queryOne(
+      `SELECT * FROM todos WHERE linked_open_item_id = ?`, [openItemId],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : null;
   }
 
   async list(userId: string, list?: string, includeCompleted = false): Promise<TodoEntry[]> {
@@ -229,9 +252,12 @@ export class TodoRepository {
       description: row.description as string | undefined,
       priority: row.priority as TodoEntry['priority'],
       dueDate: row.due_date as string | undefined,
-      completed: row.completed === 1,
+      // SQLite: 1/0; Postgres kann auch boolean liefern
+      completed: row.completed === 1 || row.completed === true || row.completed === '1',
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
+      linkedProjectId: (row.linked_project_id as string | null) ?? undefined,
+      linkedOpenItemId: (row.linked_open_item_id as string | null) ?? undefined,
     };
   }
 }

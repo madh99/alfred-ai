@@ -1241,4 +1241,15 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_todo_notes_todo ON todo_notes(todo_id, created_at DESC)`, []);
     },
   },
+  {
+    version: 87,
+    description: 'v671 — Spiegel-Link Todo ↔ Project-Open-Item',
+    async up(db) {
+      await db.execute(`ALTER TABLE todos ADD COLUMN IF NOT EXISTS linked_project_id TEXT`, []);
+      await db.execute(`ALTER TABLE todos ADD COLUMN IF NOT EXISTS linked_open_item_id TEXT`, []);
+      await db.execute(`ALTER TABLE project_open_items ADD COLUMN IF NOT EXISTS linked_todo_id TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_todos_linked_open_item ON todos(linked_open_item_id) WHERE linked_open_item_id IS NOT NULL`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_open_items_linked_todo ON project_open_items(linked_todo_id) WHERE linked_todo_id IS NOT NULL`, []);
+    },
+  },
 ];
