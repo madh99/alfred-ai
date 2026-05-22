@@ -5,6 +5,12 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.678] - 2026-05-22
+
+### Fixed
+- **Sidebar Chat-Klick auf Project-Chat sprang fälschlicherweise zum Web-Chat:** Klick auf `project:<uuid>` in der Sidebar lud zwar die Conversation-Messages, aber `useChat.chatId` ist fest `web-chat-<userId>` — neue Nachrichten gingen also an den falschen Chat. Neu: Project-Chats werden direkt zur `/projects/?id=<projectId>&chat=open` navigiert. Die ProjectChat-Komponente erkennt den `chat=open`-Param und expandiert automatisch + scrollt zum Element. Query-Param wird nach Auto-Open entfernt damit Reload nicht endlos scrollt.
+- **Sidebar-Label für Project-Chats:** Statt rohem `project:3a407ced-a819-…` zeigt die Sidebar jetzt 📁 + den echten Projekt-Namen (via in-memory Lookup gegen die bereits geladenen aktiven Projekte).
+
 ## [0.19.0-multi-ha.677] - 2026-05-22
 
 ### Fixed — Deploy: vier zusammenhängende Bugs

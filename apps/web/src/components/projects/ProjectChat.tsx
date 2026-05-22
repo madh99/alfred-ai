@@ -27,7 +27,11 @@ export function ProjectChat({ projectId, projectName }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  // v678 — Auto-expand wenn die Sidebar mit ?chat=open navigiert hat
+  const [expanded, setExpanded] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return new URLSearchParams(window.location.search).get('chat') === 'open'; } catch { return false; }
+  });
   const [loadingHistory, setLoadingHistory] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<(() => void) | null>(null);
@@ -53,6 +57,21 @@ export function ProjectChat({ projectId, projectName }: Props) {
       loadHistory();
     }
   }, [expanded, messages.length, loadHistory]);
+
+  // v678 — Beim Auto-Open (Sidebar-Navigation) zum Chat-Element scrollen damit
+  // der User es sofort sieht (sonst ist es weit unten in der Projects-Detail-View)
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('chat') === 'open' && rootRef.current) {
+      setTimeout(() => rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+      // query-param entfernen damit Reload nicht endlos auto-scrollt
+      const url = new URL(window.location.href);
+      url.searchParams.delete('chat');
+      window.history.replaceState({}, '', url.toString());
+    }
+  }, []);
 
   // Auto-Scroll bei neuer Nachricht
   useEffect(() => {
@@ -92,7 +111,7 @@ export function ProjectChat({ projectId, projectName }: Props) {
 
   if (!expanded) {
     return (
-      <div className="pt-2 border-t border-[#222]">
+      <div ref={rootRef} className="pt-2 border-t border-[#222]">
         <button
           onClick={() => setExpanded(true)}
           className="w-full text-left flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-gray-200"
@@ -106,7 +125,7 @@ export function ProjectChat({ projectId, projectName }: Props) {
   }
 
   return (
-    <div className="pt-2 border-t border-[#222]">
+    <div ref={rootRef} className="pt-2 border-t border-[#222]">
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={() => setExpanded(false)}

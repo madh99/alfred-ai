@@ -114,10 +114,34 @@ export function Sidebar() {
     telegram: '✈️', matrix: '🔷', api: '🌐', discord: '🎮', whatsapp: '💚', signal: '🔵',
   } as Record<string, string>)[p] ?? '💬';
 
+  // v678 — Project-Chats erkennen + projektbezogenen Anzeige-Namen ableiten
+  function chatDisplayLabel(c: ConvItem): { label: string; icon: string; isProject: boolean } {
+    if (c.chatId?.startsWith('project:')) {
+      const projectId = c.chatId.slice('project:'.length);
+      const proj = projects.find(p => p.id === projectId);
+      return {
+        label: proj ? proj.name.slice(0, 50) : `Projekt ${projectId.slice(0, 8)}`,
+        icon: '📁',
+        isProject: true,
+      };
+    }
+    return {
+      label: c.customLabel ?? c.chatId,
+      icon: platformIcon(c.platform),
+      isProject: false,
+    };
+  }
+
   function openConversation(c: ConvItem) {
     // v647 — api/web-Conversations → direkt in ChatPage laden.
-    // Andere Plattformen (matrix/telegram/discord/...) → History mit Auto-Select öffnen,
-    // weil ChatPage nur für web-User sendet (Platform=api).
+    // v678 — Project-Chats (chatId='project:<uuid>') gehören NICHT in den allgemeinen
+    // Web-Chat (der hat eine fixe chatId='web-chat-<userId>'). Sie müssen in die
+    // Projekt-Detail-View damit die Project-Chat-Sektion den richtigen Kontext lädt.
+    if (c.chatId?.startsWith('project:')) {
+      const projectId = c.chatId.slice('project:'.length);
+      window.location.href = `${BASE}/projects/?id=${encodeURIComponent(projectId)}&chat=open`;
+      return;
+    }
     if (c.platform === 'api') {
       try { localStorage.setItem('alfred-chat-active-conversation-id', c.id); } catch {}
       window.location.href = `${BASE}/chat/`;
@@ -233,18 +257,21 @@ export function Sidebar() {
             </div>
             {chatsOpen && (
               <div className="space-y-0.5">
-                {chats.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => openConversation(c)}
-                    className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
-                    title={c.platform === 'api' ? 'Im Chat fortsetzen' : 'In History öffnen (read-only)'}
-                  >
-                    {c.pinnedAt && <span className="text-amber-400 text-[10px]">📌</span>}
-                    <span className="text-[11px]">{platformIcon(c.platform)}</span>
-                    <span className="truncate flex-1">{c.customLabel ?? c.chatId}</span>
-                  </button>
-                ))}
+                {chats.map(c => {
+                  const display = chatDisplayLabel(c);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => openConversation(c)}
+                      className="w-full flex items-center gap-2 px-3 py-1 text-[13px] text-gray-300 hover:bg-[#1a1a1a] rounded text-left"
+                      title={display.isProject ? 'Projekt-Chat öffnen' : (c.platform === 'api' ? 'Im Chat fortsetzen' : 'In History öffnen (read-only)')}
+                    >
+                      {c.pinnedAt && <span className="text-amber-400 text-[10px]">📌</span>}
+                      <span className="text-[11px]">{display.icon}</span>
+                      <span className="truncate flex-1">{display.label}</span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
