@@ -612,6 +612,23 @@ export const CmdbConfigSchema = z.object({
   healthCheckIntervalMinutes: z.number().optional(),
 });
 
+// v696 — Project-Agent Sandbox + Live-Preview (opt-in)
+export const SandboxConfigSchema = z.object({
+  enabled: z.coerce.boolean().optional(),
+  defaultMode: z.enum(['classic', 'sandbox', 'sandbox-preview', 'interactive-chat']).optional(),
+  defaultMergeStrategy: z.enum(['direct', 'pr']).optional(),
+  maxParallelPerUser: z.coerce.number().int().positive().optional(),
+  diskQuotaPerUserMb: z.coerce.number().int().positive().optional(),
+  diskQuotaPerSandboxMb: z.coerce.number().int().positive().optional(),
+  hostPortRangeStart: z.coerce.number().int().min(1024).max(65535).optional(),
+  hostPortRangeEnd: z.coerce.number().int().min(1024).max(65535).optional(),
+  idleTimeoutMin: z.coerce.number().int().positive().optional(),
+  cleanupAfterHours: z.coerce.number().int().positive().optional(),
+  worktreeBasePath: z.string().optional(),
+  containerImage: z.string().optional(),
+  pnpmStorePath: z.string().nullable().optional(),
+});
+
 export const MqttConfigSchema = z.object({
   brokerUrl: z.string(),
   username: z.string().optional(),
@@ -674,6 +691,7 @@ export const AlfredConfigSchema = z.object({
   pfsense: PfSenseConfigSchema.optional(),
   infra: InfraDefaultsConfigSchema.optional(),
   cmdb: CmdbConfigSchema.optional(),
+  sandbox: SandboxConfigSchema.optional(),
   projects: ProjectsConfigSchema.optional(),
   backup: z.object({
     enabled: z.coerce.boolean().default(false),

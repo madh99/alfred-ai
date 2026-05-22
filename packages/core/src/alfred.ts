@@ -209,6 +209,8 @@ export class Alfred {
   private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
   private cmdbHealthCheckTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
+  /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
+  private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
   private ownerMasterUserId?: string;
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
@@ -3097,6 +3099,33 @@ export class Alfred {
           }
         } catch (err) {
           this.logger.warn({ err }, 'Insight-Engine wiring failed (non-fatal)');
+        }
+
+        // v696 — Project-Agent Sandbox + Live-Preview Foundation.
+        // Opt-in via config.sandbox.enabled. Solange disabled oder Docker fehlt:
+        // sandboxManager bleibt undefined → ProjectAgentRunner sieht es nicht → classic-Pfad.
+        if (this.config.sandbox?.enabled) {
+          try {
+            const { SandboxRepository: SandboxRepo } = await import('@alfred/storage');
+            const { SandboxManager } = await import('./sandbox-manager.js');
+            const sandboxRepo = new SandboxRepo(adapter);
+            const nodeIdForSandbox = this.config.cluster?.nodeId ?? 'single';
+            const sandboxManager = new SandboxManager({
+              config: this.config.sandbox,
+              repo: sandboxRepo,
+              logger: this.logger.child({ component: 'sandbox-manager' }),
+              nodeId: nodeIdForSandbox,
+            });
+            const hc = await sandboxManager.runHealthCheck();
+            if (hc.dockerAvailable && hc.worktreeBaseWritable) {
+              this.sandboxManager = sandboxManager;
+              this.logger.info({ ...sandboxManager.getStatus() }, 'v696 Sandbox-Manager initialized');
+            } else {
+              this.logger.warn({ reasons: hc.reasons }, 'v696 Sandbox-Manager disabled (health-check failed) — classic-only mode');
+            }
+          } catch (err) {
+            this.logger.warn({ err }, 'v696 Sandbox-Manager wiring failed (non-fatal, classic-only mode)');
+          }
         }
 
         // Schedule periodic auto-discovery

@@ -81,6 +81,8 @@ export { MetricSamplesRepository } from './repositories/metric-samples-repositor
 export type { MetricSample, MetricForecast } from './repositories/metric-samples-repository.js';
 export { InsightsRepository } from './repositories/insights-repository.js';
 export type { Insight, InsightCandidate, InsightCategory, InsightStatus } from './repositories/insights-repository.js';
+export { SandboxRepository } from './repositories/sandbox-repository.js';
+export type { Sandbox, SandboxInsert, SandboxStatus, SandboxResult, SandboxProjectType } from './repositories/sandbox-repository.js';
 export { GoalsRepository } from './repositories/goals-repository.js';
 export type { Goal, GoalCheckpoint, GoalStatus, GoalCategory, GoalCadence, CheckpointStatus } from './repositories/goals-repository.js';
 export { KgQuestionsRepository } from './repositories/kg-questions-repository.js';

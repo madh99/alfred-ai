@@ -1289,4 +1289,50 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC)`, []);
     },
   },
+  {
+    version: 90,
+    description: 'v696 — Project-Agent Sandbox + Live-Preview Foundation (opt-in)',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_agent_sandboxes (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          session_id TEXT,
+          user_id TEXT NOT NULL,
+
+          worktree_path TEXT NOT NULL,
+          branch_name TEXT NOT NULL,
+          base_commit_sha TEXT NOT NULL,
+
+          container_id TEXT,
+          container_image TEXT NOT NULL,
+          host_port INTEGER,
+          internal_port INTEGER NOT NULL,
+          project_type TEXT,
+
+          status TEXT NOT NULL,
+          status_reason TEXT,
+          node_id TEXT NOT NULL,
+
+          ram_peak_mb INTEGER,
+          disk_used_mb INTEGER,
+
+          created_at TEXT NOT NULL,
+          last_active_at TEXT NOT NULL,
+          destroyed_at TEXT,
+
+          result TEXT,
+          result_pr_url TEXT
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandboxes_session ON project_agent_sandboxes(session_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandboxes_active ON project_agent_sandboxes(status, last_active_at)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandboxes_project ON project_agent_sandboxes(project_id, status)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandboxes_user ON project_agent_sandboxes(user_id, status)`, []);
+
+      await db.execute(`ALTER TABLE project_agent_sessions ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'classic'`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS sandbox_default_mode TEXT`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_strategy TEXT`, []);
+    },
+  },
 ];

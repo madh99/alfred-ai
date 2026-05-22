@@ -1973,4 +1973,55 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, created_at DESC)`);
     },
   },
+  {
+    version: 87,
+    description: 'v696 — Project-Agent Sandbox + Live-Preview Foundation (opt-in, kein User-Verhalten ohne Aktivierung)',
+    up(db) {
+      // Sandbox-State pro Session (oder project-level für zukünftige Erweiterungen)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_agent_sandboxes (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          session_id TEXT,
+          user_id TEXT NOT NULL,
+
+          worktree_path TEXT NOT NULL,
+          branch_name TEXT NOT NULL,
+          base_commit_sha TEXT NOT NULL,
+
+          container_id TEXT,
+          container_image TEXT NOT NULL,
+          host_port INTEGER,
+          internal_port INTEGER NOT NULL,
+          project_type TEXT,
+
+          status TEXT NOT NULL,
+          status_reason TEXT,
+          node_id TEXT NOT NULL,
+
+          ram_peak_mb INTEGER,
+          disk_used_mb INTEGER,
+
+          created_at TEXT NOT NULL,
+          last_active_at TEXT NOT NULL,
+          destroyed_at TEXT,
+
+          result TEXT,
+          result_pr_url TEXT
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandboxes_session ON project_agent_sandboxes(session_id)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandboxes_active ON project_agent_sandboxes(status, last_active_at)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandboxes_project ON project_agent_sandboxes(project_id, status)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandboxes_user ON project_agent_sandboxes(user_id, status)`);
+
+      // Session-Mode (default 'classic' für ALLE existierenden + neuen Sessions).
+      // Werte: 'classic' | 'sandbox' | 'sandbox-preview' | 'interactive-chat'
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'classic'`); } catch { /* exists */ }
+
+      // Project-Level Defaults (NULL = Global-Setting verwenden)
+      try { db.exec(`ALTER TABLE projects ADD COLUMN sandbox_default_mode TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN merge_strategy TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

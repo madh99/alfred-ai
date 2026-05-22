@@ -5,6 +5,56 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.696] - 2026-05-22
+
+### Added — Project-Agent Sandbox + Live-Preview: Foundation (Phase 1/5)
+
+Vorbereitende Infrastruktur für ephemere Worktree+Container-Sessions mit Live-Preview. **In dieser Version: kein User-facing Verhalten.** Alle existierenden Sessions laufen 1:1 wie heute weiter. Die Sandbox-Funktion ist opt-in über `config.sandbox.enabled = true` UND setzt verfügbares Docker + beschreibbaren Worktree-Pfad voraus. Ohne beides: SandboxManager bleibt `undefined`, classic-Pfad ist Default.
+
+**Was kommt nach v696:**
+- v697: Worktree-Lifecycle + Container-Spawn + Project-Type-Detection
+- v698: Internal-Proxy `/preview/{id}/*` (HTTP + WebSocket-HMR)
+- v699: WebUI (autonom-Tabs + interactive-chat-Mode)
+- v700: Hardening (Cleanup, HA-Migration via NFS-aware path, Pre-Merge-Secret-Scan)
+
+**Geänderte Dateien:**
+- `@alfred/types`: `SandboxConfig`, `SandboxSessionMode`, `SandboxMergeStrategy`
+- `@alfred/config`: `SandboxConfigSchema` (Zod) + ENV-Overrides für 13 Felder (`ALFRED_SANDBOX_*`)
+- `@alfred/storage`:
+  - Migration v87 (SQLite) + v90 (PG): Tabelle `project_agent_sandboxes`, neue Spalte `project_agent_sessions.mode` (default `'classic'`), neue Spalten `projects.sandbox_default_mode` + `projects.merge_strategy`
+  - Neuer `SandboxRepository` mit vollem CRUD (create, getById, listByProject, listActiveByUser, updateStatus, setContainerInfo, touchActivity, markDestroyed, …)
+- `@alfred/core`:
+  - Neue Klasse `SandboxManager` (Skelett — Lifecycle-Methoden werfen `not-implemented`, werden in v697+ gefüllt)
+  - `runHealthCheck()` prüft Docker-Daemon + Worktree-Base-Pfad und entscheidet ob das Feature überhaupt nutzbar ist
+  - `isAvailable()` + `getStatus()` als Diagnose-Hooks für künftige UI/API-Endpunkte
+  - `checkUserQuota()` prüft `maxParallelPerUser` + `diskQuotaPerUserMb` (für Phase 2 nutzbar)
+  - Wiring in `alfred.ts`: lazy-Init nur wenn `config.sandbox.enabled` true UND Health-Check ✓. Bei Fehler: warn-Log, classic-Pfad bleibt aktiv.
+
+### Backward-Compatibility — explizit garantiert
+
+- Alle existierenden Sessions: `mode = 'classic'` durch Migration-Default
+- Existierende Projects: `sandbox_default_mode = NULL` und `merge_strategy = NULL` → Global-Default greift (= classic, da default-enabled = false)
+- ProjectAgentRunner: keine Code-Änderung in v696. Wird in v697 um eine vorab-Verzweigung erweitert.
+- Wenn `config.sandbox` komplett fehlt: SandboxManager wird nie initialisiert
+- Wenn Docker fehlt: SandboxManager wird initialisiert, aber `isAvailable() = false` → Runner sieht es nicht
+- Beim Upgrade ohne Aktivierung: NULL Code-Path-Änderung gegenüber v695
+
+### Default-Werte
+| Feld | Default |
+|---|---|
+| `enabled` | false |
+| `defaultMode` | 'classic' |
+| `defaultMergeStrategy` | 'pr' |
+| `maxParallelPerUser` | 3 |
+| `diskQuotaPerUserMb` | 5120 (5 GB) |
+| `diskQuotaPerSandboxMb` | 2048 (2 GB) |
+| `hostPortRangeStart` / `End` | 9100 / 9199 |
+| `idleTimeoutMin` | 30 |
+| `cleanupAfterHours` | 24 |
+| `worktreeBasePath` | `/var/alfred/worktrees` (HA-Cluster: NFS-Mount empfohlen) |
+| `containerImage` | `alfred-sandbox:node-22` (gebaut beim ersten Use in v697) |
+| `pnpmStorePath` | null |
+
 ## [0.19.0-multi-ha.695] - 2026-05-22
 
 ### Fixed — kg-gap-adapter: ehrliche Existenz-Checks statt naive Attribut-Lücken

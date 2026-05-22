@@ -933,6 +933,42 @@ export interface CmdbConfig {
   healthCheckIntervalMinutes?: number;
 }
 
+/**
+ * v696 — Project-Agent Sandbox + Live-Preview
+ * Opt-in feature. Wenn enabled=false: existing project-agent flows komplett unverändert.
+ */
+export type SandboxSessionMode = 'classic' | 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+export type SandboxMergeStrategy = 'direct' | 'pr';
+
+export interface SandboxConfig {
+  /** Master-Switch. Default false. Wenn false oder Docker nicht verfügbar:
+   *  alle Sessions laufen im classic-Modus (heutiges Verhalten, kein UI-Change). */
+  enabled?: boolean;
+  /** Default-Modus für neue Sessions ohne explizite Wahl. Default 'classic'. */
+  defaultMode?: SandboxSessionMode;
+  /** Default-Merge-Strategie für Sandbox-Sessions. Default 'pr'. */
+  defaultMergeStrategy?: SandboxMergeStrategy;
+  /** Max parallele laufende Sandboxes pro User. Default 3. */
+  maxParallelPerUser?: number;
+  /** Disk-Quota pro User in MB. Default 5120 (5 GB). */
+  diskQuotaPerUserMb?: number;
+  /** Disk-Quota pro einzelner Sandbox in MB. Default 2048 (2 GB). */
+  diskQuotaPerSandboxMb?: number;
+  /** Host-Port-Range für Container-Forwarding [start, end]. Default [9100, 9199]. */
+  hostPortRangeStart?: number;
+  hostPortRangeEnd?: number;
+  /** Idle-Minuten bis status='running' → 'paused'. Default 30. */
+  idleTimeoutMin?: number;
+  /** Stunden seit destroyed_at OR (paused + last_active_at) bis Cleanup. Default 24. */
+  cleanupAfterHours?: number;
+  /** Worktree-Base-Path. Default '/var/alfred/worktrees'. HA-Cluster: auf NFS-Mount setzen. */
+  worktreeBasePath?: string;
+  /** Container-Image für Sandbox-Runtime. Default 'alfred-sandbox:node-22'. */
+  containerImage?: string;
+  /** Shared pnpm-store mount (optional, beschleunigt npm install). NULL = pro Container eigener Store. */
+  pnpmStorePath?: string | null;
+}
+
 export interface MqttConfig {
   brokerUrl: string;
   username?: string;
@@ -997,6 +1033,8 @@ export interface AlfredConfig {
   pfsense?: PfSenseConfig;
   infra?: InfraDefaultsConfig;
   cmdb?: CmdbConfig;
+  /** v696 — Project-Agent Sandbox (opt-in). Wenn nicht gesetzt: classic-only Verhalten. */
+  sandbox?: SandboxConfig;
   projects?: ProjectsConfig;
   backup?: BackupConfig;
   commvault?: CommvaultConfig;
