@@ -74,6 +74,21 @@ export function InsightsPage() {
     } finally { setSweeping(false); }
   }
 
+  // v695 — Bulk-Dismiss aller offenen Insights der aktuell gefilterten Kategorie
+  async function dismissAllInCategory() {
+    if (!client) return;
+    if (filterCat === 'all') { alert('Bitte zuerst eine Kategorie filtern.'); return; }
+    if (!confirm(`Alle offenen Insights in "${CATEGORY_LABEL[filterCat] ?? filterCat}" als erledigt markieren?`)) return;
+    setBusy('bulk-dismiss');
+    try {
+      const r = await client.dismissInsightsCategory(filterCat);
+      alert(`${r.dismissed} Insights als erledigt markiert.`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(null); }
+  }
+
   async function handleDismiss(id: string) {
     if (!client) return;
     setBusy(id);
@@ -164,6 +179,14 @@ export function InsightsPage() {
           {statuses.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
         <div className="flex-1" />
+        {filterCat !== 'all' && filterStatus === 'pending' && insights.length > 0 && (
+          <button
+            onClick={dismissAllInCategory}
+            disabled={busy === 'bulk-dismiss'}
+            className="px-3 py-1.5 text-sm border border-red-500/30 text-red-400 hover:bg-red-500/15 disabled:opacity-50 rounded"
+            title={`Alle ${insights.length} offenen Insights in "${CATEGORY_LABEL[filterCat] ?? filterCat}" als erledigt markieren`}
+          >✕ Alle erledigen ({insights.length})</button>
+        )}
         <button onClick={load} className="px-3 py-1.5 text-sm text-blue-400 hover:text-blue-300">↻ Neu laden</button>
       </div>
 

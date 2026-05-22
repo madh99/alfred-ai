@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.695] - 2026-05-22
+
+### Fixed — kg-gap-adapter: ehrliche Existenz-Checks statt naive Attribut-Lücken
+
+v694 hat die Insight-Engine zum Laufen gebracht — aber der KG-Gap-Adapter spammt mit Karten wie „Beziehung zu Tochter Hannah unklar" (Name enthält die Beziehung!), „Beziehung zu Alexandra unklar" (Memory weiß sie ist die Frau), „Adresse für Alleestraße 6 fehlt" (Name IST die Adresse), „Adresse für St. Pölten fehlt" (das ist eine Stadt). Root-Cause: Adapter prüfte ausschließlich `entity.attributes` und ignorierte (a) den Namen selbst, (b) `kg_relations`-Edges (Familien-Inferenz schreibt dorthin), (c) `memories`-Inhalte.
+
+**A — Name-basierte Heuristiken** in `kg-gap-adapter.ts`:
+- `RELATION_PREFIX_RE` (de): Sohn/Tochter/Mutter/Vater/Mama/Papa/Schwester/Bruder/Oma/Opa/Tante/Onkel/Cousin/Mann/Frau/Partner/Freund/Kollege/Chef/Nachbar/Schwager/Schwägerin/Schwiegermutter/Schwiegervater/Schwiegersohn/Schwiegertochter — Match überspringt Beziehungs-Gap
+- `STREET_WITH_NUMBER_RE`: Straßen-Suffix + Hausnummer → Name IST die Adresse → Skip
+- `STREET_IN_NAME_RE`: Straßen-Suffix ohne Nummer → noch immer Adress-Information → Skip
+- `PLACE_NAME_RE`: Stadt/Ort-Pattern (Großbuchstaben, kein Suffix, keine Nummer, ≤30 Zeichen) → Skip Adresse-Gap
+
+**B — KG-Relations-Check:** neue Adapter-Dependency `KgGapDataFacade.listRelationsForEntity(uids, entityId)`. Bei Person-Beziehungs-Gap wird abgefragt ob bereits eine Edge mit Type `sibling | parent_of | child_of | spouse | spouse_of | friend | colleague | relates_to_owner | family_of | partner_of | married_to | parent | child` existiert. Bei Birthday-Gap: `birthday | born_on | has_birthday`. Wenn ja → Skip.
+
+**C — Memory-Text-Check:** Facade-Methode `listMemoryValues(uids)` lädt einmal pro Sweep ALLE memory.value-Strings, in-memory wird zeilenweise gegen `name LIKE` + Keyword-Regex (Relation/Birthday/Adresse/Org-Info) gematcht. Wenn Treffer → Skip. Keine N+1-Queries.
+
+**D — Bulk-Dismiss-Endpoint + WebUI-Button:** Damit die alten Noise-Karten nicht einzeln weggeklickt werden müssen:
+- `InsightsRepository.dismissCategory(userId, category)` setzt alle pending/snoozed einer Kategorie auf dismissed
+- `POST /api/insights/dismiss-category` mit Body `{ category }`
+- WebUI `/insights`: zusätzlicher Button „✕ Alle erledigen (N)" erscheint nur wenn ein Kategorie-Filter + Status=pending + N>0
+
+**E — Backward-Compatibility:** Wenn `KgGapDataFacade` nicht verfügbar (Storage-Init-Fehler), fällt der Adapter auf reines `entity.attributes`-Verhalten zurück (v638-Level, kein Crash).
+
+### Beobachtbar in den Karten
+- **„Beziehung zu Tochter Hannah unklar"** → weg (Name-Regex)
+- **„Beziehung zu Sohn Noah unklar"** → weg (Name-Regex)
+- **„Beziehung zu Sabine unklar"** → weg wenn Memory „Sabine ist meine Schwester" enthält
+- **„Beziehung zu Alexandra unklar"** → weg wenn Memory Ehe-Hinweis enthält
+- **„Adresse für Alleestraße 6 fehlt"** → weg (Adress-Pattern im Namen)
+- **„Adresse für Viktor Kaplan Straße 12 fehlt"** → weg
+- **„Adresse für St. Pölten fehlt"** → weg (Stadt-Erkennung)
+- **„Adresse für Mittelschule Laabental fehlt"** → bleibt (kein Pattern-Match, sinnvoller Gap)
+
+### Beeinträchtigt nichts
+- v694 Legacy-UID-Brücke unverändert
+- Wenn keine Memories existieren: Adapter funktioniert weiter, fängt nur weniger Spam ab
+- Question-Generator nutzt eigenen Pfad (unverändert)
+
 ## [0.19.0-multi-ha.694] - 2026-05-22
 
 ### Fixed — Insight-Engine produziert 0 Insights: Legacy-UID-Brücke + Canonical-Merge

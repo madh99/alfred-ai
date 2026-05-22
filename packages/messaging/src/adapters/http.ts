@@ -391,6 +391,8 @@ export class HttpAdapter extends MessagingAdapter {
   private insightsActFn?: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
   private insightsSweepFn?: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
   private insightsStatsFn?: () => Promise<Record<string, number>>;
+  // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup nach v695)
+  private insightsDismissCategoryFn?: (category: string) => Promise<number>;
 
   // v639 — Goals API
   private goalsListFn?: (filter?: { status?: string; category?: string }) => Promise<any[]>;
@@ -420,6 +422,7 @@ export class HttpAdapter extends MessagingAdapter {
     act: (id: string) => Promise<{ ok: boolean; result?: any; reason?: string }>;
     sweep: () => Promise<{ inserted: number; refreshed: number; perAdapter: Record<string, number>; errors: string[] }>;
     stats: () => Promise<Record<string, number>>;
+    dismissCategory?: (category: string) => Promise<number>;
   }): void {
     this.insightsListFn = opts.list;
     this.insightsDismissFn = opts.dismiss;
@@ -427,6 +430,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.insightsActFn = opts.act;
     this.insightsSweepFn = opts.sweep;
     this.insightsStatsFn = opts.stats;
+    this.insightsDismissCategoryFn = opts.dismissCategory;
   }
 
   private projectsCallbacks?: {
@@ -879,6 +883,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleInsightsStats(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/insights/sweep' && req.method === 'POST') {
       this.handleInsightsSweep(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/insights/dismiss-category' && req.method === 'POST') {
+      this.handleInsightsDismissCategory(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/dismiss$/) && req.method === 'POST') {
       this.handleInsightsDismiss(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/snooze$/) && req.method === 'POST') {
@@ -2266,6 +2272,19 @@ export class HttpAdapter extends MessagingAdapter {
     await this.insightsDismissFn(id);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true }));
+  }
+
+  // v695 — Bulk-Dismiss: alle pending/snoozed Insights einer Kategorie auf einen Schlag erledigen.
+  private async handleInsightsDismissCategory(req: http.IncomingMessage, res: http.ServerResponse, _url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.insightsDismissCategoryFn) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const body = await this.readBody(req);
+    let category = '';
+    try { category = String(JSON.parse(body).category ?? ''); } catch { /* invalid */ }
+    if (!category) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'category required' })); return; }
+    const dismissed = await this.insightsDismissCategoryFn(category);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, dismissed }));
   }
 
   private async handleInsightsSnooze(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

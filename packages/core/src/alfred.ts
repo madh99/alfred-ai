@@ -2902,7 +2902,41 @@ export class Alfred {
                   return Array.from(byKey.values());
                 },
               };
-              insightEngine.register(new KgGapAdapter(kgFacade));
+              // v695 — Data-Facade für ehrliche Existenz-Checks (Name/KG-Relations/Memory)
+              // verhindert Spam für Beziehungen/Geburtstage/Adressen die woanders schon stehen.
+              const gapData = (async () => {
+                try {
+                  const { MemoryRepository: MemRepoForGap } = await import('@alfred/storage');
+                  const memRepoForGap = new MemRepoForGap(adapter);
+                  return {
+                    listMemoryValues: async (uids: string[]) => {
+                      const out: Array<{ value: string }> = [];
+                      for (const uid of uids) {
+                        try {
+                          const list = await memRepoForGap.listAll(uid);
+                          for (const m of list) out.push({ value: m.value ?? '' });
+                        } catch { /* skip uid */ }
+                      }
+                      return out;
+                    },
+                    listRelationsForEntity: async (uids: string[], entityId: string) => {
+                      const out: Array<{ relationType: string; sourceEntityId: string; targetEntityId: string }> = [];
+                      for (const uid of uids) {
+                        try {
+                          const list = await kgRepoForInsights.getRelationsForEntity(uid, entityId);
+                          for (const r of list) out.push({ relationType: (r as any).relationType, sourceEntityId: (r as any).sourceEntityId, targetEntityId: (r as any).targetEntityId });
+                        } catch { /* skip uid */ }
+                      }
+                      return out;
+                    },
+                  };
+                } catch (err) {
+                  this.logger.debug({ err }, 'KG-Gap data-facade wiring skipped (legacy attribute-only mode)');
+                  return undefined;
+                }
+              });
+              const resolvedGapData = await gapData();
+              insightEngine.register(new KgGapAdapter(kgFacade, resolvedGapData));
             } catch (err) {
               this.logger.debug({ err }, 'KG-Gap adapter wiring skipped');
             }
@@ -5010,6 +5044,11 @@ export class Alfred {
           stats: async () => {
             if (!ownerUidForInsights) return {};
             return insightsRepo.stats(ownerUidForInsights);
+          },
+          // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap" nach v695-Cleanup)
+          dismissCategory: async (category: string) => {
+            if (!ownerUidForInsights) return 0;
+            return insightsRepo.dismissCategory(ownerUidForInsights, category as any);
           },
         });
         this.logger.info('Insights API registered');

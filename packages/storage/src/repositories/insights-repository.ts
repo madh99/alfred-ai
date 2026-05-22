@@ -127,6 +127,20 @@ export class InsightsRepository {
     await this.db.execute(`UPDATE alfred_insights SET status = 'dismissed', dismissed_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`, [now, now, id, userId]);
   }
 
+  /**
+   * v695 — Bulk-Dismiss aller offenen Insights einer Kategorie. Verwendet vom WebUI
+   * um nach v695-Sweep alte Noise-Karten (kg-gap) in einem Schritt loszuwerden.
+   * Returnt Anzahl betroffener Zeilen.
+   */
+  async dismissCategory(userId: string, category: InsightCategory): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.db.execute(
+      `UPDATE alfred_insights SET status = 'dismissed', dismissed_at = ?, updated_at = ? WHERE user_id = ? AND category = ? AND status IN ('pending', 'snoozed')`,
+      [now, now, userId, category],
+    );
+    return result.changes ?? 0;
+  }
+
   async snooze(userId: string, id: string, hours: number): Promise<void> {
     const now = new Date().toISOString();
     const until = new Date(Date.now() + hours * 3_600_000).toISOString();

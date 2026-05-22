@@ -346,6 +346,14 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v695 — Bulk-Dismiss aller offenen Insights einer Kategorie (für „kg-gap"-Cleanup)
+  async dismissInsightsCategory(category: string): Promise<{ success: boolean; dismissed: number }> {
+    const res = await fetch(`${this.baseUrl}/api/insights/dismiss-category`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ category }),
+    });
+    if (!res.ok) throw new Error(`Bulk-dismiss: HTTP ${res.status}`);
+    return res.json();
+  }
 
   // ── v639 — Goals ──
   async fetchGoals(filter?: { status?: string; category?: string }): Promise<GoalItem[]> {
