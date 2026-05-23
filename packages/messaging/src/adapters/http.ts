@@ -3048,9 +3048,24 @@ export class HttpAdapter extends MessagingAdapter {
       const respHeaders: Record<string, string | string[]> = {};
       for (const [k, v] of Object.entries(upstreamRes.headers)) {
         if (v == null) continue;
-        // Hop-by-hop-Headers verwerfen
         const lk = k.toLowerCase();
+        // Hop-by-hop-Headers verwerfen
         if (lk === 'connection' || lk === 'keep-alive' || lk === 'transfer-encoding' || lk === 'upgrade') continue;
+        // v712 — iframe-Blocker entfernen: x-frame-options DENY + CSP frame-ancestors blockieren
+        // sonst das Live-Preview. Da das iframe nur über unseren auth-gated Proxy lädt,
+        // ist same-origin-Embed sicher.
+        if (lk === 'x-frame-options') continue;
+        if (lk === 'content-security-policy' || lk === 'content-security-policy-report-only') {
+          // Strip frame-ancestors-Directive (kann iframe-Embedding blocken)
+          const csp = Array.isArray(v) ? v.join('; ') : String(v);
+          const cleaned = csp
+            .split(';')
+            .map(s => s.trim())
+            .filter(s => !s.toLowerCase().startsWith('frame-ancestors'))
+            .join('; ');
+          if (cleaned) respHeaders[k] = cleaned;
+          continue;
+        }
         respHeaders[k] = v as string | string[];
       }
       res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);

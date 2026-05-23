@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.712] - 2026-05-24
+
+### Fixed — iframe-blockierende Security-Headers im Sandbox-Preview-Proxy strippen
+
+Container läuft (status=running, Next.js dev-server antwortet 200), aber iframe zeigt 🚫 (browser-block-Icon) — Live-Diagnose via `curl http://127.0.0.1:9100/`:
+```
+x-frame-options: DENY
+content-security-policy: ... frame-ancestors 'none'
+```
+
+Die alpbyte-games Next.js-Middleware setzt strict iframe-blocker. Browser refused → no preview.
+
+**Fix** in `handleSandboxProxyHttp` (response-header-stage):
+- `x-frame-options` → **komplett gestrippt** (Proxy entscheidet selbst)
+- `content-security-policy` und `-report-only` → `frame-ancestors`-Directive entfernt, Rest passiert durch
+- Andere Security-Headers (X-Content-Type-Options, Referrer-Policy, Permissions-Policy) unverändert durchgereicht
+
+Sicherheit:
+- iframe wird nur über unseren auth-gated Proxy (`/preview/<sandboxId>/`) geladen
+- Cross-User-Zugriff wäre eh durch ownership-check blockiert (403)
+- Same-Origin-Embed (Alfred-WebUI auf gleichem Server) → kein CSRF-Vektor
+- Original-Headers bleiben am Dev-Server selbst aktiv — nur die Proxy-Response wird embed-fähig gemacht
+
+### Backward-Compat
+- Headers werden NUR an `/preview/<sid>/`-Pfaden gestrippt
+- Alle anderen API/Static-Pfade unverändert
+- Dev-Server selbst bleibt strict (User-Code unverändert)
+
 ## [0.19.0-multi-ha.711] - 2026-05-24
 
 ### Fixed — Dev-Server-Start für npm-Projekte (echte Diagnose dank v709)
