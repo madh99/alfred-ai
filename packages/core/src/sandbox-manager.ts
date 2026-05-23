@@ -311,9 +311,27 @@ export class SandboxManager {
       await this.deps.repo.updateStatus(sandboxId, 'running');
       this.deps.logger.info({ sandboxId, hostPort, containerId }, 'v708 Sandbox container ready');
     } catch (err) {
-      this.deps.logger.error({ err, sandboxId }, 'Sandbox spinUp failed (async), rolling back');
-      await this.deps.repo.updateStatus(sandboxId, 'failed', (err as Error).message.slice(0, 500));
+      this.deps.logger.error({ err, sandboxId }, 'Sandbox spinUp failed (async), capturing logs + rolling back');
+      // v709 — Container-Logs (letzte 50 Zeilen) capturen BEVOR removeContainer ausgeführt wird,
+      // sonst sind die Logs für immer weg und Diagnose unmöglich.
       const sb = await this.deps.repo.getById(sandboxId);
+      let logTail = '';
+      if (sb?.containerId) {
+        try {
+          const { execFile: ef } = await import('node:child_process');
+          const { promisify: pr } = await import('node:util');
+          const efa = pr(ef);
+          const { stdout: out, stderr: errOut } = await efa('docker', ['logs', '--tail', '50', sb.containerId], { timeout: 10_000, maxBuffer: 2 * 1024 * 1024 });
+          logTail = (out + '\n' + errOut).trim();
+        } catch (logErr) {
+          this.deps.logger.warn({ logErr, sandboxId }, 'docker logs capture failed (continuing rollback)');
+        }
+      }
+      const baseReason = (err as Error).message.slice(0, 250);
+      const fullReason = logTail
+        ? `${baseReason}\n\n=== Container-Logs (letzte 50 Zeilen) ===\n${logTail.slice(-2000)}`
+        : baseReason;
+      await this.deps.repo.updateStatus(sandboxId, 'failed', fullReason);
       if (sb?.containerId) {
         try { await removeContainer(sb.containerId, true); } catch { /* ignore */ }
       }

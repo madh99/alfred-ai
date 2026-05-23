@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.709] - 2026-05-24
+
+### Added — Container-Log-Capture vor Rollback (Diagnose-Hilfe)
+
+User-Feedback: nach Sandbox-Create-Fail wird der Container von der Rollback-Logik entfernt BEVOR jemand seine Logs sehen kann. Resultat: nur generischer Fehler "dev-server did not become healthy" ohne Hinweis auf die echte Ursache (EACCES? OOM? Port-Konflikt? Missing dep?).
+
+**Fix** in `SandboxManager.spinUpContainerAsync.catch`:
+- Vor `removeContainer`: `docker logs --tail 50 <containerId>` ausführen + in `status_reason` speichern
+- Failure-Reason enthält jetzt:
+  ```
+  <error message>
+
+  === Container-Logs (letzte 50 Zeilen) ===
+  <stdout + stderr tail>
+  ```
+- Interactive-Page zeigt das bereits als `<pre>` mit `whitespace-pre-wrap` (seit v708) — daher sichtbar im Failed-State
+
+### Backward-Compat
+- Bei erfolgreichem Container-Start: keine Auswirkung
+- Bei Failure: status_reason ist länger (bis zu ~2.3kb), bestehende DB-Spalte ist TEXT → kein Limit
+
 ## [0.19.0-multi-ha.708] - 2026-05-24
 
 ### Changed — Sandbox-Create returnt sofort, Container-Start läuft async (UX-Fix)
