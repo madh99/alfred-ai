@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.714] - 2026-05-24
+
+### Fixed — 403 "You do not own this sandbox" (Legacy-UID-Reibung)
+
+iframe-Header-Fixes (v712+v713) griffen — Container lief, dev-server antwortete. Aber Browser zeigte 403 vom Alfred-Proxy: "You do not own this sandbox".
+
+Root-Cause: das alpbyte-games-Projekt ist DB-seitig owned by `f165df7a-…` (Legacy-UID aus Pre-Multi-User-Migration, siehe v694). Beim Sandbox-Create wurde sandbox.user_id auf `project.userId = f165df7a` gesetzt. Web-Login authentifiziert als admin `91df4602-…`. Proxy-Ownership-Check `sb.userId !== user.userId` → 403.
+
+**Zwei Fixes:**
+
+1. **Sandbox.user_id = Web-User (nicht project.userId)** beim Create:
+   - `handleSandboxCreate` extrahiert User-ID aus Bearer-Token via `getUserByToken`
+   - Reicht durch als `requestUserId` an die create-callback
+   - Callback nimmt `input.requestUserId || proj?.userId || ownerMasterUserId` (Fallback-Chain für Backward-Compat)
+   - Neue Sandboxes haben damit die korrekte Owner-ID
+
+2. **Legacy-UID-Bridge im Proxy-Resolver** (defense-in-depth, gleicher Pattern wie v694):
+   - Bei nicht-direktem Match: prüfen ob Anfrager der Owner ist UND Sandbox-UID in `legacyDataUids` steht
+   - Wenn ja: Zugriff erlaubt (Owner darf auf Legacy-UID-Sandboxes — falls neue durch falsche Hand erstellt wurden oder älterer Daten-Bestand)
+
+### Was den User jetzt freilegt
+- Neue Sandboxes haben korrekte user_id → 403 weg
+- Falls noch alte Sandboxes (mit Legacy-UID) existieren: Owner-Bridge erlaubt Zugriff
+- Multi-User-Isolation bleibt korrekt: nicht-Owner können nicht via Bridge
+
+### Backward-Compat
+- Ohne v714: bestehende Sandboxes haben sandbox.userId = project.userId (legacy)
+- Mit v714 (alte Sandboxes): Bridge greift, Owner kann zugreifen
+- Mit v714 (neue Sandboxes): direkter Match, kein Bridge nötig
+
 ## [0.19.0-multi-ha.713] - 2026-05-24
 
 ### Fixed — Alfred-Default X-Frame-Options: DENY blockierte iframe trotz v712

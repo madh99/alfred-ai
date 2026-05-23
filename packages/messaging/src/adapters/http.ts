@@ -409,7 +409,7 @@ export class HttpAdapter extends MessagingAdapter {
     list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
     listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
@@ -457,7 +457,7 @@ export class HttpAdapter extends MessagingAdapter {
     list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
     listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
@@ -3171,8 +3171,17 @@ export class HttpAdapter extends MessagingAdapter {
   private async handleSandboxCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    // v714 — extract requesting user-id from token, damit sandbox.user_id = web-user (admin)
+    // statt project.userId (kann Legacy-UID sein und blockt späteren Preview-Access mit 403)
+    const authHeader = req.headers['authorization'];
+    const tokenForUser = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    let requestUserId = '';
+    if (tokenForUser && this.authCb) {
+      const u = await this.authCb.getUserByToken(tokenForUser);
+      if (u) requestUserId = u.userId;
+    }
     const body = await this.readBody(req);
-    let input: { projectId: string; sessionId?: string | null; mode: string; slug?: string };
+    let input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string };
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       // v705 — sessionId ist optional seit v703 (Standalone-Sandboxes via "🚀 Interactive Sandbox")
@@ -3186,6 +3195,7 @@ export class HttpAdapter extends MessagingAdapter {
         sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0 ? parsed.sessionId : null,
         mode: parsed.mode,
         slug: typeof parsed.slug === 'string' ? parsed.slug : undefined,
+        requestUserId, // v714 — wird im callback als sandbox.user_id verwendet
       };
     } catch {
       res.writeHead(400, { 'Content-Type': 'application/json' });

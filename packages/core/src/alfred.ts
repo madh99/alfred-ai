@@ -5331,11 +5331,13 @@ export class Alfred {
               return sandboxRepoForApi.listActiveByUser(uid);
             },
             getById: async (sandboxId: string) => sandboxRepoForApi.getById(sandboxId),
-            create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => {
+            create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => {
               const cwd = await resolveCwdForSb(input.projectId);
               if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
+              // v714 — Priorität: requestUserId (vom HTTP-Token) > project.userId > ownerMasterUserId.
+              // requestUserId ist der WEB-User der gerade kreiert — passt mit späterem ownership-check.
               const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(input.projectId) : null;
-              const userId = proj?.userId ?? this.ownerMasterUserId;
+              const userId = input.requestUserId || proj?.userId || this.ownerMasterUserId;
               if (!userId) throw new Error('Cannot determine user for sandbox');
               const r = await sbMgr.createForSession({
                 sessionId: input.sessionId ?? null,
@@ -5493,7 +5495,12 @@ export class Alfred {
               if (!user) return { ok: false, status: 401, message: 'Invalid or expired token' };
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, status: 404, message: 'Sandbox not found' };
-              if (sb.userId !== user.userId) return { ok: false, status: 403, message: 'You do not own this sandbox' };
+              // v714 — Ownership: direkter Match ODER Owner-mit-Legacy-UID-Bridge (alte Sandboxes)
+              const directMatch = sb.userId === user.userId;
+              const isOwnerLegacyBridge = (user.userId === this.ownerMasterUserId) && this.legacyDataUids.includes(sb.userId);
+              if (!directMatch && !isOwnerLegacyBridge) {
+                return { ok: false, status: 403, message: 'You do not own this sandbox' };
+              }
               if (sb.status !== 'running') return { ok: false, status: 409, message: `Sandbox is ${sb.status} — not running` };
               if (typeof sb.hostPort !== 'number') return { ok: false, status: 503, message: 'Sandbox has no host port' };
               sandboxRepoForApi.touchActivity(sandboxId).catch(() => { /* */ });
