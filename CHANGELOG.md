@@ -5,6 +5,46 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.708] - 2026-05-24
+
+### Changed — Sandbox-Create returnt sofort, Container-Start läuft async (UX-Fix)
+
+User-Feedback: nach Klick auf „🚀 Interactive Sandbox" passierte 30-90s nichts sichtbar, weil die HTTP-API erst returnt hat NACHDEM Container + dev-server vollständig hochgefahren waren.
+
+**Fix:** `SandboxManager.createForSession()` splittet jetzt in zwei Phasen:
+
+**Phase 1 (sync, ~1-3s):**
+- Pre-Checks (Quota, git-Repo)
+- Worktree erstellen (mit v707 g+rwX-Perms)
+- Project-Type detect
+- DB-Insert (status='creating')
+- Returnt sofort mit Sandbox-Objekt
+
+**Phase 2 (async, fire-and-forget):**
+- `spinUpContainerAsync()` läuft im Hintergrund
+- DB-Status-Updates während Lauf für UI-Progress:
+  - `creating + 'building-image: …'`
+  - `creating + 'starting-container: Docker-Container startet'`
+  - `creating + 'installing-deps: pnpm install läuft, danach dev-server (port X)'`
+  - → `running` bei Erfolg ODER `failed + reason` bei Fehler
+- Cleanup-Rollback bei Fehler (Container + Worktree weg) bleibt identisch
+
+**Frontend (Interactive-Page):**
+- Polling alle 2s war schon da, nutzt jetzt `statusReason` zur Anzeige
+- „⏳ Container wird vorbereitet …" mit current statusReason als Live-Progress-Hint
+- Bei Failed: Error-Message + reason in expandiertem Format mit Docker-logs-Hinweis
+
+**UX-Konsequenz:**
+- Button-Klick → Tab öffnet in ~1-2s
+- Im Tab sieht User sofort: „building-image…" / „starting-container…" / „installing-deps…"
+- Status-Wechsel im 2s-Polling automatisch sichtbar
+- Bei Failure: detailierter reason direkt im Tab, kein „nichts passiert"-Effekt mehr
+
+### Backward-Compatibility
+- API-Response von `POST /api/sandbox/create` hat dasselbe Schema (Sandbox-Objekt zurück)
+- Nur die Semantik: Sandbox-Objekt enthält status='creating' statt 'running', containerId ist initial null, host_port noch null
+- Polling-Pfad war seit v699 schon da → automatisch funktional
+
 ## [0.19.0-multi-ha.707] - 2026-05-24
 
 ### Fixed — Sandbox-Container EACCES auf Worktree

@@ -268,11 +268,34 @@ export default function InteractivePage() {
               title={`Sandbox Preview ${sandbox.id.slice(0, 8)}`}
             />
           ) : (
-            <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-              {sandbox.status === 'creating' && '⏳ Container startet… (pnpm install + dev-server, kann 1-3 min dauern beim ersten Mal)'}
-              {sandbox.status === 'paused' && '⏸ Sandbox pausiert — Resume im Project-Chat'}
-              {sandbox.status === 'failed' && `⚠ Failed: ${sandbox.statusReason ?? 'unknown'}`}
-              {(sandbox.status === 'discarded' || sandbox.status === 'cleaned') && '✕ Sandbox entfernt'}
+            <div className="flex-1 flex flex-col items-center justify-center text-sm text-gray-500 p-6 text-center">
+              {sandbox.status === 'creating' && (
+                <>
+                  <div className="text-3xl mb-3 animate-pulse">⏳</div>
+                  <div className="text-lg text-gray-300 mb-2">Container wird vorbereitet …</div>
+                  {sandbox.statusReason && (
+                    <div className="text-xs text-cyan-400 bg-cyan-500/10 border border-cyan-500/30 rounded px-3 py-2 max-w-xl">
+                      {sandbox.statusReason}
+                    </div>
+                  )}
+                  <div className="text-[11px] text-gray-600 mt-4">
+                    Beim ersten Mal: Docker-Image bauen (~1-3 min) + npm install + dev-server starten.
+                    Bei späteren Sandboxes des gleichen Projekts: ~30-60s.
+                  </div>
+                  <div className="text-[10px] text-gray-700 mt-2 font-mono">
+                    Status wird alle 2s aktualisiert.
+                  </div>
+                </>
+              )}
+              {sandbox.status === 'paused' && <div>⏸ Sandbox pausiert — Resume im Project-Chat</div>}
+              {sandbox.status === 'failed' && (
+                <>
+                  <div className="text-3xl mb-3">⚠</div>
+                  <div className="text-lg text-red-400 mb-2">Container-Start fehlgeschlagen</div>
+                  <pre className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded px-3 py-2 max-w-2xl whitespace-pre-wrap text-left">{sandbox.statusReason ?? 'unknown'}</pre>
+                </>
+              )}
+              {(sandbox.status === 'discarded' || sandbox.status === 'cleaned') && <div>✕ Sandbox entfernt</div>}
             </div>
           )}
         </div>

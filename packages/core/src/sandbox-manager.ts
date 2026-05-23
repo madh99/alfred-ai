@@ -157,16 +157,19 @@ export class SandboxManager {
   // ─────────────────────────────────────────────────────────────────────────
 
   /**
-   * Erstellt eine neue Sandbox für eine Session.
+   * v708 — Erstellt eine neue Sandbox für eine Session.
    *
-   * Schritte:
-   *  1. Pre-Checks (available, quota, project-cwd ist git-repo)
-   *  2. Worktree erstellen
-   *  3. Project-Type detecten
-   *  4. DB-Eintrag (status='creating')
-   *  5. Falls Mode preview/interactive: Image sicherstellen → Port → Container starten → wait_for_health
-   *  6. DB-Update status='running' + container_id + host_port
+   * **Phase 1 (sync)**: Pre-Checks, Worktree-Create, Project-Type-Detect, DB-Insert
+   *   → returnt sofort mit `sandbox` (status='creating'). Dauer ~1-3s.
    *
+   * **Phase 2 (async, fire-and-forget)**: Image-Build (falls fehlend), Port-Allocation,
+   *   Container-Run, waitForDevServer. Updates DB-Status während Lauf:
+   *   - phase=building-image → image gerade gebaut (1-3 min, nur 1x)
+   *   - phase=starting-container → docker run abgesetzt
+   *   - phase=installing-deps → container läuft, npm install ist gang
+   *   - status=running am Ende ODER status=failed bei Fehler
+   *
+   * Frontend pollt /api/sandbox/:id und zeigt status_reason als Progress.
    * Bei jedem Fehler: Rollback (Container weg, Worktree weg, DB-Status='failed').
    */
   async createForSession(input: CreateForSessionInput): Promise<CreateForSessionResult> {
@@ -191,7 +194,7 @@ export class SandboxManager {
     const baseDir = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
     const worktreePath = path.join(baseDir, input.projectId, sid8);
 
-    // 2. Worktree
+    // Phase 1a — Worktree (sync, ~1s)
     const wt = await createWorktree({
       projectCwd: input.projectCwd,
       branchName,
@@ -199,11 +202,11 @@ export class SandboxManager {
       logger: this.deps.logger,
     });
 
-    // 3. Project-Type
+    // Phase 1b — Project-Type-Detect
     const detection = detectProjectType(wt.worktreePath);
     this.deps.logger.info({ detection, sessionId: input.sessionId }, 'Project-Type detected');
 
-    // 4. DB-Insert
+    // Phase 1c — DB-Insert
     const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
     const sandbox = await this.deps.repo.create({
       projectId: input.projectId,
@@ -219,7 +222,7 @@ export class SandboxManager {
       status: 'creating',
     });
 
-    // Wenn kein Container gewünscht (sandbox-only): direkt running setzen
+    // Wenn kein Container gewünscht (sandbox-only): direkt running setzen + return
     if (!wantsContainer || !detection.hasDevServer) {
       if (wantsContainer && !detection.hasDevServer) {
         this.deps.logger.warn({ sessionId: input.sessionId, projectType: detection.type }, 'Mode requested preview but project has no dev-server → fallback to sandbox-only');
@@ -228,23 +231,52 @@ export class SandboxManager {
       return { sandbox, detection, containerStarted: false };
     }
 
-    // 5. Container starten
+    // Phase 2 — Container-Start ASYNC starten (nicht awaited!) damit createForSession sofort returnt
+    void this.spinUpContainerAsync({
+      sandboxId: sandbox.id,
+      image,
+      worktreePath: wt.worktreePath,
+      branchName: wt.branchName,
+      projectCwd: input.projectCwd,
+      detection,
+    });
+
+    // Phase 1 returnt sofort — Frontend pollt /api/sandbox/:id für Progress
+    return { sandbox, detection, containerStarted: false };
+  }
+
+  /**
+   * v708 — Async Phase 2: Image sicherstellen + Container starten + Health-Wait.
+   * Aktualisiert DB-Status mit beschreibendem status_reason für UI-Progress.
+   * Bei Fehler: vollständiger Rollback wie vorher (Container + Worktree weg).
+   */
+  private async spinUpContainerAsync(opts: {
+    sandboxId: string;
+    image: string;
+    worktreePath: string;
+    branchName: string;
+    projectCwd: string;
+    detection: ProjectDetection;
+  }): Promise<void> {
+    const { sandboxId, image, worktreePath, branchName, projectCwd, detection } = opts;
     try {
+      // Status: image preparation
+      await this.deps.repo.updateStatus(sandboxId, 'creating', 'building-image: pulled+built docker image (kann 1-3min beim 1. Mal dauern)');
       await ensureImage({ image, dockerfilesDir: this.dockerfilesDir, logger: this.deps.logger });
 
+      // Status: port-allocation + container-run
+      await this.deps.repo.updateStatus(sandboxId, 'creating', 'starting-container: Docker-Container startet');
       const portStart = this.deps.config.hostPortRangeStart ?? 9100;
       const portEnd = this.deps.config.hostPortRangeEnd ?? 9199;
       const hostPort = await findFreePort(portStart, portEnd, this.deps.repo);
 
-      const memMb = this.deps.config.diskQuotaPerSandboxMb ?? 2048;
-      const containerName = `alfred-sandbox-${sandbox.id.slice(0, 8)}`;
+      const containerName = `alfred-sandbox-${sandboxId.slice(0, 8)}`;
       const binds: Array<{ host: string; container: string; readOnly?: boolean }> = [
-        { host: wt.worktreePath, container: '/workspace' },
+        { host: worktreePath, container: '/workspace' },
       ];
       const pnpmStore = this.deps.config.pnpmStorePath;
       if (pnpmStore) binds.push({ host: pnpmStore, container: '/pnpm-store' });
 
-      // Install + Dev-Server-Befehl
       const installCmd = `${detection.diagnostics.packageManager} install`;
       const devCmd = detection.devCommand.join(' ');
       const fullCmd = `${installCmd} && exec ${devCmd}`;
@@ -256,49 +288,45 @@ export class SandboxManager {
         binds,
         envVars: { CI: '', NODE_ENV: 'development' },
         ports: [[hostPort, detection.internalPort]],
-        memoryMb: 2048, // RAM, nicht Disk — fixer Wert für Container
+        memoryMb: 2048,
         cpus: 2,
         command: ['sh', '-c', `"${fullCmd}"`],
         restartPolicy: 'no',
         logger: this.deps.logger,
       });
 
-      await this.deps.repo.setContainerInfo(sandbox.id, containerId, hostPort);
+      await this.deps.repo.setContainerInfo(sandboxId, containerId, hostPort);
+      await this.deps.repo.updateStatus(sandboxId, 'creating', `installing-deps: ${installCmd} läuft, danach dev-server (port ${detection.internalPort})`);
 
-      // 6. Health-Check (kann lange dauern wegen npm install)
+      // Health-Wait (kann lange dauern wegen npm install)
       const healthy = await waitForDevServer(hostPort, {
         intervalMs: 2000,
         timeoutMs: 5 * 60 * 1000,
         logger: this.deps.logger,
       });
       if (!healthy) {
-        throw new Error('dev-server did not become healthy within 5 minutes (npm install or dev start failed)');
+        throw new Error('dev-server did not become healthy within 5 minutes (npm install or dev start failed — check `sudo docker logs ' + containerName + '` for details)');
       }
 
-      await this.deps.repo.updateStatus(sandbox.id, 'running');
-      const updated = await this.deps.repo.getById(sandbox.id);
-      return { sandbox: updated ?? sandbox, detection, containerStarted: true };
+      await this.deps.repo.updateStatus(sandboxId, 'running');
+      this.deps.logger.info({ sandboxId, hostPort, containerId }, 'v708 Sandbox container ready');
     } catch (err) {
-      // Rollback
-      this.deps.logger.error({ err, sandboxId: sandbox.id }, 'Sandbox creation failed, rolling back');
-      await this.deps.repo.updateStatus(sandbox.id, 'failed', (err as Error).message.slice(0, 500));
-      // Container best-effort entfernen
-      const updated = await this.deps.repo.getById(sandbox.id);
-      if (updated?.containerId) {
-        try { await removeContainer(updated.containerId, true); } catch { /* ignore */ }
+      this.deps.logger.error({ err, sandboxId }, 'Sandbox spinUp failed (async), rolling back');
+      await this.deps.repo.updateStatus(sandboxId, 'failed', (err as Error).message.slice(0, 500));
+      const sb = await this.deps.repo.getById(sandboxId);
+      if (sb?.containerId) {
+        try { await removeContainer(sb.containerId, true); } catch { /* ignore */ }
       }
-      // Worktree entfernen
       try {
         await destroyWorktree({
-          projectCwd: input.projectCwd,
-          worktreePath: wt.worktreePath,
-          branchName: wt.branchName,
+          projectCwd,
+          worktreePath,
+          branchName,
           deleteBranch: true,
           force: true,
           logger: this.deps.logger,
         });
       } catch { /* ignore */ }
-      throw err;
     }
   }
 
