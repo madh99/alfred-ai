@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.713] - 2026-05-24
+
+### Fixed — Alfred-Default X-Frame-Options: DENY blockierte iframe trotz v712
+
+Live-Diagnose via `curl -I https://localhost:3420/preview/.../`:
+```
+X-Frame-Options: DENY
+```
+
+→ v712 strippt korrekt die UPSTREAM-Headers vom Dev-Server, aber Alfred selbst setzt am Anfang von `handleRequest` für ALLE Responses (Sicherheit-Default):
+```ts
+res.setHeader('X-Frame-Options', 'DENY');
+res.setHeader('X-Content-Type-Options', 'nosniff');
+```
+
+Wenn ich danach via `writeHead(status, respHeaders)` neue Header schreibe, werden die Defaults NICHT entfernt — beide bleiben → iframe blocked.
+
+**Fix:** in `handleSandboxProxyHttp` direkt am Methoden-Anfang:
+```ts
+res.removeHeader('X-Frame-Options');
+```
+
+Vor jeder weiteren Logik (auch error-Pfade). Nur für die `/preview/`-Route; alle anderen Endpoints behalten den DENY-Default.
+
+### Backward-Compat
+- Nur `/preview/<sandboxId>/`-Pfade ohne X-Frame-Options
+- WebUI, API, alle anderen Routes: weiterhin `DENY` (Standard-Security)
+
 ## [0.19.0-multi-ha.712] - 2026-05-24
 
 ### Fixed — iframe-blockierende Security-Headers im Sandbox-Preview-Proxy strippen

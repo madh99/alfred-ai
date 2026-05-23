@@ -3005,6 +3005,10 @@ export class HttpAdapter extends MessagingAdapter {
     sandboxId: string,
     upstreamPath: string,
   ): Promise<void> {
+    // v713 — Alfred setzt X-Frame-Options: DENY als Default am Anfang von handleRequest
+    // für ALLE Responses (Sicherheit). Für /preview/-Routes wollen wir iframe-Embed erlauben
+    // — daher Default-Header EXPLIZIT entfernen bevor wir die Response schreiben.
+    res.removeHeader('X-Frame-Options');
     if (!this.sandboxProxyResolve) {
       return this.writePreviewError(res, 503, 'Sandbox-Proxy nicht aktiv', 'Das Sandbox-Feature ist auf diesem Alfred-Node nicht aktiv.');
     }
