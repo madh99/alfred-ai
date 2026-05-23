@@ -1338,6 +1338,23 @@ export class Alfred {
           } catch (err) { this.logger.debug({ err, sessionId }, 'OpenItemMatcher failed (non-fatal)'); }
         }
 
+        // v705 — Explizit zugewiesene Open-Items (via implementMilestone / workOnOpenItems)
+        // auflösen oder zurücksetzen, unabhängig vom LLM-Matcher.
+        // Marker: auto_resolved_by = `implementing:${taskId}` (während Lauf)
+        //   → success: auto_resolved_by = `implemented:${taskId}` + status='done' + confidence=0.8
+        //   → failure: status='open', auto_resolved_by=NULL
+        if (this.projectRepo) {
+          try {
+            if (success) {
+              const resolved = await this.projectRepo.resolveItemsForSession(sessionId, 0.8);
+              if (resolved > 0) this.logger.info({ sessionId, resolved }, 'v705 implementMilestone-Items als done markiert');
+            } else {
+              const reverted = await this.projectRepo.revertItemsForSession(sessionId);
+              if (reverted > 0) this.logger.info({ sessionId, reverted }, 'v705 implementMilestone-Items auf open zurückgesetzt (Session fehlgeschlagen)');
+            }
+          } catch (err) { this.logger.debug({ err, sessionId }, 'v705 resolve/revert items failed (non-fatal)'); }
+        }
+
         // v610 G5 — On failure, neither runbook nor deploy proposal makes sense.
         // We keep the runbook gated additionally by milestone-count, but the
         // deploy-suggestion does NOT need many milestones — just a green build.
@@ -6198,7 +6215,19 @@ export class Alfred {
               const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.matrix?.enabled ? 'matrix' : 'api');
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;
               const r = await skill.execute({ action: 'start', goal, cwd: project.cwd, link_open_item_ids: items.map(i => i.id) }, ctx);
-              return { ok: !!r.success, taskId: (r.data as any)?.taskId, itemCount: items.length, error: r.error };
+              const taskId = (r.data as any)?.taskId;
+              // v705 — Items beim Start als "in_progress" markieren damit der Completion-Callback
+              // sie als zur Session gehörig erkennen kann (auch wenn der LLM-Matcher sie nicht
+              // erkennt). Auf Success werden sie aufgelöst, auf Failure zurückgesetzt.
+              if (r.success && taskId) {
+                try {
+                  const marked = await projRepo.markItemsWorkingOnSession(items.map(i => i.id), taskId);
+                  this.logger.info({ taskId, marked, total: items.length }, 'v705 implementMilestone: items als in_progress markiert');
+                } catch (err) {
+                  this.logger.debug({ err, taskId }, 'v705 mark in_progress failed (non-fatal)');
+                }
+              }
+              return { ok: !!r.success, taskId, itemCount: items.length, error: r.error };
             } catch (err) { return { ok: false, error: (err as Error).message }; }
           },
 

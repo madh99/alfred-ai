@@ -5,6 +5,49 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.705] - 2026-05-24
+
+### Fixed — Sandbox-Create akzeptiert standalone sessionId-Null (v703-Regression)
+
+In v703 wurde `sessionId` im SandboxManager + Callback optional gemacht, aber die HTTP-Endpoint-Validation in `handleSandboxCreate` rejected weiterhin jeden Request ohne sessionId mit "projectId, sessionId, mode required". Der „🚀 Interactive Sandbox"-Button aus Project-Chat schickt KEIN sessionId → Endpoint rejected → User sieht Alert + Sandbox wird nie erstellt.
+
+**Fix** in `messaging/src/adapters/http.ts:handleSandboxCreate`:
+- Required-Felder nur noch `projectId, mode`
+- `sessionId` wird falls vorhanden + string → durchgereicht, sonst `null`
+- Backend-Code-Pfad ist seit v703 für beides ausgelegt
+
+### Fixed — Roadmap-Items wurden nach Implementieren nicht als done markiert
+
+**Root-Cause:** Der bestehende `OpenItemMatcher` (v641) versucht via LLM nach Session-Ende zu erkennen welche Items "wahrscheinlich erledigt" sind. Das ist hilfreich für generische Sessions wo der Agent selbst entschied was er fixt — aber bei einem **expliziten User-Klick auf „Implementieren" in der Roadmap** kennen wir die genauen Item-IDs schon zum Start. Die LLM-Heuristik ist redundant + bei knappen Goals tendenziell zu konservativ (Confidence <0.6 → kein Auto-Done).
+
+**Fix:** Drei neue ProjectRepository-Methoden + zwei Hooks:
+
+1. `markItemsWorkingOnSession(itemIds, taskId)` — beim `implementMilestone`-Start:
+   - Items auf `status='in_progress'`
+   - `auto_resolved_by = 'implementing:<taskId>'` als transienter Marker
+   - User sieht sofort visuell welche Items der Agent gerade bearbeitet (🔄-Icon in der UI)
+
+2. `resolveItemsForSession(taskId, confidence=0.8)` — im completion-callback bei `success=true`:
+   - Findet alle Items mit `auto_resolved_by = 'implementing:<taskId>'`
+   - Setzt status='done', resolved_at=now, auto_resolved_by='implemented:<taskId>', confidence=0.8
+   - User sieht die Items als done mit klarer Attribution
+
+3. `revertItemsForSession(taskId)` — im completion-callback bei `success=false`:
+   - Findet die Items wie oben
+   - Setzt status='open', auto_resolved_by=NULL
+   - Items kehren in den Backlog zurück damit nichts verloren geht
+
+**Wirkung:**
+- LLM-Matcher (v641) bleibt aktiv als Fallback für Sessions die NICHT via implementMilestone gestartet wurden (z.B. via project-chat normale Anfragen)
+- Bei expliziter Roadmap-Implementation: deterministisches Auto-Done ohne LLM-Unsicherheit
+- Bei Failure: Items kehren in den Backlog zurück, nichts verloren
+- Beobachtbar im Log: `"v705 implementMilestone-Items als done markiert"` mit count
+
+### Backward-Compatibility
+- v641-OpenItemMatcher unverändert — läuft weiterhin, kann aber Items die schon via v705 resolved wurden (status!='open') nicht mehr beeinflussen (kein Konflikt)
+- Items aus älteren Sessions ohne implementing-Marker bleiben unangerührt
+- Sandbox-Create akzeptiert weiterhin sessionId wenn übergeben
+
 ## [0.19.0-multi-ha.704] - 2026-05-23
 
 ### Added — Open-Items Inline-Edit + Chat-Done-Marker + Concurrent-Block

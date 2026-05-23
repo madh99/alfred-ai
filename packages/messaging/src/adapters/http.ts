@@ -3153,17 +3153,18 @@ export class HttpAdapter extends MessagingAdapter {
     if (!(await this.checkAuth(req, res))) return;
     if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
     const body = await this.readBody(req);
-    let input: { projectId: string; sessionId: string; mode: string; slug?: string };
+    let input: { projectId: string; sessionId?: string | null; mode: string; slug?: string };
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
-      if (typeof parsed.projectId !== 'string' || typeof parsed.sessionId !== 'string' || typeof parsed.mode !== 'string') {
+      // v705 — sessionId ist optional seit v703 (Standalone-Sandboxes via "🚀 Interactive Sandbox")
+      if (typeof parsed.projectId !== 'string' || typeof parsed.mode !== 'string') {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'projectId, sessionId, mode required' }));
+        res.end(JSON.stringify({ error: 'projectId, mode required' }));
         return;
       }
       input = {
         projectId: parsed.projectId,
-        sessionId: parsed.sessionId,
+        sessionId: typeof parsed.sessionId === 'string' && parsed.sessionId.length > 0 ? parsed.sessionId : null,
         mode: parsed.mode,
         slug: typeof parsed.slug === 'string' ? parsed.slug : undefined,
       };

@@ -634,6 +634,64 @@ export class ProjectRepository {
     return result.changes > 0;
   }
 
+  /**
+   * v705 — Markiert Open-Items als "wird gerade vom Agent bearbeitet" (status='in_progress'
+   * + auto_resolved_by-Marker mit Session-Verweis). Wird beim explizite Trigger
+   * (`implementMilestone`, `workOnOpenItems`) aufgerufen damit der Agent-Lauf nicht
+   * orphaned läuft wenn der LLM-Matcher die Items am Ende nicht zuordnen kann.
+   */
+  async markItemsWorkingOnSession(itemIds: string[], taskId: string): Promise<number> {
+    if (itemIds.length === 0) return 0;
+    const placeholders = itemIds.map(() => '?').join(',');
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items
+       SET status = 'in_progress', auto_resolved_by = ?, auto_resolved_confidence = NULL
+       WHERE id IN (${placeholders}) AND status IN ('open', 'in_progress')`,
+      [`implementing:${taskId}`, ...itemIds],
+    );
+    return result.changes ?? 0;
+  }
+
+  /**
+   * v705 — Findet Items die unter `implementing:<taskId>`-Marker stehen.
+   * Wird vom Completion-Callback verwendet um die Items aufzulösen oder zurückzusetzen.
+   */
+  async findItemsWorkingOnSession(taskId: string): Promise<ProjectOpenItem[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_open_items WHERE auto_resolved_by = ?`,
+      [`implementing:${taskId}`],
+    ) as Record<string, unknown>[];
+    return rows.map(rowToOpenItem);
+  }
+
+  /**
+   * v705 — Resolved alle Items die zur Session gehören (Success-Pfad).
+   * Setzt status=done + resolved_at + auto_resolved_by="implemented:<taskId>" + confidence.
+   */
+  async resolveItemsForSession(taskId: string, confidence = 0.8): Promise<number> {
+    const now = new Date().toISOString();
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items
+       SET status = 'done', resolved_at = ?, auto_resolved_by = ?, auto_resolved_confidence = ?
+       WHERE auto_resolved_by = ? AND status IN ('open', 'in_progress')`,
+      [now, `implemented:${taskId}`, confidence, `implementing:${taskId}`],
+    );
+    return result.changes ?? 0;
+  }
+
+  /**
+   * v705 — Setzt Items zurück auf 'open' (Failure-Pfad).
+   */
+  async revertItemsForSession(taskId: string): Promise<number> {
+    const result = await this.adapter.execute(
+      `UPDATE project_open_items
+       SET status = 'open', auto_resolved_by = NULL, auto_resolved_confidence = NULL
+       WHERE auto_resolved_by = ? AND status = 'in_progress'`,
+      [`implementing:${taskId}`],
+    );
+    return result.changes ?? 0;
+  }
+
   /** Helper: alle nicht-erledigten Items eines Projekts holen für den Matcher. */
   async listOpenItemsForProject(projectId: string, statuses: OpenItemStatus[] = ['open', 'in_progress']): Promise<ProjectOpenItem[]> {
     const placeholders = statuses.map(() => '?').join(',');
