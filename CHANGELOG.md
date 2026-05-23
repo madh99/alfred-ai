@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.718] - 2026-05-24
+
+### Fixed — „socket hang up" Race-Condition (v716-Regression)
+
+User-Report: Preview-iframe zeigt „Dev-Server nicht erreichbar / Upstream-Fehler: socket hang up" trotz funktionierendem Container (curl direct host:9100/ → 200 OK).
+
+Root-Cause: v716 fügte `req.on('close')` hinzu um Upstream zu killen bei Browser-Disconnect. Aber `close` fires bei JEDER connection-close — auch bei normalem End von keep-alive-Connections. Konsequenz:
+- Browser stellt Request
+- Upstream antwortet, response wird gepiped
+- Connection schließt natürlich nach response.end()
+- `close`-Event fires
+- Mein code calls `upstreamReq.destroy()` — der Stream zum Upstream ist da meistens schon beendet, aber falls noch nicht fully drained: socket hang up
+
+**Fix:** Guard mit `!res.writableEnded` — Upstream nur dann killen wenn response NICHT sauber beendet wurde (echter Browser-Abbruch mid-flight, nicht normaler End).
+
+```ts
+req.on('close', () => {
+  if (!res.writableEnded && !upstreamReq.destroyed) {
+    upstreamReq.destroy();
+  }
+});
+```
+
+### Backward-Compat
+- Bei normalem Response-End: nichts passiert (writableEnded=true → skip)
+- Bei echtem Browser-Abbruch: weiterhin upstream killen (writableEnded=false)
+
 ## [0.19.0-multi-ha.717] - 2026-05-24
 
 ### Changed — Interactive-Page pollt auch bei status='running' (UX)

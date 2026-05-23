@@ -3123,9 +3123,14 @@ export class HttpAdapter extends MessagingAdapter {
     upstreamReq.on('timeout', () => {
       upstreamReq.destroy(new Error('Timeout to upstream dev-server'));
     });
-    // v716 — Wenn Browser disconnectet während Upstream-Request läuft: Upstream killen
+    // v718 — Browser-disconnect detection: 'close' allein fires auch bei normalem End
+    // (keep-alive-Verbindung schließt natürlich) → würde upstream zu eifrig destroyen
+    // und 'socket hang up' verursachen. Stattdessen nur destroyen wenn response NICHT
+    // sauber beendet wurde (writableEnded=false → browser cancelled mid-flight).
     req.on('close', () => {
-      if (!upstreamReq.destroyed) { try { upstreamReq.destroy(); } catch { /* */ } }
+      if (!res.writableEnded && !upstreamReq.destroyed) {
+        try { upstreamReq.destroy(); } catch { /* */ }
+      }
     });
 
     req.pipe(upstreamReq);
