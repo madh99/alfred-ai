@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.701] - 2026-05-23
+
+### Fixed — Sandbox API-Callbacks: Race-Condition mit Adapter-Registry
+
+Live-Test nach v700-Deploy zeigte: WebUI-Settings meldete `feature-disabled` obwohl Log eindeutig `"v697 Sandbox-Manager initialized"` mit `enabled:true, available:true` zeigte.
+
+Root-Cause: In v699+v700 wurden die Sandbox-API-Callbacks (`setSandboxCallbacks`, `setSandboxProxyResolver`) im Sandbox-Init-Block bei `alfred.ts:~3208` registriert. Aber `this.adapters.get('api')` returnt dort `undefined` — der HTTP-Adapter wird erst später auf `alfred.ts:4419` instanziiert. Die Callback-Registrierung scheiterte still (die `if (httpAdapterCrud && ...setSandboxCallbacks)` Bedingung war false, kein Log, kein Effekt). Resultat: `/api/sandbox/*` Endpoints liefen ins `feature-disabled`-Fallback.
+
+**Fix:**
+- Sandbox-API-Callbacks aus dem Sandbox-Init-Block ENTFERNT (alter Block bleibt mit Hinweis-Kommentar, aber `httpAdapterCrud` ist nie definiert → no-op)
+- Sandbox-API + Preview-Proxy jetzt NEU registriert direkt nach „Insights API registered" (`alfred.ts:~5275`) — dort ist `apiAdapter` korrekt im Scope
+- Selbe Pattern wie für Insights/Goals/Projects API
+- SandboxManager-Init bleibt unverändert (lief immer korrekt — nur API-Wire war kaputt)
+
+**Beobachtbar nach Restart:**
+```
+v697 Sandbox-Manager initialized {"enabled":true,"available":true,...}
+v699 Sandbox CRUD-API registered
+v698 Sandbox-Preview-Proxy registered (/preview/<sandboxId>/*)
+v700 Sandbox cleanup-worker scheduled
+```
+
+(Vorher fehlten Zeile 2+3.)
+
+### Backward-Compatibility
+Identisch zu v700. Bei deaktivierter Sandbox-Feature komplett no-op.
+
 ## [0.19.0-multi-ha.700] - 2026-05-22
 
 ### Added — Sandbox Hardening: Merge-Flow + Cleanup-Worker + Interactive-Route (Phase 5/5 — Wrap-Up)

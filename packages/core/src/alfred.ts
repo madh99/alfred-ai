@@ -3202,7 +3202,13 @@ export class Alfred {
                 this.logger.warn({ err }, 'v697 Sandbox-Skill registration failed (non-fatal)');
               }
 
-              // v699 — Sandbox CRUD-API-Endpoints registrieren
+              // v699/v698 Sandbox-API-Callbacks wären HIER richtig platziert wenn
+              // der api-Adapter schon existieren würde — tut er aber nicht zu diesem
+              // Zeitpunkt (Sandbox-Init läuft VOR Adapter-Setup). Die echten Callbacks
+              // werden weiter unten registriert nachdem `apiAdapter` definiert ist.
+              // siehe: "// v699/v700 — Wire Sandbox API" ~Zeile 5275
+              // Folgender Block bleibt deaktiviert (kein Effekt — `this.adapters.get('api')`
+              // returnt undefined an dieser Stelle):
               try {
                 const httpAdapterCrud = this.adapters.get('api') as { setSandboxCallbacks?: (cb: Record<string, unknown>) => void } | undefined;
                 if (httpAdapterCrud && typeof httpAdapterCrud.setSandboxCallbacks === 'function') {
@@ -5272,6 +5278,112 @@ export class Alfred {
           },
         });
         this.logger.info('Insights API registered');
+      }
+
+      // v699/v700 — Wire Sandbox API + Preview-Proxy (NUR wenn SandboxManager initialisiert wurde)
+      if (apiAdapter && this.sandboxManager && this.database && 'setSandboxCallbacks' in apiAdapter) {
+        try {
+          const { SandboxRepository: SandboxRepoForApi } = await import('@alfred/storage');
+          const sandboxRepoForApi = new SandboxRepoForApi(this.database.getAdapter());
+          const sbMgr = this.sandboxManager;
+          const projectsRepoForSb = this.projectRepo;
+          const resolveCwdForSb = async (projectId: string): Promise<string | null> => {
+            if (!projectsRepoForSb) return null;
+            try { const p = await projectsRepoForSb.getByIdAnyOwner(projectId); return p?.cwd ?? null; } catch { return null; }
+          };
+          const { execFile: execFileForDiff } = await import('node:child_process');
+          const { promisify: promisifyForDiff } = await import('node:util');
+          const execFileAsyncForDiff = promisifyForDiff(execFileForDiff);
+
+          (apiAdapter as any).setSandboxCallbacks({
+            status: async () => sbMgr.getStatus(),
+            list: async (filter: { projectId?: string; sessionId?: string }) => {
+              if (filter.sessionId) {
+                const sb = await sandboxRepoForApi.getBySessionId(filter.sessionId);
+                return sb ? [sb] : [];
+              }
+              if (filter.projectId) {
+                return sandboxRepoForApi.listByProject(filter.projectId);
+              }
+              return [];
+            },
+            getById: async (sandboxId: string) => sandboxRepoForApi.getById(sandboxId),
+            create: async (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => {
+              const cwd = await resolveCwdForSb(input.projectId);
+              if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
+              const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(input.projectId) : null;
+              const userId = proj?.userId ?? this.ownerMasterUserId;
+              if (!userId) throw new Error('Cannot determine user for sandbox');
+              const r = await sbMgr.createForSession({
+                sessionId: input.sessionId,
+                projectId: input.projectId,
+                userId,
+                projectCwd: cwd,
+                mode: input.mode as 'sandbox' | 'sandbox-preview' | 'interactive-chat',
+                slug: input.slug,
+              });
+              return r.sandbox;
+            },
+            pause: (sandboxId: string) => sbMgr.pause(sandboxId),
+            resume: (sandboxId: string) => sbMgr.resume(sandboxId),
+            discard: async (sandboxId: string) => {
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
+              const cwd = await resolveCwdForSb(sb.projectId);
+              if (!cwd) throw new Error(`Project cwd unknown`);
+              await sbMgr.discard(sandboxId, cwd);
+            },
+            merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => {
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) return { ok: false, reason: 'Sandbox not found' };
+              const cwd = await resolveCwdForSb(sb.projectId);
+              if (!cwd) return { ok: false, reason: 'Project cwd unknown' };
+              const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(sb.projectId) : null;
+              const strat = (opts.strategy === 'direct' ? 'direct' : 'pr') as 'direct' | 'pr';
+              return sbMgr.merge(sandboxId, {
+                strategy: strat,
+                commitMessage: opts.commitMessage,
+                prTitle: opts.prTitle,
+                prBody: opts.prBody,
+                projectCwd: cwd,
+                forgeConfig: this.config.codeAgents?.forge,
+                defaultBranch: proj?.defaultBranch ?? this.config.codeAgents?.forge?.baseBranch,
+                repoUrl: proj?.repoUrl,
+              });
+            },
+            diff: async (sandboxId: string) => {
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
+              try {
+                const { stdout } = await execFileAsyncForDiff('git', ['diff', `${sb.baseCommitSha}..HEAD`], { cwd: sb.worktreePath, maxBuffer: 10 * 1024 * 1024, timeout: 30_000 });
+                return stdout || '(no changes)';
+              } catch (err) {
+                return `# git diff failed: ${(err as Error).message}`;
+              }
+            },
+          });
+          this.logger.info('v699 Sandbox CRUD-API registered');
+
+          // v698 — Sandbox-Preview-Proxy-Resolver
+          if ('setSandboxProxyResolver' in apiAdapter && this.webAuthCallback) {
+            const authCb = this.webAuthCallback;
+            (apiAdapter as any).setSandboxProxyResolver(async (sandboxId: string, token: string | null) => {
+              if (!token) return { ok: false, status: 401, message: 'Missing token' };
+              const user = await authCb.getUserByToken(token);
+              if (!user) return { ok: false, status: 401, message: 'Invalid or expired token' };
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) return { ok: false, status: 404, message: 'Sandbox not found' };
+              if (sb.userId !== user.userId) return { ok: false, status: 403, message: 'You do not own this sandbox' };
+              if (sb.status !== 'running') return { ok: false, status: 409, message: `Sandbox is ${sb.status} — not running` };
+              if (typeof sb.hostPort !== 'number') return { ok: false, status: 503, message: 'Sandbox has no host port' };
+              sandboxRepoForApi.touchActivity(sandboxId).catch(() => { /* */ });
+              return { ok: true, hostPort: sb.hostPort, userId: sb.userId };
+            });
+            this.logger.info('v698 Sandbox-Preview-Proxy registered (/preview/<sandboxId>/*)');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v699 Sandbox API wiring failed (non-fatal)');
+        }
       }
 
       // v639 — Wire Goals API
