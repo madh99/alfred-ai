@@ -5,6 +5,45 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.716] - 2026-05-24
+
+### Fixed — Alfred crashed beim Sandbox-Discard (ERR_HTTP_HEADERS_SENT)
+
+User-Report: alfred ist beim Versuch eine Sandbox zu beenden komplett abgestürzt.
+
+Log-Diagnose:
+```
+Error [ERR_HTTP_HEADERS_SENT]: Cannot write headers after they are sent to the client
+  at writePreviewError
+  at ClientRequest 'error' handler
+Uncaught exception → Graceful shutdown
+```
+
+Wenn der User auf „Discard" klickt, killt alfred den Container. Wenn der Browser gerade einen Sub-Resource-Request läuft hatte (CSS/JS/API-Call), reisst die Verbindung mid-stream → `upstreamReq.on('error')` feuert → mein code rief `writePreviewError(res, 502, ...)` was `writeHead` machte — Headers waren aber schon gesendet (200 OK Stream lief) → Error → uncaughtException → alfred terminierte gracefully.
+
+**Drei Fixes:**
+
+1. **upstreamReq.on('error') guard:** Prüfe `res.headersSent || res.writableEnded` vor jedem writeHead. Wenn schon gesendet → `res.destroy()` statt error-page.
+
+2. **writePreviewError defensive:** Selbe Guard auch im writePreviewError selbst, plus try/catch um den ganzen writeHead+end Block.
+
+3. **req.on('close') → upstream killen:** Wenn der Browser disconnectet (z.B. iframe-discard), wird der Upstream-Request explizit abgebrochen statt orphan-stream offen zu halten.
+
+### Fixed — Sandbox-App `/api/*` Calls returnten 404 (500-Error im iframe-Frontend)
+
+User-Beobachtung: alpbyte-games Startseite OK, aber Klick auf Links zeigte 500 (in der Sandbox-App). Container-Logs zeigten KEINE 500-Errors → das HTTP-Request kam gar nicht beim Container an.
+
+Root-Cause: meine v715-Referer-Routing-Logik schloss `/api/*`-Pfade aus (um Konflikte mit Alfred's eigenen API-Endpoints zu vermeiden). ABER die Sandbox-App hat selbst `/api/*`-Routes (Likes, Chat, Auth, CSRF etc.) → Browser-fetch → kam zum Alfred-API-Handler → 404 → Frontend zeigt 500.
+
+**Fix:** Referer-Routing **als letzten Fallback** vor 404 verschoben. Damit:
+- Alfred-spezifische Routes (/api/auth, /api/sandbox, /api/projects etc.) greifen zuerst
+- Alles was DURCH FÄLLT (also keinen Alfred-Handler matcht) und mit Referer auf /preview/<sid>/ kommt → wird zur Sandbox geroutet
+- Sandbox-eigene `/api/likes`, `/api/chat`, etc. werden korrekt zur App geroutet
+
+### Backward-Compat
+- Bestehende Alfred-Endpoints unverändert (matchen zuerst)
+- Nur unmatched-Pfade mit Referer-Bedingung gehen zur Sandbox
+
 ## [0.19.0-multi-ha.715] - 2026-05-24
 
 ### Fixed — Next.js Sub-Resources (CSS/JS/HMR) im iframe-Preview laden nicht

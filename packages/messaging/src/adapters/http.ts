@@ -822,21 +822,6 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
 
-    // v715 — Referer-basiertes Routing für Sub-Resources (Next.js erzeugt absolute Pfade
-    // wie /_next/static/foo.css ohne /preview/-Prefix). Wenn der Request NICHT zu /api/,
-    // /alfred/, /preview/, /files/ gehört aber der Referer auf /preview/<sid>/ zeigt,
-    // routen wir transparent zur richtigen Sandbox.
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'POST') {
-      const referer = req.headers.referer ?? '';
-      const refererMatch = referer.match(/\/preview\/([a-zA-Z0-9-]{8,})\//);
-      if (refererMatch && !url.pathname.startsWith('/api') && !url.pathname.startsWith('/alfred') && !url.pathname.startsWith('/files') && url.pathname !== '/') {
-        this.handleSandboxProxyHttp(req, res, url, refererMatch[1], url.pathname).catch(err => {
-          try { if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(`Preview proxy error: ${(err as Error).message}`); } catch { /* */ }
-        });
-        return;
-      }
-    }
-
     if (url.pathname === '/api/health' && req.method === 'GET') {
       this.handleHealth(res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/auth/required' && req.method === 'GET') {
@@ -1345,6 +1330,20 @@ export class HttpAdapter extends MessagingAdapter {
     } else if (url.pathname.startsWith('/files/tts/') && req.method === 'GET') {
       this.serveTtsFile(url.pathname, res);
     } else {
+      // v716 — Referer-basiertes Sandbox-Routing als LETZTER Fallback vor 404.
+      // Wenn keine Alfred-Route matched aber Referer auf /preview/<sid>/ zeigt:
+      // → der Browser hat eine absolute URL aus dem iframe-Content angefragt
+      //   (z.B. /_next/static/foo.css, /api/likes für Sandbox-App, etc.)
+      // → transparent zur richtigen Sandbox routen.
+      // Damit fallen ALLE nicht-Alfred-spezifischen Pfade durch zur Sandbox.
+      const referer = req.headers.referer ?? '';
+      const refererMatch = referer.match(/\/preview\/([a-zA-Z0-9-]{8,})\//);
+      if (refererMatch) {
+        this.handleSandboxProxyHttp(req, res, url, refererMatch[1], url.pathname).catch(err => {
+          try { if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(`Preview proxy error: ${(err as Error).message}`); } } catch { /* */ }
+        });
+        return;
+      }
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
     }
@@ -3017,13 +3016,20 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   private writePreviewError(res: http.ServerResponse, status: number, title: string, message: string): void {
-    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(`<!DOCTYPE html><html><head><title>${title}</title><meta charset="utf-8"></head>
+    // v716 — defensive guard: never crash if headers already sent
+    if (res.headersSent || res.writableEnded) {
+      try { res.destroy(); } catch { /* */ }
+      return;
+    }
+    try {
+      res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(`<!DOCTYPE html><html><head><title>${title}</title><meta charset="utf-8"></head>
 <body style="font-family:system-ui;padding:2rem;background:#111;color:#ddd">
 <h1 style="margin-top:0">${title}</h1>
 <p>${message.replace(/</g, '&lt;')}</p>
 <p style="opacity:0.6;font-size:0.9em">Alfred Sandbox-Preview</p>
 </body></html>`);
+    } catch { try { res.destroy(); } catch { /* */ } }
   }
 
   private async handleSandboxProxyHttp(
@@ -3105,10 +3111,21 @@ export class HttpAdapter extends MessagingAdapter {
     });
 
     upstreamReq.on('error', err => {
-      this.writePreviewError(res, 502, 'Dev-Server nicht erreichbar', `Upstream-Fehler: ${(err as Error).message}`);
+      // v716 — Guard gegen ERR_HTTP_HEADERS_SENT: wenn response schon begann zu streamen
+      // (z.B. 200 OK + Body) und der Upstream stirbt (Container-Discard mid-request),
+      // würde writeHead crashen → uncaughtException → Alfred-Crash.
+      if (res.headersSent || res.writableEnded) {
+        try { res.destroy(); } catch { /* */ }
+        return;
+      }
+      try { this.writePreviewError(res, 502, 'Dev-Server nicht erreichbar', `Upstream-Fehler: ${(err as Error).message}`); } catch { /* swallow */ }
     });
     upstreamReq.on('timeout', () => {
       upstreamReq.destroy(new Error('Timeout to upstream dev-server'));
+    });
+    // v716 — Wenn Browser disconnectet während Upstream-Request läuft: Upstream killen
+    req.on('close', () => {
+      if (!upstreamReq.destroyed) { try { upstreamReq.destroy(); } catch { /* */ } }
     });
 
     req.pipe(upstreamReq);
