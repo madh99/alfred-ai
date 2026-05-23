@@ -6065,7 +6065,21 @@ export class Alfred {
               const skill = this.skillRegistry?.get('project_agent');
               if (!skill) return { ok: false, error: 'project_agent-Skill nicht registriert' };
               const itemList = items.map((it, i) => `${i + 1}. ${it.title}${it.description ? `\n   ${it.description.slice(0, 200)}` : ''}${it.estimatedHours ? ` (~${it.estimatedHours}h)` : ''}`).join('\n');
-              const goal = `Implementiere folgende Roadmap-Items für Milestone "${milestone}" im Projekt "${project.name}":\n\n${itemList}\n\nBitte arbeite die Items in der angegebenen Reihenfolge ab. Für jeden Item: Implementierung + Test + Commit.`;
+              // v702 — Sanitize project.name: alte User-Messages als Projekt-Name (z.B.
+              // "Erstelle ein neues Projekt für ... unter /root/alpbyte-ga...") verschmutzten
+              // den Goal-Text und führten dazu dass der Agent falsche Pfade in seinen Plan
+              // übernahm. Wir nehmen den ersten Satz / max 60 Zeichen + slug-Fallback.
+              const shortProjectLabel = (() => {
+                const raw = (project.name || project.slug || 'Project').trim();
+                // Wenn name kurz und ohne Pfad-Artefakte: direkt verwenden
+                if (raw.length <= 60 && !raw.includes('/')) return raw;
+                // Sonst: erstes Satzende ODER 60-Zeichen-Cut, vor pfad-artigen Strings stoppen
+                const firstSentence = raw.split(/[.\n!?]/)[0] ?? raw;
+                const beforePath = firstSentence.split(/\s+(?:unter|in|im|für|bei)\s+\/(?:root|home|var|mnt|opt|tmp)\//i)[0] ?? firstSentence;
+                const capped = beforePath.slice(0, 60).trim();
+                return capped.replace(/[„""'`]/g, '').trim() || (project.slug ?? 'Project');
+              })();
+              const goal = `Implementiere folgende Roadmap-Items für Milestone "${milestone}" im Projekt "${shortProjectLabel}" (Working Directory: ${project.cwd ?? '?'}):\n\n${itemList}\n\nBitte arbeite die Items in der angegebenen Reihenfolge ab. Für jeden Item: Implementierung + Test + Commit. Alle Pfad-Referenzen in Item-Texten sind ggf. veraltet — verwende ausschließlich den Working Directory oben für File-Operationen.`;
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.matrix?.enabled ? 'matrix' : 'api');
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: ownerPlatform, conversationId: '' } as any;

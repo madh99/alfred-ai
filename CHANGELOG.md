@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.702] - 2026-05-23
+
+### Fixed — implementMilestone: Goal-Text sanitized + explizit cwd-Hint
+
+Live-Beobachtung: Project-Agent aus Roadmap-Button gestartet, lief im richtigen cwd (`/home/madh/projects/alpbyte-games`), aber schrieb in seinen Milestones „Phase 1: Workspace unter **/root/alpbyte-ga vorbereiten**". Root-Cause: `project.name` enthielt eine alte User-Message-Trunkierung („Starte einen NEUEN Projekt-Agent-Lauf für „Alpbyte Games" unter /root/alpbyte-ga…"), die in den Goal-Prompt eingebaut wurde. Der Agent übernahm den verschmutzten Pfad in seinen Plan.
+
+**Fix** in `alfred.ts:implementMilestone`:
+1. **Sanitize project.name** vor der Verwendung im Goal-Text:
+   - Wenn ≤60 Zeichen + keine Slash → direkt verwenden
+   - Sonst: erster Satz / vor Pfad-Anker (unter|in|im|für|bei /root//home//var/…) abschneiden + auf 60 Zeichen kappen
+   - Fallback auf project.slug → 'Project'
+2. **Explizit cwd im Goal-Text**: `"... im Projekt "${shortLabel}" (Working Directory: ${project.cwd})"`
+3. **Explizite Anweisung**: „Alle Pfad-Referenzen in Item-Texten sind ggf. veraltet — verwende ausschließlich den Working Directory oben für File-Operationen."
+
+**Resultat:** Selbst bei alten Items mit veralteten Pfaden bekommt der Agent den korrekten cwd unzweifelhaft im Prompt. Pfad-Konfusion vermieden.
+
+### Backward-Compatibility
+- Keine Schema-Änderung
+- Verhalten bei normalen Project-Namen (≤60 Zeichen ohne Slash) IDENTISCH zu v701
+- Nur bei „kaputten" Project-Namen (lange User-Message als Name) greift die Sanitization
+
 ## [0.19.0-multi-ha.701] - 2026-05-23
 
 ### Fixed — Sandbox API-Callbacks: Race-Condition mit Adapter-Registry
