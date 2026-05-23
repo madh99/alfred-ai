@@ -3111,27 +3111,28 @@ export class HttpAdapter extends MessagingAdapter {
     });
 
     upstreamReq.on('error', err => {
-      // v716 — Guard gegen ERR_HTTP_HEADERS_SENT: wenn response schon begann zu streamen
-      // (z.B. 200 OK + Body) und der Upstream stirbt (Container-Discard mid-request),
-      // würde writeHead crashen → uncaughtException → Alfred-Crash.
+      // v716/v719 — Guard gegen ERR_HTTP_HEADERS_SENT: wenn response schon begann zu streamen
+      // (z.B. 200 OK + Body) und der Upstream stirbt, würde writeHead crashen.
+      const errMsg = (err as Error).message ?? String(err);
       if (res.headersSent || res.writableEnded) {
         try { res.destroy(); } catch { /* */ }
         return;
       }
-      try { this.writePreviewError(res, 502, 'Dev-Server nicht erreichbar', `Upstream-Fehler: ${(err as Error).message}`); } catch { /* swallow */ }
+      // v719 — Diagnose-Log für socket-hang-up + ähnliche Upstream-Fehler. Hilft beim
+      // Debuggen ob Browser- oder Container-Seite den connection-close verursacht.
+      try {
+        // best-effort log via direct stderr (kein logger im scope hier)
+        process.stderr.write(`[sandbox-proxy] upstream error sandbox=${sandboxId} path=${upstreamPath} method=${req.method} err=${errMsg}\n`);
+      } catch { /* */ }
+      try { this.writePreviewError(res, 502, 'Dev-Server nicht erreichbar', `Upstream-Fehler: ${errMsg}`); } catch { /* swallow */ }
     });
     upstreamReq.on('timeout', () => {
       upstreamReq.destroy(new Error('Timeout to upstream dev-server'));
     });
-    // v718 — Browser-disconnect detection: 'close' allein fires auch bei normalem End
-    // (keep-alive-Verbindung schließt natürlich) → würde upstream zu eifrig destroyen
-    // und 'socket hang up' verursachen. Stattdessen nur destroyen wenn response NICHT
-    // sauber beendet wurde (writableEnded=false → browser cancelled mid-flight).
-    req.on('close', () => {
-      if (!res.writableEnded && !upstreamReq.destroyed) {
-        try { upstreamReq.destroy(); } catch { /* */ }
-      }
-    });
+    // v719 — req.on('close') handler komplett ENTFERNT. War in v716 als "Cleanup" gedacht
+    // wenn Browser disconnectet, aber feuerte ZU OFT (auch bei normalem keep-alive-end)
+    // → socket-hang-up race. Node GC räumt orphan-streams auch ohne explicit destroy auf.
+    // Trade-off: minimaler memory-leak-Risiko vs. korrekte Funktionalität. Wir wählen Funktion.
 
     req.pipe(upstreamReq);
   }

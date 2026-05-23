@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.719] - 2026-05-24
+
+### Fixed — `req.on('close')`-Handler komplett entfernt (socket hang up Persistenz)
+
+v718-Guard (`!res.writableEnded`) reichte nicht — User sah weiterhin „socket hang up" trotz healthy Container + 200 OK bei direct curl. Race-Conditions zwischen `close`-Event und Stream-State sind nicht zuverlässig abfangbar — JS-Event-Loop garantiert keine atomare Reihenfolge.
+
+**Fix v719:** den `req.on('close')`-Handler aus v716 KOMPLETT entfernt. War als „Cleanup-Optimierung" gedacht (Upstream-Stream killen wenn Browser disconnectet), aber Node garbage-collected orphan-Streams ohnehin. Trade-off:
+- Minimales Memory-Leak-Risiko bei wirklichen Browser-Aborts (mehrere Sekunden bis GC)
+- ABER korrekte Funktion ohne false-positive socket-hang-up
+
+**Diagnose-Log hinzugefügt:** bei upstream-Error wird sandboxId + Pfad + Methode + Error-Message via process.stderr geloggt. Hilft falls die socket-hang-up trotzdem auftaucht (z.B. echter Container-Crash) die Quelle zu finden.
+
+### Trade-off-Begründung
+v716-`close`-Handler war defensiv gedacht, hat aber mehr Probleme verursacht als gelöst. Node's HTTP-Client cleaned orphan-requests via socket-timeout (default 5 min) und GC. Bei laufendem dev-server kommen viele kurze Requests, jeder schließt korrekt → kein Memory-Stau. Der „Cleanup" war reine paranoide Vorsicht ohne empirische Notwendigkeit.
+
 ## [0.19.0-multi-ha.718] - 2026-05-24
 
 ### Fixed — „socket hang up" Race-Condition (v716-Regression)
