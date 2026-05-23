@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.715] - 2026-05-24
+
+### Fixed — Next.js Sub-Resources (CSS/JS/HMR) im iframe-Preview laden nicht
+
+HTML im iframe lädt (✓), aber die Seite zeigt unstyled HTML (kein CSS, keine Interaktivität). Diagnose: Next.js erzeugt absolute Pfade:
+```html
+<link href="/_next/static/css/app.css">
+<script src="/_next/static/chunks/main.js">
+```
+
+Browser löst gegen iframe-Origin auf → `https://host:3420/_next/static/...` — **ohne** `/preview/<sid>/`-Prefix → fällt durch in 404-Fallback.
+
+**Zwei Fixes:**
+
+1. **Cookie path=/ statt /preview/<sid>/** in `writePreviewCookieAndRedirect`:
+   - Browser sendet das Auth-Cookie jetzt bei JEDEM Request, nicht nur unter /preview/
+   - Sicher weil ownership-check pro Request via sandbox-id-from-URL + token läuft
+   - Notwendig für die Referer-Routing-Strategie unten
+
+2. **Referer-basiertes Routing** für HTTP + WebSocket-Upgrade:
+   - Wenn Request NICHT zu /api/, /alfred/, /preview/, /files/ gehört
+   - Und Referer auf `/preview/<sid>/` zeigt
+   - → Route transparent zu `/preview/<sid>/<original-path>` via `handleSandboxProxyHttp`
+   - WebSocket-Upgrade: gleiche Logik via Origin/Referer (Next.js HMR-WS via `/_next/webpack-hmr` o.ä.)
+
+### Was jetzt funktioniert
+- `<link href="/_next/static/...">` → Browser fragt absolut → Referer-Routing forwarded → CSS lädt
+- `<script src="/_next/static/...">` → JS lädt → React/Next.js bootstrappt
+- Next.js HMR WebSocket → Live-Reload funktioniert beim File-Edit im Worktree
+- Bilder, Fonts, andere Assets unter `/_next/` oder `/public/`-Pfaden
+
+### Sicherheit
+- Owner-Check für jeden gerouteten Request bleibt: `sb.userId === user.userId` (oder Legacy-Bridge)
+- Cookie ist HttpOnly + SameSite=Strict — kein JS-Zugriff, kein Cross-Site-Forging
+- Pfad-Whitelist exkludiert API/WebUI/TTS-Files vom Referer-Routing
+
+### Backward-Compat
+- Bestehende `/preview/<sid>/...`-Direct-Requests unverändert
+- API/WebUI-Routes: keine Auswirkung (vor Referer-Check ausgeschlossen)
+- Sandbox ohne aktives Browser-Referer (z.B. curl): funktioniert via Direct-Path wie bisher
+
 ## [0.19.0-multi-ha.714] - 2026-05-24
 
 ### Fixed — 403 "You do not own this sandbox" (Legacy-UID-Reibung)

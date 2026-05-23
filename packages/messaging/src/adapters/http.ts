@@ -603,7 +603,16 @@ export class HttpAdapter extends MessagingAdapter {
           });
           return;
         }
-        // Andere upgrade-Requests verwerfen (no native WebSocket-API in Alfred außer Sandbox)
+        // v715 — Referer-basiertes Routing für HMR-WebSocket (Next.js verwendet absolute
+        // Pfade wie /_next/webpack-hmr ohne /preview/-Prefix)
+        const referer = req.headers.referer ?? req.headers.origin ?? '';
+        const refererMatch = referer.match(/\/preview\/([a-zA-Z0-9-]{8,})\//);
+        if (refererMatch && !u.pathname.startsWith('/api') && !u.pathname.startsWith('/alfred')) {
+          this.handleSandboxProxyUpgrade(req, socket, head, u, refererMatch[1], u.pathname).catch(err => {
+            try { socket.write(`HTTP/1.1 500 Internal Server Error\r\n\r\nUpgrade failed: ${(err as Error).message}\n`); socket.destroy(); } catch { /* */ }
+          });
+          return;
+        }
         socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
         socket.destroy();
       } catch {
@@ -811,6 +820,21 @@ export class HttpAdapter extends MessagingAdapter {
         try { if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(`Preview proxy error: ${(err as Error).message}`); } catch { /* */ }
       });
       return;
+    }
+
+    // v715 — Referer-basiertes Routing für Sub-Resources (Next.js erzeugt absolute Pfade
+    // wie /_next/static/foo.css ohne /preview/-Prefix). Wenn der Request NICHT zu /api/,
+    // /alfred/, /preview/, /files/ gehört aber der Referer auf /preview/<sid>/ zeigt,
+    // routen wir transparent zur richtigen Sandbox.
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'POST') {
+      const referer = req.headers.referer ?? '';
+      const refererMatch = referer.match(/\/preview\/([a-zA-Z0-9-]{8,})\//);
+      if (refererMatch && !url.pathname.startsWith('/api') && !url.pathname.startsWith('/alfred') && !url.pathname.startsWith('/files') && url.pathname !== '/') {
+        this.handleSandboxProxyHttp(req, res, url, refererMatch[1], url.pathname).catch(err => {
+          try { if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end(`Preview proxy error: ${(err as Error).message}`); } catch { /* */ }
+        });
+        return;
+      }
     }
 
     if (url.pathname === '/api/health' && req.method === 'GET') {
@@ -2971,9 +2995,13 @@ export class HttpAdapter extends MessagingAdapter {
   ): void {
     const target = new URL(url.toString());
     target.searchParams.delete('_alfred_auth');
+    // v715 — Cookie path=/ (statt /preview/<sid>/) damit der Browser ihn auch bei
+    // Sub-Resource-Requests wie /_next/static/* mitschickt (Next.js erzeugt absolute
+    // Pfade die nicht den /preview/-Prefix tragen → würden ohne Cookie 401-en).
+    // Sicher weil ownership-check pro sandboxId+token im Proxy-Resolver erfolgt.
     const cookieParts = [
       `${this.PREVIEW_COOKIE}=${encodeURIComponent(token)}`,
-      `Path=/preview/${sandboxId}/`,
+      `Path=/`,
       `HttpOnly`,
       `SameSite=Strict`,
     ];
