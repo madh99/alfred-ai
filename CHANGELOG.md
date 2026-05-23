@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.706] - 2026-05-24
+
+### Fixed — Dockerfile.node-22 Build-Failure (UID-Konflikt)
+
+`docker build alfred-sandbox:node-22` failed mit:
+```
+addgroup -g 1000 -S alfred && adduser -u 1000 -S -G alfred alfred
+... returned a non-zero code: 1
+```
+
+Root-Cause: das `node:22-alpine` Base-Image enthält bereits einen `node`-User mit UID/GID 1000. Der versuch eine zweite Gruppe mit derselben GID 1000 anzulegen failed.
+
+**Fix:**
+- Eigenen `alfred`-User-Code entfernt
+- Verwendet stattdessen den existing `node`-User aus node:22-alpine
+- `chown -R node:node /pnpm-store /workspace` für Permissions
+- `USER node` statt `USER alfred`
+
+Funktional identisch (non-root UID 1000), nur ohne Konflikt.
+
 ## [0.19.0-multi-ha.705] - 2026-05-24
 
 ### Fixed — Sandbox-Create akzeptiert standalone sessionId-Null (v703-Regression)
