@@ -5280,11 +5280,12 @@ export class Alfred {
         this.logger.info('Insights API registered');
       }
 
-      // v699/v700 — Wire Sandbox API + Preview-Proxy (NUR wenn SandboxManager initialisiert wurde)
+      // v699/v700/v703 — Wire Sandbox API + Preview-Proxy + Chat
       if (apiAdapter && this.sandboxManager && this.database && 'setSandboxCallbacks' in apiAdapter) {
         try {
-          const { SandboxRepository: SandboxRepoForApi } = await import('@alfred/storage');
+          const { SandboxRepository: SandboxRepoForApi, SandboxChatRepository: SandboxChatRepo } = await import('@alfred/storage');
           const sandboxRepoForApi = new SandboxRepoForApi(this.database.getAdapter());
+          const sandboxChatRepo = new SandboxChatRepo(this.database.getAdapter());
           const sbMgr = this.sandboxManager;
           const projectsRepoForSb = this.projectRepo;
           const resolveCwdForSb = async (projectId: string): Promise<string | null> => {
@@ -5307,15 +5308,20 @@ export class Alfred {
               }
               return [];
             },
+            listAll: async (userId: string) => {
+              const uid = userId || this.ownerMasterUserId || this.config.security?.ownerUserId;
+              if (!uid) return [];
+              return sandboxRepoForApi.listActiveByUser(uid);
+            },
             getById: async (sandboxId: string) => sandboxRepoForApi.getById(sandboxId),
-            create: async (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => {
+            create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => {
               const cwd = await resolveCwdForSb(input.projectId);
               if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
               const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(input.projectId) : null;
               const userId = proj?.userId ?? this.ownerMasterUserId;
               if (!userId) throw new Error('Cannot determine user for sandbox');
               const r = await sbMgr.createForSession({
-                sessionId: input.sessionId,
+                sessionId: input.sessionId ?? null,
                 projectId: input.projectId,
                 userId,
                 projectCwd: cwd,
@@ -5361,8 +5367,57 @@ export class Alfred {
                 return `# git diff failed: ${(err as Error).message}`;
               }
             },
+            // v703 — Sandbox-Chat (Interactive-Mode)
+            chatList: async (sandboxId: string) => {
+              return sandboxChatRepo.list(sandboxId);
+            },
+            chatSendMessage: async (sandboxId: string, message: string) => {
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) return { ok: false, reason: 'Sandbox not found' };
+              if (sb.status !== 'running' && sb.status !== 'paused') {
+                return { ok: false, reason: `Sandbox in status ${sb.status} — kann keine Messages annehmen` };
+              }
+              // (1) User-Message persistieren
+              const userMsg = await sandboxChatRepo.append({
+                sandboxId,
+                userId: sb.userId,
+                role: 'user',
+                text: message,
+              });
+              // (2) Project-Agent-Task starten mit cwd=worktree
+              const skill = this.skillRegistry?.get('project_agent');
+              if (!skill) return { ok: false, userMessageId: userMsg.id, reason: 'project_agent-Skill nicht registriert' };
+              const ownerChat = this.config.security?.ownerUserId ?? '';
+              const ownerPlatform = (this.config.telegram?.enabled ? 'telegram' : this.config.matrix?.enabled ? 'matrix' : 'api');
+              const ctx = { userId: sb.userId, masterUserId: sb.userId, chatId: ownerChat, platform: ownerPlatform, conversationId: '' } as any;
+              // Activity-Touch (sandbox idle-timer reset)
+              sandboxRepoForApi.touchActivity(sandboxId).catch(() => { /* */ });
+              try {
+                const result = await skill.execute({
+                  action: 'start',
+                  goal: message,
+                  cwd: sb.worktreePath,
+                }, ctx);
+                const taskId = (result.data as any)?.taskId;
+                // (3) Agent-Placeholder-Message mit Task-Verknüpfung anlegen — die UI pollt
+                // den Task-Status und kann den finalen Output später nachladen.
+                if (taskId) {
+                  await sandboxChatRepo.append({
+                    sandboxId,
+                    userId: sb.userId,
+                    role: 'agent',
+                    text: '⏳ Agent läuft …',
+                    taskId,
+                    taskPhase: 'planning',
+                  });
+                }
+                return { ok: !!result.success, userMessageId: userMsg.id, taskId, reason: result.error };
+              } catch (err) {
+                return { ok: false, userMessageId: userMsg.id, reason: (err as Error).message };
+              }
+            },
           });
-          this.logger.info('v699 Sandbox CRUD-API registered');
+          this.logger.info('v699 Sandbox CRUD-API + v703 Chat registered');
 
           // v698 — Sandbox-Preview-Proxy-Resolver
           if ('setSandboxProxyResolver' in apiAdapter && this.webAuthCallback) {

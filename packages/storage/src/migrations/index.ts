@@ -2024,4 +2024,24 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE projects ADD COLUMN merge_strategy TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 88,
+    description: 'v703 — sandbox_chat_messages: persistente Chat-History pro Sandbox für Interactive-Mode',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sandbox_chat_messages (
+          id TEXT PRIMARY KEY,
+          sandbox_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          task_id TEXT,
+          task_phase TEXT,
+          created_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandbox_chat_sandbox ON sandbox_chat_messages(sandbox_id, created_at)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandbox_chat_task ON sandbox_chat_messages(task_id)`);
+    },
+  },
 ];

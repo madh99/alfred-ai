@@ -15,6 +15,7 @@ const TOOLS = [
   { href: `${BASE}/notes/`, label: 'Notes', icon: '🗒️' },
   { href: `${BASE}/runbooks/`, label: 'Runbooks', icon: '📖' },
   { href: `${BASE}/project-agents/`, label: 'Project Agents', icon: '🤖' },
+  { href: `${BASE}/sandboxes/`, label: 'Sandboxes', icon: '📦' },
   { href: `${BASE}/background-tasks/`, label: 'Background Tasks', icon: '⚙️' },
   { href: `${BASE}/cmdb/`, label: 'CMDB', icon: '🖥️' },
   { href: `${BASE}/itsm/`, label: 'ITSM', icon: '🔧' },

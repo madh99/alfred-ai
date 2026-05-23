@@ -410,6 +410,22 @@ export function ProjectChat({ projectId, projectName }: Props) {
             <span>Projekt-Chat — {projectName}</span>
           </div>
           <div className="flex items-center gap-1">
+            {/* v703 — Interactive Sandbox starten (kein Project-Agent-Run nötig) */}
+            <button
+              onClick={async () => {
+                if (!client) return;
+                if (!confirm('Neue Interactive-Sandbox für dieses Projekt starten?\n\nWird in ~1-3 min hochgefahren (Image-Build + npm install). Neuer Tab öffnet sich automatisch.')) return;
+                try {
+                  const slug = `interactive-${Date.now().toString(36).slice(-5)}`;
+                  const sb = await client.createSandbox({ projectId, mode: 'interactive-chat', slug });
+                  if (sb && sb.id) window.open(`/interactive?sandboxId=${sb.id}`, '_blank');
+                } catch (e) {
+                  alert('Sandbox-Create fehlgeschlagen: ' + (e instanceof Error ? e.message : String(e)));
+                }
+              }}
+              title="Standalone Interactive-Sandbox starten — Chat mit Live-Preview, ohne Project-Agent-Session"
+              className="text-[10px] text-purple-400 hover:bg-purple-500/15 px-2 py-0.5 rounded border border-purple-500/40"
+            >🚀 Interactive Sandbox</button>
             <button
               onClick={loadHistory}
               disabled={loadingHistory}

@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.703] - 2026-05-23
+
+### Added — Interactive-Mode End-to-End + Standalone-Sandboxes + Sandboxes-Sidebar
+
+Schließt die Lücke aus v700 wo Interactive-Mode-UI da war aber Chat-Loop nur Placeholder, und Sandbox immer eine Project-Agent-Session voraussetzte. Jetzt komplett funktional.
+
+**Backend (Phase A):**
+- Migration v88 SQLite + v91 PG: neue Tabelle `sandbox_chat_messages` (id, sandbox_id, user_id, role, text, task_id, task_phase, created_at)
+- Neue `SandboxChatRepository` mit `append`, `list`, `updateTaskPhase`
+- `SandboxManager.createForSession` akzeptiert jetzt `sessionId?: string | null` — standalone Sandboxes ohne Project-Agent-Session möglich. Branch-Name nutzt fresh UUID-Prefix wenn keine sessionId
+- Neue API-Endpoints:
+  - `GET /api/sandbox/:id/chat` — Chat-History
+  - `POST /api/sandbox/:id/chat` mit `{message}` — User-Message persistieren + Project-Agent-Task starten mit `cwd=sandbox.worktreePath` + Agent-Platzhalter-Message mit task_id verknüpfen
+  - `GET /api/sandbox/list-all` — alle aktiven Sandboxes des Users (für /sandboxes-Seite)
+- CRUD-`create`-Callback: `sessionId` optional
+
+**Frontend (Phase B):**
+- Neue Client-Methoden: `listAllSandboxes`, `fetchSandboxChat`, `sendSandboxChatMessage`
+- Neuer Type `SandboxChatItem`
+- Interactive-Page komplett wired:
+  - Lädt Chat-History beim Mount
+  - Submit-Message → POST chat → Refresh History (zeigt User-Msg + Agent-Platzhalter mit task_id)
+  - SSE-Subscribe auf `/api/project-agents/:taskId/output` für laufenden Agent — Live-Output collapsible pro Agent-Message
+  - Auto-Refresh Chat alle 4s solange ein Agent-Task läuft (für phase-update)
+  - Phase-Badges (planning/coding/building/...) pro Agent-Message
+- Project-Chat Expand-Header: neuer **🚀 Interactive Sandbox**-Button — erstellt standalone Sandbox + öffnet `/interactive?sandboxId=...` in neuem Tab
+- SandboxPanel: sessionId jetzt optional — project-level Modus listet aktive Sandboxes des Projekts
+
+**Frontend (Phase C):**
+- Neue Route `/sandboxes` — globale Verwaltungsseite mit:
+  - Liste aller aktiven Sandboxes (status, project-name, branch, port, worktree-path, timestamps)
+  - Quick-Actions: 💬 Interactive · 🌐 Preview · ⏸ Pause · ▶ Resume · ✕ Discard
+  - "+ Neue Sandbox" Modal: Projekt-Picker + Mode-Picker (interactive-chat/sandbox-preview/sandbox)
+  - Auto-Refresh alle 3s während Sandboxes in transient-state sind
+  - Feature-Disabled-Warning bei Docker/Worktree-Issues
+- Sidebar-Entry "📦 Sandboxes" zwischen Project Agents und Background Tasks
+
+### Flow nach v703 (End-to-End)
+
+Drei Wege zur Interactive-Sandbox:
+1. **Aus Project-Chat:** Header-Button „🚀 Interactive Sandbox" → standalone Sandbox + Tab öffnet
+2. **Aus Sandboxes-Sidebar:** „+ Neue Sandbox" → Modal mit Projekt+Mode → Tab öffnet
+3. **An laufende Session anhängen:** in SessionLivePane SandboxPanel scrollen → Mode wählen → Create (wie v699)
+
+Im Interactive-Tab:
+- Chat-Input → User-Message + Project-Agent-Task im Worktree
+- Live-Output streamt unter der Agent-Message
+- Live-Preview iframe rechts updated via HMR sobald der Agent Files ändert
+- Merge/Discard im Header
+
+### Backward-Compatibility
+- SandboxPanel mit sessionId funktioniert wie v699
+- Bestehende `/api/sandbox/*` Endpoints unverändert in Verhalten
+- Wenn sandbox-Feature disabled: kein Verhalten-Change
+
 ## [0.19.0-multi-ha.702] - 2026-05-23
 
 ### Fixed — implementMilestone: Goal-Text sanitized + explizit cwd-Hint

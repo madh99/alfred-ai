@@ -32,7 +32,8 @@ export interface SandboxManagerDeps {
 }
 
 export interface CreateForSessionInput {
-  sessionId: string;
+  /** Optional ab v703: Sandbox kann auch ohne Session existieren (z.B. Interactive-Mode-Standalone). */
+  sessionId?: string | null;
   projectId: string;
   userId: string;
   /** Pfad zum Main-Repo des Projekts (= projects.cwd). */
@@ -183,9 +184,9 @@ export class SandboxManager {
 
     const wantsContainer = input.mode === 'sandbox-preview' || input.mode === 'interactive-chat';
 
-    // Pfad + Branch ableiten
-    const sid8 = input.sessionId.slice(0, 8);
-    const slug = (input.slug ?? 'session').replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 24).toLowerCase();
+    // Pfad + Branch ableiten — sessionId optional: nutze frischen UUID-Prefix bei standalone
+    const sid8 = input.sessionId ? input.sessionId.slice(0, 8) : `i${Date.now().toString(36).slice(-7)}`;
+    const slug = (input.slug ?? (input.sessionId ? 'session' : 'interactive')).replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 24).toLowerCase();
     const branchName = `agent-${sid8}-${slug}`;
     const baseDir = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
     const worktreePath = path.join(baseDir, input.projectId, sid8);
@@ -206,7 +207,7 @@ export class SandboxManager {
     const image = this.deps.config.containerImage ?? 'alfred-sandbox:node-22';
     const sandbox = await this.deps.repo.create({
       projectId: input.projectId,
-      sessionId: input.sessionId,
+      sessionId: input.sessionId ?? null,
       userId: input.userId,
       worktreePath: wt.worktreePath,
       branchName: wt.branchName,

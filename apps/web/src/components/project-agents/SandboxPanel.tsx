@@ -6,7 +6,9 @@ import type { SandboxItem, SandboxStatusResponse } from '@/lib/alfred-client';
 
 interface Props {
   projectId: string;
-  sessionId: string;
+  /** v703 — Optional: ohne sessionId rendert der Panel im "project-level" Modus
+   *  (zeigt aktive Sandboxes des Projekts, Create-Button erstellt session-lose Sandbox). */
+  sessionId?: string;
   /** Default-Mode aus der Session (z.B. aus mode-Spalte). */
   defaultMode?: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
   /** Slug für Branch-Naming (z.B. erste Wörter der goal). */
@@ -47,14 +49,19 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
     try {
       const [s, list] = await Promise.all([
         client.fetchSandboxStatus(),
-        client.listSandboxes({ sessionId }),
+        // v703 — Wenn sessionId fehlt, fallback auf projectId (project-level)
+        sessionId
+          ? client.listSandboxes({ sessionId })
+          : client.listSandboxes({ projectId }),
       ]);
       setStatus(s);
-      setSandbox(list[0] ?? null);
+      // Bei project-level: nimm die jüngste aktive Sandbox
+      const active = list.find(s => s.status === 'running' || s.status === 'paused' || s.status === 'creating');
+      setSandbox(active ?? list[0] ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [client, sessionId]);
+  }, [client, sessionId, projectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -70,7 +77,7 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
     if (!client) return;
     setBusy('create'); setError(null);
     try {
-      const r = await client.createSandbox({ projectId, sessionId, mode, slug });
+      const r = await client.createSandbox({ projectId, sessionId: sessionId ?? null, mode, slug });
       setSandbox(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

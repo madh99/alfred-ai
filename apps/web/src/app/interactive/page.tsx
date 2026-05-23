@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useConfig } from '@/context/ConfigContext';
-import type { SandboxItem } from '@/lib/alfred-client';
+import type { SandboxItem, SandboxChatItem } from '@/lib/alfred-client';
 
 const STATUS_COLOR: Record<string, string> = {
   creating: 'text-amber-400 bg-amber-500/10 border-amber-500/40',
@@ -15,14 +15,23 @@ const STATUS_COLOR: Record<string, string> = {
   merging: 'text-purple-400 bg-purple-500/10 border-purple-500/40',
 };
 
+const PHASE_BADGES: Record<string, string> = {
+  planning: 'bg-blue-500/20 text-blue-400',
+  coding: 'bg-purple-500/20 text-purple-400',
+  building: 'bg-amber-500/20 text-amber-400',
+  fixing: 'bg-orange-500/20 text-orange-400',
+  validating: 'bg-cyan-500/20 text-cyan-400',
+  committing: 'bg-indigo-500/20 text-indigo-400',
+  done: 'bg-emerald-500/20 text-emerald-400',
+  failed: 'bg-red-500/20 text-red-400',
+};
+
 /**
- * v700 — Interactive-Chat-Mode Page (Route: /interactive?sandboxId=...).
+ * v703 — Interactive-Chat-Mode Page (Route: /interactive?sandboxId=...).
  *
- * Layout: Chat links (40%) + Preview rechts (60%). Fokus-View für eine Sandbox.
- * Der Chat-Input wird in v701 zur eigentlichen Agent-Loop ausgebaut.
- *
- * Query-Param statt dynamic-route weil Next.js mit output:export keine
- * dynamicParams unterstützt.
+ * Layout: Chat links (40%) + Preview rechts (60%). Vollbild-Fokus-View.
+ * Jede User-Message spawnt einen Project-Agent-Task im Sandbox-Worktree-cwd.
+ * Live-Output via existing /api/project-agents/:id/output SSE stream.
  */
 export default function InteractivePage() {
   const search = useSearchParams();
@@ -31,10 +40,14 @@ export default function InteractivePage() {
   const [sandbox, setSandbox] = useState<SandboxItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState('');
-  const [chatHistory, setChatHistory] = useState<Array<{ role: 'user' | 'agent'; text: string; ts: number }>>([]);
+  const [chatHistory, setChatHistory] = useState<SandboxChatItem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
+  const [liveOutput, setLiveOutput] = useState<Map<string, Array<{ ts: number; source: string; text: string }>>>(new Map());
+  const esRef = useRef<EventSource | null>(null);
+  const currentTaskRef = useRef<string | null>(null);
+  const chatBoxRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
+  const loadSandbox = useCallback(async () => {
     if (!client || !sandboxId) return;
     try {
       const sb = await client.getSandbox(sandboxId);
@@ -44,13 +57,68 @@ export default function InteractivePage() {
     }
   }, [client, sandboxId]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadChat = useCallback(async () => {
+    if (!client || !sandboxId) return;
+    try {
+      const msgs = await client.fetchSandboxChat(sandboxId);
+      setChatHistory(msgs);
+    } catch (e) {
+      // chat list failure is not fatal — just log
+      console.warn('chat load failed', e);
+    }
+  }, [client, sandboxId]);
+
+  useEffect(() => { loadSandbox(); loadChat(); }, [loadSandbox, loadChat]);
+
+  // Auto-Refresh Sandbox-Status wenn creating/merging
   useEffect(() => {
     if (!sandbox) return;
     if (sandbox.status !== 'creating' && sandbox.status !== 'merging') return;
-    const t = setInterval(load, 2000);
+    const t = setInterval(loadSandbox, 2000);
     return () => clearInterval(t);
-  }, [sandbox?.status, load]);
+  }, [sandbox?.status, loadSandbox]);
+
+  // Auto-Scroll Chat
+  useEffect(() => {
+    const box = chatBoxRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [chatHistory, liveOutput]);
+
+  // SSE-Subscribe für laufende Agent-Tasks
+  useEffect(() => {
+    const runningMsg = chatHistory.find(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');
+    const taskId = runningMsg?.taskId;
+    if (!taskId || taskId === currentTaskRef.current) return;
+    // Close previous stream
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    currentTaskRef.current = taskId;
+    if (!client) return;
+    const es = client.openProjectAgentOutputStream(
+      taskId,
+      (line) => {
+        setLiveOutput(prev => {
+          const next = new Map(prev);
+          const existing = next.get(taskId) ?? [];
+          const updated = [...existing, line];
+          next.set(taskId, updated.length > 200 ? updated.slice(-200) : updated);
+          return next;
+        });
+      },
+      (history) => {
+        setLiveOutput(prev => { const next = new Map(prev); next.set(taskId, history); return next; });
+      },
+    );
+    esRef.current = es;
+    return () => { es.close(); };
+  }, [chatHistory, client]);
+
+  // Reload chat alle 4s wenn ein agent-task läuft (für phase-update + final-text)
+  useEffect(() => {
+    const hasRunning = chatHistory.some(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');
+    if (!hasRunning) return;
+    const t = setInterval(loadChat, 4000);
+    return () => clearInterval(t);
+  }, [chatHistory, loadChat]);
 
   const previewUrl = useMemo(() => {
     if (!sandbox || sandbox.status !== 'running' || !client) return null;
@@ -59,27 +127,25 @@ export default function InteractivePage() {
 
   async function handleSendMessage() {
     const text = chatInput.trim();
-    if (!text || !sandbox) return;
-    setChatHistory(prev => [...prev, { role: 'user', text, ts: Date.now() }]);
+    if (!text || !sandbox || !client) return;
+    setBusy('send'); setError(null);
     setChatInput('');
-    setBusy('send');
-    // v700: Placeholder-Antwort. Agent-Execution-Loop (Spawn von Project-Agent-Task
-    // mit cwd=worktree pro Nachricht) wird in v701 implementiert.
-    setTimeout(() => {
-      setChatHistory(prev => [...prev, {
-        role: 'agent',
-        text: `🚧 Interactive-Agent-Loop ist in v700 als Skelett angelegt — der Agent läuft noch nicht automatisch pro Nachricht. Workaround: Nutze den Project-Chat mit derselben Session, dort kannst du Project-Agent-Tasks starten die im Sandbox-Worktree (\`${sandbox.worktreePath}\`) laufen. Live-Preview rechts updated via HMR.`,
-        ts: Date.now(),
-      }]);
-      setBusy(null);
-    }, 400);
+    try {
+      const r = await client.sendSandboxChatMessage(sandbox.id, text);
+      if (!r.ok) {
+        setError(r.reason ?? 'Send failed');
+      }
+      await loadChat();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally { setBusy(null); }
   }
 
   async function handleDiscard() {
     if (!client || !sandbox) return;
     if (!confirm('Sandbox verwerfen? Alle Änderungen gehen verloren wenn nicht gemerged.')) return;
     setBusy('discard');
-    try { await client.discardSandbox(sandbox.id); await load(); }
+    try { await client.discardSandbox(sandbox.id); await loadSandbox(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
   }
@@ -92,7 +158,7 @@ export default function InteractivePage() {
       const r = await client.mergeSandbox(sandbox.id, { strategy: strategy as 'direct' | 'pr' });
       if (r.ok) {
         if (r.prUrl) window.open(r.prUrl, '_blank');
-        await load();
+        await loadSandbox();
       } else { setError(`Merge fehlgeschlagen: ${r.reason ?? 'unknown'}`); }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(null); }
@@ -104,7 +170,7 @@ export default function InteractivePage() {
     </div>
   );
 
-  if (error) return (
+  if (error && !sandbox) return (
     <div className="min-h-screen bg-[#0a0a0a] text-red-400 p-6">
       <h1 className="text-xl">Fehler</h1>
       <p className="text-sm">{error}</p>
@@ -134,23 +200,46 @@ export default function InteractivePage() {
         </div>
       </header>
 
+      {error && (
+        <div className="border-b border-red-500/30 bg-red-500/10 text-red-400 px-4 py-1.5 text-xs">{error}</div>
+      )}
+
       <div className="flex-1 flex overflow-hidden">
         <div className="w-[40%] flex flex-col border-r border-[#1a1a1a]">
-          <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          <div ref={chatBoxRef} className="flex-1 overflow-y-auto p-3 space-y-2">
             {chatHistory.length === 0 && (
               <div className="text-xs text-gray-500 italic">
-                Beschreibe was die Sandbox bauen/ändern soll. Jede Nachricht wird vom Agent im Worktree umgesetzt — die Live-Preview rechts zeigt das Ergebnis sofort via HMR.
-                <div className="mt-3 p-2 bg-amber-500/10 border border-amber-500/30 rounded text-amber-400 text-[11px]">
-                  🚧 Hinweis: Die automatische Agent-Loop pro Nachricht ist in v700 als Skelett angelegt — kommt in v701 voll. Bis dahin: nutze den Project-Chat, Project-Agent-Tasks laufen im Worktree.
-                </div>
+                Beschreibe was die Sandbox bauen/ändern soll. Jede Nachricht startet einen Project-Agent-Task im Worktree (<code className="text-gray-400">{sandbox.worktreePath.split('/').slice(-2).join('/')}</code>). Live-Preview rechts updated via HMR sobald Files geändert werden.
               </div>
             )}
-            {chatHistory.map((m, i) => (
-              <div key={i} className={`text-xs rounded p-2 ${m.role === 'user' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-[#111] border border-[#1f1f1f]'}`}>
-                <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">{m.role === 'user' ? 'Du' : 'Agent'}</div>
-                <div className="whitespace-pre-wrap text-gray-200">{m.text}</div>
-              </div>
-            ))}
+            {chatHistory.map((m) => {
+              const liveLines = m.taskId ? liveOutput.get(m.taskId) ?? [] : [];
+              const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed';
+              return (
+                <div key={m.id} className={`text-xs rounded p-2 ${m.role === 'user' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-[#111] border border-[#1f1f1f]'}`}>
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                    <span>{m.role === 'user' ? '👤 Du' : '🤖 Agent'}</span>
+                    <div className="flex items-center gap-2">
+                      {m.taskPhase && (
+                        <span className={`px-1.5 py-0.5 rounded ${PHASE_BADGES[m.taskPhase] ?? 'bg-gray-500/20 text-gray-400'}`}>{m.taskPhase}</span>
+                      )}
+                      <span className="text-gray-600">{new Date(m.createdAt).toLocaleTimeString('de-AT')}</span>
+                    </div>
+                  </div>
+                  <div className="whitespace-pre-wrap text-gray-200">{m.text}</div>
+                  {isRunning && liveLines.length > 0 && (
+                    <details className="mt-2" open>
+                      <summary className="cursor-pointer text-[10px] text-cyan-400">▾ Live-Output ({liveLines.length})</summary>
+                      <div className="mt-1 max-h-48 overflow-y-auto bg-black/30 rounded p-1.5 font-mono text-[10px] text-gray-400 whitespace-pre-wrap">
+                        {liveLines.slice(-40).map((l, i) => (
+                          <div key={i} className={l.source === 'stderr' ? 'text-red-300' : l.source === 'system' ? 'text-blue-300' : ''}>{l.text}</div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div className="border-t border-[#1a1a1a] p-2 flex gap-2">
             <textarea
@@ -160,11 +249,11 @@ export default function InteractivePage() {
               placeholder="Was soll der Agent ändern? (Enter = senden, Shift+Enter = Zeilenumbruch)"
               rows={3}
               className="flex-1 bg-[#0d0d0d] border border-[#2a2a2a] rounded text-xs text-gray-200 p-2 resize-none focus:outline-none focus:border-blue-500"
-              disabled={busy !== null}
+              disabled={busy === 'send' || sandbox.status !== 'running'}
             />
             <button
               onClick={handleSendMessage}
-              disabled={busy !== null || !chatInput.trim()}
+              disabled={busy !== null || !chatInput.trim() || sandbox.status !== 'running'}
               className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-xs"
             >Senden</button>
           </div>
@@ -180,7 +269,7 @@ export default function InteractivePage() {
             />
           ) : (
             <div className="flex-1 flex items-center justify-center text-sm text-gray-500">
-              {sandbox.status === 'creating' && '⏳ Container startet…'}
+              {sandbox.status === 'creating' && '⏳ Container startet… (pnpm install + dev-server, kann 1-3 min dauern beim ersten Mal)'}
               {sandbox.status === 'paused' && '⏸ Sandbox pausiert — Resume im Project-Chat'}
               {sandbox.status === 'failed' && `⚠ Failed: ${sandbox.statusReason ?? 'unknown'}`}
               {(sandbox.status === 'discarded' || sandbox.status === 'cleaned') && '✕ Sandbox entfernt'}

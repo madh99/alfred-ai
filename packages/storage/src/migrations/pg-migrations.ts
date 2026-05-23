@@ -1335,4 +1335,24 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS merge_strategy TEXT`, []);
     },
   },
+  {
+    version: 91,
+    description: 'v703 — sandbox_chat_messages: persistente Chat-History pro Sandbox',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS sandbox_chat_messages (
+          id TEXT PRIMARY KEY,
+          sandbox_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          text TEXT NOT NULL,
+          task_id TEXT,
+          task_phase TEXT,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_chat_sandbox ON sandbox_chat_messages(sandbox_id, created_at)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_chat_task ON sandbox_chat_messages(task_id)`, []);
+    },
+  },
 ];

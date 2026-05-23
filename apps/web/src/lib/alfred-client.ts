@@ -370,6 +370,28 @@ export class AlfredClient {
     const data = await res.json();
     return data.sandboxes ?? [];
   }
+  // v703 — Alle aktiven Sandboxes des Users (für /sandboxes-Sidebar-Seite)
+  async listAllSandboxes(): Promise<SandboxItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/list-all`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-list-all: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.sandboxes ?? [];
+  }
+  // v703 — Sandbox-Chat (Interactive-Mode)
+  async fetchSandboxChat(sandboxId: string): Promise<SandboxChatItem[]> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`Sandbox-chat: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.messages ?? [];
+  }
+  async sendSandboxChatMessage(sandboxId: string, message: string): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return data;
+  }
   async getSandbox(sandboxId: string): Promise<SandboxItem | null> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}`, { headers: this.authHeaders });
     if (res.status === 404) return null;
@@ -377,7 +399,7 @@ export class AlfredClient {
     const data = await res.json();
     return data.sandbox ?? null;
   }
-  async createSandbox(input: { projectId: string; sessionId: string; mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat'; slug?: string }): Promise<SandboxItem> {
+  async createSandbox(input: { projectId: string; sessionId?: string | null; mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat'; slug?: string }): Promise<SandboxItem> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/create`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? `Sandbox-create: HTTP ${res.status}`);
@@ -2063,6 +2085,17 @@ export interface SandboxItem {
   destroyedAt: string | null;
   result: string | null;
   resultPrUrl: string | null;
+}
+
+export interface SandboxChatItem {
+  id: string;
+  sandboxId: string;
+  userId: string;
+  role: 'user' | 'agent';
+  text: string;
+  taskId: string | null;
+  taskPhase: string | null;
+  createdAt: string;
 }
 
 export interface SandboxStatusResponse {

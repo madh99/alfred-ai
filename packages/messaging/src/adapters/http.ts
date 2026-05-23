@@ -403,16 +403,20 @@ export class HttpAdapter extends MessagingAdapter {
   >;
 
   // v699 — Sandbox-CRUD-Callbacks (Wire-Up von alfred.ts → SandboxManager)
+  // v703 — sessionId optional + chat-message + chat-list + listAll
   private sandboxCallbacks?: {
     status: () => Promise<Record<string, unknown>>;
-    list: (filter: { projectId?: string; sessionId?: string }) => Promise<unknown[]>;
+    list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
+    listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
     merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
+    chatList: (sandboxId: string) => Promise<unknown[]>;
+    chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
   };
 
   // v639 — Goals API
@@ -447,16 +451,20 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   // v699 — Sandbox-CRUD-Callbacks (alle laufen mit checkAuth)
+  // v703 — erweitert: chatList + chatSendMessage + listAll + sessionId optional
   setSandboxCallbacks(cb: {
     status: () => Promise<Record<string, unknown>>;
-    list: (filter: { projectId?: string; sessionId?: string }) => Promise<unknown[]>;
+    list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
+    listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
     merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
+    chatList: (sandboxId: string) => Promise<unknown[]>;
+    chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
   }): void {
     this.sandboxCallbacks = cb;
   }
@@ -977,6 +985,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxMerge(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/diff$/) && req.method === 'GET') {
       this.handleSandboxDiff(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat$/) && req.method === 'GET') {
+      this.handleSandboxChatList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat$/) && req.method === 'POST') {
+      this.handleSandboxChatSend(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/sandbox/list-all' && req.method === 'GET') {
+      this.handleSandboxListAll(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+$/) && req.method === 'GET') {
       this.handleSandboxGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/insights\/[^/]+\/dismiss$/) && req.method === 'POST') {
@@ -3204,6 +3218,61 @@ export class HttpAdapter extends MessagingAdapter {
       const diff = await this.sandboxCallbacks.diff(sandboxId);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end(diff);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  // v703 — Sandbox-Chat (Interactive-Mode)
+  private async handleSandboxChatList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    try {
+      const messages = await this.sandboxCallbacks.chatList(sandboxId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ messages }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleSandboxChatSend(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    const sandboxId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let message = '';
+    try { message = String((JSON.parse(body) as Record<string, unknown>).message ?? ''); } catch { /* */ }
+    if (!message.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'message required' })); return; }
+    try {
+      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim());
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleSandboxListAll(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Sandbox-Feature disabled' })); return; }
+    try {
+      // Auth-Check via Bearer-Token → wir nehmen einfach den ersten authentifizierten User
+      // (für Multi-User: müsste hier userId aus checkAuth zurückgegeben werden — Phase-C-Polish)
+      const authHeader = req.headers['authorization'];
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+      let userId = '';
+      if (token && this.authCb) {
+        const u = await this.authCb.getUserByToken(token);
+        if (u) userId = u.userId;
+      }
+      const sandboxes = await this.sandboxCallbacks.listAll(userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sandboxes }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
