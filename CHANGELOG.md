@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.710] - 2026-05-24
+
+### Fixed — Interactive-Tab öffnete „Not found"-JSON statt WebUI (basePath-Fehler)
+
+User-Report: Klick auf „🚀 Interactive Sandbox" öffnete `https://host:3420/interactive?sandboxId=...` und zeigte `{"error":"Not found"}` statt der WebUI-Seite.
+
+Root-Cause: Alfred-HTTP-Adapter served die WebUI nur unter `/alfred/`-Prefix (siehe `serveStaticFile` an Zeile 1316, matched nur `/alfred/...`). Meine v699/v703-Buttons konstruierten aber URLs ohne den Prefix:
+```ts
+window.open(`/interactive?sandboxId=${id}`)  // ❌ → /interactive (Not found)
+```
+
+**Fix:** alle 4 Stellen mit `/alfred/`-Prefix korrigiert:
+- `ProjectChat.tsx` — „🚀 Interactive Sandbox"-Button
+- `SandboxPanel.tsx` — „💬 Interactive-Mode"-Link
+- `sandboxes/page.tsx` — Create-Modal-Auto-Open + Liste-Links
+
+```ts
+window.open(`/alfred/interactive?sandboxId=${id}`)  // ✓
+```
+
+Static-Handler resolved `/alfred/interactive` → `/alfred/interactive/index.html` automatisch (Directory→index.html).
+
+### Backward-Compat
+- Trivial — kein Daten-Pfad, nur URL-Konstruktion korrigiert
+- Bestehende offene Tabs mit falscher URL: hard-reload nach Deploy oder mit `/alfred/`-Prefix neu öffnen
+
 ## [0.19.0-multi-ha.709] - 2026-05-24
 
 ### Added — Container-Log-Capture vor Rollback (Diagnose-Hilfe)

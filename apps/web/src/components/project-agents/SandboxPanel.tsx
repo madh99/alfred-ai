@@ -225,7 +225,7 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
                 <span>📺 Live-Preview</span>
                 <div className="flex gap-2">
                   <a
-                    href={`/interactive?sandboxId=${sandbox.id}`}
+                    href={`/alfred/interactive?sandboxId=${sandbox.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-purple-400 hover:text-purple-300"

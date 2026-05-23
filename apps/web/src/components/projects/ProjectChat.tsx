@@ -418,7 +418,7 @@ export function ProjectChat({ projectId, projectName }: Props) {
                 try {
                   const slug = `interactive-${Date.now().toString(36).slice(-5)}`;
                   const sb = await client.createSandbox({ projectId, mode: 'interactive-chat', slug });
-                  if (sb && sb.id) window.open(`/interactive?sandboxId=${sb.id}`, '_blank');
+                  if (sb && sb.id) window.open(`/alfred/interactive?sandboxId=${sb.id}`, '_blank');
                 } catch (e) {
                   alert('Sandbox-Create fehlgeschlagen: ' + (e instanceof Error ? e.message : String(e)));
                 }

@@ -66,7 +66,7 @@ export default function SandboxesPage() {
       const sb = await client.createSandbox({ projectId: createProjectId, mode: createMode, slug });
       setShowCreate(false);
       if (sb && sb.id && createMode === 'interactive-chat') {
-        window.open(`/interactive?sandboxId=${sb.id}`, '_blank');
+        window.open(`/alfred/interactive?sandboxId=${sb.id}`, '_blank');
       }
       await load();
     } catch (e) {
@@ -176,7 +176,7 @@ export default function SandboxesPage() {
                 <div className="flex flex-col gap-1 items-end">
                   {previewUrl && (
                     <a
-                      href={`/interactive?sandboxId=${sb.id}`}
+                      href={`/alfred/interactive?sandboxId=${sb.id}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-[11px] px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded"
