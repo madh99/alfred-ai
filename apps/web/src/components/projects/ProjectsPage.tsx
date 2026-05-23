@@ -102,6 +102,32 @@ export function ProjectsPage() {
   // v668 — Roadmap-Edit pro Open-Item (Inline statt Modal)
   const [roadmapEditId, setRoadmapEditId] = useState<string | null>(null);
   const [roadmapForm, setRoadmapForm] = useState<{ milestone: string; order: string; estimatedHours: string }>({ milestone: '', order: '', estimatedHours: '' });
+  // v704 — Inline-Edit für Title + Description
+  const [itemEditId, setItemEditId] = useState<string | null>(null);
+  const [itemEditForm, setItemEditForm] = useState<{ title: string; description: string }>({ title: '', description: '' });
+
+  function startItemEdit(item: { id: string; title: string; description?: string | null }) {
+    setItemEditId(item.id);
+    setItemEditForm({ title: item.title, description: item.description ?? '' });
+    setExpandedItemIds(prev => { const next = new Set(prev); next.add(item.id); return next; });
+  }
+
+  async function saveItemEdit(itemId: string) {
+    if (!client) return;
+    const ok = await client.patchProjectOpenItem(itemId, {
+      title: itemEditForm.title.trim(),
+      description: itemEditForm.description.trim() || null,
+    });
+    if (ok && detail) {
+      setDetail({
+        ...detail,
+        openItems: detail.openItems.map(it => it.id === itemId
+          ? { ...it, title: itemEditForm.title.trim(), description: itemEditForm.description.trim() || undefined }
+          : it),
+      });
+    }
+    setItemEditId(null);
+  }
 
   function toggleItemExpanded(id: string) {
     setExpandedItemIds(prev => {
@@ -618,6 +644,11 @@ export function ProjectsPage() {
                           />
                           <button onClick={() => resolveOpenItem(it)} className="text-gray-500 hover:text-emerald-400" title="Erledigen">☐</button>
                           <button
+                            onClick={() => startItemEdit(it)}
+                            className="text-gray-600 hover:text-amber-400"
+                            title="Titel + Beschreibung bearbeiten"
+                          >✏️</button>
+                          <button
                             onClick={() => openRoadmapEdit(it)}
                             className={it.roadmapMilestone ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 hover:text-blue-400'}
                             title={it.roadmapMilestone ? `Roadmap: ${it.roadmapMilestone}${it.roadmapOrder != null ? ` #${it.roadmapOrder}` : ''}` : 'Zur Roadmap hinzufügen'}
@@ -648,6 +679,35 @@ export function ProjectsPage() {
                           <span className="text-[10px] text-gray-600">{relativeTime(it.createdAt)}</span>
                         </div>
                         {/* v668 — Roadmap-Edit Inline-Form */}
+                        {itemEditId === it.id && (
+                          <div className="ml-12 mt-1 mb-2 p-2 bg-amber-500/5 border border-amber-500/30 rounded text-[11px] space-y-1.5">
+                            <div className="text-amber-300 font-semibold text-[10px]">✏️ Item bearbeiten</div>
+                            <input
+                              value={itemEditForm.title}
+                              onChange={e => setItemEditForm(f => ({ ...f, title: e.target.value }))}
+                              placeholder="Titel"
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200"
+                            />
+                            <textarea
+                              value={itemEditForm.description}
+                              onChange={e => setItemEditForm(f => ({ ...f, description: e.target.value }))}
+                              placeholder="Beschreibung (optional)"
+                              rows={4}
+                              className="w-full px-2 py-1 bg-[#1a1a1a] border border-[#2a2a2a] rounded text-gray-200 resize-y font-mono text-[10px]"
+                            />
+                            <div className="flex gap-1.5 justify-end">
+                              <button
+                                onClick={() => setItemEditId(null)}
+                                className="px-2 py-0.5 text-gray-400 hover:text-gray-200"
+                              >Abbrechen</button>
+                              <button
+                                onClick={() => saveItemEdit(it.id)}
+                                disabled={!itemEditForm.title.trim()}
+                                className="px-2 py-0.5 bg-amber-500/20 border border-amber-500/40 text-amber-300 rounded hover:bg-amber-500/30 disabled:opacity-50"
+                              >Speichern</button>
+                            </div>
+                          </div>
+                        )}
                         {roadmapEditId === it.id && (
                           <div className="ml-12 mt-1 mb-2 p-2 bg-[#0f0f0f] border border-blue-500/30 rounded text-[11px] space-y-1.5">
                             <div className="text-blue-300 font-semibold">🗺️ Roadmap-Zuordnung</div>

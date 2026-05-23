@@ -5367,9 +5367,44 @@ export class Alfred {
                 return `# git diff failed: ${(err as Error).message}`;
               }
             },
-            // v703 — Sandbox-Chat (Interactive-Mode)
+            // v703/v704 — Sandbox-Chat (Interactive-Mode) mit Live-Enrichment
             chatList: async (sandboxId: string) => {
-              return sandboxChatRepo.list(sandboxId);
+              const messages = await sandboxChatRepo.list(sandboxId);
+              // v704 — Für jede Agent-Message mit task_id: aktuellen Project-Agent-Status holen
+              // und phase + text live anreichern (done → Summary, failed → Error, sonst Phase).
+              if (!this.database) return messages;
+              try {
+                const { ProjectAgentSessionRepository } = await import('@alfred/storage');
+                const sessRepo = new ProjectAgentSessionRepository(this.database.getAdapter());
+                const enriched: typeof messages = [];
+                for (const m of messages) {
+                  if (m.role !== 'agent' || !m.taskId) { enriched.push(m); continue; }
+                  try {
+                    const sess = await sessRepo.getByTaskId(m.taskId);
+                    if (!sess) { enriched.push(m); continue; }
+                    const phase = sess.currentPhase;
+                    let text = m.text;
+                    // Bei terminal-State: Summary aus Milestones + Commit + Files-Changed bauen
+                    if (phase === 'done' || phase === 'failed') {
+                      const milestones = Array.isArray(sess.milestones) ? sess.milestones : [];
+                      const lastMs = milestones[milestones.length - 1] ?? '';
+                      const commitSha = sess.lastCommitSha ? sess.lastCommitSha.slice(0, 8) : null;
+                      const lines: string[] = [];
+                      if (phase === 'done') {
+                        lines.push(`✅ Fertig nach ${sess.currentIteration ?? 0} Iteration(en).`);
+                      } else {
+                        lines.push(`❌ Failed: ${(sess as any).failureInsight ?? 'unknown'}`);
+                      }
+                      if (sess.totalFilesChanged > 0) lines.push(`📝 ${sess.totalFilesChanged} Datei(en) geändert`);
+                      if (commitSha) lines.push(`📦 Commit ${commitSha}`);
+                      if (lastMs) lines.push(`\n${lastMs}`);
+                      text = lines.join(' · ').replace(' · \n', '\n');
+                    }
+                    enriched.push({ ...m, text, taskPhase: phase });
+                  } catch { enriched.push(m); }
+                }
+                return enriched;
+              } catch { return messages; }
             },
             chatSendMessage: async (sandboxId: string, message: string) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
@@ -5377,6 +5412,21 @@ export class Alfred {
               if (sb.status !== 'running' && sb.status !== 'paused') {
                 return { ok: false, reason: `Sandbox in status ${sb.status} — kann keine Messages annehmen` };
               }
+              // v704 — Concurrent-Block: prüfen ob bereits ein nicht-terminal Agent-Task läuft
+              try {
+                const { ProjectAgentSessionRepository: PASR } = await import('@alfred/storage');
+                const sessRepo2 = new PASR(this.database!.getAdapter());
+                const existing = await sandboxChatRepo.list(sandboxId);
+                for (const m of existing.slice(-10)) {
+                  if (m.role === 'agent' && m.taskId) {
+                    const s = await sessRepo2.getByTaskId(m.taskId);
+                    if (s && s.currentPhase !== 'done' && s.currentPhase !== 'failed') {
+                      return { ok: false, reason: `Vorheriger Agent-Task läuft noch (phase=${s.currentPhase}). Bitte abwarten oder im Project-Chat stoppen.` };
+                    }
+                  }
+                }
+              } catch (err) { this.logger.debug({ err }, 'concurrent-check failed (continuing)'); }
+
               // (1) User-Message persistieren
               const userMsg = await sandboxChatRepo.append({
                 sandboxId,
@@ -5399,8 +5449,6 @@ export class Alfred {
                   cwd: sb.worktreePath,
                 }, ctx);
                 const taskId = (result.data as any)?.taskId;
-                // (3) Agent-Placeholder-Message mit Task-Verknüpfung anlegen — die UI pollt
-                // den Task-Status und kann den finalen Output später nachladen.
                 if (taskId) {
                   await sandboxChatRepo.append({
                     sandboxId,
@@ -5886,25 +5934,36 @@ export class Alfred {
               return await projRepo.addOpenItem(project.id, input as any);
             } catch (err) { this.logger.warn({ err }, 'Projects API addOpenItem failed'); return null; }
           },
-          updateOpenItem: async (itemId: string, status: string) => {
+          // v704 — Erweitert: status + title + description
+          updateOpenItem: async (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => {
             try {
-              const ok = await projRepo.updateOpenItemStatus(itemId, status as any);
-              // v671 — Spiegel-Sync: wenn Open-Item ein verlinktes Todo hat → Todo-Status mit-toggle'n.
-              // Nur 'done' propagiert (cancelled ≠ done, das Todo soll dann offen bleiben wie vereinbart).
-              if (ok && this.todoRepo) {
-                try {
-                  const oi = await projRepo.getOpenItemByIdRaw(itemId);
-                  if (oi?.linkedTodoId) {
-                    const t = await this.todoRepo.getById(oi.linkedTodoId);
-                    if (t) {
-                      if (status === 'done' && !t.completed) await this.todoRepo.complete(t.id);
-                      else if (status === 'open' && t.completed) await this.todoRepo.uncomplete(t.id);
-                      // 'cancelled' / 'in_progress' werden NICHT zum Todo propagiert
-                    }
-                  }
-                } catch (err) { this.logger.debug({ err }, 'OpenItem→Todo status-sync failed'); }
+              let anyChange = false;
+              // Field-Update (title/description) zuerst
+              if (patch.title != null || patch.description !== undefined) {
+                const fieldPatch: { title?: string; description?: string | null } = {};
+                if (patch.title != null) fieldPatch.title = patch.title;
+                if (patch.description !== undefined) fieldPatch.description = patch.description;
+                const ok = await projRepo.updateOpenItemFields(itemId, fieldPatch);
+                if (ok) anyChange = true;
               }
-              return ok;
+              // Status-Update + Todo-Sync (v671)
+              if (patch.status) {
+                const ok = await projRepo.updateOpenItemStatus(itemId, patch.status as any);
+                if (ok) anyChange = true;
+                if (ok && this.todoRepo) {
+                  try {
+                    const oi = await projRepo.getOpenItemByIdRaw(itemId);
+                    if (oi?.linkedTodoId) {
+                      const t = await this.todoRepo.getById(oi.linkedTodoId);
+                      if (t) {
+                        if (patch.status === 'done' && !t.completed) await this.todoRepo.complete(t.id);
+                        else if (patch.status === 'open' && t.completed) await this.todoRepo.uncomplete(t.id);
+                      }
+                    }
+                  } catch (err) { this.logger.debug({ err }, 'OpenItem→Todo status-sync failed'); }
+                }
+              }
+              return anyChange;
             } catch { return false; }
           },
           listHealthLog: async (id: string, limit: number) => {

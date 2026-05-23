@@ -1035,6 +1035,18 @@ export class AlfredClient {
     return data.success;
   }
 
+  // v704 — Open-Item title/description editieren
+  async patchProjectOpenItem(itemId: string, patch: { title?: string; description?: string | null; status?: string }): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/api/projects/open-items/${itemId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    return data.success;
+  }
+
   // v641 — Bulk-Work + Audit für Open-Items
   async projectWorkOnOpenItems(projectId: string, itemIds: string[], maxItems = 10): Promise<{ ok: boolean; taskId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/work-on-items`, {

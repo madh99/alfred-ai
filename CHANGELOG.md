@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.704] - 2026-05-23
+
+### Added — Open-Items Inline-Edit + Chat-Done-Marker + Concurrent-Block
+
+**1) Open-Items Inline-Edit (Bugfix für nicht-editierbare Details):**
+- Backend: `updateOpenItem`-Callback erweitert von `(itemId, status)` auf `(itemId, patch: {status?, title?, description?})`. Status-only-Updates bleiben rückwärtskompatibel.
+- API `PATCH /api/projects/open-items/:id` akzeptiert jetzt title + description zusätzlich zu status.
+- Frontend `alfred-client.patchProjectOpenItem(itemId, patch)` neue Methode (alte `updateProjectOpenItem` bleibt).
+- WebUI: neuer ✏️-Button neben Erledigen/Roadmap. Klick → Inline-Form mit Title-Input + Description-Textarea + Speichern/Abbrechen. Speichern sendet PATCH und updated lokalen State.
+
+**2) Chat-Done-Marker (Interactive-Mode Polish):**
+- `chatList`-Callback in alfred.ts reichert Agent-Messages live mit aktuellem Project-Agent-Session-State an:
+  - Bei `phase ∈ {done, failed}`: Text wird durch Summary ersetzt (Iterations-Anzahl, Files-Changed, Commit-SHA, letzter Milestone)
+  - Sonst: aktuelles `taskPhase` durchgereicht
+- Frontend muss nichts ändern — die Phase-Badges + Text-Update wirken automatisch beim nächsten Poll (4s-Auto-Refresh oder manuelles Reload)
+- Done-Format: `✅ Fertig nach N Iteration(en). · 📝 X Datei(en) geändert · 📦 Commit abc12345\n\n<letzter Milestone>`
+
+**3) Concurrent-Block (Interactive-Mode Safety):**
+- `chatSendMessage` prüft die letzten 10 Chat-Messages auf laufende Agent-Tasks (`phase ∉ {done, failed}`)
+- Wenn vorheriger Task läuft → reject mit `reason: "Vorheriger Agent-Task läuft noch (phase=...). Bitte abwarten oder im Project-Chat stoppen."`
+- Frontend: bestehender Error-Banner in Interactive-Page zeigt die Begründung
+- Verhindert git-Konflikte durch parallele Agent-Runs im selben Worktree
+
+### Was NICHT in v704
+- Container-Crash-Recovery (komplexer — Polling/Event-Watching für docker-state, eigener Worker) → bleibt für v705 oder später
+- WebUI-disable des Send-Buttons während Task läuft (aktuell nur Backend-Reject; Frontend könnte aus chatHistory abgeleitet preventiv disablen — Polish)
+
+### Backward-Compatibility
+- Status-only-Updates auf open-items funktionieren unverändert
+- chatList bleibt rückwärtskompatibel — Enrichment ist additive, originale `text`-Spalte in DB unverändert (nur die Response enthält den ersetzten Text)
+- Concurrent-Block ist ein neuer Reject-Pfad — bestehende Single-Chat-Flows merken nichts
+
 ## [0.19.0-multi-ha.703] - 2026-05-23
 
 ### Added — Interactive-Mode End-to-End + Standalone-Sandboxes + Sandboxes-Sidebar

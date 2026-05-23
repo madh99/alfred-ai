@@ -527,7 +527,8 @@ export class HttpAdapter extends MessagingAdapter {
     update: (id: string, patch: Record<string, unknown>) => Promise<any | null>;
     archive: (id: string) => Promise<boolean>;
     addOpenItem: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
-    updateOpenItem: (itemId: string, status: string) => Promise<boolean>;
+    /** v704 — Erweitert: status + title + description. Status-only bleibt rückwärtskompatibel. */
+    updateOpenItem: (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => Promise<boolean>;
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
     // v641 — Bulk-Work + Audit
     workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
@@ -2544,10 +2545,14 @@ export class HttpAdapter extends MessagingAdapter {
     if (!this.projectsCallbacks) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
     const itemId = url.pathname.split('/').pop()!;
     const body = await this.readBody(req);
-    let patch: { status?: string };
+    let patch: { status?: string; title?: string; description?: string | null };
     try { patch = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
-    if (!patch.status) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'status required' })); return; }
-    const ok = await this.projectsCallbacks.updateOpenItem(itemId, patch.status);
+    if (!patch.status && patch.title == null && patch.description === undefined) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'status, title oder description required' }));
+      return;
+    }
+    const ok = await this.projectsCallbacks.updateOpenItem(itemId, patch);
     res.writeHead(ok ? 200 : 404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: ok }));
   }
