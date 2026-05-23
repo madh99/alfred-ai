@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.707] - 2026-05-24
+
+### Fixed — Sandbox-Container EACCES auf Worktree
+
+`npm install` im Container failed mit:
+```
+EACCES: permission denied, mkdir '/workspace/node_modules'
+```
+
+Root-Cause:
+- alfred läuft als `root`, erstellt Worktree-Files mit `drwxr-sr-x` (mode 0755, owner root, group madh via setgid)
+- Container läuft als `node`-User (UID 1000) — auf Host = madh-Gruppe
+- Group hat read+execute, aber kein write → npm install scheitert
+
+**Fix** in `worktree.ts.createWorktree`:
+- Nach erfolgreichem `git worktree add`: `chmod -R g+rwX <worktreePath>`
+- Setzt group-write rekursiv (X = execute nur auf Dirs, nicht Files)
+- Container-User (UID 1000 = madh-Gruppe) kann jetzt schreiben
+
+### Bonus
+- v705 + v706-Reste: Cleanup-Worker hat halb-fertige Sandboxes aus früheren Failed-Runs schon automatisch entfernt (drwxr-sr-x-Worktrees + abgestürzte Container)
+
 ## [0.19.0-multi-ha.706] - 2026-05-24
 
 ### Fixed — Dockerfile.node-22 Build-Failure (UID-Konflikt)

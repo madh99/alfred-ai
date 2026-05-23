@@ -91,6 +91,16 @@ export async function createWorktree(input: CreateWorktreeInput): Promise<Create
     throw new Error(`git worktree add failed: ${(err as Error).message.slice(0, 200)}`);
   }
 
+  // v707 — Worktree-Permissions: alfred läuft typisch als root, der Container-User ist
+  // node (UID 1000). Damit `npm install` im Container ins worktree-bind-mount schreiben
+  // kann, brauchen wir group-write (das parent-Dir hat schon setgid auf madh-Gruppe).
+  // chmod -R g+rwX setzt group-write rekursiv ohne execute-bits auf Files zu setzen.
+  try {
+    await execFileAsync('chmod', ['-R', 'g+rwX', input.worktreePath], { timeout: 30_000 });
+  } catch (err) {
+    input.logger.warn({ err, worktreePath: input.worktreePath }, 'chmod g+rwX on worktree failed — container may have permission issues');
+  }
+
   input.logger.info({ worktreePath: input.worktreePath, branch: finalBranch, baseCommit }, 'Worktree created');
   return { worktreePath: input.worktreePath, branchName: finalBranch, baseCommitSha: baseCommit };
 }
