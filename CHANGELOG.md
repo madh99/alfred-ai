@@ -5,6 +5,14 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.717] - 2026-05-24
+
+### Changed — Interactive-Page pollt auch bei status='running' (UX)
+
+Vorher: Polling nur bei `creating`/`merging`. Wenn Sandbox dann sterbt (Discard von anderswo, Cleanup-Worker, Container-Crash) → UI behält status='running' Badge, der iframe zeigt aber Upstream-Fehler. Verwirrend.
+
+**Fix:** 2s-Polling bei creating/merging (transient), **10s-Polling bei running/paused** (live). Statuswechsel zu cleaned/failed/discarded werden binnen 10s sichtbar.
+
 ## [0.19.0-multi-ha.716] - 2026-05-24
 
 ### Fixed — Alfred crashed beim Sandbox-Discard (ERR_HTTP_HEADERS_SENT)

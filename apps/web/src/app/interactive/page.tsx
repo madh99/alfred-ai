@@ -70,11 +70,15 @@ export default function InteractivePage() {
 
   useEffect(() => { loadSandbox(); loadChat(); }, [loadSandbox, loadChat]);
 
-  // Auto-Refresh Sandbox-Status wenn creating/merging
+  // v717 — Auto-Refresh: schnell (2s) bei creating/merging, langsam (10s) bei running,
+  // damit Status-Wechsel zu cleaned/failed/discarded sichtbar werden ohne reload.
   useEffect(() => {
     if (!sandbox) return;
-    if (sandbox.status !== 'creating' && sandbox.status !== 'merging') return;
-    const t = setInterval(loadSandbox, 2000);
+    const isTransient = sandbox.status === 'creating' || sandbox.status === 'merging';
+    const isLive = sandbox.status === 'running' || sandbox.status === 'paused';
+    if (!isTransient && !isLive) return;
+    const interval = isTransient ? 2000 : 10000;
+    const t = setInterval(loadSandbox, interval);
     return () => clearInterval(t);
   }, [sandbox?.status, loadSandbox]);
 
