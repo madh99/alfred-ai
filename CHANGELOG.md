@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.711] - 2026-05-24
+
+### Fixed — Dev-Server-Start für npm-Projekte (echte Diagnose dank v709)
+
+v709 Container-Log-Capture zeigte die wahre Ursache der Sandbox-Fails:
+
+```
+added 457 packages in 22s     ← npm install OK
+Unknown command: "dev"
+Did you mean this?
+  npm run dev # run the "dev" package script
+```
+
+Mein `project-detect.ts` generierte `npm dev` statt `npm run dev`. **npm braucht das `run` Keyword**, pnpm und yarn nicht (akzeptieren beides). Resultat: bei jedem npm-Projekt (mit `package-lock.json`) failed der dev-Server-Start.
+
+**Fix** in `project-detect.ts`: neuer `runArgs(script, ...extraArgs)`-Helper der für ALLE 3 Package-Manager `<pm> run <script> [-- extraArgs]` baut. Funktioniert konsistent:
+- `npm run dev -- --hostname 0.0.0.0 --port 3000`
+- `pnpm run dev -- --host 0.0.0.0 --port 5173`
+- `yarn run dev -- --port 3000`
+
+Angepasst für alle 7 Framework-Branches (next, astro, remix, cra, vite, generic-dev, generic-start).
+
+### Backward-Compat
+- Keine Schema-Änderung
+- Bei pnpm/yarn: nur Syntax-Vereinheitlichung (run-Keyword war optional, jetzt explizit) — funktional identisch
+- Bei npm: Bugfix — vorher KEINE Sandbox lief mit `package-lock.json` durch
+
 ## [0.19.0-multi-ha.710] - 2026-05-24
 
 ### Fixed — Interactive-Tab öffnete „Not found"-JSON statt WebUI (basePath-Fehler)

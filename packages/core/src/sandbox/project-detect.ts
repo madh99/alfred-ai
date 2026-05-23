@@ -64,12 +64,27 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   else if (existsSync(path.join(worktreePath, 'yarn.lock'))) packageManager = 'yarn';
   else if (existsSync(path.join(worktreePath, 'package-lock.json'))) packageManager = 'npm';
 
+  // v711 — npm braucht 'run', pnpm/yarn nicht. Wir verwenden überall 'run' weil's
+  // für alle drei funktioniert. Args nach `--` werden von npm/pnpm/yarn ans script
+  // weitergereicht (Next.js liest dann --hostname/--port etc.).
+  const runArgs = (script: string, ...extraArgs: string[]) => {
+    if (packageManager === 'npm') {
+      return extraArgs.length > 0
+        ? ['npm', 'run', script, '--', ...extraArgs]
+        : ['npm', 'run', script];
+    }
+    // pnpm + yarn akzeptieren beides; wir nutzen 'run' für Konsistenz
+    return extraArgs.length > 0
+      ? [packageManager, 'run', script, '--', ...extraArgs]
+      : [packageManager, 'run', script];
+  };
+
   // Framework-Erkennung (Reihenfolge wichtig: spezifischer zuerst)
   // Next.js
   if (deps.next) {
     return {
       type: 'node-next',
-      devCommand: [packageManager, 'dev', '--', '--hostname', '0.0.0.0', '--port', '3000'],
+      devCommand: runArgs('dev', '--hostname', '0.0.0.0', '--port', '3000'),
       internalPort: 3000,
       hasDevServer: Boolean(scripts.dev || scripts.start),
       diagnostics: { packageManager, devScript: scripts.dev ?? scripts.start, framework: 'next' },
@@ -79,7 +94,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (deps.astro) {
     return {
       type: 'node-astro',
-      devCommand: [packageManager, 'dev', '--', '--host', '0.0.0.0', '--port', '4321'],
+      devCommand: runArgs('dev', '--host', '0.0.0.0', '--port', '4321'),
       internalPort: 4321,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'astro' },
@@ -89,7 +104,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (deps['@remix-run/dev'] || deps['@remix-run/serve']) {
     return {
       type: 'node-remix',
-      devCommand: [packageManager, 'dev'],
+      devCommand: runArgs('dev'),
       internalPort: 3000,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'remix' },
@@ -99,7 +114,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (deps['react-scripts']) {
     return {
       type: 'node-cra',
-      devCommand: [packageManager, 'start'],
+      devCommand: runArgs('start'),
       internalPort: 3000,
       hasDevServer: Boolean(scripts.start),
       diagnostics: { packageManager, devScript: scripts.start, framework: 'cra' },
@@ -109,7 +124,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (deps.vite) {
     return {
       type: 'node-vite',
-      devCommand: [packageManager, 'dev', '--', '--host', '0.0.0.0', '--port', '5173'],
+      devCommand: runArgs('dev', '--host', '0.0.0.0', '--port', '5173'),
       internalPort: 5173,
       hasDevServer: Boolean(scripts.dev),
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'vite' },
@@ -119,7 +134,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (scripts.dev) {
     return {
       type: 'node-generic',
-      devCommand: [packageManager, 'dev'],
+      devCommand: runArgs('dev'),
       internalPort: tryParsePortFromScript(scripts.dev) ?? 3000,
       hasDevServer: true,
       diagnostics: { packageManager, devScript: scripts.dev, framework: 'generic' },
@@ -129,7 +144,7 @@ export function detectProjectType(worktreePath: string): ProjectDetection {
   if (scripts.start) {
     return {
       type: 'node-generic',
-      devCommand: [packageManager, 'start'],
+      devCommand: runArgs('start'),
       internalPort: tryParsePortFromScript(scripts.start) ?? 3000,
       hasDevServer: true,
       diagnostics: { packageManager, devScript: scripts.start, framework: 'generic-start' },
