@@ -110,6 +110,66 @@ export default function InteractivePage() {
     if (box) box.scrollTop = box.scrollHeight;
   }, [chatHistory, liveOutput]);
 
+  // v747 — Tab-Title-Update + Browser-Notification bei Agent-Status-Change
+  useEffect(() => {
+    if (!sandbox) return;
+    const latestAgentMsg = [...chatHistory].reverse().find(m => m.role === 'agent' && m.taskId);
+    const phase = latestAgentMsg?.taskPhase;
+    const branchShort = sandbox.branchName.slice(-15);
+    const phaseIcon: Record<string, string> = {
+      planning: '🧠', coding: '✍️', building: '🔨', fixing: '🔧',
+      validating: '🔍', committing: '💾', done: '✅', failed: '❌',
+    };
+    if (phase && phase !== 'done' && phase !== 'failed') {
+      document.title = `${phaseIcon[phase] ?? '⏳'} ${phase} · ${branchShort} · Alfred`;
+    } else if (phase === 'done') {
+      document.title = `✅ Fertig · ${branchShort} · Alfred`;
+    } else if (phase === 'failed') {
+      document.title = `❌ Failed · ${branchShort} · Alfred`;
+    } else {
+      document.title = `💬 Interactive · ${branchShort} · Alfred`;
+    }
+    return () => { document.title = 'Alfred'; };
+  }, [sandbox, chatHistory]);
+
+  // v747 — Browser-Notification bei done/failed wenn Tab nicht im Fokus
+  const lastPhaseRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sandbox) return;
+    const latestAgentMsg = [...chatHistory].reverse().find(m => m.role === 'agent' && m.taskId);
+    const phase = latestAgentMsg?.taskPhase;
+    const taskId = latestAgentMsg?.taskId;
+    const phaseKey = `${taskId}:${phase}`;
+    if (!phase || phaseKey === lastPhaseRef.current) return;
+    const prevPhase = lastPhaseRef.current?.split(':')[1];
+    lastPhaseRef.current = phaseKey;
+    // Nur bei Übergang in done/failed UND nicht beim ersten render
+    if ((phase === 'done' || phase === 'failed') && prevPhase && prevPhase !== 'done' && prevPhase !== 'failed') {
+      // Permission anfragen falls noch nicht
+      const fire = () => {
+        if (!('Notification' in window)) return;
+        if (Notification.permission === 'granted' && document.hidden) {
+          const n = new Notification(
+            phase === 'done' ? `✅ Agent fertig — ${sandbox.branchName.slice(-30)}` : `❌ Agent failed — ${sandbox.branchName.slice(-30)}`,
+            {
+              body: latestAgentMsg?.text?.slice(0, 150) ?? '',
+              icon: '/favicon.ico',
+              tag: `alfred-sandbox-${sandbox.id}`,
+            },
+          );
+          n.onclick = () => { window.focus(); n.close(); };
+        }
+      };
+      if ('Notification' in window) {
+        if (Notification.permission === 'default') {
+          Notification.requestPermission().then(() => fire());
+        } else {
+          fire();
+        }
+      }
+    }
+  }, [sandbox, chatHistory]);
+
   // v720 — Robusterer SSE-Subscribe mit Auto-Reconnect bei drops
   useEffect(() => {
     const runningMsg = chatHistory.find(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');

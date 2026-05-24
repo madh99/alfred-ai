@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.747] - 2026-05-24
+
+### Added — Tab-Title-Update + Browser-Notification bei Agent-Done
+
+Wenn du den Browser-Tab im Hintergrund hast (z.B. anderes Tab gerade aktiv), siehst du den Agent-Status jetzt direkt im Tab-Title. Plus: Browser-Notification beim Übergang in done/failed damit du nichts verpasst.
+
+**Tab-Title-Update** (`interactive/page.tsx`):
+- `document.title` synchronisiert sich mit aktuellem Agent-Phase aus letzter agent-Message
+- Format: `<phase-icon> <phase> · <branch-short> · Alfred`
+- Icons pro Phase:
+  - 🧠 planning
+  - ✍️ coding
+  - 🔨 building
+  - 🔧 fixing
+  - 🔍 validating
+  - 💾 committing
+  - ✅ Fertig (done)
+  - ❌ Failed
+  - 💬 Interactive (idle/keine Phase)
+- Cleanup beim Unmount setzt zurück auf `Alfred`
+
+Damit siehst du im Browser-Tab-Header sofort `🔨 building · branch-name · Alfred` während Agent läuft.
+
+**Browser-Notification** bei Phase-Transition zu done/failed:
+- Tracker (`lastPhaseRef`) merkt sich letzten phase-state per taskId
+- Bei Übergang `*→done` oder `*→failed` UND `document.hidden === true`: zeige Browser-Notification
+- Title: `✅ Agent fertig — <branch>` oder `❌ Agent failed — <branch>`
+- Body: Text der Agent-Message (gekürzt auf 150 chars)
+- Tag: `alfred-sandbox-<id>` damit pro Sandbox nur eine Notification pending ist
+- Click auf Notification: `window.focus()` + close
+- Permission-Anfrage beim ersten Trigger (default → granted → permission saved für künftige Sandboxes)
+- Wenn permission=denied: silently skip
+
+Damit kannst du in einem anderen Tab arbeiten und kriegst Push wenn der Agent fertig ist.
+
 ## [0.19.0-multi-ha.746] - 2026-05-24
 
 ### Added — Stats-Modal Live-Refresh mit Sparkline + Quota als Progress-Bar
