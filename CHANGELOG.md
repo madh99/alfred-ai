@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.735] - 2026-05-24
+
+### Added — .env-Export + Sandbox-Quick-Create direkt aus Project-Detail
+
+**ENV-Export** (`ProjectEnvironmentsView.tsx`):
+- Neuer Button `💾 als .env exportieren` neben dem Import-Button
+- Exportiert die aktuelle Stage als Standard-`.env`-Format
+- Auto-Quote bei Werten mit Whitespace/Special-Chars (`"$\\\`#`), Escape von `\\`/`"`/`$`/`` ` ``
+- Strip von CR/LF in Werten damit File-Format intakt bleibt
+- Header-Kommentare mit Project + Stage + Timestamp
+- Download via `Blob` + `URL.createObjectURL` mit Dateinamen `<projectName>.<stage>.env`
+- Reverse-Workflow zu v734-Import: jetzt kann User Stages auch wieder als File rausziehen (für lokales Dev oder Backup)
+
+**Sandbox-Quick-Create** (neue Komponente `SandboxQuickCreateModal.tsx`):
+- Bisher konnte man Sandboxes nur über Session-Bindung (SandboxPanel) oder Interactive-Page mit `?sandboxId=…` öffnen — kein direkter "Starte Sandbox für dieses Project"-Button.
+- Neuer Button `🧪 Sandbox` neben `🚀 Deploy` im Project-Detail-Header
+- Modal mit drei Selects:
+  - **Mode**: Sandbox / Sandbox+Preview / Interactive-Chat (Default: Interactive-Chat, empfohlen)
+  - **🔐 ENV-Stage**: alle Stages mit Key-Count (sandbox/dev/prod/staging + custom)
+  - **💾 DB-Seed**: Project-Default / Leer / spezifischer Seed
+- Lädt Stages + Seeds beim Öffnen via `fetchEnvironmentStages` + `fetchDbSeeds`
+- Submit:
+  - Bei `interactive-chat`-Mode → automatisches Redirect zu `/alfred/interactive?sandboxId=<id>` (User landet sofort in der Chat-UI)
+  - Bei `sandbox-preview`/`sandbox` → Redirect zu `/alfred/sandboxes`-Übersicht
+- Erstellung läuft async — Page-Reload nach Phase-1 (Sandbox-Row in DB), Container-Start dann Phase-2 im Hintergrund
+
+Damit kompletter Sandbox-from-Project-Workflow ohne Session-Umweg:
+1. Project öffnen
+2. `🧪 Sandbox` klicken
+3. Mode + Stage + Seed wählen → Submit
+4. Bei Interactive: direkt in der Chat-UI angekommen
+
 ## [0.19.0-multi-ha.734] - 2026-05-24
 
 ### Added — .env-File-Import + Diff zwischen Stages im Environment-Manager

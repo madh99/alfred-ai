@@ -16,6 +16,7 @@ import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
 import { ProjectDbSeedsView } from './ProjectDbSeedsView';
+import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
 import { ProjectStorageView } from './ProjectStorageView';
 
 const STATUS_BADGES: Record<string, string> = {
@@ -101,6 +102,8 @@ export function ProjectsPage() {
   const [showResolvedItems, setShowResolvedItems] = useState(false);
   // v659 — Deploy-Modal
   const [deployModalOpen, setDeployModalOpen] = useState(false);
+  // v735 — Sandbox-Quick-Create
+  const [sandboxModalOpen, setSandboxModalOpen] = useState(false);
   // v668 — Roadmap-Edit pro Open-Item (Inline statt Modal)
   const [roadmapEditId, setRoadmapEditId] = useState<string | null>(null);
   const [roadmapForm, setRoadmapForm] = useState<{ milestone: string; order: string; estimatedHours: string }>({ milestone: '', order: '', estimatedHours: '' });
@@ -502,6 +505,14 @@ export function ProjectsPage() {
                   </h2>
                 )}
                 <div className="flex gap-2 flex-wrap">
+                  {/* v735 — Sandbox-Quick-Create direkt aus Project-Detail */}
+                  {detail.project.status !== 'archived' && (
+                    <button
+                      onClick={() => setSandboxModalOpen(true)}
+                      className="px-3 py-1 text-xs text-cyan-400 hover:bg-cyan-500/10 rounded border border-cyan-500/30"
+                      title="Sandbox erstellen mit ENV-Stage + DB-Seed-Wahl"
+                    >🧪 Sandbox</button>
+                  )}
                   {/* v659 — Deploy-Trigger */}
                   {detail.project.status !== 'archived' && (
                     <button
@@ -977,6 +988,15 @@ export function ProjectsPage() {
                   projectName={detail.project.name}
                   defaultRepoUrl={detail.project.repoUrl}
                   onClose={() => setDeployModalOpen(false)}
+                />
+              )}
+
+              {/* v735 — Sandbox-Quick-Create-Modal */}
+              {sandboxModalOpen && (
+                <SandboxQuickCreateModal
+                  projectId={detail.project.id}
+                  projectName={detail.project.name}
+                  onClose={() => setSandboxModalOpen(false)}
                 />
               )}
             </div>

@@ -15,6 +15,26 @@ interface DiffRow { key: string; valA?: string; valB?: string; kind: 'only_a' | 
 
 const KNOWN_STAGES = ['sandbox', 'dev', 'prod', 'staging'];
 
+/** v735 — Serialisiert ENV-Vars zu .env-File-Inhalt mit Escape für Sonderzeichen. */
+function serializeEnvFile(vars: Record<string, string>, projectName: string, stage: string): string {
+  const lines: string[] = [
+    `# Alfred ENV-Export — Project: ${projectName} — Stage: ${stage}`,
+    `# Generated: ${new Date().toISOString()}`,
+    '',
+  ];
+  const escape = (v: string): string => {
+    const sanitized = v.replace(/[\r\n]/g, '');
+    if (/[\s"'$`\\#]/.test(sanitized)) {
+      return `"${sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`;
+    }
+    return sanitized;
+  };
+  for (const k of Object.keys(vars).sort()) {
+    lines.push(`${k}=${escape(vars[k])}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
 /** v734 — Parser für .env-Files: KEY=VALUE, Quotes raus, Kommentare/Empty skip. */
 function parseEnvFile(content: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -160,6 +180,26 @@ export function ProjectEnvironmentsView({ projectId, projectName }: Props) {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
 
+  // v735 — Export aktive Stage als .env-File-Download
+  async function handleExport() {
+    if (!client) return;
+    try {
+      // Vollständige Werte ziehen (auch wenn aktuell maskiert angezeigt)
+      const fullVars = await client.fetchEnvironmentVars(projectId, activeStage, true);
+      if (Object.keys(fullVars).length === 0) { setError(`Stage "${activeStage}" hat keine ENVs`); return; }
+      const content = serializeEnvFile(fullVars, projectName, activeStage);
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 50)}.${activeStage}.env`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
+
   async function executeImport() {
     if (!client || !importRows) return;
     const toSet: Record<string, string> = {};
@@ -280,6 +320,7 @@ export function ProjectEnvironmentsView({ projectId, projectName }: Props) {
               {scanning ? '⏳ Scannt…' : '🔍 Repo scannen'}
             </button>
             <button onClick={() => fileInputRef.current?.click()} className="px-2 py-1 border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded text-[11px]">📤 .env importieren</button>
+            <button onClick={handleExport} className="px-2 py-1 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded text-[11px]" title="Aktuelle Stage als .env-File downloaden">💾 als .env exportieren</button>
             <input
               ref={fileInputRef}
               type="file"
