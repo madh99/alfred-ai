@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.731] - 2026-05-24
+
+### Added — Auto-Done-Mark für referenzierte Open-Items nach erfolgreichem Agent-Lauf
+
+Schließt den Cycle aus v730: wenn der User per 📋-Picker Open-Items zur Sandbox-Chat-Message angehängt hat und der Project-Agent danach `success` returnt, werden diese Items automatisch auf `status='done'` gesetzt. Damit pflegt die Roadmap sich selbst — User muss nicht nochmal manuell im Project-Detail klicken.
+
+**Migration v92 (SQLite) / v95 (PG):**
+- Neue Spalte `project_agent_sessions.mentioned_item_ids` (TEXT, JSON-Array). Best-effort `ALTER TABLE ... ADD COLUMN [IF NOT EXISTS]`.
+
+**ProjectAgentSession + Repository:**
+- Interface erweitert um `mentionedItemIds?: string[]`
+- `create(opts)` akzeptiert das Feld, persistiert als JSON-String
+- `mapRow()` parsed zurück; Filter auf nur-strings; defensive JSON.parse-Failure → undefined
+
+**project_agent-Skill** (`project-agent-skill.ts`):
+- `start`-Action liest `input.mentioned_item_ids` (Array von IDs, max 50, nur strings)
+- Übergibt es an `sessionRepo.create({mentionedItemIds, ...})`
+
+**alfred.ts chatSendMessage callback:**
+- Wenn die Sandbox-Chat-Message `mentions` enthielt: deren IDs werden via `mentioned_item_ids` an `skill.execute` gegeben
+
+**alfred.ts completion-callback:**
+- Bei `success === true`: liest `project_agent_sessions.mentioned_item_ids` aus der DB, parsed JSON-Array
+- Für jeden ID → `projectRepo.updateOpenItemStatus(id, 'done')` (defensiv try/catch — IDs könnten Decisions sein und scheitern dann)
+- Logging mit Anzahl erfolgreich gemarkter Items
+- Läuft vor dem bestehenden LLM-`OpenItemMatcher` (v641) damit explizit-referenzierte Items sicher gemarkt sind — LLM-Matcher kann zusätzliche heuristische Treffer noch oben drauf machen
+
+Damit User-Workflow:
+1. 📋 öffnet Picker → Items wählen
+2. Chat-Message senden (Items als Chips sichtbar)
+3. Project-Agent läuft mit "[Bezug auf folgende Items aus der Projekt-Roadmap…]" im Goal
+4. Bei success: Items sind automatisch `done` ohne manuelles Status-Update
+
 ## [0.19.0-multi-ha.730] - 2026-05-24
 
 ### Added — Open-Items-Mentions + Image-Vision-Pre-Pass im Interactive-Sandbox-Chat

@@ -18,6 +18,9 @@ export interface ProjectAgentSession {
   resumedFromTaskId?: string;
   /** v721 — Sandbox-Bindung damit Interactive-Chat-Tasks zum Original-Project binden statt Ghost-Project zu erzeugen. */
   sandboxId?: string;
+  /** v731 — Open-Item-IDs die vom User in der auslösenden Chat-Message explizit referenziert wurden.
+   *  Bei session-completion mit success werden diese Items automatisch auf 'done' gesetzt. */
+  mentionedItemIds?: string[];
   /** v652 — LLM-generierter "Lessons Learned"-Text bei Done/Failed. */
   failureInsight?: string;
   /** v652 — Counter wie oft diese Session bereits Auto-Resumed wurde. */
@@ -31,19 +34,21 @@ export interface ProjectAgentSession {
 export class ProjectAgentSessionRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string; resumedFromTaskId?: string; sandboxId?: string }): Promise<ProjectAgentSession> {
+  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string; resumedFromTaskId?: string; sandboxId?: string; mentionedItemIds?: string[] }): Promise<ProjectAgentSession> {
     const id = randomUUID();
     const now = new Date().toISOString();
+    const mentionsJson = opts.mentionedItemIds && opts.mentionedItemIds.length > 0 ? JSON.stringify(opts.mentionedItemIds) : null;
     await this.adapter.execute(`
-      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, resumed_from_task_id, sandbox_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, opts.resumedFromTaskId ?? null, opts.sandboxId ?? null, now, now]);
+      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, resumed_from_task_id, sandbox_id, mentioned_item_ids, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, opts.resumedFromTaskId ?? null, opts.sandboxId ?? null, mentionsJson, now, now]);
     return {
       id, taskId: opts.taskId, goal: opts.goal, cwd: opts.cwd, agentName: opts.agentName,
       currentPhase: 'planning', currentIteration: 0, totalFilesChanged: 0,
       lastBuildPassed: false, milestones: [], createdAt: now, updatedAt: now,
       resumedFromTaskId: opts.resumedFromTaskId,
       sandboxId: opts.sandboxId,
+      mentionedItemIds: opts.mentionedItemIds,
     };
   }
 
@@ -224,6 +229,12 @@ export class ProjectAgentSessionRepository {
       lastPushUrl: (row.last_push_url as string | null) ?? undefined,
       resumedFromTaskId: (row.resumed_from_task_id as string | null) ?? undefined,
       sandboxId: (row.sandbox_id as string | null) ?? undefined,
+      mentionedItemIds: (() => {
+        const raw = row.mentioned_item_ids as string | null;
+        if (!raw) return undefined;
+        try { const parsed = JSON.parse(raw); return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : undefined; }
+        catch { return undefined; }
+      })(),
       failureInsight: (row.failure_insight as string | null) ?? undefined,
       autoResumeCount: (row.auto_resume_count as number | null) ?? 0,
       lastProgressAt: row.last_progress_at as string | undefined,

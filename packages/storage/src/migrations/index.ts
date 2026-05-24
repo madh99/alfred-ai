@@ -2113,4 +2113,11 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE projects ADD COLUMN default_db_seed_id TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 92,
+    description: 'v731 — mentioned_item_ids auf project_agent_sessions (Auto-Done-Mark nach Run)',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN mentioned_item_ids TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

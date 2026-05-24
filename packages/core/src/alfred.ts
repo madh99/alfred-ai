@@ -1401,6 +1401,38 @@ export class Alfred {
           } catch (err) { this.logger.debug({ err }, 'Project repo-url auto-detect failed (non-fatal)'); }
         }
 
+        // v731 — Auto-Done-Mark für explizit user-referenzierte Items aus der Sandbox-Chat-Message.
+        // Wenn der User per 📋-Picker Items zur Chat-Message gehängt hat und der Agent erfolgreich
+        // beendet hat, gelten diese Items als implementiert → Status 'done'. Konservativer als
+        // OpenItemMatcher weil hier User-Intention explizit war.
+        if (success && this.projectRepo) {
+          try {
+            const sessRow = await this.database?.getAdapter().queryOne(
+              `SELECT mentioned_item_ids FROM project_agent_sessions WHERE task_id = ?`,
+              [sessionId],
+            ).catch(() => null) as { mentioned_item_ids?: string | null } | null;
+            const raw = sessRow?.mentioned_item_ids;
+            if (raw) {
+              let ids: string[] = [];
+              try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) ids = parsed.filter((x: unknown): x is string => typeof x === 'string'); } catch { /* */ }
+              let updated = 0;
+              for (const id of ids) {
+                try {
+                  await this.projectRepo.updateOpenItemStatus(id, 'done');
+                  updated++;
+                } catch (err) {
+                  this.logger.debug({ err, itemId: id }, 'v731 mentioned item auto-done failed (might be decision, not open-item)');
+                }
+              }
+              if (updated > 0) {
+                this.logger.info({ sessionId, updated, total: ids.length }, 'v731 auto-marked mentioned items as done');
+              }
+            }
+          } catch (err) {
+            this.logger.debug({ err, sessionId }, 'v731 auto-done-mark failed (non-fatal)');
+          }
+        }
+
         // v641 — OpenItemMatcher: nach erfolgreichem Lauf prüfen welche der bestehenden
         // open Items des Projekts durch die Milestones+Files erledigt wurden. LLM-Pass
         // mit konservativer Confidence (≥0.6 → auto-done, sonst nur markieren).
@@ -5808,6 +5840,8 @@ export class Alfred {
                   cwd: sb.worktreePath,
                   // v721 — sandbox_id mitgeben damit Completion-Callback zum Original-Project bindet statt Ghost-Project zu erzeugen
                   sandbox_id: sandboxId,
+                  // v731 — mention-IDs ans skill → session-Persist → completion-callback macht Auto-Done-Mark
+                  mentioned_item_ids: mentions && mentions.length > 0 ? mentions.map(m => m.id) : undefined,
                 }, ctx);
                 const taskId = (result.data as any)?.taskId;
                 if (taskId) {

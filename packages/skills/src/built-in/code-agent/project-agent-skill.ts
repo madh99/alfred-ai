@@ -622,6 +622,10 @@ ${planSummary}${commits}${userNotes}
 
     // Create session tracking
     // v721 — sandbox_id durchreichen damit Interactive-Chat-Tasks zum Original-Project binden
+    // v731 — mentioned_item_ids persistieren für Auto-Done-Mark im Completion-Callback
+    const mentionedItemIds = Array.isArray(input.mentioned_item_ids)
+      ? (input.mentioned_item_ids as unknown[]).filter((x): x is string => typeof x === 'string').slice(0, 50)
+      : undefined;
     const session = await this.sessionRepo.create({
       taskId: crypto.randomUUID(),
       goal,
@@ -629,6 +633,7 @@ ${planSummary}${commits}${userNotes}
       agentName,
       resumedFromTaskId: input._resumedFromTaskId as string | undefined,
       sandboxId: (input.sandbox_id as string | undefined) ?? (input.sandboxId as string | undefined),
+      mentionedItemIds,
     });
 
     const config = {

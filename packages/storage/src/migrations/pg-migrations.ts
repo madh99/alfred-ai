@@ -1424,4 +1424,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_db_seed_id TEXT`, []);
     },
   },
+  {
+    version: 95,
+    description: 'v731 — mentioned_item_ids auf project_agent_sessions (Auto-Done-Mark nach Run)',
+    async up(db) {
+      await db.execute(`ALTER TABLE project_agent_sessions ADD COLUMN IF NOT EXISTS mentioned_item_ids TEXT`, []);
+    },
+  },
 ];
