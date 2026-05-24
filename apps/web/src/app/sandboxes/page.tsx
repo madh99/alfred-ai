@@ -134,7 +134,13 @@ export default function SandboxesPage() {
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      // v745 — Quota-Error klar markieren (Backend 429)
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/Max parallele Sandboxes|Disk-Quota/.test(msg)) {
+        setError(`⚠ Quota erreicht: ${msg} (Pausiere oder verwerfe zuerst eine andere Sandbox.)`);
+      } else {
+        setError(msg);
+      }
     } finally { setBusy(null); }
   }
 
@@ -207,6 +213,37 @@ export default function SandboxesPage() {
   });
   const globalActiveCount = sandboxes.filter(s => ['creating', 'running', 'paused', 'merging'].includes(s.status)).length;
   const uniqueProjectsInList = Array.from(new Set(sandboxes.map(s => s.projectId)));
+
+  // v745 — Stats-Aggregation
+  const aggregate = (() => {
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const todayMs = todayStart.getTime();
+    let totalRamMb = 0;
+    let totalDiskMb = 0;
+    let runningCount = 0;
+    let pausedCount = 0;
+    let failedCount = 0;
+    let oldestRunningCreatedAt: number | null = null;
+    let createdToday = 0;
+    for (const s of sandboxes) {
+      if (s.ramPeakMb) totalRamMb += s.ramPeakMb;
+      if (s.diskUsedMb) totalDiskMb += s.diskUsedMb;
+      if (s.status === 'running') {
+        runningCount++;
+        const created = new Date(s.createdAt).getTime();
+        if (oldestRunningCreatedAt === null || created < oldestRunningCreatedAt) oldestRunningCreatedAt = created;
+      } else if (s.status === 'paused') pausedCount++;
+      else if (s.status === 'failed') failedCount++;
+      if (new Date(s.createdAt).getTime() >= todayMs) createdToday++;
+    }
+    const longestUptimeMin = oldestRunningCreatedAt !== null ? Math.floor((Date.now() - oldestRunningCreatedAt) / 60000) : 0;
+    return { totalRamMb, totalDiskMb, runningCount, pausedCount, failedCount, longestUptimeMin, createdToday };
+  })();
+  const formatUptime = (min: number): string => {
+    if (min < 60) return `${min}m`;
+    if (min < 1440) return `${Math.floor(min / 60)}h ${min % 60}m`;
+    return `${Math.floor(min / 1440)}d ${Math.floor((min % 1440) / 60)}h`;
+  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
@@ -306,6 +343,50 @@ export default function SandboxesPage() {
           <div className="text-4xl mb-2">📦</div>
           <div className="text-sm">Keine Sandboxes.</div>
           <div className="text-xs mt-2 text-gray-600">Erstelle eine neue für ein Projekt oben rechts.</div>
+        </div>
+      )}
+
+      {/* v745 — Stats-Card */}
+      {sandboxes.length > 0 && (
+        <div className="border border-[#1a1a1a] bg-[#0a0a0a] rounded p-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">Aktiv</div>
+              <div className="text-base text-emerald-300 font-mono mt-0.5">{aggregate.runningCount}</div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">Paused</div>
+              <div className="text-base text-blue-300 font-mono mt-0.5">{aggregate.pausedCount}</div>
+            </div>
+            {aggregate.failedCount > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-500">Failed</div>
+                <div className="text-base text-red-300 font-mono mt-0.5">{aggregate.failedCount}</div>
+              </div>
+            )}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-gray-500">Heute erstellt</div>
+              <div className="text-base text-amber-300 font-mono mt-0.5">{aggregate.createdToday}</div>
+            </div>
+            {aggregate.totalRamMb > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-500">RAM-Peak (Σ)</div>
+                <div className="text-base text-purple-300 font-mono mt-0.5">{aggregate.totalRamMb >= 1024 ? `${(aggregate.totalRamMb / 1024).toFixed(1)} GB` : `${aggregate.totalRamMb.toFixed(0)} MB`}</div>
+              </div>
+            )}
+            {aggregate.totalDiskMb > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-500">Disk (Σ)</div>
+                <div className="text-base text-cyan-300 font-mono mt-0.5">{aggregate.totalDiskMb >= 1024 ? `${(aggregate.totalDiskMb / 1024).toFixed(1)} GB` : `${aggregate.totalDiskMb.toFixed(0)} MB`}</div>
+              </div>
+            )}
+            {aggregate.longestUptimeMin > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-500">Längste Uptime</div>
+                <div className="text-base text-gray-300 font-mono mt-0.5">{formatUptime(aggregate.longestUptimeMin)}</div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

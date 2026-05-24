@@ -3504,8 +3504,13 @@ export class HttpAdapter extends MessagingAdapter {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sandbox: sb }));
     } catch (err) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      // v745 — Quota-Errors als 429 (Too Many Requests / Quota Exceeded) statt 500
+      const msg = (err as Error).message;
+      const isQuota = /Max parallele Sandboxes|Disk-Quota/.test(msg);
+      const isNotGitRepo = /not a git repo/.test(msg);
+      const status = isQuota ? 429 : isNotGitRepo ? 400 : 500;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: msg, code: isQuota ? 'QUOTA_EXCEEDED' : isNotGitRepo ? 'NOT_A_REPO' : 'UNKNOWN' }));
     }
   }
 

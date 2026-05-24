@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.745] - 2026-05-24
+
+### Added — Sandbox-Stats-Section + Backend Quota-Error-Code
+
+**Stats-Card** in `/sandboxes`-Page über der Liste:
+- Grid mit bis zu 7 Aggregat-Kacheln (responsive 2/4/7 Spalten):
+  - **Aktiv** (emerald) — Count running
+  - **Paused** (blue) — Count paused
+  - **Failed** (red) — nur sichtbar wenn > 0
+  - **Heute erstellt** (amber) — Sandboxes mit `createdAt >= heute 00:00`
+  - **RAM-Peak (Σ)** (purple) — Sum aller `ramPeakMb`, auto MB/GB
+  - **Disk (Σ)** (cyan) — Sum aller `diskUsedMb`, auto MB/GB
+  - **Längste Uptime** (grau) — von ältester running Sandbox, formatted h/d
+- Felder ohne Daten (z.B. wenn keine RAM-Stats vorhanden weil Container noch keine Polls hatte) werden automatisch ausgeblendet
+- Reine Frontend-Aggregation — keine neue API nötig
+
+**Backend Quota-Error-Code** (`http.ts` `handleSandboxCreate`):
+- Bisher: Quota-Error landete als generischer 500 mit `error`-String → Client musste den Text parsen
+- Jetzt:
+  - `Max parallele Sandboxes` / `Disk-Quota` → HTTP **429** + `code: 'QUOTA_EXCEEDED'`
+  - `not a git repo` → HTTP **400** + `code: 'NOT_A_REPO'`
+  - Sonst weiter 500 + `code: 'UNKNOWN'`
+- Web-Client wertet das aus und zeigt prominent `⚠ Quota erreicht: …`-Meldung mit Action-Hint statt nackter Fehler-String
+
+Damit hat der User klare Information beim Erreichen der Quota statt "etwas ist schiefgelaufen, 500".
+
 ## [0.19.0-multi-ha.744] - 2026-05-24
 
 ### Added — Auto-Resume bei Open + Restart-Action für Failed-Sandboxes
