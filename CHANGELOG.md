@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.756] - 2026-05-24
+
+### Fixed — Environments / DB-Seeds / Sandbox-Templates HTTP 501 wenn Docker fehlt
+
+**Root-Cause**: Die Callback-Registrierung für die drei storage-only APIs (Environments seit v726, DB-Seeds seit v732, Sandbox-Templates seit v751) hing zusammen mit der Sandbox-CRUD-Registrierung und dem Preview-Proxy in einem gemeinsamen `if (hc.dockerAvailable && hc.worktreeBaseWritable)`-Block in `alfred.ts:initialize()`. Wenn der Docker-Daemon auf einem Node nicht verfügbar war (z.B. nur Web-UI-Host, kein Worker-Node), liefen all diese Registrierungen NICHT — und die Endpoints antworteten mit HTTP 501 *"nicht verfügbar"*.
+
+Symptom im WebUI war die typische Trias auf der Projects-Seite:
+- `environments-get: HTTP 501`
+- `db-seeds-list: HTTP 501`
+- `sandbox-templates-list: HTTP 501`
+
+**Fix**: Die Storage-Callbacks und der Sandbox-Preview-Proxy laufen jetzt unabhängig vom Docker-Health-Check. Der Docker-Gate umschließt nur noch das, was wirklich Docker braucht (Sandbox-Manager-Assignment, Auto-Cleanup, NFS-Detection, Sandbox-CRUD). Storage-Operationen sind reine DB-Calls und müssen funktionieren auch wenn Docker fehlt.
+
+Keine Schema- oder API-Änderung — nur Wire-Up-Refactor in `alfred.ts`.
+
 ## [0.19.0-multi-ha.755] - 2026-05-24
 
 ### Added — Per-Project-Quota für Sandboxes

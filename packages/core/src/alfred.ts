@@ -3510,8 +3510,15 @@ export class Alfred {
               } catch (err) {
                 this.logger.warn({ err }, 'v699 Sandbox CRUD-API registration failed (non-fatal)');
               }
+            } else {
+              this.logger.warn({ reasons: hc.reasons }, 'v697 Sandbox-Manager disabled (health-check failed) — classic-only mode');
+            }
 
-              // v728 — Environments-CRUD-API (WebUI-Zugriff auf project_environments via REST)
+            // v755b — Storage-only callbacks (env, templates, seeds) + Sandbox-Proxy laufen
+            // unabhängig vom Docker-Health-Check: das sind reine DB-Operationen die nicht
+            // an einem laufenden Docker-Daemon hängen. Vorher 501-Fehler wenn Docker offline.
+
+            // v728 — Environments-CRUD-API (WebUI-Zugriff auf project_environments via REST)
               try {
                 const envHttpAdapter = this.adapters.get('api') as { setEnvironmentsCallbacks?: (cb: Record<string, unknown>) => void } | undefined;
                 if (envHttpAdapter && typeof envHttpAdapter.setEnvironmentsCallbacks === 'function' && this.envRepoRef && this.envCryptoRef) {
@@ -3827,9 +3834,6 @@ export class Alfred {
               } catch (err) {
                 this.logger.warn({ err }, 'v698 Sandbox-Proxy resolver registration failed (non-fatal)');
               }
-            } else {
-              this.logger.warn({ reasons: hc.reasons }, 'v697 Sandbox-Manager disabled (health-check failed) — classic-only mode');
-            }
           } catch (err) {
             this.logger.warn({ err }, 'v697 Sandbox-Manager wiring failed (non-fatal, classic-only mode)');
           }
