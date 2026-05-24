@@ -5,6 +5,51 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.733] - 2026-05-24
+
+### Added — Sandbox-Create mit ENV-Stage/DB-Seed-Wahl + Deploy schreibt prod-ENVs aufs Target
+
+Schließt den ENV+Seeds-Cycle: User kann beim Sandbox-Erstellen explizit eine Stage + einen Seed wählen (statt nur Default), und der Deploy-Skill schreibt die `prod`-Stage als `.env` aufs Remote-Target.
+
+**Sandbox-Create-API** (`alfred.ts`):
+- `create`-Callback Type erweitert um `envStage?` + `dbSeedId?` (oder `null` für explizit-leer)
+- Default-Resolution: `input.envStage || project.defaultEnvStage || 'sandbox'`
+- Seed-Resolution: `input.dbSeedId === null ? empty : (input.dbSeedId || project.defaultDbSeedId || undefined)`; falls Seed-ID gesetzt → DB-Lookup → `kind: 'upload'|'repo_path'` an SandboxManager weitergeben
+
+**HTTP-API** (`http.ts`):
+- `POST /api/sandbox/create` Body akzeptiert nun `{envStage, dbSeedId}` — envStage muss `[a-z][a-z0-9_-]{0,30}` matchen, dbSeedId entweder string oder explizit `null` für "empty"
+
+**Web-Client** (`alfred-client.ts`):
+- `createSandbox` akzeptiert envStage + dbSeedId
+
+**`SandboxPanel.tsx`** (Project-Detail Create-Form):
+- Beim Mount lädt es `fetchEnvironmentStages` + `fetchDbSeeds` zur Auswahl
+- Zwei neue Selects neben Mode-Wahl:
+  - 🔐 ENV: sandbox/dev/prod/staging + custom-Stages, mit Key-Count-Anzeige
+  - 💾 Seed: "Project-Default" / "Leer (kein Seed)" / jeder hochgeladene/repo-path-Seed
+- Werte werden ans createSandbox-Call durchgereicht
+
+**Deploy-Skill** (`deploy.ts`):
+- Neuer `setEnvProvider(fn)` Hook
+- `doDeploy` führt nach Clone/Pull + vor Install einen ENV-Step ein:
+  - Wenn `envProvider` gesetzt und `input.skip_env !== true`: ruft `envProvider(projectName, stage)` mit `stage = input.env_stage ?? 'prod'`
+  - Schreibt das resultierende Key-Value-Object via base64-Heredoc als `<projectDir>/.env` auf das Target (chmod 600)
+  - Sichtbar in den Steps: `🔐 ENV-File aus stage="prod" geschrieben (N Keys, chmod 600)`
+- `escapeEnvValue()`-Helper für Sonderzeichen (CR/LF strip, Quote bei Whitespace/`"$\\#`-Zeichen)
+- Neue Input-Felder im Schema: `env_stage` (Override, default 'prod'), `skip_env` (boolean, opt-out)
+
+**Provider-Verdrahtung** (`alfred.ts`):
+- `deploySkill.setEnvProvider(async (projectName, stage) => …)`: nutzt projectRepo.list → findet Project per slug/name → EnvironmentRepository.get(projectId, stage) → decrypted via EnvCryptoService
+
+**Project-Type Backend** (`project-repository.ts`):
+- `Project` Interface + `mapRow()` erweitert um `defaultEnvStage` + `defaultDbSeedId`
+
+Workflow jetzt vollständig:
+1. WebUI Project-Detail → 🔐 Environments → Werte für `prod`/`dev`/`sandbox` setzen
+2. 💾 DB-Seeds → Seed hochladen + ★ Default
+3. Sandbox erstellen → Stage+Seed explizit wählbar (Default-Auswahl wird angezeigt)
+4. Deploy → `.env` wird automatisch aus `prod`-Stage geschrieben
+
 ## [0.19.0-multi-ha.732] - 2026-05-24
 
 ### Added — WebUI für ENV-Management + DB-Seeds-Verwaltung im Project-Detail

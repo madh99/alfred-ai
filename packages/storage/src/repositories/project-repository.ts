@@ -84,6 +84,10 @@ export interface Project {
   lockedByNodeId?: string;
   /** v665a — TTL des Locks (ISO timestamp) — stale-cleanup bei `< now()` */
   lockedUntil?: string;
+  /** v726 — Default-ENV-Stage für Sandbox-Erstellung (sandbox/dev/prod/custom). */
+  defaultEnvStage?: string;
+  /** v732 — Default-DB-Seed-ID für Sandbox-Erstellung. */
+  defaultDbSeedId?: string;
 }
 
 export interface ProjectSessionSummary {
@@ -191,6 +195,8 @@ function rowToProject(row: Record<string, unknown>): Project {
     nodeId: (row.node_id as string | null) ?? undefined,
     lockedByNodeId: (row.locked_by_node_id as string | null) ?? undefined,
     lockedUntil: (row.locked_until as string | null) ?? undefined,
+    defaultEnvStage: (row.default_env_stage as string | null) ?? undefined,
+    defaultDbSeedId: (row.default_db_seed_id as string | null) ?? undefined,
   };
 }
 

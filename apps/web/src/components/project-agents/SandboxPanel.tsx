@@ -45,6 +45,11 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
   const [mode, setMode] = useState<'sandbox' | 'sandbox-preview' | 'interactive-chat'>(defaultMode);
   // v723 — 3-Wege-Merge-Modal
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  // v733 — Create-Optionen
+  const [envStages, setEnvStages] = useState<Array<{ stage: string; keyCount: number }>>([]);
+  const [dbSeeds, setDbSeeds] = useState<Array<{ id: string; name: string; kind: string }>>([]);
+  const [selectedEnvStage, setSelectedEnvStage] = useState<string>('sandbox');
+  const [selectedDbSeedId, setSelectedDbSeedId] = useState<string>(''); // '' = use project default, 'none' = empty
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -67,6 +72,24 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
 
   useEffect(() => { load(); }, [load]);
 
+  // v733 — Load envStages + dbSeeds beim ersten Mount damit Create-Form Options zeigen kann
+  useEffect(() => {
+    if (!client || sandbox) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [stages, seeds] = await Promise.all([
+          client.fetchEnvironmentStages(projectId).catch(() => []),
+          client.fetchDbSeeds(projectId).catch(() => []),
+        ]);
+        if (cancelled) return;
+        setEnvStages(stages);
+        setDbSeeds(seeds);
+      } catch { /* */ }
+    })();
+    return () => { cancelled = true; };
+  }, [client, projectId, sandbox]);
+
   // Auto-refresh wenn creating/merging (UI-Status sync mit Backend)
   useEffect(() => {
     if (!sandbox) return;
@@ -79,7 +102,15 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
     if (!client) return;
     setBusy('create'); setError(null);
     try {
-      const r = await client.createSandbox({ projectId, sessionId: sessionId ?? null, mode, slug });
+      // v733 — envStage + dbSeedId
+      const dbSeedId = selectedDbSeedId === '' ? undefined : (selectedDbSeedId === 'none' ? null : selectedDbSeedId);
+      const r = await client.createSandbox({
+        projectId,
+        sessionId: sessionId ?? null,
+        mode, slug,
+        envStage: selectedEnvStage,
+        dbSeedId,
+      });
       setSandbox(r);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -199,6 +230,33 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
               <option value="sandbox-preview">Sandbox + Preview (Dev-Server + iframe)</option>
               <option value="interactive-chat">Interactive Chat (dialogisch + Preview)</option>
             </select>
+            {/* v733 — ENV-Stage Wahl */}
+            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+              🔐 ENV:
+              <select
+                value={selectedEnvStage}
+                onChange={(e) => setSelectedEnvStage(e.target.value)}
+                className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200"
+              >
+                {Array.from(new Set(['sandbox', 'dev', 'prod', 'staging', ...envStages.map(s => s.stage)])).map(s => {
+                  const info = envStages.find(x => x.stage === s);
+                  return <option key={s} value={s}>{s}{info ? ` (${info.keyCount})` : ''}</option>;
+                })}
+              </select>
+            </label>
+            {/* v733 — DB-Seed Wahl */}
+            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+              💾 Seed:
+              <select
+                value={selectedDbSeedId}
+                onChange={(e) => setSelectedDbSeedId(e.target.value)}
+                className="bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200"
+              >
+                <option value="">Project-Default</option>
+                <option value="none">Leer (kein Seed)</option>
+                {dbSeeds.map(s => <option key={s.id} value={s.id}>{s.name} ({s.kind})</option>)}
+              </select>
+            </label>
             <button
               onClick={handleCreate}
               disabled={busy === 'create'}

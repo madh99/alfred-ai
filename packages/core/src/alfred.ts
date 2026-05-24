@@ -1922,8 +1922,25 @@ export class Alfred {
         } catch { /* fall back to raw owner id */ }
         deploySkill.setMemoryRepo(this.memoryRepo, ownerMasterId ?? ownerId);
       }
+      // v733 — ENV-Provider: liefert ENVs aus project_environments[stage] für Auto-.env-Write beim Deploy
+      deploySkill.setEnvProvider(async (projectName: string, stage: string) => {
+        if (!this.envRepoRef || !this.envCryptoRef || !this.projectRepo) return undefined;
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        if (!ownerUid) return undefined;
+        try {
+          const projects = await this.projectRepo.list(ownerUid);
+          const proj = projects.find(p => p.slug === projectName || p.name.toLowerCase() === projectName.toLowerCase());
+          if (!proj) return undefined;
+          const entry = await this.envRepoRef.get(proj.id, stage);
+          if (!entry) return undefined;
+          return this.envCryptoRef.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+        } catch (err) {
+          this.logger.debug({ err, projectName, stage }, 'v733 deploy env-provider lookup failed');
+          return undefined;
+        }
+      });
       skillRegistry.register(deploySkill);
-      this.logger.info('Deploy skill registered (with orchestration)');
+      this.logger.info('Deploy skill registered (with orchestration, v733: +env-provider)');
 
       // 4o5-mikrotik. MikroTik RouterOS (optional — before CMDB so discovery source is available)
       if (this.config.mikrotik?.enabled) {
@@ -5764,14 +5781,28 @@ export class Alfred {
               defaultBranch = defaultBranch ?? this.config.codeAgents?.forge?.baseBranch ?? 'main';
               return { ...sb, defaultBranch };
             },
-            create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => {
+            create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string; envStage?: string; dbSeedId?: string | null }) => {
               const cwd = await resolveCwdForSb(input.projectId);
               if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
               // v714 — Priorität: requestUserId (vom HTTP-Token) > project.userId > ownerMasterUserId.
-              // requestUserId ist der WEB-User der gerade kreiert — passt mit späterem ownership-check.
               const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(input.projectId) : null;
               const userId = input.requestUserId || proj?.userId || this.ownerMasterUserId;
               if (!userId) throw new Error('Cannot determine user for sandbox');
+
+              // v733 — envStage + dbSeed-Wahl: Default aus project, sonst input-override
+              const envStage = input.envStage || proj?.defaultEnvStage || 'sandbox';
+              const seedIdToUse = input.dbSeedId === null ? null : (input.dbSeedId ?? proj?.defaultDbSeedId ?? null);
+              let dbSeed: { kind: 'empty' } | { kind: 'repo_path'; path: string } | { kind: 'upload'; seedId: string } = { kind: 'empty' };
+              if (seedIdToUse && this.dbSeedRepoRef) {
+                try {
+                  const seed = await this.dbSeedRepoRef.getById(seedIdToUse);
+                  if (seed && seed.projectId === input.projectId) {
+                    if (seed.kind === 'upload') dbSeed = { kind: 'upload', seedId: seed.id };
+                    else if (seed.kind === 'repo_path') dbSeed = { kind: 'repo_path', path: seed.storageRef };
+                  }
+                } catch { /* fallback to empty */ }
+              }
+
               const r = await sbMgr.createForSession({
                 sessionId: input.sessionId ?? null,
                 projectId: input.projectId,
@@ -5779,6 +5810,8 @@ export class Alfred {
                 projectCwd: cwd,
                 mode: input.mode as 'sandbox' | 'sandbox-preview' | 'interactive-chat',
                 slug: input.slug,
+                envStage,
+                dbSeed,
               });
               return r.sandbox;
             },

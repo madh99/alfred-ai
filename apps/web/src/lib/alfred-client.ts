@@ -407,7 +407,7 @@ export class AlfredClient {
     const data = await res.json();
     return data.sandbox ?? null;
   }
-  async createSandbox(input: { projectId: string; sessionId?: string | null; mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat'; slug?: string }): Promise<SandboxItem> {
+  async createSandbox(input: { projectId: string; sessionId?: string | null; mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat'; slug?: string; envStage?: string; dbSeedId?: string | null }): Promise<SandboxItem> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/create`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? `Sandbox-create: HTTP ${res.status}`);

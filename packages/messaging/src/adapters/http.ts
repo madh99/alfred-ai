@@ -429,7 +429,7 @@ export class HttpAdapter extends MessagingAdapter {
     list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
     listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string; envStage?: string; dbSeedId?: string | null }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
@@ -497,7 +497,7 @@ export class HttpAdapter extends MessagingAdapter {
     list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
     listAll: (userId: string) => Promise<unknown[]>;
     getById: (sandboxId: string) => Promise<unknown | null>;
-    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => Promise<unknown>;
+    create: (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string; envStage?: string; dbSeedId?: string | null }) => Promise<unknown>;
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
@@ -3471,7 +3471,7 @@ export class HttpAdapter extends MessagingAdapter {
       if (u) requestUserId = u.userId;
     }
     const body = await this.readBody(req);
-    let input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string };
+    let input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string; envStage?: string; dbSeedId?: string | null };
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       // v705 — sessionId ist optional seit v703 (Standalone-Sandboxes via "🚀 Interactive Sandbox")
@@ -3486,6 +3486,9 @@ export class HttpAdapter extends MessagingAdapter {
         mode: parsed.mode,
         slug: typeof parsed.slug === 'string' ? parsed.slug : undefined,
         requestUserId, // v714 — wird im callback als sandbox.user_id verwendet
+        // v733 — envStage + dbSeedId override
+        envStage: typeof parsed.envStage === 'string' && /^[a-z][a-z0-9_-]{0,30}$/.test(parsed.envStage) ? parsed.envStage : undefined,
+        dbSeedId: parsed.dbSeedId === null ? null : (typeof parsed.dbSeedId === 'string' && parsed.dbSeedId.length > 0 ? parsed.dbSeedId : undefined),
       };
     } catch {
       res.writeHead(400, { 'Content-Type': 'application/json' });

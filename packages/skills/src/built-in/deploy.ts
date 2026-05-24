@@ -71,6 +71,8 @@ export class DeploySkill extends Skill {
         lines: { type: 'number', description: 'Anzahl Log-Zeilen für "logs" Action (default: 50)' },
         gateway: { type: 'string', description: 'Gateway-IP für neue VMs/LXCs (default: x.x.x.1)' },
         subnet_prefix: { type: 'string', description: 'Subnet-Präfix für neue VMs/LXCs (default: 24)' },
+        env_stage: { type: 'string', description: 'v733 — Liest project_environments[stage] (Default: prod) und schreibt als .env aufs Target. Erfordert dass Project-ENVs in der WebUI/Skill gesetzt sind.' },
+        skip_env: { type: 'boolean', description: 'v733 — ENV-Injection überspringen auch wenn project_environments existieren (default: false)' },
       },
       required: ['action'],
     },
@@ -87,6 +89,12 @@ export class DeploySkill extends Skill {
   private cmdbCallback?: (result: Record<string, unknown>) => Promise<void>;
   private postDeployCallback?: (host: string, project: string, userId: string) => Promise<void>;
   private forgeConfig?: { github?: { token?: string }; gitlab?: { token?: string; baseUrl?: string } };
+  /** v733 — Provider für ENV-Injection: liefert ENVs aus project_environments für gegebene project-name + stage. */
+  private envProvider?: (projectName: string, stage: string) => Promise<Record<string, string> | undefined>;
+
+  setEnvProvider(fn: typeof this.envProvider): void {
+    this.envProvider = fn;
+  }
 
   setOrchestrationCallbacks(cbs: {
     proxmox?: SkillCallback;
@@ -355,6 +363,26 @@ export class DeploySkill extends Skill {
       }
     } catch (err) {
       return { success: false, error: `Git-Operation fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}` };
+    }
+
+    // v733 — 2.5: ENV-File aus project_environments injizieren (opt-out via skip_env)
+    if (this.envProvider && input.skip_env !== true) {
+      const stage = typeof input.env_stage === 'string' && input.env_stage.length > 0 ? input.env_stage : 'prod';
+      try {
+        const envs = await this.envProvider(project, stage);
+        if (envs && Object.keys(envs).length > 0) {
+          const lines = Object.entries(envs).map(([k, v]) => `${k}=${this.escapeEnvValue(v)}`);
+          const content = lines.join('\n') + '\n';
+          // Heredoc-Write via ssh — safe gegen Sonderzeichen via single-quote-Wrapper
+          const b64 = Buffer.from(content, 'utf8').toString('base64');
+          await this.ssh(host, user, `echo '${b64}' | base64 -d > ${projectDir}/.env && chmod 600 ${projectDir}/.env`);
+          steps.push(`🔐 ENV-File aus stage="${stage}" geschrieben (${lines.length} Keys, chmod 600)`);
+        } else {
+          steps.push(`ℹ️ Keine ENVs in stage="${stage}" gesetzt — überspringe .env-Write`);
+        }
+      } catch (err) {
+        steps.push(`⚠️ ENV-Injection fehlgeschlagen: ${err instanceof Error ? err.message.slice(0, 100) : 'unknown'}`);
+      }
     }
 
     // 3. Install dependencies
@@ -816,5 +844,18 @@ export class DeploySkill extends Skill {
       steps.push(`❌ Fehler: ${err instanceof Error ? err.message : String(err)}`);
       return { success: false, error: steps.join('\n'), data: { steps } };
     }
+  }
+
+  /**
+   * v733 — Escape eines ENV-Werts für KEY=VALUE-Zeile in .env-Files.
+   * Strip Newlines (würden ENV-File-Format brechen). Quoten wenn Spaces oder Special-Chars.
+   */
+  private escapeEnvValue(v: string): string {
+    const sanitized = v.replace(/[\r\n]/g, '');
+    if (/[\s"'$`\\#]/.test(sanitized)) {
+      // Double-quotes mit Escape: backslash + double-quote
+      return `"${sanitized.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$/g, '\\$').replace(/`/g, '\\`')}"`;
+    }
+    return sanitized;
   }
 }
