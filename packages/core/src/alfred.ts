@@ -3300,6 +3300,15 @@ export class Alfred {
               this.sandboxManager = sandboxManager;
               this.logger.info({ ...sandboxManager.getStatus() }, 'v697 Sandbox-Manager initialized');
 
+              // v749 — Auto-Cleanup stuck Sandboxes beim Startup + periodisch alle 5min
+              // Damit creating-Sandboxes nach Alfred-Crash nicht ewig hängen
+              sandboxManager.cleanupStuckSandboxes(10).then(n => {
+                if (n > 0) this.logger.info({ cleaned: n }, 'v749 Startup-Cleanup: stuck sandboxes marked as failed');
+              }).catch(() => { /* */ });
+              setInterval(() => {
+                sandboxManager.cleanupStuckSandboxes(10).catch(() => { /* */ });
+              }, 5 * 60_000).unref?.();
+
               // v700 — NFS-Detection (best-effort, nur logging — hilft bei HA-Cluster-Diagnose)
               try {
                 const { readFileSync } = await import('node:fs');

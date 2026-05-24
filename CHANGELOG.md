@@ -5,6 +5,30 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.749] - 2026-05-24
+
+### Added — Auto-Cleanup stuck Sandboxes beim Startup + periodisch alle 5min
+
+Schließt v748 nahtlos ab: User muss `⏏️ Als failed markieren` nicht mehr manuell drücken — Alfred macht das beim Startup automatisch und periodisch.
+
+**`SandboxManager.cleanupStuckSandboxes(thresholdMinutes = 10)`**:
+- Query `listByNodeAndStatus(nodeId, ['creating'])` — Cluster-aware (jeder Node cleant nur eigene Sandboxes)
+- Filter: `created_at < cutoff` (default 10min, matcht Frontend-Threshold von v748)
+- Pro stuck Sandbox: `forceFail(id, 'auto-cleanup: stuck in creating since 10min')`
+- Returns Anzahl gemarkter Sandboxes
+- Best-effort — fail eines einzelnen Sandboxes bricht den Loop nicht ab
+
+**Wiring in `alfred.ts`** (Sandbox-Manager-Init-Block):
+1. **Beim Startup**: einmaliger `cleanupStuckSandboxes(10)` direkt nach Init. Loggt `v749 Startup-Cleanup: stuck sandboxes marked as failed` mit Count wenn welche aufgeräumt wurden.
+2. **Periodisch**: `setInterval(..., 5 * 60_000)` ruft Cleanup alle 5min. `.unref?.()` damit der Timer den Node-Process nicht am exit hindert.
+
+Workflow nach Alfred-Crash während Sandbox-Create:
+- Vorher: User sieht stuck Sandbox in `creating` → muss in UI klicken `⏏️ Als failed`
+- Jetzt: Alfred-Restart → cleanupStuckSandboxes → Sandbox sofort in `failed` → User kriegt Recovery-Banner (📜 Logs, 🗑️ Aufräumen) sofort beim Page-Load
+- Falls Alfred nicht restartet wird (z.B. node-b läuft weiter): nach max 5min picked das Interval die Sandbox
+
+Frontend v748-Stuck-Banner bleibt als Sicherheitsnetz für Edge-Cases (z.B. User öffnet Page exakt zwischen Threshold-Erreichen und nächstem Interval-Tick).
+
 ## [0.19.0-multi-ha.748] - 2026-05-24
 
 ### Added — Stuck-Sandbox-Detection + Force-Fail-Action

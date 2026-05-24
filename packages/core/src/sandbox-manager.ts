@@ -772,6 +772,41 @@ export class SandboxManager {
   }
 
   /**
+   * v749 — Auto-Cleanup stuck Sandboxes (creating-Phase > N min).
+   * Aufruf beim Alfred-Startup + periodic alle 5min. Cluster-aware: jeder Node
+   * cleant nur seine eigenen Sandboxes (via listByNodeAndStatus).
+   * Default-Threshold 10min (consistent mit Frontend isStuck-Logic v748).
+   */
+  async cleanupStuckSandboxes(thresholdMinutes = 10): Promise<number> {
+    try {
+      const repo = this.deps.repo as unknown as {
+        listByNodeAndStatus?: (nodeId: string, statuses: string[]) => Promise<Array<{ id: string; createdAt: string; branchName?: string }>>;
+      };
+      if (!repo.listByNodeAndStatus) return 0;
+      const stuck = await repo.listByNodeAndStatus(this.deps.nodeId, ['creating']);
+      const cutoffMs = Date.now() - thresholdMinutes * 60_000;
+      let cleaned = 0;
+      for (const sb of stuck) {
+        try {
+          const createdMs = new Date(sb.createdAt).getTime();
+          if (!Number.isFinite(createdMs) || createdMs > cutoffMs) continue;
+          await this.forceFail(sb.id, `auto-cleanup: stuck in creating since ${thresholdMinutes}min`);
+          cleaned++;
+        } catch (err) {
+          this.deps.logger.warn({ err, sandboxId: sb.id }, 'v749 stuck-cleanup failed for sandbox');
+        }
+      }
+      if (cleaned > 0) {
+        this.deps.logger.info({ cleaned, nodeId: this.deps.nodeId, thresholdMinutes }, 'v749 cleanupStuckSandboxes: marked stuck sandboxes as failed');
+      }
+      return cleaned;
+    } catch (err) {
+      this.deps.logger.debug({ err }, 'v749 cleanupStuckSandboxes failed (non-fatal)');
+      return 0;
+    }
+  }
+
+  /**
    * v748 — Force-Fail: für stuck Sandboxes (creating seit > 10min ohne Progress).
    * Setzt status=failed mit reason, versucht best-effort Container zu stoppen falls einer existiert.
    */
