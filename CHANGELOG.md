@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.740] - 2026-05-24
+
+### Added — Diff-Modal im Interactive-Chat + Failed-State-Banner
+
+**Diff-Modal** (`interactive/page.tsx`):
+- Neuer Toolbar-Button `📋 Diff` neben `🔐 ENV` + vor `✅ Merge`
+- Klick lädt via `client.fetchSandboxDiff()` den `git diff` von Base-Commit bis HEAD
+- Modal mit Syntax-Highlighting:
+  - `diff --git` → purple (file-headers)
+  - `--- / +++` → amber (file-paths)
+  - `@@ ... @@` → cyan (hunk-headers)
+  - `+lines` → emerald
+  - `-lines` → red
+  - Context → grau
+- Header zeigt branch-name + base-commit-SHA-Kurzform
+- 🔄 Reload-Button + ✕ Close
+- Pre-formatted mit white-space:pre damit Indentation erhalten bleibt
+
+Damit kannst du VOR dem Merge prüfen was der Agent geändert hat — bisher gab's Diff nur im SandboxPanel im Project-Chat.
+
+**Failed-State-Banner** (`ProjectSandboxesView.tsx`):
+- `failed`-Sandboxes werden jetzt auch in der Liste angezeigt (bisher gefiltert) mit dedicated UI:
+  - Rote 2px-Border + leicht rotes Background statt normalem grauem Box
+  - `❌ Sandbox gefailed`-Header mit Discard-Empfehlung
+  - Kopierbare SSH-Logs-Command mit Container-Name-Prefix: `sudo docker logs alfred-sandbox-<id8>`
+  - Discard-Button als `🗑️ Aufräumen` mit prominenterem Styling (rot statt amber)
+- statusReason-Detail (warum failed) bleibt sichtbar wie bisher
+
+Damit gehen Failures nicht still unter der Filter-Schwelle verloren — User sieht sie sofort und kann mit klaren Recovery-Steps weitermachen (Container-Logs prüfen via SSH, dann Discard).
+
 ## [0.19.0-multi-ha.739] - 2026-05-24
 
 ### Added — Sandbox-Quota-Display + dynamischer Idle-Timeout

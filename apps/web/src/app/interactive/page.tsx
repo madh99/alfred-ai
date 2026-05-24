@@ -49,6 +49,10 @@ export default function InteractivePage() {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   // v723 — 3-Wege-Merge-Modal (PR | Direct | Abbrechen) statt verirrendem confirm()
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  // v740 — Diff-Modal
+  const [diffModalOpen, setDiffModalOpen] = useState(false);
+  const [diffContent, setDiffContent] = useState<string>('');
+  const [diffLoading, setDiffLoading] = useState(false);
   // v728 — Toolbar-Modals (Logs, Stats, ENV)
   const [logsModalOpen, setLogsModalOpen] = useState(false);
   const [logsContent, setLogsContent] = useState<string>('');
@@ -215,6 +219,22 @@ export default function InteractivePage() {
   // v728 — Toolbar Actions
   function handleReloadIframe() { setIframeReloadKey(k => k + 1); }
 
+  // v740 — Diff-Modal: lädt git diff von baseCommit..HEAD im worktree
+  async function openDiffModal() {
+    if (!client || !sandbox) return;
+    setDiffModalOpen(true);
+    setDiffLoading(true);
+    setDiffContent('');
+    try {
+      const text = await client.fetchSandboxDiff(sandbox.id);
+      setDiffContent(text || '(keine Änderungen)');
+    } catch (e) {
+      setDiffContent(`[Fehler: ${e instanceof Error ? e.message : String(e)}]`);
+    } finally {
+      setDiffLoading(false);
+    }
+  }
+
   async function handleRestart() {
     if (!client || !sandbox) return;
     if (!confirm('Dev-Server neu starten? Container wird gestoppt, .next/ wird gelöscht, dann neu gestartet. Worktree-Änderungen bleiben.')) return;
@@ -347,6 +367,7 @@ export default function InteractivePage() {
               <button onClick={openLogsModal} disabled={busy !== null} title="Container-Logs anzeigen" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📜 Logs</button>
               <button onClick={openStatsModal} disabled={busy !== null} title="Container-Stats (CPU/RAM)" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📊 Stats</button>
               <button onClick={openEnvModal} disabled={busy !== null} title="Sandbox-ENV-Variablen verwalten" className="px-2 py-1 border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded text-[11px] disabled:opacity-50">🔐 ENV</button>
+              <button onClick={openDiffModal} disabled={busy !== null} title="git diff vom Base-Commit anschauen" className="px-2 py-1 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 rounded text-[11px] disabled:opacity-50">📋 Diff</button>
               <button onClick={handleMerge} disabled={busy !== null} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] disabled:opacity-50">✅ Merge</button>
               <button onClick={handleDiscard} disabled={busy !== null} className="px-2 py-1 border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded text-[11px] disabled:opacity-50">✕ Discard</button>
             </>
@@ -576,6 +597,35 @@ export default function InteractivePage() {
                 <button onClick={addEnvVar} disabled={!envNewKey.trim()} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded text-xs">+ Speichern</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* v740 — Diff-Modal */}
+      {diffModalOpen && sandbox && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setDiffModalOpen(false)}>
+          <div className="w-full max-w-5xl max-h-[85vh] flex flex-col rounded-lg border border-cyan-500/40 bg-[#0f0f0f] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-cyan-300">📋 Sandbox-Diff · branch <code className="text-amber-300">{sandbox.branchName}</code></h2>
+              <div className="flex gap-2">
+                <button onClick={openDiffModal} disabled={diffLoading} className="px-2 py-1 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 rounded text-[11px] disabled:opacity-50">🔄 Reload</button>
+                <button onClick={() => setDiffModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded text-[11px]">✕</button>
+              </div>
+            </div>
+            <div className="text-[10px] text-gray-500 mb-2">
+              git diff vom Base-Commit (<code>{sandbox.baseCommitSha.slice(0, 8)}</code>) bis HEAD.
+            </div>
+            <pre className="flex-1 overflow-auto bg-black border border-[#1a1a1a] rounded p-2 text-[10px] text-gray-300 whitespace-pre font-mono leading-relaxed">
+              {diffLoading ? '(lädt…)' : (diffContent.split('\n').map((line, i) => {
+                const cls = line.startsWith('+++') || line.startsWith('---') ? 'text-amber-400 font-semibold'
+                  : line.startsWith('+') ? 'text-emerald-400'
+                  : line.startsWith('-') ? 'text-red-400'
+                  : line.startsWith('@@') ? 'text-cyan-400 font-semibold'
+                  : line.startsWith('diff --git') ? 'text-purple-300 font-semibold mt-1'
+                  : 'text-gray-400';
+                return <div key={i} className={cls}>{line || ' '}</div>;
+              }))}
+            </pre>
           </div>
         </div>
       )}

@@ -69,8 +69,8 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
     setLoading(true);
     try {
       const list = await client.listSandboxes({ projectId });
-      // Nur "lebende" Sandboxes anzeigen
-      const live = list.filter(s => ['creating', 'running', 'paused', 'merging'].includes(s.status));
+      // v740 — Failed auch anzeigen (mit Recovery-Banner). 'discarded'/'cleaned' bleiben gefiltert.
+      const live = list.filter(s => ['creating', 'running', 'paused', 'merging', 'failed'].includes(s.status));
       setSandboxes(live);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
@@ -198,8 +198,17 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
             const interactive = s.containerId && s.hostPort;
             const idleTimeoutMin = status?.idleTimeoutMin ?? 30;
             const idle = s.status === 'running' ? computeIdleCountdown(s.lastActiveAt, idleTimeoutMin) : null;
+            const isFailed = s.status === 'failed';
             return (
-              <div key={s.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded p-2 space-y-1">
+              <div key={s.id} className={`rounded p-2 space-y-1 ${isFailed ? 'bg-red-500/5 border-2 border-red-500/40' : 'bg-[#0a0a0a] border border-[#1a1a1a]'}`}>
+                {/* v740 — Recovery-Banner für failed Sandboxes */}
+                {isFailed && (
+                  <div className="flex items-center gap-2 text-red-300 text-[11px] mb-1">
+                    <span className="font-semibold">❌ Sandbox gefailed</span>
+                    <span className="text-gray-400">— Discard empfohlen. Container-Logs vorher prüfen via SSH:</span>
+                    <code className="text-[10px] text-gray-500 font-mono">sudo docker logs alfred-sandbox-{s.id.slice(0, 8)}</code>
+                  </div>
+                )}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`px-2 py-0.5 rounded border text-[10px] ${STATUS_COLOR[s.status]}`}>{s.status}</span>
                   <code className="text-amber-300 font-mono text-[11px]">{s.branchName}</code>
@@ -240,12 +249,12 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
                       className="px-2 py-0.5 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded text-[10px] disabled:opacity-40"
                     >▶ Resume</button>
                   )}
-                  {(s.status === 'running' || s.status === 'paused') && (
+                  {(s.status === 'running' || s.status === 'paused' || s.status === 'failed') && (
                     <button
                       onClick={() => handleDiscard(s.id, s.branchName)}
                       disabled={busyId === s.id}
-                      className="px-2 py-0.5 border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded text-[10px] disabled:opacity-40 ml-auto"
-                    >✕ Discard</button>
+                      className={`px-2 py-0.5 border rounded text-[10px] disabled:opacity-40 ml-auto ${s.status === 'failed' ? 'border-red-500/60 text-red-300 bg-red-500/15 hover:bg-red-500/25 font-semibold' : 'border-red-500/40 text-red-400 hover:bg-red-500/15'}`}
+                    >{s.status === 'failed' ? '🗑️ Aufräumen' : '✕ Discard'}</button>
                   )}
                 </div>
               </div>
