@@ -253,19 +253,25 @@ export default function SandboxesPage() {
           <p className="text-sm text-gray-500">Project-Agent Sandboxes mit Live-Preview & Interactive-Chat-Mode.</p>
         </div>
         <div className="flex gap-2 items-center">
-          {/* v743 — Quota-Display */}
+          {/* v743/v746 — Quota-Display als Progress-Bar */}
           {status && typeof status.maxParallelPerUser === 'number' && (() => {
             const max = status.maxParallelPerUser;
             const used = globalActiveCount;
             const full = used >= max;
             const warning = used >= max - 1 && !full;
-            const cls = full ? 'border-red-500/40 text-red-300 bg-red-500/10'
-              : warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10'
-              : 'border-gray-600 text-gray-400';
+            const pct = Math.min(100, (used / max) * 100);
+            const textCls = full ? 'text-red-300' : warning ? 'text-amber-300' : 'text-gray-400';
+            const fillCls = full ? 'bg-red-500/60' : warning ? 'bg-amber-500/60' : 'bg-emerald-500/60';
             return (
-              <span className={`px-2 py-1 rounded border text-xs ${cls}`} title={`Global ${used} von max ${max} parallel-Sandboxes`}>
-                Quota: {used}/{max}{full ? ' VOLL' : ''}
-              </span>
+              <div
+                className="flex flex-col gap-0.5 px-2 py-1 rounded border border-gray-600"
+                title={`Global ${used} von max ${max} parallel-Sandboxes (alle Projekte)`}
+              >
+                <div className={`text-[10px] font-mono ${textCls}`}>Quota: {used}/{max}{full ? ' VOLL' : ''}</div>
+                <div className="w-24 h-1.5 bg-[#0a0a0a] rounded-full overflow-hidden">
+                  <div className={`h-full ${fillCls} transition-all duration-300`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
             );
           })()}
           <button

@@ -59,6 +59,9 @@ export default function InteractivePage() {
   const [logsAutoRefresh, setLogsAutoRefresh] = useState(false);
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [statsContent, setStatsContent] = useState<{ ramMb: number | null; cpuPct: number | null; status: string | null; createdAt: string; hostPort: number | null; image: string } | null>(null);
+  // v746 — Live-Refresh + History
+  const [statsHistory, setStatsHistory] = useState<Array<{ t: number; cpu: number | null; ram: number | null }>>([]);
+  const [statsAutoRefresh, setStatsAutoRefresh] = useState(true);
   const [envModalOpen, setEnvModalOpen] = useState(false);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [envReveal, setEnvReveal] = useState(false);
@@ -266,14 +269,36 @@ export default function InteractivePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logsModalOpen, logsAutoRefresh, sandbox?.id]);
 
+  async function loadStats() {
+    if (!client || !sandbox) return;
+    try {
+      const r = await client.fetchSandboxStats(sandbox.id);
+      if (r.ok && r.stats) {
+        const s = r.stats;
+        setStatsContent(s);
+        // v746 — History (max 30 Samples = ~1min bei 2s)
+        setStatsHistory(prev => [
+          ...prev.slice(-29),
+          { t: Date.now(), cpu: s.cpuPct, ram: s.ramMb },
+        ]);
+      }
+    } catch { /* */ }
+  }
+
   async function openStatsModal() {
     if (!client || !sandbox) return;
     setStatsModalOpen(true);
-    try {
-      const r = await client.fetchSandboxStats(sandbox.id);
-      if (r.ok && r.stats) setStatsContent(r.stats);
-    } catch { /* */ }
+    setStatsHistory([]);
+    await loadStats();
   }
+
+  // v746 — Live-Refresh wenn Stats-Modal offen + auto-refresh aktiv
+  useEffect(() => {
+    if (!statsModalOpen || !statsAutoRefresh) return;
+    const t = setInterval(loadStats, 2000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statsModalOpen, statsAutoRefresh, sandbox?.id]);
 
   async function openEnvModal() {
     if (!client || !sandbox) return;
@@ -536,26 +561,62 @@ export default function InteractivePage() {
       )}
 
       {/* v728 — Stats-Modal */}
-      {statsModalOpen && sandbox && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setStatsModalOpen(false)}>
-          <div className="w-full max-w-md rounded-lg border border-gray-500/40 bg-[#0f0f0f] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-200">📊 Container-Stats</h2>
-              <button onClick={() => setStatsModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded text-[11px]">✕</button>
-            </div>
-            {statsContent ? (
-              <div className="space-y-1 text-xs text-gray-300">
-                <div>Status: <span className="text-amber-300">{statsContent.status ?? '—'}</span></div>
-                <div>CPU: <span className="text-amber-300">{statsContent.cpuPct?.toFixed(1) ?? '—'}%</span></div>
-                <div>RAM: <span className="text-amber-300">{statsContent.ramMb ? `${statsContent.ramMb.toFixed(0)} MB` : '—'}</span></div>
-                <div>Port: <span className="text-amber-300">{statsContent.hostPort ?? '—'}</span></div>
-                <div>Image: <span className="text-amber-300">{statsContent.image}</span></div>
-                <div>Created: <span className="text-amber-300">{statsContent.createdAt}</span></div>
+      {statsModalOpen && sandbox && (() => {
+        const maxCpu = Math.max(100, ...statsHistory.map(s => s.cpu ?? 0));
+        const maxRam = Math.max(100, ...statsHistory.map(s => s.ram ?? 0));
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setStatsModalOpen(false)}>
+            <div className="w-full max-w-lg rounded-lg border border-gray-500/40 bg-[#0f0f0f] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-200">📊 Container-Stats {statsAutoRefresh && <span className="text-[10px] text-emerald-400 ml-1 animate-pulse">● Live</span>}</h2>
+                <div className="flex gap-2 items-center text-[11px]">
+                  <label className="flex items-center gap-1 text-gray-400 cursor-pointer">
+                    <input type="checkbox" checked={statsAutoRefresh} onChange={(e) => setStatsAutoRefresh(e.target.checked)} />
+                    Auto-Refresh (2s)
+                  </label>
+                  <button onClick={loadStats} title="Jetzt aktualisieren" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded">🔄</button>
+                  <button onClick={() => setStatsModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded">✕</button>
+                </div>
               </div>
-            ) : <div className="text-xs text-gray-500">Lädt…</div>}
+              {statsContent ? (
+                <>
+                  <div className="space-y-1 text-xs text-gray-300 mb-3">
+                    <div>Status: <span className="text-amber-300">{statsContent.status ?? '—'}</span></div>
+                    <div>CPU: <span className="text-amber-300">{statsContent.cpuPct?.toFixed(1) ?? '—'}%</span></div>
+                    <div>RAM: <span className="text-amber-300">{statsContent.ramMb ? `${statsContent.ramMb.toFixed(0)} MB` : '—'}</span></div>
+                    <div>Port: <span className="text-amber-300">{statsContent.hostPort ?? '—'}</span></div>
+                    <div>Image: <span className="text-amber-300">{statsContent.image}</span></div>
+                    <div>Created: <span className="text-amber-300">{statsContent.createdAt}</span></div>
+                  </div>
+                  {/* v746 — Mini-Sparkline: letzte 30 Samples */}
+                  {statsHistory.length >= 2 && (
+                    <div className="space-y-2">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">CPU-Verlauf (letzte {statsHistory.length}× 2s)</div>
+                        <div className="flex items-end gap-px h-12 bg-black/40 border border-[#1a1a1a] rounded px-1 py-1">
+                          {statsHistory.map((s, i) => {
+                            const pct = s.cpu == null ? 0 : Math.min(100, (s.cpu / maxCpu) * 100);
+                            return <div key={i} className="flex-1 bg-emerald-500/60" style={{ height: `${Math.max(2, pct)}%` }} title={`${s.cpu?.toFixed(1) ?? '—'}%`} />;
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">RAM-Verlauf</div>
+                        <div className="flex items-end gap-px h-12 bg-black/40 border border-[#1a1a1a] rounded px-1 py-1">
+                          {statsHistory.map((s, i) => {
+                            const pct = s.ram == null ? 0 : Math.min(100, (s.ram / maxRam) * 100);
+                            return <div key={i} className="flex-1 bg-purple-500/60" style={{ height: `${Math.max(2, pct)}%` }} title={`${s.ram?.toFixed(0) ?? '—'} MB`} />;
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : <div className="text-xs text-gray-500">Lädt…</div>}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* v728 — ENV-Modal */}
       {envModalOpen && sandbox && (

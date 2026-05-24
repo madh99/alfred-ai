@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.746] - 2026-05-24
+
+### Added — Stats-Modal Live-Refresh mit Sparkline + Quota als Progress-Bar
+
+**Stats-Modal im Interactive-Chat** (`interactive/page.tsx`):
+- Bisher: einmaliger Snapshot beim Öffnen
+- Jetzt: Auto-Refresh alle 2s (toggleable, default ON)
+- `● Live`-Indikator im Header (pulse-animation) wenn auto-refresh aktiv
+- Toggle `Auto-Refresh (2s)` Checkbox + manueller `🔄`-Button
+- History-State sammelt letzte 30 Samples (= ~1 min Verlauf)
+- **Sparkline-Charts** unter den Werten:
+  - CPU-Verlauf in emerald (auto-scale auf höchsten Wert, min 100%)
+  - RAM-Verlauf in purple (auto-scale)
+  - Pro Bar Tooltip mit exaktem Wert
+  - Bars haben min-2% Height damit auch 0-Werte sichtbar bleiben
+- Modal von `max-w-md` auf `max-w-lg` erweitert für Chart-Platz
+
+Damit siehst du live wie CPU/RAM während eines Project-Agent-Runs nach oben gehen.
+
+**Quota-Progress-Bar** (`/sandboxes`):
+- Bisher: `Quota: 2/3` als Text-Pill
+- Jetzt: zwei-zeilige Box mit Text + visueller Progress-Bar (24px breit)
+- Fill-Color matched Status-Klassifizierung:
+  - emerald bei `< max-1` (entspannt)
+  - amber bei `= max-1` (1 Slot frei)
+  - rot bei `= max` (VOLL)
+- CSS-Transition (300ms) damit Änderungen smooth animieren
+- Mehr Sichtbarkeit als kleine Pill ohne mehr Platz zu brauchen
+
 ## [0.19.0-multi-ha.745] - 2026-05-24
 
 ### Added — Sandbox-Stats-Section + Backend Quota-Error-Code
