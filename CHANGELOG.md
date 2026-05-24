@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.736] - 2026-05-24
+
+### Changed — Image-Vision auch für Worktree-Bilder + Deploy-Modal mit ENV-Stage-Wahl
+
+Zwei kleinere Konsistenz-/UX-Erweiterungen:
+
+**Image-Vision für ALLE Bilder** (`alfred.ts` chatSendMessage):
+- Vorher (v730): Vision-Pre-Pass nur bei Bildern OHNE `dropInWorktree` — wenn der User ein Mockup ins Worktree gedropped hat, kannte der Agent den Pfad, aber **nicht** den Bildinhalt (er hatte selbst keinen Vision-Support).
+- Jetzt: Vision-Pass läuft für **jedes** `image/*`-Attachment, unabhängig vom Worktree-Drop-Flag.
+- Damit gilt bei Worktree-Drop-Bildern jetzt: Datei landet IN `.alfred-uploads/<name>` UND Description landet im Goal. Der Agent kann beim Code referenzieren `<img src="/alfred-uploads/mockup.png">` UND weiß was im Bild zu sehen ist.
+- Code-Refactor: Vision-Block wurde aus dem `else`-Branch (non-worktree) in den gemeinsamen Pfad nach der dropInWorktree-Entscheidung verschoben.
+
+**Deploy-Modal mit ENV-Stage-Wahl** (`ProjectDeployModal.tsx`):
+- Bisher nutzte das WebUI-Deploy-Modal die Default-Stage `prod` ohne User-Wahl
+- Neuer Block "🔐 ENV-Injection" am Modal-Ende mit:
+  - Checkbox `ENV-Injection überspringen` (`skip_env=true`)
+  - Dropdown für Stage-Wahl (lädt aktuelle Stages via `fetchEnvironmentStages`, Default `prod`)
+  - Visual-Hint `→ wird als .env aufs Target geschrieben (chmod 600)`
+- `triggerProjectDeploy`-Client-Signatur erweitert um `env_stage?` + `skip_env?`
+- `triggerDeploy`-Callback in alfred.ts reicht beide Felder ans Deploy-Skill-Input durch
+
+Damit kannst du jetzt explizit ein Staging-Deploy mit `staging`-Stage-ENVs machen, oder Production mit `prod`-Stage — alles via WebUI ohne Manual-Skill-Call.
+
 ## [0.19.0-multi-ha.735] - 2026-05-24
 
 ### Added — .env-Export + Sandbox-Quick-Create direkt aus Project-Detail

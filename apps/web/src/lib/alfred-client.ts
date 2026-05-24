@@ -1008,6 +1008,7 @@ export class AlfredClient {
     host: string; user?: string; process_manager?: string; runtime?: string;
     app_port?: number; branch?: string; repo_url?: string;
     install_command?: string; build_command?: string; start_command?: string;
+    env_stage?: string; skip_env?: boolean;
   }): Promise<{ success: boolean; data?: unknown; error?: string; display?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/deploy`, {
       method: 'POST',

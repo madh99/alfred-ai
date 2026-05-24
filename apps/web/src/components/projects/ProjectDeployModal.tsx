@@ -37,6 +37,10 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
   const [appPort, setAppPort] = useState<string>('');
   const [branch, setBranch] = useState('main');
   const [repoUrl, setRepoUrl] = useState(defaultRepoUrl ?? '');
+  // v736 — ENV-Stage-Wahl
+  const [envStage, setEnvStage] = useState<string>('prod');
+  const [skipEnv, setSkipEnv] = useState<boolean>(false);
+  const [envStages, setEnvStages] = useState<Array<{ stage: string; keyCount: number }>>([]);
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; display?: string; error?: string; data?: unknown } | null>(null);
@@ -68,6 +72,19 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
 
   useEffect(() => { loadDeploys(); }, [loadDeploys]);
 
+  // v736 — Verfügbare ENV-Stages laden für Select
+  useEffect(() => {
+    if (!client) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await client.fetchEnvironmentStages(projectId);
+        if (!cancelled) setEnvStages(s);
+      } catch { /* */ }
+    })();
+    return () => { cancelled = true; };
+  }, [client, projectId]);
+
   function applyDeploy(d: ProjectLastDeploy) {
     setHost(d.host);
     setUser(d.user || 'root');
@@ -95,6 +112,9 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
         app_port: appPort ? Number(appPort) : undefined,
         branch: branch.trim() || undefined,
         repo_url: repoUrl.trim() || undefined,
+        // v736 — ENV-Stage als .env aufs Target
+        env_stage: skipEnv ? undefined : envStage,
+        skip_env: skipEnv,
       });
       setResult(r);
     } finally {
@@ -244,6 +264,35 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
                 placeholder={defaultRepoUrl ?? 'https://…'}
                 className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
               />
+            </div>
+          </div>
+
+          {/* v736 — ENV-Stage-Wahl: schreibt project_environments[stage] als .env aufs Target */}
+          <div className="border-t border-[#1a1a1a] pt-3 mt-3">
+            <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">🔐 ENV-Injection</div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-1.5 text-[11px] text-gray-300">
+                <input type="checkbox" checked={skipEnv} onChange={(e) => setSkipEnv(e.target.checked)} />
+                <span>ENV-Injection überspringen</span>
+              </label>
+              {!skipEnv && (
+                <>
+                  <label className="text-[11px] text-gray-500">aus Stage:</label>
+                  <select
+                    value={envStage}
+                    onChange={(e) => setEnvStage(e.target.value)}
+                    className="bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200"
+                  >
+                    {Array.from(new Set(['prod', 'staging', 'dev', 'sandbox', ...envStages.map(s => s.stage)])).map(s => {
+                      const info = envStages.find(x => x.stage === s);
+                      return <option key={s} value={s}>{s}{info ? ` (${info.keyCount} Keys)` : ' (leer)'}</option>;
+                    })}
+                  </select>
+                  <span className="text-[10px] text-gray-500">
+                    → wird als <code>.env</code> aufs Target geschrieben (chmod 600)
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>

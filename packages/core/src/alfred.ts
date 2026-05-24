@@ -5986,29 +5986,31 @@ export class Alfred {
                   } else {
                     // (c) Nur als Kontext-Referenz an den Agent
                     contextFiles.push({ name: att.name, mime: att.mime, sizeKB: Math.round(buf.length / 1024) });
-                    // v730 — Bei Bildern ohne worktree-drop: Vision-Pre-Pass via LLM-Provider
-                    // (Claude/GPT-4V), Description wird ans Goal angehängt damit der Project-Agent
-                    // versteht was im Bild ist (Agent hat selbst keinen Vision-Support).
-                    if (att.mime.startsWith('image/') && this.llmProvider) {
-                      try {
-                        const result = await this.llmProvider.complete({
-                          messages: [{
-                            role: 'user',
-                            content: [
-                              { type: 'text', text: 'Beschreibe dieses Bild präzise auf Deutsch in 2-4 Sätzen für einen Code-Generator (Layout, Farben, sichtbare UI-Elemente, Text-Inhalte falls erkennbar). Keine Einleitung, direkt Beschreibung.' },
-                              { type: 'image', source: { type: 'base64', media_type: att.mime, data: payload } },
-                            ],
-                          }],
-                          maxTokens: 400,
-                          tier: 'default',
-                        });
-                        const desc = result.content?.trim();
-                        if (desc) {
-                          imageDescriptions.push({ name: att.name, description: desc.slice(0, 1000) });
-                        }
-                      } catch (err) {
-                        this.logger.debug({ err, name: att.name }, 'v730 image-vision-pass failed (continuing without description)');
+                  }
+                  // v736 — Image-Vision-Pass für ALLE Bilder (worktree + nicht-worktree).
+                  // Vorher (v730) wurde Vision nur bei non-worktree-Bildern gemacht — Inkonsistenz,
+                  // weil Agent ein Mockup im Worktree zwar findet aber Inhalt nicht sieht.
+                  // Jetzt: Pfad-Referenz UND Description landen im Goal — Agent kann beim Code
+                  // sowohl die Datei im Worktree referenzieren als auch wissen was drin ist.
+                  if (att.mime.startsWith('image/') && this.llmProvider) {
+                    try {
+                      const result = await this.llmProvider.complete({
+                        messages: [{
+                          role: 'user',
+                          content: [
+                            { type: 'text', text: 'Beschreibe dieses Bild präzise auf Deutsch in 2-4 Sätzen für einen Code-Generator (Layout, Farben, sichtbare UI-Elemente, Text-Inhalte falls erkennbar). Keine Einleitung, direkt Beschreibung.' },
+                            { type: 'image', source: { type: 'base64', media_type: att.mime, data: payload } },
+                          ],
+                        }],
+                        maxTokens: 400,
+                        tier: 'default',
+                      });
+                      const desc = result.content?.trim();
+                      if (desc) {
+                        imageDescriptions.push({ name: att.name, description: desc.slice(0, 1000) });
                       }
+                    } catch (err) {
+                      this.logger.debug({ err, name: att.name }, 'v730/v736 image-vision-pass failed (continuing without description)');
                     }
                   }
                 }
@@ -6977,6 +6979,9 @@ export class Alfred {
               if (input.install_command) params.install_command = input.install_command;
               if (input.build_command) params.build_command = input.build_command;
               if (input.start_command) params.start_command = input.start_command;
+              // v736 — ENV-Stage durchreichen (Deploy-Skill liest die als .env aufs Target)
+              if (typeof input.env_stage === 'string' && input.env_stage.length > 0) params.env_stage = input.env_stage;
+              if (input.skip_env === true) params.skip_env = true;
               if (!this.skillSandbox) return { success: false, error: 'SkillSandbox nicht verfügbar' };
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ctx = { userId: uid, masterUserId: uid, chatId: ownerChatId, platform: 'api', conversationId: '' } as any;
