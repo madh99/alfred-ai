@@ -5,6 +5,51 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.732] - 2026-05-24
+
+### Added — WebUI für ENV-Management + DB-Seeds-Verwaltung im Project-Detail
+
+Schließt v726-Backend mit zwei kollabierbaren Views auf der Project-Detail-Seite (analog zu Roadmap/Automations/Conventions).
+
+**Backend-Erweiterungen** (`http.ts`):
+- `GET /api/projects/:id/environments/scan` — neue Route für Repo-ENV-Discovery (re-implementiert die `scan_repo`-Logik aus `environments`-Skill direkt im EnvironmentsCallbacks-Interface, scant `.env.example` + Quelltext nach `process.env.X`/`import.meta.env.X`/`os.environ.get('X')`/`os.getenv('X')` Patterns in TS/JS/Py/PHP/Ruby/Go-Files bis Tiefe 4, ignoriert node_modules/.git/dist/build/.next/.alfred-data/.alfred-uploads/coverage).
+- `GET/POST/DELETE /api/projects/:id/db-seeds[/:seedId]` — neue Routes für DB-Seed-Verwaltung
+  - `GET` listet alle Seeds (id, name, kind, storageRef, size, createdAt)
+  - `POST` body `{name, dataUrl}` lädt einen File hoch (max 100 MB, Filename auf `[a-zA-Z0-9._-]_max150` saniert, gespeichert unter `<uploadSeedsPath>/<projectId>/<timestamp>_<name>`)
+  - `POST /repo-path` body `{name, repoPath}` registriert eine Seed-Datei die schon im Repo liegt (Sicherheits-Check: kein `..`, kein `/`-Prefix, muss innerhalb project.cwd auflösbar sein)
+  - `PUT /default` body `{seedId|null}` setzt `projects.default_db_seed_id` für Sandbox-Default-Wahl
+  - `DELETE /:seedId` entfernt Seed + bei `kind=upload` löscht zusätzlich die File aus storage, plus auto-unset von default_db_seed_id
+- Neues `DbSeedsCallbacks` Interface (exported)
+
+**Web-Client** (`alfred-client.ts`):
+- `scanEnvironmentRepo`, `fetchDbSeeds`, `uploadDbSeed`, `registerDbSeedRepoPath`, `setDefaultDbSeed`, `deleteDbSeed`
+- `Project` Interface erweitert um `defaultEnvStage` + `defaultDbSeedId`
+
+**`ProjectEnvironmentsView`** (neue Komponente):
+- Kollabierbare Section mit Header `🔐 Environments (N Keys über M Stages)`
+- Stage-Tabs (default: sandbox/dev/prod/staging + dynamische custom-Stages aus DB)
+- Inline "neue Stage"-Input mit Validation (`^[a-z][a-z0-9_-]{0,30}$`)
+- Pro Stage: Key-Value-Tabelle mit Mask/Reveal-Toggle, Edit-Click befüllt das Add-Form, Delete pro Key (mit Bestätigung)
+- `🔍 Repo scannen` Button → Modal-Section mit Liste benötigter Keys aus `.env.example`+Quelltext, ✓-Marker für bereits gesetzte, "+ Hinzufügen"-Button füllt das Add-Form vor
+- `aus Stage X kopieren` Selector + Button (merge ohne Überschreibung)
+- `🗑️ Stage löschen` (mit Bestätigung)
+
+**`ProjectDbSeedsView`** (neue Komponente):
+- Kollabierbare Section `💾 DB-Seeds (N)`
+- Liste der Seeds mit Icon (📤 upload / 📂 repo_path), Name, Size oder Pfad, ☆/★ Default-Toggle, ✕ Delete
+- Upload-Sektion: File-Dialog (max 100 MB), Live-Status während Upload
+- Register-Repo-Path-Sektion: Name + Pfad-Input (relativ zu project.cwd)
+- Default-Seed-Setter (★ Default-Toggle pro Seed → wird in `projects.default_db_seed_id` persistiert → bei Sandbox-Erstellung automatisch ausgewählt sofern nicht explizit überschrieben)
+
+Beide Views in `ProjectsPage.tsx` unter Automations + vor Conventions eingehängt (collapsible default-closed).
+
+Damit du nicht mehr via Chat-Skill `environments` ENVs setzen musst — kompletter WebUI-Workflow:
+1. Project öffnen → 🔐 Environments expandieren
+2. 🔍 Repo scannen → sieht welche Keys benötigt werden
+3. Werte ausfüllen pro Stage (prod / dev / sandbox)
+4. 💾 DB-Seeds expandieren → Demo-DB hochladen oder Repo-Pfad registrieren → ★ als Default
+5. Sandbox erstellen → ENVs werden automatisch eingespielt, Default-Seed nach `.alfred-data/` kopiert
+
 ## [0.19.0-multi-ha.731] - 2026-05-24
 
 ### Added — Auto-Done-Mark für referenzierte Open-Items nach erfolgreichem Agent-Lauf

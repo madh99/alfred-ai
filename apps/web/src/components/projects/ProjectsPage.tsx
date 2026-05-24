@@ -14,6 +14,8 @@ import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
 import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
+import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
+import { ProjectDbSeedsView } from './ProjectDbSeedsView';
 import { ProjectStorageView } from './ProjectStorageView';
 
 const STATUS_BADGES: Record<string, string> = {
@@ -949,6 +951,12 @@ export function ProjectsPage() {
 
               {/* v663b — Automations-View (collapsible) */}
               <ProjectAutomationsView projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v732 — Environments-View (collapsible) */}
+              <ProjectEnvironmentsView projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v732 — DB-Seeds-View (collapsible) */}
+              <ProjectDbSeedsView projectId={detail.project.id} projectName={detail.project.name} defaultSeedId={detail.project.defaultDbSeedId ?? null} />
 
               {/* v663a — Conventions (collapsible) */}
               <ProjectConventionsView

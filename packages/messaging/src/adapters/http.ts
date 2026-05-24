@@ -135,6 +135,17 @@ export interface EnvironmentsCallbacks {
   getVars: (projectId: string, stage: string, reveal: boolean) => Promise<Record<string, string>>;
   setVars: (projectId: string, stage: string, vars: Record<string, string>, replace: boolean) => Promise<{ ok: boolean; count: number; reason?: string }>;
   deleteStage: (projectId: string, stage: string) => Promise<void>;
+  /** v732 — Repo-Scan: liefert Liste benötigter ENV-Keys aus .env.example + Quelltext. */
+  scanRepo?: (projectId: string) => Promise<{ ok: boolean; keys?: Array<{ key: string; sources: string[] }>; reason?: string }>;
+}
+
+/** v732 — Wire-Up-Interface für DB-Seeds-CRUD-API. */
+export interface DbSeedsCallbacks {
+  list: (projectId: string) => Promise<Array<{ id: string; name: string; kind: string; storageRef: string; sizeBytes: number; createdAt: string }>>;
+  upload: (projectId: string, name: string, dataBase64: string) => Promise<{ ok: boolean; seedId?: string; reason?: string }>;
+  registerRepoPath: (projectId: string, name: string, repoPath: string) => Promise<{ ok: boolean; seedId?: string; reason?: string }>;
+  delete: (projectId: string, seedId: string) => Promise<{ ok: boolean; reason?: string }>;
+  setDefault: (projectId: string, seedId: string | null) => Promise<{ ok: boolean; reason?: string }>;
 }
 
 /**
@@ -440,6 +451,12 @@ export class HttpAdapter extends MessagingAdapter {
   private environmentsCallbacks?: EnvironmentsCallbacks;
   setEnvironmentsCallbacks(cb: EnvironmentsCallbacks): void {
     this.environmentsCallbacks = cb;
+  }
+
+  /** v732 — DB-Seeds-CRUD-Callbacks. */
+  private dbSeedsCallbacks?: DbSeedsCallbacks;
+  setDbSeedsCallbacks(cb: DbSeedsCallbacks): void {
+    this.dbSeedsCallbacks = cb;
   }
 
   // v639 — Goals API
@@ -1032,12 +1049,24 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatSend(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
+      this.handleEnvironmentsScan(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'GET') {
       this.handleEnvironmentsGet(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'PUT') {
       this.handleEnvironmentsPut(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'DELETE') {
       this.handleEnvironmentsDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds$/) && req.method === 'GET') {
+      this.handleDbSeedsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds$/) && req.method === 'POST') {
+      this.handleDbSeedsUpload(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds\/repo-path$/) && req.method === 'POST') {
+      this.handleDbSeedsRegisterRepoPath(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds\/default$/) && req.method === 'PUT') {
+      this.handleDbSeedsSetDefault(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleDbSeedsDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/restart$/) && req.method === 'POST') {
       this.handleSandboxRestart(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/logs$/) && req.method === 'GET') {
@@ -3611,6 +3640,157 @@ export class HttpAdapter extends MessagingAdapter {
     }
     try {
       const r = await this.environmentsCallbacks.setVars(projectId, stage, vars, payload.replace === true);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v732 — GET /api/projects/:id/environments/scan → benötigte ENV-Keys aus Repo scannen. */
+  private async handleEnvironmentsScan(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.environmentsCallbacks?.scanRepo) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Scan-Action nicht verfügbar' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.environmentsCallbacks.scanRepo(projectId);
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v732 — GET /api/projects/:id/db-seeds → Liste hochgeladener + repo-path Seeds. */
+  private async handleDbSeedsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.dbSeedsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'DB-Seeds-Feature nicht aktiv' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const seeds = await this.dbSeedsCallbacks.list(projectId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ seeds }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v732 — POST /api/projects/:id/db-seeds → upload (body: {name, dataUrl}). */
+  private async handleDbSeedsUpload(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.dbSeedsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'DB-Seeds-Feature nicht aktiv' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let payload: { name?: string; dataUrl?: string } = {};
+    try { payload = JSON.parse(body) as typeof payload; } catch { /* */ }
+    const name = (payload.name ?? '').trim();
+    const dataUrl = payload.dataUrl ?? '';
+    if (!name || !dataUrl || !dataUrl.startsWith('data:')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'name + dataUrl required (dataUrl must start with data:)' }));
+      return;
+    }
+    const commaIdx = dataUrl.indexOf(',');
+    if (commaIdx < 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'invalid dataUrl' }));
+      return;
+    }
+    try {
+      const r = await this.dbSeedsCallbacks.upload(projectId, name.slice(0, 200), dataUrl.slice(commaIdx + 1));
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v732 — POST /api/projects/:id/db-seeds/repo-path → registriert seed der im Repo liegt. */
+  private async handleDbSeedsRegisterRepoPath(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.dbSeedsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'DB-Seeds-Feature nicht aktiv' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let payload: { name?: string; repoPath?: string } = {};
+    try { payload = JSON.parse(body) as typeof payload; } catch { /* */ }
+    const name = (payload.name ?? '').trim();
+    const repoPath = (payload.repoPath ?? '').trim();
+    if (!name || !repoPath) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'name + repoPath required' }));
+      return;
+    }
+    if (repoPath.includes('..') || repoPath.startsWith('/')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'repoPath muss relativ zum project-cwd sein (kein .. und kein /-Prefix)' }));
+      return;
+    }
+    try {
+      const r = await this.dbSeedsCallbacks.registerRepoPath(projectId, name.slice(0, 200), repoPath.slice(0, 500));
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v732 — PUT /api/projects/:id/db-seeds/default — Default-Seed setzen (body: {seedId|null}). */
+  private async handleDbSeedsSetDefault(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.dbSeedsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'DB-Seeds-Feature nicht aktiv' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let payload: { seedId?: string | null } = {};
+    try { payload = JSON.parse(body) as typeof payload; } catch { /* */ }
+    const seedId = payload.seedId === null || payload.seedId === '' ? null : (payload.seedId ?? null);
+    try {
+      const r = await this.dbSeedsCallbacks.setDefault(projectId, seedId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v732 — DELETE /api/projects/:id/db-seeds/:seedId. */
+  private async handleDbSeedsDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.dbSeedsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'DB-Seeds-Feature nicht aktiv' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    const seedId = parts[5];
+    try {
+      const r = await this.dbSeedsCallbacks.delete(projectId, seedId);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

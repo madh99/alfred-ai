@@ -478,6 +478,53 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/${encodeURIComponent(stage)}`, { method: 'DELETE', headers: this.authHeaders });
     if (!res.ok) throw new Error(`environments-delete: HTTP ${res.status}`);
   }
+  // v732 — Repo-Scan: schlägt benötigte Keys vor
+  async scanEnvironmentRepo(projectId: string): Promise<{ ok: boolean; keys?: Array<{ key: string; sources: string[] }>; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/scan`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+
+  // v732 — DB-Seeds API
+  async fetchDbSeeds(projectId: string): Promise<Array<{ id: string; name: string; kind: string; storageRef: string; sizeBytes: number; createdAt: string }>> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/db-seeds`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`db-seeds-list: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.seeds ?? [];
+  }
+  async uploadDbSeed(projectId: string, name: string, dataUrl: string): Promise<{ ok: boolean; seedId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/db-seeds`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ name, dataUrl }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async registerDbSeedRepoPath(projectId: string, name: string, repoPath: string): Promise<{ ok: boolean; seedId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/db-seeds/repo-path`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ name, repoPath }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async setDefaultDbSeed(projectId: string, seedId: string | null): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/db-seeds/default`, {
+      method: 'PUT', headers: this.jsonHeaders, body: JSON.stringify({ seedId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async deleteDbSeed(projectId: string, seedId: string): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/db-seeds/${seedId}`, {
+      method: 'DELETE', headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
@@ -2011,6 +2058,10 @@ export interface Project {
   repoUrl?: string;
   /** v643 — Default-Branch (HEAD), auto-detected vom Project-Agent. */
   defaultBranch?: string;
+  /** v726 — Default-ENV-Stage für Sandbox-Erstellung. */
+  defaultEnvStage?: string;
+  /** v732 — Default-DB-Seed für Sandbox-Erstellung. */
+  defaultDbSeedId?: string;
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];
