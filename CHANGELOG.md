@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.767] - 2026-05-25
+
+### Fixed — Startup-Cleanup für Orphan-Tasks war im Sandbox-gated Block versteckt
+
+**Symptom**: Task `88a27c8e-…` (Project-Agent UUID) blieb auch nach v765 in der UI als "coding" sichtbar — Cleanup hat nicht gegriffen.
+
+**Root-Cause**: Die `failOrphanedCodeAgentTasks()`-Aufruf in v763 lag in einem `if (apiAdapter && this.sandboxManager && ...)`-Block. Wenn Docker offline ist (z.B. UI-only Node), wird der Sandbox-Manager nicht initialisiert → Block wird übersprungen → Cleanup läuft nie. v756 hatte zwar die storage-only APIs aus dem Docker-Gate gezogen, der Cleanup war aber weiter drin.
+
+**Fix**: Cleanup ist jetzt ein eigenständiger Init-Step direkt nach `Database.create()` — läuft unabhängig von Sandbox-Manager-State. Greift jetzt auf JEDER Node, ob Docker da ist oder nicht.
+
+### Added — Wizard AI-Scaffold-Mode (Phase 3 nachgereicht)
+
+In v766 war die AI-Scaffold-Option in der UI noch disabled. Jetzt aktiv:
+
+**Wie's funktioniert**:
+- User wählt in Step 5 `🤖 AI-Scaffold (mit Code-Agent)`
+- Wizard erstellt Project + CWD + Template-Skeleton + Initial-Commit + optional Remote-Push (wie bei 📦 Template)
+- Danach kickt ein fire-and-forget `code_agent.execute({action:'run'})` mit einem Scaffold-Prompt (max 15min Timeout)
+- Prompt enthält Stack, Beschreibung, klare Tasks (package.json, Configs, Folder-Struktur — KEINE Business-Logik)
+- Nach erfolgreichem Run: Auto `git add -A && git commit -m "[alfred-wizard] AI-scaffold by code-agent"` + Auto-Push falls Remote-Repo
+- Wizard returnt sofort mit projectId — User sieht die Commits in der CWD aufpoppen
+
+**Voraussetzungen**:
+- `config.codeAgents.enabled = true` + mindestens ein Code-Agent (claude-code/codex/…) konfiguriert
+- Bei nicht konfiguriertem code-agent: AI-Scaffold wird übersprungen, Logger-Warn, Wizard-Response ist trotzdem ok (Template-Scaffold ist passiert)
+
 ## [0.19.0-multi-ha.766] - 2026-05-25
 
 ### Added — Project-Wizard Step 5: Repo-Create + Template-Scaffold (Phase 2)

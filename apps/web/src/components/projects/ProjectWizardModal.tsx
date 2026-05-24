@@ -474,11 +474,11 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
                       <div className="text-[10px] text-gray-500">README + .gitignore + git init + initial-commit. Schnell, deterministisch.</div>
                     </div>
                   </label>
-                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30 opacity-60 cursor-not-allowed">
-                    <input type="radio" disabled checked={scaffoldMode === 'agent'} onChange={() => setScaffoldMode('agent')} className="mt-0.5" />
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={scaffoldMode === 'agent'} onChange={() => setScaffoldMode('agent')} className="mt-0.5" />
                     <div>
-                      <div className="text-gray-200">🤖 AI-Scaffold (v767 — noch nicht aktiv)</div>
-                      <div className="text-[10px] text-gray-500">Project-Agent baut initiale Struktur basierend auf Stack. Dauert 5-15min.</div>
+                      <div className="text-gray-200">🤖 AI-Scaffold (mit Code-Agent)</div>
+                      <div className="text-[10px] text-gray-500">Template + Code-Agent läuft im Hintergrund und scaffoldet initiale Struktur (package.json, Configs, Entry-Points). Dauert 5-15min, committed + pusht selbständig.</div>
                     </div>
                   </label>
                   <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
@@ -495,10 +495,11 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
                 <div className="font-semibold text-gray-300 mb-1">Was passiert beim Erstellen:</div>
                 <ul className="list-disc list-inside space-y-0.5">
                   <li>Projekt mit allen Steps-Daten wird in DB persistiert</li>
-                  {scaffoldMode === 'template' && <li>CWD <code className="text-amber-300">~/.alfred/projects/{slug}</code> wird angelegt + git init</li>}
-                  {scaffoldMode === 'template' && <li>README.md + .gitignore (Stack-aware) werden geschrieben + commited</li>}
+                  {scaffoldMode !== 'none' && <li>CWD <code className="text-amber-300">~/.alfred/projects/{slug}</code> wird angelegt + git init</li>}
+                  {scaffoldMode !== 'none' && <li>README.md + .gitignore (Stack-aware) werden geschrieben + commited</li>}
                   {repoMode !== 'local' && <li>Remote-Repo wird via {repoMode}-API erstellt (Sichtbarkeit: {repoVisibility})</li>}
                   {repoMode !== 'local' && scaffoldMode !== 'none' && <li>Initial-Commit wird zu Remote gepusht</li>}
+                  {scaffoldMode === 'agent' && <li className="text-purple-300">Code-Agent läuft im Hintergrund (5-15min) → AI-Scaffold + Auto-Commit{repoMode !== 'local' ? ' + Auto-Push' : ''}</li>}
                 </ul>
               </div>
             </div>

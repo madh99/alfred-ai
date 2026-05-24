@@ -253,6 +253,21 @@ export class Alfred {
       connectionString: this.config.storage.connectionString,
     });
     const adapter = this.database.getAdapter();
+
+    // v767 — Universal Startup-Cleanup für nicht-terminale Agent-Chat-Tasks.
+    // MUSS hier laufen (vor Sandbox-Manager-Init), damit der Cleanup auch greift
+    // wenn Docker offline ist und der Sandbox-Manager-Block übersprungen wird.
+    // v763/v765 hatten den Cleanup im sandbox-gated Block versteckt → Bug, deshalb
+    // Tasks blieben "running" wenn Alfred ohne Docker startete (z.B. UI-only Node).
+    try {
+      const { SandboxChatRepository: SandboxChatRepoStartup } = await import('@alfred/storage');
+      const sandboxChatRepoStartup = new SandboxChatRepoStartup(adapter);
+      const orphaned = await sandboxChatRepoStartup.failOrphanedCodeAgentTasks();
+      if (orphaned > 0) this.logger.info({ count: orphaned }, 'v767 startup: marked orphaned chat-tasks as failed');
+    } catch (err) {
+      this.logger.warn({ err }, 'v767 startup chat-cleanup failed (non-fatal)');
+    }
+
     const conversationRepo = new ConversationRepository(adapter);
     this.conversationRepo = conversationRepo;
     const userRepo = new UserRepository(adapter);
@@ -7587,6 +7602,73 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     }
                   } catch (err) {
                     this.logger.warn({ err }, 'v766 scaffold failed');
+                  }
+                }
+
+                // v767 — AI-Scaffold: fire-and-forget code_agent in projectCwd
+                // läuft im Hintergrund, schreibt Files, committed + pusht selbst.
+                let aiScaffoldKicked = false;
+                if (input.scaffoldMode === 'agent') {
+                  const cAgent = this.codeAgentSkillRef;
+                  const codeAgents = this.config.codeAgents?.agents ?? [];
+                  if (!cAgent || codeAgents.length === 0) {
+                    this.logger.warn({ scaffoldMode: 'agent' }, 'v767 AI-Scaffold gewählt aber code-agent nicht konfiguriert — skip');
+                  } else {
+                    const defaultAgent = codeAgents[0].name;
+                    const scaffoldGoal = `Scaffold the initial structure for a new project.
+
+PROJECT
+- Name: ${input.name}
+- Description: ${input.description}
+
+TECH-STACK
+- Frontend: ${input.stack.frontend}
+- Backend: ${input.stack.backend}
+- Database: ${input.stack.database}
+- Extras: ${input.stack.extras.join(', ') || '(none)'}
+
+TASKS
+1. Create the initial project structure: package.json (or equivalent), basic folder layout, entry-point files, config files.
+2. Install dependencies (run npm/pnpm/yarn install as needed).
+3. Set up minimum config so the dev-server starts without errors.
+4. DO NOT implement business logic — only scaffolding. The roadmap will be tackled in later iterations.
+5. Respect existing README.md and .gitignore — do not overwrite, only add to them if necessary.
+
+A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or equivalent) should work.`;
+
+                    (async () => {
+                      try {
+                        const ctxScaffold = { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' } as any;
+                        await cAgent.execute({
+                          action: 'run',
+                          agent: defaultAgent,
+                          prompt: scaffoldGoal,
+                          cwd: projectCwd,
+                          timeout: 900_000, // 15min
+                        }, ctxScaffold);
+                        // Auto-Commit + Auto-Push der Scaffold-Files
+                        try {
+                          const { execFile: execFileScaf } = await import('node:child_process');
+                          const { promisify: promisifyScaf } = await import('node:util');
+                          const execAsync2 = promisifyScaf(execFileScaf);
+                          const { stdout: porcelain } = await execAsync2('git', ['status', '--porcelain'], { cwd: projectCwd, maxBuffer: 1024 * 1024, timeout: 15_000 });
+                          if (porcelain.trim()) {
+                            await execAsync2('git', ['add', '-A'], { cwd: projectCwd, timeout: 30_000 });
+                            await execAsync2('git', ['commit', '-m', '[alfred-wizard] AI-scaffold by code-agent'], { cwd: projectCwd, timeout: 30_000 });
+                            if (cloneUrl) {
+                              try { await execAsync2('git', ['push', 'origin', 'main'], { cwd: projectCwd, timeout: 120_000 }); }
+                              catch (err) { this.logger.warn({ err }, 'v767 AI-scaffold push failed (commit lokal vorhanden)'); }
+                            }
+                          }
+                        } catch (err) {
+                          this.logger.warn({ err }, 'v767 AI-scaffold commit/push failed');
+                        }
+                        this.logger.info({ projectName: input.name, cwd: projectCwd }, 'v767 AI-Scaffold completed');
+                      } catch (err) {
+                        this.logger.warn({ err }, 'v767 AI-Scaffold code-agent run failed');
+                      }
+                    })().catch(err => this.logger.warn({ err }, 'v767 AI-Scaffold fire-and-forget caught'));
+                    aiScaffoldKicked = true;
                   }
                 }
 
