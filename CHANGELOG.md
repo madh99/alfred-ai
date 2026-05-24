@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.741] - 2026-05-24
+
+### Added — Inline-Logs in Failed-Banner + Deploy-History-Section
+
+**Inline-Container-Logs für failed Sandboxes** (`ProjectSandboxesView.tsx`):
+- Im Failed-Banner statt SSH-Command-Hint jetzt direkt ein Button `📜 Container-Logs anzeigen`
+- Lazy-load via `fetchSandboxLogs(id, 100)` (existiert seit v728)
+- Inline-Expansion mit `<pre>`-Block, max-height 256px + scroll
+- `🙈 Logs ausblenden` Toggle zum Schließen
+- Map-State `inlineLogs[sandboxId]` mit `{loading, text, open}`
+- Plus-Bonus: alle non-failed Sandboxes können ihre Logs weiterhin im Interactive-Chat 📜-Toolbar-Button öffnen
+
+Damit musst du nicht mehr in SSH wechseln um zu sehen warum eine Sandbox gefailed ist — direkt im UI sichtbar.
+
+**Deploy-History-Section** (neue Komponente `ProjectDeployHistoryView.tsx`):
+- Kollabierbare Section unter Sandboxes-View mit Header `📦 Deploy-Verlauf (✓ 5 ✗ 2 / 7)`
+- Header-Stats: Success-Count + Failed-Count + Total
+- Liste aller Deploys aus `fetchProjectLastDeploys` (lazy-load beim Expand)
+- Pro Eintrag:
+  - Status-Badge (✓ deployed / ✗ failed, color-coded)
+  - `user@host` mono-font
+  - Runtime · ProcessManager (mit compose-variant) · Port
+  - Verified-Icon ✓ wenn Post-Deploy-Check OK
+  - Relative-Time + absolute-Time-Tooltip
+  - Failed-Deploys haben rote Border + Error-Snippet (line-clamp-2)
+  - `↻ Re-Deploy`-Button öffnet das DeployModal (Prefill-Logik existiert dort schon)
+- Host-Filter-Dropdown (alle | spezifischer Host) mit Per-Host-Count
+- 🔄 Refresh-Button
+
+In `ProjectsPage` direkt nach Sandboxes-View eingehängt. Onreduplicate=setDeployModalOpen — der existierende Modal lädt eh die letzten Deploys + applied den ersten passenden Host automatisch (v659).
+
 ## [0.19.0-multi-ha.740] - 2026-05-24
 
 ### Added — Diff-Modal im Interactive-Chat + Failed-State-Banner

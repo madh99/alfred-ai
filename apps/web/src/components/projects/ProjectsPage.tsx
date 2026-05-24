@@ -17,6 +17,7 @@ import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
 import { ProjectDbSeedsView } from './ProjectDbSeedsView';
 import { ProjectSandboxesView } from './ProjectSandboxesView';
+import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
 import { ProjectStorageView } from './ProjectStorageView';
 
@@ -972,6 +973,14 @@ export function ProjectsPage() {
 
               {/* v737 — Sandboxes-Übersicht mit Quick-Actions */}
               <ProjectSandboxesView projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v741 — Deploy-History */}
+              <ProjectDeployHistoryView
+                projectId={detail.project.id}
+                projectName={detail.project.name}
+                defaultRepoUrl={detail.project.repoUrl}
+                onReDeploy={() => setDeployModalOpen(true)}
+              />
 
               {/* v663a — Conventions (collapsible) */}
               <ProjectConventionsView

@@ -63,6 +63,8 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
   // v739 — Sandbox-Status für Quota-Display + dynamischen Idle-Timeout
   const [status, setStatus] = useState<SandboxStatusResponse | null>(null);
   const [globalActiveCount, setGlobalActiveCount] = useState<number>(0);
+  // v741 — Inline-Logs pro Sandbox (Map: sandboxId → logs)
+  const [inlineLogs, setInlineLogs] = useState<Record<string, { loading: boolean; text: string; open: boolean }>>({});
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -134,6 +136,23 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
     finally { setBusyId(null); }
   }
 
+  // v741 — Inline-Logs für failed sandboxes lazy laden
+  async function toggleLogs(sandboxId: string) {
+    if (!client) return;
+    const current = inlineLogs[sandboxId];
+    if (current?.open) {
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { ...current, open: false } }));
+      return;
+    }
+    setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: true, text: '', open: true } }));
+    try {
+      const r = await client.fetchSandboxLogs(sandboxId, 100);
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: false, text: r.ok && r.logs ? r.logs : `[Fehler: ${r.reason ?? 'unknown'}]`, open: true } }));
+    } catch (e) {
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: false, text: `[Fehler: ${e instanceof Error ? e.message : String(e)}]`, open: true } }));
+    }
+  }
+
   function handleOpen(s: SandboxItem) {
     // Interactive → Chat-Page, sonst → Sandboxes-Liste
     if (s.containerId && s.hostPort) {
@@ -201,14 +220,29 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
             const isFailed = s.status === 'failed';
             return (
               <div key={s.id} className={`rounded p-2 space-y-1 ${isFailed ? 'bg-red-500/5 border-2 border-red-500/40' : 'bg-[#0a0a0a] border border-[#1a1a1a]'}`}>
-                {/* v740 — Recovery-Banner für failed Sandboxes */}
-                {isFailed && (
-                  <div className="flex items-center gap-2 text-red-300 text-[11px] mb-1">
-                    <span className="font-semibold">❌ Sandbox gefailed</span>
-                    <span className="text-gray-400">— Discard empfohlen. Container-Logs vorher prüfen via SSH:</span>
-                    <code className="text-[10px] text-gray-500 font-mono">sudo docker logs alfred-sandbox-{s.id.slice(0, 8)}</code>
-                  </div>
-                )}
+                {/* v740/v741 — Recovery-Banner für failed Sandboxes mit Inline-Logs */}
+                {isFailed && (() => {
+                  const logState = inlineLogs[s.id];
+                  return (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 text-red-300 text-[11px] mb-1 flex-wrap">
+                        <span className="font-semibold">❌ Sandbox gefailed</span>
+                        <span className="text-gray-400">— Discard empfohlen.</span>
+                        <button
+                          onClick={() => toggleLogs(s.id)}
+                          className="px-2 py-0.5 border border-red-500/40 text-red-300 hover:bg-red-500/15 rounded text-[10px]"
+                        >
+                          {logState?.open ? '🙈 Logs ausblenden' : '📜 Container-Logs anzeigen'}
+                        </button>
+                      </div>
+                      {logState?.open && (
+                        <pre className="bg-black border border-red-500/30 rounded p-2 text-[10px] text-gray-300 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono">
+                          {logState.loading ? '(lädt…)' : (logState.text || '(keine Logs)')}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className={`px-2 py-0.5 rounded border text-[10px] ${STATUS_COLOR[s.status]}`}>{s.status}</span>
                   <code className="text-amber-300 font-mono text-[11px]">{s.branchName}</code>
