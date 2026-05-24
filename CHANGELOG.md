@@ -5,6 +5,21 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.754] - 2026-05-24
+
+### Added — Sandbox-Verteilung pro Node im /cluster-Dashboard
+
+Auf der `/cluster`-Seite war bislang sichtbar welche Adapter auf welchem Node claimen und welcher Node welche Reasoning-Slots erledigt — aber nicht, wie sich die Sandbox-Last über die Nodes verteilt. Bei 3 Nodes und Quota-Druck war das eine Lücke.
+
+**NodeCard-Erweiterung**:
+- Total-Sandbox-Count rechts oben im Sandboxes-Block
+- Horizontaler Status-Balken (running emerald / paused blue / failed red), proportional aufgeteilt
+- Legende mit Counts pro Status
+- RAM-Peak-Sum aller running-Sandboxes des Nodes (wenn ramPeakMb gesetzt)
+- Älteste running-Sandbox: relative Zeit ("3h ago") — hilft Long-Running-Stragglers zu identifizieren
+
+**Implementation**: client-seitige Aggregation aus `listAllSandboxes()` — kein Backend-Change. Cleaned/discarded/merging werden gefiltert, da nicht resource-relevant. Auto-Refresh alle 15s zusammen mit dem bestehenden ClusterHealth-Polling.
+
 ## [0.19.0-multi-ha.753] - 2026-05-24
 
 ### Added — Bulk-Pause + Bulk-Resume in /sandboxes

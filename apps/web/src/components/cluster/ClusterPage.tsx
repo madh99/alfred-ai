@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import clsx from 'clsx';
 import type { ClusterHealthData, ClusterNode, AdapterClaim, ReasoningSlotEntry } from '@/types/api';
+import type { SandboxItem } from '@/lib/alfred-client';
 
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
@@ -27,16 +28,52 @@ function formatSlotTime(isoDate: string): string {
   });
 }
 
+interface NodeSandboxStats {
+  total: number;
+  running: number;
+  paused: number;
+  failed: number;
+  ramMb: number;
+  oldestRunningSince?: string;
+}
+
+function aggregateSandboxesByNode(sandboxes: SandboxItem[]): Record<string, NodeSandboxStats> {
+  const acc: Record<string, NodeSandboxStats> = {};
+  for (const s of sandboxes) {
+    if (s.status === 'cleaned' || s.status === 'discarded' || s.status === 'merging') continue;
+    const node = s.nodeId || 'unknown';
+    if (!acc[node]) acc[node] = { total: 0, running: 0, paused: 0, failed: 0, ramMb: 0 };
+    acc[node].total++;
+    if (s.status === 'running') {
+      acc[node].running++;
+      if (typeof s.ramPeakMb === 'number') acc[node].ramMb += s.ramPeakMb;
+      if (!acc[node].oldestRunningSince || s.createdAt < acc[node].oldestRunningSince) {
+        acc[node].oldestRunningSince = s.createdAt;
+      }
+    } else if (s.status === 'paused') {
+      acc[node].paused++;
+    } else if (s.status === 'failed') {
+      acc[node].failed++;
+    }
+  }
+  return acc;
+}
+
 export function ClusterPage() {
   const { client } = useConfig();
   const [data, setData] = useState<ClusterHealthData | null>(null);
+  const [sandboxStats, setSandboxStats] = useState<Record<string, NodeSandboxStats>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const d = await client.fetchClusterHealth();
+      const [d, sandboxes] = await Promise.all([
+        client.fetchClusterHealth(),
+        client.listAllSandboxes().catch(() => [] as SandboxItem[]),
+      ]);
       setData(d);
+      setSandboxStats(aggregateSandboxesByNode(sandboxes));
       setError(null);
     } catch (err) {
       setError((err as Error).message);
@@ -75,7 +112,7 @@ export function ClusterPage() {
         <h2 className="text-sm font-medium text-gray-400 mb-3">Nodes</h2>
         <div className="grid gap-3 grid-cols-1 md:grid-cols-2">
           {data.nodes.map(node => (
-            <NodeCard key={node.nodeId} node={node} isThis={node.nodeId === data.thisNodeId} />
+            <NodeCard key={node.nodeId} node={node} isThis={node.nodeId === data.thisNodeId} sandboxStats={sandboxStats[node.nodeId]} />
           ))}
         </div>
       </section>
@@ -168,7 +205,7 @@ export function ClusterPage() {
   );
 }
 
-function NodeCard({ node, isThis }: { node: ClusterNode; isThis: boolean }) {
+function NodeCard({ node, isThis, sandboxStats }: { node: ClusterNode; isThis: boolean; sandboxStats?: NodeSandboxStats }) {
   return (
     <div className={clsx(
       'bg-[#111111] border rounded-xl p-4',
@@ -200,6 +237,65 @@ function NodeCard({ node, isThis }: { node: ClusterNode; isThis: boolean }) {
             <span>Adapters</span>
             <span className="text-gray-300">{node.adapters.join(', ')}</span>
           </div>
+        )}
+      </div>
+      {/* v754 — Sandbox-Verteilung pro Node */}
+      <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+        <div className="flex items-center justify-between text-xs mb-2">
+          <span className="text-gray-400">Sandboxes</span>
+          <span className="text-gray-300 font-mono">{sandboxStats?.total ?? 0}</span>
+        </div>
+        {sandboxStats && sandboxStats.total > 0 ? (
+          <>
+            <div className="flex gap-1 mb-2">
+              {sandboxStats.running > 0 && (
+                <div
+                  className="h-2 bg-emerald-500/70 rounded-l"
+                  style={{ flex: sandboxStats.running }}
+                  title={`${sandboxStats.running} running`}
+                />
+              )}
+              {sandboxStats.paused > 0 && (
+                <div
+                  className="h-2 bg-blue-500/70"
+                  style={{ flex: sandboxStats.paused }}
+                  title={`${sandboxStats.paused} paused`}
+                />
+              )}
+              {sandboxStats.failed > 0 && (
+                <div
+                  className="h-2 bg-red-500/70 rounded-r"
+                  style={{ flex: sandboxStats.failed }}
+                  title={`${sandboxStats.failed} failed`}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-3 text-[10px] text-gray-400">
+              {sandboxStats.running > 0 && (
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />{sandboxStats.running} running</span>
+              )}
+              {sandboxStats.paused > 0 && (
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-blue-500" />{sandboxStats.paused} paused</span>
+              )}
+              {sandboxStats.failed > 0 && (
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-500" />{sandboxStats.failed} failed</span>
+              )}
+            </div>
+            {sandboxStats.ramMb > 0 && (
+              <div className="mt-1.5 flex justify-between text-[10px] text-gray-500">
+                <span>RAM-Peak Sum</span>
+                <span className="text-gray-400">{sandboxStats.ramMb} MB</span>
+              </div>
+            )}
+            {sandboxStats.oldestRunningSince && (
+              <div className="flex justify-between text-[10px] text-gray-500">
+                <span>Älteste running</span>
+                <span className="text-gray-400">{formatAgo(sandboxStats.oldestRunningSince)}</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <span className="text-[10px] text-gray-600 italic">— keine —</span>
         )}
       </div>
     </div>
