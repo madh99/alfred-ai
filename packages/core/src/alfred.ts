@@ -153,6 +153,8 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
+  /** v722 — Self-Learning: LearnedRecipeRepo (Pre-Hook + Action) */
+  private learnedRecipeRepo?: import('@alfred/storage').LearnedRecipeRepository;
   /** v658 — Projekt-Chat: ConversationRepository für chatHistory-Endpoint */
   private conversationRepo?: import('@alfred/storage').ConversationRepository;
   private insightsRepo?: import('@alfred/storage').InsightsRepository;
@@ -4300,6 +4302,20 @@ export class Alfred {
       }
     }
 
+    // v722 — Self-Learning: LearnedRecipeRepo an die Pipeline (Pre-Hook für Recipe-Augmentation)
+    // + an die MemorySkill (learn_recipe Action).
+    try {
+      const { LearnedRecipeRepository } = await import('@alfred/storage');
+      this.learnedRecipeRepo = new LearnedRecipeRepository(adapter);
+      this.pipeline.setLearnedRecipeRepo(this.learnedRecipeRepo);
+      if (this.memorySkillRef) {
+        this.memorySkillRef.setLearnedRecipeRepo(this.learnedRecipeRepo);
+      }
+      this.logger.info('v722 LearnedRecipeRepo wired (pipeline pre-hook + memory.learn_recipe)');
+    } catch (err) {
+      this.logger.debug({ err }, 'Could not wire learned-recipe repo (non-critical)');
+    }
+
     // 7a2. Wire optional moderation service into pipeline
     if (this.config.security?.moderation?.enabled) {
       const modConfig = this.config.security.moderation;
@@ -7426,6 +7442,89 @@ export class Alfred {
       } catch (err) {
         this.logger.warn({ err }, 'Skill-failure reflector init failed');
       }
+    }
+
+    // v722 — RefusalCorrectionReflector. Scannt Conversations nach
+    // "Refusal → User-Korrektur → erfolgreicher Skill-Call"-Triplets und legt
+    // entsprechende LearnedRecipes mit confidence=0.5 an.
+    if (this.conversationRepo && this.learnedRecipeRepo) {
+      try {
+        const { RefusalCorrectionReflector } = await import('./reflection/refusal-correction-reflector.js');
+        const refusalReflector = new RefusalCorrectionReflector(
+          this.conversationRepo,
+          this.learnedRecipeRepo,
+          this.logger.child({ component: 'refusal-correction-reflector' }),
+        );
+        // Sweep every 30 minutes — Pattern braucht User-Reaktion + Skill-Erfolg
+        setInterval(async () => {
+          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          if (!ownerUid) return;
+          try {
+            const detected = await refusalReflector.scanForUser(ownerUid);
+            if (detected.length > 0) {
+              this.logger.info({ count: detected.length }, 'v722 refusal-correction patterns → recipes persisted');
+            }
+          } catch (err) {
+            this.logger.debug({ err }, 'v722 refusal-correction sweep failed (non-critical)');
+          }
+        }, 30 * 60_000);
+        this.logger.info('v722 RefusalCorrectionReflector started (30min sweep interval)');
+      } catch (err) {
+        this.logger.warn({ err }, 'v722 RefusalCorrectionReflector init failed');
+      }
+    }
+
+    // v722 — Auto-Rules Audit beim Startup. Findet prosaische "merke dir wie ..."
+    // Memories und enqueued eine Confirmation den User zu fragen ob daraus ein
+    // strukturiertes Recipe werden soll. Single-Pass, kein Interval — der User soll
+    // einmal Klarheit schaffen, nicht permanent gestört werden.
+    if (this.memoryRepo && this.confirmationQueue && this.learnedRecipeRepo) {
+      // Fire-and-forget, leicht verzögert damit der Startup-Pfad nicht blockiert
+      setTimeout(async () => {
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        if (!ownerUid || !this.confirmationQueue || !this.memoryRepo) return;
+        try {
+          const existingRecipes = await this.learnedRecipeRepo!.list(ownerUid, { includeInvalidated: true, limit: 500 });
+          const seenTriggers = new Set(existingRecipes.map(r => r.triggerPhrase.toLowerCase().trim()));
+          const candidates = await this.memoryRepo.search(ownerUid, 'wie');
+          const proseRulePattern = /\b(merke dir|wenn der user|wenn ich sage|du sollst dann)\b/i;
+          const ownerPlatformForAudit = (this.config.telegram?.enabled ? 'telegram'
+            : this.config.discord?.enabled ? 'discord'
+            : this.config.whatsapp?.enabled ? 'whatsapp'
+            : 'api');
+          let enqueued = 0;
+          for (const m of candidates.slice(0, 20)) {
+            if (!proseRulePattern.test(m.value)) continue;
+            const triggerKey = (m.key + ' ' + m.value).toLowerCase().slice(0, 200).trim();
+            if (seenTriggers.has(triggerKey)) continue;
+            const dedupSourceId = `audit-prose-rule-${m.key}`;
+            await this.confirmationQueue.enqueue({
+              chatId: this.config.security?.ownerUserId ?? '',
+              platform: ownerPlatformForAudit,
+              source: 'reasoning',
+              sourceId: dedupSourceId,
+              description: `Audit (v722): Memory "${m.key}" sieht aus wie eine prosaische Regel — soll daraus ein strukturiertes Recipe werden? Inhalt: "${m.value.slice(0, 120)}..."`,
+              skillName: 'memory',
+              skillParams: {
+                action: 'learn_recipe',
+                trigger_phrase: m.key.replace(/^(?:rule_|behavior_|auto_)/, '').replace(/_/g, ' '),
+                action_sequence: '[]', // User soll im Confirmation-Dialog präzisieren
+                context_hint: `Quelle: bestehende Memory "${m.key}". Original-Text: ${m.value.slice(0, 200)}`,
+              },
+              timeoutMinutes: 7 * 24 * 60,
+            });
+            enqueued++;
+            if (enqueued >= 5) break; // Don't spam — max 5 per audit-run
+          }
+          if (enqueued > 0) {
+            this.logger.info({ enqueued }, 'v722 auto-rules audit: enqueued recipe-creation confirmations');
+          } else {
+            this.logger.debug('v722 auto-rules audit: no prose rules found');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v722 auto-rules audit failed (non-fatal)');
+        }
+      }, 30_000); // 30s nach Startup
     }
 
     // Dead-node monitoring (observability only — adapter failover handled by AdapterClaimManager)

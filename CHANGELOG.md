@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.722] - 2026-05-24
+
+### Added — Self-Learning: maschinen-lesbare Recipes statt prosaischer Auto-Rules
+
+User-Beobachtung nach v721-Test: Bei einer Radio-Anfrage antwortete Alfred zuerst "kann ich nicht" — erst nach User-Push-Back ("hast du in der Vergangenheit aber schon") fand Alfred die hinterlegte Stream-URL im Memory und führte den Skill korrekt aus. Erwartung des Users: Alfred soll sich diese Auflösung dauerhaft merken, damit beim nächsten Trigger DIREKT der richtige Skill ausgeführt wird — und zwar in einer Form, die der LLM tatsächlich nutzen kann (nicht als prosaischer "merke dir wie ..."-Memory-Text, den die LLM beim nächsten Mal genauso wieder ignoriert).
+
+Lösung: Strukturiertes Recipe-System mit 5 Komponenten.
+
+- **Migration v90 (SQLite) / v93 (PG)**: Tabelle `learned_recipes` mit (trigger_phrase, trigger_keywords JSON, action_sequence JSON, context_hint, confidence, source, success_count, fail_count, invalidated_at, superseded_by).
+- **LearnedRecipeRepository** (`@alfred/storage`): CRUD + `findMatching(userId, userText)` (Keyword-Score gegen Trigger-Keywords) + `recordSuccess/recordFail` (Confidence-Auto-Adjustment, Auto-Invalidate bei zu vielen Fails).
+- **Reasoning Pre-Hook in message-pipeline** (Phase 4): Bei jeder User-Message werden vor dem LLM-Call passende Recipes via `findMatching` gesucht und als `## Bekannte Rezepte (Self-Learning)` Sektion in den System-Prompt injiziert — inkl. confidence, action_sequence JSON und recipe_id. Der LLM hat damit einen DIREKTEN Vorschlag mit ausführbarem Schema vor sich, statt zu refuse'n.
+- **RefusalCorrectionReflector** (`packages/core/src/reflection/`, Phase 3): 30min-Sweep, scannt Conversations nach "assistant refusal → user correction → assistant skill-call mit tool_calls"-Triplets innerhalb 30min-Window. Bei Match: extrahiert tool_calls als RecipeAction[], persistiert als Recipe mit source=`refusal_correction`, confidence=0.5.
+- **memory.learn_recipe Action** (Phase 7): Manueller Pfad — User/LLM kann via `memory action=learn_recipe trigger_phrase="..." action_sequence=[{skill, action, params}, ...]` ein Recipe direkt anlegen (source=`manual`, confidence=0.7).
+- **Auto-Rules Audit beim Startup** (Phase 8): 30s nach Boot single-pass Scan über Memories mit "wie"-Substring. Wenn `merke dir|wenn der user|wenn ich sage|du sollst dann` Pattern matcht → ConfirmationQueue-Vorschlag den prosaischen Memory in ein strukturiertes Recipe zu überführen. Max 5 Vorschläge pro Audit-Run damit der User nicht überflutet wird.
+
+Self-Learning-Loop:
+1. User triggert Aufgabe → Alfred refused
+2. User korrigiert → Alfred findet workaround und führt skill aus
+3. RefusalCorrectionReflector erkennt Pattern → persistiert Recipe (confidence=0.5)
+4. Nächste Trigger-Phrase → Pre-Hook injiziert Recipe in System-Prompt → LLM führt action_sequence direkt aus (kein Refusal mehr)
+
+Deferred (v723+): Phase 5 (Skill-Result-Augmentation für leere Results) und Phase 6 (Auto-Confirmation Dialog "soll ich das merken?") brauchen tiefere Skill-Registry-Hooks und kommen in einem Follow-up.
+
 ## [0.19.0-multi-ha.721] - 2026-05-24
 
 ### Fixed — Interactive-Sandbox-Chat erzeugte Ghost-Projects mit Worktree-Pfad

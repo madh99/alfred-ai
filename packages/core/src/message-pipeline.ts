@@ -224,6 +224,8 @@ export class MessagePipeline {
   /** v658 — Projekt-Chat: für System-Prompt-Injection des Projekt-Kontextes */
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   private projectAgentSessionRepo?: import('@alfred/storage').ProjectAgentSessionRepository;
+  /** v722 — Self-Learning: matchende LearnedRecipes als Hinweise in den System-Prompt injizieren. */
+  private learnedRecipeRepo?: import('@alfred/storage').LearnedRecipeRepository;
   private alfredUserRepo?: import('@alfred/storage').AlfredUserRepository;
   private roleSkillAccess?: Record<string, string[] | '*'>;
   // v685 — Owner-Master-User-ID (vom alfred.ts gesetzt). Wenn die Pipeline-Message
@@ -307,6 +309,11 @@ export class MessagePipeline {
    *  running sessions in the system prompt (scopes valid interject targets). */
   setProjectAgentSessionRepo(repo: import('@alfred/storage').ProjectAgentSessionRepository): void {
     this.projectAgentSessionRepo = repo;
+  }
+
+  /** v722 — LearnedRecipeRepo für Pre-Hook (Recipe-Match → System-Prompt-Augmentation). */
+  setLearnedRecipeRepo(repo: import('@alfred/storage').LearnedRecipeRepository): void {
+    this.learnedRecipeRepo = repo;
   }
 
   setModerationService(service: import('@alfred/security').ModerationService): void {
@@ -885,6 +892,33 @@ export class MessagePipeline {
       });
 
       tracePhase('system_prompt_built', { chars: system.length });
+
+      // v722 — Self-Learning Pre-Hook: matchende LearnedRecipes in den System-Prompt
+      // injizieren, damit der LLM einen direkten "so geht es"-Hint vor sich hat statt
+      // mit "kann ich nicht" zu antworten. Best-effort — Fehler darf nicht den Chat brechen.
+      if (this.learnedRecipeRepo && message.text) {
+        try {
+          const matched = await this.learnedRecipeRepo.findMatching(masterUserId, message.text, 3);
+          if (matched.length > 0) {
+            const lines: string[] = ['', '## Bekannte Rezepte (Self-Learning)'];
+            lines.push('Du hast diese Aufgaben in der Vergangenheit bereits erfolgreich gelöst.');
+            lines.push('Wenn die User-Anfrage dazu passt: führe die action_sequence direkt aus statt zu sagen "kann ich nicht".');
+            for (const r of matched) {
+              const conf = (r.confidence * 100).toFixed(0);
+              lines.push(`\n### "${r.triggerPhrase.slice(0, 80)}" (confidence=${conf}%, success=${r.successCount}/${r.successCount + r.failCount})`);
+              if (r.contextHint) lines.push(`- Kontext: ${r.contextHint}`);
+              lines.push(`- action_sequence: \`\`\`json`);
+              lines.push(JSON.stringify(r.actionSequence, null, 2));
+              lines.push(`\`\`\``);
+              lines.push(`- recipe_id: \`${r.id}\``);
+            }
+            system += '\n' + lines.join('\n');
+            this.logger.debug({ userId: masterUserId, matched: matched.length, recipeIds: matched.map(r => r.id) }, 'v722 learned recipes injected into prompt');
+          }
+        } catch (err) {
+          this.logger.debug({ err }, 'v722 recipe pre-hook failed (continuing)');
+        }
+      }
 
       // v658 — Projekt-Chat: bei projectId in metadata den Projekt-Kontext laden
       // und in den System-Prompt injizieren. So weiß der LLM cwd, repo, aktive Sessions,

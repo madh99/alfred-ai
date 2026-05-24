@@ -1,6 +1,6 @@
 import type { SkillMetadata, SkillContext, SkillResult } from '@alfred/types';
 import { Skill } from '../skill.js';
-import type { MemoryRepository } from '@alfred/storage';
+import type { MemoryRepository, LearnedRecipeRepository, RecipeAction } from '@alfred/storage';
 import { effectiveUserId, allUserIds } from '../user-utils.js';
 import { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from '../relative-date-resolver.js';
 
@@ -9,7 +9,7 @@ interface EmbeddingServiceLike {
   semanticSearch(userId: string, query: string, limit?: number): Promise<{ key: string; value: string; category: string; score: number }[]>;
 }
 
-type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic_search' | 'kg_analyze';
+type MemoryAction = 'save' | 'recall' | 'search' | 'list' | 'delete' | 'semantic_search' | 'kg_analyze' | 'learn_recipe';
 
 export class MemorySkill extends Skill {
   readonly metadata: SkillMetadata = {
@@ -26,8 +26,19 @@ export class MemorySkill extends Skill {
       properties: {
         action: {
           type: 'string',
-          enum: ['save', 'recall', 'search', 'list', 'delete', 'semantic_search', 'kg_analyze'],
-          description: 'The memory action to perform. kg_analyze: triggers Knowledge Graph analysis (entity linking, family inference, chat analysis)',
+          enum: ['save', 'recall', 'search', 'list', 'delete', 'semantic_search', 'kg_analyze', 'learn_recipe'],
+          description: 'The memory action to perform. kg_analyze: triggers Knowledge Graph analysis. learn_recipe (v722): saves a machine-readable recipe (trigger_phrase + action_sequence JSON) so Alfred kann diese Aufgabe in Zukunft direkt ausführen statt "kann ich nicht" zu sagen.',
+        },
+        trigger_phrase: {
+          type: 'string',
+          description: 'v722 learn_recipe: Was der User typischerweise sagt (z.B. "starte radio göd")',
+        },
+        action_sequence: {
+          description: 'v722 learn_recipe: JSON-Array von {skill, action?, params} — direkt ausführbare Skill-Aufrufe',
+        },
+        context_hint: {
+          type: 'string',
+          description: 'v722 learn_recipe: Optionaler Hint (z.B. "Stream-URL liegt in memory radio_stream_oe1")',
         },
         key: {
           type: 'string',
@@ -71,9 +82,14 @@ export class MemorySkill extends Skill {
   };
 
   private kgAnalyzeCallback?: (userId: string) => Promise<{ entities: number; relations: number; newEntities: number; corrections: number }>;
+  /** v722 — LearnedRecipeRepo für learn_recipe Action (injected from alfred.ts). */
+  private learnedRecipeRepo?: LearnedRecipeRepository;
 
   /** Set callback for KG analysis (injected from alfred.ts). */
   setKgAnalyzeCallback(cb: typeof this.kgAnalyzeCallback): void { this.kgAnalyzeCallback = cb; }
+
+  /** v722 — Inject LearnedRecipeRepo from alfred.ts. */
+  setLearnedRecipeRepo(repo: LearnedRecipeRepository): void { this.learnedRecipeRepo = repo; }
 
   constructor(
     private readonly memoryRepo: MemoryRepository,
@@ -103,6 +119,8 @@ export class MemorySkill extends Skill {
         return this.semanticSearchMemories(input, context);
       case 'kg_analyze':
         return this.triggerKgAnalysis(context);
+      case 'learn_recipe':
+        return this.learnRecipe(input, context);
       default:
         return {
           success: false,
@@ -393,5 +411,74 @@ export class MemorySkill extends Skill {
       `**Korrekturen:** ${stats.corrections}`,
     ];
     return { success: true, data: stats, display: lines.join('\n') };
+  }
+
+  /**
+   * v722 — learn_recipe: speichert eine maschinen-lesbare Action-Sequence damit Alfred
+   * eine wiederkehrende Aufgabe in Zukunft direkt ausführen kann statt zu refuse'n.
+   * Akzeptiert action_sequence sowohl als JSON-String als auch als Array (LLM-tolerant).
+   */
+  private async learnRecipe(input: Record<string, unknown>, context: SkillContext): Promise<SkillResult> {
+    if (!this.learnedRecipeRepo) {
+      return { success: false, error: 'Self-Learning nicht verfügbar (LearnedRecipeRepo nicht initialisiert).' };
+    }
+    const triggerPhrase = input.trigger_phrase as string | undefined;
+    const rawSeq = input.action_sequence;
+    const contextHint = input.context_hint as string | undefined;
+
+    if (!triggerPhrase || typeof triggerPhrase !== 'string') {
+      return { success: false, error: 'Missing required field "trigger_phrase" for learn_recipe' };
+    }
+
+    let actionSequence: RecipeAction[] = [];
+    try {
+      const parsed = typeof rawSeq === 'string' ? JSON.parse(rawSeq) : rawSeq;
+      if (!Array.isArray(parsed)) throw new Error('action_sequence must be an array');
+      for (const step of parsed) {
+        if (!step || typeof step !== 'object') continue;
+        const s = step as Record<string, unknown>;
+        if (typeof s.skill !== 'string') continue;
+        actionSequence.push({
+          skill: s.skill,
+          action: typeof s.action === 'string' ? s.action : undefined,
+          params: (s.params && typeof s.params === 'object') ? s.params as Record<string, unknown> : {},
+        });
+      }
+    } catch (err) {
+      return { success: false, error: `Invalid action_sequence: ${(err as Error).message}` };
+    }
+    if (actionSequence.length === 0) {
+      return { success: false, error: 'action_sequence ist leer oder enthält keine gültigen {skill, params} Steps' };
+    }
+
+    const userId = context.alfredUserId ?? context.userId;
+    const triggerKeywords = this.tokenizeTrigger(triggerPhrase);
+    const recipe = await this.learnedRecipeRepo.create({
+      userId,
+      triggerPhrase,
+      triggerKeywords,
+      actionSequence,
+      contextHint,
+      source: 'manual',
+      confidence: 0.7, // manual learns starten höher
+    });
+    return {
+      success: true,
+      data: { recipeId: recipe.id, keywords: triggerKeywords, steps: actionSequence.length },
+      display: `🧠 Rezept gemerkt: "${triggerPhrase.slice(0, 60)}" (${actionSequence.length} Steps, confidence=70%, recipe_id=\`${recipe.id.slice(0, 8)}\`)`,
+    };
+  }
+
+  private tokenizeTrigger(text: string): string[] {
+    const lc = text.toLowerCase();
+    const tokens = lc.match(/[a-zäöüß0-9_]+/g) ?? [];
+    const stop = new Set(['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'aber', 'mit', 'ohne', 'für', 'von', 'auf', 'bitte', 'starte', 'spiel', 'spiele']);
+    const uniq = new Set<string>();
+    for (const t of tokens) {
+      if (t.length < 4) continue;
+      if (stop.has(t)) continue;
+      uniq.add(t);
+    }
+    return Array.from(uniq).slice(0, 8);
   }
 }
