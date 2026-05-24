@@ -62,6 +62,12 @@ export default function SandboxesPage() {
   const [createEnvStages, setCreateEnvStages] = useState<Array<{ stage: string; keyCount: number }>>([]);
   const [createSeeds, setCreateSeeds] = useState<Array<{ id: string; name: string; kind: string }>>([]);
   const [inlineLogs, setInlineLogs] = useState<Record<string, { loading: boolean; text: string; open: boolean }>>({});
+  // v750 — Multi-Select + Sort
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [sortBy, setSortBy] = useState<'lastActive-desc' | 'created-desc' | 'project' | 'status'>(() => {
+    if (typeof window === 'undefined') return 'lastActive-desc';
+    try { return (localStorage.getItem('alfred.sandboxes.sortBy') as never) || 'lastActive-desc'; } catch { return 'lastActive-desc'; }
+  });
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -82,6 +88,50 @@ export default function SandboxesPage() {
   }, [client, createProjectId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // v750 — Sort-Preference persistieren
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try { localStorage.setItem('alfred.sandboxes.sortBy', sortBy); } catch { /* */ }
+  }, [sortBy]);
+
+  // v750 — Bulk-Discard ausgewählter Sandboxes
+  async function handleBulkDiscard() {
+    if (!client || selected.size === 0) return;
+    if (!confirm(`${selected.size} Sandbox(es) verwerfen? Alle nicht-gemergten Änderungen gehen verloren.`)) return;
+    setBusy('bulk');
+    let ok = 0, failed = 0;
+    for (const id of Array.from(selected)) {
+      try { await client.discardSandbox(id); ok++; }
+      catch { failed++; }
+    }
+    setSelected(new Set());
+    await load();
+    setBusy(null);
+    if (failed > 0) setError(`Bulk-Discard: ${ok} ok, ${failed} fehlgeschlagen`);
+  }
+
+  function toggleSelect(id: string) {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllVisible() {
+    const ids = filteredSandboxes.filter(s => s.status === 'running' || s.status === 'paused' || s.status === 'failed').map(s => s.id);
+    if (ids.every(id => selected.has(id))) {
+      // Alle visible bereits selected → deselect
+      setSelected(prev => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+      });
+    } else {
+      setSelected(prev => new Set([...Array.from(prev), ...ids]));
+    }
+  }
 
   // Auto-refresh: v743 erweitert um running (für Idle-Countdown live)
   useEffect(() => {
@@ -228,12 +278,27 @@ export default function SandboxesPage() {
 
   // v743 — Gefilterte Liste + Quota-Berechnung
   const activeStatuses: SandboxStatus[] = ['creating', 'running', 'paused', 'merging', 'failed'];
-  const filteredSandboxes = sandboxes.filter(sb => {
-    if (filterProjectId && sb.projectId !== filterProjectId) return false;
-    if (filterStatus === 'all') return true;
-    if (filterStatus === 'active') return activeStatuses.includes(sb.status);
-    return sb.status === filterStatus;
-  });
+  const filteredSandboxes = sandboxes
+    .filter(sb => {
+      if (filterProjectId && sb.projectId !== filterProjectId) return false;
+      if (filterStatus === 'all') return true;
+      if (filterStatus === 'active') return activeStatuses.includes(sb.status);
+      return sb.status === filterStatus;
+    })
+    .sort((a, b) => {
+      // v750 — konfigurierbare Sortierung
+      switch (sortBy) {
+        case 'created-desc':
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        case 'project':
+          return (projectName(a.projectId)).localeCompare(projectName(b.projectId));
+        case 'status':
+          return a.status.localeCompare(b.status) || new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime();
+        case 'lastActive-desc':
+        default:
+          return new Date(b.lastActiveAt).getTime() - new Date(a.lastActiveAt).getTime();
+      }
+    });
   const globalActiveCount = sandboxes.filter(s => ['creating', 'running', 'paused', 'merging'].includes(s.status)).length;
   const uniqueProjectsInList = Array.from(new Set(sandboxes.map(s => s.projectId)));
 
@@ -297,6 +362,14 @@ export default function SandboxesPage() {
               </div>
             );
           })()}
+          {/* v750 — Alle sichtbaren auswählen */}
+          {filteredSandboxes.some(s => s.status === 'running' || s.status === 'paused' || s.status === 'failed') && (
+            <button
+              onClick={selectAllVisible}
+              className="px-3 py-1.5 text-sm text-gray-400 hover:text-gray-200"
+              title="Alle sichtbaren actionable Sandboxes selektieren/deselektieren"
+            >☑ Alle</button>
+          )}
           <button
             onClick={load}
             className="px-3 py-1.5 text-sm text-blue-400 hover:text-blue-300"
@@ -344,9 +417,35 @@ export default function SandboxesPage() {
               </option>
             ))}
           </select>
+          {/* v750 — Sort-Dropdown */}
+          <span className="text-gray-500">Sortierung:</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+            className="bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-gray-200"
+          >
+            <option value="lastActive-desc">Letzte Aktivität (neueste oben)</option>
+            <option value="created-desc">Erstellt (neueste oben)</option>
+            <option value="project">Projekt (A-Z)</option>
+            <option value="status">Status</option>
+          </select>
           <span className="text-gray-500 ml-auto">
             {filteredSandboxes.length} / {sandboxes.length} angezeigt
           </span>
+        </div>
+      )}
+
+      {/* v750 — Bulk-Action-Bar wenn ausgewählt */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 text-xs">
+          <span className="text-blue-300 font-semibold">{selected.size} ausgewählt</span>
+          <span className="text-gray-500">·</span>
+          <button onClick={() => setSelected(new Set())} className="text-gray-400 hover:text-gray-200">Auswahl löschen</button>
+          <button
+            onClick={handleBulkDiscard}
+            disabled={busy === 'bulk'}
+            className="ml-auto px-3 py-1 border border-red-500/40 text-red-300 hover:bg-red-500/15 rounded disabled:opacity-50"
+          >{busy === 'bulk' ? '⏳ Verwerfe…' : `🗑️ ${selected.size} verwerfen`}</button>
         </div>
       )}
 
@@ -466,6 +565,16 @@ export default function SandboxesPage() {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
+                    {/* v750 — Multi-Select Checkbox (nur für running/paused/failed) */}
+                    {(sb.status === 'running' || sb.status === 'paused' || sb.status === 'failed') && (
+                      <input
+                        type="checkbox"
+                        checked={selected.has(sb.id)}
+                        onChange={() => toggleSelect(sb.id)}
+                        className="cursor-pointer"
+                        title="Für Bulk-Action auswählen"
+                      />
+                    )}
                     <span className={`text-[10px] px-2 py-0.5 rounded border ${STATUS_COLOR[sb.status] ?? 'text-gray-400 border-gray-500/40'}`}>{sb.status}</span>
                     <span className="text-xs text-gray-400">{projectName(sb.projectId)}</span>
                     {sb.projectType && <span className="text-[10px] text-gray-600">· {sb.projectType}</span>}

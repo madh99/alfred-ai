@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.750] - 2026-05-24
+
+### Added — Multi-Select + Bulk-Discard + Sortier-Optionen in /sandboxes
+
+Wenn man viele Sandboxes hat, brauchts effizientere Bulk-Operationen statt einzeln durchklicken.
+
+**Multi-Select** (`/sandboxes`-Page):
+- Checkbox pro Sandbox-Card (nur für actionable Status: running/paused/failed — creating/merging haben keine)
+- Selection-State im React-State (Set<string>)
+- ☑ Alle-Button in Header: toggle alle visible actionable Sandboxes (rein/raus)
+
+**Bulk-Action-Bar** (sichtbar wenn selected.size > 0):
+- `N ausgewählt · Auswahl löschen · 🗑️ N verwerfen`
+- Discard-Loop führt sequentiell aus, sammelt ok/failed counts
+- Bei partial failure: Error-Banner mit summary `Bulk-Discard: 5 ok, 2 fehlgeschlagen`
+- Nach Bulk-Run wird Selection cleared + Liste reloaded
+
+**Sortier-Dropdown** (in Filter-Bar):
+- Letzte Aktivität (neueste oben) — default
+- Erstellt (neueste oben)
+- Projekt (A-Z)
+- Status
+- Persistiert in `localStorage.alfred.sandboxes.sortBy` damit User-Wahl über Sessions überlebt
+- Sort wird VOR Filter angewendet (Filter ist nur Sichtbarkeits-Filter)
+
+Typical use case: Sandbox-Quota voll → Filter auf "paused" + sort lastActiveAt-asc → älteste paused oben → Alle auswählen → 🗑️ verwerfen → wieder freie Slots.
+
 ## [0.19.0-multi-ha.749] - 2026-05-24
 
 ### Added — Auto-Cleanup stuck Sandboxes beim Startup + periodisch alle 5min
