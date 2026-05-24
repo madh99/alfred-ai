@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.727] - 2026-05-24
+
+### Fixed — Project-Agent zerstörte dev-server-Cache bei laufender Sandbox
+
+User-Beobachtung: Im Interactive-Sandbox-Modus rief der Project-Agent bei jeder Validation `npm run build` (= `next build`) auf. Das überschrieb den `.next/`-Build-Cache des parallel laufenden `next dev --turbopack` mit Production-Output → Dev-Server warf bei jedem Request `ENOENT: no such file or directory, open '/workspace/.next/server/app/(public)/page/app-build-manifest.json'` → "Internal Server Error" in der Preview. Manueller Recovery: Container stoppen, `rm -rf .next`, Container starten.
+
+Root-Cause: `autoDetectBuildCommands` in `project-agent-skill.ts` hat `npm run build` blindly aus dem package.json eingelesen — ohne zu wissen ob bereits ein dev-server für genau dieses Projekt läuft.
+
+Fix:
+- **`ProjectAgentSkill.setSandboxRepo()`** — neue Late-Wire-Methode, von alfred.ts gerufen sobald `SandboxRepo` initialisiert ist.
+- **Pre-Build-Check in `start`-Action**: vor `autoDetectBuildCommands` wird die Project-ID aus dem cwd resolved und `sandboxRepo.listByProject(projectId, ['running'])` geprüft. Wenn eine running Sandbox mit hostPort > 0 existiert → `runningSandbox = {hostPort}` an autoDetect weitergegeben.
+- **`autoDetectBuildCommands(cwd, {runningSandbox})`** erweitert: wenn `runningSandbox` gesetzt, wird `npm run build` aus der Command-Liste **entfernt** und stattdessen ein **HTTP-Health-Check** angehängt:
+  ```
+  curl -fsS --max-time 20 http://127.0.0.1:<hostPort>/ -o /dev/null
+  ```
+  `curl -f` returnt exit-code != 0 bei 4xx/5xx → wird vom `validateBuild`-Pipeline als Build-Failure erkannt → Agent läuft Fix-Iteration.
+- typecheck + lint laufen weiterhin (keine `.next/`-Mutation).
+- Sichtbares Hinweis im Start-Response: `🌐 Live-Sandbox erkannt (port 9101) — Build-Step durch HTTP-Health-Check ersetzt damit der dev-server intakt bleibt.`
+
+Drei-Layer-Validation:
+1. **Type-Check** (`npm run typecheck`) — TypeScript-Errors
+2. **Lint** (`npm run lint`) — Style + offensichtliche Bugs
+3. **Live-Render-Check** (curl gegen Sandbox) — runtime/SSR-Errors über echte dev-server-Page-Rendering. Stärker als production-Build weil Hydration tatsächlich läuft.
+
+Fallback: wenn keine Sandbox läuft (z.B. Standalone Project-Agent ohne Interactive-Mode) → `npm run build` wie bisher.
+
 ## [0.19.0-multi-ha.726] - 2026-05-24
 
 ### Added — Project-ENV-Management mit AES-GCM-Verschlüsselung + Sandbox-Integration

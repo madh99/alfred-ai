@@ -171,6 +171,8 @@ export class Alfred {
   private projectManager?: import('./projects/project-manager.js').ProjectManager;
   private projectHealthMonitor?: import('./projects/health-monitor.js').HealthMonitor;
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
+  /** v727 — Late-Wiring von SandboxRepo an Project-Agent-Skill (für dev-safe Build-Detection) */
+  private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
@@ -1052,6 +1054,8 @@ export class Alfred {
         this.config.codeAgents.forge,
       );
       projectAgentSkill.setRunner(projectRunner);
+      // v727 — Ref für späte SandboxRepo-Verdrahtung
+      this.projectAgentSkillRef = projectAgentSkill;
       // v604 L8 — file-store is initialized later in init(), so we hold a ref
       // here and inject it once available.
       this.projectAgentRunnerRef = projectRunner;
@@ -3225,6 +3229,11 @@ export class Alfred {
             const { SandboxRepository: SandboxRepo } = await import('@alfred/storage');
             const { SandboxManager } = await import('./sandbox-manager.js');
             const sandboxRepo = new SandboxRepo(adapter);
+            // v727 — SandboxRepo an Project-Agent-Skill geben damit der build-detection
+            // dev-safe arbeiten kann (running Sandbox → kein `next build` mehr)
+            if (this.projectAgentSkillRef) {
+              try { this.projectAgentSkillRef.setSandboxRepo(sandboxRepo); } catch { /* */ }
+            }
             const nodeIdForSandbox = this.config.cluster?.nodeId ?? 'single';
             const sandboxManager = new SandboxManager({
               config: this.config.sandbox,

@@ -130,7 +130,10 @@ export function removeAbortController(sessionId: string): void {
  * Liest package.json/Cargo.toml/pyproject.toml und mappt sinnvolle Scripts.
  * Gracefully degrades wenn nichts erkennbar.
  */
-async function autoDetectBuildCommands(cwd: string): Promise<{ build: string[]; test: string[] } | null> {
+async function autoDetectBuildCommands(
+  cwd: string,
+  opts?: { runningSandbox?: { hostPort: number } },
+): Promise<{ build: string[]; test: string[] } | null> {
   const fs = await import('node:fs');
   const path = await import('node:path');
   try {
@@ -145,11 +148,19 @@ async function autoDetectBuildCommands(cwd: string): Promise<{ build: string[]; 
       if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) build.push('pnpm install');
       else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) build.push('yarn install');
       else build.push('npm install');
-      // Build/typecheck/lint
-      if (scripts.build) build.push('npm run build');
+      // v727 — Bei laufender Sandbox: NICHT `npm run build` ausführen weil das den
+      // .next/-Cache des dev-servers überschreibt → dev-server crashed mit ENOENT
+      // build-manifest. Stattdessen typecheck + lint + Live-HTTP-Check der Sandbox-URL
+      // (200 = code rendert, 500 = code kaputt). Die Page selbst ist die Validation.
+      const sb = opts?.runningSandbox;
+      if (scripts.build && !sb) build.push('npm run build');
       if (scripts.typecheck) build.push('npm run typecheck');
       else if (scripts['type-check']) build.push('npm run type-check');
       if (scripts.lint) build.push('npm run lint');
+      if (sb) {
+        // curl --fail-with-body retourniert exit-code != 0 bei 4xx/5xx, max 20s timeout
+        build.push(`curl -fsS --max-time 20 http://127.0.0.1:${sb.hostPort}/ -o /dev/null`);
+      }
       // Test commands
       if (scripts.test && !/^echo\s/.test(scripts.test)) test.push('npm test');
       return { build, test };
@@ -241,6 +252,14 @@ export class ProjectAgentSkill extends Skill {
   setProjectLookup(repo: typeof this.projectRepo, ownerUserId: string | undefined): void {
     this.projectRepo = repo;
     this.ownerUserId = ownerUserId;
+  }
+
+  /** v727 — Sandbox-Repo damit der Skill running Sandboxes erkennen + Build entsprechend anpassen kann. */
+  private sandboxRepo?: {
+    listByProject(projectId: string, statuses?: string[]): Promise<Array<{ id: string; worktreePath: string; hostPort: number | null; status: string; projectId: string }>>;
+  };
+  setSandboxRepo(repo: typeof this.sandboxRepo): void {
+    this.sandboxRepo = repo;
   }
 
   constructor(
@@ -566,8 +585,32 @@ ${planSummary}${commits}${userNotes}
 
     // Resolve build/test commands from input, template, or defaults
     const template = this.config.templates?.find(t => t.name === input.template);
+
+    // v727 — Wenn eine running Sandbox für dieses Project existiert: Build-Detection so
+    // anpassen dass `npm run build` (next build) NICHT ausgeführt wird (würde den
+    // .next/-Cache des dev-servers killen → page rendert 500). Stattdessen HTTP-200-Check
+    // gegen die Sandbox-URL als runtime-Validation.
+    let runningSandbox: { hostPort: number } | undefined;
+    let sandboxValidationHint: string | undefined;
+    if (this.sandboxRepo && this.projectRepo && this.ownerUserId) {
+      try {
+        // cwd ist entweder Original-Project-cwd ODER worktree-path einer Sandbox
+        const projects = await this.projectRepo.list(this.ownerUserId);
+        const proj = projects.find(p => p.cwd === cwd) ?? projects.find(p => p.cwd && cwd.startsWith(p.cwd));
+        if (proj) {
+          const running = await this.sandboxRepo.listByProject(proj.id, ['running']);
+          const live = running.find(s => typeof s.hostPort === 'number' && s.hostPort > 0);
+          if (live && typeof live.hostPort === 'number') {
+            runningSandbox = { hostPort: live.hostPort };
+            sandboxValidationHint = `Live-Sandbox erkannt (port ${live.hostPort}) — Build-Step durch HTTP-Health-Check ersetzt damit der dev-server intakt bleibt.`;
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
     // v649 — Auto-Test-Discovery aus package.json/Cargo.toml/pyproject.toml
-    const autoDetected = await autoDetectBuildCommands(cwd).catch(() => null);
+    // v727 — runningSandbox-info weiterreichen für dev-safe Command-Wahl
+    const autoDetected = await autoDetectBuildCommands(cwd, { runningSandbox }).catch(() => null);
     const buildCommands = (input.buildCommands as string[])
       ?? template?.buildCommands
       ?? autoDetected?.build
@@ -607,13 +650,14 @@ ${planSummary}${commits}${userNotes}
 
     return {
       success: true,
-      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings },
+      data: { taskId: session.taskId, goal, cwd, agentName, buildCommands, testCommands, cwdRewriteHint, previousAttemptHint, preflightWarnings, sandboxValidationHint },
       display: `🚀 Project Agent gestartet (${session.taskId})\n` +
         `Ziel: ${goal}\n` +
         `Verzeichnis: ${cwd}\n` +
         `Agent: ${agentName}\n` +
         `Build: ${buildCommands.join(' && ')}\n` +
         (autoDetected ? `🔎 Auto-Detect: ${autoDetected.build.length} Build- + ${autoDetected.test.length} Test-Commands erkannt.\n` : '') +
+        (sandboxValidationHint ? `\n🌐 ${sandboxValidationHint}\n` : '') +
         (cwdRewriteHint ? `\n⚠️ ${cwdRewriteHint}\n` : '') +
         (previousAttemptHint ? `\nℹ️ ${previousAttemptHint}\n` : '') +
         (preflightWarnings.length > 0 ? `\n⚠️ Pre-Flight-Warnungen:\n${preflightWarnings.map(w => `  - ${w}`).join('\n')}\n` : '') +
