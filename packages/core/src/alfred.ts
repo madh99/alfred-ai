@@ -6648,6 +6648,44 @@ export class Alfred {
             if (!this.commitsRepoRef) return [];
             try { return await this.commitsRepoRef.listBySession(sessionId); } catch { return []; }
           },
+          // v742 — Re-Match Open-Items gegen letzten Session-Lauf (manuell triggern)
+          reMatchOpenItems: async (projectId: string) => {
+            if (!this.projectRepo || !this.llmProvider || !this.database) {
+              return { ok: false, reason: 'projectRepo, llmProvider oder database nicht initialisiert' };
+            }
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { ok: false, reason: 'Project nicht gefunden' };
+              if (!project.cwd) return { ok: false, reason: 'Project hat kein cwd' };
+              // Letzte successful project_agent_session für diesen cwd
+              const row = await this.database.getAdapter().queryOne(
+                `SELECT task_id, goal, milestones, total_files_changed
+                 FROM project_agent_sessions
+                 WHERE cwd = ? AND last_build_passed = 1 AND total_files_changed > 0
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [project.cwd],
+              ).catch(() => null) as { task_id: string; goal: string; milestones: string; total_files_changed: number } | null;
+              if (!row) {
+                return { ok: false, reason: 'Keine erfolgreiche project_agent_session mit Datei-Änderungen gefunden (Matcher braucht Diff-Kontext)' };
+              }
+              let milestones: string[] = [];
+              try { const parsed = JSON.parse(row.milestones); if (Array.isArray(parsed)) milestones = parsed; } catch { /* */ }
+              const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
+              const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+              const result = await matcher.matchAfterSession({
+                projectId,
+                sessionId: row.task_id,
+                goal: row.goal,
+                milestones,
+                changedFiles: [],
+                totalFilesChanged: row.total_files_changed,
+              });
+              return { ok: true, matched: result.matched, resolved: result.resolved };
+            } catch (err) {
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
           // v658 — Work-Stats Aggregation
           workStats: async (id: string) => {
             try {

@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.742] - 2026-05-24
+
+### Added — Re-Match-Button für OpenItemMatcher manuell triggern
+
+User-Beobachtung: Im Project-Detail zeigten nur 8 von 152 Open-Items einen `🤖 ~90%`-Confidence-Badge. Diagnose: der OpenItemMatcher (v641) läuft automatisch nur **nach erfolgreichen Project-Agent-Runs mit `totalFilesChanged > 0`**. Andere Items wurden nie analysiert — sie warten auf zukünftige Runs in ihren Bereichen oder wurden vom LLM beim einzigen Lauf nicht als "betroffen" beurteilt.
+
+User-Wunsch: manuell den Matcher gegen den letzten erfolgreichen Run laufen lassen können (z.B. nach Re-Loading der Items, um neue Erkenntnisse zu bekommen).
+
+**Backend** (`alfred.ts`):
+- Neuer `reMatchOpenItems`-Callback in `projectsCallbacks`
+- Liest aus `project_agent_sessions` die letzte Session mit `last_build_passed=1 AND total_files_changed > 0` zum project.cwd
+- Parsed milestones-JSON, ruft `OpenItemMatcher.matchAfterSession()` direkt auf
+- Returns `{ok, matched, resolved}` für UI-Feedback
+
+**HTTP-API** (`http.ts`):
+- `POST /api/projects/:id/re-match-open-items`
+- Auth-gated, ruft callback
+
+**Web-Client** (`alfred-client.ts`):
+- `reMatchProjectOpenItems(projectId)` → `{ok, matched, resolved, reason}`
+
+**WebUI** (`ProjectsPage.tsx`):
+- Neuer Button `🤖 Re-Match` neben `🔍 Audit` im Open-Items-Header
+- Tooltip erklärt: "LLM-Matcher gegen letzten erfolgreichen Project-Agent-Lauf manuell triggern — analysiert welche Items durch den letzten Code-Change implizit erledigt wurden"
+- Bei Erfolg: Alert mit `✓ Re-Match: N Items analysiert, M als erledigt markiert.` + Hinweis zum Page-Reload
+- Bei Fehler (z.B. keine session mit Datei-Änderungen): klare Fehler-Meldung
+
+Workflow: User sieht im Project-Detail dass viele Items keinen Confidence-Wert haben → klickt `🤖 Re-Match` → LLM analysiert alle 200 Open-Items gegen den letzten Run → setzt Confidence-Werte für die als betroffen erkannten Items + auto-resolved bei `confidence >= 0.6`.
+
 ## [0.19.0-multi-ha.741] - 2026-05-24
 
 ### Added — Inline-Logs in Failed-Banner + Deploy-History-Section

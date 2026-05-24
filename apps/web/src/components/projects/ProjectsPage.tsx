@@ -93,6 +93,8 @@ export function ProjectsPage() {
   const [nameInput, setNameInput] = useState('');
   const [newItemTitle, setNewItemTitle] = useState('');
   const [newItemPriority, setNewItemPriority] = useState<'low' | 'normal' | 'high'>('normal');
+  // v742 — Re-Match Open-Items mit OpenItemMatcher
+  const [reMatching, setReMatching] = useState(false);
   // v641 — Multi-Select + Bulk-Work + Audit
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [workingOnItems, setWorkingOnItems] = useState(false);
@@ -327,6 +329,21 @@ export function ProjectsPage() {
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     } finally { setWorkingOnItems(false); }
+  }
+
+  // v742 — Re-Match Open-Items
+  async function runReMatch() {
+    if (!client || !detail) return;
+    setReMatching(true);
+    try {
+      const r = await client.reMatchProjectOpenItems(detail.project.id);
+      if (r.ok) {
+        alert(`✓ Re-Match: ${r.matched ?? 0} Items analysiert, ${r.resolved ?? 0} als erledigt markiert.\n\nLade die Seite neu um die Confidence-Werte zu sehen.`);
+        await loadDetail(detail.project.id);
+      } else {
+        alert(`✗ Re-Match fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      }
+    } finally { setReMatching(false); }
   }
 
   async function runAudit() {
@@ -610,6 +627,13 @@ export function ProjectsPage() {
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-gray-400">Offene Punkte ({activeItems.length})</h3>
                   <div className="flex items-center gap-1">
+                    {/* v742 — Re-Match OpenItemMatcher gegen letzten Session-Lauf */}
+                    <button
+                      onClick={runReMatch}
+                      disabled={reMatching || auditing}
+                      className="px-2 py-0.5 text-[10px] text-amber-400 hover:bg-amber-500/10 border border-amber-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
+                      title="LLM-Matcher gegen letzten erfolgreichen Project-Agent-Lauf manuell triggern — analysiert welche Items durch den letzten Code-Change implizit erledigt wurden"
+                    >{reMatching ? '⏳ Re-Matche…' : '🤖 Re-Match'}</button>
                     <button
                       onClick={runAudit}
                       disabled={auditing}

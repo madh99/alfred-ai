@@ -586,6 +586,8 @@ export class HttpAdapter extends MessagingAdapter {
     // v643 — Commits per Project + per Session
     listProjectCommits?: (projectId: string, limit: number) => Promise<any[]>;
     listSessionCommits?: (sessionId: string) => Promise<any[]>;
+    // v742 — Re-Match Open-Items gegen letzten Session-Lauf
+    reMatchOpenItems?: (projectId: string) => Promise<{ ok: boolean; matched?: number; resolved?: number; reason?: string }>;
   };
 
   setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
@@ -1067,6 +1069,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDbSeedsSetDefault(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/db-seeds\/[^/]+$/) && req.method === 'DELETE') {
       this.handleDbSeedsDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/re-match-open-items$/) && req.method === 'POST') {
+      this.handleProjectsReMatchOpenItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/restart$/) && req.method === 'POST') {
       this.handleSandboxRestart(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/logs$/) && req.method === 'GET') {
@@ -3820,6 +3824,26 @@ export class HttpAdapter extends MessagingAdapter {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v742 — POST /api/projects/:id/re-match-open-items → manuell OpenItemMatcher gegen letzten Session-Lauf. */
+  private async handleProjectsReMatchOpenItems(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.reMatchOpenItems) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Re-Match nicht verfügbar' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    try {
+      const r = await this.projectsCallbacks.reMatchOpenItems(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
     }
   }
 
