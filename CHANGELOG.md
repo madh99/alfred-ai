@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.771] - 2026-05-25
+
+### Added — 🔄 Resume-Button für failed/stopped Project-Agent-Tasks im Interactive-Chat
+
+**Motivation**: User-Test zeigte einen UX-Pitfall — User wollte einen abgebrochenen Project-Agent-Task fortsetzen, hat im 🚀 Plan-Modus etwas wie "88a27c8e... ist gestopt worden, kannst du weitermachen" getippt. Resultat: System hat das als **neuen** Plan-Auftrag mit dem Text als Goal interpretiert, einen sinnlosen 6-Phasen-Plan generiert und im Fix-Loop 48min gedreht. Die `project_agent.resume`-Action existierte, war aber nirgends in der UI erreichbar.
+
+**Fix**:
+- Neuer **🔄 Resume**-Button erscheint im Chat-Header jeder Project-Agent-Bubble mit `taskPhase IN ('failed','stopped')` (NICHT für `code-*`-Tasks — die sind fire-and-forget ohne Plan-Tracking)
+- Klick → Confirm-Dialog ("Plan wird geladen, erledigte Phasen werden übersprungen") → API-Call → `project_agent.execute({action: 'resume', failed_task_id})`
+- Project-Agent lädt persistierten Plan, baut Continuation-Goal (welche Phasen fertig waren, Letzter Commit, etc), startet neue Session
+- Neue Chat-Message `🔄 Resume von Task abc12345… gestartet. Neue Task-ID: def67890…` erscheint
+- Frontend SSE subscribed automatisch zur neuen Task-ID → Live-Output sichtbar
+
+**Backend**:
+- Neue `chatResumeTask`-Callback in `setSandboxCallbacks`-Interface
+- Neuer HTTP-Endpoint `POST /api/sandbox/:id/chat/resume` mit body `{taskId}`
+- Wire in alfred.ts ruft `this.projectAgentSkillRef.execute(resume)` direkt
+- Code-Agent-Tasks (`code-*`) liefern `{ok:false, reason:'Code-Agent kann nicht resumed werden, starte neuen ⚡ Quick-Run'}` — verhindert Verwechslung
+
+**Web-Client**: `client.resumeSandboxChatTask(sandboxId, taskId)`
+
+**Was NICHT in v771 ist** (nice-to-have für später):
+- Resume-Intent-Heuristik im Plan-Modus die warnt wenn der eingegebene Text UUID + Resume-Keywords enthält
+- Anzeige des persistierten Plans (welche Phasen done/failed) vor Resume — User klickt blind ein "weitermachen"
+
 ## [0.19.0-multi-ha.770] - 2026-05-25
 
 ### Fixed — environments / db-seeds / sandbox-templates Endpoints permanent 501 (echte Wurzel-Ursache)

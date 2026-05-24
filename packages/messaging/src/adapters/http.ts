@@ -518,6 +518,8 @@ export class HttpAdapter extends MessagingAdapter {
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
+    /** v771 — Failed/stopped Project-Agent-Task resumen. */
+    chatResumeTask?: (sandboxId: string, failedTaskId: string) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -603,6 +605,8 @@ export class HttpAdapter extends MessagingAdapter {
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
+    /** v771 — Failed/stopped Project-Agent-Task resumen. */
+    chatResumeTask?: (sandboxId: string, failedTaskId: string) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -1145,6 +1149,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatSend(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat\/stop$/) && req.method === 'POST') {
       this.handleSandboxChatStop(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat\/resume$/) && req.method === 'POST') {
+      this.handleSandboxChatResume(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4315,6 +4321,33 @@ export class HttpAdapter extends MessagingAdapter {
     try {
       const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions, engine);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  // v771 — Resume einen failed/stopped Project-Agent-Task per taskId
+  private async handleSandboxChatResume(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.chatResumeTask) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Resume nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let taskId = '';
+    try { taskId = String((JSON.parse(body) as Record<string, unknown>).taskId ?? ''); } catch { /* */ }
+    if (!taskId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'taskId required' }));
+      return;
+    }
+    try {
+      const r = await this.sandboxCallbacks.chatResumeTask(sandboxId, taskId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });

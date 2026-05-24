@@ -6736,6 +6736,40 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 return { ok: false, userMessageId: userMsg.id, reason: (err as Error).message };
               }
             },
+            // v771 — Resume failed/stopped Project-Agent-Task via project_agent.execute(resume).
+            // Code-Agent-Tasks (code-*) können NICHT resumed werden — die sind fire-and-forget ohne Plan-Tracking.
+            chatResumeTask: async (sandboxIdR: string, failedTaskId: string) => {
+              if (failedTaskId.startsWith('code-')) {
+                return { ok: false, reason: 'Code-Agent-Tasks können nicht resumed werden — neuen ⚡ Quick-Run starten.' };
+              }
+              if (!this.projectAgentSkillRef) {
+                return { ok: false, reason: 'Project-Agent-Skill nicht registriert' };
+              }
+              try {
+                const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '' } as any;
+                const r = await this.projectAgentSkillRef.execute({ action: 'resume', failed_task_id: failedTaskId }, ctx);
+                if (!r.success) {
+                  return { ok: false, reason: r.error ?? 'Resume fehlgeschlagen' };
+                }
+                const newTaskId = (r.data as any)?.taskId;
+                if (newTaskId) {
+                  // User sieht eine neue "Resume gestartet"-Message im Chat
+                  await sandboxChatRepo.append({
+                    sandboxId: sandboxIdR,
+                    userId: this.ownerMasterUserId ?? ownerUid,
+                    role: 'agent',
+                    text: `🔄 Resume von Task \`${failedTaskId.slice(0, 8)}…\` gestartet. Neue Task-ID: \`${newTaskId.slice(0, 8)}…\``,
+                    taskId: newTaskId,
+                    taskPhase: 'planning',
+                  });
+                }
+                return { ok: true, taskId: newTaskId };
+              } catch (err) {
+                return { ok: false, reason: (err as Error).message };
+              }
+            },
+
             // v762 — Stop einen laufenden Task. taskId aus chatSendMessage-Response.
             // v763 — Robust: auch wenn nicht im Memory-Map (z.B. nach Alfred-Restart), DB als stopped markieren
             // v765 — Funktioniert auch für Project-Agent-Tasks (UUID ohne Prefix): falls Code-Agent-Map kein

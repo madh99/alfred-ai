@@ -505,6 +505,8 @@ export default function InteractivePage() {
               const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped' && m.taskPhase !== 'awaiting_user';
               // v765 — Stop-Button für ALLE laufenden Agent-Tasks (Code-Agent oder Project-Agent)
               const isCodeAgent = !!(m.taskId && m.taskId.startsWith('code-'));
+              // v771 — Resume-Button für failed/stopped Project-Agent-Tasks (NICHT für code-* — die haben keinen Plan)
+              const isResumable = !!(m.taskId && !isCodeAgent && (m.taskPhase === 'failed' || m.taskPhase === 'stopped'));
               return (
                 <div key={m.id} className={`text-xs rounded p-2 ${m.role === 'user' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-[#111] border border-[#1f1f1f]'}`}>
                   <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gray-500 mb-1">
@@ -523,6 +525,20 @@ export default function InteractivePage() {
                           className="px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25 text-[10px]"
                           title={isCodeAgent ? 'Code-Agent-Subprocess sofort beenden' : 'Project-Agent-Task abbrechen (Stop-Signal)'}
                         >⏹ Stop</button>
+                      )}
+                      {/* v771 — Resume für failed/stopped Project-Agent Tasks */}
+                      {isResumable && m.taskId && (
+                        <button
+                          onClick={async () => {
+                            if (!client || !sandbox) return;
+                            if (!confirm(`Project-Agent-Task fortsetzen?\n\nDer Plan wird geladen, erledigte Phasen werden übersprungen, die unterbrochene Phase fortgesetzt.`)) return;
+                            const r = await client.resumeSandboxChatTask(sandbox.id, m.taskId!);
+                            if (!r.ok) setError(r.reason ?? 'Resume failed');
+                            else await loadChat();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 hover:bg-amber-500/25 text-[10px]"
+                          title="Project-Agent-Task fortsetzen — Plan wird geladen, erledigte Phasen übersprungen"
+                        >🔄 Resume</button>
                       )}
                       {m.taskPhase && (
                         <span className={`px-1.5 py-0.5 rounded ${PHASE_BADGES[m.taskPhase] ?? 'bg-gray-500/20 text-gray-400'}`}>{m.taskPhase}</span>

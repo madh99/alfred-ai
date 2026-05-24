@@ -444,6 +444,15 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
     return data;
   }
+  // v771 — Failed/stopped Project-Agent-Task resumen
+  async resumeSandboxChatTask(sandboxId: string, taskId: string): Promise<{ ok: boolean; taskId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat/resume`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ taskId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return data;
+  }
   async sendSandboxChatMessage(
     sandboxId: string,
     message: string,
