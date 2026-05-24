@@ -3304,7 +3304,20 @@ export class Alfred {
                       }
                       return [];
                     },
-                    getById: async (sandboxId: string) => sandboxRepo.getById(sandboxId),
+                    getById: async (sandboxId: string) => {
+                      const sb = await sandboxRepo.getById(sandboxId);
+                      if (!sb) return null;
+                      // v723 — DefaultBranch anreichern für korrekten Frontend-Merge-Dialog
+                      let defaultBranch: string | undefined;
+                      if (projectsRepoCrud) {
+                        try {
+                          const p = await projectsRepoCrud.getByIdAnyOwner(sb.projectId);
+                          defaultBranch = p?.defaultBranch ?? undefined;
+                        } catch { /* non-critical */ }
+                      }
+                      defaultBranch = defaultBranch ?? this.config.codeAgents?.forge?.baseBranch ?? 'main';
+                      return { ...sb, defaultBranch };
+                    },
                     create: async (input: { projectId: string; sessionId: string; mode: string; slug?: string }) => {
                       const cwd = await resolveProjectCwdCrud(input.projectId);
                       if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
@@ -3330,13 +3343,17 @@ export class Alfred {
                       if (!cwd) throw new Error(`Project cwd unknown`);
                       await sandboxManager.discard(sandboxId, cwd);
                     },
-                    merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => {
+                    merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => {
                       const sb = await sandboxRepo.getById(sandboxId);
                       if (!sb) return { ok: false, reason: 'Sandbox not found' };
                       const cwd = await resolveProjectCwdCrud(sb.projectId);
                       if (!cwd) return { ok: false, reason: 'Project cwd unknown' };
                       const proj = projectsRepoCrud ? await projectsRepoCrud.getByIdAnyOwner(sb.projectId) : null;
                       const strat = (opts.strategy === 'direct' ? 'direct' : 'pr') as 'direct' | 'pr';
+                      // v723 — Safety: direct-merge erfordert explizite Bestätigung
+                      if (strat === 'direct' && opts.confirmDirect !== true) {
+                        return { ok: false, reason: 'Direct-Merge erfordert explizite Bestätigung (confirmDirect=true im Request).' };
+                      }
                       return sandboxManager.merge(sandboxId, {
                         strategy: strat,
                         commitMessage: opts.commitMessage,
@@ -5399,7 +5416,21 @@ export class Alfred {
               if (!uid) return [];
               return sandboxRepoForApi.listActiveByUser(uid);
             },
-            getById: async (sandboxId: string) => sandboxRepoForApi.getById(sandboxId),
+            getById: async (sandboxId: string) => {
+              const sb = await sandboxRepoForApi.getById(sandboxId);
+              if (!sb) return null;
+              // v723 — DefaultBranch aus dem Project anreichern damit das Frontend
+              // den echten Branch-Namen im Merge-Dialog zeigen kann (statt hardcoded 'main').
+              let defaultBranch: string | undefined;
+              if (projectsRepoForSb) {
+                try {
+                  const p = await projectsRepoForSb.getByIdAnyOwner(sb.projectId);
+                  defaultBranch = p?.defaultBranch ?? undefined;
+                } catch { /* non-critical */ }
+              }
+              defaultBranch = defaultBranch ?? this.config.codeAgents?.forge?.baseBranch ?? 'main';
+              return { ...sb, defaultBranch };
+            },
             create: async (input: { projectId: string; sessionId?: string | null; mode: string; slug?: string; requestUserId?: string }) => {
               const cwd = await resolveCwdForSb(input.projectId);
               if (!cwd) throw new Error(`Project cwd unknown for project ${input.projectId}`);
@@ -5427,13 +5458,18 @@ export class Alfred {
               if (!cwd) throw new Error(`Project cwd unknown`);
               await sbMgr.discard(sandboxId, cwd);
             },
-            merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => {
+            merge: async (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
               const cwd = await resolveCwdForSb(sb.projectId);
               if (!cwd) return { ok: false, reason: 'Project cwd unknown' };
               const proj = projectsRepoForSb ? await projectsRepoForSb.getByIdAnyOwner(sb.projectId) : null;
               const strat = (opts.strategy === 'direct' ? 'direct' : 'pr') as 'direct' | 'pr';
+              // v723 — Safety: direct-merge erfordert explizite Bestätigung. Verhindert dass ein
+              // verirrter Frontend-Call (siehe v722 confirm()-UX-Bug) versehentlich auf main pusht.
+              if (strat === 'direct' && opts.confirmDirect !== true) {
+                return { ok: false, reason: 'Direct-Merge erfordert explizite Bestätigung (confirmDirect=true im Request).' };
+              }
               return sbMgr.merge(sandboxId, {
                 strategy: strat,
                 commitMessage: opts.commitMessage,

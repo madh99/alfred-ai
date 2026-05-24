@@ -43,6 +43,8 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
   const [showDiff, setShowDiff] = useState(false);
   const [diffText, setDiffText] = useState<string>('');
   const [mode, setMode] = useState<'sandbox' | 'sandbox-preview' | 'interactive-chat'>(defaultMode);
+  // v723 — 3-Wege-Merge-Modal
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -109,12 +111,21 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
     finally { setBusy(null); }
   }
 
-  async function handleMerge() {
+  // v723 — Öffnet das 3-Wege-Merge-Modal statt confirm() das Abbrechen still als direct-merge interpretiert hat.
+  function handleMerge() {
     if (!client || !sandbox) return;
-    const strategy = confirm('Mit PR mergen?\n\nOK = Branch pushen + PR/MR auf Forge erstellen\nAbbrechen = Direct-Push in main') ? 'pr' : 'direct';
+    setMergeModalOpen(true);
+  }
+
+  async function executeMerge(strategy: 'pr' | 'direct') {
+    if (!client || !sandbox) return;
+    setMergeModalOpen(false);
     setBusy('merge'); setError(null);
     try {
-      const r = await client.mergeSandbox(sandbox.id, { strategy: strategy as 'direct' | 'pr' });
+      const r = await client.mergeSandbox(sandbox.id, {
+        strategy,
+        ...(strategy === 'direct' ? { confirmDirect: true } : {}),
+      });
       if (r.ok) {
         if (r.prUrl) window.open(r.prUrl, '_blank');
         await load();
@@ -292,6 +303,54 @@ export function SandboxPanel({ projectId, sessionId, defaultMode = 'sandbox-prev
           )}
         </>
       )}
+
+      {/* v723 — 3-Wege-Merge-Modal mit echter Abbrechen-Option und dynamischem Default-Branch. */}
+      {mergeModalOpen && sandbox && (() => {
+        const branch = sandbox.defaultBranch ?? 'main';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+            onClick={() => setMergeModalOpen(false)}
+          >
+            <div
+              className="w-full max-w-lg rounded-lg border border-amber-500/40 bg-[#0f0f0f] p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-lg font-semibold text-amber-400">Sandbox mergen</h2>
+              <p className="mt-1 text-xs text-gray-400">
+                Branch: <code className="text-amber-300">{sandbox.branchName}</code><br />
+                Ziel-Branch: <code className="text-amber-300">{branch}</code>
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                <button
+                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-left text-sm text-emerald-300 hover:bg-emerald-500/20"
+                  onClick={() => executeMerge('pr')}
+                >
+                  <div className="font-semibold">PR / Merge-Request erstellen</div>
+                  <div className="text-xs text-emerald-400/70">Branch wird gepusht, Pull-/Merge-Request auf der Forge geöffnet. Reviewbar.</div>
+                </button>
+                <button
+                  className="rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-left text-sm text-red-300 hover:bg-red-500/20"
+                  onClick={() => {
+                    if (confirm(`Wirklich direkt in '${branch}' pushen? Diese Aktion ist nicht über die Forge reviewbar.`)) {
+                      executeMerge('direct');
+                    }
+                  }}
+                >
+                  <div className="font-semibold">Direkt in <code>{branch}</code> pushen</div>
+                  <div className="text-xs text-red-400/70">Squash-Merge ohne Review. Nur für Solo-Projekte oder triviale Änderungen.</div>
+                </button>
+                <button
+                  className="rounded border border-gray-600 bg-gray-800/40 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/40"
+                  onClick={() => setMergeModalOpen(false)}
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

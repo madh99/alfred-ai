@@ -417,7 +417,7 @@ export class AlfredClient {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/discard`, { method: 'POST', headers: this.authHeaders });
     if (!res.ok) throw new Error(`Sandbox-discard: HTTP ${res.status}`);
   }
-  async mergeSandbox(sandboxId: string, opts: { strategy?: 'direct' | 'pr'; commitMessage?: string; prTitle?: string; prBody?: string }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
+  async mergeSandbox(sandboxId: string, opts: { strategy?: 'direct' | 'pr'; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }): Promise<{ ok: boolean; prUrl?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/merge`, { method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(opts) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
@@ -2097,6 +2097,8 @@ export interface SandboxItem {
   destroyedAt: string | null;
   result: string | null;
   resultPrUrl: string | null;
+  /** v723 — Default-Branch des Projects (dynamisch resolved für Merge-Dialog). */
+  defaultBranch?: string;
 }
 
 export interface SandboxChatItem {

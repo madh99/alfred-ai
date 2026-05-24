@@ -46,6 +46,8 @@ export default function InteractivePage() {
   const esRef = useRef<EventSource | null>(null);
   const currentTaskRef = useRef<string | null>(null);
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
+  // v723 — 3-Wege-Merge-Modal (PR | Direct | Abbrechen) statt verirrendem confirm()
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
 
   const loadSandbox = useCallback(async () => {
     if (!client || !sandboxId) return;
@@ -193,12 +195,23 @@ export default function InteractivePage() {
     finally { setBusy(null); }
   }
 
-  async function handleMerge() {
+  // v723 — Statt verirrendem confirm(): öffnet das Merge-Modal mit echten 3 Optionen.
+  function handleMerge() {
     if (!client || !sandbox) return;
-    const strategy = confirm('Mit PR mergen?\n\nOK = Branch pushen + PR auf Forge\nAbbrechen = Direct-Push in main') ? 'pr' : 'direct';
+    setMergeModalOpen(true);
+  }
+
+  // v723 — Wird vom Modal mit konkreter Strategy aufgerufen. Direct-Merge schickt
+  // confirmDirect=true an das Backend (sonst lehnt der v723-Backend-Guard ab).
+  async function executeMerge(strategy: 'pr' | 'direct') {
+    if (!client || !sandbox) return;
+    setMergeModalOpen(false);
     setBusy('merge');
     try {
-      const r = await client.mergeSandbox(sandbox.id, { strategy: strategy as 'direct' | 'pr' });
+      const r = await client.mergeSandbox(sandbox.id, {
+        strategy,
+        ...(strategy === 'direct' ? { confirmDirect: true } : {}),
+      });
       if (r.ok) {
         if (r.prUrl) window.open(r.prUrl, '_blank');
         await loadSandbox();
@@ -343,6 +356,54 @@ export default function InteractivePage() {
           )}
         </div>
       </div>
+
+      {/* v723 — 3-Wege-Merge-Modal. Ersetzt confirm() das Abbrechen still als direct-merge interpretiert hat. */}
+      {mergeModalOpen && sandbox && (() => {
+        const branch = sandbox.defaultBranch ?? 'main';
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+            onClick={() => setMergeModalOpen(false)}
+          >
+            <div
+              className="w-full max-w-lg rounded-lg border border-amber-500/40 bg-[#0f0f0f] p-6 shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h2 className="text-lg font-semibold text-amber-400">Sandbox mergen</h2>
+              <p className="mt-1 text-xs text-gray-400">
+                Branch: <code className="text-amber-300">{sandbox.branchName}</code><br />
+                Ziel-Branch: <code className="text-amber-300">{branch}</code>
+              </p>
+              <div className="mt-5 flex flex-col gap-2">
+                <button
+                  className="rounded border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-left text-sm text-emerald-300 hover:bg-emerald-500/20"
+                  onClick={() => executeMerge('pr')}
+                >
+                  <div className="font-semibold">PR / Merge-Request erstellen</div>
+                  <div className="text-xs text-emerald-400/70">Branch wird gepusht, Pull-/Merge-Request auf der Forge geöffnet. Reviewbar.</div>
+                </button>
+                <button
+                  className="rounded border border-red-500/40 bg-red-500/10 px-4 py-3 text-left text-sm text-red-300 hover:bg-red-500/20"
+                  onClick={() => {
+                    if (confirm(`Wirklich direkt in '${branch}' pushen? Diese Aktion ist nicht über die Forge reviewbar.`)) {
+                      executeMerge('direct');
+                    }
+                  }}
+                >
+                  <div className="font-semibold">Direkt in <code>{branch}</code> pushen</div>
+                  <div className="text-xs text-red-400/70">Squash-Merge ohne Review. Nur für Solo-Projekte oder triviale Änderungen.</div>
+                </button>
+                <button
+                  className="rounded border border-gray-600 bg-gray-800/40 px-4 py-2 text-sm text-gray-300 hover:bg-gray-700/40"
+                  onClick={() => setMergeModalOpen(false)}
+                >
+                  Abbrechen
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.723] - 2026-05-24
+
+### Fixed — Merge-Dialog interpretierte Abbrechen still als Direct-Push
+
+User-Report nach v722-Test: Im Sandbox-Merge-Dialog (Interactive-Page + SandboxPanel) wurde `Abbrechen` geclickt — die Sandbox war danach trotzdem weg und der Sandbox-Inhalt war als Squash-Merge auf `master` gepusht. Außerdem stand im Text hardcoded "main" obwohl das Project `master` als Default-Branch hat.
+
+Root-Cause: `confirm('OK = PR, Abbrechen = Direct-Push')` ist ein 2-Wege-Schalter ohne echten Cancel. `Abbrechen` liefert `false` → der Code wertete das als `strategy='direct'` und führte den Merge ohne Review aus. Backend hatte keine Safety, weil es davon ausging der Frontend-Dialog filtert das schon.
+
+Fix dreistufig:
+
+- **Frontend 3-Wege-Modal** (`apps/web/src/app/interactive/page.tsx`, `apps/web/src/components/project-agents/SandboxPanel.tsx`): Eigenes Modal mit drei klar getrennten Buttons:
+  - `PR / Merge-Request erstellen` (grün, default-empfehlung)
+  - `Direkt in '<defaultBranch>' pushen` (rot, mit zusätzlicher confirm()-Bestätigung)
+  - `Abbrechen` (grau, schließt nur das Modal)
+- **Dynamischer Default-Branch im Text**: Der Modal liest `sandbox.defaultBranch` (vom Backend angereichert) — zeigt also `master`, `develop`, oder was-auch-immer das Project konfiguriert hat. Hardcoded "main" entfernt.
+- **Backend Safety-Net** (`alfred.ts` zwei merge-Callback-Stellen): Wenn `strategy='direct'` UND `opts.confirmDirect !== true` → reject mit `reason='Direct-Merge erfordert explizite Bestätigung (confirmDirect=true im Request).'`. Damit kann auch ein verirrter Skill-Call oder ein verbuggter Frontend nicht aus Versehen direct-mergen.
+- **API-Anreicherung**: `GET /api/sandbox/:id` enthält nun `defaultBranch` (resolved aus `project.defaultBranch ?? config.codeAgents.forge.baseBranch ?? 'main'`). Web-Client `SandboxItem`-Typ entsprechend erweitert.
+
 ## [0.19.0-multi-ha.722] - 2026-05-24
 
 ### Added — Self-Learning: maschinen-lesbare Recipes statt prosaischer Auto-Rules
