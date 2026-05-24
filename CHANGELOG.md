@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.768] - 2026-05-25
+
+### Fixed — project_agent_sessions Orphan-Cleanup (Projekt-Agents-Page zeigt korrekten Status)
+
+**Symptom**: Task `88a27c8e-…` blieb auch nach v767-Fix als "CODING / läuft" sichtbar — in Project-Agents-Page, Projects-Page "Aktuell laufend", Sandboxes-Page Interactive-Chat. Cleanup hatte die FALSCHE Tabelle erfasst.
+
+**Root-Cause**: Mein v763/v765/v767-Cleanup räumte `sandbox_chat_messages.task_phase` auf. Aber die "läuft"-Anzeigen kommen von der eigenständigen Tabelle `project_agent_sessions.current_phase` — Project-Agent-Runner persistiert dort seinen Lifecycle (planning/coding/building/done/failed). Zwei verschiedene Tabellen, zwei verschiedene Phase-Werte, eine wurde ignoriert.
+
+**Fix**:
+- Neue Methode `ProjectAgentSessionRepository.failOrphanedSessions()`: `UPDATE project_agent_sessions SET current_phase='failed', failure_insight='…' WHERE current_phase NOT IN ('done','failed','awaiting_user')`
+- Cleanup-Step in `alfred.ts` direkt nach `Database.create()` macht jetzt **beide** Tabellen: sandbox_chat_messages + project_agent_sessions
+- `failure_insight` bekommt einen Hinweis-Text damit der User in der Session-Detail-Ansicht sieht warum das Ding gefailed ist (nicht Bug sondern Restart-Konsequenz)
+- Existierende `awaiting_user`-Sessions bleiben unverändert (legitime Pause)
+
+Nach Deploy + Restart sollten alle drei UI-Anzeigen (Project-Agents-List, Projects "Aktuell laufend", Interactive-Chat) konsistent als terminal anzeigen.
+
 ## [0.19.0-multi-ha.767] - 2026-05-25
 
 ### Fixed — Startup-Cleanup für Orphan-Tasks war im Sandbox-gated Block versteckt

@@ -83,6 +83,25 @@ export class ProjectAgentSessionRepository {
     await this.adapter.execute(`UPDATE project_agent_sessions SET ${sets.join(', ')} WHERE task_id = ?`, values);
   }
 
+  /**
+   * v768 — Startup-Cleanup: alle nicht-terminalen Project-Agent-Sessions als 'failed'
+   * markieren. Nach Alfred-Restart läuft kein Runner mehr für diese Sessions, also
+   * sind sie real orphaned. 'done', 'failed', 'awaiting_user' bleiben unverändert.
+   * Liefert Anzahl betroffener Rows.
+   */
+  async failOrphanedSessions(): Promise<number> {
+    const now = new Date().toISOString();
+    const r = await this.adapter.execute(
+      `UPDATE project_agent_sessions
+         SET current_phase = 'failed',
+             updated_at = ?,
+             failure_insight = COALESCE(failure_insight, '⏹ Session war beim Alfred-Restart noch aktiv und wurde automatisch als failed markiert (Runner-Prozess wurde unterbrochen, kein Auto-Resume).')
+       WHERE current_phase NOT IN ('done', 'failed', 'awaiting_user')`,
+      [now],
+    );
+    return r.changes ?? 0;
+  }
+
   /** v652 — Persistiert den LLM-generierten Lessons-Learned-Text. */
   async setFailureInsight(taskId: string, insight: string): Promise<void> {
     const now = new Date().toISOString();

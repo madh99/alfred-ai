@@ -254,18 +254,22 @@ export class Alfred {
     });
     const adapter = this.database.getAdapter();
 
-    // v767 — Universal Startup-Cleanup für nicht-terminale Agent-Chat-Tasks.
-    // MUSS hier laufen (vor Sandbox-Manager-Init), damit der Cleanup auch greift
-    // wenn Docker offline ist und der Sandbox-Manager-Block übersprungen wird.
-    // v763/v765 hatten den Cleanup im sandbox-gated Block versteckt → Bug, deshalb
-    // Tasks blieben "running" wenn Alfred ohne Docker startete (z.B. UI-only Node).
+    // v767/v768 — Universal Startup-Cleanup für nicht-terminale Agent-Tasks.
+    // Läuft direkt nach DB-Create, unabhängig von Sandbox-Manager-State.
+    // Zwei Tabellen:
+    //  - sandbox_chat_messages (taskPhase) — Interactive-Chat-View
+    //  - project_agent_sessions (currentPhase) — Project-Agents-Page + Projects "Aktuell laufend"
+    // Beide werden nach Restart als orphan markiert (Runner ist tot, kein Auto-Resume).
     try {
-      const { SandboxChatRepository: SandboxChatRepoStartup } = await import('@alfred/storage');
+      const { SandboxChatRepository: SandboxChatRepoStartup, ProjectAgentSessionRepository: PASRStartup } = await import('@alfred/storage');
       const sandboxChatRepoStartup = new SandboxChatRepoStartup(adapter);
-      const orphaned = await sandboxChatRepoStartup.failOrphanedCodeAgentTasks();
-      if (orphaned > 0) this.logger.info({ count: orphaned }, 'v767 startup: marked orphaned chat-tasks as failed');
+      const orphanedChat = await sandboxChatRepoStartup.failOrphanedCodeAgentTasks();
+      if (orphanedChat > 0) this.logger.info({ count: orphanedChat }, 'v767 startup: marked orphaned chat-tasks as failed');
+      const sessRepoStartup = new PASRStartup(adapter);
+      const orphanedSess = await sessRepoStartup.failOrphanedSessions();
+      if (orphanedSess > 0) this.logger.info({ count: orphanedSess }, 'v768 startup: marked orphaned project-agent-sessions as failed');
     } catch (err) {
-      this.logger.warn({ err }, 'v767 startup chat-cleanup failed (non-fatal)');
+      this.logger.warn({ err }, 'v767/v768 startup orphan-cleanup failed (non-fatal)');
     }
 
     const conversationRepo = new ConversationRepository(adapter);
