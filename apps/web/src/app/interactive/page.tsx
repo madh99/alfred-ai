@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useConfig } from '@/context/ConfigContext';
 import type { SandboxItem, SandboxChatItem } from '@/lib/alfred-client';
 import { SandboxChatInput } from '@/components/chat/SandboxChatInput';
+import { SaveAsTemplateModal } from '@/components/sandbox/SaveAsTemplateModal';
 
 const STATUS_COLOR: Record<string, string> = {
   creating: 'text-amber-400 bg-amber-500/10 border-amber-500/40',
@@ -68,6 +69,9 @@ export default function InteractivePage() {
   const [envNewKey, setEnvNewKey] = useState('');
   const [envNewValue, setEnvNewValue] = useState('');
   const [iframeReloadKey, setIframeReloadKey] = useState(0);
+  // v752 — Save-as-Template
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
+  const [templateSavedToast, setTemplateSavedToast] = useState<string | null>(null);
 
   const loadSandbox = useCallback(async () => {
     if (!client || !sandboxId) return;
@@ -460,6 +464,7 @@ export default function InteractivePage() {
               <button onClick={openStatsModal} disabled={busy !== null} title="Container-Stats (CPU/RAM)" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📊 Stats</button>
               <button onClick={openEnvModal} disabled={busy !== null} title="Sandbox-ENV-Variablen verwalten" className="px-2 py-1 border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded text-[11px] disabled:opacity-50">🔐 ENV</button>
               <button onClick={openDiffModal} disabled={busy !== null} title="git diff vom Base-Commit anschauen" className="px-2 py-1 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 rounded text-[11px] disabled:opacity-50">📋 Diff</button>
+              <button onClick={() => setSaveTemplateModalOpen(true)} disabled={busy !== null} title="Setup als wiederverwendbares Template speichern" className="px-2 py-1 border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded text-[11px] disabled:opacity-50">📦 Save as Template</button>
               <button onClick={handleMerge} disabled={busy !== null} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] disabled:opacity-50">✅ Merge</button>
               <button onClick={handleDiscard} disabled={busy !== null} className="px-2 py-1 border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded text-[11px] disabled:opacity-50">✕ Discard</button>
             </>
@@ -756,6 +761,20 @@ export default function InteractivePage() {
             </pre>
           </div>
         </div>
+      )}
+
+      {/* v752 — Save-as-Template */}
+      {saveTemplateModalOpen && sandbox && (
+        <SaveAsTemplateModal
+          projectId={sandbox.projectId}
+          sandboxId={sandbox.id}
+          presetMode="interactive-chat"
+          onClose={() => setSaveTemplateModalOpen(false)}
+          onSaved={() => { setTemplateSavedToast('Template gespeichert ✓'); setTimeout(() => setTemplateSavedToast(null), 3000); }}
+        />
+      )}
+      {templateSavedToast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-purple-600 text-white px-3 py-2 rounded shadow-lg text-xs">{templateSavedToast}</div>
       )}
     </div>
   );

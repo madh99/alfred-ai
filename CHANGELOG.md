@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.752] - 2026-05-24
+
+### Added — Save-as-Template aus laufender Sandbox
+
+Komplement zu v751: aus einer produktiven Sandbox direkt ein Template generieren, statt zurück zur Project-Detail-Seite zu wechseln und manuell zusammenzuklicken.
+
+**Interactive-Page** (`/interactive?sandboxId=…`):
+- Neuer Toolbar-Button "📦 Save as Template" zwischen Diff und Merge
+- Öffnet `SaveAsTemplateModal` mit Pre-fill:
+  - `mode` aus dem Page-Kontext (interactive-chat)
+  - `initialGoal` aus der ersten User-Chat-Message dieser Sandbox (max 500 Zeichen)
+  - ENV-Stages + DB-Seeds aus dem Project geladen für Dropdown-Auswahl
+- Felder: Name (req), Beschreibung, Mode, Scope (📌 Project / 🌐 global), ENV-Stage, DB-Seed, Initial-Goal, Tags
+- Bei Erfolg: Toast unten rechts "Template gespeichert ✓" für 3s
+- Nutzt bestehende `POST /api/sandbox-templates` — keine API-Änderung nötig
+
+Hinweis: `envStage` und `dbSeedId` werden nicht auf der Sandbox-Row persistiert (waren nur Create-Input), daher wählt sie der User im Modal selbst — der Pre-fill beschränkt sich auf das, was ehrlich rekonstruierbar ist (Mode, Initial-Goal aus Chat).
+
 ## [0.19.0-multi-ha.751] - 2026-05-24
 
 ### Added — Sandbox-Templates: wiederverwendbare Konfigurationen
