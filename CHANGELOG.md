@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.760] - 2026-05-24
+
+### Added — Code-Agent-Engine im Interactive-Chat (Backend, Phasen 1-3)
+
+Neben dem bestehenden heavy-weight Project-Agent (14-Phasen-Planner) gibt es jetzt einen zweiten, leichten Coding-Engine-Pfad für iteratives Arbeiten in der Sandbox. Backend-Implementierung — UI-Toggle kommt in v761.
+
+**Wie's funktioniert**:
+- `chatSendMessage`-Callback erweitert um `engine?: 'project-agent' | 'code-agent'` (default `project-agent`, also kein Verhaltens-Change ohne explizite Wahl)
+- Bei `engine='code-agent'` wird statt `project_agent.execute({action:'start'})` der vorhandene `code_agent`-Skill mit `action: 'run'` ausgelöst (CLI-Coding-Agent als Subprozess, z.B. claude-code / codex / aider)
+- HTTP-Endpoint `/api/sandboxes/:id/chat` akzeptiert nun optional `engine` im Body
+
+**Phase 1 — Chat-History-Context**:
+- Vor jedem Run werden die letzten Sandbox-Chat-Messages als Conversation-Prefix in den Prompt gerendert
+- Hybrid-Cap: max 15 Messages ODER ~4000 Tokens (≈16000 Chars), mindestens 3 behalten
+- Macht "ändere das" / "nein doch anders" verständlich
+
+**Phase 2 — Auto-Commit pro Iteration**:
+- Nach erfolgreichem Run: `git add -A && git commit -m "[alfred-code-agent] <user-message-first-line>"`
+- Commit-Message ist die erste Zeile der User-Nachricht (sanitized, capped 72 Zeichen)
+- SHA wird in der Agent-Response-Message angezeigt (`· commit abc12345`)
+- Bei "keine Änderungen": commit übersprungen, im Output angezeigt
+
+**Phase 3 — Retry-Loop bei Fehler**:
+- Wenn Agent-Run mit exit-code != 0 endet: ein zweiter Versuch mit Error-Output als Context
+- Max 2 Attempts (wie beim Project-Agent), dann Stop mit klarer Fehlermeldung
+- Zwischen-Update als Chat-Message `🔁 Fix-Versuch 2/2 …`
+
+**Fire-and-forget**: HTTP-Response kommt sofort zurück mit `taskId`, der Run läuft im Hintergrund. User sieht Fortschritt via Chat-Polling.
+
+**Concurrent-Guard**: bestehender Block-Check für nicht-terminale Project-Agent-Tasks gilt weiterhin — pro Sandbox läuft nur ein Task gleichzeitig.
+
 ## [0.19.0-multi-ha.759] - 2026-05-24
 
 ### Changed — Offene Punkte / Sessions / Entscheidungen jetzt einklappbar

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import yaml from 'js-yaml';
 import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@alfred/types';
 import type { Logger } from 'pino';
@@ -5982,6 +5983,7 @@ export class Alfred {
               message: string,
               attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
               mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
+              engine?: 'project-agent' | 'code-agent',
             ) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
@@ -6124,6 +6126,150 @@ export class Alfred {
                 role: 'user',
                 text: augmentedMessage,
               });
+              // v760 — Branch nach engine: 'code-agent' = light/iterativ, sonst project-agent (default)
+              if (engine === 'code-agent') {
+                const cAgent = this.codeAgentSkillRef;
+                const codeAgents = this.config.codeAgents?.agents ?? [];
+                if (!cAgent || codeAgents.length === 0) {
+                  return { ok: false, userMessageId: userMsg.id, reason: 'code-agent nicht konfiguriert (config.codeAgents.enabled + agents)' };
+                }
+                const defaultAgent = codeAgents[0].name;
+
+                // Hybrid-Cap: letzte 15 Messages ODER ~4000 Tokens (~16000 chars), min 3 behalten
+                const allHistory = await sandboxChatRepo.list(sandboxId);
+                const MAX_MSGS = 15, MAX_CHARS = 16000, MIN_KEEP = 3;
+                let trimmedHistory = allHistory.filter(m => m.id !== userMsg.id).slice(-MAX_MSGS);
+                let totalChars = trimmedHistory.reduce((s, m) => s + (m.text || '').length, 0);
+                while (totalChars > MAX_CHARS && trimmedHistory.length > MIN_KEEP) {
+                  const removed = trimmedHistory.shift();
+                  totalChars -= (removed?.text || '').length;
+                }
+                const historyText = trimmedHistory.map(m => {
+                  const prefix = m.role === 'user' ? 'User:' : 'Agent:';
+                  return `${prefix} ${(m.text || '').slice(0, 1500)}`;
+                }).join('\n\n');
+                const prompt = `Du arbeitest iterativ in einem Sandbox-Container an einem Projekt. Bisheriger Chat-Verlauf:
+
+${historyText || '(noch keine vorherigen Nachrichten)'}
+
+Neue Aufgabe:
+${augmentedMessage}
+
+Wichtig:
+- Implementiere fokussiert nur diese eine Änderung. Keine Refactoring-Tangenten.
+- Halte dich strikt an die Anfrage.
+- Du arbeitest in einem git worktree — Änderungen werden am Ende automatisch committed.
+- Wenn unklar was gemeint ist, nimm die plausibelste Interpretation, frag NICHT nach.`;
+
+                const taskId = `code-${randomUUID()}`;
+                await sandboxChatRepo.append({
+                  sandboxId,
+                  userId: sb.userId,
+                  role: 'agent',
+                  text: `⚡ Code-Agent läuft (${defaultAgent}) …`,
+                  taskId,
+                  taskPhase: 'coding',
+                });
+
+                // Fire-and-forget — User-Chat pollt nachträglich via fetchSandboxChat
+                (async () => {
+                  const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '' } as any;
+                  try {
+                    // v760 Phase 3 — Retry-Loop: bei Agent-Fail bis zu 2 Versuche mit Error-Context
+                    const MAX_ATTEMPTS = 2;
+                    let attempts = 0;
+                    let currentPrompt = prompt;
+                    let result: any = null;
+                    while (attempts < MAX_ATTEMPTS) {
+                      attempts++;
+                      if (attempts > 1) {
+                        await sandboxChatRepo.append({
+                          sandboxId,
+                          userId: sb.userId,
+                          role: 'agent',
+                          text: `🔁 Fix-Versuch ${attempts}/${MAX_ATTEMPTS} …`,
+                          taskId,
+                          taskPhase: 'coding',
+                        });
+                      }
+                      result = await cAgent.execute({
+                        action: 'run',
+                        agent: defaultAgent,
+                        prompt: currentPrompt,
+                        cwd: sb.worktreePath,
+                      }, ctxCa);
+                      if (result.success) break;
+                      // Failure → Retry-Prompt mit Error-Context bauen (falls noch Versuche übrig)
+                      if (attempts < MAX_ATTEMPTS) {
+                        const errOutput = (
+                          (result.data as any)?.stderr
+                          || result.error
+                          || ''
+                        ).slice(0, 1500);
+                        currentPrompt = `Der vorherige Versuch (${attempts}/${MAX_ATTEMPTS}) ist fehlgeschlagen. Fehler:
+
+${errOutput || '(kein Fehler-Output)'}
+
+Original-Aufgabe:
+${prompt}
+
+Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Aufgabe selbst unklar ist, nimm die plausibelste Interpretation.`;
+                      }
+                    }
+
+                    // v760 Phase 2 — Auto-Commit nach erfolgreichem Run
+                    let commitNote = '';
+                    if (result.success) {
+                      try {
+                        const { execFile } = await import('node:child_process');
+                        const { promisify } = await import('node:util');
+                        const execAsync = promisify(execFile);
+                        const { stdout: porcelain } = await execAsync('git', ['status', '--porcelain'], { cwd: sb.worktreePath, maxBuffer: 1024 * 1024, timeout: 15_000 });
+                        if (porcelain.trim()) {
+                          // Commit-Msg aus User-Message (erste Zeile, sanitized, capped)
+                          const firstLine = augmentedMessage.split('\n')[0].trim().replace(/\s+/g, ' ').slice(0, 72) || 'iteration';
+                          const commitMsg = `[alfred-code-agent] ${firstLine}`;
+                          await execAsync('git', ['add', '-A'], { cwd: sb.worktreePath, timeout: 30_000 });
+                          await execAsync('git', ['commit', '-m', commitMsg], { cwd: sb.worktreePath, timeout: 30_000 });
+                          const { stdout: shaRaw } = await execAsync('git', ['rev-parse', 'HEAD'], { cwd: sb.worktreePath, timeout: 10_000 });
+                          commitNote = ` · commit \`${shaRaw.trim().slice(0, 8)}\``;
+                        } else {
+                          commitNote = ' · keine Änderungen';
+                        }
+                      } catch (err) {
+                        this.logger.warn({ err, sandboxId }, 'v760 auto-commit failed (continuing)');
+                        commitNote = ` · (commit fehlgeschlagen: ${(err as Error).message.slice(0, 60)})`;
+                      }
+                    }
+
+                    const attemptNote = attempts > 1 ? ` (nach ${attempts} Versuchen)` : '';
+                    const summary = result.success
+                      ? `✓ Fertig${attemptNote}${(result.data as any)?.modifiedFiles?.length ? ` — ${(result.data as any).modifiedFiles.length} Dateien geändert` : ''}${commitNote}`
+                      : `❌ Fehlgeschlagen nach ${attempts} Versuchen: ${result.error ?? 'unbekannt'}`;
+                    const display = (result.display ?? '').slice(0, 3000);
+                    await sandboxChatRepo.append({
+                      sandboxId,
+                      userId: sb.userId,
+                      role: 'agent',
+                      text: `${summary}\n\n${display}`,
+                      taskId,
+                      taskPhase: result.success ? 'done' : 'failed',
+                    });
+                  } catch (err) {
+                    await sandboxChatRepo.append({
+                      sandboxId,
+                      userId: sb.userId,
+                      role: 'agent',
+                      text: `❌ Code-Agent-Fehler: ${(err as Error).message}`,
+                      taskId,
+                      taskPhase: 'failed',
+                    });
+                  }
+                })().catch(err => this.logger.warn({ err }, 'v760 code-agent fire-and-forget failed'));
+
+                return { ok: true, userMessageId: userMsg.id, taskId };
+              }
+
               // (2) Project-Agent-Task starten mit cwd=worktree
               const skill = this.skillRegistry?.get('project_agent');
               if (!skill) return { ok: false, userMessageId: userMsg.id, reason: 'project_agent-Skill nicht registriert' };

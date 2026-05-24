@@ -457,6 +457,8 @@ export class HttpAdapter extends MessagingAdapter {
       message: string,
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
+      /** v760 — Engine-Wahl: 'project-agent' (default, heavy 14-phase planner) | 'code-agent' (light, iterativ pro Iteration einen Commit). */
+      engine?: 'project-agent' | 'code-agent',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
@@ -532,6 +534,8 @@ export class HttpAdapter extends MessagingAdapter {
       message: string,
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
+      /** v760 — Engine-Wahl: 'project-agent' (default, heavy planner) | 'code-agent' (light, iterativ). */
+      engine?: 'project-agent' | 'code-agent',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
@@ -4102,9 +4106,12 @@ export class HttpAdapter extends MessagingAdapter {
     let message = '';
     let attachments: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }> | undefined;
     let mentions: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }> | undefined;
+    let engine: 'project-agent' | 'code-agent' | undefined;
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       message = String(parsed.message ?? '');
+      // v760 — Engine-Wahl (default: project-agent für Backward-Compat)
+      if (parsed.engine === 'code-agent' || parsed.engine === 'project-agent') engine = parsed.engine;
       // v729a — Attachments aus dem Body validieren
       if (Array.isArray(parsed.attachments)) {
         attachments = [];
@@ -4147,7 +4154,7 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     try {
-      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions);
+      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions, engine);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {
