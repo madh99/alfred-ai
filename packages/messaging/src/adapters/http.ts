@@ -3111,6 +3111,22 @@ export class HttpAdapter extends MessagingAdapter {
         respHeaders[k] = v as string | string[];
       }
 
+      // v725 — Link-Header rewriten (Server-Push-Hints für preload): </path>; rel=preload
+      // wird vom Browser als preload-fetch mit ABSOLUTE path getriggert → braucht prefix.
+      const linkHeader = respHeaders['link'];
+      if (linkHeader) {
+        const safeId = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
+        const prefix = `/preview/${safeId}`;
+        const rewrite = (s: string) => s.replace(/<(\/[^>]*)>/g, (full, path: string) => {
+          // path enthält das führende '/'. Skip: zu kurz, protokoll-relativ (//), oder bereits prefixed.
+          if (path.length < 2) return full;
+          if (path.charAt(1) === '/') return full;
+          if (path === prefix || path.startsWith(`${prefix}/`)) return full;
+          return `<${prefix}${path}>`;
+        });
+        respHeaders['link'] = Array.isArray(linkHeader) ? linkHeader.map(rewrite) : rewrite(linkHeader);
+      }
+
       // v724 — Bei HTML-Responses Body buffern, <base href> + history-API-Patch injizieren.
       // So bleibt der iframe-URL nach client-side Next.js-Navigation im /preview/<sid>/-Prefix
       // → Subresources (CSS, JS, API, _next/data) finden ihr Routing wieder.
@@ -3124,6 +3140,16 @@ export class HttpAdapter extends MessagingAdapter {
         upstreamRes.on('end', () => {
           try {
             let body = Buffer.concat(chunks).toString('utf8');
+            // v725 — URL-Rewriting in HTML-Attributen: alle absoluten Pfade /foo werden
+            // zu /preview/<sb>/foo prefixed. Browser fetcht damit DIREKT unter preview-prefix,
+            // braucht keine Referer-Magie. Konservativ: nur quoted attribute values
+            // (href="/..", src="/..", srcset="/..", action="/.."). Ignoriert:
+            //  - bereits prefixed (/preview/<sb>/...)
+            //  - protokoll-relative (//host/...)
+            //  - protokoll-absolute (http://, https://, data:, blob:, mailto:, etc.)
+            //  - hash-only (#foo)
+            //  - relative ohne / (foo/bar)
+            body = this.rewriteSandboxHtmlUrls(body, sandboxId);
             const inject = this.buildSandboxHtmlInjection(sandboxId);
             // Versuche nach <head ...> einzufügen (kann Attribute haben).
             // Fallback: nach <html ...>. Letzter Fallback: einfach voranstellen.
@@ -3195,22 +3221,17 @@ export class HttpAdapter extends MessagingAdapter {
   }
 
   /**
-   * v724 — Baut das HTML-Inject-Snippet für Sandbox-Preview-Responses.
-   * Zwei Komponenten:
-   *  (a) `<base href="/preview/<sb>/">` — fängt plain `<a href="/foo">` und alle relativen
-   *      Subresource-URLs ein, lässt sie unter dem preview-prefix auflösen.
-   *  (b) `<script>` der history.pushState/replaceState wrapped — fängt Next.js Client-Router
-   *      (`router.push('/community')`) ab und prefixt absolute Pfade.
-   * Beides nötig: (a) allein reicht nicht weil Next.js URLs intern aus location.origin baut;
-   * (b) allein reicht nicht weil plain `<a>` ohne Wrapper das base-href braucht.
-   * Beide Komponenten sind idempotent: re-injection bei SPA-renavigates ist harmlos.
+   * v724 — HTML-Inject-Snippet für Sandbox-Preview-Responses.
+   * v725 — `<base href>` ENTFERNT weil CSP `base-uri 'self'` ihn in manchen Browsern
+   * blockierte und er für absolute Pfade ohnehin nichts brachte. Statt dessen werden
+   * absolute href/src-Attribute im HTML direkt rewriten (siehe rewriteSandboxHtmlUrls).
+   * Behält nur den history-API-Patch der Next.js Client-Router-Navigates prefixt.
    */
   private buildSandboxHtmlInjection(sandboxId: string): string {
     // sandboxId ist UUID/Slug-Form — safe-by-construction für JS-Literal, kein User-Input.
     const safeId = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
     const prefix = `/preview/${safeId}`;
     return [
-      `<base href="${prefix}/">`,
       `<script>`,
       `(function(){`,
       `var P=${JSON.stringify(prefix)};`,
@@ -3227,6 +3248,58 @@ export class HttpAdapter extends MessagingAdapter {
       `})();`,
       `</script>`,
     ].join('');
+  }
+
+  /**
+   * v725 — Rewriting absoluter URL-Pfade in HTML-Attributen auf den preview-prefix.
+   *
+   * Browser fetcht absolute Pfade (/foo) relativ zur Origin, nicht zur base-href.
+   * Vorher: `<link href="/_next/static/foo.css">` → Browser fragt `/foo.css` → 404
+   * Nachher: `<link href="/preview/<sb>/_next/static/foo.css">` → 200
+   *
+   * Konservativ implementiert:
+   *  - Nur quoted attribute values (double oder single quotes)
+   *  - Nur href, src, srcset, action, formaction, poster, data
+   *  - Skip wenn bereits prefixed, protokoll-absolute, protokoll-relativ, data:, blob:, mailto:, javascript:, oder hash-only
+   *
+   * srcset (Multi-URL with descriptors): jedes URL-Token einzeln verarbeiten.
+   */
+  private rewriteSandboxHtmlUrls(html: string, sandboxId: string): string {
+    const safeId = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
+    const prefix = `/preview/${safeId}`;
+
+    const isAbsolutePath = (val: string): boolean => {
+      if (val.length === 0) return false;
+      if (val.charAt(0) !== '/') return false;
+      if (val.charAt(1) === '/') return false; // protokoll-relativ //host/...
+      if (val.indexOf(`${prefix}/`) === 0 || val === prefix) return false; // bereits prefixed
+      return true;
+    };
+
+    // Standard-Attribute: href, src, action, formaction, poster, data, ping
+    const attrRe = /\b(href|src|action|formaction|poster|data|ping)\s*=\s*(["'])([^"']*)\2/gi;
+    html = html.replace(attrRe, (full, attr: string, quote: string, val: string) => {
+      if (!isAbsolutePath(val)) return full;
+      return `${attr}=${quote}${prefix}${val}${quote}`;
+    });
+
+    // srcset ist Multi-Value: "url1 1x, url2 2x" — jedes URL-Token einzeln behandeln
+    const srcsetRe = /\bsrcset\s*=\s*(["'])([^"']*)\1/gi;
+    html = html.replace(srcsetRe, (full, quote: string, val: string) => {
+      const rewritten = val.split(',').map(entry => {
+        const trimmed = entry.trim();
+        if (!trimmed) return entry;
+        // entry = "URL DESCRIPTOR" (DESCRIPTOR optional)
+        const spaceIdx = trimmed.search(/\s/);
+        const urlPart = spaceIdx >= 0 ? trimmed.slice(0, spaceIdx) : trimmed;
+        const descriptorPart = spaceIdx >= 0 ? trimmed.slice(spaceIdx) : '';
+        if (!isAbsolutePath(urlPart)) return entry;
+        return `${prefix}${urlPart}${descriptorPart}`;
+      }).join(', ');
+      return `srcset=${quote}${rewritten}${quote}`;
+    });
+
+    return html;
   }
 
   private async handleSandboxProxyUpgrade(

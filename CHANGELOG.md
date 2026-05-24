@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.725] - 2026-05-24
+
+### Fixed — Sandbox-Preview: HTML-URL-Rewriting statt Browser-Magic (Subresources kamen weiter mit 404)
+
+User-Report nach v724-Deploy: Trotz injizierter `<base href>` + History-API-Patch zeigt die Sandbox-Preview die App ohne CSS, Bilder als broken-image, Console voller `net::ERR_ABORTED 404` für alle `/_next/static/...`-Scripts. Network-Tab zeigt 39 Requests mit Status 404 (alle 402B = Alfred's `{"error":"Not found"}` Response).
+
+Root-Cause: `<base href>` greift **nur für relative Pfade** — Next.js generiert aber alle Subresource-URLs als **absolute Pfade** (`/_next/static/chunks/foo.js`). Browser löst absolute Pfade relativ zur Origin auf, ignoriert dabei base-href komplett. Die in v716 eingeführte Referer-Fallback-Logik im Adapter sollte diese Requests fangen (Referer = iframe-URL `/preview/<sb>/`), greift aber bei der konkreten App offenbar nicht — entweder weil Browser keinen Referer sendet, oder weil ein Header-Filter dazwischenkommt.
+
+Pragmatischer Fix: **HTML-URL-Rewriting direkt im Proxy**. Alle `href`, `src`, `srcset`, `action`, `formaction`, `poster`, `data`, `ping`-Attribute mit absoluten Pfaden werden im HTML-Body direkt prefixed:
+
+- `<link href="/_next/static/foo.css">` → `<link href="/preview/<sb>/_next/static/foo.css">`
+- `<img src="/logo.svg">` → `<img src="/preview/<sb>/logo.svg">`
+- `<script src="/_next/static/chunks/...">` → mit Prefix
+- `srcset="/foo 1x, /bar 2x"` → jedes URL-Token einzeln prefixed
+
+Skip-Conditions (URL bleibt unverändert):
+- bereits prefixed (`/preview/<sb>/...`)
+- protokoll-relativ (`//host/...`)
+- protokoll-absolut (`http://`, `https://`, `data:`, `blob:`, `mailto:`, `javascript:`)
+- hash-only (`#foo`)
+- relative ohne führendem `/`
+
+Zusätzlich: **Link-Response-Header rewriten** (HTTP/2 Server-Push-Hints `</path>; rel=preload`) — Browser triggert Preload-Requests auf diese mit absoluten Pfaden, also auch da Prefix einbauen.
+
+`<base href>` ENTFERNT aus Inject — der bringt für absolute Pfade ohnehin nichts und konflikt potenziell mit CSP `base-uri 'self'` in manchen Browsern. History-API-Patch bleibt (für Next.js Client-Router-Navigation).
+
+Streaming-RSC (`text/x-component`) und SSE (`text/event-stream`) werden weiter nicht modifiziert — wenn RSC absolute Pfade enthält, fällt der Referer-Fallback ein (RSC-Requests laufen mit Referer = current iframe-URL die jetzt durch URL-Rewriting + History-Patch korrekt im preview-prefix bleibt).
+
 ## [0.19.0-multi-ha.724] - 2026-05-24
 
 ### Fixed — Sandbox-Preview verlor Preview-Prefix bei Next.js Client-Navigation
