@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.737] - 2026-05-24
+
+### Added — ProjectSandboxesView: Live-Übersicht aller aktiven Sandboxes im Project-Detail
+
+Bisher konnte man im Project-Detail nicht sehen welche Sandboxes für das Project aktiv sind — man musste auf die `/sandboxes`-Übersicht wechseln oder im Project-Chat eine Session öffnen. Neue kollabierbare Section direkt im Project-Detail mit Live-Status + Quick-Actions.
+
+**Neue Komponente** `ProjectSandboxesView.tsx`:
+- Header: `🧪 Sandboxes (1/2 aktiv)` mit Count-Badge (running/total)
+- Lädt `client.listSandboxes({projectId})` beim Expand, filtert auf "lebende" Stati (`creating`/`running`/`paused`/`merging`)
+- Auto-Refresh alle 5s solange welche running/creating/merging sind (stoppt bei nur-paused/keine)
+- Pro Sandbox:
+  - Status-Badge mit farbcodiertem Status (emerald=running, blue=paused, amber=creating, purple=merging)
+  - Branch-Name (mono-font), project-type, host-port, relativer Created-Time
+  - `statusReason`-Hinweis falls vorhanden (z.B. "starting-container: …")
+  - Action-Buttons:
+    - `▶ Öffnen` — bei running Interactive-Sandboxes → `/alfred/interactive?sandboxId=<id>`
+    - `⏸ Pause` — bei running
+    - `▶ Resume` — bei paused
+    - `✕ Discard` — bei running/paused (mit Bestätigung, Branch-Name im Confirm-Text)
+- Empty-State: Hinweis auf `🧪 Sandbox`-Button (v735) zum Erstellen
+
+In `ProjectsPage.tsx` direkt nach DB-Seeds-View eingehängt.
+
+Damit Sandbox-Lifecycle-Management komplett im Project-Detail erledigbar:
+- Erstellen via `🧪 Sandbox` Button (Header, v735)
+- Liste + Steuern via `🧪 Sandboxes` Section (hier)
+- Detail-Chat via `▶ Öffnen` → Interactive-Page
+
 ## [0.19.0-multi-ha.736] - 2026-05-24
 
 ### Changed — Image-Vision auch für Worktree-Bilder + Deploy-Modal mit ENV-Stage-Wahl
