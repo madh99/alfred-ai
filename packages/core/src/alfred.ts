@@ -7380,6 +7380,151 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
         });
         this.logger.info('Projects API registered');
+
+        // v764 — Project-Wizard-Callbacks (LLM-Suggest + Plan-Gen + Validator + Create)
+        if ('setProjectWizardCallbacks' in apiAdapter && this.projectRepo) {
+          const projRepo = this.projectRepo;
+          const llm = this.llmProvider;
+          const resolveOwnerWiz = async (): Promise<string> => {
+            const ownerId = this.config.security?.ownerUserId ?? '';
+            try {
+              const user = await this.userRepo!.findOrCreate('telegram' as any, ownerId);
+              return user.masterUserId ?? user.id;
+            } catch { return ownerId; }
+          };
+
+          async function callJson(prompt: string, systemPrompt: string): Promise<Record<string, unknown>> {
+            if (!llm) throw new Error('LLM-Provider nicht verfügbar');
+            const resp = await llm.complete({
+              tier: 'strong',
+              system: systemPrompt,
+              messages: [
+                { role: 'user', content: prompt },
+              ],
+              maxTokens: 4000,
+            });
+            const text = (resp.content ?? '').trim();
+            // JSON extrahieren (LLMs umrahmen oft mit ```json…```)
+            const jsonMatch = text.match(/```json\s*([\s\S]+?)\s*```/) ?? text.match(/```\s*([\s\S]+?)\s*```/);
+            const raw = jsonMatch ? jsonMatch[1] : text;
+            try { return JSON.parse(raw); } catch (err) {
+              throw new Error(`LLM-Output war kein gültiges JSON: ${(err as Error).message.slice(0, 100)} — Output: ${raw.slice(0, 200)}`);
+            }
+          }
+
+          (apiAdapter as any).setProjectWizardCallbacks({
+            suggestStack: async (description: string) => {
+              const sys = 'Du bist ein erfahrener Software-Architekt. Schlage einen sinnvollen, modernen Tech-Stack für ein Projekt vor. Antworte AUSSCHLIESSLICH als gültiges JSON ohne weiteren Text. Bevorzuge populäre, gut dokumentierte Optionen.';
+              const usr = `Projekt-Beschreibung:\n${description}\n\nGib JSON zurück:\n{\n  "frontend": "z.B. Next.js, Vite+React, Astro, SvelteKit, oder 'None - backend only'",\n  "backend": "z.B. Node/Express, Hono, FastAPI, Bun, oder 'None - frontend only'",\n  "database": "z.B. SQLite, PostgreSQL, MongoDB, oder 'None'",\n  "extras": ["TypeScript", "Tailwind", "Auth", "Docker", ...],\n  "rationale": "kurze Begründung warum dieser Stack passt (max 300 Zeichen)"\n}`;
+              const out = await callJson(usr, sys);
+              return {
+                frontend: String(out.frontend ?? 'Unbekannt'),
+                backend: String(out.backend ?? 'None'),
+                database: String(out.database ?? 'None'),
+                extras: Array.isArray(out.extras) ? out.extras.map(String) : [],
+                rationale: String(out.rationale ?? '').slice(0, 500),
+              };
+            },
+            generatePlan: async (description: string, stack: { frontend: string; backend: string; database: string; extras: string[]; rationale: string }) => {
+              const sys = 'Du bist ein erfahrener Tech-Lead. Erstelle einen realistischen Implementierungs-Plan als Roadmap. Antworte AUSSCHLIESSLICH als gültiges JSON ohne weiteren Text.';
+              const usr = `Projekt-Beschreibung:\n${description}\n\nTech-Stack:\n- Frontend: ${stack.frontend}\n- Backend: ${stack.backend}\n- Database: ${stack.database}\n- Extras: ${stack.extras.join(', ') || '(keine)'}\n\nErstelle JSON mit 8-15 Open-Items gruppiert in 3-5 Milestones:\n{\n  "items": [\n    { "title": "max 80 Zeichen", "description": "konkrete Tasks", "priority": "low|normal|high", "roadmapMilestone": "Milestone-Name", "roadmapOrder": 1 }\n  ],\n  "decisions": [\n    { "choice": "Entscheidung kurz", "rationale": "Warum, max 200 Zeichen" }\n  ]\n}\nDecisions: 2-4 wichtige Tech-Stack- oder Architektur-Entscheidungen. roadmapOrder ist die Reihenfolge innerhalb des Milestones (1,2,3...).`;
+              const out = await callJson(usr, sys);
+              const itemsRaw = Array.isArray(out.items) ? out.items : [];
+              const decisionsRaw = Array.isArray(out.decisions) ? out.decisions : [];
+              return {
+                items: itemsRaw.slice(0, 20).map((it: Record<string, unknown>, idx: number) => ({
+                  title: String(it.title ?? `Item ${idx + 1}`).slice(0, 200),
+                  description: it.description ? String(it.description).slice(0, 1000) : undefined,
+                  priority: (it.priority === 'low' || it.priority === 'high') ? it.priority : 'normal',
+                  roadmapMilestone: String(it.roadmapMilestone ?? 'Setup').slice(0, 100),
+                  roadmapOrder: Number(it.roadmapOrder) || idx + 1,
+                })),
+                decisions: decisionsRaw.slice(0, 8).map((d: Record<string, unknown>) => ({
+                  choice: String(d.choice ?? '').slice(0, 300),
+                  rationale: String(d.rationale ?? '').slice(0, 500),
+                })),
+              };
+            },
+            validate: async (description: string, stack: { frontend: string; backend: string; database: string; extras: string[]; rationale: string }, items: Array<{ title: string }>) => {
+              const sys = 'Du bist ein kritischer Senior-Architekt. Hinterfrage einen Implementierungs-Plan. Antworte AUSSCHLIESSLICH als gültiges JSON ohne weiteren Text. Sei knapp und konkret.';
+              const itemsStr = items.map((it, i) => `${i + 1}. ${it.title}`).join('\n');
+              const usr = `Projekt: ${description}\n\nStack: ${stack.frontend} / ${stack.backend} / ${stack.database}\n\nGeplante Items:\n${itemsStr}\n\nKritik als JSON:\n{\n  "ok": true wenn keine größeren Probleme,\n  "issues": ["maximal 5 konkrete Probleme, max 200 Zeichen pro Stück"],\n  "suggestions": ["maximal 5 Verbesserungs-Vorschläge, max 200 Zeichen pro Stück"]\n}\nFokus: Lücken, Übertechnisierung, falsche Prioritäten, unrealistischer Scope.`;
+              const out = await callJson(usr, sys);
+              return {
+                ok: out.ok === true,
+                issues: Array.isArray(out.issues) ? out.issues.slice(0, 5).map((s: unknown) => String(s).slice(0, 300)) : [],
+                suggestions: Array.isArray(out.suggestions) ? out.suggestions.slice(0, 5).map((s: unknown) => String(s).slice(0, 300)) : [],
+              };
+            },
+            create: async (input: {
+              name: string;
+              slug?: string;
+              description: string;
+              stack: { frontend: string; backend: string; database: string; extras: string[]; rationale: string };
+              items: Array<{ title: string; description?: string; priority: 'low' | 'normal' | 'high'; roadmapMilestone: string; roadmapOrder: number }>;
+              decisions: Array<{ choice: string; rationale: string }>;
+              tags?: string[];
+            }) => {
+              try {
+                const uid = await resolveOwnerWiz();
+                if (!uid) return { ok: false, reason: 'Kein Owner-User' };
+                const slug = (input.slug ?? input.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')).slice(0, 80);
+                const project = await projRepo.create(uid, {
+                  name: input.name,
+                  slug,
+                  description: input.description.slice(0, 2000),
+                  tags: input.tags ?? [],
+                } as any);
+                // Open-Items
+                for (const it of input.items) {
+                  try {
+                    await projRepo.addOpenItem(project.id, {
+                      title: it.title,
+                      description: it.description,
+                      priority: it.priority,
+                      roadmapMilestone: it.roadmapMilestone,
+                      roadmapOrder: it.roadmapOrder,
+                    } as any);
+                  } catch (err) {
+                    this.logger.warn({ err, title: it.title }, 'v764 wizard addOpenItem failed (continuing)');
+                  }
+                }
+                // Decisions
+                for (const d of input.decisions) {
+                  try {
+                    await projRepo.addDecision(project.id, {
+                      title: d.choice.slice(0, 100),
+                      choice: d.choice,
+                      rationale: d.rationale,
+                    });
+                  } catch (err) {
+                    this.logger.warn({ err, choice: d.choice }, 'v764 wizard addDecision failed (continuing)');
+                  }
+                }
+                // Stack-Info als Convention speichern (für späteres Scaffold)
+                try {
+                  await projRepo.update(uid, project.id, {
+                    conventions: {
+                      techStack: {
+                        frontend: input.stack.frontend,
+                        backend: input.stack.backend,
+                        database: input.stack.database,
+                        extras: input.stack.extras,
+                      },
+                      stackRationale: input.stack.rationale,
+                    } as any,
+                  } as any);
+                } catch (err) {
+                  this.logger.warn({ err }, 'v764 wizard conventions update failed (continuing)');
+                }
+                return { ok: true, projectId: project.id };
+              } catch (err) {
+                return { ok: false, reason: (err as Error).message };
+              }
+            },
+          });
+          this.logger.info('v764 Project-Wizard API registered');
+        }
       }
     }
 

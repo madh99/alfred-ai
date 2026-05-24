@@ -384,6 +384,54 @@ export class AlfredClient {
     const data = await res.json();
     return data.messages ?? [];
   }
+  // v764 — Project-Wizard API
+  async wizardSuggestStack(description: string): Promise<{
+    frontend: string; backend: string; database: string; extras: string[]; rationale: string;
+  }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/wizard/suggest-stack`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ description }),
+    });
+    if (!res.ok) throw new Error(`wizard-suggest-stack: HTTP ${res.status}`);
+    return res.json();
+  }
+  async wizardGeneratePlan(description: string, stack: {
+    frontend: string; backend: string; database: string; extras: string[]; rationale: string;
+  }): Promise<{
+    items: Array<{ title: string; description?: string; priority: 'low' | 'normal' | 'high'; roadmapMilestone: string; roadmapOrder: number }>;
+    decisions: Array<{ choice: string; rationale: string }>;
+  }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/wizard/generate-plan`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ description, stack }),
+    });
+    if (!res.ok) throw new Error(`wizard-generate-plan: HTTP ${res.status}`);
+    return res.json();
+  }
+  async wizardValidate(description: string, stack: {
+    frontend: string; backend: string; database: string; extras: string[]; rationale: string;
+  }, items: Array<{ title: string }>): Promise<{ ok: boolean; issues: string[]; suggestions: string[] }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/wizard/validate`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ description, stack, items }),
+    });
+    if (!res.ok) throw new Error(`wizard-validate: HTTP ${res.status}`);
+    return res.json();
+  }
+  async wizardCreate(input: {
+    name: string;
+    slug?: string;
+    description: string;
+    stack: { frontend: string; backend: string; database: string; extras: string[]; rationale: string };
+    items: Array<{ title: string; description?: string; priority: 'low' | 'normal' | 'high'; roadmapMilestone: string; roadmapOrder: number }>;
+    decisions: Array<{ choice: string; rationale: string }>;
+    tags?: string[];
+  }): Promise<{ ok: boolean; projectId?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/wizard/create`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.error ?? data.reason ?? `http-${res.status}` };
+    return data;
+  }
+
   // v762 — Laufenden Code-Agent-Task stoppen
   async stopSandboxChatTask(sandboxId: string, taskId: string): Promise<{ ok: boolean; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat/stop`, {

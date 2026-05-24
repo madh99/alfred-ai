@@ -155,6 +155,56 @@ export interface SandboxTemplatesCallbacks {
   delete: (id: string) => Promise<{ ok: boolean; reason?: string }>;
 }
 
+/** v764 — Project-Wizard: LLM-gestützte Bootstrap-Vorschläge. */
+export interface ProjectWizardSuggestStackResult {
+  frontend: string;
+  backend: string;
+  database: string;
+  extras: string[];
+  rationale: string;
+}
+
+export interface ProjectWizardPlanItem {
+  title: string;
+  description?: string;
+  priority: 'low' | 'normal' | 'high';
+  roadmapMilestone: string;
+  roadmapOrder: number;
+}
+
+export interface ProjectWizardDecision {
+  choice: string;
+  rationale: string;
+}
+
+export interface ProjectWizardGeneratePlanResult {
+  items: ProjectWizardPlanItem[];
+  decisions: ProjectWizardDecision[];
+}
+
+export interface ProjectWizardValidateResult {
+  ok: boolean;
+  issues: string[];
+  suggestions: string[];
+}
+
+export interface ProjectWizardCreateInput {
+  name: string;
+  slug?: string;
+  description: string;
+  stack: ProjectWizardSuggestStackResult;
+  items: ProjectWizardPlanItem[];
+  decisions: ProjectWizardDecision[];
+  tags?: string[];
+}
+
+export interface ProjectWizardCallbacks {
+  suggestStack: (description: string) => Promise<ProjectWizardSuggestStackResult>;
+  generatePlan: (description: string, stack: ProjectWizardSuggestStackResult) => Promise<ProjectWizardGeneratePlanResult>;
+  validate: (description: string, stack: ProjectWizardSuggestStackResult, items: ProjectWizardPlanItem[]) => Promise<ProjectWizardValidateResult>;
+  create: (input: ProjectWizardCreateInput) => Promise<{ ok: boolean; projectId?: string; reason?: string }>;
+}
+
 /** v732 — Wire-Up-Interface für DB-Seeds-CRUD-API. */
 export interface DbSeedsCallbacks {
   list: (projectId: string) => Promise<Array<{ id: string; name: string; kind: string; storageRef: string; sizeBytes: number; createdAt: string }>>;
@@ -484,6 +534,12 @@ export class HttpAdapter extends MessagingAdapter {
   private sandboxTemplatesCallbacks?: SandboxTemplatesCallbacks;
   setSandboxTemplatesCallbacks(cb: SandboxTemplatesCallbacks): void {
     this.sandboxTemplatesCallbacks = cb;
+  }
+
+  /** v764 — Project-Wizard-Callbacks (LLM-Suggest + Plan-Gen + Validator + Create). */
+  private projectWizardCallbacks?: ProjectWizardCallbacks;
+  setProjectWizardCallbacks(cb: ProjectWizardCallbacks): void {
+    this.projectWizardCallbacks = cb;
   }
 
   // v639 — Goals API
@@ -1147,6 +1203,15 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/projects' && req.method === 'POST') {
       this.handleProjectsCreate(req, res).catch(err => this.safeError(res, err));
+    // v764 — Project-Wizard (Bootstrap-LLM-Hilfe)
+    } else if (url.pathname === '/api/projects/wizard/suggest-stack' && req.method === 'POST') {
+      this.handleProjectWizardSuggestStack(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/wizard/generate-plan' && req.method === 'POST') {
+      this.handleProjectWizardGeneratePlan(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/wizard/validate' && req.method === 'POST') {
+      this.handleProjectWizardValidate(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/projects/wizard/create' && req.method === 'POST') {
+      this.handleProjectWizardCreate(req, res).catch(err => this.safeError(res, err));
     // v675 — Spezifische Routes MÜSSEN vor der generic /api/projects/:id Route stehen,
     // sonst matched die generic Route und interpretiert z.B. "automation-templates" als Projekt-ID.
     } else if (url.pathname === '/api/projects/automation-templates' && req.method === 'GET') {
@@ -2646,6 +2711,88 @@ export class HttpAdapter extends MessagingAdapter {
     const project = await this.projectsCallbacks.create(input);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ project }));
+  }
+
+  // v764 — Project-Wizard Endpoints
+  private async handleProjectWizardSuggestStack(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectWizardCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Wizard nicht konfiguriert' })); return; }
+    const body = await this.readBody(req);
+    let description = '';
+    try { description = String((JSON.parse(body) as Record<string, unknown>).description ?? ''); } catch { /* */ }
+    if (!description.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'description required' })); return; }
+    try {
+      const result = await this.projectWizardCallbacks.suggestStack(description);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleProjectWizardGeneratePlan(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectWizardCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Wizard nicht konfiguriert' })); return; }
+    const body = await this.readBody(req);
+    let description = ''; let stack: ProjectWizardSuggestStackResult | null = null;
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      description = String(parsed.description ?? '');
+      stack = (parsed.stack ?? null) as ProjectWizardSuggestStackResult | null;
+    } catch { /* */ }
+    if (!description.trim() || !stack) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'description + stack required' })); return; }
+    try {
+      const result = await this.projectWizardCallbacks.generatePlan(description, stack);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleProjectWizardValidate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectWizardCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Wizard nicht konfiguriert' })); return; }
+    const body = await this.readBody(req);
+    let description = ''; let stack: ProjectWizardSuggestStackResult | null = null; let items: ProjectWizardPlanItem[] = [];
+    try {
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      description = String(parsed.description ?? '');
+      stack = (parsed.stack ?? null) as ProjectWizardSuggestStackResult | null;
+      items = Array.isArray(parsed.items) ? parsed.items as ProjectWizardPlanItem[] : [];
+    } catch { /* */ }
+    if (!description.trim() || !stack || items.length === 0) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'description + stack + items required' })); return; }
+    try {
+      const result = await this.projectWizardCallbacks.validate(description, stack, items);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  private async handleProjectWizardCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectWizardCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Wizard nicht konfiguriert' })); return; }
+    const body = await this.readBody(req);
+    let input: ProjectWizardCreateInput | null = null;
+    try { input = JSON.parse(body) as ProjectWizardCreateInput; } catch { /* */ }
+    if (!input || !input.name || !input.description || !input.stack || !Array.isArray(input.items)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'name + description + stack + items required' }));
+      return;
+    }
+    try {
+      const result = await this.projectWizardCallbacks.create(input);
+      res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
   }
 
   private async handleProjectsUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

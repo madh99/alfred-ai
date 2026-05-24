@@ -18,6 +18,8 @@ import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
 import { ProjectDbSeedsView } from './ProjectDbSeedsView';
 import { ProjectTemplatesView } from './ProjectTemplatesView';
 import { ProjectQuotaView } from './ProjectQuotaView';
+import { NewProjectChoiceModal } from './NewProjectChoiceModal';
+import { ProjectWizardModal } from './ProjectWizardModal';
 import { ProjectSandboxesView } from './ProjectSandboxesView';
 import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
@@ -106,6 +108,9 @@ export function ProjectsPage() {
   // v654 — Expandable Item-Details + Erledigt-Section
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
   const [showResolvedItems, setShowResolvedItems] = useState(false);
+  // v764 — Project-Wizard
+  const [newProjectChoiceOpen, setNewProjectChoiceOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   // v759 — Collapsible-State für Offene Punkte / Sessions / Entscheidungen (persist in localStorage)
   const [openItemsExpanded, setOpenItemsExpanded] = useState(() => {
     if (typeof window === 'undefined') return true;
@@ -432,7 +437,7 @@ export function ProjectsPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setCreating(c => !c)}
+            onClick={() => setNewProjectChoiceOpen(true)}
             className="px-4 py-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg text-sm border border-emerald-500/30"
           >
             + Neues Projekt
@@ -1100,6 +1105,24 @@ export function ProjectsPage() {
           )}
         </div>
       </div>
+
+      {/* v764 — Project-Create Choice + Wizard */}
+      {newProjectChoiceOpen && (
+        <NewProjectChoiceModal
+          onChoice={(choice) => {
+            setNewProjectChoiceOpen(false);
+            if (choice === 'wizard') setWizardOpen(true);
+            else setCreating(true);
+          }}
+          onClose={() => setNewProjectChoiceOpen(false)}
+        />
+      )}
+      {wizardOpen && (
+        <ProjectWizardModal
+          onClose={() => setWizardOpen(false)}
+          onCreated={(projectId) => { setWizardOpen(false); load().then(() => setSelectedId(projectId)); }}
+        />
+      )}
     </div>
   );
 }

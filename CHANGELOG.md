@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.764] - 2026-05-24
+
+### Added — Project-Wizard mit LLM-Bootstrap (Phase 1 von 2)
+
+Beim Klick auf "Neues Projekt" öffnet sich jetzt zuerst eine Auswahl: 🪄 Wizard (LLM-gestützt) oder ✏️ Manuell (bestehender Form). Wizard-Pfad führt durch 4 Steps und endet mit einem voll befüllten Projekt — Metadaten + Roadmap + Decisions. Repo-Erstellung und Auto-Scaffold kommen in v765.
+
+**Backend** (4 neue Endpoints):
+- `POST /api/projects/wizard/suggest-stack` → LLM (strong-tier) schlägt Tech-Stack aus Beschreibung vor
+- `POST /api/projects/wizard/generate-plan` → LLM erstellt 8-15 Open-Items gruppiert in Milestones + 2-4 Decisions
+- `POST /api/projects/wizard/validate` → LLM kritisiert den Plan, liefert Issues + Suggestions
+- `POST /api/projects/wizard/create` → erstellt Project + Open-Items + Decisions + speichert techStack in conventions
+
+Alle LLM-Calls über strong-tier (claude-opus/gpt-5). JSON-Output mit Sanity-Capping (max 5 issues, max 20 items, etc.).
+
+**WebUI**:
+- `NewProjectChoiceModal` — kleines Modal mit zwei großen Buttons (Wizard vs Manuell)
+- `ProjectWizardModal` — 4-Step-Wizard mit Step-Indicator, persistiert State über alle Schritte:
+  - **Step 1 — Basics**: Name, Slug (auto), Tags
+  - **Step 2 — Beschreibung**: Multi-line Textarea + optionaler Voice-Input (re-uses bestehende STT)
+  - **Step 3 — Tech-Stack**: Radio "LLM vorschlägt" oder "ich wähle selbst" (Frontend/Backend/DB-Dropdowns + Extras-Toggles)
+  - **Step 4 — Plan-Review**: Items editierbar (Titel, Priority, Milestone), addable, removable. Validator-Banner zeigt Issues+Suggestions in Amber. Decisions in collapsible.
+
+**Was v764 NICHT macht** (kommt in v765):
+- Kein Auto-Scaffold (Templates oder Project-Agent-Bootstrap)
+- Keine automatische Repo-Erstellung (GitLab/GitHub API)
+- v764 speichert nur Metadaten + Roadmap, repo musst du manuell anlegen oder auf v765 warten
+
 ## [0.19.0-multi-ha.763] - 2026-05-24
 
 ### Fixed — Orphane Code-Agent-Tasks nach Restart
