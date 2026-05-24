@@ -30,6 +30,20 @@ function formatRelative(iso?: string): string {
 }
 
 /**
+ * v748 — Stuck-Detection: Sandbox-Manager startet Container in Phase 2 async.
+ * Wenn Alfred während Phase 2 crashed oder Container nicht hochkommt, bleibt
+ * der Status 'creating' für immer. > 10min creating = stuck.
+ */
+const STUCK_THRESHOLD_MIN = 10;
+function isStuck(sb: SandboxItem): boolean {
+  if (sb.status !== 'creating') return false;
+  try {
+    const elapsedMin = (Date.now() - new Date(sb.createdAt).getTime()) / 60000;
+    return elapsedMin > STUCK_THRESHOLD_MIN;
+  } catch { return false; }
+}
+
+/**
  * v738/v739 — Idle-Countdown: Sandbox-Manager pausiert running Sandboxes nach
  * config.idleTimeoutMin (default 30 Min). v739: liest echte Config statt hardcoded.
  */
@@ -175,6 +189,19 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
     }
   }
 
+  // v748 — Force-Fail für stuck Sandboxes
+  async function handleForceFail(s: SandboxItem) {
+    if (!client) return;
+    if (!confirm(`Sandbox "${s.branchName}" als failed markieren? (Container wird gestoppt falls aktiv, Status → failed)`)) return;
+    setBusyId(s.id); setError(null);
+    try {
+      const r = await client.forceFailSandbox(s.id, 'stuck-creating: user forced via UI');
+      if (!r.ok) setError(`Force-Fail fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyId(null); }
+  }
+
   // v744 — Restart-Container für failed/running (heilt dev-server cache issues)
   async function handleRestart(s: SandboxItem) {
     if (!client) return;
@@ -244,8 +271,21 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
             const idleTimeoutMin = status?.idleTimeoutMin ?? 30;
             const idle = s.status === 'running' ? computeIdleCountdown(s.lastActiveAt, idleTimeoutMin) : null;
             const isFailed = s.status === 'failed';
+            const stuck = isStuck(s);
             return (
-              <div key={s.id} className={`rounded p-2 space-y-1 ${isFailed ? 'bg-red-500/5 border-2 border-red-500/40' : 'bg-[#0a0a0a] border border-[#1a1a1a]'}`}>
+              <div key={s.id} className={`rounded p-2 space-y-1 ${isFailed ? 'bg-red-500/5 border-2 border-red-500/40' : stuck ? 'bg-amber-500/5 border-2 border-amber-500/40' : 'bg-[#0a0a0a] border border-[#1a1a1a]'}`}>
+                {/* v748 — Stuck-Banner */}
+                {stuck && (
+                  <div className="flex items-center gap-2 text-amber-300 text-[11px] mb-1 flex-wrap">
+                    <span className="font-semibold">⚠ Sandbox stuck in 'creating' seit &gt;10min.</span>
+                    <span className="text-gray-400">Container hat sich vermutlich nicht gestartet (Alfred-Crash während Phase 2, oder dev-server-Timeout).</span>
+                    <button
+                      onClick={() => handleForceFail(s)}
+                      disabled={busyId === s.id}
+                      className="px-2 py-0.5 border border-amber-500/40 text-amber-300 hover:bg-amber-500/15 rounded text-[10px] font-semibold ml-auto"
+                    >⏏️ Als failed markieren</button>
+                  </div>
+                )}
                 {/* v740/v741 — Recovery-Banner für failed Sandboxes mit Inline-Logs */}
                 {isFailed && (() => {
                   const logState = inlineLogs[s.id];

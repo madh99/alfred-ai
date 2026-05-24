@@ -772,6 +772,21 @@ export class SandboxManager {
   }
 
   /**
+   * v748 — Force-Fail: für stuck Sandboxes (creating seit > 10min ohne Progress).
+   * Setzt status=failed mit reason, versucht best-effort Container zu stoppen falls einer existiert.
+   */
+  async forceFail(sandboxId: string, reason = 'manually-marked-failed'): Promise<{ ok: boolean; reason?: string }> {
+    const sb = await this.deps.repo.getById(sandboxId);
+    if (!sb) return { ok: false, reason: 'Sandbox not found' };
+    if (sb.containerId) {
+      try { await stopContainer(sb.containerId, 5); } catch { /* ignore */ }
+    }
+    await this.deps.repo.updateStatus(sandboxId, 'failed', reason.slice(0, 200));
+    this.deps.logger.info({ sandboxId, reason }, 'v748 force-failed sandbox');
+    return { ok: true };
+  }
+
+  /**
    * v726 — Lädt ENVs für eine Project/Stage aus EnvironmentRepository und decrypted sie.
    * Best-effort: bei Fehler oder fehlenden Deps gibt {} zurück (Container startet wie zuvor).
    */

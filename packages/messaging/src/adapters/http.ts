@@ -445,6 +445,7 @@ export class HttpAdapter extends MessagingAdapter {
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
+    forceFail?: (sandboxId: string, reason?: string) => Promise<{ ok: boolean; reason?: string }>;
   };
 
   /** v728 — Environments-CRUD-Callbacks (Wire-Up von alfred.ts → EnvironmentRepository + Crypto). */
@@ -513,6 +514,7 @@ export class HttpAdapter extends MessagingAdapter {
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
+    forceFail?: (sandboxId: string, reason?: string) => Promise<{ ok: boolean; reason?: string }>;
   }): void {
     this.sandboxCallbacks = cb;
   }
@@ -1073,6 +1075,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsReMatchOpenItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/restart$/) && req.method === 'POST') {
       this.handleSandboxRestart(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/force-fail$/) && req.method === 'POST') {
+      this.handleSandboxForceFail(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/logs$/) && req.method === 'GET') {
       this.handleSandboxLogs(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/stats$/) && req.method === 'GET') {
@@ -3527,6 +3531,28 @@ export class HttpAdapter extends MessagingAdapter {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v748 — POST /api/sandbox/:id/force-fail — Stuck-Sandbox (creating > 10min) manuell auf failed setzen. */
+  private async handleSandboxForceFail(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.forceFail) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Force-Fail-Action nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let reason: string | undefined;
+    try { reason = (JSON.parse(body) as Record<string, unknown>).reason as string | undefined; } catch { /* */ }
+    try {
+      const r = await this.sandboxCallbacks.forceFail(sandboxId, reason);
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
     }
   }
 

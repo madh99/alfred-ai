@@ -443,6 +443,15 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v748 — Force-Fail für stuck sandboxes
+  async forceFailSandbox(sandboxId: string, reason?: string): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/force-fail`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ reason }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   async fetchSandboxLogs(sandboxId: string, tail = 200): Promise<{ ok: boolean; logs?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/logs?tail=${tail}`, { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));

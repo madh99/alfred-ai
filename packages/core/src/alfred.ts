@@ -3485,6 +3485,8 @@ export class Alfred {
                     restart: (sandboxId: string) => sandboxManager.restart(sandboxId),
                     getLogs: (sandboxId: string, tail: number) => sandboxManager.getLogs(sandboxId, tail),
                     getStats: (sandboxId: string) => sandboxManager.getStats(sandboxId),
+                    // v748 — Force-Fail für stuck sandboxes
+                    forceFail: (sandboxId: string, reason?: string) => sandboxManager.forceFail(sandboxId, reason),
                   });
                   this.logger.info('v699 Sandbox CRUD-API registered (v728: +restart/logs/stats)');
                 }
@@ -5861,6 +5863,8 @@ export class Alfred {
             restart: (sandboxId: string) => sbMgr.restart(sandboxId),
             getLogs: (sandboxId: string, tail: number) => sbMgr.getLogs(sandboxId, tail),
             getStats: (sandboxId: string) => sbMgr.getStats(sandboxId),
+            // v748 — Force-Fail für stuck sandboxes
+            forceFail: (sandboxId: string, reason?: string) => sbMgr.forceFail(sandboxId, reason),
             // v703/v704 — Sandbox-Chat (Interactive-Mode) mit Live-Enrichment
             chatList: async (sandboxId: string) => {
               const messages = await sandboxChatRepo.list(sandboxId);

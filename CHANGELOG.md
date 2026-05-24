@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.748] - 2026-05-24
+
+### Added — Stuck-Sandbox-Detection + Force-Fail-Action
+
+Wenn der Sandbox-Container-Start in Phase 2 hängt (Alfred crashed während Container-Spawn, oder dev-server-Timeout) blieb der `status='creating'` für immer — User konnte nichts machen außer SSH+manual Discard. Jetzt: Frontend erkennt stuck Sandboxes nach 10min und bietet Force-Fail an.
+
+**Backend** (`sandbox-manager.ts`):
+- Neue `forceFail(sandboxId, reason)`-Methode
+- Best-effort `stopContainer()` falls eine containerId existiert
+- Setzt status='failed' mit übergebenem reason (max 200 chars)
+- Logger-Entry für Audit
+
+**HTTP-API** (`http.ts`):
+- `POST /api/sandbox/:id/force-fail` mit body `{reason?}`
+- Auth-gated, ruft Callback
+
+**Web-Client**:
+- `forceFailSandbox(sandboxId, reason)` → `{ok, reason}`
+
+**Frontend** (`/sandboxes` Page + `ProjectSandboxesView`):
+- `isStuck()`-Helper: `status === 'creating' && createdAt > 10min`
+- Stuck-Sandboxes haben amber 2px-Border + Background statt grau
+- Banner über der Sandbox: `⚠ Stuck in 'creating' seit >10min — Container hat sich vermutlich nicht gestartet`
+- `⏏️ Als failed markieren`-Button (rechts in Banner) ruft `forceFailSandbox` mit `reason='stuck-creating: user forced via UI'`
+- Nach success: refresh → Sandbox jetzt in `failed`-State mit allen v740-Recovery-Actions verfügbar (📜 Logs anschauen, 🗑️ Aufräumen, ♻️ Restart-Versuch)
+
+Typischer Workflow: Alfred wird während Sandbox-Create restartet → User sieht ⚠ Stuck → klickt Als failed markieren → sieht 📜 Container-Logs (vermutlich leer/early-stage) → 🗑️ Aufräumen → neu erstellen.
+
 ## [0.19.0-multi-ha.747] - 2026-05-24
 
 ### Added — Tab-Title-Update + Browser-Notification bei Agent-Done
