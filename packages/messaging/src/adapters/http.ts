@@ -3073,6 +3073,10 @@ export class HttpAdapter extends MessagingAdapter {
     headers['x-forwarded-host'] = String(req.headers['host'] ?? '');
     headers['x-forwarded-proto'] = this.server instanceof https.Server ? 'https' : 'http';
     headers['x-forwarded-prefix'] = `/preview/${sandboxId}`;
+    // v724 — Accept-Encoding auf identity zwingen damit wir bei HTML-Responses den Body
+    // ungekomprimiert buffern und <base href> + history-API-Patch injizieren können.
+    // Upstream ist 127.0.0.1, compression bringt hier eh nichts.
+    headers['accept-encoding'] = 'identity';
 
     const upstreamReq = http.request({
       host: '127.0.0.1',
@@ -3106,8 +3110,61 @@ export class HttpAdapter extends MessagingAdapter {
         }
         respHeaders[k] = v as string | string[];
       }
-      res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);
-      upstreamRes.pipe(res);
+
+      // v724 — Bei HTML-Responses Body buffern, <base href> + history-API-Patch injizieren.
+      // So bleibt der iframe-URL nach client-side Next.js-Navigation im /preview/<sid>/-Prefix
+      // → Subresources (CSS, JS, API, _next/data) finden ihr Routing wieder.
+      // NICHT für Streaming-RSC (text/x-component) oder SSE (text/event-stream).
+      const ctRaw = upstreamRes.headers['content-type'];
+      const ct = Array.isArray(ctRaw) ? ctRaw[0] : (ctRaw ?? '');
+      const isHtmlResponse = /^text\/html\b/i.test(ct);
+      if (isHtmlResponse) {
+        const chunks: Buffer[] = [];
+        upstreamRes.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+        upstreamRes.on('end', () => {
+          try {
+            let body = Buffer.concat(chunks).toString('utf8');
+            const inject = this.buildSandboxHtmlInjection(sandboxId);
+            // Versuche nach <head ...> einzufügen (kann Attribute haben).
+            // Fallback: nach <html ...>. Letzter Fallback: einfach voranstellen.
+            const headMatch = body.match(/<head\b[^>]*>/i);
+            if (headMatch && typeof headMatch.index === 'number') {
+              const at = headMatch.index + headMatch[0].length;
+              body = body.slice(0, at) + inject + body.slice(at);
+            } else {
+              const htmlMatch = body.match(/<html\b[^>]*>/i);
+              if (htmlMatch && typeof htmlMatch.index === 'number') {
+                const at = htmlMatch.index + htmlMatch[0].length;
+                body = body.slice(0, at) + '<head>' + inject + '</head>' + body.slice(at);
+              } else {
+                body = inject + body;
+              }
+            }
+            const out = Buffer.from(body, 'utf8');
+            // Content-Length anpassen, falls vorher gesetzt war (war es bei identity oft)
+            respHeaders['content-length'] = String(out.length);
+            // Eigene Content-Encoding-Header entfernen (sicher ist sicher — wir senden identity)
+            delete respHeaders['content-encoding'];
+            res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);
+            res.end(out);
+          } catch (err) {
+            process.stderr.write(`[sandbox-proxy] html-inject failed sandbox=${sandboxId} err=${(err as Error).message}\n`);
+            try {
+              if (!res.headersSent) {
+                res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);
+                res.end(Buffer.concat(chunks));
+              }
+            } catch { /* swallow */ }
+          }
+        });
+        upstreamRes.on('error', err => {
+          if (res.headersSent || res.writableEnded) { try { res.destroy(); } catch { /* */ } return; }
+          try { this.writePreviewError(res, 502, 'Dev-Server-Stream abgebrochen', `Upstream-Fehler: ${(err as Error).message}`); } catch { /* */ }
+        });
+      } else {
+        res.writeHead(upstreamRes.statusCode ?? 502, respHeaders);
+        upstreamRes.pipe(res);
+      }
     });
 
     upstreamReq.on('error', err => {
@@ -3135,6 +3192,41 @@ export class HttpAdapter extends MessagingAdapter {
     // Trade-off: minimaler memory-leak-Risiko vs. korrekte Funktionalität. Wir wählen Funktion.
 
     req.pipe(upstreamReq);
+  }
+
+  /**
+   * v724 — Baut das HTML-Inject-Snippet für Sandbox-Preview-Responses.
+   * Zwei Komponenten:
+   *  (a) `<base href="/preview/<sb>/">` — fängt plain `<a href="/foo">` und alle relativen
+   *      Subresource-URLs ein, lässt sie unter dem preview-prefix auflösen.
+   *  (b) `<script>` der history.pushState/replaceState wrapped — fängt Next.js Client-Router
+   *      (`router.push('/community')`) ab und prefixt absolute Pfade.
+   * Beides nötig: (a) allein reicht nicht weil Next.js URLs intern aus location.origin baut;
+   * (b) allein reicht nicht weil plain `<a>` ohne Wrapper das base-href braucht.
+   * Beide Komponenten sind idempotent: re-injection bei SPA-renavigates ist harmlos.
+   */
+  private buildSandboxHtmlInjection(sandboxId: string): string {
+    // sandboxId ist UUID/Slug-Form — safe-by-construction für JS-Literal, kein User-Input.
+    const safeId = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
+    const prefix = `/preview/${safeId}`;
+    return [
+      `<base href="${prefix}/">`,
+      `<script>`,
+      `(function(){`,
+      `var P=${JSON.stringify(prefix)};`,
+      `function fix(u){`,
+      `  if(typeof u==='string'&&u.charAt(0)==='/'&&u.indexOf(P+'/')!==0&&u!==P){return P+u;}`,
+      `  return u;`,
+      `}`,
+      `try{`,
+      `  var op=history.pushState.bind(history);`,
+      `  var or=history.replaceState.bind(history);`,
+      `  history.pushState=function(s,t,u){return op(s,t,fix(u));};`,
+      `  history.replaceState=function(s,t,u){return or(s,t,fix(u));};`,
+      `}catch(e){}`,
+      `})();`,
+      `</script>`,
+    ].join('');
   }
 
   private async handleSandboxProxyUpgrade(

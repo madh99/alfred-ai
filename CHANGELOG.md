@@ -5,6 +5,25 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.724] - 2026-05-24
+
+### Fixed — Sandbox-Preview verlor Preview-Prefix bei Next.js Client-Navigation
+
+User-Report: In der Sandbox-Preview wird die Hauptseite + statische Pages (Nutzungsbedingungen, Impressum) korrekt dargestellt. Sobald aber innerhalb des iframes navigiert wird (Klick auf `/community`, Anchor-Links wie `Games`/`Studio` die via `lp("/#games")` einen Route-Change auslösen), bricht die Darstellung: CSS verschwindet, Bilder fehlen, API-Calls scheitern. Pages erscheinen "nackt" mit blauen unterstrichenen Links.
+
+Root-Cause: Next.js Client-Router macht `history.pushState('/community')` direkt mit `window.location.origin` — **ohne** den `/preview/<sandboxId>/`-Prefix. Sobald die iframe-URL den Prefix verloren hat, fragen alle Subresources (`/_next/static/css/...`, `/api/community/auth/me`, RSC-fetches) mit einem Referer **ohne** `/preview/`-Prefix an. Das in v716 eingeführte Referer-Fallback-Routing (`/\/preview\/([a-zA-Z0-9-]{8,})\//`) matcht nicht mehr → 404 vom Alfred-Adapter → kein CSS, keine Bilder, keine API-Antworten → unstyled Page.
+
+Fix in `handleSandboxProxyHttp` (packages/messaging/src/adapters/http.ts):
+
+- **Upstream-Request mit `Accept-Encoding: identity`**: Erzwingt unkomprimierten Response damit wir den Body bei HTML-Responses ohne zlib/brotli-Roundtrip rewriten können. Bringt auf 127.0.0.1 keinen Performance-Verlust.
+- **HTML-Buffering + Inject**: Bei `Content-Type: text/html` (case-insensitive, matched auf word-boundary) wird der gesamte Response-Body gepuffert statt direkt gestreamt. Nach dem ersten `<head ...>` (oder fallback `<html ...>`) wird die `buildSandboxHtmlInjection()` injiziert. Content-Length wird neu berechnet, `Content-Encoding`-Header entfernt. Streaming-Content-Types (`text/x-component`, `text/event-stream`) werden NICHT gebuffert — die laufen unverändert durch.
+- **Inject-Snippet besteht aus zwei Komponenten:**
+  - `<base href="/preview/<sandboxId>/">`: Fängt plain `<a href="/foo">`-Klicks und alle relativen Subresource-URLs. Browser löst sie unter dem preview-prefix auf.
+  - Inline-`<script>` der `history.pushState`/`replaceState` wrapped: Fängt Next.js Client-Router-Aufrufe (`router.push('/community')`) ab und prefixt absolute Pfade automatisch mit `/preview/<sandboxId>`. Idempotent — Re-Injection bei SPA-Renavigations ist harmlos. sandboxId wird auf `[a-zA-Z0-9-]` gefiltert vor JS-Literal-Einbettung (defense-in-depth, ist eh UUID/Slug-Form).
+- Beides zusammen ist notwendig: `<base href>` alleine reicht nicht weil Next.js URLs intern aus `window.location.origin` baut und `<base>` ignoriert. Der Script-Patch alleine reicht nicht weil plain `<a href>`-Elements (ohne Next.js Link-Wrapper) keinen `pushState` triggern sondern direkt navigieren.
+
+Damit bleibt die iframe-URL nach jeder Client-Navigation im preview-prefix → Subresource-Referer stimmt wieder → CSS, Bilder, API-Calls, RSC-Fetches funktionieren.
+
 ## [0.19.0-multi-ha.723] - 2026-05-24
 
 ### Fixed — Merge-Dialog interpretierte Abbrechen still als Direct-Push
