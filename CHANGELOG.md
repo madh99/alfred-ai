@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.758] - 2026-05-24
+
+### Fixed — Native Modules (better-sqlite3 etc) im Sandbox-Container
+
+**Symptom**: Code-Agent-Tests im Sandbox-Container schlugen mit `libc.musl-x86_64.so.1: cannot open shared object file` fehl. better-sqlite3 (und andere Native-Bindings) konnten ihre kompilierten Binaries nicht laden.
+
+**Root-Cause**: Sandbox-Image basiert auf `node:22-alpine` (musl libc), aber der Host (.92/.93 → Debian/Ubuntu glibc) bind-mountet seinen Worktree mit `node_modules` in den Container. Wenn der User vorher auf dem Host `pnpm install` lief (oder aus Cache), liegen dort glibc-kompilierte Native-Bindings — und `pnpm install` im Container sagt "alles da" und rebuildet sie NICHT für musl.
+
+**Fix** (zweiteilig):
+
+1. **Container-Start-Cmd erweitert** (`sandbox-manager.ts`):
+   ```
+   alt: pnpm install && exec pnpm dev
+   neu: pnpm install && pnpm rebuild && exec pnpm dev
+   ```
+   `pnpm rebuild` triggert Postinstall-Scripts → prebuild-Downloads für Alpine/musl oder lokale Kompilation.
+
+2. **Sandbox-Dockerfile** ergänzt um `build-base`-Toolchain (`python3 make g++ libstdc++`):
+   Falls für ein Modul kein Alpine-musl-Prebuild existiert, kann es lokal kompiliert werden. Vorher fehlten die Build-Tools komplett. Image-Größe wächst um ~50 MB, dafür funktionieren alle gängigen node-gyp-Pakete.
+
+**Action Required nach Update**: Damit das neue Dockerfile greift, einmal die alte Image-Version löschen:
+```bash
+docker rmi alfred-sandbox-node-22
+```
+Beim nächsten Sandbox-Create wird das Image automatisch neu gebaut (~1-3 min einmalig).
+
 ## [0.19.0-multi-ha.757] - 2026-05-24
 
 ### Fixed — Sandbox-Preview-Proxy: App-Cookies werden nicht mehr verschluckt

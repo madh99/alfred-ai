@@ -334,9 +334,15 @@ export class SandboxManager {
       const pnpmStore = this.deps.config.pnpmStorePath;
       if (pnpmStore) binds.push({ host: pnpmStore, container: '/pnpm-store' });
 
-      const installCmd = `${detection.diagnostics.packageManager} install`;
+      // v758 — Native Module für Container-OS rebuilden. Wenn der Host glibc ist und
+      // node_modules schon mit Host-Binaries existiert (via bind-mount), würde pnpm install
+      // sagen "alles da" und die musl-inkompatiblen Bindings (z.B. better-sqlite3) belassen.
+      // `pnpm rebuild` triggert Postinstall-Scripts → prebuild-Downloads für Alpine/musl.
+      const pm = detection.diagnostics.packageManager;
+      const installCmd = `${pm} install`;
+      const rebuildCmd = `${pm} rebuild`;
       const devCmd = detection.devCommand.join(' ');
-      const fullCmd = `${installCmd} && exec ${devCmd}`;
+      const fullCmd = `${installCmd} && ${rebuildCmd} && exec ${devCmd}`;
 
       // v726 — Project-ENVs + Default-ENVs zusammenführen. Defaults dürfen NICHT von Project überschrieben werden? Doch — Project hat Vorrang (user-controlled).
       const containerEnvs: Record<string, string> = {

@@ -4,7 +4,9 @@
 FROM node:22-alpine
 
 # Tools für dev-server + git operations + dumb-init für proper signal-handling
-RUN apk add --no-cache git dumb-init bash curl \
+# v758 — build-base + python3 + libstdc++ damit native modules (better-sqlite3 etc)
+#        notfalls auch lokal kompilieren können wenn kein Alpine-musl-Prebuild verfügbar
+RUN apk add --no-cache git dumb-init bash curl python3 make g++ libstdc++ \
   && corepack enable \
   && corepack prepare pnpm@latest --activate
 
