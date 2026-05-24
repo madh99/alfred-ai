@@ -88,32 +88,71 @@ export default function InteractivePage() {
     if (box) box.scrollTop = box.scrollHeight;
   }, [chatHistory, liveOutput]);
 
-  // SSE-Subscribe für laufende Agent-Tasks
+  // v720 — Robusterer SSE-Subscribe mit Auto-Reconnect bei drops
   useEffect(() => {
     const runningMsg = chatHistory.find(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');
     const taskId = runningMsg?.taskId;
-    if (!taskId || taskId === currentTaskRef.current) return;
+    if (!taskId || !client) {
+      if (esRef.current) { esRef.current.close(); esRef.current = null; }
+      currentTaskRef.current = null;
+      return;
+    }
+    if (taskId === currentTaskRef.current && esRef.current && esRef.current.readyState !== EventSource.CLOSED) {
+      // Same task, connection still alive → nothing to do
+      return;
+    }
     // Close previous stream
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     currentTaskRef.current = taskId;
-    if (!client) return;
-    const es = client.openProjectAgentOutputStream(
-      taskId,
-      (line) => {
-        setLiveOutput(prev => {
-          const next = new Map(prev);
-          const existing = next.get(taskId) ?? [];
-          const updated = [...existing, line];
-          next.set(taskId, updated.length > 200 ? updated.slice(-200) : updated);
-          return next;
-        });
-      },
-      (history) => {
-        setLiveOutput(prev => { const next = new Map(prev); next.set(taskId, history); return next; });
-      },
-    );
-    esRef.current = es;
-    return () => { es.close(); };
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    const connect = () => {
+      if (currentTaskRef.current !== taskId) return;
+      const es = client.openProjectAgentOutputStream(
+        taskId,
+        (line) => {
+          setLiveOutput(prev => {
+            const next = new Map(prev);
+            const existing = next.get(taskId) ?? [];
+            const updated = [...existing, line];
+            next.set(taskId, updated.length > 200 ? updated.slice(-200) : updated);
+            return next;
+          });
+        },
+        (history) => {
+          setLiveOutput(prev => { const next = new Map(prev); next.set(taskId, history); return next; });
+        },
+      );
+      es.addEventListener('error', () => {
+        // v720 — Auto-reconnect bei drop. EventSource versucht selbst zu reconnecten bei
+        // transport-errors, aber wenn Server sauber schließt → CLOSED state, kein retry.
+        // Wir prüfen alle 2s ob's tot ist und re-connecten.
+        if (es.readyState === EventSource.CLOSED && currentTaskRef.current === taskId) {
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (currentTaskRef.current === taskId) {
+              esRef.current = null;
+              connect();
+            }
+          }, 2000);
+        }
+      });
+      esRef.current = es;
+    };
+    connect();
+    // v720 — Watchdog: alle 10s prüfen ob SSE noch lebt; wenn nicht, neu verbinden
+    const watchdog = setInterval(() => {
+      const es = esRef.current;
+      if (es && es.readyState === EventSource.CLOSED && currentTaskRef.current === taskId) {
+        es.close();
+        esRef.current = null;
+        connect();
+      }
+    }, 10000);
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(watchdog);
+      if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    };
   }, [chatHistory, client]);
 
   // Reload chat alle 4s wenn ein agent-task läuft (für phase-update + final-text)

@@ -5,6 +5,24 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.720] - 2026-05-24
+
+### Fixed — Interactive-Mode SSE-Output droppt nach ein paar Events
+
+User-Report: Im Interactive-Tab erscheinen nur 2 Output-Zeilen, in Telegram kommen aber weitere Agent-Messages durch. Der SSE-Stream zwischen Browser und Alfred connectet sauber, droppt aber irgendwann ohne Auto-Reconnect → Live-Output bleibt eingefroren während Agent weiterarbeitet.
+
+Root-Cause: EventSource macht Auto-Reconnect nur bei transport-errors, NICHT wenn Server sauber schließt (z.B. nach Idle-Timeout in der SSE-Handler-Logik). Mein code im Interactive-Page-useEffect hatte `currentTaskRef.current === taskId` als Skip-Guard — auch wenn die ES bereits CLOSED war, wurde nicht neu connected.
+
+**Fix:**
+1. **Skip-Guard verschärft:** zusätzlich `esRef.current.readyState !== EventSource.CLOSED` checken
+2. **Explicit Reconnect-Handler:** ES.addEventListener('error') prüft `readyState === CLOSED` → re-connect nach 2s wenn taskId noch active ist
+3. **Watchdog:** Interval alle 10s prüft ES-State; wenn CLOSED → re-connect
+4. **Cleanup:** beide Timer + ES bei Effect-Cleanup geschlossen
+
+### Backward-Compat
+- Bei aktivem Stream: kein Verhaltens-Change
+- Bei Disconnect: jetzt zuverlässig reconnect statt eingefroren
+
 ## [0.19.0-multi-ha.719] - 2026-05-24
 
 ### Fixed — `req.on('close')`-Handler komplett entfernt (socket hang up Persistenz)
