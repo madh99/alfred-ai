@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.772] - 2026-05-25
+
+### Fixed — Stop für Project-Agent funktionierte NIE wirklich (v765-v771 alle stilles fehlgeschlagen)
+
+**Symptom**: User klickt Stop auf laufenden Project-Agent-Task. Chat-Bubble bekommt "Task gestoppt"-Notification, Phase wird auf 'stopped' aktualisiert in DB. **Aber der Agent läuft tatsächlich weiter** — 51min, 1h, beliebig lang. Nur die UI lügt.
+
+**Root-Cause**: Mein v765-Stop-Callback ruft `projectAgentSkillRef.execute({action:'stop',task_id})` mit context `{chatId: '', userRole: undefined}`. Der Skill-Handler `verifyTaskAccess` prüft aber:
+```ts
+if (context.chatId === session.chatId) return session;
+if (context.userRole === 'admin') return session;
+return null;
+```
+Beide Checks schlagen fehl bei API-Caller → `verifyTaskAccess` returnt `null` → `stopProject` returnt `{success:false, error:'Task nicht gefunden oder keine Berechtigung'}` → mein Code fällt in den Orphan-Fallback Step 4 und schreibt nur in DB "gestoppt", **ohne dass der echte Runner je das Stop-Signal sieht**.
+
+Das gleiche gilt seit Tag 1 (v765 added 'wenn taskId nicht im map, versuche project-agent.stop' — der Pfad hat aber NIE wirklich gefeuert).
+
+**Fix**: `userRole: 'admin'` zum ctx in beiden Callbacks (`chatStopTask` + `chatResumeTask`) hinzugefügt. `verifyTaskAccess` lässt durch → `stopProject` läuft echt:
+1. `pushInterjection(taskId, '__STOP__')` schreibt Stop-Marker zur Interjection-Tabelle
+2. `activeAbortControllers.get(taskId).abort()` killt aktiven AbortController
+3. Project-Agent-Runner sieht __STOP__ am nächsten Iteration-Boundary und beendet sauber
+
+**Beobachtbarkeit**: Falls `r.success === false` doch noch zurückkommt (z.B. session wurde inzwischen gelöscht): Logger warnt mit `v772 project_agent.stop returned failure — falling back to orphan-mark` damit man den Grund in den Logs sehen kann.
+
+**Latenz**: Stop ist immer noch nicht instant — der Runner sieht __STOP__ erst am nächsten Iteration-Boundary (LLM-Call-Ende). Das kann 30s-2min dauern wenn gerade ein langer claude-code-Run aktiv ist. Aber der Runner WIRD jetzt anhalten, nicht ignorieren.
+
 ## [0.19.0-multi-ha.771] - 2026-05-25
 
 ### Added — 🔄 Resume-Button für failed/stopped Project-Agent-Tasks im Interactive-Chat

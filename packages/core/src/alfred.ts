@@ -6747,7 +6747,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               }
               try {
                 const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
-                const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '' } as any;
+                // v772 — userRole='admin' für Konsistenz mit stop, falls Resume später auch verifyTaskAccess nutzt
+                const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin' } as any;
                 const r = await this.projectAgentSkillRef.execute({ action: 'resume', failed_task_id: failedTaskId }, ctx);
                 if (!r.success) {
                   return { ok: false, reason: r.error ?? 'Resume fehlgeschlagen' };
@@ -6791,8 +6792,13 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (!taskId.startsWith('code-') && this.projectAgentSkillRef) {
                 try {
                   const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
-                  const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '' } as any;
+                  // v772 — userRole='admin' damit verifyTaskAccess in project-agent-skill durchlässt
+                  // (sonst chatId=='' Check schlägt fehl → falsch-orphan-marking, Agent läuft echt weiter)
+                  const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin' } as any;
                   const r = await this.projectAgentSkillRef.execute({ action: 'stop', task_id: taskId }, ctx);
+                  if (!r.success) {
+                    this.logger.warn({ taskId, error: r.error }, 'v772 project_agent.stop returned failure — falling back to orphan-mark');
+                  }
                   if (r.success) {
                     await sandboxChatRepo.updateTaskPhase(taskId, 'stopped');
                     await sandboxChatRepo.append({
