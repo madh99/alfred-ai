@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.759] - 2026-05-24
+
+### Changed — Offene Punkte / Sessions / Entscheidungen jetzt einklappbar
+
+Die drei Hauptbereiche im Project-Detail-View waren bislang die einzigen, die sich nicht einklappen ließen — was bei großen Projekten zu sehr langen, unübersichtlichen Seiten führte. Jetzt analog zu den anderen Sections (Roadmap, Automations, Environments, DB-Seeds, Templates, Quota) einklappbar mit persistiertem State:
+
+- **Offene Punkte** — default expanded (Workflow-zentral)
+- **Letzte Sessions** — default collapsed
+- **Entscheidungen** — default collapsed
+
+Pro Section eigener Toggle, persistiert in `localStorage.alfred.project.{openItems,sessions,decisions}Expanded`. User-Wahl überlebt Page-Reload + Session.
+
+Action-Buttons im Offene-Punkte-Header (Re-Match / Working / Audit) bleiben auch im eingeklappten Zustand erreichbar — nur die Listen selbst werden ausgeblendet.
+
 ## [0.19.0-multi-ha.758] - 2026-05-24
 
 ### Fixed — Native Modules (better-sqlite3 etc) im Sandbox-Container

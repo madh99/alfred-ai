@@ -106,6 +106,28 @@ export function ProjectsPage() {
   // v654 — Expandable Item-Details + Erledigt-Section
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
   const [showResolvedItems, setShowResolvedItems] = useState(false);
+  // v759 — Collapsible-State für Offene Punkte / Sessions / Entscheidungen (persist in localStorage)
+  const [openItemsExpanded, setOpenItemsExpanded] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem('alfred.project.openItemsExpanded') !== '0';
+  });
+  const [sessionsExpanded, setSessionsExpanded] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('alfred.project.sessionsExpanded') === '1';
+  });
+  const [decisionsExpanded, setDecisionsExpanded] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('alfred.project.decisionsExpanded') === '1';
+  });
+  useEffect(() => {
+    try { localStorage.setItem('alfred.project.openItemsExpanded', openItemsExpanded ? '1' : '0'); } catch { /* */ }
+  }, [openItemsExpanded]);
+  useEffect(() => {
+    try { localStorage.setItem('alfred.project.sessionsExpanded', sessionsExpanded ? '1' : '0'); } catch { /* */ }
+  }, [sessionsExpanded]);
+  useEffect(() => {
+    try { localStorage.setItem('alfred.project.decisionsExpanded', decisionsExpanded ? '1' : '0'); } catch { /* */ }
+  }, [decisionsExpanded]);
   // v659 — Deploy-Modal
   const [deployModalOpen, setDeployModalOpen] = useState(false);
   // v735 — Sandbox-Quick-Create
@@ -627,7 +649,13 @@ export function ProjectsPage() {
                   return (
                 <>
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-gray-400">Offene Punkte ({activeItems.length})</h3>
+                  <button
+                    onClick={() => setOpenItemsExpanded(e => !e)}
+                    className="flex items-center gap-2 text-sm font-semibold text-gray-400 hover:text-gray-200"
+                  >
+                    <span className="text-xs">{openItemsExpanded ? '▼' : '▶'}</span>
+                    <span>Offene Punkte ({activeItems.length})</span>
+                  </button>
                   <div className="flex items-center gap-1">
                     {/* v742 — Re-Match OpenItemMatcher gegen letzten Session-Lauf */}
                     <button
@@ -644,6 +672,7 @@ export function ProjectsPage() {
                     >{auditing ? '⏳ Audit läuft…' : '🔍 Audit'}</button>
                   </div>
                 </div>
+                {openItemsExpanded && (<>
                 {/* v668 — Audit-Loading-Banner: User sieht sofort dass etwas passiert */}
                 {auditing && (
                   <div className="bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 mb-2 text-xs text-blue-200 flex items-center gap-2 animate-pulse">
@@ -936,6 +965,7 @@ export function ProjectsPage() {
                     )}
                   </div>
                 )}
+                </>)}
                 </>
                 );
                 })()}
@@ -950,35 +980,51 @@ export function ProjectsPage() {
                 />
               )}
 
-              {/* Sessions */}
+              {/* Sessions — v759: einklappbar */}
               {detail.sessions.length > 0 && (
                 <div className="pt-2 border-t border-[#222]">
-                  <h3 className="text-sm font-semibold text-gray-400 mb-2">Letzte Sessions ({detail.sessions.length})</h3>
-                  <div className="space-y-1.5">
-                    {detail.sessions.slice(0, 10).map(s => (
-                      <SessionRow
-                        key={s.id}
-                        session={s}
-                        projectId={detail.project.id}
-                        repoUrl={detail.project.repoUrl}
-                      />
-                    ))}
-                  </div>
+                  <button
+                    onClick={() => setSessionsExpanded(e => !e)}
+                    className="w-full flex items-center justify-between text-sm font-semibold text-gray-400 hover:text-gray-200 mb-2"
+                  >
+                    <span>📅 Letzte Sessions ({detail.sessions.length})</span>
+                    <span className="text-xs">{sessionsExpanded ? '▼' : '▶'}</span>
+                  </button>
+                  {sessionsExpanded && (
+                    <div className="space-y-1.5">
+                      {detail.sessions.slice(0, 10).map(s => (
+                        <SessionRow
+                          key={s.id}
+                          session={s}
+                          projectId={detail.project.id}
+                          repoUrl={detail.project.repoUrl}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Decisions */}
+              {/* Decisions — v759: einklappbar */}
               {detail.decisions.length > 0 && (
                 <div className="pt-2 border-t border-[#222]">
-                  <h3 className="text-sm font-semibold text-gray-400 mb-2">Entscheidungen ({detail.decisions.length})</h3>
-                  <div className="space-y-1.5">
-                    {detail.decisions.slice(0, 10).map(d => (
-                      <div key={d.id} className="text-xs">
-                        <div className="text-gray-300 font-medium">{d.choice}</div>
-                        {d.rationale && <div className="text-gray-500 mt-0.5 ml-2 italic">{d.rationale}</div>}
-                      </div>
-                    ))}
-                  </div>
+                  <button
+                    onClick={() => setDecisionsExpanded(e => !e)}
+                    className="w-full flex items-center justify-between text-sm font-semibold text-gray-400 hover:text-gray-200 mb-2"
+                  >
+                    <span>⚖️ Entscheidungen ({detail.decisions.length})</span>
+                    <span className="text-xs">{decisionsExpanded ? '▼' : '▶'}</span>
+                  </button>
+                  {decisionsExpanded && (
+                    <div className="space-y-1.5">
+                      {detail.decisions.slice(0, 10).map(d => (
+                        <div key={d.id} className="text-xs">
+                          <div className="text-gray-300 font-medium">{d.choice}</div>
+                          {d.rationale && <div className="text-gray-500 mt-0.5 ml-2 italic">{d.rationale}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
