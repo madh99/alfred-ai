@@ -5,6 +5,22 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.757] - 2026-05-24
+
+### Fixed — Sandbox-Preview-Proxy: App-Cookies werden nicht mehr verschluckt
+
+**Problem**: Apps im Sandbox-Container (z.B. Chat/Channels-Features in Spielen oder Foren) blieben auf "Channels werden geladen…" hängen, weil ihre eigenen Session-Cookies nicht beim Backend ankamen.
+
+**Root-Cause** (zwei Bugs):
+1. **Cookie-Stripping zu aggressiv**: In `handleSandboxProxy` und `handleSandboxProxyUpgrade` lief `delete headers['cookie']` — das hat ALLE Cookies gelöscht, nicht nur Alfred-Auth. Damit fehlten App-Session-Cookies beim Upstream.
+2. **Set-Cookie Path nicht prefix-aware**: Wenn der Container `Set-Cookie: session=…; Path=/api` zurückgab, speicherte der Browser das mit Path `/api` — Requests vom iframe gehen aber an `/preview/<sb>/api/…`, das Cookie wurde nie wieder gesendet.
+
+**Fix**:
+- Neue Helper `filterUpstreamCookies()`: behält App-Cookies, strippt nur Cookies mit Präfix `__alfred_` und den `PREVIEW_COOKIE`. Greift in HTTP- und WebSocket-Proxy.
+- Set-Cookie Path-Rewriting: jeder `Path=X` wird zu `Path=/preview/<sb>X` umgeschrieben (außer wenn schon präfixt). Dadurch landen App-Cookies an der richtigen Path-Stelle im Browser-Cookie-Jar und werden bei nachfolgenden Iframe-Requests mitgeschickt.
+
+Damit funktionieren Chat/Channels/Realtime-Features in Sandbox-Apps wieder (HTTP-Polling, WebSocket-Auth über Cookies).
+
 ## [0.19.0-multi-ha.756] - 2026-05-24
 
 ### Fixed — Environments / DB-Seeds / Sandbox-Templates HTTP 501 wenn Docker fehlt

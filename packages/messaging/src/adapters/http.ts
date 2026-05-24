@@ -3081,6 +3081,25 @@ export class HttpAdapter extends MessagingAdapter {
   private readonly PREVIEW_COOKIE = '__alfred_preview_token';
 
   /** Liest preview-token aus Cookie ODER aus ?_alfred_auth=... (initial-load). */
+  /**
+   * v757 — Filtert alfred-eigene Cookies aus dem Cookie-Header bevor er upstream
+   * weitergereicht wird. Die App im Sandbox-Container soll nur SEINE eigenen
+   * Cookies sehen (z.B. Session-Cookies für Channels/Chat-Features), nicht
+   * Alfred-Auth. Vorher: `delete headers['cookie']` hat ALLES gelöscht und damit
+   * Apps zerschossen, die auf eigene Session-Cookies angewiesen sind.
+   */
+  private filterUpstreamCookies(cookieHeader: string | string[] | undefined): string | undefined {
+    if (!cookieHeader) return undefined;
+    const raw = Array.isArray(cookieHeader) ? cookieHeader.join('; ') : cookieHeader;
+    const kept = raw.split(';')
+      .map(s => s.trim())
+      .filter(c => {
+        const name = c.split('=')[0].trim();
+        return name && !name.startsWith('__alfred_') && name !== this.PREVIEW_COOKIE;
+      });
+    return kept.length > 0 ? kept.join('; ') : undefined;
+  }
+
   private extractPreviewToken(req: http.IncomingMessage, url: URL): { token: string | null; viaQuery: boolean } {
     const queryToken = url.searchParams.get('_alfred_auth');
     if (queryToken) return { token: queryToken, viaQuery: true };
@@ -3178,8 +3197,11 @@ export class HttpAdapter extends MessagingAdapter {
     const upstreamUrl = new URL(upstreamPath + (url.search ? url.search.replace(/[?&]_alfred_auth=[^&]*/g, '') : ''), `http://127.0.0.1:${r.hostPort}`);
     const headers: Record<string, string | string[]> = {};
     for (const [k, v] of Object.entries(req.headers)) { if (v != null) headers[k] = v; }
-    // Cookie für Upstream bereinigen — Alfred-Cookies sollen nicht zum dev-server lecken
+    // v757 — Cookie filtern: nur alfred-eigene strippen, App-Cookies durchreichen
+    // (Channels/Chat im iframe brauchen ihre eigenen Session-Cookies)
+    const filteredCookies = this.filterUpstreamCookies(headers['cookie']);
     delete headers['cookie'];
+    if (filteredCookies) headers['cookie'] = filteredCookies;
     delete headers['authorization'];
     headers['host'] = `127.0.0.1:${r.hostPort}`;
     headers['x-forwarded-host'] = String(req.headers['host'] ?? '');
@@ -3223,7 +3245,31 @@ export class HttpAdapter extends MessagingAdapter {
         respHeaders[k] = v as string | string[];
       }
 
-      // v725 — Link-Header rewriten (Server-Push-Hints für preload): </path>; rel=preload
+      // v757 — Set-Cookie Path-Rewriting: Upstream setzt z.B. `Path=/api`, aber
+      // Requests vom iframe kommen unter `/preview/<sb>/api/...` → ohne Rewrite
+      // verschickt der Browser App-Session-Cookies nie an die richtigen Routen.
+      const setCookies = respHeaders['set-cookie'];
+      if (setCookies) {
+        const safeIdForCookie = sandboxId.replace(/[^a-zA-Z0-9-]/g, '');
+        const cookiePrefix = `/preview/${safeIdForCookie}`;
+        const rewriteCookie = (cookieStr: string) => {
+          return cookieStr.split(';').map(part => {
+            const trimmed = part.trim();
+            const eq = trimmed.indexOf('=');
+            const attrName = (eq === -1 ? trimmed : trimmed.slice(0, eq)).toLowerCase();
+            if (attrName !== 'path') return part;
+            const pathVal = trimmed.slice(eq + 1).trim();
+            if (!pathVal.startsWith('/')) return ` Path=${cookiePrefix}/`;
+            if (pathVal === cookiePrefix || pathVal.startsWith(`${cookiePrefix}/`)) return part;
+            return ` Path=${cookiePrefix}${pathVal === '/' ? '/' : pathVal}`;
+          }).join(';');
+        };
+        respHeaders['set-cookie'] = Array.isArray(setCookies)
+          ? setCookies.map(rewriteCookie)
+          : rewriteCookie(setCookies);
+      }
+
+      // v725 — Link-Header rewriten (Server-Push-Hints für preload):</path>; rel=preload
       // wird vom Browser als preload-fetch mit ABSOLUTE path getriggert → braucht prefix.
       const linkHeader = respHeaders['link'];
       if (linkHeader) {
@@ -3431,7 +3477,11 @@ export class HttpAdapter extends MessagingAdapter {
     const upstream = net.connect({ host: '127.0.0.1', port: r.hostPort }, () => {
       // Original-Request rebuilden für upstream — bereinigt um alfred-cookies
       const headers = { ...req.headers };
+      // v757 — Nur alfred-Cookies strippen, App-Session-Cookies durchreichen
+      // (WebSocket-Upgrade für Channels/Chat braucht App-Auth via Cookie)
+      const filteredCookies = this.filterUpstreamCookies(headers['cookie']);
       delete headers['cookie'];
+      if (filteredCookies) headers['cookie'] = filteredCookies;
       delete headers['authorization'];
       headers['host'] = `127.0.0.1:${r.hostPort}`;
       const cleanQuery = (url.search ?? '').replace(/[?&]_alfred_auth=[^&]*/g, '');
