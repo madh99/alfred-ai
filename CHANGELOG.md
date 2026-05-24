@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.766] - 2026-05-25
+
+### Added — Project-Wizard Step 5: Repo-Create + Template-Scaffold (Phase 2)
+
+Wizard ist jetzt vollständig: nach Plan-Review (Step 4) folgt der Setup-Step (Step 5) der das Projekt physisch initialisiert.
+
+**Step 5 — Setup-Modus**:
+- **Repository-Wahl**: 📁 Lokal / 🦊 GitLab / 🐙 GitHub (radio)
+- **Sichtbarkeit**: 🔒 privat / 🌐 public (bei Forge-Mode)
+- **Scaffold-Modus**: 📦 Template (empfohlen) / 🤖 AI-Scaffold (disabled, v767) / ⊘ Kein Scaffold
+- Vorschau-Box zeigt zusammen, was beim Erstellen passieren wird (CWD, README, Remote, Push)
+
+**Backend-Erweiterung** (`/api/projects/wizard/create`):
+- Neue Felder: `repoMode`, `scaffoldMode`, `repoVisibility`
+- CWD wird in `ALFRED_PROJECTS_BASE/<slug>` angelegt (default `~/.alfred/projects/<slug>`, env-overridable)
+- Bei Forge-Mode: `createForgeClient(config.codeAgents.forge).createProject({name, description, visibility})` erstellt Remote-Repo
+- Bei `scaffoldMode='template'`: README.md (mit Stack + Roadmap) + .gitignore (Stack-aware: node/python/etc) + git init + initial-commit
+- Bei Forge + Scaffold: git remote add origin + push -u origin main
+- Provider-Mismatch (z.B. User wählt GitHub aber config.forge.provider=gitlab) → klare Fehlermeldung
+- Git-User-Config-Fallback (Alfred / alfred@local) falls Host kein git config hat
+
+**Begrenzungen**:
+- AI-Scaffold-Modus ist in der UI noch disabled (kommt in v767 als separate Phase, da Project-Agent-Wire mehr Logik braucht)
+- Erste Push schlägt bei leerem Repo ohne Default-Branch ggf. fehl (default `-b main` beim init, default `git push -u origin main`) — bei Problemen: User pusht manuell
+
 ## [0.19.0-multi-ha.765] - 2026-05-25
 
 ### Fixed — Universal Orphan-Cleanup + Stop für Project-Agent-Tasks

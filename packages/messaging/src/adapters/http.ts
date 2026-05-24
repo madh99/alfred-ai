@@ -196,6 +196,12 @@ export interface ProjectWizardCreateInput {
   items: ProjectWizardPlanItem[];
   decisions: ProjectWizardDecision[];
   tags?: string[];
+  /** v766 — Repo-Mode für Auto-Erstellung im Forge. */
+  repoMode?: 'gitlab' | 'github' | 'local';
+  /** v766 — Scaffold-Mode für Initial-Files. */
+  scaffoldMode?: 'template' | 'agent' | 'none';
+  /** v766 — Visibility für Remote-Repo (default private). */
+  repoVisibility?: 'private' | 'public';
 }
 
 export interface ProjectWizardCallbacks {

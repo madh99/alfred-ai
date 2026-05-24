@@ -423,6 +423,9 @@ export class AlfredClient {
     items: Array<{ title: string; description?: string; priority: 'low' | 'normal' | 'high'; roadmapMilestone: string; roadmapOrder: number }>;
     decisions: Array<{ choice: string; rationale: string }>;
     tags?: string[];
+    repoMode?: 'gitlab' | 'github' | 'local';
+    scaffoldMode?: 'template' | 'agent' | 'none';
+    repoVisibility?: 'private' | 'public';
   }): Promise<{ ok: boolean; projectId?: string; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/wizard/create`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),

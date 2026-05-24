@@ -42,7 +42,7 @@ const EXTRAS = ['TypeScript', 'Tailwind', 'Auth', 'Docker', 'i18n', 'Testing', '
 
 export function ProjectWizardModal({ onClose, onCreated }: Props) {
   const { client } = useConfig();
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +70,11 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
   const [items, setItems] = useState<PlanItem[]>([]);
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [validator, setValidator] = useState<ValidatorResult | null>(null);
+
+  // Step 5 — Setup (v766)
+  const [repoMode, setRepoMode] = useState<'gitlab' | 'github' | 'local'>('local');
+  const [scaffoldMode, setScaffoldMode] = useState<'template' | 'agent' | 'none'>('template');
+  const [repoVisibility, setRepoVisibility] = useState<'private' | 'public'>('private');
 
   function slugify(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
@@ -185,6 +190,9 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
         items: items.filter(it => it.title.trim()),
         decisions,
         tags: tags.split(',').map(t => t.trim()).filter(Boolean),
+        repoMode,
+        scaffoldMode,
+        repoVisibility,
       });
       if (!r.ok || !r.projectId) {
         setError(r.reason ?? 'Erstellung fehlgeschlagen');
@@ -197,7 +205,7 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
     } finally { setBusy(null); }
   }
 
-  const stepLabels = ['Basics', 'Beschreibung', 'Tech-Stack', 'Plan-Review'];
+  const stepLabels = ['Basics', 'Beschreibung', 'Tech-Stack', 'Plan-Review', 'Setup'];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
@@ -210,7 +218,7 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
         {/* Step indicator */}
         <div className="flex items-center gap-1 mb-3 text-[10px]">
           {stepLabels.map((label, i) => {
-            const stepNum = (i + 1) as 1 | 2 | 3 | 4;
+            const stepNum = (i + 1) as 1 | 2 | 3 | 4 | 5;
             const current = stepNum === step;
             const past = stepNum < step;
             return (
@@ -418,6 +426,83 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
               )}
             </div>
           )}
+
+          {/* Step 5 — Setup (v766) */}
+          {step === 5 && (
+            <div className="space-y-4 text-xs">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">Repository</div>
+                <div className="space-y-1">
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={repoMode === 'local'} onChange={() => setRepoMode('local')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">📁 Nur lokal</div>
+                      <div className="text-[10px] text-gray-500">Kein Remote-Repo. Du kannst später manuell erstellen.</div>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={repoMode === 'gitlab'} onChange={() => setRepoMode('gitlab')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">🦊 GitLab</div>
+                      <div className="text-[10px] text-gray-500">Erstellt Repo via codeAgents.forge-Config (muss provider=gitlab haben).</div>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={repoMode === 'github'} onChange={() => setRepoMode('github')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">🐙 GitHub</div>
+                      <div className="text-[10px] text-gray-500">Erstellt Repo via codeAgents.forge-Config (muss provider=github haben).</div>
+                    </div>
+                  </label>
+                </div>
+                {repoMode !== 'local' && (
+                  <div className="mt-2 flex items-center gap-3 text-[11px]">
+                    <span className="text-gray-500">Sichtbarkeit:</span>
+                    <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={repoVisibility === 'private'} onChange={() => setRepoVisibility('private')} /> <span className="text-gray-300">🔒 privat</span></label>
+                    <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={repoVisibility === 'public'} onChange={() => setRepoVisibility('public')} /> <span className="text-gray-300">🌐 public</span></label>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-2">Scaffold (Initial-Files)</div>
+                <div className="space-y-1">
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={scaffoldMode === 'template'} onChange={() => setScaffoldMode('template')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">📦 Template (empfohlen)</div>
+                      <div className="text-[10px] text-gray-500">README + .gitignore + git init + initial-commit. Schnell, deterministisch.</div>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30 opacity-60 cursor-not-allowed">
+                    <input type="radio" disabled checked={scaffoldMode === 'agent'} onChange={() => setScaffoldMode('agent')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">🤖 AI-Scaffold (v767 — noch nicht aktiv)</div>
+                      <div className="text-[10px] text-gray-500">Project-Agent baut initiale Struktur basierend auf Stack. Dauert 5-15min.</div>
+                    </div>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer p-2 border border-[#1a1a1a] rounded hover:bg-[#1a1a1a]/30">
+                    <input type="radio" checked={scaffoldMode === 'none'} onChange={() => setScaffoldMode('none')} className="mt-0.5" />
+                    <div>
+                      <div className="text-gray-200">⊘ Kein Scaffold</div>
+                      <div className="text-[10px] text-gray-500">Nur Metadaten + Roadmap speichern, kein Code anfassen.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded p-3 text-[10px] text-gray-400">
+                <div className="font-semibold text-gray-300 mb-1">Was passiert beim Erstellen:</div>
+                <ul className="list-disc list-inside space-y-0.5">
+                  <li>Projekt mit allen Steps-Daten wird in DB persistiert</li>
+                  {scaffoldMode === 'template' && <li>CWD <code className="text-amber-300">~/.alfred/projects/{slug}</code> wird angelegt + git init</li>}
+                  {scaffoldMode === 'template' && <li>README.md + .gitignore (Stack-aware) werden geschrieben + commited</li>}
+                  {repoMode !== 'local' && <li>Remote-Repo wird via {repoMode}-API erstellt (Sichtbarkeit: {repoVisibility})</li>}
+                  {repoMode !== 'local' && scaffoldMode !== 'none' && <li>Initial-Commit wird zu Remote gepusht</li>}
+                </ul>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Navigation */}
@@ -425,7 +510,7 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
           <button onClick={onClose} className="px-3 py-1.5 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded text-[11px]">Abbrechen</button>
           <div className="flex gap-2">
             {step > 1 && (
-              <button onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3 | 4)} disabled={!!busy}
+              <button onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3 | 4 | 5)} disabled={!!busy}
                 className="px-3 py-1.5 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded text-[11px] disabled:opacity-50">← Zurück</button>
             )}
             {step === 1 && (
@@ -442,7 +527,11 @@ export function ProjectWizardModal({ onClose, onCreated }: Props) {
               </button>
             )}
             {step === 4 && (
-              <button onClick={create} disabled={busy === 'create' || items.filter(it => it.title.trim()).length === 0}
+              <button onClick={() => items.filter(it => it.title.trim()).length === 0 ? setError('Mindestens ein Open-Item') : (setError(null), setStep(5))}
+                className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-[11px]">Weiter →</button>
+            )}
+            {step === 5 && (
+              <button onClick={create} disabled={busy === 'create'}
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-[11px]">
                 {busy === 'create' ? '⏳ Erstelle…' : '✓ Projekt erstellen'}
               </button>
