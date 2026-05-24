@@ -1455,4 +1455,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_project ON sandbox_templates(project_id)`, []);
     },
   },
+  {
+    version: 97,
+    description: 'v755 — projects.max_concurrent_sandboxes für Per-Project-Quota',
+    async up(db) {
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_concurrent_sandboxes INTEGER`, []);
+    },
+  },
 ];

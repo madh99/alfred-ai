@@ -5,6 +5,31 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.755] - 2026-05-24
+
+### Added — Per-Project-Quota für Sandboxes
+
+Bislang gab es nur eine globale User-Quota (`maxParallelPerUser`, default 3) — alle Projects teilen sich denselben Pool. Wenn ein Project mit langläufigen Sandboxes die Quota frisst, blockiert es alle anderen Projects.
+
+**Schema** (Migration SQLite v94 / PG v97):
+- Neue Spalte `projects.max_concurrent_sandboxes INTEGER NULL`
+- NULL = nutzt User-Quota (default-Verhalten unverändert)
+- Wert > 0 = Hard-Limit gleichzeitig aktiver (creating/running/paused) Sandboxes dieses Projekts
+
+**Enforcement** (`sandbox-manager.checkUserQuota`):
+- Erweitert um optionalen `projectId`-Parameter
+- Neuer Dep-Callback `projectQuotaLookup(projectId) → maxConcurrentSandboxes | null`
+- Per-Project-Check läuft NACH User-Quota+Disk-Quota: schlägt User-Quota schon zu, sieht User die globale Meldung, sonst die projekt-spezifische
+- Fehler im Lookup non-fatal (Fallback auf User-Quota), kein Lock-Out bei Bug
+
+**UI** (`ProjectQuotaView`, collapsible auf Project-Detail-Seite):
+- Header zeigt aktuellen Wert + Live-Auslastung (`2/3 aktiv`) in amber bei Quota-Erreichen
+- Number-Input (0..999) zum Setzen, "Reset"-Button für Rückfall auf User-Quota
+- Warn-Banner wenn Quota erreicht ist (neue Sandboxes werden abgelehnt)
+- Lädt Auslastung via existierendem `listSandboxes` — kein zusätzlicher Endpoint
+
+Typischer Use-Case: Long-Running-Project mit Spielwiesen-Sandboxes auf 1 begrenzen, damit Hot-Projects nicht durch Spielwiese-Sandboxes ausgebremst werden.
+
 ## [0.19.0-multi-ha.754] - 2026-05-24
 
 ### Added — Sandbox-Verteilung pro Node im /cluster-Dashboard

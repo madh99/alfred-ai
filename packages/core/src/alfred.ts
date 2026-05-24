@@ -3294,6 +3294,14 @@ export class Alfred {
               envCrypto: this.envCryptoRef,
               dbSeedRepo: this.dbSeedRepoRef,
               uploadSeedsPath: this.config.sandbox.uploadSeedsPath ?? undefined,
+              // v755 — Per-Project-Quota-Lookup
+              projectQuotaLookup: async (projectId: string) => {
+                if (!this.projectRepo || !this.ownerMasterUserId) return null;
+                try {
+                  const p = await this.projectRepo.getById(this.ownerMasterUserId, projectId);
+                  return p?.maxConcurrentSandboxes ?? null;
+                } catch { return null; }
+              },
             });
             const hc = await sandboxManager.runHealthCheck();
             if (hc.dockerAvailable && hc.worktreeBaseWritable) {

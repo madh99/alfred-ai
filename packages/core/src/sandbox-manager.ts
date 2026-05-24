@@ -38,6 +38,8 @@ export interface SandboxManagerDeps {
   dbSeedRepo?: DbSeedRepository;
   /** v726 — Pfad in dem Upload-Seeds liegen (z.B. /var/alfred/seeds/). */
   uploadSeedsPath?: string;
+  /** v755 — Optional: Lookup-Callback für Per-Project-Quota. Liefert maxConcurrentSandboxes oder null. */
+  projectQuotaLookup?: (projectId: string) => Promise<number | null>;
 }
 
 export interface CreateForSessionInput {
@@ -158,7 +160,7 @@ export class SandboxManager {
     };
   }
 
-  async checkUserQuota(userId: string): Promise<string | null> {
+  async checkUserQuota(userId: string, projectId?: string): Promise<string | null> {
     const max = this.deps.config.maxParallelPerUser ?? 3;
     const active = await this.deps.repo.listActiveByUser(userId);
     if (active.length >= max) {
@@ -168,6 +170,18 @@ export class SandboxManager {
     const used = await this.deps.repo.getActiveDiskUsageMb(userId);
     if (used >= quotaMb) {
       return `Disk-Quota (${quotaMb} MB) erreicht — aktuell belegt: ${used} MB.`;
+    }
+    // v755 — Per-Project-Quota (zusätzlich zur User-Quota)
+    if (projectId && this.deps.projectQuotaLookup) {
+      try {
+        const projectMax = await this.deps.projectQuotaLookup(projectId);
+        if (typeof projectMax === 'number' && projectMax > 0) {
+          const activeInProject = await this.deps.repo.listByProject(projectId, ['creating', 'running', 'paused']);
+          if (activeInProject.length >= projectMax) {
+            return `Project-Quota (${projectMax}) erreicht — aktuell aktiv: ${activeInProject.length}. Bitte erst eine Sandbox dieses Projekts pausieren oder verwerfen.`;
+          }
+        }
+      } catch { /* lookup-Fehler ist nicht fatal — falle auf User-Quota zurück */ }
     }
     return null;
   }
@@ -199,7 +213,7 @@ export class SandboxManager {
     if (input.mode === 'classic') {
       throw new Error('createForSession called with classic mode — should not happen');
     }
-    const quotaIssue = await this.checkUserQuota(input.userId);
+    const quotaIssue = await this.checkUserQuota(input.userId, input.projectId);
     if (quotaIssue) throw new Error(quotaIssue);
 
     const gitCheck = await validateGitRepo(input.projectCwd);

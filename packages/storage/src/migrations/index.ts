@@ -2144,4 +2144,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_project ON sandbox_templates(project_id)`);
     },
   },
+  {
+    version: 94,
+    description: 'v755 — projects.max_concurrent_sandboxes für Per-Project-Quota',
+    up(db) {
+      try { db.exec(`ALTER TABLE projects ADD COLUMN max_concurrent_sandboxes INTEGER`); } catch { /* already exists */ }
+    },
+  },
 ];

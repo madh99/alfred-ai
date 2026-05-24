@@ -2138,6 +2138,8 @@ export interface Project {
   defaultEnvStage?: string;
   /** v732 — Default-DB-Seed für Sandbox-Erstellung. */
   defaultDbSeedId?: string;
+  /** v755 — Per-Project-Quota für gleichzeitig aktive Sandboxes (NULL = User-Quota). */
+  maxConcurrentSandboxes?: number;
   status: ProjectStatus;
   healthMode: ProjectHealthMode;
   tags: string[];

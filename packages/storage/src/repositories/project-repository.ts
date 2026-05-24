@@ -88,6 +88,8 @@ export interface Project {
   defaultEnvStage?: string;
   /** v732 — Default-DB-Seed-ID für Sandbox-Erstellung. */
   defaultDbSeedId?: string;
+  /** v755 — Maximale gleichzeitig aktive Sandboxes für dieses Projekt. NULL = nutzt User-Quota. */
+  maxConcurrentSandboxes?: number;
 }
 
 export interface ProjectSessionSummary {
@@ -197,6 +199,7 @@ function rowToProject(row: Record<string, unknown>): Project {
     lockedUntil: (row.locked_until as string | null) ?? undefined,
     defaultEnvStage: (row.default_env_stage as string | null) ?? undefined,
     defaultDbSeedId: (row.default_db_seed_id as string | null) ?? undefined,
+    maxConcurrentSandboxes: (row.max_concurrent_sandboxes as number | null) ?? undefined,
   };
 }
 
@@ -339,7 +342,7 @@ export class ProjectRepository {
     return rows.map(rowToProject);
   }
 
-  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId'>>): Promise<Project | null> {
+  async update(userId: string, id: string, patch: Partial<Pick<Project, 'name' | 'description' | 'cwd' | 'repoUrl' | 'defaultBranch' | 'status' | 'healthMode' | 'tags' | 'nextCheckAt' | 'conventions' | 'storageType' | 'shareId' | 'nodeId' | 'maxConcurrentSandboxes'>>): Promise<Project | null> {
     const existing = await this.getById(userId, id);
     if (!existing) return null;
     const sets: string[] = [];
@@ -366,6 +369,8 @@ export class ProjectRepository {
     if (patch.storageType !== undefined) { sets.push('storage_type = ?'); params.push(patch.storageType); }
     if (patch.shareId !== undefined) { sets.push('share_id = ?'); params.push(patch.shareId); }
     if (patch.nodeId !== undefined) { sets.push('node_id = ?'); params.push(patch.nodeId); }
+    // v755 — Per-Project-Quota
+    if (patch.maxConcurrentSandboxes !== undefined) { sets.push('max_concurrent_sandboxes = ?'); params.push(patch.maxConcurrentSandboxes ?? null); }
     if (sets.length === 0) return existing;
     params.push(existing.id);
     await this.adapter.execute(`UPDATE projects SET ${sets.join(', ')} WHERE id = ?`, params);

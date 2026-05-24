@@ -17,6 +17,7 @@ import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
 import { ProjectDbSeedsView } from './ProjectDbSeedsView';
 import { ProjectTemplatesView } from './ProjectTemplatesView';
+import { ProjectQuotaView } from './ProjectQuotaView';
 import { ProjectSandboxesView } from './ProjectSandboxesView';
 import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
@@ -998,6 +999,15 @@ export function ProjectsPage() {
 
               {/* v751 — Sandbox-Templates */}
               <ProjectTemplatesView projectId={detail.project.id} projectName={detail.project.name} />
+
+              {/* v755 — Per-Project-Quota */}
+              <ProjectQuotaView
+                projectId={detail.project.id}
+                currentMax={detail.project.maxConcurrentSandboxes}
+                onUpdate={(newMax) => {
+                  if (detail.project.id) setDetail({ ...detail, project: { ...detail.project, maxConcurrentSandboxes: newMax ?? undefined } });
+                }}
+              />
 
               {/* v737 — Sandboxes-Übersicht mit Quick-Actions */}
               <ProjectSandboxesView projectId={detail.project.id} projectName={detail.project.name} />
