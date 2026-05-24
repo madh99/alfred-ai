@@ -349,6 +349,9 @@ export class ProjectAgentRunner {
           await new Promise(r => setTimeout(r, 5_000));
           const msgs = await drainInterjections(sessionId);
           if (msgs.includes('__STOP__')) {
+            // v773 — Session als failed markieren damit UI nicht ewig "läuft" zeigt
+            state.projectPhase = 'failed';
+            await this.updateSession(sessionId, state, false);
             await this.sendProgress(platform, chatId, `⏹ Plan abgelehnt — Project Agent gestoppt.`);
             return;
           }
@@ -492,6 +495,9 @@ export class ProjectAgentRunner {
         if (messages.includes('__STOP__')) {
           // v650 — abortController.abort() killt auch laufende Sub-Process-Tree
           abortController.abort();
+          // v773 — Session als failed markieren damit UI nicht ewig "läuft" zeigt
+          state.projectPhase = 'failed';
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
           await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt vor Phase ${phaseIdx + 1}/${plan.phases.length}.`);
           return;
         }
@@ -646,6 +652,9 @@ export class ProjectAgentRunner {
           const fixMessages = await drainInterjections(sessionId);
           if (fixMessages.includes('__STOP__')) {
             abortController.abort();
+            // v773 — Session als failed markieren damit UI nicht ewig "läuft" zeigt
+            state.projectPhase = 'failed';
+            await this.updateSession(sessionId, state, lastBuildActuallyPassed);
             await this.sendProgress(platform, chatId, `⏹ Project Agent gestoppt während Fix-Versuch.`);
             return;
           }

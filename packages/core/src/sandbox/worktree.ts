@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from 'pino';
 
@@ -99,6 +99,24 @@ export async function createWorktree(input: CreateWorktreeInput): Promise<Create
     await execFileAsync('chmod', ['-R', 'g+rwX', input.worktreePath], { timeout: 30_000 });
   } catch (err) {
     input.logger.warn({ err, worktreePath: input.worktreePath }, 'chmod g+rwX on worktree failed — container may have permission issues');
+  }
+
+  // v774 — Worktree-Metadata-Permissions: `git worktree add` schreibt Metadaten nach
+  // `<projectCwd>/.git/worktrees/<name>/` als der Prozess-User (root). Wenn der Code-Agent
+  // später als anderer User läuft (z.B. `sudo -u madh git commit`), kann er `index.lock`
+  // dort nicht schreiben → fatal: Permission denied auf jedem git-Schreibvorgang.
+  // Fix: chown auf den Owner von projectCwd, plus group-write.
+  try {
+    const worktreeName = path.basename(input.worktreePath);
+    const worktreeMetaDir = path.join(input.projectCwd, '.git', 'worktrees', worktreeName);
+    if (existsSync(worktreeMetaDir)) {
+      const projStat = statSync(input.projectCwd);
+      await execFileAsync('chown', ['-R', `${projStat.uid}:${projStat.gid}`, worktreeMetaDir], { timeout: 10_000 });
+      await execFileAsync('chmod', ['-R', 'g+rwX', worktreeMetaDir], { timeout: 10_000 });
+      input.logger.info({ worktreeMetaDir, uid: projStat.uid, gid: projStat.gid }, 'v774 worktree-metadata chowned to projectCwd-owner');
+    }
+  } catch (err) {
+    input.logger.warn({ err, worktreePath: input.worktreePath }, 'v774 chown on .git/worktrees/<name> failed — git ops may fail with index.lock permission denied');
   }
 
   input.logger.info({ worktreePath: input.worktreePath, branch: finalBranch, baseCommit }, 'Worktree created');

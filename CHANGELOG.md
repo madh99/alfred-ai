@@ -5,6 +5,60 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.773] - 2026-05-25
+
+### Fixed — Project-Agent Stop schreibt Session-Phase auf 'failed' + Worktree-Metadata-Permissions
+
+Aus tatsächlichen Server-Logs analysiert, nicht aus dem Code geraten. Drei verschachtelte Bugs entdeckt:
+
+**Bug 1 (war v772): API-Stop ohne userRole='admin'** — verifyTaskAccess in project-agent-skill lehnt API-Caller ab → orphan-marking ohne realen Stop. v772 fix steckt mit drin.
+
+**Bug 2 (NEU v773): Runner schreibt Session-Phase NICHT auf 'failed' bei __STOP__**
+
+Symptom (im laufenden v768 reproduziert): User klickt "Session stoppen" auf Project-Agents-Page. `pushInterjection(__STOP__)` läuft, Runner sieht es, schreibt `⏹ Project Agent gestoppt vor Phase 2/6` in Live-Output, `abortController.abort()`, `return`. **ABER**: `session.current_phase` bleibt auf `'coding'` (zuletzt gesetzt via `updateSession()` vor der __STOP__-Detection). UI-Phase-Filter `currentPhase !== 'done' && currentPhase !== 'failed'` ist true → UI zeigt ewig "läuft", obwohl Runner längst aus der Funktion gereturned ist.
+
+**Fix v773** (3 Stellen in `project-agent-runner.ts` — alle drei __STOP__-Checks):
+```ts
+if (messages.includes('__STOP__')) {
+  abortController.abort();
+  // v773 — Session als failed markieren
+  state.projectPhase = 'failed';
+  await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+  await this.sendProgress(...);
+  return;
+}
+```
+- Plan-Review Stop (Zeile 351)
+- Phase-Loop Stop (Zeile 492)
+- Fix-Attempt Stop (Zeile 653)
+
+**Bug 3 (NEU v774): Worktree-Metadata-Permissions für sudo-Agent-User**
+
+Aus den Logs:
+```
+sudo -u madh git add -A
+fatal: Unable to create '/home/madh/projects/alpbyte-games/.git/worktrees/ipk73ad8/index.lock': Permission denied
+```
+
+`git worktree add` schreibt Metadata nach `<projectCwd>/.git/worktrees/<name>/` als alfred-Process-User (root). Wenn der Code-Agent als anderer User läuft (z.B. `sudo -u madh claude-code`), kann er `index.lock` nicht schreiben → JEDER git-Schreibvorgang failt → Phase-Commits scheitern → "0 Dateien geändert" obwohl der Agent gearbeitet hat → endloser Fix-Loop.
+
+**Fix v774** in `worktree.ts:createWorktree()`: nach `git worktree add`:
+```ts
+const worktreeMetaDir = path.join(projectCwd, '.git', 'worktrees', worktreeName);
+const projStat = statSync(projectCwd);
+await execFileAsync('chown', ['-R', `${projStat.uid}:${projStat.gid}`, worktreeMetaDir]);
+await execFileAsync('chmod', ['-R', 'g+rwX', worktreeMetaDir]);
+```
+
+→ Worktree-Metadata gehört jetzt dem projectCwd-Owner (typisch madh:madh). Code-Agent kann index.lock schreiben.
+
+**Existierende kaputte Worktrees nicht auto-geheilt** — Migrations-Skript für nächste Version geplant. Aktuelle stuck-worktrees manuell heilen:
+```bash
+ssh madh@192.168.1.92
+sudo chown -R madh:madh /home/madh/projects/alpbyte-games/.git/worktrees/ipk73ad8
+sudo chmod -R g+rwX /home/madh/projects/alpbyte-games/.git/worktrees/ipk73ad8
+```
+
 ## [0.19.0-multi-ha.772] - 2026-05-25
 
 ### Fixed — Stop für Project-Agent funktionierte NIE wirklich (v765-v771 alle stilles fehlgeschlagen)
