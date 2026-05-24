@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.734] - 2026-05-24
+
+### Added — .env-File-Import + Diff zwischen Stages im Environment-Manager
+
+Zwei pragmatische QoL-Erweiterungen zum ENV-Manager (v726/v732). Statt jeden Key einzeln per Hand einzugeben kannst du jetzt ganze `.env`-Files importieren — und unterschiede zwischen Stages auf einen Blick sehen.
+
+**Client-Side `.env`-Parser** (`parseEnvFile`):
+- Liest Zeile für Zeile (`\r\n` und `\n` toleriert)
+- Skip: Empty-Lines, Kommentare (`#`)
+- Format: `KEY=VALUE`, Key muss `^[A-Z][A-Z0-9_]*$` matchen sonst skip
+- Quote-Handling: umschließende `"..."` oder `'...'` werden entfernt
+- Escape-Sequences (`\n`/`\t`/`\"`/`\\`) nur in double-quoted Strings interpretiert
+
+**Import-Workflow** in `ProjectEnvironmentsView`:
+- Neuer Button `📤 .env importieren` öffnet File-Dialog (accept `.env*`/`text/plain`, max 1 MB)
+- Preview-Modal listet alle gefundenen Keys mit Konflikt-Marker (`⚠ existiert`)
+- Drei Quick-Actions: "alle wählen" / "nur neue" / "keine"
+- Pro-Key-Checkbox toggle
+- Toggle "Stage komplett ersetzen statt mergen" — bei replace=true werden alle bisherigen Keys der Stage überschrieben (auch die nicht im Import enthaltenen)
+- Submit-Button zeigt Anzahl der ausgewählten Keys
+
+**Diff-Workflow** in `ProjectEnvironmentsView`:
+- Neuer Button `⚖️ Diff` öffnet Compare-Modal
+- Zwei Stage-Selects (default sandbox ↔ prod), neu-laden bei Change
+- Diff-Kategorisierung mit Border-Color + Icon:
+  - `◀ only_a` (emerald) — nur in linker Stage
+  - `▶ only_b` (blue) — nur in rechter Stage
+  - `≠ different` (orange) — beide haben Key aber unterschiedliche Werte
+  - `= same` (grau, optional ausgeblendet) — identisch
+- Pro Diff-Row ein `→`-Button: kopiert Wert von Stage A nach B
+- "Alle A → B"-Button für Bulk-Sync (alle only_a + different)
+- Stats-Footer mit Count pro Kategorie
+- 👁/🔒 Mask/Reveal-Toggle für Klartext-Werte
+
+Reine Frontend-Erweiterung — keine Backend-Änderungen. Nutzt existing PUT-Endpoint mit `vars`+`replace`-Payload.
+
 ## [0.19.0-multi-ha.733] - 2026-05-24
 
 ### Added — Sandbox-Create mit ENV-Stage/DB-Seed-Wahl + Deploy schreibt prod-ENVs aufs Target
