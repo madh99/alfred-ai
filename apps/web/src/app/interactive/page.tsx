@@ -76,7 +76,7 @@ export default function InteractivePage() {
     if (!sandboxId) return;
     try {
       const saved = localStorage.getItem(`alfred.sandbox.${sandboxId}.engine`);
-      if (saved === 'code-agent' || saved === 'project-agent') setEngine(saved);
+      if (saved === 'code-agent' || saved === 'project-agent' || saved === 'discuss') setEngine(saved);
     } catch { /* */ }
   }, [sandboxId]);
   function changeEngine(next: SandboxChatEngine) {

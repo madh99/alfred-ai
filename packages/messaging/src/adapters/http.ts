@@ -514,7 +514,7 @@ export class HttpAdapter extends MessagingAdapter {
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy 14-phase planner) | 'code-agent' (light, iterativ pro Iteration einen Commit). */
-      engine?: 'project-agent' | 'code-agent',
+      engine?: 'project-agent' | 'code-agent' | 'discuss',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -599,7 +599,7 @@ export class HttpAdapter extends MessagingAdapter {
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy planner) | 'code-agent' (light, iterativ). */
-      engine?: 'project-agent' | 'code-agent',
+      engine?: 'project-agent' | 'code-agent' | 'discuss',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -4265,12 +4265,12 @@ export class HttpAdapter extends MessagingAdapter {
     let message = '';
     let attachments: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }> | undefined;
     let mentions: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }> | undefined;
-    let engine: 'project-agent' | 'code-agent' | undefined;
+    let engine: 'project-agent' | 'code-agent' | 'discuss' | undefined;
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       message = String(parsed.message ?? '');
-      // v760 — Engine-Wahl (default: project-agent für Backward-Compat)
-      if (parsed.engine === 'code-agent' || parsed.engine === 'project-agent') engine = parsed.engine;
+      // v760/v769 — Engine-Wahl (default: project-agent für Backward-Compat)
+      if (parsed.engine === 'code-agent' || parsed.engine === 'project-agent' || parsed.engine === 'discuss') engine = parsed.engine;
       // v729a — Attachments aus dem Body validieren
       if (Array.isArray(parsed.attachments)) {
         attachments = [];

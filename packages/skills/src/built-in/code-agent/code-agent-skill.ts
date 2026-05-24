@@ -201,6 +201,8 @@ export class CodeAgentSkill extends Skill {
 
     const cwd = typeof input.cwd === 'string' ? input.cwd : undefined;
     const timeoutMs = typeof input.timeout === 'number' ? input.timeout : undefined;
+    // v769 — taskId für Live-Output-Streaming (Reuse der project-agent outputBuffer/SSE-Infrastruktur)
+    const liveTaskId = typeof input.taskId === 'string' ? input.taskId : undefined;
 
     // v608 F4 — bridge the subprocess into the sandbox's ActivityTracker.
     // Each stdout/stderr chunk fires onActivity, which calls tracker.ping('processing'),
@@ -213,6 +215,8 @@ export class CodeAgentSkill extends Skill {
       onActivity: tracker ? () => tracker.ping('processing') : undefined,
       // v762 — AbortSignal aus context durchreichen damit Caller den Subprocess stoppen kann
       signal: context.abortSignal,
+      // v769 — taskId an executeAgent → appendOutputLine pro stdout/stderr-chunk → SSE
+      taskId: liveTaskId,
     });
 
     this.emitCompletion({

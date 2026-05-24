@@ -6011,7 +6011,7 @@ export class Alfred {
               message: string,
               attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
               mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
-              engine?: 'project-agent' | 'code-agent',
+              engine?: 'project-agent' | 'code-agent' | 'discuss',
             ) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
@@ -6154,6 +6154,125 @@ export class Alfred {
                 role: 'user',
                 text: augmentedMessage,
               });
+              // v769 — Branch 'discuss': Read-Only Code-Agent für Beratung statt Implementation
+              if (engine === 'discuss') {
+                const cAgent = this.codeAgentSkillRef;
+                const codeAgents = this.config.codeAgents?.agents ?? [];
+                if (!cAgent || codeAgents.length === 0) {
+                  return { ok: false, userMessageId: userMsg.id, reason: 'code-agent nicht konfiguriert (config.codeAgents.enabled + agents) — Discuss-Modus braucht ihn für Codebase-Zugriff' };
+                }
+                const defaultAgent = codeAgents[0].name;
+
+                // Chat-History als Context (gleiche Hybrid-Cap wie code-agent)
+                const allHistoryD = await sandboxChatRepo.list(sandboxId);
+                const MAX_MSGS_D = 15, MAX_CHARS_D = 16000, MIN_KEEP_D = 3;
+                let trimmedD = allHistoryD.filter(m => m.id !== userMsg.id).slice(-MAX_MSGS_D);
+                let totalD = trimmedD.reduce((s, m) => s + (m.text || '').length, 0);
+                while (totalD > MAX_CHARS_D && trimmedD.length > MIN_KEEP_D) {
+                  const r = trimmedD.shift();
+                  totalD -= (r?.text || '').length;
+                }
+                const historyTextD = trimmedD.map(m => `${m.role === 'user' ? 'User:' : 'Agent:'} ${(m.text || '').slice(0, 1500)}`).join('\n\n');
+
+                const discussPrompt = `READ-ONLY DISKUSSIONS-MODUS
+
+Du bist ein Code-Berater. Diese Anfrage ist eine FRAGE oder BESPRECHUNG, KEINE Implementations-Anweisung.
+
+DEINE AUFGABE:
+1. Nutze deine Tools (Read, Glob, Grep) um die relevanten Code-Files im worktree zu LESEN und den aktuellen Stand zu verstehen
+2. Antworte TEXTUELL strukturiert:
+   - **Aktueller Stand**: Was findest du in der Codebase relevant für die Frage
+   - **Optionen** (2-4): jeweils mit Trade-offs und Code-Skizze (kurz!)
+   - **Empfehlung**: welche Option du nehmen würdest und warum
+3. STRENGSTENS VERBOTEN:
+   - KEINE Files editieren (kein Write, kein Edit)
+   - KEINE git-Operations
+   - KEINE Installs / Commands die State ändern
+4. Der User wird danach mit "ja Option B" oder ähnlich antworten — DAS triggert dann eine separate Implementations-Runde im Quick-Modus.
+
+Chat-Verlauf:
+${historyTextD || '(noch keine vorherigen Nachrichten)'}
+
+Aktuelle Frage des Users:
+${augmentedMessage}`;
+
+                const taskId = `code-${randomUUID()}`;
+                await sandboxChatRepo.append({
+                  sandboxId,
+                  userId: sb.userId,
+                  role: 'agent',
+                  text: `💬 Berater liest Codebase …`,
+                  taskId,
+                  taskPhase: 'coding',
+                });
+
+                const abortController = new AbortController();
+                this.codeAgentTaskAborts.set(taskId, abortController);
+
+                try {
+                  const { appendOutputLine } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+                  appendOutputLine(taskId, 'system', `💬 Discuss-Modus (read-only) startet im worktree ${sb.worktreePath}`);
+                } catch { /* */ }
+
+                (async () => {
+                  const ctxD = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
+                  try {
+                    const result = await cAgent.execute({
+                      action: 'run',
+                      agent: defaultAgent,
+                      prompt: discussPrompt,
+                      cwd: sb.worktreePath,
+                      taskId,
+                    }, ctxD);
+
+                    // Safety-Net: hat der Agent trotz Verbot was geändert?
+                    let revertNote = '';
+                    try {
+                      const { execFile: execFileD } = await import('node:child_process');
+                      const { promisify: promisifyD } = await import('node:util');
+                      const execAsyncD = promisifyD(execFileD);
+                      const { stdout: porcelainD } = await execAsyncD('git', ['status', '--porcelain'], { cwd: sb.worktreePath, maxBuffer: 1024 * 1024, timeout: 10_000 });
+                      if (porcelainD.trim()) {
+                        this.logger.warn({ sandboxId, taskId, dirty: porcelainD.slice(0, 500) }, 'v769 Discuss-Modus: Agent hat Files geändert obwohl read-only — Revert');
+                        try { await execAsyncD('git', ['checkout', '--', '.'], { cwd: sb.worktreePath, timeout: 20_000 }); } catch { /* */ }
+                        try { await execAsyncD('git', ['clean', '-fd'], { cwd: sb.worktreePath, timeout: 20_000 }); } catch { /* */ }
+                        revertNote = `\n\n⚠️ **Hinweis**: Der Agent hat versucht Files zu ändern obwohl Read-Only — Änderungen wurden automatisch revertiert. Bei Bedarf wechsle in ⚡ Quick-Modus für tatsächliche Implementation.`;
+                      }
+                    } catch (err) {
+                      this.logger.warn({ err }, 'v769 Discuss safety-revert failed (non-fatal)');
+                    }
+
+                    const display = (result.display ?? '').slice(0, 6000);
+                    await sandboxChatRepo.append({
+                      sandboxId,
+                      userId: sb.userId,
+                      role: 'agent',
+                      text: `💬 Beratung${result.success ? '' : ' (mit Fehler)'}\n\n${display}${revertNote}`,
+                      taskId,
+                      taskPhase: result.success ? 'done' : 'failed',
+                    });
+                  } catch (err) {
+                    const aborted = abortController.signal.aborted;
+                    await sandboxChatRepo.append({
+                      sandboxId,
+                      userId: sb.userId,
+                      role: 'agent',
+                      text: aborted ? '⏹ Discuss vom User gestoppt.' : `❌ Discuss-Fehler: ${(err as Error).message}`,
+                      taskId,
+                      taskPhase: aborted ? 'stopped' : 'failed',
+                    });
+                  } finally {
+                    this.codeAgentTaskAborts.delete(taskId);
+                    try {
+                      const { markOutputEnded } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+                      markOutputEnded(taskId);
+                    } catch { /* */ }
+                  }
+                })().catch(err => this.logger.warn({ err }, 'v769 discuss fire-and-forget failed'));
+
+                return { ok: true, userMessageId: userMsg.id, taskId };
+              }
+
               // v760 — Branch nach engine: 'code-agent' = light/iterativ, sonst project-agent (default)
               if (engine === 'code-agent') {
                 const cAgent = this.codeAgentSkillRef;
@@ -6203,6 +6322,12 @@ Wichtig:
                 const abortController = new AbortController();
                 this.codeAgentTaskAborts.set(taskId, abortController);
 
+                // v769 — Initial-System-Line damit User sieht "verbunden"
+                try {
+                  const { appendOutputLine } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+                  appendOutputLine(taskId, 'system', `▶ Code-Agent (${defaultAgent}) startet im worktree ${sb.worktreePath}`);
+                } catch { /* */ }
+
                 // Fire-and-forget — User-Chat pollt nachträglich via fetchSandboxChat
                 (async () => {
                   const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
@@ -6229,6 +6354,8 @@ Wichtig:
                         agent: defaultAgent,
                         prompt: currentPrompt,
                         cwd: sb.worktreePath,
+                        // v769 — Live-Output via shared outputBuffer (gleicher Buffer wie Project-Agent)
+                        taskId,
                       }, ctxCa);
                       if (result.success) break;
                       // Failure → Retry-Prompt mit Error-Context bauen (falls noch Versuche übrig)
@@ -6302,6 +6429,11 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   } finally {
                     // v762 — Cleanup: AbortController-Eintrag entfernen
                     this.codeAgentTaskAborts.delete(taskId);
+                    // v769 — Output-Buffer als ended markieren (retain 5min für nachladende UIs)
+                    try {
+                      const { markOutputEnded } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+                      markOutputEnded(taskId);
+                    } catch { /* */ }
                   }
                 })().catch(err => this.logger.warn({ err }, 'v760 code-agent fire-and-forget failed'));
 

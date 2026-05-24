@@ -12,7 +12,7 @@ export interface SandboxChatAttachment {
   dropInWorktree: boolean;
 }
 
-export type SandboxChatEngine = 'project-agent' | 'code-agent';
+export type SandboxChatEngine = 'project-agent' | 'code-agent' | 'discuss';
 
 interface SandboxChatInputProps {
   onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[], engine?: SandboxChatEngine) => void;
@@ -275,9 +275,15 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
           rows={1}
         />
 
-        {/* v761 — Engine-Toggle: ⚡Quick (code-agent, iterativ) vs 🚀Plan (project-agent, 14-Phasen) */}
+        {/* v761/v769 — Engine-Toggle 3-way: 💬Discuss (read-only, beraten) / ⚡Quick (code-agent, iterativ) / 🚀Plan (project-agent, 14-Phasen) */}
         {onEngineChange && (
           <div className="flex flex-col gap-0 border border-[#2a2a2a] rounded overflow-hidden text-[10px]">
+            <button
+              onClick={() => onEngineChange('discuss')}
+              disabled={disabled}
+              title="Beratung: Agent liest deinen Code und schlägt Optionen vor — keine Implementation. Read-Only, ~30s-2min"
+              className={`px-2 py-1 ${engine === 'discuss' ? 'bg-cyan-600 text-white' : 'bg-[#0a0a0a] text-gray-400 hover:bg-cyan-500/10 hover:text-cyan-300'}`}
+            >💬 Discuss</button>
             <button
               onClick={() => onEngineChange('code-agent')}
               disabled={disabled}

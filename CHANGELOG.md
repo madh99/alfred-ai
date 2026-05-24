@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.769] - 2026-05-25
+
+### Added — Live-Output für Code-Agent + Discuss-Engine (Read-Only Beratung mit Codebase-Zugriff)
+
+Zwei zusammengehörende UX-Verbesserungen für den Interactive-Chat in der Sandbox.
+
+**Phase 1 — Live-Output für Code-Agent**:
+- Bisher: User sah nur "Code-Agent läuft …" Spinner, Output kam erst am Ende als kompletter Block
+- Jetzt: stdout/stderr werden live in den shared `outputBuffer` (existierende Project-Agent-Infrastruktur) geschoben
+- `CodeAgentSkill.runAgent` reicht das optionale `input.taskId` an `executeAgent` durch — der hatte schon seit v651 die `appendOutputLine`-Logik intern
+- chatSendMessage gibt synthetischen `code-<uuid>` als taskId an code-agent — Frontend subscribed über das gleiche `/api/project-agents/:id/output` SSE wie für Project-Agent
+- Initial-System-Line `▶ Code-Agent (claude-code) startet im worktree …` damit User sofort sieht: verbunden
+- `markOutputEnded(taskId)` beim Cleanup → SSE schließt sauber, Buffer wird nach 5min freigegeben
+- Frontend-`liveOutput`-Map zeigt expandierbares "▾ Live-Output (N)"-Details unter der Code-Agent-Message — analog Project-Agent
+
+**Phase 2 — Discuss-Engine (3. Engine-Option)**:
+- Engine-Toggle ist jetzt 3-way: `💬 Discuss` (cyan) / `⚡ Quick` (purple) / `🚀 Plan` (emerald)
+- `💬 Discuss` startet den Code-Agent im **Read-Only-Modus** mit explizitem Prompt: "Lies relevante Files via Tools, schlage 2-4 Optionen mit Trade-offs vor, KEINE Edits"
+- Strong-Tier-Default-Agent (selber wie Code-Agent), nutzt seine normalen Read-Tools (Glob, Grep, Read) → kennt deine ganze Codebase
+- **Safety-Net**: nach jedem Discuss-Run `git status --porcelain` Check → falls Agent doch Files geändert hat (LLMs missachten manchmal Instruktionen): automatisch `git checkout -- .` + `git clean -fd` Revert + Warning-Message im Chat ("⚠️ Hinweis: Agent hat versucht Files zu ändern obwohl Read-Only — Änderungen wurden revertiert")
+- Output via gleicher Live-Output-Pipeline → du siehst Read-Tool-Calls live ("Reading globals.css… Reading components/NewsCard.tsx…")
+- Chat-History wird mit gleicher Hybrid-Cap (15 msgs / 16000 chars) als Context geliefert
+- Stop-Button funktioniert auch für Discuss-Tasks (gleicher AbortController-Mechanismus)
+
+**Workflow**:
+1. Du tippst eine Frage → `💬 Discuss` aktivieren → Senden
+2. Agent liest deine Codebase (live sichtbar), antwortet mit "Aktueller Stand / Optionen / Empfehlung"
+3. Du entscheidest, switchst auf `⚡ Quick`, sagst "ja Option B mit subtilerem Hover" → wird implementiert
+4. Discuss-Mode bleibt im localStorage pro Sandbox gemerkt
+
+LocalStorage: `alfred.sandbox.<id>.engine` akzeptiert nun auch `'discuss'`.
+
 ## [0.19.0-multi-ha.768] - 2026-05-25
 
 ### Fixed — project_agent_sessions Orphan-Cleanup (Projekt-Agents-Page zeigt korrekten Status)

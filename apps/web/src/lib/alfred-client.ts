@@ -449,7 +449,7 @@ export class AlfredClient {
     message: string,
     attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
     mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
-    engine?: 'project-agent' | 'code-agent',
+    engine?: 'project-agent' | 'code-agent' | 'discuss',
   ): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
     const body: Record<string, unknown> = { message };
     if (attachments && attachments.length > 0) body.attachments = attachments;
