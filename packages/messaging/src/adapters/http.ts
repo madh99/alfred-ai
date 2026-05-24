@@ -460,6 +460,8 @@ export class HttpAdapter extends MessagingAdapter {
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy 14-phase planner) | 'code-agent' (light, iterativ pro Iteration einen Commit). */
       engine?: 'project-agent' | 'code-agent',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
+    chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -537,6 +539,8 @@ export class HttpAdapter extends MessagingAdapter {
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy planner) | 'code-agent' (light, iterativ). */
       engine?: 'project-agent' | 'code-agent',
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
+    chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -1077,6 +1081,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat$/) && req.method === 'POST') {
       this.handleSandboxChatSend(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat\/stop$/) && req.method === 'POST') {
+      this.handleSandboxChatStop(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4156,6 +4162,33 @@ export class HttpAdapter extends MessagingAdapter {
     try {
       const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions, engine);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  // v762 — Stop einen laufenden Code-Agent-Task per taskId
+  private async handleSandboxChatStop(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.chatStopTask) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Stop nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let taskId = '';
+    try { taskId = String((JSON.parse(body) as Record<string, unknown>).taskId ?? ''); } catch { /* */ }
+    if (!taskId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'taskId required' }));
+      return;
+    }
+    try {
+      const r = await this.sandboxCallbacks.chatStopTask(sandboxId, taskId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });

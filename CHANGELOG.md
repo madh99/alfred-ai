@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.762] - 2026-05-24
+
+### Fixed — Code-Agent (v760) lässt sich jetzt stoppen
+
+**Problem in v760**: Code-Agent-Runs liefen fire-and-forget ohne Abort-Mechanismus. Wenn der User in Telegram "stop" sagte oder über die UI versuchte zu beenden, lief der CLI-Subprocess (claude-code etc) bis zum natürlichen Ende oder Timeout (~12-30min) weiter. Die UI hing dann mit Phase `coding` fest.
+
+**Fix**:
+- `codeAgentTaskAborts: Map<taskId, AbortController>` in alfred.ts hält aktive Runs
+- Im fire-and-forget-Block: Controller registriert beim Start, im finally aufgeräumt
+- `CodeAgentSkill.runAgent` reicht `context.abortSignal` an `executeAgent` durch (executeAgent hat seit v650 schon Process-Tree-Kill via SIGTERM bei Abort)
+- Neuer HTTP-Endpoint `POST /api/sandbox/:id/chat/stop` body `{taskId}` → ruft `chatStopTask`-Callback
+- Web-Client-Methode `stopSandboxChatTask(sandboxId, taskId)`
+
+**UI**:
+- Stop-Button (⏹ Stop) erscheint im Header der laufenden Code-Agent-Chat-Message (Bedingung: `taskId` beginnt mit `code-` UND Phase nicht terminal)
+- Bei Klick: Confirm-Dialog → API-Call → Subprocess wird gekillt → Chat-Message mit Phase `stopped` angehängt
+- Neuer Phase-Badge `stopped` (grau) zusätzlich zu `done`/`failed`
+- Polling-Intervalle erkennen `stopped` als terminal → Auto-Refresh stoppt
+
+**Was NICHT abgedeckt ist (Out-of-Scope für v762)**:
+- Stop für Project-Agent über die Interactive-UI (Project-Agent hat eigene stop-action via Telegram/Chat-Skill — `project_agent.execute({action:'stop', task_id})`). Code-Agent-Stop und Project-Agent-Stop sind separat.
+- Konkurrenz-Check bei mehreren parallelen Code-Agent-Runs in der gleichen Sandbox (heute: alle laufen parallel, jeder hat seine eigene taskId)
+
 ## [0.19.0-multi-ha.761] - 2026-05-24
 
 ### Added — Engine-Toggle ⚡Quick / 🚀Plan im Interactive-Chat (UI für v760)

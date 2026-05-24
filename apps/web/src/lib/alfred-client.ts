@@ -384,6 +384,15 @@ export class AlfredClient {
     const data = await res.json();
     return data.messages ?? [];
   }
+  // v762 — Laufenden Code-Agent-Task stoppen
+  async stopSandboxChatTask(sandboxId: string, taskId: string): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat/stop`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ taskId }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+    return data;
+  }
   async sendSandboxChatMessage(
     sandboxId: string,
     message: string,

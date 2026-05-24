@@ -174,6 +174,8 @@ export class Alfred {
   private projectSkillRef?: import('@alfred/skills').ProjectSkill;
   /** v727 — Late-Wiring von SandboxRepo an Project-Agent-Skill (für dev-safe Build-Detection) */
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
+  /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
+  private codeAgentTaskAborts = new Map<string, AbortController>();
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
@@ -6171,9 +6173,13 @@ Wichtig:
                   taskPhase: 'coding',
                 });
 
+                // v762 — AbortController für Stop-Support registrieren
+                const abortController = new AbortController();
+                this.codeAgentTaskAborts.set(taskId, abortController);
+
                 // Fire-and-forget — User-Chat pollt nachträglich via fetchSandboxChat
                 (async () => {
-                  const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '' } as any;
+                  const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
                   try {
                     // v760 Phase 3 — Retry-Loop: bei Agent-Fail bis zu 2 Versuche mit Error-Context
                     const MAX_ATTEMPTS = 2;
@@ -6256,14 +6262,20 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                       taskPhase: result.success ? 'done' : 'failed',
                     });
                   } catch (err) {
+                    const aborted = abortController.signal.aborted;
                     await sandboxChatRepo.append({
                       sandboxId,
                       userId: sb.userId,
                       role: 'agent',
-                      text: `❌ Code-Agent-Fehler: ${(err as Error).message}`,
+                      text: aborted
+                        ? '⏹ Vom User gestoppt.'
+                        : `❌ Code-Agent-Fehler: ${(err as Error).message}`,
                       taskId,
-                      taskPhase: 'failed',
+                      taskPhase: aborted ? 'stopped' : 'failed',
                     });
+                  } finally {
+                    // v762 — Cleanup: AbortController-Eintrag entfernen
+                    this.codeAgentTaskAborts.delete(taskId);
                   }
                 })().catch(err => this.logger.warn({ err }, 'v760 code-agent fire-and-forget failed'));
 
@@ -6303,6 +6315,14 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               } catch (err) {
                 return { ok: false, userMessageId: userMsg.id, reason: (err as Error).message };
               }
+            },
+            // v762 — Stop einen laufenden Code-Agent-Task. taskId aus chatSendMessage-Response.
+            chatStopTask: async (_sandboxId: string, taskId: string) => {
+              const ctrl = this.codeAgentTaskAborts.get(taskId);
+              if (!ctrl) return { ok: false, reason: `Task ${taskId} läuft nicht (mehr) oder ist kein Code-Agent` };
+              ctrl.abort();
+              this.codeAgentTaskAborts.delete(taskId);
+              return { ok: true };
             },
           });
           this.logger.info('v699 Sandbox CRUD-API + v703 Chat registered');

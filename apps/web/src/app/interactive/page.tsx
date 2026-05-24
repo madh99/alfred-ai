@@ -26,6 +26,7 @@ const PHASE_BADGES: Record<string, string> = {
   committing: 'bg-indigo-500/20 text-indigo-400',
   done: 'bg-emerald-500/20 text-emerald-400',
   failed: 'bg-red-500/20 text-red-400',
+  stopped: 'bg-gray-500/20 text-gray-400',
 };
 
 /**
@@ -196,7 +197,7 @@ export default function InteractivePage() {
 
   // v720 — Robusterer SSE-Subscribe mit Auto-Reconnect bei drops
   useEffect(() => {
-    const runningMsg = chatHistory.find(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');
+    const runningMsg = chatHistory.find(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped');
     const taskId = runningMsg?.taskId;
     if (!taskId || !client) {
       if (esRef.current) { esRef.current.close(); esRef.current = null; }
@@ -263,7 +264,7 @@ export default function InteractivePage() {
 
   // Reload chat alle 4s wenn ein agent-task läuft (für phase-update + final-text)
   useEffect(() => {
-    const hasRunning = chatHistory.some(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed');
+    const hasRunning = chatHistory.some(m => m.role === 'agent' && m.taskId && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped');
     if (!hasRunning) return;
     const t = setInterval(loadChat, 4000);
     return () => clearInterval(t);
@@ -501,12 +502,27 @@ export default function InteractivePage() {
             )}
             {chatHistory.map((m) => {
               const liveLines = m.taskId ? liveOutput.get(m.taskId) ?? [] : [];
-              const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed';
+              const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped';
+              // v762 — Stop-Button für Code-Agent-Tasks (synthetische taskId beginnt mit 'code-')
+              const isCodeAgent = !!(m.taskId && m.taskId.startsWith('code-'));
               return (
                 <div key={m.id} className={`text-xs rounded p-2 ${m.role === 'user' ? 'bg-blue-500/10 border border-blue-500/30' : 'bg-[#111] border border-[#1f1f1f]'}`}>
                   <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gray-500 mb-1">
                     <span>{m.role === 'user' ? '👤 Du' : '🤖 Agent'}</span>
                     <div className="flex items-center gap-2">
+                      {isRunning && isCodeAgent && m.taskId && (
+                        <button
+                          onClick={async () => {
+                            if (!client || !sandbox) return;
+                            if (!confirm('Code-Agent-Task abbrechen? Subprocess wird gekillt.')) return;
+                            const r = await client.stopSandboxChatTask(sandbox.id, m.taskId!);
+                            if (!r.ok) setError(r.reason ?? 'Stop failed');
+                            await loadChat();
+                          }}
+                          className="px-1.5 py-0.5 rounded bg-red-500/15 border border-red-500/40 text-red-300 hover:bg-red-500/25 text-[10px]"
+                          title="Code-Agent-Subprocess sofort beenden"
+                        >⏹ Stop</button>
+                      )}
                       {m.taskPhase && (
                         <span className={`px-1.5 py-0.5 rounded ${PHASE_BADGES[m.taskPhase] ?? 'bg-gray-500/20 text-gray-400'}`}>{m.taskPhase}</span>
                       )}

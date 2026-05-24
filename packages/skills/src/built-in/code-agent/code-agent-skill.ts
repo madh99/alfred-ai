@@ -211,6 +211,8 @@ export class CodeAgentSkill extends Skill {
       timeoutMs,
       onProgress: context.onProgress,
       onActivity: tracker ? () => tracker.ping('processing') : undefined,
+      // v762 — AbortSignal aus context durchreichen damit Caller den Subprocess stoppen kann
+      signal: context.abortSignal,
     });
 
     this.emitCompletion({
