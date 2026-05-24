@@ -389,10 +389,12 @@ export class AlfredClient {
     message: string,
     attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
     mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
+    engine?: 'project-agent' | 'code-agent',
   ): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
     const body: Record<string, unknown> = { message };
     if (attachments && attachments.length > 0) body.attachments = attachments;
     if (mentions && mentions.length > 0) body.mentions = mentions;
+    if (engine) body.engine = engine;
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(body),
     });

@@ -12,12 +12,17 @@ export interface SandboxChatAttachment {
   dropInWorktree: boolean;
 }
 
+export type SandboxChatEngine = 'project-agent' | 'code-agent';
+
 interface SandboxChatInputProps {
-  onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[]) => void;
+  onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[], engine?: SandboxChatEngine) => void;
   disabled?: boolean;
   placeholder?: string;
   /** v730 — Project-ID damit der Mention-Picker Open-Items/Decisions des Projekts laden kann */
   projectId?: string;
+  /** v761 — Engine-Toggle (⚡Quick = code-agent, 🚀Plan = project-agent). State von parent gehalten (für localStorage-Persist pro Sandbox). */
+  engine?: SandboxChatEngine;
+  onEngineChange?: (engine: SandboxChatEngine) => void;
 }
 
 interface PendingAttachment {
@@ -32,7 +37,7 @@ const MAX_ROWS = 8;
 const MAX_FILE_MB = 10;
 const MAX_ATTACHMENTS = 5;
 
-export function SandboxChatInput({ onSend, disabled, placeholder, projectId }: SandboxChatInputProps) {
+export function SandboxChatInput({ onSend, disabled, placeholder, projectId, engine, onEngineChange }: SandboxChatInputProps) {
   const { client } = useConfig();
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -153,6 +158,7 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId }: S
         ? attachments.map(a => ({ name: a.name, mime: a.mime, dataUrl: a.dataUrl, dropInWorktree: a.dropInWorktree }))
         : undefined,
       mentions.length > 0 ? mentions : undefined,
+      engine,
     );
     setText('');
     setAttachments([]);
@@ -268,6 +274,24 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId }: S
           className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded px-3 py-2 text-sm text-gray-200 resize-none focus:outline-none focus:border-purple-500/40 disabled:opacity-50"
           rows={1}
         />
+
+        {/* v761 — Engine-Toggle: ⚡Quick (code-agent, iterativ) vs 🚀Plan (project-agent, 14-Phasen) */}
+        {onEngineChange && (
+          <div className="flex flex-col gap-0 border border-[#2a2a2a] rounded overflow-hidden text-[10px]">
+            <button
+              onClick={() => onEngineChange('code-agent')}
+              disabled={disabled}
+              title="Iterativ: Eine fokussierte Änderung pro Nachricht, Auto-Commit, ~1-3min"
+              className={`px-2 py-1 ${engine === 'code-agent' ? 'bg-purple-600 text-white' : 'bg-[#0a0a0a] text-gray-400 hover:bg-purple-500/10 hover:text-purple-300'}`}
+            >⚡ Quick</button>
+            <button
+              onClick={() => onEngineChange('project-agent')}
+              disabled={disabled}
+              title="Plan-basiert: 14-Phasen-Planner mit Tests/Fixes, 15-60min, für große Features"
+              className={`px-2 py-1 ${engine === 'project-agent' ? 'bg-emerald-600 text-white' : 'bg-[#0a0a0a] text-gray-400 hover:bg-emerald-500/10 hover:text-emerald-300'}`}
+            >🚀 Plan</button>
+          </div>
+        )}
 
         <button
           onClick={handleSend}

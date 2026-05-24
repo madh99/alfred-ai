@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useConfig } from '@/context/ConfigContext';
 import type { SandboxItem, SandboxChatItem } from '@/lib/alfred-client';
-import { SandboxChatInput } from '@/components/chat/SandboxChatInput';
+import { SandboxChatInput, type SandboxChatEngine } from '@/components/chat/SandboxChatInput';
 import { SaveAsTemplateModal } from '@/components/sandbox/SaveAsTemplateModal';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -69,6 +69,19 @@ export default function InteractivePage() {
   const [envNewKey, setEnvNewKey] = useState('');
   const [envNewValue, setEnvNewValue] = useState('');
   const [iframeReloadKey, setIframeReloadKey] = useState(0);
+  // v761 — Engine-Toggle (Quick=code-agent / Plan=project-agent) — pro Sandbox in localStorage
+  const [engine, setEngine] = useState<SandboxChatEngine>('code-agent');
+  useEffect(() => {
+    if (!sandboxId) return;
+    try {
+      const saved = localStorage.getItem(`alfred.sandbox.${sandboxId}.engine`);
+      if (saved === 'code-agent' || saved === 'project-agent') setEngine(saved);
+    } catch { /* */ }
+  }, [sandboxId]);
+  function changeEngine(next: SandboxChatEngine) {
+    setEngine(next);
+    if (sandboxId) try { localStorage.setItem(`alfred.sandbox.${sandboxId}.engine`, next); } catch { /* */ }
+  }
   // v752 — Save-as-Template
   const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false);
   const [templateSavedToast, setTemplateSavedToast] = useState<string | null>(null);
@@ -265,13 +278,14 @@ export default function InteractivePage() {
     text: string,
     attachments?: import('@/components/chat/SandboxChatInput').SandboxChatAttachment[],
     mentions?: import('@/components/chat/ItemMentionPicker').MentionedItem[],
+    engineOverride?: SandboxChatEngine,
   ) {
     if ((!text || !text.trim()) && (!attachments || attachments.length === 0) && (!mentions || mentions.length === 0)) return;
     if (!sandbox || !client) return;
     setBusy('send'); setError(null);
     setChatInput('');
     try {
-      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments, mentions);
+      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments, mentions, engineOverride ?? engine);
       if (!r.ok) {
         setError(r.reason ?? 'Send failed');
       }
@@ -518,6 +532,8 @@ export default function InteractivePage() {
             onSend={handleSendMessage}
             disabled={busy === 'send' || sandbox.status !== 'running'}
             projectId={sandbox.projectId}
+            engine={engine}
+            onEngineChange={changeEngine}
           />
         </div>
 

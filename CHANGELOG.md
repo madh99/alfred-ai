@@ -5,6 +5,26 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.761] - 2026-05-24
+
+### Added — Engine-Toggle ⚡Quick / 🚀Plan im Interactive-Chat (UI für v760)
+
+Komplement zur v760-Backend-Implementierung: User kann nun pro Sandbox wählen zwischen leichtem Code-Agent (iterativ) und heavy-weight Project-Agent (14-Phasen-Planner).
+
+**SandboxChatInput erweitert**:
+- Neuer vertikaler Toggle direkt links neben dem Senden-Button: `⚡ Quick` / `🚀 Plan`
+- Quick (purple, default für neue Sandboxes) = code-agent → iterativ, 1-3min pro Iteration, Auto-Commit
+- Plan (emerald) = project-agent → 14-Phasen-Planner, 15-60min, für ganze Features
+- Tooltips erklären den Unterschied beim Hover
+- Engine wird beim Senden als optionaler Param an `sendSandboxChatMessage` durchgereicht
+
+**State-Persistierung**:
+- Pro Sandbox eigener Engine-Wert in `localStorage.alfred.sandbox.<id>.engine`
+- Beim Öffnen der Interactive-Page wird der zuletzt benutzte Modus pro Sandbox vorausgewählt
+- Default `code-agent` für noch nie konfigurierte Sandboxes
+
+**Backward-Compat**: Bestehende Sandboxes ohne gespeicherte Engine-Wahl bekommen ⚡Quick — UI gibt das ans Backend weiter. Wer das alte Verhalten will, klickt einmal auf 🚀Plan, wird gemerkt.
+
 ## [0.19.0-multi-ha.760] - 2026-05-24
 
 ### Added — Code-Agent-Engine im Interactive-Chat (Backend, Phasen 1-3)
