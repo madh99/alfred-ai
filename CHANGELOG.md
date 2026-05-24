@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.729] - 2026-05-24
+
+### Added — File-Upload + Voice-Input im Interactive-Sandbox-Chat (v729a)
+
+User-Wunsch nach v728: im Interactive-Chat sollen auch File-Uploads + Mikro-Voice möglich sein wie im Hauptchat — plus optional die Möglichkeit, Files direkt in den Sandbox-Worktree abzulegen damit der Project-Agent darauf zugreifen kann.
+
+**Neue Komponente** `apps/web/src/components/chat/SandboxChatInput.tsx`:
+- Auto-resize Textarea + Send-Button
+- Datei-Anhang via 📎-Button ODER Drag&Drop ODER Paste (Clipboard-Bilder)
+- Voice-Recording via 🎤 mit MediaRecorder (audio/webm), Auto-Transkription via existierender STT-Pipeline (Text wird in Input-Feld eingefügt)
+- Pro Attachment: Checkbox "📁 Worktree" entscheidet ob die Datei in `.alfred-uploads/` im Sandbox-Worktree abgelegt wird (Heuristik: Code-/Text-Files default ON, Bilder/PDFs default OFF)
+- Filetypes: md, txt, json, yaml, csv, env, png, jpg, jpeg, webp, gif, pdf, docx, xlsx
+- Limits: max 10 MB/Datei, max 5 Dateien gleichzeitig
+
+**Web-Client** (`apps/web/src/lib/alfred-client.ts`):
+- `sendSandboxChatMessage(sandboxId, text, attachments?)` — Attachments-Parameter erweitert.
+
+**HTTP-API** (`packages/messaging/src/adapters/http.ts`):
+- `POST /api/sandbox/:id/chat` Body-Schema erweitert: `{message, attachments?: Array<{name, mime, dataUrl, dropInWorktree}>}`
+- Attachment-Validation: dataUrl muss `data:` prefix haben, name max 200 chars, mime max 100 chars.
+- `sandboxCallbacks.chatSendMessage` Signatur um `attachments?` erweitert.
+
+**Backend-Pipeline** (`packages/core/src/alfred.ts` chatSendMessage):
+- (a) Audio-Attachments → STT via neue Pipeline-Methode `transcribeAudioBuffer(buffer, mime)` (public-Wrapper um den privaten SpeechTranscriber). Transcript wird an die User-Message angehängt.
+- (b) Files mit `dropInWorktree=true` → in `<worktree>/.alfred-uploads/<safename>` geschrieben (Name auf `a-zA-Z0-9._-` saniert, max 100 chars, 0644). Pfad-Referenzen werden ans Goal des project_agent angehängt: `[User-bereitgestellte Dateien im Worktree:] - .alfred-uploads/foo.md`.
+- (c) Files mit `dropInWorktree=false` → nur als Pfad-Referenz im Goal: `[User-Referenz-Dateien (nicht im Worktree):] - foo.png (image/png, 145 KB)` — der Agent kennt damit Existenz und Eigenschaft aber nicht den Inhalt (Bild-Vision wäre eigenes v730+).
+- Auto-Append zur `.gitignore` für `.alfred-uploads/` (Files landen nie im Repo, auch wenn User die `.gitignore` modifiziert).
+
+**Pipeline** (`packages/core/src/message-pipeline.ts`):
+- Neue Public-Method `transcribeAudioBuffer(buffer, mimeType): Promise<string | undefined>` als sauberer Zugang zum SpeechTranscriber für externe Caller (best-effort, returnt undefined falls Transcriber nicht konfiguriert).
+
+**Interactive-Page** (`apps/web/src/app/interactive/page.tsx`):
+- Simpler `<textarea>` ersetzt durch `<SandboxChatInput>`. `handleSendMessage` akzeptiert jetzt `(text, attachments?)`.
+
+Nicht in v729a (kommt in v730):
+- Open-Items / Decisions / Milestones als Mention-Picker im Chat-Input (User wählt Item → wird als Referenz an die Message gehängt, Agent kennt den Bezug)
+- Image-Vision für die `dropInWorktree=false` Files (Bilder direkt im LLM-Context für Multi-Modal-Verstehen)
+
 ## [0.19.0-multi-ha.728] - 2026-05-24
 
 ### Added — Sandbox-Verwaltungs-Toolbar im Interactive-Chat + ENV-WebUI

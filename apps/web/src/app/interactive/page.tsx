@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useConfig } from '@/context/ConfigContext';
 import type { SandboxItem, SandboxChatItem } from '@/lib/alfred-client';
+import { SandboxChatInput } from '@/components/chat/SandboxChatInput';
 
 const STATUS_COLOR: Record<string, string> = {
   creating: 'text-amber-400 bg-amber-500/10 border-amber-500/40',
@@ -182,13 +183,13 @@ export default function InteractivePage() {
     return client.buildSandboxPreviewUrl(sandbox.id);
   }, [sandbox, client]);
 
-  async function handleSendMessage() {
-    const text = chatInput.trim();
-    if (!text || !sandbox || !client) return;
+  async function handleSendMessage(text: string, attachments?: import('@/components/chat/SandboxChatInput').SandboxChatAttachment[]) {
+    if ((!text || !text.trim()) && (!attachments || attachments.length === 0)) return;
+    if (!sandbox || !client) return;
     setBusy('send'); setError(null);
     setChatInput('');
     try {
-      const r = await client.sendSandboxChatMessage(sandbox.id, text);
+      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments);
       if (!r.ok) {
         setError(r.reason ?? 'Send failed');
       }
@@ -391,22 +392,10 @@ export default function InteractivePage() {
               );
             })}
           </div>
-          <div className="border-t border-[#1a1a1a] p-2 flex gap-2">
-            <textarea
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
-              placeholder="Was soll der Agent ändern? (Enter = senden, Shift+Enter = Zeilenumbruch)"
-              rows={3}
-              className="flex-1 bg-[#0d0d0d] border border-[#2a2a2a] rounded text-xs text-gray-200 p-2 resize-none focus:outline-none focus:border-blue-500"
-              disabled={busy === 'send' || sandbox.status !== 'running'}
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={busy !== null || !chatInput.trim() || sandbox.status !== 'running'}
-              className="px-3 py-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-xs"
-            >Senden</button>
-          </div>
+          <SandboxChatInput
+            onSend={handleSendMessage}
+            disabled={busy === 'send' || sandbox.status !== 'running'}
+          />
         </div>
 
         <div className="flex-1 flex flex-col">

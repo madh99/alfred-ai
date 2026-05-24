@@ -5648,7 +5648,11 @@ export class Alfred {
                 return enriched;
               } catch { return messages; }
             },
-            chatSendMessage: async (sandboxId: string, message: string) => {
+            chatSendMessage: async (
+              sandboxId: string,
+              message: string,
+              attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+            ) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
               if (sb.status !== 'running' && sb.status !== 'paused') {
@@ -5669,12 +5673,81 @@ export class Alfred {
                 }
               } catch (err) { this.logger.debug({ err }, 'concurrent-check failed (continuing)'); }
 
-              // (1) User-Message persistieren
+              // v729a — Attachments verarbeiten BEVOR Project-Agent gestartet wird:
+              //  (a) Audio (audio/*) → STT-Transkription → an message text appendieren
+              //  (b) Files mit dropInWorktree=true → in /workspace/.alfred-uploads/ im worktree ablegen
+              //  (c) Andere Files → als Goal-Hinweise an den Agent geben (Pfad-Referenz)
+              let augmentedMessage = message;
+              const droppedFiles: string[] = [];
+              const contextFiles: Array<{ name: string; mime: string; sizeKB: number }> = [];
+              if (attachments && attachments.length > 0) {
+                const path = await import('node:path');
+                const fs = await import('node:fs');
+                const uploadsDir = path.join(sb.worktreePath, '.alfred-uploads');
+                let uploadsDirReady = false;
+                try { fs.mkdirSync(uploadsDir, { recursive: true, mode: 0o755 }); uploadsDirReady = true; } catch (err) {
+                  this.logger.warn({ err, uploadsDir }, 'v729a uploads-dir mkdir failed');
+                }
+                // .gitignore-Append damit Uploads nicht ins Repo committed werden
+                try {
+                  const gitignorePath = path.join(sb.worktreePath, '.gitignore');
+                  const existing = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, 'utf8') : '';
+                  if (!existing.includes('.alfred-uploads')) {
+                    const sep = existing.length === 0 || existing.endsWith('\n') ? '' : '\n';
+                    fs.writeFileSync(gitignorePath, existing + sep + '.alfred-uploads/\n', 'utf8');
+                  }
+                } catch { /* non-critical */ }
+
+                for (const att of attachments) {
+                  const isAudio = att.mime.startsWith('audio/');
+                  // dataUrl ist "data:<mime>;base64,<payload>"
+                  const commaIdx = att.dataUrl.indexOf(',');
+                  if (commaIdx < 0) continue;
+                  const payload = att.dataUrl.slice(commaIdx + 1);
+                  let buf: Buffer;
+                  try { buf = Buffer.from(payload, 'base64'); } catch { continue; }
+
+                  if (isAudio) {
+                    // (a) Audio → STT via Pipeline
+                    try {
+                      const transcript = await this.pipeline.transcribeAudioBuffer(buf, att.mime);
+                      if (transcript) augmentedMessage = (augmentedMessage + ' ' + transcript).trim();
+                      else this.logger.warn({ mime: att.mime }, 'v729a audio transcript empty or transcriber not configured');
+                    } catch (err) {
+                      this.logger.warn({ err }, 'v729a audio transcription failed');
+                    }
+                    continue;
+                  }
+
+                  if (att.dropInWorktree && uploadsDirReady) {
+                    // (b) Datei in worktree ablegen
+                    try {
+                      const safeName = att.name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 100);
+                      const target = path.join(uploadsDir, safeName);
+                      fs.writeFileSync(target, buf, { mode: 0o644 });
+                      droppedFiles.push(`.alfred-uploads/${safeName}`);
+                    } catch (err) {
+                      this.logger.warn({ err, name: att.name }, 'v729a file-drop failed');
+                    }
+                  } else {
+                    // (c) Nur als Kontext-Referenz an den Agent
+                    contextFiles.push({ name: att.name, mime: att.mime, sizeKB: Math.round(buf.length / 1024) });
+                  }
+                }
+                if (droppedFiles.length > 0) {
+                  augmentedMessage += `\n\n[User-bereitgestellte Dateien im Worktree:]\n${droppedFiles.map(f => `- ${f}`).join('\n')}`;
+                }
+                if (contextFiles.length > 0) {
+                  augmentedMessage += `\n\n[User-Referenz-Dateien (nicht im Worktree):]\n${contextFiles.map(f => `- ${f.name} (${f.mime}, ${f.sizeKB} KB)`).join('\n')}`;
+                }
+              }
+
+              // (1) User-Message persistieren (mit augmented text falls Voice/Files dazu)
               const userMsg = await sandboxChatRepo.append({
                 sandboxId,
                 userId: sb.userId,
                 role: 'user',
-                text: message,
+                text: augmentedMessage,
               });
               // (2) Project-Agent-Task starten mit cwd=worktree
               const skill = this.skillRegistry?.get('project_agent');
@@ -5687,7 +5760,7 @@ export class Alfred {
               try {
                 const result = await skill.execute({
                   action: 'start',
-                  goal: message,
+                  goal: augmentedMessage,
                   cwd: sb.worktreePath,
                   // v721 — sandbox_id mitgeben damit Completion-Callback zum Original-Project bindet statt Ghost-Project zu erzeugen
                   sandbox_id: sandboxId,

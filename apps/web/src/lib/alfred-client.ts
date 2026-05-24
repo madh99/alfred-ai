@@ -384,9 +384,15 @@ export class AlfredClient {
     const data = await res.json();
     return data.messages ?? [];
   }
-  async sendSandboxChatMessage(sandboxId: string, message: string): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
+  async sendSandboxChatMessage(
+    sandboxId: string,
+    message: string,
+    attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+  ): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
+    const body: Record<string, unknown> = { message };
+    if (attachments && attachments.length > 0) body.attachments = attachments;
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, {
-      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify({ message }),
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };

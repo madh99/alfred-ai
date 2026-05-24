@@ -425,7 +425,11 @@ export class HttpAdapter extends MessagingAdapter {
     merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
     chatList: (sandboxId: string) => Promise<unknown[]>;
-    chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    chatSendMessage: (
+      sandboxId: string,
+      message: string,
+      attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+    ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -482,7 +486,11 @@ export class HttpAdapter extends MessagingAdapter {
     merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
     chatList: (sandboxId: string) => Promise<unknown[]>;
-    chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    chatSendMessage: (
+      sandboxId: string,
+      message: string,
+      attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+    ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
     getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
@@ -3682,10 +3690,35 @@ export class HttpAdapter extends MessagingAdapter {
     const sandboxId = url.pathname.split('/')[3];
     const body = await this.readBody(req);
     let message = '';
-    try { message = String((JSON.parse(body) as Record<string, unknown>).message ?? ''); } catch { /* */ }
-    if (!message.trim()) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'message required' })); return; }
+    let attachments: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }> | undefined;
     try {
-      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim());
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      message = String(parsed.message ?? '');
+      // v729a — Attachments aus dem Body validieren
+      if (Array.isArray(parsed.attachments)) {
+        attachments = [];
+        for (const att of parsed.attachments) {
+          if (!att || typeof att !== 'object') continue;
+          const a = att as Record<string, unknown>;
+          if (typeof a.name !== 'string' || typeof a.mime !== 'string' || typeof a.dataUrl !== 'string') continue;
+          if (!a.dataUrl.startsWith('data:')) continue;
+          attachments.push({
+            name: a.name.slice(0, 200),
+            mime: a.mime.slice(0, 100),
+            dataUrl: a.dataUrl,
+            dropInWorktree: a.dropInWorktree === true,
+          });
+        }
+        if (attachments.length === 0) attachments = undefined;
+      }
+    } catch { /* */ }
+    if (!message.trim() && (!attachments || attachments.length === 0)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'message or attachments required' }));
+      return;
+    }
+    try {
+      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

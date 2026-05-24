@@ -316,6 +316,20 @@ export class MessagePipeline {
     this.learnedRecipeRepo = repo;
   }
 
+  /**
+   * v729a — Public Audio-Transkription für externe Caller (z.B. Sandbox-Chat).
+   * Returns undefined wenn kein Transcriber konfiguriert ist oder Audio leer.
+   */
+  async transcribeAudioBuffer(buffer: Buffer, mimeType: string): Promise<string | undefined> {
+    if (!this.speechTranscriber) return undefined;
+    try {
+      return await this.speechTranscriber.transcribe(buffer, mimeType);
+    } catch (err) {
+      this.logger.warn({ err, mimeType }, 'v729a transcribeAudioBuffer failed');
+      return undefined;
+    }
+  }
+
   setModerationService(service: import('@alfred/security').ModerationService): void {
     this.moderationService = service;
   }
