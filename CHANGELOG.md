@@ -5,6 +5,42 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.743] - 2026-05-24
+
+### Added — /sandboxes-Übersicht auf Feature-Parität (Filter + Quota + Idle + Failed-Logs + Create-Optionen)
+
+Die globale `/sandboxes`-Page hat seit v703 weitgehend unverändert gerendert. Mit der ganzen v721–v742-Welt von ENV-Stages, DB-Seeds, Idle-Countdown, Failed-Banner und Quota war sie funktional veraltet. v743 bringt sie auf den Stand der projekt-spezifischen `ProjectSandboxesView`.
+
+**Filter-Bar** (neu, eingeblendet wenn ≥1 Sandbox vorhanden):
+- Status-Select: `Aktiv` (default — running/paused/creating/merging/failed) / `Alle` / spezifischer Status
+- Project-Select: `Alle (N)` / spezifisches Project mit Counter
+- Right-aligned `M / N angezeigt`-Counter
+
+**Quota-Display** im Header:
+- `Quota: 2/3` color-coded (grau/amber/rot) abhängig von Auslastung
+- `+ Neue Sandbox`-Button disabled wenn Quota voll, mit Tooltip-Hinweis
+
+**Idle-Countdown** bei `status === 'running'`:
+- `⏱ auto-Pause in ~22 min` (grau, normal)
+- `⏱ auto-Pause in ~3 min` (amber, warning)
+- Nutzt `status.idleTimeoutMin` aus v739 (echter Config-Wert statt hardcoded 30)
+- Auto-Refresh alle 5s (vorher: nur bei creating/merging)
+
+**Failed-State-Banner** mit Inline-Logs:
+- 2px rote Border + leicht rotes Background
+- `❌ Sandbox gefailed — Discard empfohlen.` Header + `📜 Container-Logs anzeigen`-Toggle
+- Lazy-load via `fetchSandboxLogs(100)`, Inline-Pre-Block mit Scroll
+- Map-State `inlineLogs[sandboxId]` mit `{loading, text, open}`
+- Discard-Button als `🗑️ Aufräumen` (prominenter Styling für failed)
+
+**Create-Modal** erweitert um ENV+Seed-Wahl:
+- Beim Modal-Open: lazy-fetch `fetchEnvironmentStages(projectId)` + `fetchDbSeeds(projectId)`
+- 🔐 **ENV-Stage**-Select: sandbox/dev/prod/staging + custom-Stages mit Key-Count
+- 💾 **DB-Seed**-Select: Project-Default / Leer / spezifischer Seed
+- Werte werden ans `createSandbox` durchgereicht (envStage + dbSeedId, v733-API)
+
+**Auto-Refresh** erweitert: läuft jetzt auch wenn `running` Sandboxes da sind (Idle-Countdown live), nicht nur bei transient creating/merging.
+
 ## [0.19.0-multi-ha.742] - 2026-05-24
 
 ### Added — Re-Match-Button für OpenItemMatcher manuell triggern

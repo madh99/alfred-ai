@@ -2,7 +2,22 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { SandboxItem, SandboxStatusResponse, Project } from '@/lib/alfred-client';
+import type { SandboxItem, SandboxStatusResponse, Project, SandboxStatus } from '@/lib/alfred-client';
+
+/** v743 — Idle-Countdown identisch zu ProjectSandboxesView */
+function computeIdleCountdown(lastActiveAt: string, idleTimeoutMin: number): { text: string; warning: boolean } | null {
+  try {
+    const lastMs = new Date(lastActiveAt).getTime();
+    if (!Number.isFinite(lastMs)) return null;
+    const elapsedMin = (Date.now() - lastMs) / 60000;
+    const remainingMin = idleTimeoutMin - elapsedMin;
+    if (remainingMin <= 0) return { text: 'auto-Pause läuft jeden Moment', warning: true };
+    if (remainingMin < 1) return { text: 'auto-Pause in <1 min', warning: true };
+    if (remainingMin < 5) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: true };
+    if (remainingMin < idleTimeoutMin) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: false };
+    return null;
+  } catch { return null; }
+}
 
 const STATUS_COLOR: Record<string, string> = {
   creating: 'text-amber-400 bg-amber-500/10 border-amber-500/40',
@@ -29,6 +44,14 @@ export default function SandboxesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [createProjectId, setCreateProjectId] = useState<string>('');
   const [createMode, setCreateMode] = useState<'sandbox' | 'sandbox-preview' | 'interactive-chat'>('interactive-chat');
+  // v743 — Filter + Lazy-Daten für Create-Modal + Inline-Logs
+  const [filterStatus, setFilterStatus] = useState<SandboxStatus | 'all' | 'active'>('active');
+  const [filterProjectId, setFilterProjectId] = useState<string>('');
+  const [createEnvStage, setCreateEnvStage] = useState<string>('sandbox');
+  const [createSeedId, setCreateSeedId] = useState<string>('');
+  const [createEnvStages, setCreateEnvStages] = useState<Array<{ stage: string; keyCount: number }>>([]);
+  const [createSeeds, setCreateSeeds] = useState<Array<{ id: string; name: string; kind: string }>>([]);
+  const [inlineLogs, setInlineLogs] = useState<Record<string, { loading: boolean; text: string; open: boolean }>>({});
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -50,20 +73,61 @@ export default function SandboxesPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-refresh wenn was creating/merging
+  // Auto-refresh: v743 erweitert um running (für Idle-Countdown live)
   useEffect(() => {
-    const hasTransient = sandboxes.some(s => s.status === 'creating' || s.status === 'merging');
+    const hasTransient = sandboxes.some(s => s.status === 'creating' || s.status === 'merging' || s.status === 'running');
     if (!hasTransient) return;
-    const t = setInterval(load, 3000);
+    const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [sandboxes, load]);
+
+  // v743 — Bei Create-Modal-Öffnen: ENV-Stages + Seeds für gewähltes Project lazy laden
+  useEffect(() => {
+    if (!showCreate || !client || !createProjectId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [st, sd] = await Promise.all([
+          client.fetchEnvironmentStages(createProjectId).catch(() => []),
+          client.fetchDbSeeds(createProjectId).catch(() => []),
+        ]);
+        if (cancelled) return;
+        setCreateEnvStages(st);
+        setCreateSeeds(sd);
+      } catch { /* */ }
+    })();
+    return () => { cancelled = true; };
+  }, [showCreate, client, createProjectId]);
+
+  // v743 — Inline-Logs (für failed)
+  async function toggleLogs(sandboxId: string) {
+    if (!client) return;
+    const current = inlineLogs[sandboxId];
+    if (current?.open) {
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { ...current, open: false } }));
+      return;
+    }
+    setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: true, text: '', open: true } }));
+    try {
+      const r = await client.fetchSandboxLogs(sandboxId, 100);
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: false, text: r.ok && r.logs ? r.logs : `[Fehler: ${r.reason ?? 'unknown'}]`, open: true } }));
+    } catch (e) {
+      setInlineLogs(prev => ({ ...prev, [sandboxId]: { loading: false, text: `[Fehler: ${e instanceof Error ? e.message : String(e)}]`, open: true } }));
+    }
+  }
 
   async function handleCreate() {
     if (!client || !createProjectId) return;
     setBusy('create'); setError(null);
     try {
       const slug = `manual-${Date.now().toString(36).slice(-5)}`;
-      const sb = await client.createSandbox({ projectId: createProjectId, mode: createMode, slug });
+      // v743 — ENV-Stage + DB-Seed durchreichen
+      const dbSeedId = createSeedId === '' ? undefined : (createSeedId === 'none' ? null : createSeedId);
+      const sb = await client.createSandbox({
+        projectId: createProjectId, mode: createMode, slug,
+        envStage: createEnvStage,
+        dbSeedId,
+      });
       setShowCreate(false);
       if (sb && sb.id && createMode === 'interactive-chat') {
         window.open(`/alfred/interactive?sandboxId=${sb.id}`, '_blank');
@@ -103,26 +167,92 @@ export default function SandboxesPage() {
     return projects.find(p => p.id === projectId)?.name?.slice(0, 50) ?? projectId.slice(0, 8);
   }
 
+  // v743 — Gefilterte Liste + Quota-Berechnung
+  const activeStatuses: SandboxStatus[] = ['creating', 'running', 'paused', 'merging', 'failed'];
+  const filteredSandboxes = sandboxes.filter(sb => {
+    if (filterProjectId && sb.projectId !== filterProjectId) return false;
+    if (filterStatus === 'all') return true;
+    if (filterStatus === 'active') return activeStatuses.includes(sb.status);
+    return sb.status === filterStatus;
+  });
+  const globalActiveCount = sandboxes.filter(s => ['creating', 'running', 'paused', 'merging'].includes(s.status)).length;
+  const uniqueProjectsInList = Array.from(new Set(sandboxes.map(s => s.projectId)));
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-2xl font-bold text-gray-100">📦 Sandboxes</h1>
           <p className="text-sm text-gray-500">Project-Agent Sandboxes mit Live-Preview & Interactive-Chat-Mode.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* v743 — Quota-Display */}
+          {status && typeof status.maxParallelPerUser === 'number' && (() => {
+            const max = status.maxParallelPerUser;
+            const used = globalActiveCount;
+            const full = used >= max;
+            const warning = used >= max - 1 && !full;
+            const cls = full ? 'border-red-500/40 text-red-300 bg-red-500/10'
+              : warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+              : 'border-gray-600 text-gray-400';
+            return (
+              <span className={`px-2 py-1 rounded border text-xs ${cls}`} title={`Global ${used} von max ${max} parallel-Sandboxes`}>
+                Quota: {used}/{max}{full ? ' VOLL' : ''}
+              </span>
+            );
+          })()}
           <button
             onClick={load}
             className="px-3 py-1.5 text-sm text-blue-400 hover:text-blue-300"
           >↻ Neu laden</button>
           <button
             onClick={() => setShowCreate(true)}
-            disabled={!status?.available}
-            title={status?.available ? '' : 'Sandbox-Feature nicht verfügbar (siehe /settings)'}
+            disabled={!status?.available || (status?.maxParallelPerUser !== undefined && globalActiveCount >= status.maxParallelPerUser)}
+            title={status?.available
+              ? (status?.maxParallelPerUser !== undefined && globalActiveCount >= status.maxParallelPerUser
+                ? `Quota voll (${globalActiveCount}/${status.maxParallelPerUser})`
+                : '')
+              : 'Sandbox-Feature nicht verfügbar (siehe /settings)'}
             className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded"
           >+ Neue Sandbox</button>
         </div>
       </div>
+
+      {/* v743 — Filter-Bar */}
+      {sandboxes.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-xs">
+          <span className="text-gray-500">Filter:</span>
+          <select
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value as typeof filterStatus)}
+            className="bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-gray-200"
+          >
+            <option value="active">Aktiv (running/paused/creating/merging/failed)</option>
+            <option value="all">Alle</option>
+            <option value="running">running</option>
+            <option value="paused">paused</option>
+            <option value="creating">creating</option>
+            <option value="failed">failed</option>
+            <option value="merging">merging</option>
+            <option value="discarded">discarded</option>
+          </select>
+          <select
+            value={filterProjectId}
+            onChange={(e) => setFilterProjectId(e.target.value)}
+            className="bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1 text-gray-200"
+          >
+            <option value="">Alle Projekte ({uniqueProjectsInList.length})</option>
+            {uniqueProjectsInList.map(pid => (
+              <option key={pid} value={pid}>
+                {projectName(pid)} ({sandboxes.filter(s => s.projectId === pid).length})
+              </option>
+            ))}
+          </select>
+          <span className="text-gray-500 ml-auto">
+            {filteredSandboxes.length} / {sandboxes.length} angezeigt
+          </span>
+        </div>
+      )}
 
       {/* Feature-Status */}
       {status && !status.available && (
@@ -144,16 +274,42 @@ export default function SandboxesPage() {
       {!loading && sandboxes.length === 0 && (
         <div className="border border-dashed border-[#2a2a2a] rounded-lg p-12 text-center text-gray-500">
           <div className="text-4xl mb-2">📦</div>
-          <div className="text-sm">Keine aktiven Sandboxes.</div>
+          <div className="text-sm">Keine Sandboxes.</div>
           <div className="text-xs mt-2 text-gray-600">Erstelle eine neue für ein Projekt oben rechts.</div>
         </div>
       )}
 
+      {!loading && sandboxes.length > 0 && filteredSandboxes.length === 0 && (
+        <div className="border border-dashed border-[#2a2a2a] rounded-lg p-6 text-center text-gray-500 text-sm">
+          Keine Sandboxes passen zum Filter. <button onClick={() => { setFilterStatus('all'); setFilterProjectId(''); }} className="text-blue-400 hover:underline">Alle zeigen</button>
+        </div>
+      )}
+
       <div className="space-y-2">
-        {sandboxes.map(sb => {
+        {filteredSandboxes.map(sb => {
           const previewUrl = sb.status === 'running' && client ? client.buildSandboxPreviewUrl(sb.id) : null;
+          const isFailed = sb.status === 'failed';
+          const idleTimeoutMin = status?.idleTimeoutMin ?? 30;
+          const idle = sb.status === 'running' ? computeIdleCountdown(sb.lastActiveAt, idleTimeoutMin) : null;
+          const logState = inlineLogs[sb.id];
           return (
-            <div key={sb.id} className="border border-[#1f1f1f] bg-[#0a0a0a] rounded p-3">
+            <div key={sb.id} className={`rounded p-3 ${isFailed ? 'border-2 border-red-500/40 bg-red-500/5' : 'border border-[#1f1f1f] bg-[#0a0a0a]'}`}>
+              {isFailed && (
+                <div className="flex items-center gap-2 text-red-300 text-xs mb-2 flex-wrap">
+                  <span className="font-semibold">❌ Sandbox gefailed — Discard empfohlen.</span>
+                  <button
+                    onClick={() => toggleLogs(sb.id)}
+                    className="px-2 py-0.5 border border-red-500/40 text-red-300 hover:bg-red-500/15 rounded text-[10px]"
+                  >
+                    {logState?.open ? '🙈 Logs ausblenden' : '📜 Container-Logs anzeigen'}
+                  </button>
+                </div>
+              )}
+              {isFailed && logState?.open && (
+                <pre className="bg-black border border-red-500/30 rounded p-2 text-[10px] text-gray-300 whitespace-pre-wrap max-h-64 overflow-y-auto font-mono mb-2">
+                  {logState.loading ? '(lädt…)' : (logState.text || '(keine Logs)')}
+                </pre>
+              )}
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -162,6 +318,12 @@ export default function SandboxesPage() {
                     {sb.projectType && <span className="text-[10px] text-gray-600">· {sb.projectType}</span>}
                     {sb.hostPort && <span className="text-[10px] text-gray-600">· port {sb.hostPort}</span>}
                     {!sb.sessionId && <span className="text-[10px] text-purple-400">· standalone</span>}
+                    {idle && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded border ${idle.warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-gray-600 text-gray-400'}`}
+                        title={`Letzte Aktivität: ${sb.lastActiveAt}\nAuto-Pause nach ${idleTimeoutMin}min Idle`}
+                      >⏱ {idle.text}</span>
+                    )}
                   </div>
                   <div className="font-mono text-[11px] text-gray-300 break-all">{sb.branchName}</div>
                   <div className="font-mono text-[10px] text-gray-600 break-all">{sb.worktreePath}</div>
@@ -169,7 +331,7 @@ export default function SandboxesPage() {
                     Erstellt: {new Date(sb.createdAt).toLocaleString('de-AT')}
                     {' · '} Last activity: {new Date(sb.lastActiveAt).toLocaleString('de-AT')}
                   </div>
-                  {sb.statusReason && (
+                  {sb.statusReason && !isFailed && (
                     <div className="text-[10px] text-amber-400 mt-1">⚠ {sb.statusReason}</div>
                   )}
                 </div>
@@ -196,7 +358,11 @@ export default function SandboxesPage() {
                       <button onClick={() => handleResume(sb.id)} disabled={busy === sb.id} className="text-[10px] px-2 py-0.5 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 rounded disabled:opacity-50">▶</button>
                     )}
                     {(sb.status === 'running' || sb.status === 'paused' || sb.status === 'failed') && (
-                      <button onClick={() => handleDiscard(sb.id, sb.branchName)} disabled={busy === sb.id} className="text-[10px] px-2 py-0.5 border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded disabled:opacity-50">✕</button>
+                      <button
+                        onClick={() => handleDiscard(sb.id, sb.branchName)}
+                        disabled={busy === sb.id}
+                        className={`text-[10px] px-2 py-0.5 border rounded disabled:opacity-50 ${sb.status === 'failed' ? 'border-red-500/60 text-red-300 bg-red-500/15 hover:bg-red-500/25 font-semibold' : 'border-red-500/40 text-red-400 hover:bg-red-500/15'}`}
+                      >{sb.status === 'failed' ? '🗑️ Aufräumen' : '✕'}</button>
                     )}
                   </div>
                 </div>
@@ -234,6 +400,34 @@ export default function SandboxesPage() {
                 <option value="interactive-chat">Interactive Chat (Chat + Live-Preview)</option>
                 <option value="sandbox-preview">Sandbox + Preview (Dev-Server + iframe)</option>
                 <option value="sandbox">Sandbox-only (Worktree-Isolation, kein Container)</option>
+              </select>
+            </div>
+            {/* v743 — ENV-Stage + DB-Seed Wahl */}
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">🔐 ENV-Stage</label>
+              <select
+                value={createEnvStage}
+                onChange={(e) => setCreateEnvStage(e.target.value)}
+                disabled={!createProjectId}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200 disabled:opacity-50"
+              >
+                {Array.from(new Set(['sandbox', 'dev', 'prod', 'staging', ...createEnvStages.map(s => s.stage)])).map(s => {
+                  const info = createEnvStages.find(x => x.stage === s);
+                  return <option key={s} value={s}>{s}{info ? ` (${info.keyCount} Keys)` : ' (leer)'}</option>;
+                })}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">💾 DB-Seed</label>
+              <select
+                value={createSeedId}
+                onChange={(e) => setCreateSeedId(e.target.value)}
+                disabled={!createProjectId}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-sm text-gray-200 disabled:opacity-50"
+              >
+                <option value="">Project-Default verwenden</option>
+                <option value="none">Leer (kein Seed)</option>
+                {createSeeds.map(s => <option key={s.id} value={s.id}>{s.name} ({s.kind})</option>)}
               </select>
             </div>
             <div className="text-[10px] text-gray-600">
