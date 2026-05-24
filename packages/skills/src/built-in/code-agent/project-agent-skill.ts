@@ -578,12 +578,14 @@ ${planSummary}${commits}${userNotes}
       ?? [];
 
     // Create session tracking
+    // v721 — sandbox_id durchreichen damit Interactive-Chat-Tasks zum Original-Project binden
     const session = await this.sessionRepo.create({
       taskId: crypto.randomUUID(),
       goal,
       cwd,
       agentName,
       resumedFromTaskId: input._resumedFromTaskId as string | undefined,
+      sandboxId: (input.sandbox_id as string | undefined) ?? (input.sandboxId as string | undefined),
     });
 
     const config = {

@@ -16,6 +16,8 @@ export interface ProjectAgentSession {
   lastPushUrl?: string;
   /** v648 — Linked source-session if this is a Resume-Session. */
   resumedFromTaskId?: string;
+  /** v721 — Sandbox-Bindung damit Interactive-Chat-Tasks zum Original-Project binden statt Ghost-Project zu erzeugen. */
+  sandboxId?: string;
   /** v652 — LLM-generierter "Lessons Learned"-Text bei Done/Failed. */
   failureInsight?: string;
   /** v652 — Counter wie oft diese Session bereits Auto-Resumed wurde. */
@@ -29,18 +31,19 @@ export interface ProjectAgentSession {
 export class ProjectAgentSessionRepository {
   constructor(private readonly adapter: AsyncDbAdapter) {}
 
-  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string; resumedFromTaskId?: string }): Promise<ProjectAgentSession> {
+  async create(opts: { taskId: string; goal: string; cwd: string; agentName: string; resumedFromTaskId?: string; sandboxId?: string }): Promise<ProjectAgentSession> {
     const id = randomUUID();
     const now = new Date().toISOString();
     await this.adapter.execute(`
-      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, resumed_from_task_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, opts.resumedFromTaskId ?? null, now, now]);
+      INSERT INTO project_agent_sessions (id, task_id, goal, cwd, agent_name, resumed_from_task_id, sandbox_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, opts.taskId, opts.goal, opts.cwd, opts.agentName, opts.resumedFromTaskId ?? null, opts.sandboxId ?? null, now, now]);
     return {
       id, taskId: opts.taskId, goal: opts.goal, cwd: opts.cwd, agentName: opts.agentName,
       currentPhase: 'planning', currentIteration: 0, totalFilesChanged: 0,
       lastBuildPassed: false, milestones: [], createdAt: now, updatedAt: now,
       resumedFromTaskId: opts.resumedFromTaskId,
+      sandboxId: opts.sandboxId,
     };
   }
 
@@ -220,6 +223,7 @@ export class ProjectAgentSessionRepository {
       lastCommitSha: row.last_commit_sha as string | undefined,
       lastPushUrl: (row.last_push_url as string | null) ?? undefined,
       resumedFromTaskId: (row.resumed_from_task_id as string | null) ?? undefined,
+      sandboxId: (row.sandbox_id as string | null) ?? undefined,
       failureInsight: (row.failure_insight as string | null) ?? undefined,
       autoResumeCount: (row.auto_resume_count as number | null) ?? 0,
       lastProgressAt: row.last_progress_at as string | undefined,

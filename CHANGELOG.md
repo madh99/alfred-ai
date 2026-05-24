@@ -5,6 +5,23 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.721] - 2026-05-24
+
+### Fixed — Interactive-Sandbox-Chat erzeugte Ghost-Projects mit Worktree-Pfad
+
+User-Report nach v720-Test: Im Sandbox-Interactive-Modus für ein bestehendes Projekt (z.B. `alpbyte-games`) startet der Agent korrekt im Worktree. Nach Abschluss erschien aber ein NEUES Projekt in der Projekt-Liste — die Project-Manager-Auto-Bindung benutzte den `worktreePath` als `cwd` und matchte damit kein bestehendes Project → `findOrCreate` erstellte stattdessen ein Ghost-Project mit dem Worktree-Pfad als Workspace.
+
+Root-Cause: Der `chatSendMessage`-Callback gab `cwd: sb.worktreePath` an die `project_agent`-Skill weiter. Im Completion-Callback (alfred.ts) suchte die Project-Manager-Logik via `findByCwd(worktreePath)` → kein Treffer → neues Project.
+
+Fix:
+- **Migration v89 (SQLite) / v92 (PG)**: Spalte `sandbox_id` auf `project_agent_sessions` + Index. Persistiert die Sandbox-Bindung der Session.
+- **ProjectAgentSession.sandboxId**: Neues Interface-Feld + `create()` akzeptiert `sandboxId`, `mapRow()` lädt es zurück.
+- **project-agent Skill**: Akzeptiert `sandbox_id` Parameter und reicht ihn an `sessionRepo.create` durch.
+- **alfred.ts chatSendMessage**: Reicht `sandbox_id: sandboxId` an `skill.execute(start, ...)` durch.
+- **alfred.ts completion-callback**: Resolved zu Beginn `session.sandboxId → sandbox.projectId → project.cwd` und benutzt diesen `resolvedCwd` für alle Project-Identifications (Workspace-Memory, finishSession, Conversation-Lookup, OpenItem-Matcher, Repo-URL-Detect, Telegram-DM-Name, Auto-Deploy-Suggestion). Git-Operationen bleiben auf dem Worktree-Pfad. Best-effort — Resolution-Fehler bricht den Completion-Flow nicht ab.
+
+Damit binden Interactive-Chat-Tasks zum Original-Project, Open-Items + Decisions landen am richtigen Projekt, und die Project-Liste bleibt sauber.
+
 ## [0.19.0-multi-ha.720] - 2026-05-24
 
 ### Fixed — Interactive-Mode SSE-Output droppt nach ein paar Events

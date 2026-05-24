@@ -1157,14 +1157,50 @@ export class Alfred {
       // summarizer, and persists open items + decisions. This is what gives Alfred
       // post-session awareness ("what happened in project X, what's still open").
       projectRunner.setCompletionCallback(async (sessionId, cfg, state, success) => {
+        // v721 — Sandbox→Project Resolution: wenn diese Session aus einem Interactive-Sandbox-Chat
+        // gestartet wurde (worktree-cwd), zum Original-Project umrouten damit das Ghost-Project
+        // mit dem Worktree-Pfad als cwd vermieden wird. Best-effort — Resolution-Fehler darf den
+        // Completion-Flow nicht abbrechen.
+        let resolvedCwd = cfg.cwd;
+        let resolvedProjectId: string | undefined;
+        try {
+          const adapter = this.database?.getAdapter();
+          if (adapter) {
+            const sessRow = await adapter.queryOne(
+              `SELECT sandbox_id FROM project_agent_sessions WHERE task_id = ?`,
+              [sessionId],
+            ).catch(() => null) as { sandbox_id?: string } | null;
+            const sandboxId = sessRow?.sandbox_id;
+            if (sandboxId) {
+              const sbRow = await adapter.queryOne(
+                `SELECT project_id FROM project_agent_sandboxes WHERE id = ?`,
+                [sandboxId],
+              ).catch(() => null) as { project_id?: string } | null;
+              if (sbRow?.project_id && this.projectRepo) {
+                const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                if (userId) {
+                  const proj = await this.projectRepo.getById(userId, sbRow.project_id).catch(() => null);
+                  if (proj?.cwd) {
+                    resolvedCwd = proj.cwd;
+                    resolvedProjectId = proj.id;
+                    this.logger.debug({ sessionId, sandboxId, projectId: proj.id, originalCwd: cfg.cwd, resolvedCwd }, 'v721 sandbox→project resolved');
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          this.logger.debug({ err, sessionId }, 'v721 sandbox→project resolution failed (continuing with worktree cwd)');
+        }
+
         // v615 M3 (L6) — Auto-Memory der Workspace-Info bei JEDEM Project-Agent-Lauf
         // (success ODER failure). Dual zu v609 V2 deploy-Memory: speichert wo gearbeitet
         // wurde, damit der nächste "weiter am Projekt X"-Request den richtigen cwd
         // findet. Best-effort — Memory-Fehler bricht den Completion-Flow nicht ab.
-        if (this.memoryRepo && cfg.cwd) {
+        if (this.memoryRepo && resolvedCwd) {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
-            const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
+            const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
             if (userId && projectName) {
               const safeKey = `project_workspace_${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
               const latestSession = await this.database?.getAdapter().queryOne(
@@ -1172,7 +1208,7 @@ export class Alfred {
                 [sessionId],
               ).catch(() => null) as { last_commit_sha?: string; last_build_passed?: number } | null;
               const parts = [
-                `Dev-Workspace für Projekt "${projectName}": ${cfg.cwd} (lokal auf Alfred-Node)`,
+                `Dev-Workspace für Projekt "${projectName}": ${resolvedCwd} (lokal auf Alfred-Node)`,
                 `last_run=${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
                 `phases=${state.projectIteration}`,
                 `files_changed=${state.totalFilesChanged}`,
@@ -1211,7 +1247,8 @@ export class Alfred {
                 sessionType: 'project_agent',
                 sourceId: sessionId,
                 goal: cfg.goal,
-                cwd: cfg.cwd,
+                // v721 — resolvedCwd zeigt bei Sandbox-Sessions auf das Original-Project (statt worktree)
+                cwd: resolvedCwd,
                 milestones: state.milestonesReached,
                 totalFilesChanged: state.totalFilesChanged,
                 success,
@@ -1229,7 +1266,7 @@ export class Alfred {
             const tg = this.adapters.get('telegram');
             const owner = this.config.security.ownerUserId;
             if (tg && 'sendDirectMessage' in tg) {
-              const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? 'Projekt';
+              const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop() ?? 'Projekt';
               const milestonesText = state.milestonesReached.length > 0
                 ? `\nMilestones: ${state.milestonesReached.slice(0, 5).join(', ')}`
                 : '';
@@ -1244,12 +1281,18 @@ export class Alfred {
 
         // v686 — B) Completion-Message in die Project-Chat-Conversation persistieren.
         // Damit beim nächsten Öffnen des Project-Chats die History den Run-Abschluss zeigt.
-        if (this.conversationRepo && cfg.cwd && this.projectRepo) {
+        if (this.conversationRepo && resolvedCwd && this.projectRepo) {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
-              const projects = await this.projectRepo.list(userId);
-              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => p.cwd && cfg.cwd?.startsWith(p.cwd));
+              // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
+              let proj = resolvedProjectId
+                ? await this.projectRepo.getById(userId, resolvedProjectId).catch(() => null)
+                : null;
+              if (!proj) {
+                const projects = await this.projectRepo.list(userId);
+                proj = projects.find(p => p.cwd === resolvedCwd) ?? projects.find(p => p.cwd && resolvedCwd?.startsWith(p.cwd)) ?? null;
+              }
               if (proj) {
                 const conv = await this.conversationRepo.findOrCreateForProject(userId, proj.id);
                 const summary = success
@@ -1269,15 +1312,21 @@ export class Alfred {
         }
 
         // v643 — Repo-URL + Default-Branch auto-detect aus cwd
-        if (this.projectRepo && cfg.cwd) {
+        if (this.projectRepo && resolvedCwd) {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
               const { execFile } = await import('node:child_process');
               const { promisify } = await import('node:util');
               const exec = promisify(execFile);
-              const projects = await this.projectRepo.list(userId);
-              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => p.cwd && cfg.cwd?.startsWith(p.cwd));
+              // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
+              let proj = resolvedProjectId
+                ? await this.projectRepo.getById(userId, resolvedProjectId).catch(() => null)
+                : null;
+              if (!proj) {
+                const projects = await this.projectRepo.list(userId);
+                proj = projects.find(p => p.cwd === resolvedCwd) ?? projects.find(p => p.cwd && resolvedCwd?.startsWith(p.cwd)) ?? null;
+              }
               if (proj) {
                 const patch: { repoUrl?: string; defaultBranch?: string } = {};
                 if (!proj.repoUrl) {
@@ -1311,8 +1360,11 @@ export class Alfred {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
               // Find project for this cwd (project-manager.finishSession attached it via cwd)
+              // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
               const projects = await this.projectRepo.list(userId);
-              const proj = projects.find(p => p.cwd === cfg.cwd) ?? projects.find(p => cfg.cwd?.includes(p.cwd ?? ''));
+              const proj = resolvedProjectId
+                ? projects.find(p => p.id === resolvedProjectId)
+                : (projects.find(p => p.cwd === resolvedCwd) ?? projects.find(p => resolvedCwd?.includes(p.cwd ?? '')));
               if (proj) {
                 const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
                 const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
@@ -1418,7 +1470,8 @@ export class Alfred {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (!userId) return;
-            const projectName = (cfg.cwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
+            // v721 — resolvedCwd zeigt bei Sandbox-Sessions auf das Original-Project
+            const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
             if (!projectName) return;
             // Find latest deploy memory for this project
             const memHits = await this.memoryRepo.search(userId, `deploy_${projectName}_`);
@@ -5466,6 +5519,8 @@ export class Alfred {
                   action: 'start',
                   goal: message,
                   cwd: sb.worktreePath,
+                  // v721 — sandbox_id mitgeben damit Completion-Callback zum Original-Project bindet statt Ghost-Project zu erzeugen
+                  sandbox_id: sandboxId,
                 }, ctx);
                 const taskId = (result.data as any)?.taskId;
                 if (taskId) {

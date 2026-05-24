@@ -1355,4 +1355,38 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_chat_task ON sandbox_chat_messages(task_id)`, []);
     },
   },
+  {
+    version: 92,
+    description: 'v721 — sandbox_id auf project_agent_sessions damit Interactive-Tasks korrekt zum Original-Project binden',
+    async up(db) {
+      await db.execute(`ALTER TABLE project_agent_sessions ADD COLUMN IF NOT EXISTS sandbox_id TEXT`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sessions_sandbox ON project_agent_sessions(sandbox_id)`, []);
+    },
+  },
+  {
+    version: 93,
+    description: 'v722 — learned_recipes: maschinen-lesbare Recipes statt prosaischer Auto-Rules',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS learned_recipes (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          trigger_phrase TEXT NOT NULL,
+          trigger_keywords TEXT NOT NULL,
+          action_sequence TEXT NOT NULL,
+          context_hint TEXT,
+          confidence REAL NOT NULL DEFAULT 0.5,
+          source TEXT NOT NULL,
+          success_count INTEGER NOT NULL DEFAULT 0,
+          fail_count INTEGER NOT NULL DEFAULT 0,
+          last_used_at TEXT,
+          invalidated_at TEXT,
+          superseded_by TEXT,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_recipes_user ON learned_recipes(user_id, invalidated_at)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_recipes_confidence ON learned_recipes(user_id, confidence DESC, success_count DESC)`, []);
+    },
+  },
 ];
