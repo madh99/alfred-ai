@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.770] - 2026-05-25
+
+### Fixed — environments / db-seeds / sandbox-templates Endpoints permanent 501 (echte Wurzel-Ursache)
+
+**Symptom (über v756-v769 nie wirklich gefixt)**: Project-Detail-Page zeigte permanent rote Banner:
+- `environments-get: HTTP 501`
+- `db-seeds-list: HTTP 501`
+- `sandbox-templates-list: HTTP 501`
+
+Sowohl v756 (Docker-Gate raus) als auch v764 (Wizard hinzu) haben die 3 Storage-Callbacks "halb" verschoben, aber nie an die richtige Stelle.
+
+**Echte Root-Cause** (jetzt erst gefunden): Die 3 Callback-Registrierungen liefen bei **Zeile ~3543** in `initialize()` — aber der **api-Adapter wird erst bei Zeile ~4975** erzeugt. `this.adapters.get('api')` lieferte zur Aufruf-Zeit `undefined`, die `if`-Checks schlugen still fehl, NICHTS wurde registriert. Wizard-Callbacks (v764) funktionierten weil sie bei Zeile 7560 nach apiAdapter-Init registriert wurden. Storage-Callbacks waren "verwaist" seit v728/v732/v751.
+
+**Fix v770**:
+- Neuer kombinierter Storage-Callbacks-Block direkt nach Insights-API-Registration (Zeile ~5832), wo `apiAdapter` garantiert existiert
+- Pro Sub-Block (env / templates / seeds) eigene try-catch — wenn einer schiefgeht, brechen die anderen nicht ab
+- Kein `sandbox.enabled`-Gate mehr — Storage ist unabhängig vom Sandbox-Feature
+- Logger gibt jetzt klar Auskunft: `v770 Environments CRUD-API registered`, etc.
+
+Der alte tote Code bei Zeile ~3543 wurde bewusst belassen — er ist ein No-Op (api-adapter ist undefined zu dem Zeitpunkt) und entfernen würde das Diff unnötig vergrößern; in einem späteren Refactor kann er entfernt werden.
+
+Nach Deploy von v770 sollten alle 3 Banner auf der Project-Detail-Page verschwinden, und die Sandbox-Templates/Environments/DB-Seeds-Sections funktional sein.
+
 ## [0.19.0-multi-ha.769] - 2026-05-25
 
 ### Added — Live-Output für Code-Agent + Discuss-Engine (Read-Only Beratung mit Codebase-Zugriff)

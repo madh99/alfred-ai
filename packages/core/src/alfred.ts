@@ -5830,6 +5830,268 @@ export class Alfred {
         this.logger.info('Insights API registered');
       }
 
+      // v770 — Storage-Only-Callbacks (env / db-seeds / sandbox-templates) UNABHÄNGIG von sandboxManager registrieren.
+      // Bugfix: vorher waren sie inline im `if (sandbox.enabled)` Block versteckt UND wurden bei Zeile ~3543 aufgerufen
+      // BEVOR der api-Adapter existierte (der wird erst bei Zeile 4975 erzeugt). Folge: `this.adapters.get('api')`
+      // lieferte undefined, Callback-Registrierung lief still ins Nichts, ALLE 3 Endpoints lieferten permanent 501.
+      // Jetzt: hier, nach apiAdapter und Database vorhanden, ohne sandboxManager-Dependency.
+      if (apiAdapter && this.database) {
+        const adapter = this.database.getAdapter();
+
+        // v728 — Environments-CRUD-API (WebUI-Zugriff auf project_environments via REST)
+        try {
+          const envHttpAdapter = apiAdapter as { setEnvironmentsCallbacks?: (cb: Record<string, unknown>) => void };
+          if (typeof envHttpAdapter.setEnvironmentsCallbacks === 'function' && this.envRepoRef && this.envCryptoRef) {
+            const envRepoLocal = this.envRepoRef;
+            const envCryptoLocal = this.envCryptoRef;
+            envHttpAdapter.setEnvironmentsCallbacks({
+              listStages: async (projectId: string) => {
+                const entries = await envRepoLocal.listForProject(projectId);
+                return entries.map(e => {
+                  let keyCount = 0;
+                  try { keyCount = Object.keys(envCryptoLocal.decrypt(e.varsEncrypted, e.iv, e.authTag)).length; } catch { keyCount = -1; }
+                  return { stage: e.stage, keyCount, updatedAt: e.updatedAt };
+                });
+              },
+              getVars: async (projectId: string, stage: string, reveal: boolean) => {
+                const entry = await envRepoLocal.get(projectId, stage);
+                if (!entry) return {};
+                const vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                if (reveal) return vars;
+                const masked: Record<string, string> = {};
+                for (const [k, v] of Object.entries(vars)) {
+                  masked[k] = v.length <= 4 ? '****' : v.slice(0, 2) + '****' + v.slice(-2);
+                }
+                return masked;
+              },
+              setVars: async (projectId: string, stage: string, vars: Record<string, string>, replace: boolean) => {
+                for (const k of Object.keys(vars)) {
+                  if (!/^[A-Z][A-Z0-9_]*$/.test(k)) {
+                    return { ok: false, count: 0, reason: `Ungültiger Key "${k}" (erlaubt: A-Z, 0-9, _; muss mit Buchstabe beginnen)` };
+                  }
+                }
+                const current = replace ? {} : (await (async () => {
+                  const entry = await envRepoLocal.get(projectId, stage);
+                  if (!entry) return {} as Record<string, string>;
+                  return envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                })());
+                const merged = { ...current, ...vars };
+                const { ciphertext, iv, authTag } = envCryptoLocal.encrypt(merged);
+                await envRepoLocal.upsert({ projectId, stage, varsEncrypted: ciphertext, iv, authTag, encryptionVersion: 1 });
+                return { ok: true, count: Object.keys(merged).length };
+              },
+              deleteStage: async (projectId: string, stage: string) => {
+                await envRepoLocal.delete(projectId, stage);
+              },
+              scanRepo: async (projectId: string) => {
+                if (!this.projectRepo) return { ok: false, reason: 'projectRepo nicht initialisiert' };
+                const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
+                if (!proj || !proj.cwd) return { ok: false, reason: 'project oder cwd nicht gefunden' };
+                const { existsSync: ex, readFileSync, readdirSync, statSync } = await import('node:fs');
+                const pth = await import('node:path');
+                if (!ex(proj.cwd)) return { ok: false, reason: `cwd existiert nicht: ${proj.cwd}` };
+                const found = new Map<string, { sources: Set<string> }>();
+                for (const fn of ['.env.example', '.env.sample', '.env.template']) {
+                  const p = pth.join(proj.cwd, fn);
+                  if (!ex(p)) continue;
+                  try {
+                    const content = readFileSync(p, 'utf8');
+                    for (const line of content.split('\n')) {
+                      const m = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=/);
+                      if (m) {
+                        const e = found.get(m[1]) ?? { sources: new Set<string>() };
+                        e.sources.add(fn); found.set(m[1], e);
+                      }
+                    }
+                  } catch { /* */ }
+                }
+                const codeExts = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.php', '.rb', '.go']);
+                const skipDirs = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.alfred-data', '.alfred-uploads', 'coverage']);
+                const walk = (dir: string, depth: number) => {
+                  if (depth > 4) return;
+                  let entries: import('node:fs').Dirent[] = [];
+                  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+                  for (const e of entries) {
+                    if (skipDirs.has(e.name)) continue;
+                    const full = pth.join(dir, e.name);
+                    if (e.isDirectory()) { walk(full, depth + 1); continue; }
+                    const ext = pth.extname(e.name);
+                    if (!codeExts.has(ext)) continue;
+                    try {
+                      if (statSync(full).size > 512 * 1024) continue;
+                      const content = readFileSync(full, 'utf8');
+                      const regexes = [
+                        /process\.env\.([A-Z][A-Z0-9_]*)/g,
+                        /process\.env\[['"]([A-Z][A-Z0-9_]*)['"]\]/g,
+                        /import\.meta\.env\.([A-Z][A-Z0-9_]*)/g,
+                        /\bos\.environ\.get\(['"]([A-Z][A-Z0-9_]*)['"]\)/g,
+                        /\bos\.getenv\(['"]([A-Z][A-Z0-9_]*)['"]\)/g,
+                      ];
+                      for (const r of regexes) {
+                        let m: RegExpExecArray | null;
+                        while ((m = r.exec(content)) !== null) {
+                          const key = m[1];
+                          const e2 = found.get(key) ?? { sources: new Set<string>() };
+                          e2.sources.add(pth.relative(proj.cwd!, full));
+                          found.set(key, e2);
+                        }
+                      }
+                    } catch { /* */ }
+                  }
+                };
+                walk(proj.cwd, 0);
+                const keys = Array.from(found.entries())
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([key, info]) => ({ key, sources: Array.from(info.sources).slice(0, 5) }));
+                return { ok: true, keys };
+              },
+            });
+            this.logger.info('v770 Environments CRUD-API registered');
+          } else {
+            this.logger.warn({ hasEnvRepo: !!this.envRepoRef, hasCrypto: !!this.envCryptoRef }, 'v770 Environments API skipped — Pre-conditions missing');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v770 Environments API registration failed (non-fatal)');
+        }
+
+        // v751 — Sandbox-Templates-CRUD-API
+        try {
+          const tplHttpAdapter = apiAdapter as { setSandboxTemplatesCallbacks?: (cb: Record<string, unknown>) => void };
+          if (typeof tplHttpAdapter.setSandboxTemplatesCallbacks === 'function') {
+            const { SandboxTemplateRepository } = await import('@alfred/storage');
+            const tplRepo = new SandboxTemplateRepository(adapter);
+            const ownerUid = () => this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            tplHttpAdapter.setSandboxTemplatesCallbacks({
+              list: async (projectId: string | null | undefined) => {
+                const uid = ownerUid();
+                if (!uid) return [];
+                const templates = await tplRepo.listForUser(uid, projectId === undefined ? undefined : projectId);
+                return templates.map(t => ({
+                  id: t.id, projectId: t.projectId, name: t.name, description: t.description,
+                  mode: t.mode, envStage: t.envStage, dbSeedId: t.dbSeedId, initialGoal: t.initialGoal,
+                  tags: t.tags, createdAt: t.createdAt, updatedAt: t.updatedAt,
+                }));
+              },
+              create: async (input: {
+                projectId?: string | null;
+                name: string;
+                description?: string;
+                mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+                envStage?: string;
+                dbSeedId?: string;
+                initialGoal?: string;
+                tags?: string[];
+              }) => {
+                const uid = ownerUid();
+                if (!uid) return { ok: false, reason: 'Kein Owner-User' };
+                try {
+                  const t = await tplRepo.create({ ...input, userId: uid });
+                  return { ok: true, id: t.id };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+              update: async (id: string, patch: Record<string, unknown>) => {
+                try {
+                  const ok = await tplRepo.update(id, patch as never);
+                  return ok ? { ok: true } : { ok: false, reason: 'Template nicht gefunden' };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+              delete: async (id: string) => {
+                try { await tplRepo.delete(id); return { ok: true }; }
+                catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+            });
+            this.logger.info('v770 Sandbox-Templates CRUD-API registered');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v770 Sandbox-Templates API registration failed (non-fatal)');
+        }
+
+        // v732 — DB-Seeds-CRUD-API
+        try {
+          const seedsHttpAdapter = apiAdapter as { setDbSeedsCallbacks?: (cb: Record<string, unknown>) => void };
+          if (typeof seedsHttpAdapter.setDbSeedsCallbacks === 'function' && this.dbSeedRepoRef && this.projectRepo) {
+            const seedRepoLocal = this.dbSeedRepoRef;
+            const projRepoLocal = this.projectRepo;
+            const uploadsPath = this.config.sandbox?.uploadSeedsPath ?? '/var/alfred/db-seeds';
+            seedsHttpAdapter.setDbSeedsCallbacks({
+              list: async (projectId: string) => {
+                const seeds = await seedRepoLocal.listForProject(projectId);
+                return seeds.map(s => ({
+                  id: s.id, name: s.name, kind: s.kind, storageRef: s.storageRef,
+                  sizeBytes: s.sizeBytes, createdAt: s.createdAt,
+                }));
+              },
+              upload: async (projectId: string, name: string, dataBase64: string) => {
+                try {
+                  const fs = await import('node:fs');
+                  const pth2 = await import('node:path');
+                  const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 150);
+                  const projDir = pth2.join(uploadsPath, projectId);
+                  fs.mkdirSync(projDir, { recursive: true, mode: 0o755 });
+                  const target = pth2.join(projDir, `${Date.now()}_${safeName}`);
+                  const buf = Buffer.from(dataBase64, 'base64');
+                  if (buf.length > 100 * 1024 * 1024) return { ok: false, reason: 'Seed-File zu groß (max 100 MB)' };
+                  fs.writeFileSync(target, buf, { mode: 0o644 });
+                  const relRef = pth2.relative(uploadsPath, target);
+                  const seed = await seedRepoLocal.create({ projectId, name: safeName, kind: 'upload', storageRef: relRef, sizeBytes: buf.length });
+                  return { ok: true, seedId: seed.id };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+              registerRepoPath: async (projectId: string, name: string, repoPath: string) => {
+                try {
+                  const proj = await projRepoLocal.getByIdAnyOwner(projectId).catch(() => null);
+                  if (!proj || !proj.cwd) return { ok: false, reason: 'project oder cwd nicht gefunden' };
+                  const fs = await import('node:fs');
+                  const pth3 = await import('node:path');
+                  const fullPath = pth3.resolve(proj.cwd, repoPath);
+                  if (!fullPath.startsWith(pth3.resolve(proj.cwd))) return { ok: false, reason: 'repoPath verlässt projectCwd' };
+                  let sizeBytes = 0;
+                  try { sizeBytes = fs.statSync(fullPath).size; } catch { return { ok: false, reason: `Datei nicht gefunden: ${repoPath}` }; }
+                  const seed = await seedRepoLocal.create({ projectId, name: name.slice(0, 150), kind: 'repo_path', storageRef: repoPath, sizeBytes });
+                  return { ok: true, seedId: seed.id };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+              delete: async (projectId: string, seedId: string) => {
+                try {
+                  const seed = await seedRepoLocal.getById(seedId);
+                  if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
+                  if (seed.projectId !== projectId) return { ok: false, reason: 'Seed gehört zu anderem Project' };
+                  if (seed.kind === 'upload') {
+                    try {
+                      const pth4 = await import('node:path');
+                      const fs2 = await import('node:fs');
+                      const fullPath = pth4.resolve(uploadsPath, seed.storageRef);
+                      if (fullPath.startsWith(pth4.resolve(uploadsPath)) && fs2.existsSync(fullPath)) {
+                        fs2.unlinkSync(fullPath);
+                      }
+                    } catch (err) { this.logger.warn({ err, seedId }, 'v770 upload-file unlink failed (continuing)'); }
+                  }
+                  try {
+                    await this.database!.getAdapter().execute(`UPDATE projects SET default_db_seed_id = NULL WHERE default_db_seed_id = ?`, [seedId]);
+                  } catch { /* */ }
+                  await seedRepoLocal.delete(seedId);
+                  return { ok: true };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+              setDefault: async (projectId: string, seedId: string | null) => {
+                try {
+                  if (seedId) {
+                    const seed = await seedRepoLocal.getById(seedId);
+                    if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
+                    if (seed.projectId !== projectId) return { ok: false, reason: 'Seed gehört zu anderem Project' };
+                  }
+                  await this.database!.getAdapter().execute(`UPDATE projects SET default_db_seed_id = ? WHERE id = ?`, [seedId, projectId]);
+                  return { ok: true };
+                } catch (err) { return { ok: false, reason: (err as Error).message }; }
+              },
+            });
+            this.logger.info('v770 DB-Seeds CRUD-API registered');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v770 DB-Seeds API registration failed (non-fatal)');
+        }
+      }
+
       // v699/v700/v703 — Wire Sandbox API + Preview-Proxy + Chat
       if (apiAdapter && this.sandboxManager && this.database && 'setSandboxCallbacks' in apiAdapter) {
         try {
