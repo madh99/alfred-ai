@@ -5652,6 +5652,7 @@ export class Alfred {
               sandboxId: string,
               message: string,
               attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+              mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
             ) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
@@ -5680,6 +5681,7 @@ export class Alfred {
               let augmentedMessage = message;
               const droppedFiles: string[] = [];
               const contextFiles: Array<{ name: string; mime: string; sizeKB: number }> = [];
+              const imageDescriptions: Array<{ name: string; description: string }> = [];
               if (attachments && attachments.length > 0) {
                 const path = await import('node:path');
                 const fs = await import('node:fs');
@@ -5732,6 +5734,30 @@ export class Alfred {
                   } else {
                     // (c) Nur als Kontext-Referenz an den Agent
                     contextFiles.push({ name: att.name, mime: att.mime, sizeKB: Math.round(buf.length / 1024) });
+                    // v730 — Bei Bildern ohne worktree-drop: Vision-Pre-Pass via LLM-Provider
+                    // (Claude/GPT-4V), Description wird ans Goal angehängt damit der Project-Agent
+                    // versteht was im Bild ist (Agent hat selbst keinen Vision-Support).
+                    if (att.mime.startsWith('image/') && this.llmProvider) {
+                      try {
+                        const result = await this.llmProvider.complete({
+                          messages: [{
+                            role: 'user',
+                            content: [
+                              { type: 'text', text: 'Beschreibe dieses Bild präzise auf Deutsch in 2-4 Sätzen für einen Code-Generator (Layout, Farben, sichtbare UI-Elemente, Text-Inhalte falls erkennbar). Keine Einleitung, direkt Beschreibung.' },
+                              { type: 'image', source: { type: 'base64', media_type: att.mime, data: payload } },
+                            ],
+                          }],
+                          maxTokens: 400,
+                          tier: 'default',
+                        });
+                        const desc = result.content?.trim();
+                        if (desc) {
+                          imageDescriptions.push({ name: att.name, description: desc.slice(0, 1000) });
+                        }
+                      } catch (err) {
+                        this.logger.debug({ err, name: att.name }, 'v730 image-vision-pass failed (continuing without description)');
+                      }
+                    }
                   }
                 }
                 if (droppedFiles.length > 0) {
@@ -5740,6 +5766,24 @@ export class Alfred {
                 if (contextFiles.length > 0) {
                   augmentedMessage += `\n\n[User-Referenz-Dateien (nicht im Worktree):]\n${contextFiles.map(f => `- ${f.name} (${f.mime}, ${f.sizeKB} KB)`).join('\n')}`;
                 }
+                if (imageDescriptions.length > 0) {
+                  augmentedMessage += `\n\n[Bild-Beschreibungen vom Vision-LLM:]\n${imageDescriptions.map(i => `- ${i.name}: ${i.description}`).join('\n')}`;
+                }
+              }
+
+              // v730 — Mentions: Open-Items / Decisions die der User explizit referenziert hat
+              // werden ans Goal angehängt damit der Project-Agent klar weiß auf welchen Punkt
+              // sich die Anfrage bezieht. Full-Item-Details (description) werden lazy aus DB
+              // geladen falls nötig — hier nur Title+ID damit Goal kompakt bleibt.
+              if (mentions && mentions.length > 0) {
+                const lines: string[] = [];
+                for (const m of mentions) {
+                  const icon = m.type === 'open_item' ? (m.priority === 'high' ? '🔴' : m.priority === 'low' ? '⚪' : '🟡') : '🎯';
+                  const typeLabel = m.type === 'open_item' ? 'Open-Item' : 'Decision';
+                  const statusLabel = m.status ? ` [${m.status}]` : '';
+                  lines.push(`- ${icon} ${typeLabel} \`${m.id.slice(0, 8)}\`${statusLabel}: ${m.title}`);
+                }
+                augmentedMessage += `\n\n[Bezug auf folgende Items aus der Projekt-Roadmap:]\n${lines.join('\n')}\n\nWICHTIG: Implementiere konkret diese Items. Wenn ein Item erledigt wird, melde es im Done-Output damit es automatisch als done markiert wird.`;
               }
 
               // (1) User-Message persistieren (mit augmented text falls Voice/Files dazu)

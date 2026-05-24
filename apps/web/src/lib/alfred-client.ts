@@ -388,9 +388,11 @@ export class AlfredClient {
     sandboxId: string,
     message: string,
     attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+    mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
   ): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
     const body: Record<string, unknown> = { message };
     if (attachments && attachments.length > 0) body.attachments = attachments;
+    if (mentions && mentions.length > 0) body.mentions = mentions;
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(body),
     });

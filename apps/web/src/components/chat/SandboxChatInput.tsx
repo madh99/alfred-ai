@@ -2,6 +2,7 @@
 
 import { useState, useRef, useLayoutEffect, type KeyboardEvent } from 'react';
 import { useConfig } from '@/context/ConfigContext';
+import { ItemMentionPicker, type MentionedItem } from './ItemMentionPicker';
 
 export interface SandboxChatAttachment {
   name: string;
@@ -12,9 +13,11 @@ export interface SandboxChatAttachment {
 }
 
 interface SandboxChatInputProps {
-  onSend: (text: string, attachments?: SandboxChatAttachment[]) => void;
+  onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  /** v730 — Project-ID damit der Mention-Picker Open-Items/Decisions des Projekts laden kann */
+  projectId?: string;
 }
 
 interface PendingAttachment {
@@ -29,7 +32,7 @@ const MAX_ROWS = 8;
 const MAX_FILE_MB = 10;
 const MAX_ATTACHMENTS = 5;
 
-export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatInputProps) {
+export function SandboxChatInput({ onSend, disabled, placeholder, projectId }: SandboxChatInputProps) {
   const { client } = useConfig();
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -40,6 +43,9 @@ export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatI
   const [transcribing, setTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  // v730 — Item-Mentions
+  const [mentions, setMentions] = useState<MentionedItem[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   async function fileToAttachment(file: File): Promise<PendingAttachment | null> {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
@@ -140,16 +146,26 @@ export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatI
 
   function handleSend() {
     if (disabled) return;
-    if (!text.trim() && attachments.length === 0) return;
+    if (!text.trim() && attachments.length === 0 && mentions.length === 0) return;
     onSend(
       text.trim(),
       attachments.length > 0
         ? attachments.map(a => ({ name: a.name, mime: a.mime, dataUrl: a.dataUrl, dropInWorktree: a.dropInWorktree }))
         : undefined,
+      mentions.length > 0 ? mentions : undefined,
     );
     setText('');
     setAttachments([]);
+    setMentions([]);
     textareaRef.current?.focus();
+  }
+
+  function pickMention(item: MentionedItem) {
+    setMentions(prev => prev.some(m => m.id === item.id) ? prev : [...prev, item]);
+    // Picker NICHT zu — User kann weitere wählen. Per X schließt er.
+  }
+  function removeMention(id: string) {
+    setMentions(prev => prev.filter(m => m.id !== id));
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -174,6 +190,20 @@ export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatI
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {/* v730 — Mentioned-Items als Chips */}
+      {mentions.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {mentions.map(m => (
+            <span key={m.id} className="inline-flex items-center gap-1 text-[11px] bg-blue-500/15 border border-blue-500/40 text-blue-200 rounded px-2 py-0.5">
+              <span>{m.type === 'open_item' ? (m.priority === 'high' ? '🔴' : m.priority === 'low' ? '⚪' : '🟡') : '🎯'}</span>
+              <span className="font-mono text-[10px] text-blue-300/70">{m.id.slice(0, 8)}</span>
+              <span className="truncate max-w-[280px]" title={m.title}>{m.title}</span>
+              <button onClick={() => removeMention(m.id)} className="text-blue-300/70 hover:text-blue-200 ml-1" title="Entfernen">✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="mb-2 space-y-1">
@@ -215,6 +245,16 @@ export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatI
           >
             {transcribing ? '⏳' : isRecording ? '⏺' : '🎤'}
           </button>
+          {projectId && (
+            <button
+              onClick={() => setPickerOpen(true)}
+              disabled={disabled}
+              title="Open-Items / Decisions referenzieren"
+              className="px-2 py-1 border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 rounded text-xs disabled:opacity-40"
+            >
+              📋
+            </button>
+          )}
         </div>
 
         <textarea
@@ -251,6 +291,15 @@ export function SandboxChatInput({ onSend, disabled, placeholder }: SandboxChatI
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-purple-500/30 text-purple-100 px-4 py-2 rounded text-sm">Dateien hier loslassen…</div>
         </div>
+      )}
+
+      {pickerOpen && projectId && (
+        <ItemMentionPicker
+          projectId={projectId}
+          selectedIds={mentions.map(m => m.id)}
+          onPick={pickMention}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
     </div>
   );

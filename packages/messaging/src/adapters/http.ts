@@ -429,6 +429,7 @@ export class HttpAdapter extends MessagingAdapter {
       sandboxId: string,
       message: string,
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+      mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
@@ -490,6 +491,7 @@ export class HttpAdapter extends MessagingAdapter {
       sandboxId: string,
       message: string,
       attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
+      mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
     getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
@@ -3691,6 +3693,7 @@ export class HttpAdapter extends MessagingAdapter {
     const body = await this.readBody(req);
     let message = '';
     let attachments: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }> | undefined;
+    let mentions: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }> | undefined;
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       message = String(parsed.message ?? '');
@@ -3711,14 +3714,32 @@ export class HttpAdapter extends MessagingAdapter {
         }
         if (attachments.length === 0) attachments = undefined;
       }
+      // v730 — Mentions validieren
+      if (Array.isArray(parsed.mentions)) {
+        mentions = [];
+        for (const m of parsed.mentions) {
+          if (!m || typeof m !== 'object') continue;
+          const mm = m as Record<string, unknown>;
+          if (typeof mm.id !== 'string' || typeof mm.title !== 'string') continue;
+          if (mm.type !== 'open_item' && mm.type !== 'decision') continue;
+          mentions.push({
+            id: mm.id.slice(0, 64),
+            type: mm.type,
+            title: mm.title.slice(0, 300),
+            priority: typeof mm.priority === 'string' ? mm.priority.slice(0, 20) : undefined,
+            status: typeof mm.status === 'string' ? mm.status.slice(0, 20) : undefined,
+          });
+        }
+        if (mentions.length === 0) mentions = undefined;
+      }
     } catch { /* */ }
-    if (!message.trim() && (!attachments || attachments.length === 0)) {
+    if (!message.trim() && (!attachments || attachments.length === 0) && (!mentions || mentions.length === 0)) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'message or attachments required' }));
+      res.end(JSON.stringify({ error: 'message, attachments or mentions required' }));
       return;
     }
     try {
-      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments);
+      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

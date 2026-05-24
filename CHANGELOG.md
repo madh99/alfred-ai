@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.730] - 2026-05-24
+
+### Added — Open-Items-Mentions + Image-Vision-Pre-Pass im Interactive-Sandbox-Chat
+
+User-Wunsch nach v729a: Open-Items (und Decisions) eines Projekts sollen im Chat referenzierbar sein damit der Project-Agent klar weiß welche Roadmap-Punkte konkret bearbeitet werden sollen. Plus: hochgeladene Bilder (ohne Worktree-Drop) sollen vom Vision-LLM beschrieben werden damit der Code-generierende Agent den visuellen Kontext versteht (er hat selbst keinen Vision-Zugang).
+
+**Neue Komponente** `apps/web/src/components/chat/ItemMentionPicker.tsx`:
+- Modal mit zwei Tabs: "Open-Items" (status=open/in_progress, priority-sortiert) und "Decisions"
+- Filter-Input für Substring-Suche
+- Pro Item: Prio-Icon + ID-Kurzform + Titel + optionaler Description-Snippet
+- Klick fügt Item zur Mentions-Liste, bereits ausgewählte sind disabled
+- ✕ schließt Modal
+
+**SandboxChatInput erweitert:**
+- Neuer Button 📋 im Toolbar-Stack (nur wenn `projectId` Prop gesetzt)
+- Mentioned-Items als Chips über der Textarea (mit Type-Icon, ID-Kurzform, Titel, ✕-Remove)
+- onSend übergibt zusätzlich `mentions: MentionedItem[]` Parameter
+- Pflicht-Check beim Send: mind. eines von text/attachments/mentions muss befüllt sein
+
+**Web-Client** (`alfred-client.ts`):
+- `sendSandboxChatMessage` Signatur erweitert um `mentions?`
+
+**HTTP-API** (`http.ts`):
+- `chatSendMessage` Callback-Signatur + Handler erweitert um `mentions`
+- Body-Validation: jedes mention muss `{id, type:'open_item'|'decision', title}` haben; optional priority/status (max 20 chars), title max 300, id max 64
+
+**Backend chatSendMessage** (`alfred.ts`):
+- **Image-Vision-Pre-Pass**: Bei jedem `image/*` Attachment ohne `dropInWorktree` macht der `llmProvider.complete` einen Vision-Call mit `{type:'image', source:{type:'base64', media_type, data}}` + Text-Prompt ("Beschreibe dieses Bild präzise auf Deutsch in 2-4 Sätzen für einen Code-Generator…"). Description (max 1000 chars) landet im neuen Block `[Bild-Beschreibungen vom Vision-LLM:] - <name>: <description>` im augmentedMessage. Best-effort — Vision-Fail bricht nicht den Send-Flow.
+- **Mentions-Goal-Augmentation**: Mentions werden als strukturierter Block ans Goal angehängt: `[Bezug auf folgende Items aus der Projekt-Roadmap:] - 🔴 Open-Item \`abc12345\` [in_progress]: Title` plus instruktiver Hinweis: "WICHTIG: Implementiere konkret diese Items. Wenn ein Item erledigt wird, melde es im Done-Output damit es automatisch als done markiert wird."
+
+Damit verstehst der Project-Agent:
+1. Welche konkreten Roadmap-Items adressiert werden sollen (statt fuzzy aus Nachricht raten)
+2. Was im Bild zu sehen ist falls der User ein Mockup/Screenshot dabei hatte
+3. Welche Files er im Worktree findet (v729a) und welche nur Referenz sind
+
 ## [0.19.0-multi-ha.729] - 2026-05-24
 
 ### Added — File-Upload + Voice-Input im Interactive-Sandbox-Chat (v729a)

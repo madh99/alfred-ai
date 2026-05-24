@@ -183,13 +183,17 @@ export default function InteractivePage() {
     return client.buildSandboxPreviewUrl(sandbox.id);
   }, [sandbox, client]);
 
-  async function handleSendMessage(text: string, attachments?: import('@/components/chat/SandboxChatInput').SandboxChatAttachment[]) {
-    if ((!text || !text.trim()) && (!attachments || attachments.length === 0)) return;
+  async function handleSendMessage(
+    text: string,
+    attachments?: import('@/components/chat/SandboxChatInput').SandboxChatAttachment[],
+    mentions?: import('@/components/chat/ItemMentionPicker').MentionedItem[],
+  ) {
+    if ((!text || !text.trim()) && (!attachments || attachments.length === 0) && (!mentions || mentions.length === 0)) return;
     if (!sandbox || !client) return;
     setBusy('send'); setError(null);
     setChatInput('');
     try {
-      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments);
+      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments, mentions);
       if (!r.ok) {
         setError(r.reason ?? 'Send failed');
       }
@@ -395,6 +399,7 @@ export default function InteractivePage() {
           <SandboxChatInput
             onSend={handleSendMessage}
             disabled={busy === 'send' || sandbox.status !== 'running'}
+            projectId={sandbox.projectId}
           />
         </div>
 
