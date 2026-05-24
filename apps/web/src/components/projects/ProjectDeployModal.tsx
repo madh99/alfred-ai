@@ -44,6 +44,8 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
 
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ success: boolean; display?: string; error?: string; data?: unknown } | null>(null);
+  // v738 — Preview-Toggle (zeigt was passieren würde, ohne Submit)
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const loadDeploys = useCallback(async () => {
     if (!client) return;
@@ -297,6 +299,57 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
           </div>
         </div>
 
+        {/* v738 — Deploy-Vorschau */}
+        {previewOpen && (() => {
+          const stageInfo = envStages.find(s => s.stage === envStage);
+          const stageKeys = skipEnv ? 0 : (stageInfo?.keyCount ?? 0);
+          const installCmd = runtime === 'node' ? 'npm install' : runtime === 'python' ? 'pip install -r requirements.txt' : '(none)';
+          const buildCmd = runtime === 'node' ? 'npm run build --if-present' : '(none)';
+          const startCmd = processManager === 'pm2' ? `pm2 start … --name ${projectName}`
+            : processManager === 'docker-compose' ? 'docker compose up -d'
+            : processManager === 'systemd' ? `systemctl restart ${projectName}.service`
+            : '(custom)';
+          return (
+            <div className="mt-3 p-3 bg-cyan-500/5 border border-cyan-500/30 rounded text-xs space-y-1.5">
+              <div className="font-semibold text-cyan-300 mb-2 flex items-center justify-between">
+                <span>🔍 Deploy-Vorschau (kein Submit)</span>
+                <button onClick={() => setPreviewOpen(false)} className="text-gray-500 hover:text-gray-300">✕</button>
+              </div>
+              <div className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-[11px]">
+                <div className="text-gray-500">Target:</div>
+                <div className="text-gray-200 font-mono">{user || 'root'}@{host || '???'}</div>
+                <div className="text-gray-500">Project-Dir:</div>
+                <div className="text-gray-200 font-mono">/home/{user || 'root'}/{projectName}</div>
+                <div className="text-gray-500">Branch:</div>
+                <div className="text-gray-200 font-mono">{branch || 'main'}</div>
+                {repoUrl && <><div className="text-gray-500">Repo:</div><div className="text-gray-200 font-mono truncate" title={repoUrl}>{repoUrl}</div></>}
+                <div className="text-gray-500">Runtime:</div>
+                <div className="text-gray-200">{runtime} · {processManager}{appPort ? ` · port ${appPort}` : ''}</div>
+                <div className="text-gray-500">ENV-Stage:</div>
+                <div className="text-gray-200">
+                  {skipEnv ? <span className="text-amber-300">übersprungen (skip_env)</span> :
+                    stageKeys > 0
+                      ? <><span className="text-emerald-300">{envStage}</span> · {stageKeys} Keys werden als .env (chmod 600)</>
+                      : <span className="text-amber-300">{envStage} · keine Keys gesetzt</span>}
+                </div>
+              </div>
+              <div className="pt-2 border-t border-cyan-500/20">
+                <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Befehlsabfolge auf Remote</div>
+                <ol className="space-y-0.5 text-[11px] list-decimal pl-5">
+                  <li className="text-gray-300">SSH-Test zu <code>{user || 'root'}@{host || '???'}</code></li>
+                  <li className="text-gray-300">git clone (oder pull) Branch <code>{branch || 'main'}</code></li>
+                  {!skipEnv && stageKeys > 0 && (
+                    <li className="text-emerald-300">.env-File mit {stageKeys} Keys schreiben (chmod 600)</li>
+                  )}
+                  <li className="text-gray-300">{installCmd}</li>
+                  <li className="text-gray-300">{buildCmd}</li>
+                  <li className="text-gray-300">{startCmd}</li>
+                </ol>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Result */}
         {result && (
           <div className={`mt-3 p-3 rounded text-xs ${result.success ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-200' : 'bg-red-500/10 border border-red-500/30 text-red-200'}`}>
@@ -311,6 +364,12 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
             onClick={onClose}
             className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 border border-[#2a2a2a] rounded"
           >Schließen</button>
+          {/* v738 — Vorschau-Button */}
+          <button
+            onClick={() => setPreviewOpen(v => !v)}
+            disabled={!host.trim()}
+            className="px-3 py-1.5 text-xs text-cyan-300 hover:bg-cyan-500/10 border border-cyan-500/40 rounded disabled:opacity-40"
+          >{previewOpen ? '✕ Vorschau schließen' : '🔍 Vorschau'}</button>
           <button
             onClick={submit}
             disabled={!host.trim() || submitting}

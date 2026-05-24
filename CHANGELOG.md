@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.738] - 2026-05-24
+
+### Added — Deploy-Vorschau + Sandbox-Idle-Countdown
+
+Zwei QoL-Erweiterungen für Sichtbarkeit vor Aktionen:
+
+**Deploy-Vorschau** (`ProjectDeployModal.tsx`):
+- Neuer `🔍 Vorschau`-Button neben `🚀 Deploy starten`
+- Klick zeigt collapsible Preview-Sektion mit:
+  - Target: `user@host`
+  - Project-Dir auf Remote: `/home/<user>/<project>`
+  - Branch, Repo-URL
+  - Runtime/PM/Port
+  - **ENV-Stage** mit Key-Count (oder "übersprungen wenn skip_env)
+  - **Befehlsabfolge auf Remote** als nummerierte Liste:
+    1. SSH-Test
+    2. git clone/pull
+    3. `.env-File schreiben (N Keys, chmod 600)` — falls Stage Keys hat und nicht skip_env
+    4. install command (runtime-aware: `npm install` / `pip install -r requirements.txt` / `(none)`)
+    5. build command (`npm run build --if-present` / `(none)`)
+    6. start command (pm2/docker compose/systemctl)
+- Keine echte Backend-Anfrage — alles client-side aus dem Form-State berechnet
+- ✕-Button schließt die Sektion ohne Submit
+
+**Sandbox-Idle-Countdown** (`ProjectSandboxesView.tsx`):
+- Bei `status === 'running'` Sandboxes wird `lastActiveAt` ausgelesen
+- `computeIdleCountdown()` berechnet verbleibende Zeit bis zur Auto-Pause (Default 30 min, matcht Backend-Default)
+- Badge-Anzeige:
+  - `⏱ auto-Pause in ~22 min` (grau, normal)
+  - `⏱ auto-Pause in ~3 min` (amber, warning)
+  - `⏱ auto-Pause in <1 min` / `auto-Pause läuft jeden Moment` (amber, warning)
+  - Wenn `> 30 min` verbleibend: keine Anzeige (würde Noise sein, Sandbox ist offensichtlich aktiv)
+- Tooltip mit exaktem `lastActiveAt`-Timestamp
+- Auto-Refresh alle 5s im View aktualisiert auch den Countdown
+
 ## [0.19.0-multi-ha.737] - 2026-05-24
 
 ### Added — ProjectSandboxesView: Live-Übersicht aller aktiven Sandboxes im Project-Detail

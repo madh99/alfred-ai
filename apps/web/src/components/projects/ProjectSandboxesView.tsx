@@ -30,6 +30,26 @@ function formatRelative(iso?: string): string {
 }
 
 /**
+ * v738 — Idle-Countdown: Sandbox-Manager pausiert running Sandboxes nach config.idleTimeoutMin
+ * (Default 30 Min). lastActiveAt wird bei Chat-Messages + iframe-Requests touched.
+ * Wir zeigen "wird in X min auto-gepaust" damit User nicht überrascht wird.
+ */
+const IDLE_TIMEOUT_MIN_DEFAULT = 30;
+function computeIdleCountdown(lastActiveAt: string): { text: string; warning: boolean } | null {
+  try {
+    const lastMs = new Date(lastActiveAt).getTime();
+    if (!Number.isFinite(lastMs)) return null;
+    const elapsedMin = (Date.now() - lastMs) / 60000;
+    const remainingMin = IDLE_TIMEOUT_MIN_DEFAULT - elapsedMin;
+    if (remainingMin <= 0) return { text: 'auto-Pause läuft jeden Moment', warning: true };
+    if (remainingMin < 1) return { text: `auto-Pause in <1 min`, warning: true };
+    if (remainingMin < 5) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: true };
+    if (remainingMin < 30) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: false };
+    return null; // >= 30 min: nicht anzeigen, würde Noise sein (ist ja gerade aktiv)
+  } catch { return null; }
+}
+
+/**
  * v737 — Übersicht aller Sandboxes eines Projects mit Quick-Actions.
  * Zeigt nur aktive Sandboxes (creating/running/paused/merging). Auto-Refresh alle 5s
  * wenn welche running/creating sind. Pro Sandbox: Open (für interactive → /interactive),
@@ -136,6 +156,7 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
 
           {sandboxes.map(s => {
             const interactive = s.containerId && s.hostPort;
+            const idle = s.status === 'running' ? computeIdleCountdown(s.lastActiveAt) : null;
             return (
               <div key={s.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded p-2 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -143,6 +164,12 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
                   <code className="text-amber-300 font-mono text-[11px]">{s.branchName}</code>
                   {s.projectType && <span className="text-[10px] text-gray-500">type: {s.projectType}</span>}
                   {s.hostPort && <span className="text-[10px] text-gray-500">port: {s.hostPort}</span>}
+                  {idle && (
+                    <span
+                      className={`text-[10px] px-1.5 py-0.5 rounded border ${idle.warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-gray-600 text-gray-400'}`}
+                      title={`Letzte Aktivität: ${s.lastActiveAt}\nAuto-Pause nach ${IDLE_TIMEOUT_MIN_DEFAULT}min Idle`}
+                    >⏱ {idle.text}</span>
+                  )}
                   <span className="text-[10px] text-gray-500 ml-auto">{formatRelative(s.createdAt)}</span>
                 </div>
 
