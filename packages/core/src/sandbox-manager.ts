@@ -19,6 +19,7 @@ import {
   waitForDevServer,
   ensureImage,
   getContainerStatus,
+  getContainerStats,
 } from './sandbox/docker.js';
 
 const execFileAsync = promisify(execFile);
@@ -425,6 +426,82 @@ export class SandboxManager {
       if (!healthy) throw new Error('dev-server did not respond after resume');
     }
     await this.deps.repo.updateStatus(sandboxId, 'running');
+  }
+
+  /**
+   * v728 — Restart: Container stoppen + .next/-Build-Cache im Worktree löschen + Container starten.
+   * Heilt den .next/ENOENT-Bug wenn Production-Build versehentlich den dev-server-cache überschrieben hat.
+   * NUR `.next/` wird gelöscht — andere Worktree-Files (Code, node_modules) bleiben.
+   */
+  async restart(sandboxId: string): Promise<{ ok: boolean; reason?: string }> {
+    const sb = await this.deps.repo.getById(sandboxId);
+    if (!sb) return { ok: false, reason: 'Sandbox not found' };
+    if (!sb.containerId) return { ok: false, reason: 'Sandbox has no container_id' };
+    try {
+      await this.deps.repo.updateStatus(sandboxId, 'creating', 'restart: stopping container');
+      await stopContainer(sb.containerId, 10);
+      // .next/ aus dem worktree entfernen (außerhalb des Containers, sonst NFS-Lock-Probleme)
+      try {
+        const dotNextPath = path.join(sb.worktreePath, '.next');
+        if (existsSync(dotNextPath)) {
+          const { rmSync } = await import('node:fs');
+          rmSync(dotNextPath, { recursive: true, force: true, maxRetries: 3 });
+          this.deps.logger.info({ sandboxId, dotNextPath }, 'v728 restart: .next/ removed');
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err, sandboxId }, 'v728 restart: .next/ removal failed (continuing)');
+      }
+      await this.deps.repo.updateStatus(sandboxId, 'creating', 'restart: starting container');
+      await startContainer(sb.containerId);
+      if (sb.hostPort) {
+        const healthy = await waitForDevServer(sb.hostPort, { intervalMs: 1500, timeoutMs: 120_000, logger: this.deps.logger });
+        if (!healthy) {
+          await this.deps.repo.updateStatus(sandboxId, 'paused', 'restart: dev-server did not respond');
+          return { ok: false, reason: 'dev-server did not respond within 2 minutes' };
+        }
+      }
+      await this.deps.repo.updateStatus(sandboxId, 'running', 'restart: ok');
+      return { ok: true };
+    } catch (err) {
+      const msg = (err as Error).message;
+      this.deps.logger.error({ err, sandboxId }, 'v728 restart failed');
+      await this.deps.repo.updateStatus(sandboxId, 'paused', `restart-error: ${msg.slice(0, 200)}`);
+      return { ok: false, reason: msg };
+    }
+  }
+
+  /** v728 — Liefert die letzten N Zeilen aus dem Sandbox-Container-Log. */
+  async getLogs(sandboxId: string, tail = 200): Promise<{ ok: boolean; logs?: string; reason?: string }> {
+    const sb = await this.deps.repo.getById(sandboxId);
+    if (!sb) return { ok: false, reason: 'Sandbox not found' };
+    if (!sb.containerId) return { ok: false, reason: 'Sandbox has no container' };
+    const { getContainerLogs } = await import('./sandbox/docker.js');
+    const logs = await getContainerLogs(sb.containerId, tail);
+    return { ok: true, logs };
+  }
+
+  /** v728 — Container-Stats (CPU, RAM, Status, Uptime). */
+  async getStats(sandboxId: string): Promise<{
+    ok: boolean;
+    stats?: { ramMb: number | null; cpuPct: number | null; status: string | null; createdAt: string; hostPort: number | null; image: string };
+    reason?: string;
+  }> {
+    const sb = await this.deps.repo.getById(sandboxId);
+    if (!sb) return { ok: false, reason: 'Sandbox not found' };
+    if (!sb.containerId) return { ok: false, reason: 'Sandbox has no container' };
+    const liveStats = await getContainerStats(sb.containerId);
+    const status = await getContainerStatus(sb.containerId);
+    return {
+      ok: true,
+      stats: {
+        ramMb: liveStats.ramMb,
+        cpuPct: liveStats.cpuPct,
+        status,
+        createdAt: sb.createdAt,
+        hostPort: sb.hostPort,
+        image: sb.containerImage,
+      },
+    };
   }
 
   /**

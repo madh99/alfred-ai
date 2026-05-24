@@ -428,6 +428,48 @@ export class AlfredClient {
     if (!res.ok) throw new Error(`Sandbox-diff: HTTP ${res.status}`);
     return res.text();
   }
+  // v728 — Sandbox-Toolbar-Actions
+  async restartSandbox(sandboxId: string): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/restart`, { method: 'POST', headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async fetchSandboxLogs(sandboxId: string, tail = 200): Promise<{ ok: boolean; logs?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/logs?tail=${tail}`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async fetchSandboxStats(sandboxId: string): Promise<{ ok: boolean; stats?: { ramMb: number | null; cpuPct: number | null; status: string | null; createdAt: string; hostPort: number | null; image: string }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/stats`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  // v728 — Environments-CRUD-API
+  async fetchEnvironmentStages(projectId: string): Promise<Array<{ stage: string; keyCount: number; updatedAt: string }>> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`environments-list: HTTP ${res.status}`);
+    const data = await res.json();
+    return (data.stages ?? []) as Array<{ stage: string; keyCount: number; updatedAt: string }>;
+  }
+  async fetchEnvironmentVars(projectId: string, stage: string, reveal = false): Promise<Record<string, string>> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/${encodeURIComponent(stage)}${reveal ? '?reveal=1' : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`environments-get: HTTP ${res.status}`);
+    const data = await res.json();
+    return (data.vars ?? {}) as Record<string, string>;
+  }
+  async setEnvironmentVars(projectId: string, stage: string, vars: Record<string, string>, replace = false): Promise<{ ok: boolean; count?: number; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/${encodeURIComponent(stage)}`, { method: 'PUT', headers: this.jsonHeaders, body: JSON.stringify({ vars, replace }) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async deleteEnvironmentStage(projectId: string, stage: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/environments/${encodeURIComponent(stage)}`, { method: 'DELETE', headers: this.authHeaders });
+    if (!res.ok) throw new Error(`environments-delete: HTTP ${res.status}`);
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;

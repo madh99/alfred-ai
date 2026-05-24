@@ -3432,11 +3432,68 @@ export class Alfred {
                         return `# git diff failed: ${(err as Error).message}`;
                       }
                     },
+                    // v728 — Restart/Logs/Stats für Toolbar im Interactive-Chat
+                    restart: (sandboxId: string) => sandboxManager.restart(sandboxId),
+                    getLogs: (sandboxId: string, tail: number) => sandboxManager.getLogs(sandboxId, tail),
+                    getStats: (sandboxId: string) => sandboxManager.getStats(sandboxId),
                   });
-                  this.logger.info('v699 Sandbox CRUD-API registered');
+                  this.logger.info('v699 Sandbox CRUD-API registered (v728: +restart/logs/stats)');
                 }
               } catch (err) {
                 this.logger.warn({ err }, 'v699 Sandbox CRUD-API registration failed (non-fatal)');
+              }
+
+              // v728 — Environments-CRUD-API (WebUI-Zugriff auf project_environments via REST)
+              try {
+                const envHttpAdapter = this.adapters.get('api') as { setEnvironmentsCallbacks?: (cb: Record<string, unknown>) => void } | undefined;
+                if (envHttpAdapter && typeof envHttpAdapter.setEnvironmentsCallbacks === 'function' && this.envRepoRef && this.envCryptoRef) {
+                  const envRepoLocal = this.envRepoRef;
+                  const envCryptoLocal = this.envCryptoRef;
+                  envHttpAdapter.setEnvironmentsCallbacks({
+                    listStages: async (projectId: string) => {
+                      const entries = await envRepoLocal.listForProject(projectId);
+                      return entries.map(e => {
+                        let keyCount = 0;
+                        try { keyCount = Object.keys(envCryptoLocal.decrypt(e.varsEncrypted, e.iv, e.authTag)).length; } catch { keyCount = -1; }
+                        return { stage: e.stage, keyCount, updatedAt: e.updatedAt };
+                      });
+                    },
+                    getVars: async (projectId: string, stage: string, reveal: boolean) => {
+                      const entry = await envRepoLocal.get(projectId, stage);
+                      if (!entry) return {};
+                      const vars = envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                      if (reveal) return vars;
+                      const masked: Record<string, string> = {};
+                      for (const [k, v] of Object.entries(vars)) {
+                        masked[k] = v.length <= 4 ? '****' : v.slice(0, 2) + '****' + v.slice(-2);
+                      }
+                      return masked;
+                    },
+                    setVars: async (projectId: string, stage: string, vars: Record<string, string>, replace: boolean) => {
+                      // Key-Format-Validation
+                      for (const k of Object.keys(vars)) {
+                        if (!/^[A-Z][A-Z0-9_]*$/.test(k)) {
+                          return { ok: false, count: 0, reason: `Ungültiger Key "${k}" (erlaubt: A-Z, 0-9, _; muss mit Buchstabe beginnen)` };
+                        }
+                      }
+                      const current = replace ? {} : (await (async () => {
+                        const entry = await envRepoLocal.get(projectId, stage);
+                        if (!entry) return {} as Record<string, string>;
+                        return envCryptoLocal.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+                      })());
+                      const merged = { ...current, ...vars };
+                      const { ciphertext, iv, authTag } = envCryptoLocal.encrypt(merged);
+                      await envRepoLocal.upsert({ projectId, stage, varsEncrypted: ciphertext, iv, authTag, encryptionVersion: 1 });
+                      return { ok: true, count: Object.keys(merged).length };
+                    },
+                    deleteStage: async (projectId: string, stage: string) => {
+                      await envRepoLocal.delete(projectId, stage);
+                    },
+                  });
+                  this.logger.info('v728 Environments CRUD-API registered');
+                }
+              } catch (err) {
+                this.logger.warn({ err }, 'v728 Environments API registration failed (non-fatal)');
               }
 
               // v698 — Sandbox-Preview-Proxy-Resolver registrieren. Validiert pro Request:
@@ -5548,6 +5605,10 @@ export class Alfred {
                 return `# git diff failed: ${(err as Error).message}`;
               }
             },
+            // v728 — Restart/Logs/Stats für Toolbar im Interactive-Chat
+            restart: (sandboxId: string) => sbMgr.restart(sandboxId),
+            getLogs: (sandboxId: string, tail: number) => sbMgr.getLogs(sandboxId, tail),
+            getStats: (sandboxId: string) => sbMgr.getStats(sandboxId),
             // v703/v704 — Sandbox-Chat (Interactive-Mode) mit Live-Enrichment
             chatList: async (sandboxId: string) => {
               const messages = await sandboxChatRepo.list(sandboxId);

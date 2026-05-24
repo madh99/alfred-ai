@@ -48,6 +48,18 @@ export default function InteractivePage() {
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
   // v723 — 3-Wege-Merge-Modal (PR | Direct | Abbrechen) statt verirrendem confirm()
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  // v728 — Toolbar-Modals (Logs, Stats, ENV)
+  const [logsModalOpen, setLogsModalOpen] = useState(false);
+  const [logsContent, setLogsContent] = useState<string>('');
+  const [logsAutoRefresh, setLogsAutoRefresh] = useState(false);
+  const [statsModalOpen, setStatsModalOpen] = useState(false);
+  const [statsContent, setStatsContent] = useState<{ ramMb: number | null; cpuPct: number | null; status: string | null; createdAt: string; hostPort: number | null; image: string } | null>(null);
+  const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [envVars, setEnvVars] = useState<Record<string, string>>({});
+  const [envReveal, setEnvReveal] = useState(false);
+  const [envNewKey, setEnvNewKey] = useState('');
+  const [envNewValue, setEnvNewValue] = useState('');
+  const [iframeReloadKey, setIframeReloadKey] = useState(0);
 
   const loadSandbox = useCallback(async () => {
     if (!client || !sandboxId) return;
@@ -195,6 +207,82 @@ export default function InteractivePage() {
     finally { setBusy(null); }
   }
 
+  // v728 — Toolbar Actions
+  function handleReloadIframe() { setIframeReloadKey(k => k + 1); }
+
+  async function handleRestart() {
+    if (!client || !sandbox) return;
+    if (!confirm('Dev-Server neu starten? Container wird gestoppt, .next/ wird gelöscht, dann neu gestartet. Worktree-Änderungen bleiben.')) return;
+    setBusy('restart'); setError(null);
+    try {
+      const r = await client.restartSandbox(sandbox.id);
+      if (!r.ok) setError(`Restart fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      await loadSandbox();
+      handleReloadIframe();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
+  async function loadLogs() {
+    if (!client || !sandbox) return;
+    try {
+      const r = await client.fetchSandboxLogs(sandbox.id, 200);
+      if (r.ok && r.logs !== undefined) setLogsContent(r.logs);
+      else setLogsContent(`[Fehler: ${r.reason ?? 'unknown'}]`);
+    } catch (e) { setLogsContent(`[Fehler: ${e instanceof Error ? e.message : String(e)}]`); }
+  }
+
+  async function openLogsModal() { setLogsModalOpen(true); await loadLogs(); }
+
+  useEffect(() => {
+    if (!logsModalOpen || !logsAutoRefresh) return;
+    const t = setInterval(loadLogs, 3000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [logsModalOpen, logsAutoRefresh, sandbox?.id]);
+
+  async function openStatsModal() {
+    if (!client || !sandbox) return;
+    setStatsModalOpen(true);
+    try {
+      const r = await client.fetchSandboxStats(sandbox.id);
+      if (r.ok && r.stats) setStatsContent(r.stats);
+    } catch { /* */ }
+  }
+
+  async function openEnvModal() {
+    if (!client || !sandbox) return;
+    setEnvModalOpen(true);
+    setEnvReveal(false);
+    try {
+      const vars = await client.fetchEnvironmentVars(sandbox.projectId, 'sandbox', false);
+      setEnvVars(vars);
+    } catch { setEnvVars({}); }
+  }
+
+  async function toggleEnvReveal() {
+    if (!client || !sandbox) return;
+    const next = !envReveal;
+    setEnvReveal(next);
+    try {
+      const vars = await client.fetchEnvironmentVars(sandbox.projectId, 'sandbox', next);
+      setEnvVars(vars);
+    } catch { /* */ }
+  }
+
+  async function addEnvVar() {
+    if (!client || !sandbox || !envNewKey.trim()) return;
+    const key = envNewKey.trim();
+    if (!/^[A-Z][A-Z0-9_]*$/.test(key)) { setError(`Ungültiger Key "${key}" (A-Z, 0-9, _, muss mit Buchstabe beginnen)`); return; }
+    try {
+      const r = await client.setEnvironmentVars(sandbox.projectId, 'sandbox', { [key]: envNewValue }, false);
+      if (!r.ok) { setError(`ENV-Save fehlgeschlagen: ${r.reason ?? 'unknown'}`); return; }
+      setEnvNewKey(''); setEnvNewValue('');
+      const vars = await client.fetchEnvironmentVars(sandbox.projectId, 'sandbox', envReveal);
+      setEnvVars(vars);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
+
   // v723 — Statt verirrendem confirm(): öffnet das Merge-Modal mit echten 3 Optionen.
   function handleMerge() {
     if (!client || !sandbox) return;
@@ -248,6 +336,12 @@ export default function InteractivePage() {
         <div className="flex gap-2">
           {sandbox.status === 'running' && (
             <>
+              {/* v728 — Toolbar-Buttons */}
+              <button onClick={handleReloadIframe} disabled={busy !== null} title="iframe neu laden" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">🔄</button>
+              <button onClick={handleRestart} disabled={busy !== null} title="Dev-Server restart (stop + .next/ clear + start)" className="px-2 py-1 border border-amber-500/40 text-amber-400 hover:bg-amber-500/15 rounded text-[11px] disabled:opacity-50">♻️ Restart</button>
+              <button onClick={openLogsModal} disabled={busy !== null} title="Container-Logs anzeigen" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📜 Logs</button>
+              <button onClick={openStatsModal} disabled={busy !== null} title="Container-Stats (CPU/RAM)" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📊 Stats</button>
+              <button onClick={openEnvModal} disabled={busy !== null} title="Sandbox-ENV-Variablen verwalten" className="px-2 py-1 border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded text-[11px] disabled:opacity-50">🔐 ENV</button>
               <button onClick={handleMerge} disabled={busy !== null} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] disabled:opacity-50">✅ Merge</button>
               <button onClick={handleDiscard} disabled={busy !== null} className="px-2 py-1 border border-red-500/40 text-red-400 hover:bg-red-500/15 rounded text-[11px] disabled:opacity-50">✕ Discard</button>
             </>
@@ -318,6 +412,7 @@ export default function InteractivePage() {
         <div className="flex-1 flex flex-col">
           {previewUrl ? (
             <iframe
+              key={iframeReloadKey}
               src={previewUrl}
               sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
               className="flex-1 bg-white border-0"
@@ -404,6 +499,92 @@ export default function InteractivePage() {
           </div>
         );
       })()}
+
+      {/* v728 — Logs-Modal */}
+      {logsModalOpen && sandbox && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setLogsModalOpen(false)}>
+          <div className="w-full max-w-4xl max-h-[80vh] flex flex-col rounded-lg border border-gray-500/40 bg-[#0f0f0f] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-200">📜 Container-Logs · {sandbox.id.slice(0, 8)}</h2>
+              <div className="flex gap-2 items-center text-[11px]">
+                <label className="flex items-center gap-1 text-gray-400">
+                  <input type="checkbox" checked={logsAutoRefresh} onChange={(e) => setLogsAutoRefresh(e.target.checked)} />
+                  Auto-Refresh (3s)
+                </label>
+                <button onClick={loadLogs} className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded">🔄</button>
+                <button onClick={() => setLogsModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded">✕</button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto bg-black border border-[#1a1a1a] rounded p-2 text-[10px] text-gray-300 whitespace-pre-wrap">{logsContent || '(keine Logs)'}</pre>
+          </div>
+        </div>
+      )}
+
+      {/* v728 — Stats-Modal */}
+      {statsModalOpen && sandbox && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setStatsModalOpen(false)}>
+          <div className="w-full max-w-md rounded-lg border border-gray-500/40 bg-[#0f0f0f] p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-200">📊 Container-Stats</h2>
+              <button onClick={() => setStatsModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded text-[11px]">✕</button>
+            </div>
+            {statsContent ? (
+              <div className="space-y-1 text-xs text-gray-300">
+                <div>Status: <span className="text-amber-300">{statsContent.status ?? '—'}</span></div>
+                <div>CPU: <span className="text-amber-300">{statsContent.cpuPct?.toFixed(1) ?? '—'}%</span></div>
+                <div>RAM: <span className="text-amber-300">{statsContent.ramMb ? `${statsContent.ramMb.toFixed(0)} MB` : '—'}</span></div>
+                <div>Port: <span className="text-amber-300">{statsContent.hostPort ?? '—'}</span></div>
+                <div>Image: <span className="text-amber-300">{statsContent.image}</span></div>
+                <div>Created: <span className="text-amber-300">{statsContent.createdAt}</span></div>
+              </div>
+            ) : <div className="text-xs text-gray-500">Lädt…</div>}
+          </div>
+        </div>
+      )}
+
+      {/* v728 — ENV-Modal */}
+      {envModalOpen && sandbox && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setEnvModalOpen(false)}>
+          <div className="w-full max-w-2xl max-h-[80vh] flex flex-col rounded-lg border border-purple-500/40 bg-[#0f0f0f] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-purple-300">🔐 Sandbox-ENV (stage=sandbox)</h2>
+              <div className="flex gap-2 text-[11px]">
+                <button onClick={toggleEnvReveal} className="px-2 py-1 border border-purple-500/40 text-purple-300 hover:bg-purple-500/15 rounded">{envReveal ? '🔒 Maskieren' : '👁 Zeigen'}</button>
+                <button onClick={() => setEnvModalOpen(false)} className="px-2 py-1 border border-gray-600 text-gray-300 hover:bg-gray-700/40 rounded">✕</button>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-500 mb-3">
+              Diese ENVs werden beim nächsten Sandbox-Start als <code>.env.local</code> + Container-ENVs eingespielt. Restart der Sandbox nötig damit Änderungen wirksam werden.
+            </p>
+            <div className="flex-1 overflow-auto space-y-1 mb-3">
+              {Object.keys(envVars).length === 0 ? (
+                <div className="text-xs text-gray-500 italic">Keine ENVs gesetzt. Tipp: <code>environments scan_repo project={sandbox.projectId.slice(0, 8)}</code> im Chat zeigt benötigte Keys.</div>
+              ) : (
+                Object.entries(envVars).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => (
+                  <div key={k} className="flex items-center gap-2 text-[11px]">
+                    <code className="text-amber-300 font-mono min-w-[180px]">{k}</code>
+                    <code className="flex-1 text-gray-300 truncate">{v}</code>
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="border-t border-[#1a1a1a] pt-3">
+              <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">ENV hinzufügen / überschreiben</div>
+              <div className="flex gap-2">
+                <input
+                  type="text" value={envNewKey} onChange={(e) => setEnvNewKey(e.target.value.toUpperCase())} placeholder="KEY (A-Z, _)"
+                  className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1 text-xs text-gray-200 font-mono"
+                />
+                <input
+                  type="text" value={envNewValue} onChange={(e) => setEnvNewValue(e.target.value)} placeholder="Wert"
+                  className="flex-1 bg-[#0a0a0a] border border-[#1a1a1a] rounded px-2 py-1 text-xs text-gray-200 font-mono"
+                />
+                <button onClick={addEnvVar} disabled={!envNewKey.trim()} className="px-3 py-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded text-xs">+ Speichern</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

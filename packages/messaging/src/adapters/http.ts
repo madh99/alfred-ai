@@ -129,6 +129,14 @@ export interface HttpAdapterOptions {
 
 const MAX_BODY_SIZE = 1_048_576; // 1 MB
 
+/** v728 — Wire-Up-Interface für Environments-CRUD-API. */
+export interface EnvironmentsCallbacks {
+  listStages: (projectId: string) => Promise<Array<{ stage: string; keyCount: number; updatedAt: string }>>;
+  getVars: (projectId: string, stage: string, reveal: boolean) => Promise<Record<string, string>>;
+  setVars: (projectId: string, stage: string, vars: Record<string, string>, replace: boolean) => Promise<{ ok: boolean; count: number; reason?: string }>;
+  deleteStage: (projectId: string, stage: string) => Promise<void>;
+}
+
 /**
  * HTTP API adapter — exposes Alfred as an HTTP server with SSE streaming.
  * Accepts POST /api/message and streams responses back via Server-Sent Events.
@@ -404,6 +412,7 @@ export class HttpAdapter extends MessagingAdapter {
 
   // v699 — Sandbox-CRUD-Callbacks (Wire-Up von alfred.ts → SandboxManager)
   // v703 — sessionId optional + chat-message + chat-list + listAll
+  // v728 — restart + logs + stats
   private sandboxCallbacks?: {
     status: () => Promise<Record<string, unknown>>;
     list: (filter: { projectId?: string; sessionId?: string; userId?: string }) => Promise<unknown[]>;
@@ -413,11 +422,20 @@ export class HttpAdapter extends MessagingAdapter {
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
-    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
+    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
     chatList: (sandboxId: string) => Promise<unknown[]>;
     chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
+    getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
+    getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
   };
+
+  /** v728 — Environments-CRUD-Callbacks (Wire-Up von alfred.ts → EnvironmentRepository + Crypto). */
+  private environmentsCallbacks?: EnvironmentsCallbacks;
+  setEnvironmentsCallbacks(cb: EnvironmentsCallbacks): void {
+    this.environmentsCallbacks = cb;
+  }
 
   // v639 — Goals API
   private goalsListFn?: (filter?: { status?: string; category?: string }) => Promise<any[]>;
@@ -461,10 +479,13 @@ export class HttpAdapter extends MessagingAdapter {
     pause: (sandboxId: string) => Promise<void>;
     resume: (sandboxId: string) => Promise<void>;
     discard: (sandboxId: string) => Promise<void>;
-    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
+    merge: (sandboxId: string, opts: { strategy?: string; commitMessage?: string; prTitle?: string; prBody?: string; confirmDirect?: boolean }) => Promise<{ ok: boolean; prUrl?: string; reason?: string }>;
     diff: (sandboxId: string) => Promise<string>;
     chatList: (sandboxId: string) => Promise<unknown[]>;
     chatSendMessage: (sandboxId: string, message: string) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
+    restart?: (sandboxId: string) => Promise<{ ok: boolean; reason?: string }>;
+    getLogs?: (sandboxId: string, tail: number) => Promise<{ ok: boolean; logs?: string; reason?: string }>;
+    getStats?: (sandboxId: string) => Promise<{ ok: boolean; stats?: Record<string, unknown>; reason?: string }>;
   }): void {
     this.sandboxCallbacks = cb;
   }
@@ -999,6 +1020,20 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat$/) && req.method === 'POST') {
       this.handleSandboxChatSend(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
+      this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'GET') {
+      this.handleEnvironmentsGet(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'PUT') {
+      this.handleEnvironmentsPut(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleEnvironmentsDelete(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/restart$/) && req.method === 'POST') {
+      this.handleSandboxRestart(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/logs$/) && req.method === 'GET') {
+      this.handleSandboxLogs(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/stats$/) && req.method === 'GET') {
+      this.handleSandboxStats(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox/list-all' && req.method === 'GET') {
       this.handleSandboxListAll(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+$/) && req.method === 'GET') {
@@ -3438,6 +3473,157 @@ export class HttpAdapter extends MessagingAdapter {
       else if (action === 'discard') await this.sandboxCallbacks.discard(sandboxId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v728 — POST /api/sandbox/:id/restart — Container stop + .next/ clear + start. */
+  private async handleSandboxRestart(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.restart) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Restart-Action nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    try {
+      const r = await this.sandboxCallbacks.restart(sandboxId);
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v728 — GET /api/sandbox/:id/logs?tail=N — Container-Logs. */
+  private async handleSandboxLogs(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.getLogs) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Logs-Action nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    const tailRaw = url.searchParams.get('tail');
+    const tail = tailRaw ? Math.max(1, Math.min(2000, parseInt(tailRaw, 10) || 200)) : 200;
+    try {
+      const r = await this.sandboxCallbacks.getLogs(sandboxId, tail);
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v728 — GET /api/sandbox/:id/stats — Container-Stats (CPU, RAM, Uptime). */
+  private async handleSandboxStats(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxCallbacks?.getStats) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Stats-Action nicht verfügbar' }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[3];
+    try {
+      const r = await this.sandboxCallbacks.getStats(sandboxId);
+      res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v728 — GET /api/projects/:id/environments → Liste aller Stages mit Key-Count. */
+  private async handleEnvironmentsList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.environmentsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Environments-Feature nicht aktiv' }));
+      return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const stages = await this.environmentsCallbacks.listStages(projectId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ stages }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v728 — GET /api/projects/:id/environments/:stage?reveal=1 → vars. */
+  private async handleEnvironmentsGet(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.environmentsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Environments-Feature nicht aktiv' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    const stage = decodeURIComponent(parts[5] ?? '');
+    const reveal = url.searchParams.get('reveal') === '1';
+    try {
+      const vars = await this.environmentsCallbacks.getVars(projectId, stage, reveal);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ stage, vars, reveal }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v728 — PUT /api/projects/:id/environments/:stage → bulk-set (body: {vars, replace?}). */
+  private async handleEnvironmentsPut(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.environmentsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Environments-Feature nicht aktiv' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    const stage = decodeURIComponent(parts[5] ?? '');
+    const body = await this.readBody(req);
+    let payload: { vars?: Record<string, string>; replace?: boolean } = {};
+    try { payload = JSON.parse(body) as typeof payload; } catch { /* */ }
+    const vars = payload.vars ?? {};
+    if (typeof vars !== 'object' || Array.isArray(vars)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'vars muss ein Objekt sein' }));
+      return;
+    }
+    try {
+      const r = await this.environmentsCallbacks.setVars(projectId, stage, vars, payload.replace === true);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v728 — DELETE /api/projects/:id/environments/:stage → ganze Stage löschen. */
+  private async handleEnvironmentsDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.environmentsCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Environments-Feature nicht aktiv' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    const stage = decodeURIComponent(parts[5] ?? '');
+    try {
+      await this.environmentsCallbacks.deleteStage(projectId, stage);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));

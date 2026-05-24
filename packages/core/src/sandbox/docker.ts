@@ -94,6 +94,22 @@ export async function getContainerStatus(containerId: string): Promise<string | 
   } catch { return null; }
 }
 
+/** v728 — Liefert die letzten N Zeilen aus stdout+stderr eines Containers. */
+export async function getContainerLogs(containerId: string, tail = 200): Promise<string> {
+  try {
+    const safeTail = Math.max(1, Math.min(2000, Math.floor(tail)));
+    const { stdout, stderr } = await execFileAsync(
+      'docker',
+      ['logs', '--tail', String(safeTail), '--timestamps', containerId],
+      { timeout: 15_000, maxBuffer: 5 * 1024 * 1024 },
+    );
+    // Docker mischt stdout/stderr — beide concatenaten für vollständige Ansicht
+    return [stdout, stderr].filter(s => s && s.length > 0).join('\n');
+  } catch (err) {
+    return `[docker logs failed: ${(err as Error).message}]`;
+  }
+}
+
 export async function getContainerStats(containerId: string): Promise<{ ramMb: number | null; cpuPct: number | null }> {
   try {
     const { stdout } = await execFileAsync('docker', ['stats', '--no-stream', '--format', '{{.MemUsage}}|{{.CPUPerc}}', containerId], { timeout: 8_000 });

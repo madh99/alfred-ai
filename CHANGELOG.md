@@ -5,6 +5,41 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.728] - 2026-05-24
+
+### Added — Sandbox-Verwaltungs-Toolbar im Interactive-Chat + ENV-WebUI
+
+User-Wunsch: aktuelle Sandbox aktualisieren/neu starten und Verwaltungs-Aktionen direkt im Interactive-Chat — plus zugriff auf die in v726 eingeführten ENVs ohne in den Chat-Skill wechseln zu müssen.
+
+**SandboxManager-Methoden** (`packages/core/src/sandbox-manager.ts`):
+- `restart(sandboxId)`: stop Container → `rm -rf .next` im Worktree (außerhalb des Containers, vermeidet NFS-locks) → start Container → wait-for-dev-server (2min). Heilt das `.next/`-ENOENT-Pattern wenn manuell oder per altem Project-Agent die Build-Caches inkonsistent wurden.
+- `getLogs(sandboxId, tail)`: `docker logs --tail N --timestamps` mit stderr+stdout zusammen, max 2000 Zeilen.
+- `getStats(sandboxId)`: `docker stats --no-stream` parsed (CPU%, RAM MB) + Container-Status, Uptime via createdAt, Port, Image.
+
+**HTTP-API** (`packages/messaging/src/adapters/http.ts`):
+- `POST /api/sandbox/:id/restart` — auth-gated, ruft callback
+- `GET /api/sandbox/:id/logs?tail=N` — auth-gated, returns `{ok, logs}`
+- `GET /api/sandbox/:id/stats` — auth-gated, returns `{ok, stats}`
+- `GET /api/projects/:id/environments` — list stages mit keyCount + updatedAt
+- `GET /api/projects/:id/environments/:stage?reveal=1` — vars (default maskiert)
+- `PUT /api/projects/:id/environments/:stage` — bulk-set/merge (`{vars, replace?}`), Key-Format-Validation `^[A-Z][A-Z0-9_]*$`
+- `DELETE /api/projects/:id/environments/:stage` — Stage löschen
+- Plus `EnvironmentsCallbacks` Interface (exported) für Wire-Up
+
+**Web-Client** (`apps/web/src/lib/alfred-client.ts`):
+- `restartSandbox`, `fetchSandboxLogs`, `fetchSandboxStats`
+- `fetchEnvironmentStages`, `fetchEnvironmentVars`, `setEnvironmentVars`, `deleteEnvironmentStage`
+
+**Interactive-Page Toolbar** (`apps/web/src/app/interactive/page.tsx`):
+Neue Buttons im Header bei `status === 'running'`:
+- 🔄 — iframe-Reload (key-Prop wechseln, Soft-Refresh)
+- ♻️ **Restart** — Bestätigung + Container stop/clear/start, danach iframe-Reload
+- 📜 **Logs** — Modal mit Container-Logs, optional Auto-Refresh-Toggle (3s Interval)
+- 📊 **Stats** — Modal mit CPU/RAM/Status/Port/Image/CreatedAt
+- 🔐 **ENV** — Modal mit Sandbox-Stage-ENVs (maskiert per default, "Zeigen"-Button für Klartext), inline Add-Form mit Key-Validation. Hinweis dass Restart nötig damit Änderungen wirksam werden.
+
+Wire-Up in `alfred.ts`: Restart/Logs/Stats-Callbacks in beiden setSandboxCallbacks-Stellen (CRUD + API). Environments-Callbacks separat via `setEnvironmentsCallbacks` mit Encryption-Awareness (masked vs reveal).
+
 ## [0.19.0-multi-ha.727] - 2026-05-24
 
 ### Fixed — Project-Agent zerstörte dev-server-Cache bei laufender Sandbox
