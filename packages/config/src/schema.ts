@@ -59,6 +59,7 @@ export const SecurityConfigSchema = z.object({
   rulesPath: z.string(),
   defaultEffect: z.enum(['allow', 'deny']),
   ownerUserId: z.string().optional(),
+  envEncryptionKey: z.string().optional(),
   moderation: ModerationConfigSchema.optional(),
 });
 
@@ -627,6 +628,7 @@ export const SandboxConfigSchema = z.object({
   worktreeBasePath: z.string().optional(),
   containerImage: z.string().optional(),
   pnpmStorePath: z.string().nullable().optional(),
+  uploadSeedsPath: z.string().optional(),
 });
 
 export const MqttConfigSchema = z.object({

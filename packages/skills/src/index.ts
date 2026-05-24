@@ -52,6 +52,7 @@ export { TodoSkill } from './built-in/todo.js';
 export { DockerSkill } from './built-in/docker.js';
 export { BMWSkill } from './built-in/bmw.js';
 export { BrainstormingSkill } from './built-in/brainstorming.js';
+export { EnvironmentsSkill } from './built-in/environments.js';
 export { ProjectSkill } from './built-in/project.js';
 export type { IncidentCascadeFn } from './built-in/project.js';
 export { CloudflareDnsSkill } from './built-in/cloudflare-dns.js';

@@ -2078,4 +2078,39 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_recipes_confidence ON learned_recipes(user_id, confidence DESC, success_count DESC)`);
     },
   },
+  {
+    version: 91,
+    description: 'v726 — project_environments + project_db_seeds für Sandbox/Deploy-ENV-Management',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_environments (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          vars_encrypted BLOB NOT NULL,
+          iv BLOB NOT NULL,
+          auth_tag BLOB NOT NULL,
+          encryption_version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, stage)
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_environments_project ON project_environments(project_id)`);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS project_db_seeds (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          storage_ref TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_db_seeds_project ON project_db_seeds(project_id)`);
+      try { db.exec(`ALTER TABLE projects ADD COLUMN default_env_stage TEXT`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE projects ADD COLUMN default_db_seed_id TEXT`); } catch { /* exists */ }
+    },
+  },
 ];

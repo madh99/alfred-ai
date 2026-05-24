@@ -76,6 +76,9 @@ export interface SecurityConfig {
   rulesPath: string;
   defaultEffect: 'allow' | 'deny';
   ownerUserId?: string;
+  /** v726 — Master-Key (base64, 32 bytes) für AES-GCM-Verschlüsselung der Project-ENVs.
+   *  Wenn nicht gesetzt: ENV-Persistenz nutzt Plain-Text mit Warning-Log. */
+  envEncryptionKey?: string;
   moderation?: {
     enabled?: boolean;
     provider?: 'mistral' | 'openai';
@@ -967,6 +970,8 @@ export interface SandboxConfig {
   containerImage?: string;
   /** Shared pnpm-store mount (optional, beschleunigt npm install). NULL = pro Container eigener Store. */
   pnpmStorePath?: string | null;
+  /** v726 — Pfad in dem Upload-DB-Seeds gespeichert werden. Default '/var/alfred/db-seeds'. */
+  uploadSeedsPath?: string;
 }
 
 export interface MqttConfig {

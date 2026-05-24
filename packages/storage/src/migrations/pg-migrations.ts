@@ -1389,4 +1389,39 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_recipes_confidence ON learned_recipes(user_id, confidence DESC, success_count DESC)`, []);
     },
   },
+  {
+    version: 94,
+    description: 'v726 — project_environments + project_db_seeds für Sandbox/Deploy-ENV-Management',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_environments (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          vars_encrypted BYTEA NOT NULL,
+          iv BYTEA NOT NULL,
+          auth_tag BYTEA NOT NULL,
+          encryption_version INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(project_id, stage)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_environments_project ON project_environments(project_id)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS project_db_seeds (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          storage_ref TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_db_seeds_project ON project_db_seeds(project_id)`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_env_stage TEXT`, []);
+      await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_db_seed_id TEXT`, []);
+    },
+  },
 ];

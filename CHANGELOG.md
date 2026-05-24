@@ -5,6 +5,68 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.726] - 2026-05-24
+
+### Added — Project-ENV-Management mit AES-GCM-Verschlüsselung + Sandbox-Integration
+
+User-Bedarf: Sandbox-Apps brauchen projekt-spezifische ENV-Variablen (DATABASE_URL, NEXTAUTH_SECRET, etc.) die nicht im Repo committed sein dürfen. Bisher startete der Sandbox-Container nur mit `CI=''` und `NODE_ENV=development` → Apps mit ENV-Abhängigkeiten liefen halb-broken oder gar nicht. Plus: Test-Daten (SQLite-DBs, Uploads) sollen NICHT zurück ins Repo committet werden.
+
+Backend-Foundation in v726 (Phase A — WebUI folgt in v727):
+
+**Storage**
+- Migration v91 (SQLite) / v94 (PG): Tabellen `project_environments` (id, project_id, stage, vars_encrypted BLOB, iv BLOB, auth_tag BLOB, encryption_version, timestamps) + `project_db_seeds` (id, project_id, name, kind, storage_ref, size_bytes, created_at). Plus Columns `projects.default_env_stage` + `projects.default_db_seed_id`.
+- `EnvironmentRepository` + `DbSeedRepository` in `@alfred/storage` mit CRUD.
+
+**Crypto**
+- Neuer `EnvCryptoService` in `@alfred/security` mit AES-256-GCM. Master-Key kommt aus `config.security.envEncryptionKey` (base64, 32 bytes) ODER wird beim ersten Start auto-generiert (mit Warning, damit User ihn in Config persistiert um Daten zu behalten).
+- Format pro Entry: `varsEncrypted` (ciphertext) + `iv` (12 bytes) + `authTag` (16 bytes) — alles separat in DB.
+- Helper `EnvCryptoService.generateMasterKey()` für Config-Bootstrap.
+
+**Sandbox-Integration**
+- `SandboxManager.createForSession` akzeptiert neue Optionen `envStage` (default 'sandbox') + `dbSeed` (`{kind:'empty'} | {kind:'repo_path', path} | {kind:'upload', seedId}`).
+- Beim Container-Start: ENVs aus `EnvironmentRepository.get(projectId, stage)` laden, decrypten, sowohl als `-e KEY=value` an docker-run weitergeben ALS AUCH als `.env.local` ins worktree schreiben (Next.js/Vite/etc. lesen das automatisch).
+- Auto-ENV `ALFRED_DATA_DIR=/workspace/.alfred-data` für Apps die Daten dort ablegen sollen.
+- `.gitignore`-Auto-Append für `.alfred-data/` + `.env.local` falls noch nicht drin.
+- DB-Seed-Logik:
+  - `empty`: leeres `.alfred-data/` Verzeichnis
+  - `repo_path`: Datei aus dem Repo (z.B. `seeds/dev.sqlite`) wird kopiert (Sicherheits-Check: kein `..`, muss innerhalb projectCwd liegen)
+  - `upload`: vom User über WebUI hochgeladene Datei wird aus `config.sandbox.uploadSeedsPath` kopiert
+- Pre-Merge-Auto-Commit erweitert: explizit `:!.alfred-data` + `:!.env*` als Exclude-Pathspecs damit Daten/Secrets nie ins Repo wandern, auch wenn User die `.gitignore` modifiziert hat.
+
+**Skill `environments` (CRUD via Chat)**
+Neuer Skill mit 9 Actions:
+- `set` (project, stage, key, value) — ENV setzen (validiert Key-Format `^[A-Z][A-Z0-9_]*$`)
+- `get` (project, stage, key) — Wert lesen
+- `list` (project, stage) — alle Keys mit maskierten Werten (`AB****YZ`)
+- `reveal` (project, stage) — alle Keys mit Klartext-Werten (für Owner-Audit)
+- `delete` (project, stage, key) — Key löschen
+- `delete_stage` (project, stage) — Stage komplett löschen
+- `copy_stage` (project, from_stage, to_stage, overwrite?) — Bulk-Copy
+- `list_stages` (project) — alle Stages eines Projekts
+- `scan_repo` (project) — Repo durchsuchen nach `.env.example`/`.env.sample`/`.env.template` + Quelltext-Scan auf `process.env.X`, `import.meta.env.X`, `os.environ.get('X')`, `os.getenv('X')`. Liefert Vorschlag welche Keys gesetzt werden sollten.
+- Owner-only (alle Actions prüfen `userId === ownerMasterUserId`).
+- Project-Resolution akzeptiert id, slug, oder name (case-insensitive).
+
+**Config**
+- Neues Feld `security.envEncryptionKey` (string, base64, optional)
+- Neues Feld `sandbox.uploadSeedsPath` (string, optional)
+
+**Nicht in v726 (kommt in v727):**
+- WebUI-Tab "Environments" + Form-Editor
+- WebUI-Tab "DB Seeds" mit Upload-Form
+- Sandbox-Erstellen-Dialog erweitert um ENV-Stage + DB-Seed-Wahl
+- Deploy-Skill-Integration (ENV aufs Target übertragen)
+
+Nutzung jetzt via Chat:
+```
+environments scan_repo project=alpbyte-games
+environments set project=alpbyte-games stage=sandbox key=DATABASE_URL value=postgres://localhost/dev
+environments list project=alpbyte-games stage=sandbox
+environments copy_stage project=alpbyte-games from_stage=prod to_stage=sandbox
+```
+
+Beim Sandbox-Erstellen wird default `stage=sandbox` geladen. Andere Stages aktuell nur über API-Erweiterung verfügbar (WebUI in v727).
+
 ## [0.19.0-multi-ha.725] - 2026-05-24
 
 ### Fixed — Sandbox-Preview: HTML-URL-Rewriting statt Browser-Magic (Subresources kamen weiter mit 404)

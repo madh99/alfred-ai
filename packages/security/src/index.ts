@@ -7,3 +7,4 @@ export { SecurityManager } from './security-manager.js';
 export type { Logger } from './security-manager.js';
 export { ModerationService } from './moderation-service.js';
 export type { ModerationResult } from './moderation-service.js';
+export { EnvCryptoService } from './env-crypto.js';

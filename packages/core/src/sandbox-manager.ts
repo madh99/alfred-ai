@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
 import type { SandboxConfig, SandboxSessionMode } from '@alfred/types';
-import type { SandboxRepository, Sandbox, SandboxInsert } from '@alfred/storage';
+import type { SandboxRepository, Sandbox, SandboxInsert, EnvironmentRepository, DbSeedRepository } from '@alfred/storage';
+import type { EnvCryptoService } from '@alfred/security';
 
 import { createWorktree, destroyWorktree, validateGitRepo } from './sandbox/worktree.js';
 import { detectProjectType, type ProjectDetection } from './sandbox/project-detect.js';
@@ -29,6 +30,13 @@ export interface SandboxManagerDeps {
   nodeId: string;
   /** Pfad zu den Sandbox-Dockerfiles. Wenn null/undefined wird relativ zum Bundle gesucht. */
   dockerfilesDir?: string;
+  /** v726 — Optional: für ENV-Injection beim Container-Start. */
+  envRepo?: EnvironmentRepository;
+  envCrypto?: EnvCryptoService;
+  /** v726 — Optional: für DB-Seed beim Container-Start. */
+  dbSeedRepo?: DbSeedRepository;
+  /** v726 — Pfad in dem Upload-Seeds liegen (z.B. /var/alfred/seeds/). */
+  uploadSeedsPath?: string;
 }
 
 export interface CreateForSessionInput {
@@ -42,6 +50,10 @@ export interface CreateForSessionInput {
   mode: SandboxSessionMode;
   /** Slug für branch-name (z.B. aus session-goal). */
   slug?: string;
+  /** v726 — Welche ENV-Stage aus project_environments soll geladen werden? Default: 'sandbox'. */
+  envStage?: string;
+  /** v726 — DB-Seed-Variante. Default: 'empty' (App muss selbst migrations laufen). */
+  dbSeed?: { kind: 'empty' } | { kind: 'repo_path'; path: string } | { kind: 'upload'; seedId: string };
 }
 
 export interface CreateForSessionResult {
@@ -239,6 +251,9 @@ export class SandboxManager {
       branchName: wt.branchName,
       projectCwd: input.projectCwd,
       detection,
+      projectId: input.projectId,
+      envStage: input.envStage ?? 'sandbox',
+      dbSeed: input.dbSeed ?? { kind: 'empty' },
     });
 
     // Phase 1 returnt sofort — Frontend pollt /api/sandbox/:id für Progress
@@ -257,8 +272,11 @@ export class SandboxManager {
     branchName: string;
     projectCwd: string;
     detection: ProjectDetection;
+    projectId: string;
+    envStage: string;
+    dbSeed: { kind: 'empty' } | { kind: 'repo_path'; path: string } | { kind: 'upload'; seedId: string };
   }): Promise<void> {
-    const { sandboxId, image, worktreePath, branchName, projectCwd, detection } = opts;
+    const { sandboxId, image, worktreePath, branchName, projectCwd, detection, projectId, envStage, dbSeed } = opts;
     try {
       // Status: image preparation
       await this.deps.repo.updateStatus(sandboxId, 'creating', 'building-image: pulled+built docker image (kann 1-3min beim 1. Mal dauern)');
@@ -269,6 +287,23 @@ export class SandboxManager {
       const portStart = this.deps.config.hostPortRangeStart ?? 9100;
       const portEnd = this.deps.config.hostPortRangeEnd ?? 9199;
       const hostPort = await findFreePort(portStart, portEnd, this.deps.repo);
+
+      // v726 — ENV-Variablen aus project_environments laden (decrypten) + .env.local schreiben
+      const projectEnvs = await this.loadProjectEnvironments(projectId, envStage);
+      if (Object.keys(projectEnvs).length > 0) {
+        try {
+          const envLocalPath = path.join(worktreePath, '.env.local');
+          const { writeFileSync } = await import('node:fs');
+          const lines = Object.entries(projectEnvs).map(([k, v]) => `${k}=${v}`);
+          writeFileSync(envLocalPath, lines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
+          this.deps.logger.info({ sandboxId, stage: envStage, count: lines.length }, 'v726 .env.local written to worktree');
+        } catch (err) {
+          this.deps.logger.warn({ err, sandboxId }, 'v726 .env.local write failed (continuing with -e flags only)');
+        }
+      }
+
+      // v726 — DB-Seed bereitstellen (in worktree-relativen Pfad ALFRED_DATA_DIR=/workspace/.alfred-data)
+      await this.prepareSandboxDataDir(worktreePath, dbSeed, projectCwd);
 
       const containerName = `alfred-sandbox-${sandboxId.slice(0, 8)}`;
       const binds: Array<{ host: string; container: string; readOnly?: boolean }> = [
@@ -281,12 +316,20 @@ export class SandboxManager {
       const devCmd = detection.devCommand.join(' ');
       const fullCmd = `${installCmd} && exec ${devCmd}`;
 
+      // v726 — Project-ENVs + Default-ENVs zusammenführen. Defaults dürfen NICHT von Project überschrieben werden? Doch — Project hat Vorrang (user-controlled).
+      const containerEnvs: Record<string, string> = {
+        CI: '',
+        NODE_ENV: 'development',
+        ALFRED_DATA_DIR: '/workspace/.alfred-data',
+        ...projectEnvs,
+      };
+
       const containerId = await runSandboxContainer({
         image,
         name: containerName,
         workdir: '/workspace',
         binds,
-        envVars: { CI: '', NODE_ENV: 'development' },
+        envVars: containerEnvs,
         ports: [[hostPort, detection.internalPort]],
         memoryMb: 2048,
         cpus: 2,
@@ -464,11 +507,16 @@ export class SandboxManager {
         try { await stopContainer(sb.containerId, 5); } catch { /* ignore */ }
       }
 
-      // (2) Uncommitted changes committen
+      // (2) Uncommitted changes committen — v726: .alfred-data/ + .env* explizit ausschließen
+      // damit Sandbox-Test-Daten (DB-Files, Logs, Uploads) und Secrets NICHT ins Repo wandern.
+      // Defensiv zusätzlich zu .gitignore (User könnte die Einträge entfernt haben).
       try {
         const status = await runGit(['status', '--porcelain'], sb.worktreePath);
         if (status.trim()) {
-          await runGit(['add', '-A'], sb.worktreePath);
+          await runGit(
+            ['add', '-A', '--', ':!.alfred-data', ':!.alfred-data/**', ':!.env', ':!.env.local', ':!.env.*.local'],
+            sb.worktreePath,
+          );
           const msg = opts.commitMessage ?? `Sandbox session ${sandboxId.slice(0, 8)} — auto-commit`;
           // Identity sicherstellen (Worktree erbt von main, aber für sicher)
           await runGit(['-c', 'user.name=Alfred', '-c', 'user.email=alfred@local', 'commit', '-m', msg], sb.worktreePath);
@@ -637,6 +685,86 @@ export class SandboxManager {
 
   async touchActivity(sandboxId: string): Promise<void> {
     await this.deps.repo.touchActivity(sandboxId);
+  }
+
+  /**
+   * v726 — Lädt ENVs für eine Project/Stage aus EnvironmentRepository und decrypted sie.
+   * Best-effort: bei Fehler oder fehlenden Deps gibt {} zurück (Container startet wie zuvor).
+   */
+  private async loadProjectEnvironments(projectId: string, stage: string): Promise<Record<string, string>> {
+    if (!this.deps.envRepo || !this.deps.envCrypto) return {};
+    try {
+      const entry = await this.deps.envRepo.get(projectId, stage);
+      if (!entry) return {};
+      const decrypted = this.deps.envCrypto.decrypt(entry.varsEncrypted, entry.iv, entry.authTag);
+      return decrypted;
+    } catch (err) {
+      this.deps.logger.warn({ err, projectId, stage }, 'v726 env-load failed (returning empty)');
+      return {};
+    }
+  }
+
+  /**
+   * v726 — Erstellt /workspace/.alfred-data/ im worktree und kopiert je nach dbSeed
+   * eine Seed-DB rein. Diese Pfade liegen IM worktree-mount damit der Container Zugriff hat,
+   * werden aber per `.gitignore`-Hint (oder explizitem pre-merge-filter) nicht zurückcommitted.
+   */
+  private async prepareSandboxDataDir(
+    worktreePath: string,
+    dbSeed: { kind: 'empty' } | { kind: 'repo_path'; path: string } | { kind: 'upload'; seedId: string },
+    projectCwd: string,
+  ): Promise<void> {
+    const dataDir = path.join(worktreePath, '.alfred-data');
+    try {
+      mkdirSync(dataDir, { recursive: true, mode: 0o755 });
+    } catch (err) {
+      this.deps.logger.warn({ err, dataDir }, 'v726 .alfred-data mkdir failed (continuing)');
+      return;
+    }
+
+    // .gitignore-Einträge sicherstellen damit Daten nicht ins Repo zurückfließen
+    try {
+      const { readFileSync, writeFileSync, existsSync: exists } = await import('node:fs');
+      const gitignorePath = path.join(worktreePath, '.gitignore');
+      const existing = exists(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : '';
+      const additions: string[] = [];
+      if (!existing.includes('.alfred-data')) additions.push('.alfred-data/');
+      if (!/^\.env\.local\b/m.test(existing)) additions.push('.env.local');
+      if (additions.length > 0) {
+        const next = existing + (existing.endsWith('\n') || existing.length === 0 ? '' : '\n') + additions.join('\n') + '\n';
+        writeFileSync(gitignorePath, next, 'utf8');
+      }
+    } catch (err) {
+      this.deps.logger.debug({ err }, 'v726 .gitignore update skipped');
+    }
+
+    if (dbSeed.kind === 'empty') return;
+    try {
+      const { copyFileSync, statSync: stat } = await import('node:fs');
+      if (dbSeed.kind === 'repo_path') {
+        // Pfad relative to projectCwd. Sicherheits-Check: kein .. erlaubt.
+        if (dbSeed.path.includes('..')) throw new Error('repo_path darf kein .. enthalten');
+        const src = path.resolve(projectCwd, dbSeed.path);
+        if (!src.startsWith(path.resolve(projectCwd))) throw new Error('repo_path verlässt projectCwd');
+        const target = path.join(dataDir, path.basename(src));
+        copyFileSync(src, target);
+        this.deps.logger.info({ src, target, size: stat(target).size }, 'v726 db-seed copied from repo_path');
+      } else if (dbSeed.kind === 'upload') {
+        if (!this.deps.dbSeedRepo || !this.deps.uploadSeedsPath) {
+          throw new Error('Upload-Seed angefordert aber dbSeedRepo/uploadSeedsPath nicht konfiguriert');
+        }
+        const seed = await this.deps.dbSeedRepo.getById(dbSeed.seedId);
+        if (!seed) throw new Error(`Seed ${dbSeed.seedId} nicht gefunden`);
+        if (seed.kind !== 'upload') throw new Error(`Seed ${dbSeed.seedId} ist kind=${seed.kind}, nicht upload`);
+        const src = path.resolve(this.deps.uploadSeedsPath, seed.storageRef);
+        if (!src.startsWith(path.resolve(this.deps.uploadSeedsPath))) throw new Error('Upload-Seed verlässt uploadSeedsPath');
+        const target = path.join(dataDir, seed.name);
+        copyFileSync(src, target);
+        this.deps.logger.info({ src, target, size: stat(target).size }, 'v726 db-seed copied from upload');
+      }
+    } catch (err) {
+      this.deps.logger.warn({ err }, 'v726 db-seed copy failed (sandbox startet mit leerem .alfred-data)');
+    }
   }
 }
 

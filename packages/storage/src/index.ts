@@ -74,6 +74,8 @@ export { SkillStateRepository, type SkillStateEntry } from './repositories/skill
 export { BmwTelematicRepository, type BmwTelematicEntry } from './repositories/bmw-telematic-repository.js';
 export { BrainstormingRepository, type BrainstormingSession, type BrainstormingItem } from './repositories/brainstorming-repository.js';
 export { LearnedRecipeRepository, type LearnedRecipe, type RecipeAction, type CreateRecipeInput } from './repositories/learned-recipe-repository.js';
+export { EnvironmentRepository, type ProjectEnvironment } from './repositories/environment-repository.js';
+export { DbSeedRepository, type ProjectDbSeed, type DbSeedKind } from './repositories/db-seed-repository.js';
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
 export { CmdbRepository } from './repositories/cmdb-repository.js';
 export { ItsmRepository } from './repositories/itsm-repository.js';

@@ -155,6 +155,11 @@ export class Alfred {
   private projectRepo?: import('@alfred/storage').ProjectRepository;
   /** v722 — Self-Learning: LearnedRecipeRepo (Pre-Hook + Action) */
   private learnedRecipeRepo?: import('@alfred/storage').LearnedRecipeRepository;
+  /** v726 — Environment-Management */
+  private envRepoRef?: import('@alfred/storage').EnvironmentRepository;
+  private envCryptoRef?: import('@alfred/security').EnvCryptoService;
+  private dbSeedRepoRef?: import('@alfred/storage').DbSeedRepository;
+  private envSkillFactory?: (projectRepo: import('@alfred/storage').ProjectRepository, ownerUid: string) => unknown;
   /** v658 — Projekt-Chat: ConversationRepository für chatHistory-Endpoint */
   private conversationRepo?: import('@alfred/storage').ConversationRepository;
   private insightsRepo?: import('@alfred/storage').InsightsRepository;
@@ -485,6 +490,34 @@ export class Alfred {
       this.logger.info('Brainstorming skill registered');
     }
 
+    // 3c. v726 — Environments skill (Project-ENV-Management mit AES-GCM-Encryption).
+    // Crypto-Key aus Config oder auto-generated bei erstem Start.
+    try {
+      const { EnvironmentsSkill } = await import('@alfred/skills');
+      const { EnvironmentRepository, DbSeedRepository } = await import('@alfred/storage');
+      const { EnvCryptoService } = await import('@alfred/security');
+      const envRepo = new EnvironmentRepository(adapter);
+      const dbSeedRepo = new DbSeedRepository(adapter);
+      let envKey = this.config.security?.envEncryptionKey;
+      if (!envKey) {
+        envKey = EnvCryptoService.generateMasterKey();
+        this.logger.warn({ keyPreview: envKey.slice(0, 8) + '…' }, 'v726 envEncryptionKey nicht in Config — auto-generated (volatile! In Config persistieren um Daten zu behalten)');
+      }
+      const envCrypto = new EnvCryptoService(envKey);
+      this.envRepoRef = envRepo;
+      this.envCryptoRef = envCrypto;
+      this.dbSeedRepoRef = dbSeedRepo;
+      // Wird unten nach projectRepo-Init verdrahtet (siehe Late-Bind in initialize())
+      this.envSkillFactory = (projectRepo, ownerUid) => {
+        const s = new EnvironmentsSkill(envRepo, envCrypto, projectRepo, ownerUid, dbSeedRepo);
+        skillRegistry.register(s);
+        this.logger.info('v726 Environments skill registered');
+        return s;
+      };
+    } catch (err) {
+      this.logger.warn({ err }, 'v726 Environments skill init failed (non-fatal)');
+    }
+
     // 4a-email. Initialize email (optional, multi-account)
     if (this.config.email?.accounts?.length) {
       const providers = new Map<string, import('@alfred/skills').EmailProvider>();
@@ -657,6 +690,16 @@ export class Alfred {
       );
       this.projectRepo = projectRepo;
       this.projectManager = projectManager;
+
+      // v726 — Late-Wire EnvironmentsSkill, jetzt da projectRepo da ist
+      if (this.envSkillFactory) {
+        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        if (ownerUid) {
+          try { this.envSkillFactory(projectRepo, ownerUid); } catch (err) {
+            this.logger.warn({ err }, 'v726 EnvironmentsSkill late-wire failed');
+          }
+        }
+      }
 
       // v665a — Cluster-Share Manager: Startup-Check auf konfigurierte Shares (NFS/SMB).
       // Bei Single-Node-Setup ohne Shares: no-op. Bei Cluster ohne Mounts: warnt aber blockt nicht.
@@ -3188,6 +3231,11 @@ export class Alfred {
               repo: sandboxRepo,
               logger: this.logger.child({ component: 'sandbox-manager' }),
               nodeId: nodeIdForSandbox,
+              // v726 — Project-ENV-Injection + DB-Seed-Support
+              envRepo: this.envRepoRef,
+              envCrypto: this.envCryptoRef,
+              dbSeedRepo: this.dbSeedRepoRef,
+              uploadSeedsPath: this.config.sandbox.uploadSeedsPath ?? undefined,
             });
             const hc = await sandboxManager.runHealthCheck();
             if (hc.dockerAvailable && hc.worktreeBaseWritable) {
