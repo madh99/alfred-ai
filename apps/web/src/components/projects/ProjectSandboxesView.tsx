@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useConfig } from '@/context/ConfigContext';
-import type { SandboxItem, SandboxStatus } from '@/lib/alfred-client';
+import type { SandboxItem, SandboxStatus, SandboxStatusResponse } from '@/lib/alfred-client';
 
 interface Props {
   projectId: string;
@@ -30,22 +30,20 @@ function formatRelative(iso?: string): string {
 }
 
 /**
- * v738 — Idle-Countdown: Sandbox-Manager pausiert running Sandboxes nach config.idleTimeoutMin
- * (Default 30 Min). lastActiveAt wird bei Chat-Messages + iframe-Requests touched.
- * Wir zeigen "wird in X min auto-gepaust" damit User nicht überrascht wird.
+ * v738/v739 — Idle-Countdown: Sandbox-Manager pausiert running Sandboxes nach
+ * config.idleTimeoutMin (default 30 Min). v739: liest echte Config statt hardcoded.
  */
-const IDLE_TIMEOUT_MIN_DEFAULT = 30;
-function computeIdleCountdown(lastActiveAt: string): { text: string; warning: boolean } | null {
+function computeIdleCountdown(lastActiveAt: string, idleTimeoutMin: number): { text: string; warning: boolean } | null {
   try {
     const lastMs = new Date(lastActiveAt).getTime();
     if (!Number.isFinite(lastMs)) return null;
     const elapsedMin = (Date.now() - lastMs) / 60000;
-    const remainingMin = IDLE_TIMEOUT_MIN_DEFAULT - elapsedMin;
+    const remainingMin = idleTimeoutMin - elapsedMin;
     if (remainingMin <= 0) return { text: 'auto-Pause läuft jeden Moment', warning: true };
     if (remainingMin < 1) return { text: `auto-Pause in <1 min`, warning: true };
     if (remainingMin < 5) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: true };
-    if (remainingMin < 30) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: false };
-    return null; // >= 30 min: nicht anzeigen, würde Noise sein (ist ja gerade aktiv)
+    if (remainingMin < idleTimeoutMin) return { text: `auto-Pause in ~${Math.round(remainingMin)} min`, warning: false };
+    return null; // >= idle-timeout: nicht anzeigen (gerade erst aktiv)
   } catch { return null; }
 }
 
@@ -62,6 +60,9 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // v739 — Sandbox-Status für Quota-Display + dynamischen Idle-Timeout
+  const [status, setStatus] = useState<SandboxStatusResponse | null>(null);
+  const [globalActiveCount, setGlobalActiveCount] = useState<number>(0);
 
   const load = useCallback(async () => {
     if (!client) return;
@@ -79,6 +80,25 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
     if (!expanded) return;
     load();
   }, [expanded, load]);
+
+  // v739 — Status (incl. Quota-Limits) beim Expand laden
+  useEffect(() => {
+    if (!expanded || !client) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [st, allSandboxes] = await Promise.all([
+          client.fetchSandboxStatus().catch(() => null),
+          client.listAllSandboxes().catch(() => [] as SandboxItem[]),
+        ]);
+        if (cancelled) return;
+        setStatus(st);
+        const liveGlobal = allSandboxes.filter(s => ['creating', 'running', 'paused', 'merging'].includes(s.status)).length;
+        setGlobalActiveCount(liveGlobal);
+      } catch { /* */ }
+    })();
+    return () => { cancelled = true; };
+  }, [expanded, client, sandboxes]); // re-fetch wenn sandboxes-Liste sich ändert (z.B. nach create/discard)
 
   // Auto-refresh alle 5s wenn welche running/creating sind
   useEffect(() => {
@@ -142,8 +162,28 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
         <div className="space-y-2 text-xs">
           {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-2 py-1 rounded">{error}</div>}
 
-          <div className="text-[10px] text-gray-500">
-            Lebende Sandboxes für <span className="text-gray-400">{projectName}</span>. Auto-Refresh alle 5s wenn welche laufen.
+          <div className="flex items-center justify-between gap-2 text-[10px] text-gray-500">
+            <span>
+              Lebende Sandboxes für <span className="text-gray-400">{projectName}</span>. Auto-Refresh alle 5s wenn welche laufen.
+            </span>
+            {/* v739 — Globale Quota-Anzeige */}
+            {status && typeof status.maxParallelPerUser === 'number' && (() => {
+              const max = status.maxParallelPerUser;
+              const used = globalActiveCount;
+              const full = used >= max;
+              const warning = used >= max - 1 && !full;
+              const cls = full ? 'border-red-500/40 text-red-300 bg-red-500/10'
+                : warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+                : 'border-gray-600 text-gray-400';
+              return (
+                <span
+                  className={`px-2 py-0.5 rounded border ${cls}`}
+                  title={`Global ${used} von max ${max} Sandboxes parallel (alle Projekte). Bei Limit kannst du keine neuen erstellen.`}
+                >
+                  Quota: {used}/{max}{full ? ' VOLL' : ''}
+                </span>
+              );
+            })()}
           </div>
 
           {loading && sandboxes.length === 0 && <div className="text-gray-500 italic">Lädt…</div>}
@@ -156,7 +196,8 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
 
           {sandboxes.map(s => {
             const interactive = s.containerId && s.hostPort;
-            const idle = s.status === 'running' ? computeIdleCountdown(s.lastActiveAt) : null;
+            const idleTimeoutMin = status?.idleTimeoutMin ?? 30;
+            const idle = s.status === 'running' ? computeIdleCountdown(s.lastActiveAt, idleTimeoutMin) : null;
             return (
               <div key={s.id} className="bg-[#0a0a0a] border border-[#1a1a1a] rounded p-2 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -167,7 +208,7 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
                   {idle && (
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded border ${idle.warning ? 'border-amber-500/40 text-amber-300 bg-amber-500/10' : 'border-gray-600 text-gray-400'}`}
-                      title={`Letzte Aktivität: ${s.lastActiveAt}\nAuto-Pause nach ${IDLE_TIMEOUT_MIN_DEFAULT}min Idle`}
+                      title={`Letzte Aktivität: ${s.lastActiveAt}\nAuto-Pause nach ${idleTimeoutMin}min Idle`}
                     >⏱ {idle.text}</span>
                   )}
                   <span className="text-[10px] text-gray-500 ml-auto">{formatRelative(s.createdAt)}</span>

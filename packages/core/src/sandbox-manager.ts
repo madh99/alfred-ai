@@ -138,6 +138,10 @@ export class SandboxManager {
     defaultMode: string;
     defaultMergeStrategy: string;
     dockerfilesDir: string;
+    /** v739 — Limits für Frontend-Quota-Display */
+    maxParallelPerUser: number;
+    diskQuotaPerUserMb: number;
+    idleTimeoutMin: number;
   } {
     return {
       enabled: Boolean(this.deps.config.enabled),
@@ -148,6 +152,9 @@ export class SandboxManager {
       defaultMode: this.deps.config.defaultMode ?? 'classic',
       defaultMergeStrategy: this.deps.config.defaultMergeStrategy ?? 'pr',
       dockerfilesDir: this.dockerfilesDir,
+      maxParallelPerUser: this.deps.config.maxParallelPerUser ?? 3,
+      diskQuotaPerUserMb: this.deps.config.diskQuotaPerUserMb ?? 5120,
+      idleTimeoutMin: this.deps.config.idleTimeoutMin ?? 30,
     };
   }
 

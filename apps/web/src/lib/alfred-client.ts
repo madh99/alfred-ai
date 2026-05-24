@@ -2223,4 +2223,8 @@ export interface SandboxStatusResponse {
   defaultMode?: string;
   defaultMergeStrategy?: string;
   reason?: string;
+  /** v739 — Limits für UI-Quota-Display */
+  maxParallelPerUser?: number;
+  diskQuotaPerUserMb?: number;
+  idleTimeoutMin?: number;
 }

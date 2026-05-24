@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.739] - 2026-05-24
+
+### Added — Sandbox-Quota-Display + dynamischer Idle-Timeout
+
+Sichtbarkeit der Sandbox-Limits direkt im Project-Detail damit du nicht ins Limit läufst ohne Vorwarnung.
+
+**Backend** (`sandbox-manager.ts` `getStatus()`):
+- Erweitert um `maxParallelPerUser`, `diskQuotaPerUserMb`, `idleTimeoutMin` aus der Config (mit Fallback-Defaults 3/5120/30)
+
+**Web-Client** (`alfred-client.ts`):
+- `SandboxStatusResponse` Interface um die drei neuen Felder erweitert (optional)
+
+**ProjectSandboxesView**:
+- Laden bei Expand: parallel `fetchSandboxStatus()` + `listAllSandboxes()` für Quota-Berechnung über alle Projekte
+- Header-Zeile zeigt jetzt `Quota: 2/3` mit color-codierter Border:
+  - grau bei < (max-1) used
+  - amber bei = max-1 (last slot)
+  - rot + "VOLL" bei = max
+  - Tooltip mit Hinweis "alle Projekte zählen"
+- Idle-Countdown: nutzt jetzt den echten Backend-Wert (`status.idleTimeoutMin`) statt hardcoded 30 — wenn Admin die Config auf z.B. 60 ändert, stimmt der Countdown sofort
+
+Auto-Refresh: bei jedem Sandbox-Listen-Update wird der Status mit-aktualisiert (Quota-Anzeige bleibt akkurat nach Create/Discard).
+
 ## [0.19.0-multi-ha.738] - 2026-05-24
 
 ### Added — Deploy-Vorschau + Sandbox-Idle-Countdown
