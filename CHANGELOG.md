@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.744] - 2026-05-24
+
+### Added — Auto-Resume bei Open + Restart-Action für Failed-Sandboxes
+
+Workflow-Glätte für Sandbox-Lifecycle. Zwei Stellen wo bisher unnötige Klicks/SSH nötig waren:
+
+**Auto-Resume bei Open** (`/sandboxes`-Page + `ProjectSandboxesView`):
+- Click auf `💬 Interactive` / `▶ Öffnen` bei einer paused Sandbox triggert jetzt **automatisch** `resumeSandbox` vor dem Redirect zur Interactive-Page
+- Button-Label zeigt `💬 Interactive (resume)` / `▶ Öffnen (resume)` damit User weiß was passiert
+- Tooltip: "Erst Container resume, dann Interactive öffnen"
+- Bei Resume-Fehler: Error-Message wird gesetzt, kein Redirect — User sieht warum's nicht klappte
+- Vorher: User musste erst `▶ Resume` klicken, warten bis status='running', dann erst `💬 Interactive`
+
+**Restart-Action für Failed-Sandboxes** (beide Views):
+- Bisher konnte man failed Sandboxes nur Discardden
+- Jetzt: zusätzlich `♻️ Restart`-Button neben Discard (sofern containerId vorhanden)
+- Ruft `sandboxManager.restart()` (existiert seit v728): stop → `rm -rf .next/` im Worktree → start → wait-for-dev-server
+- Heilt das häufigste Failure-Pattern (dev-server crashed wegen .next/-Cache-Inkonsistenz) ohne User-Worktree zu verwerfen
+- Bei restart-Erfolg: status zurück auf running, Worktree-Änderungen bleiben erhalten
+- Bei Misserfolg: status bleibt paused mit error-reason, User kann immer noch Discardden
+- Plus Bonus: Restart-Button auch bei running verfügbar (für proaktiven Cache-Clear, gleiche Funktion wie Interactive-Page-Toolbar)
+
+**Konsistenz:** beide Komponenten (`/sandboxes` global page + `ProjectSandboxesView` im Project-Detail) haben jetzt identisches Action-Set:
+- 💬 Interactive (auto-resume bei paused)
+- 🌐 Preview (nur running)
+- ⏸ Pause / ▶ Resume
+- ♻️ Restart (für running/failed mit containerId)
+- ✕ Discard / 🗑️ Aufräumen (für running/paused/failed)
+
 ## [0.19.0-multi-ha.743] - 2026-05-24
 
 ### Added — /sandboxes-Übersicht auf Feature-Parität (Filter + Quota + Idle + Failed-Logs + Create-Optionen)

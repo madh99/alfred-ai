@@ -153,13 +153,39 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
     }
   }
 
-  function handleOpen(s: SandboxItem) {
-    // Interactive → Chat-Page, sonst → Sandboxes-Liste
+  async function handleOpen(s: SandboxItem) {
+    if (!client) return;
+    // v744 — bei paused erst auto-resume, dann Interactive öffnen
+    if (s.status === 'paused' && s.containerId) {
+      setBusyId(s.id); setError(null);
+      try {
+        await client.resumeSandbox(s.id);
+        window.location.href = `/alfred/interactive?sandboxId=${s.id}`;
+        return;
+      } catch (e) {
+        setError(`Resume fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+        await load();
+      } finally { setBusyId(null); }
+      return;
+    }
     if (s.containerId && s.hostPort) {
       window.location.href = `/alfred/interactive?sandboxId=${s.id}`;
     } else {
       window.location.href = `/alfred/sandboxes`;
     }
+  }
+
+  // v744 — Restart-Container für failed/running (heilt dev-server cache issues)
+  async function handleRestart(s: SandboxItem) {
+    if (!client) return;
+    if (!confirm(`Container "${s.branchName}" neu starten? (stop → .next/ clear → start)`)) return;
+    setBusyId(s.id); setError(null);
+    try {
+      const r = await client.restartSandbox(s.id);
+      if (!r.ok) setError(`Restart fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyId(null); }
   }
 
   const runningCount = sandboxes.filter(s => s.status === 'running').length;
@@ -262,12 +288,14 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
                 )}
 
                 <div className="flex gap-1 flex-wrap pt-1">
-                  {interactive && s.status === 'running' && (
+                  {/* v744 — Öffnen auch bei paused mit auto-resume */}
+                  {interactive && (s.status === 'running' || s.status === 'paused') && (
                     <button
                       onClick={() => handleOpen(s)}
-                      className="px-2 py-0.5 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 rounded text-[10px]"
-                      title="Im Interactive-Chat öffnen"
-                    >▶ Öffnen</button>
+                      disabled={busyId === s.id}
+                      className="px-2 py-0.5 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/15 rounded text-[10px] disabled:opacity-40"
+                      title={s.status === 'paused' ? 'Erst Container resume, dann Interactive öffnen' : 'Im Interactive-Chat öffnen'}
+                    >▶ Öffnen{s.status === 'paused' ? ' (resume)' : ''}</button>
                   )}
                   {s.status === 'running' && (
                     <button
@@ -282,6 +310,15 @@ export function ProjectSandboxesView({ projectId, projectName }: Props) {
                       disabled={busyId === s.id}
                       className="px-2 py-0.5 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded text-[10px] disabled:opacity-40"
                     >▶ Resume</button>
+                  )}
+                  {/* v744 — Restart-Button bei failed (oder running für cache-clear) */}
+                  {(s.status === 'failed' || s.status === 'running') && s.containerId && (
+                    <button
+                      onClick={() => handleRestart(s)}
+                      disabled={busyId === s.id}
+                      title={s.status === 'failed' ? 'Container neu starten — heilt oft dev-server cache' : 'Container restart + .next/ clear'}
+                      className={`px-2 py-0.5 border rounded text-[10px] disabled:opacity-40 ${s.status === 'failed' ? 'border-amber-500/60 text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 font-semibold' : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/15'}`}
+                    >♻️ Restart</button>
                   )}
                   {(s.status === 'running' || s.status === 'paused' || s.status === 'failed') && (
                     <button

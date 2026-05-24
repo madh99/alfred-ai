@@ -154,6 +154,36 @@ export default function SandboxesPage() {
     finally { setBusy(null); }
   }
 
+  // v744 — Click "Interactive öffnen": bei paused erst auto-resume, dann redirect
+  async function handleOpenInteractive(sb: SandboxItem) {
+    if (!client) return;
+    if (sb.status === 'paused') {
+      setBusy(sb.id);
+      try {
+        await client.resumeSandbox(sb.id);
+        window.open(`/alfred/interactive?sandboxId=${sb.id}`, '_blank');
+        await load();
+      } catch (e) {
+        setError(`Resume fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`);
+      } finally { setBusy(null); }
+    } else {
+      window.open(`/alfred/interactive?sandboxId=${sb.id}`, '_blank');
+    }
+  }
+
+  // v744 — Restart-Versuch bei failed Sandbox (re-uses container restart logic von v728)
+  async function handleRestart(sb: SandboxItem) {
+    if (!client) return;
+    if (!confirm(`Container von Sandbox "${sb.branchName}" neu starten? (stop → .next/ clear → start). Heilt oft das dev-server-cache-Problem.`)) return;
+    setBusy(sb.id); setError(null);
+    try {
+      const r = await client.restartSandbox(sb.id);
+      if (!r.ok) setError(`Restart fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      await load();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(null); }
+  }
+
   async function handleDiscard(id: string, branchName: string) {
     if (!client) return;
     if (!confirm(`Sandbox verwerfen?\n\nBranch ${branchName} wird gelöscht. Alle Änderungen gehen verloren wenn nicht gemerged.`)) return;
@@ -336,13 +366,14 @@ export default function SandboxesPage() {
                   )}
                 </div>
                 <div className="flex flex-col gap-1 items-end">
-                  {previewUrl && (
-                    <a
-                      href={`/alfred/interactive?sandboxId=${sb.id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] px-2 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded"
-                    >💬 Interactive</a>
+                  {/* v744 — Interactive auch bei paused: handleOpenInteractive macht auto-resume */}
+                  {(sb.status === 'running' || sb.status === 'paused') && sb.containerId && (
+                    <button
+                      onClick={() => handleOpenInteractive(sb)}
+                      disabled={busy === sb.id}
+                      className="text-[11px] px-2 py-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded"
+                      title={sb.status === 'paused' ? 'Erst Container resume, dann Interactive öffnen' : 'Interactive-Chat öffnen'}
+                    >💬 Interactive{sb.status === 'paused' ? ' (resume)' : ''}</button>
                   )}
                   {previewUrl && (
                     <button
@@ -350,19 +381,29 @@ export default function SandboxesPage() {
                       className="text-[10px] px-2 py-0.5 text-blue-400 hover:text-blue-300"
                     >🌐 Preview</button>
                   )}
-                  <div className="flex gap-1 mt-1">
+                  <div className="flex gap-1 mt-1 flex-wrap justify-end">
                     {sb.status === 'running' && (
-                      <button onClick={() => handlePause(sb.id)} disabled={busy === sb.id} className="text-[10px] px-2 py-0.5 border border-blue-500/40 text-blue-400 hover:bg-blue-500/15 rounded disabled:opacity-50">⏸</button>
+                      <button onClick={() => handlePause(sb.id)} disabled={busy === sb.id} title="Pause" className="text-[10px] px-2 py-0.5 border border-blue-500/40 text-blue-400 hover:bg-blue-500/15 rounded disabled:opacity-50">⏸</button>
                     )}
                     {sb.status === 'paused' && (
-                      <button onClick={() => handleResume(sb.id)} disabled={busy === sb.id} className="text-[10px] px-2 py-0.5 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 rounded disabled:opacity-50">▶</button>
+                      <button onClick={() => handleResume(sb.id)} disabled={busy === sb.id} title="Resume" className="text-[10px] px-2 py-0.5 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/15 rounded disabled:opacity-50">▶</button>
+                    )}
+                    {/* v744 — Restart-Button bei running/failed (für Cache-Issues / dev-server-Recovery) */}
+                    {(sb.status === 'running' || sb.status === 'failed') && sb.containerId && (
+                      <button
+                        onClick={() => handleRestart(sb)}
+                        disabled={busy === sb.id}
+                        title={sb.status === 'failed' ? 'Container neu starten — heilt oft dev-server crash' : 'Container restart + .next/ clear'}
+                        className={`text-[10px] px-2 py-0.5 border rounded disabled:opacity-50 ${sb.status === 'failed' ? 'border-amber-500/60 text-amber-300 bg-amber-500/15 hover:bg-amber-500/25 font-semibold' : 'border-amber-500/40 text-amber-400 hover:bg-amber-500/15'}`}
+                      >♻️</button>
                     )}
                     {(sb.status === 'running' || sb.status === 'paused' || sb.status === 'failed') && (
                       <button
                         onClick={() => handleDiscard(sb.id, sb.branchName)}
                         disabled={busy === sb.id}
+                        title="Discard / Verwerfen"
                         className={`text-[10px] px-2 py-0.5 border rounded disabled:opacity-50 ${sb.status === 'failed' ? 'border-red-500/60 text-red-300 bg-red-500/15 hover:bg-red-500/25 font-semibold' : 'border-red-500/40 text-red-400 hover:bg-red-500/15'}`}
-                      >{sb.status === 'failed' ? '🗑️ Aufräumen' : '✕'}</button>
+                      >{sb.status === 'failed' ? '🗑️' : '✕'}</button>
                     )}
                   </div>
                 </div>
