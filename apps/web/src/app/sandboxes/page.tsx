@@ -111,6 +111,41 @@ export default function SandboxesPage() {
     if (failed > 0) setError(`Bulk-Discard: ${ok} ok, ${failed} fehlgeschlagen`);
   }
 
+  // v753 — Bulk-Pause: nur running-Sandboxes pausieren
+  async function handleBulkPause() {
+    if (!client || selected.size === 0) return;
+    const targets = sandboxes.filter(s => selected.has(s.id) && s.status === 'running');
+    if (targets.length === 0) { setError('Keine running-Sandboxes in der Auswahl'); return; }
+    if (!confirm(`${targets.length} laufende Sandbox(es) pausieren? Container werden gestoppt, lassen sich später wieder starten.`)) return;
+    setBusy('bulk');
+    let ok = 0, failed = 0;
+    for (const sb of targets) {
+      try { await client.pauseSandbox(sb.id); ok++; }
+      catch { failed++; }
+    }
+    setSelected(new Set());
+    await load();
+    setBusy(null);
+    if (failed > 0) setError(`Bulk-Pause: ${ok} ok, ${failed} fehlgeschlagen`);
+  }
+
+  // v753 — Bulk-Resume: nur paused-Sandboxes wieder starten
+  async function handleBulkResume() {
+    if (!client || selected.size === 0) return;
+    const targets = sandboxes.filter(s => selected.has(s.id) && s.status === 'paused');
+    if (targets.length === 0) { setError('Keine paused-Sandboxes in der Auswahl'); return; }
+    setBusy('bulk');
+    let ok = 0, failed = 0;
+    for (const sb of targets) {
+      try { await client.resumeSandbox(sb.id); ok++; }
+      catch { failed++; }
+    }
+    setSelected(new Set());
+    await load();
+    setBusy(null);
+    if (failed > 0) setError(`Bulk-Resume: ${ok} ok, ${failed} fehlgeschlagen`);
+  }
+
   function toggleSelect(id: string) {
     setSelected(prev => {
       const next = new Set(prev);
@@ -435,19 +470,42 @@ export default function SandboxesPage() {
         </div>
       )}
 
-      {/* v750 — Bulk-Action-Bar wenn ausgewählt */}
-      {selected.size > 0 && (
-        <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 text-xs">
-          <span className="text-blue-300 font-semibold">{selected.size} ausgewählt</span>
-          <span className="text-gray-500">·</span>
-          <button onClick={() => setSelected(new Set())} className="text-gray-400 hover:text-gray-200">Auswahl löschen</button>
-          <button
-            onClick={handleBulkDiscard}
-            disabled={busy === 'bulk'}
-            className="ml-auto px-3 py-1 border border-red-500/40 text-red-300 hover:bg-red-500/15 rounded disabled:opacity-50"
-          >{busy === 'bulk' ? '⏳ Verwerfe…' : `🗑️ ${selected.size} verwerfen`}</button>
-        </div>
-      )}
+      {/* v750/v753 — Bulk-Action-Bar wenn ausgewählt */}
+      {selected.size > 0 && (() => {
+        const selectedSandboxes = sandboxes.filter(s => selected.has(s.id));
+        const runningCount = selectedSandboxes.filter(s => s.status === 'running').length;
+        const pausedCount = selectedSandboxes.filter(s => s.status === 'paused').length;
+        return (
+          <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/30 rounded px-3 py-2 text-xs flex-wrap">
+            <span className="text-blue-300 font-semibold">{selected.size} ausgewählt</span>
+            <span className="text-gray-500">·</span>
+            <button onClick={() => setSelected(new Set())} className="text-gray-400 hover:text-gray-200">Auswahl löschen</button>
+            <div className="ml-auto flex gap-2">
+              {runningCount > 0 && (
+                <button
+                  onClick={handleBulkPause}
+                  disabled={busy === 'bulk'}
+                  className="px-3 py-1 border border-blue-500/40 text-blue-300 hover:bg-blue-500/15 rounded disabled:opacity-50"
+                  title={`${runningCount} running-Sandbox(es) pausieren`}
+                >{busy === 'bulk' ? '⏳…' : `⏸️ ${runningCount} pausieren`}</button>
+              )}
+              {pausedCount > 0 && (
+                <button
+                  onClick={handleBulkResume}
+                  disabled={busy === 'bulk'}
+                  className="px-3 py-1 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/15 rounded disabled:opacity-50"
+                  title={`${pausedCount} paused-Sandbox(es) wieder starten`}
+                >{busy === 'bulk' ? '⏳…' : `▶️ ${pausedCount} resume`}</button>
+              )}
+              <button
+                onClick={handleBulkDiscard}
+                disabled={busy === 'bulk'}
+                className="px-3 py-1 border border-red-500/40 text-red-300 hover:bg-red-500/15 rounded disabled:opacity-50"
+              >{busy === 'bulk' ? '⏳ Verwerfe…' : `🗑️ ${selected.size} verwerfen`}</button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Feature-Status */}
       {status && !status.available && (

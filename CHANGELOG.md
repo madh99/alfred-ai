@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.753] - 2026-05-24
+
+### Added — Bulk-Pause + Bulk-Resume in /sandboxes
+
+Komplement zu v750-Bulk-Discard: laufende Sandboxes auf einen Schlag pausieren (RAM freigeben), pausierte wieder starten — statt einzeln pro Card.
+
+**Bulk-Action-Bar** (sichtbar wenn `selected.size > 0`):
+- `⏸️ N pausieren` — erscheint wenn ≥1 running-Sandbox in der Auswahl (zeigt nur deren Count, ignoriert nicht-running)
+- `▶️ N resume` — erscheint wenn ≥1 paused-Sandbox in der Auswahl
+- Beide laufen sequenziell wie Bulk-Discard, sammeln ok/failed counts und zeigen Error-Banner bei partial failures
+- Buttons rechts-bündig zusammen mit dem bestehenden `🗑️ verwerfen`
+
+Typischer Use-Case: Quota voll → Filter auf "running" + sort lastActiveAt-asc → älteste 5 auswählen → `⏸️ 5 pausieren` → RAM frei für neue Sandbox.
+
 ## [0.19.0-multi-ha.752] - 2026-05-24
 
 ### Added — Save-as-Template aus laufender Sandbox
