@@ -535,6 +535,62 @@ export class AlfredClient {
     return data;
   }
 
+  // v751 — Sandbox-Templates API
+  async fetchSandboxTemplates(projectId?: string | null): Promise<Array<{
+    id: string;
+    projectId?: string | null;
+    name: string;
+    description?: string;
+    mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+    envStage?: string;
+    dbSeedId?: string;
+    initialGoal?: string;
+    tags: string[];
+    createdAt: string;
+    updatedAt: string;
+  }>> {
+    const params = new URLSearchParams();
+    if (projectId !== undefined) params.set('projectId', projectId === null ? '' : projectId);
+    const qs = params.toString();
+    const res = await fetch(`${this.baseUrl}/api/sandbox-templates${qs ? `?${qs}` : ''}`, { headers: this.authHeaders });
+    if (!res.ok) throw new Error(`sandbox-templates-list: HTTP ${res.status}`);
+    const data = await res.json();
+    return data.templates ?? [];
+  }
+  async createSandboxTemplate(input: {
+    projectId?: string | null;
+    name: string;
+    description?: string;
+    mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+    envStage?: string;
+    dbSeedId?: string;
+    initialGoal?: string;
+    tags?: string[];
+  }): Promise<{ ok: boolean; id?: string; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox-templates`, {
+      method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async updateSandboxTemplate(id: string, patch: Record<string, unknown>): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox-templates/${id}`, {
+      method: 'PATCH', headers: this.jsonHeaders, body: JSON.stringify(patch),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async deleteSandboxTemplate(id: string): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/sandbox-templates/${id}`, {
+      method: 'DELETE', headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+
   // v742 — Re-Match Open-Items
   async reMatchProjectOpenItems(projectId: string): Promise<{ ok: boolean; matched?: number; resolved?: number; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/re-match-open-items`, {

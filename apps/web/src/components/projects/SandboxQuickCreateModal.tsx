@@ -16,13 +16,25 @@ const KNOWN_STAGES = ['sandbox', 'dev', 'prod', 'staging'];
  * Lädt envStages + dbSeeds beim Öffnen, lässt User Mode/Stage/Seed wählen,
  * createSandbox + bei interactive-chat sofort redirect zur Interactive-Page.
  */
+interface TemplateLite {
+  id: string;
+  name: string;
+  mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+  envStage?: string;
+  dbSeedId?: string;
+  initialGoal?: string;
+}
+
 export function SandboxQuickCreateModal({ projectId, projectName, onClose }: Props) {
   const { client } = useConfig();
   const [mode, setMode] = useState<'sandbox' | 'sandbox-preview' | 'interactive-chat'>('interactive-chat');
   const [envStage, setEnvStage] = useState<string>('sandbox');
   const [seedId, setSeedId] = useState<string>(''); // '' = project-default, 'none' = empty
+  const [initialGoal, setInitialGoal] = useState<string>('');
   const [stages, setStages] = useState<Array<{ stage: string; keyCount: number }>>([]);
   const [seeds, setSeeds] = useState<Array<{ id: string; name: string; kind: string }>>([]);
+  const [templates, setTemplates] = useState<TemplateLite[]>([]);
+  const [templateId, setTemplateId] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,17 +43,30 @@ export function SandboxQuickCreateModal({ projectId, projectName, onClose }: Pro
     let cancelled = false;
     (async () => {
       try {
-        const [st, sd] = await Promise.all([
+        const [st, sd, tp] = await Promise.all([
           client.fetchEnvironmentStages(projectId).catch(() => []),
           client.fetchDbSeeds(projectId).catch(() => []),
+          client.fetchSandboxTemplates(projectId).catch(() => []),
         ]);
         if (cancelled) return;
         setStages(st);
         setSeeds(sd);
+        setTemplates(tp);
       } catch { /* */ }
     })();
     return () => { cancelled = true; };
   }, [client, projectId]);
+
+  function applyTemplate(id: string) {
+    setTemplateId(id);
+    if (!id) return;
+    const t = templates.find(x => x.id === id);
+    if (!t) return;
+    setMode(t.mode);
+    if (t.envStage) setEnvStage(t.envStage);
+    if (t.dbSeedId) setSeedId(t.dbSeedId);
+    if (t.initialGoal) setInitialGoal(t.initialGoal);
+  }
 
   async function handleCreate() {
     if (!client) return;
@@ -56,9 +81,10 @@ export function SandboxQuickCreateModal({ projectId, projectName, onClose }: Pro
         dbSeedId,
       });
       onClose();
-      // Bei Interactive: direkt zur Interactive-Page navigieren
+      // Bei Interactive: direkt zur Interactive-Page navigieren (optional mit Initial-Goal aus Template)
       if (mode === 'interactive-chat') {
-        window.location.href = `/alfred/interactive?sandboxId=${sb.id}`;
+        const goalQs = initialGoal.trim() ? `&goal=${encodeURIComponent(initialGoal.trim())}` : '';
+        window.location.href = `/alfred/interactive?sandboxId=${sb.id}${goalQs}`;
       } else {
         // Sonst: Sandboxes-Übersicht öffnen
         window.location.href = `/alfred/sandboxes`;
@@ -82,6 +108,18 @@ export function SandboxQuickCreateModal({ projectId, projectName, onClose }: Pro
         {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 px-2 py-1 rounded mb-2 text-xs">{error}</div>}
 
         <div className="space-y-3 text-xs">
+          {/* v751 — Template-Selector */}
+          {templates.length > 0 && (
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">📦 Aus Template laden</label>
+              <select value={templateId} onChange={(e) => applyTemplate(e.target.value)} className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200">
+                <option value="">— manuell konfigurieren —</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.mode})</option>)}
+              </select>
+              <div className="text-[10px] text-gray-500 mt-0.5">Setzt Mode + ENV-Stage + DB-Seed + Initial-Goal aus dem Template.</div>
+            </div>
+          )}
+
           {/* Mode */}
           <div>
             <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">Mode</label>
@@ -114,6 +152,18 @@ export function SandboxQuickCreateModal({ projectId, projectName, onClose }: Pro
             </select>
             <div className="text-[10px] text-gray-500 mt-0.5">Seed wird beim Start nach <code>.alfred-data/</code> kopiert.</div>
           </div>
+
+          {/* v751 — Initial-Goal (für interactive-chat) */}
+          {mode === 'interactive-chat' && (
+            <div>
+              <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">🎯 Initial-Goal (optional)</label>
+              <textarea
+                value={initialGoal} onChange={(e) => setInitialGoal(e.target.value)} rows={2}
+                placeholder="z.B. 'Bug X reproduzieren' — wird im Chat-Input vorgefüllt"
+                className="w-full bg-[#1a1a1a] border border-[#2a2a2a] rounded px-2 py-1 text-xs text-gray-200"
+              />
+            </div>
+          )}
 
           {/* Submit */}
           <div className="flex justify-end gap-2 pt-2 border-t border-[#1a1a1a]">

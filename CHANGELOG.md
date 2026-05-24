@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.751] - 2026-05-24
+
+### Added — Sandbox-Templates: wiederverwendbare Konfigurationen
+
+Anstatt bei jedem Sandbox-Create Mode + ENV-Stage + DB-Seed + Initial-Goal neu zusammenzuklicken, können diese Vorgaben jetzt als benannte Templates abgelegt und mit einem Klick im Quick-Create-Modal angewendet werden.
+
+**Storage** (Migration SQLite v93 / PG v96):
+- Tabelle `sandbox_templates` mit Feldern `mode`, `env_stage`, `db_seed_id`, `initial_goal`, `tags`
+- Scope pro User; `project_id=NULL` markiert ein global verfügbares Template, ein gesetzter Wert bindet es an ein Project
+- `SandboxTemplateRepository` mit CRUD + `listForUser(userId, projectId?)`-Filter (global+project, only-global oder all)
+
+**API** (`/api/sandbox-templates`):
+- `GET ?projectId=…` listet Templates (kein Param = alle, leerer Param = nur globale, ID = global+project)
+- `POST` legt Template an, `PATCH /:id` patcht, `DELETE /:id` löscht
+- Wire-Up in `alfred.ts` mit `ownerMasterUserId` als User-Scope
+
+**WebUI**:
+- Neue `ProjectTemplatesView` (collapsible) auf der Project-Detail-Seite: Liste mit Mode/Stage/Seed-Badges + Create-Form mit Scope-Auswahl (📌 dieses Project vs 🌐 global)
+- `SandboxQuickCreateModal` zeigt Dropdown "📦 Aus Template laden" wenn Templates existieren — übernimmt Mode/Stage/Seed/Goal
+- Initial-Goal-Textarea bei `interactive-chat`-Mode, wird beim Redirect via `?goal=…` an die Interactive-Page durchgereicht und dort in den Chat-Input vorgefüllt
+
+Typischer Use-Case: Pro Project ein "nightly-debug"-Template mit Stage=dev + Seed=debug-snapshot + Goal="Letzten Stack-Trace reproduzieren" — bei jedem Bug-Report ein Klick statt drei Dropdowns.
+
 ## [0.19.0-multi-ha.750] - 2026-05-24
 
 ### Added — Multi-Select + Bulk-Discard + Sortier-Optionen in /sandboxes

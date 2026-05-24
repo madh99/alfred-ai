@@ -92,6 +92,13 @@ export default function InteractivePage() {
 
   useEffect(() => { loadSandbox(); loadChat(); }, [loadSandbox, loadChat]);
 
+  // v751 — Pre-fill chat input from ?goal=... when redirected from a Sandbox-Template.
+  useEffect(() => {
+    const goal = search?.get('goal');
+    if (goal && !chatInput) setChatInput(goal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // v717 — Auto-Refresh: schnell (2s) bei creating/merging, langsam (10s) bei running,
   // damit Status-Wechsel zu cleaned/failed/discarded sichtbar werden ohne reload.
   useEffect(() => {

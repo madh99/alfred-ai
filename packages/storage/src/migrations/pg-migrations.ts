@@ -1431,4 +1431,28 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE project_agent_sessions ADD COLUMN IF NOT EXISTS mentioned_item_ids TEXT`, []);
     },
   },
+  {
+    version: 96,
+    description: 'v751 — sandbox_templates für wiederverwendbare Sandbox-Konfigurationen',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS sandbox_templates (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          project_id TEXT,
+          name TEXT NOT NULL,
+          description TEXT,
+          mode TEXT NOT NULL,
+          env_stage TEXT,
+          db_seed_id TEXT,
+          initial_goal TEXT,
+          tags TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_user ON sandbox_templates(user_id, updated_at DESC)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_project ON sandbox_templates(project_id)`, []);
+    },
+  },
 ];

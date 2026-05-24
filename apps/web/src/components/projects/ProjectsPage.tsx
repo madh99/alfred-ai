@@ -16,6 +16,7 @@ import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
 import { ProjectDbSeedsView } from './ProjectDbSeedsView';
+import { ProjectTemplatesView } from './ProjectTemplatesView';
 import { ProjectSandboxesView } from './ProjectSandboxesView';
 import { ProjectDeployHistoryView } from './ProjectDeployHistoryView';
 import { SandboxQuickCreateModal } from './SandboxQuickCreateModal';
@@ -994,6 +995,9 @@ export function ProjectsPage() {
 
               {/* v732 — DB-Seeds-View (collapsible) */}
               <ProjectDbSeedsView projectId={detail.project.id} projectName={detail.project.name} defaultSeedId={detail.project.defaultDbSeedId ?? null} />
+
+              {/* v751 — Sandbox-Templates */}
+              <ProjectTemplatesView projectId={detail.project.id} projectName={detail.project.name} />
 
               {/* v737 — Sandboxes-Übersicht mit Quick-Actions */}
               <ProjectSandboxesView projectId={detail.project.id} projectName={detail.project.name} />

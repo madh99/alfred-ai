@@ -2120,4 +2120,28 @@ export const MIGRATIONS: Migration[] = [
       try { db.exec(`ALTER TABLE project_agent_sessions ADD COLUMN mentioned_item_ids TEXT`); } catch { /* exists */ }
     },
   },
+  {
+    version: 93,
+    description: 'v751 — sandbox_templates für wiederverwendbare Sandbox-Konfigurationen',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sandbox_templates (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          project_id TEXT,
+          name TEXT NOT NULL,
+          description TEXT,
+          mode TEXT NOT NULL,
+          env_stage TEXT,
+          db_seed_id TEXT,
+          initial_goal TEXT,
+          tags TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_user ON sandbox_templates(user_id, updated_at DESC)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_sandbox_templates_project ON sandbox_templates(project_id)`);
+    },
+  },
 ];

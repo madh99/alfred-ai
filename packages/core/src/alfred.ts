@@ -3619,6 +3619,58 @@ export class Alfred {
                 this.logger.warn({ err }, 'v728 Environments API registration failed (non-fatal)');
               }
 
+              // v751 — Sandbox-Templates-CRUD-API
+              try {
+                const tplHttpAdapter = this.adapters.get('api') as { setSandboxTemplatesCallbacks?: (cb: Record<string, unknown>) => void } | undefined;
+                if (tplHttpAdapter && typeof tplHttpAdapter.setSandboxTemplatesCallbacks === 'function') {
+                  const { SandboxTemplateRepository } = await import('@alfred/storage');
+                  const tplRepo = new SandboxTemplateRepository(adapter);
+                  const ownerUid = () => this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                  tplHttpAdapter.setSandboxTemplatesCallbacks({
+                    list: async (projectId: string | null | undefined) => {
+                      const uid = ownerUid();
+                      if (!uid) return [];
+                      const templates = await tplRepo.listForUser(uid, projectId === undefined ? undefined : projectId);
+                      return templates.map(t => ({
+                        id: t.id, projectId: t.projectId, name: t.name, description: t.description,
+                        mode: t.mode, envStage: t.envStage, dbSeedId: t.dbSeedId, initialGoal: t.initialGoal,
+                        tags: t.tags, createdAt: t.createdAt, updatedAt: t.updatedAt,
+                      }));
+                    },
+                    create: async (input: {
+                      projectId?: string | null;
+                      name: string;
+                      description?: string;
+                      mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+                      envStage?: string;
+                      dbSeedId?: string;
+                      initialGoal?: string;
+                      tags?: string[];
+                    }) => {
+                      const uid = ownerUid();
+                      if (!uid) return { ok: false, reason: 'Kein Owner-User' };
+                      try {
+                        const t = await tplRepo.create({ ...input, userId: uid });
+                        return { ok: true, id: t.id };
+                      } catch (err) { return { ok: false, reason: (err as Error).message }; }
+                    },
+                    update: async (id: string, patch: Record<string, unknown>) => {
+                      try {
+                        const ok = await tplRepo.update(id, patch as never);
+                        return ok ? { ok: true } : { ok: false, reason: 'Template nicht gefunden' };
+                      } catch (err) { return { ok: false, reason: (err as Error).message }; }
+                    },
+                    delete: async (id: string) => {
+                      try { await tplRepo.delete(id); return { ok: true }; }
+                      catch (err) { return { ok: false, reason: (err as Error).message }; }
+                    },
+                  });
+                  this.logger.info('v751 Sandbox-Templates CRUD-API registered');
+                }
+              } catch (err) {
+                this.logger.warn({ err }, 'v751 Sandbox-Templates API registration failed (non-fatal)');
+              }
+
               // v732 — DB-Seeds-CRUD-API
               try {
                 const seedsHttpAdapter = this.adapters.get('api') as { setDbSeedsCallbacks?: (cb: Record<string, unknown>) => void } | undefined;

@@ -139,6 +139,22 @@ export interface EnvironmentsCallbacks {
   scanRepo?: (projectId: string) => Promise<{ ok: boolean; keys?: Array<{ key: string; sources: string[] }>; reason?: string }>;
 }
 
+/** v751 — Wire-Up für Sandbox-Templates-CRUD. */
+export interface SandboxTemplatesCallbacks {
+  list: (projectId?: string | null) => Promise<Array<{
+    id: string; projectId?: string; name: string; description?: string;
+    mode: string; envStage?: string; dbSeedId?: string; initialGoal?: string;
+    tags: string[]; createdAt: string; updatedAt: string;
+  }>>;
+  create: (input: {
+    projectId?: string | null; name: string; description?: string;
+    mode: 'sandbox' | 'sandbox-preview' | 'interactive-chat';
+    envStage?: string; dbSeedId?: string; initialGoal?: string; tags?: string[];
+  }) => Promise<{ ok: boolean; id?: string; reason?: string }>;
+  update: (id: string, patch: Record<string, unknown>) => Promise<{ ok: boolean; reason?: string }>;
+  delete: (id: string) => Promise<{ ok: boolean; reason?: string }>;
+}
+
 /** v732 — Wire-Up-Interface für DB-Seeds-CRUD-API. */
 export interface DbSeedsCallbacks {
   list: (projectId: string) => Promise<Array<{ id: string; name: string; kind: string; storageRef: string; sizeBytes: number; createdAt: string }>>;
@@ -458,6 +474,12 @@ export class HttpAdapter extends MessagingAdapter {
   private dbSeedsCallbacks?: DbSeedsCallbacks;
   setDbSeedsCallbacks(cb: DbSeedsCallbacks): void {
     this.dbSeedsCallbacks = cb;
+  }
+
+  /** v751 — Sandbox-Templates-CRUD-Callbacks. */
+  private sandboxTemplatesCallbacks?: SandboxTemplatesCallbacks;
+  setSandboxTemplatesCallbacks(cb: SandboxTemplatesCallbacks): void {
+    this.sandboxTemplatesCallbacks = cb;
   }
 
   // v639 — Goals API
@@ -1073,6 +1095,14 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDbSeedsDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/re-match-open-items$/) && req.method === 'POST') {
       this.handleProjectsReMatchOpenItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
+      this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
+      this.handleSandboxTemplatesCreate(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox-templates\/[^/]+$/) && req.method === 'PATCH') {
+      this.handleSandboxTemplatesUpdate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/sandbox-templates\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleSandboxTemplatesDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/restart$/) && req.method === 'POST') {
       this.handleSandboxRestart(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/force-fail$/) && req.method === 'POST') {
@@ -3855,6 +3885,96 @@ export class HttpAdapter extends MessagingAdapter {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v751 — GET /api/sandbox-templates?projectId=X → liste Templates (global + project-scoped). */
+  private async handleSandboxTemplatesList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxTemplatesCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Sandbox-Templates nicht verfügbar' }));
+      return;
+    }
+    const projectIdParam = url.searchParams.get('projectId');
+    const projectId = projectIdParam === null ? undefined : (projectIdParam === '' ? null : projectIdParam);
+    try {
+      const templates = await this.sandboxTemplatesCallbacks.list(projectId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ templates }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  /** v751 — POST /api/sandbox-templates → create */
+  private async handleSandboxTemplatesCreate(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxTemplatesCallbacks) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Sandbox-Templates nicht verfügbar' }));
+      return;
+    }
+    const body = await this.readBody(req);
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(body) as Record<string, unknown>; } catch { /* */ }
+    const name = String(payload.name ?? '').trim();
+    const mode = payload.mode;
+    if (!name || (mode !== 'sandbox' && mode !== 'sandbox-preview' && mode !== 'interactive-chat')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'name + mode (sandbox|sandbox-preview|interactive-chat) required' }));
+      return;
+    }
+    try {
+      const r = await this.sandboxTemplatesCallbacks.create({
+        projectId: payload.projectId === null ? null : (typeof payload.projectId === 'string' ? payload.projectId : undefined),
+        name,
+        description: typeof payload.description === 'string' ? payload.description : undefined,
+        mode,
+        envStage: typeof payload.envStage === 'string' ? payload.envStage : undefined,
+        dbSeedId: typeof payload.dbSeedId === 'string' ? payload.dbSeedId : undefined,
+        initialGoal: typeof payload.initialGoal === 'string' ? payload.initialGoal : undefined,
+        tags: Array.isArray(payload.tags) ? payload.tags.filter((t): t is string => typeof t === 'string') : undefined,
+      });
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v751 — PATCH /api/sandbox-templates/:id */
+  private async handleSandboxTemplatesUpdate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxTemplatesCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nicht verfügbar' })); return; }
+    const id = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let patch: Record<string, unknown> = {};
+    try { patch = JSON.parse(body) as Record<string, unknown>; } catch { /* */ }
+    try {
+      const r = await this.sandboxTemplatesCallbacks.update(id, patch);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v751 — DELETE /api/sandbox-templates/:id */
+  private async handleSandboxTemplatesDelete(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.sandboxTemplatesCallbacks) { res.writeHead(501, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'nicht verfügbar' })); return; }
+    const id = url.pathname.split('/')[3];
+    try {
+      const r = await this.sandboxTemplatesCallbacks.delete(id);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
     }
   }
 

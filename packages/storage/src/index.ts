@@ -76,6 +76,7 @@ export { BrainstormingRepository, type BrainstormingSession, type BrainstormingI
 export { LearnedRecipeRepository, type LearnedRecipe, type RecipeAction, type CreateRecipeInput } from './repositories/learned-recipe-repository.js';
 export { EnvironmentRepository, type ProjectEnvironment } from './repositories/environment-repository.js';
 export { DbSeedRepository, type ProjectDbSeed, type DbSeedKind } from './repositories/db-seed-repository.js';
+export { SandboxTemplateRepository, type SandboxTemplate, type CreateSandboxTemplateInput, type UpdateSandboxTemplateInput } from './repositories/sandbox-template-repository.js';
 export { ServiceUsageRepository, type ServiceUsageEntry } from './repositories/service-usage-repository.js';
 export { CmdbRepository } from './repositories/cmdb-repository.js';
 export { ItsmRepository } from './repositories/itsm-repository.js';
