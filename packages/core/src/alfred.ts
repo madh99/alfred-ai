@@ -5817,6 +5817,13 @@ export class Alfred {
           const { SandboxRepository: SandboxRepoForApi, SandboxChatRepository: SandboxChatRepo } = await import('@alfred/storage');
           const sandboxRepoForApi = new SandboxRepoForApi(this.database.getAdapter());
           const sandboxChatRepo = new SandboxChatRepo(this.database.getAdapter());
+          // v763 — Orphan-Cleanup: nicht-terminale Code-Agent-Tasks aus vorherigem Lauf als failed markieren
+          try {
+            const orphaned = await sandboxChatRepo.failOrphanedCodeAgentTasks();
+            if (orphaned > 0) this.logger.info({ count: orphaned }, 'v763 marked orphaned code-agent chat-tasks as failed');
+          } catch (err) {
+            this.logger.warn({ err }, 'v763 orphan-cleanup failed (non-fatal)');
+          }
           const sbMgr = this.sandboxManager;
           const projectsRepoForSb = this.projectRepo;
           const resolveCwdForSb = async (projectId: string): Promise<string | null> => {
@@ -6317,11 +6324,30 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               }
             },
             // v762 — Stop einen laufenden Code-Agent-Task. taskId aus chatSendMessage-Response.
-            chatStopTask: async (_sandboxId: string, taskId: string) => {
+            // v763 — Robust: auch wenn nicht im Memory-Map (z.B. nach Alfred-Restart), DB als stopped markieren
+            chatStopTask: async (sandboxId: string, taskId: string) => {
               const ctrl = this.codeAgentTaskAborts.get(taskId);
-              if (!ctrl) return { ok: false, reason: `Task ${taskId} läuft nicht (mehr) oder ist kein Code-Agent` };
-              ctrl.abort();
-              this.codeAgentTaskAborts.delete(taskId);
+              if (ctrl) {
+                // Live-Task: abbrechen, finally-Block schreibt 'stopped' in DB
+                ctrl.abort();
+                this.codeAgentTaskAborts.delete(taskId);
+                return { ok: true };
+              }
+              // Nicht im Map → entweder schon fertig oder nach Restart verwaist
+              const stillActive = await sandboxChatRepo.hasActiveTaskPhase(taskId);
+              if (!stillActive) {
+                return { ok: false, reason: `Task ${taskId} ist bereits beendet` };
+              }
+              // Orphan: einfach in DB als stopped markieren und Hinweis-Message anhängen
+              await sandboxChatRepo.updateTaskPhase(taskId, 'stopped');
+              await sandboxChatRepo.append({
+                sandboxId,
+                userId: this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? 'unknown',
+                role: 'agent',
+                text: '⏹ Task war verwaist (nach Restart) und wurde als gestoppt markiert.',
+                taskId,
+                taskPhase: 'stopped',
+              });
               return { ok: true };
             },
           });

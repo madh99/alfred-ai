@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.763] - 2026-05-24
+
+### Fixed — Orphane Code-Agent-Tasks nach Restart
+
+**Symptom**: Nach v762-Deploy+Restart wurden Code-Agent-Chat-Messages aus laufenden Tasks weiterhin als "running" in der UI angezeigt — Stop-Button funktionierte aber nicht, weil der Memory-Map nach Restart leer ist.
+
+**Root-Cause**: Code-Agent-Runs sind fire-and-forget. Bei Alfred-Restart sterben die Subprocesses, aber die Chat-Messages in DB stehen weiter auf `taskPhase: 'coding'`. Der AbortController war nur in-memory und ist weg.
+
+**Fix v763** (zwei Schichten):
+
+**1. Startup-Cleanup**:
+- Beim Init: `sandboxChatRepo.failOrphanedCodeAgentTasks()` markiert alle Messages mit `task_id LIKE 'code-%' AND task_phase NOT IN ('done','failed','stopped')` als `failed`
+- Loggt die Anzahl betroffener Tasks
+- Damit ist nach Restart sofort klar dass nichts mehr läuft
+
+**2. Stop-Endpoint robust**:
+- Wenn `taskId` nicht im Memory-Map: prüft `hasActiveTaskPhase(taskId)` in DB
+- Falls in DB noch aktiv (Orphan): markiert als `stopped` + hängt Hinweis-Message an
+- Falls in DB schon terminal: returnt klares "bereits beendet"
+- So funktioniert der Stop-Button auch für Tasks, die einen Restart überlebt haben (in der UI noch sichtbar)
+
 ## [0.19.0-multi-ha.762] - 2026-05-24
 
 ### Fixed — Code-Agent (v760) lässt sich jetzt stoppen

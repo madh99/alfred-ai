@@ -47,6 +47,36 @@ export class SandboxChatRepository {
     );
   }
 
+  /**
+   * v763 — Startup-Cleanup: alle nicht-terminalen Code-Agent-Chat-Messages als
+   * failed markieren. Wird beim Alfred-Init aufgerufen damit fire-and-forget-Tasks,
+   * die durch einen Crash/Restart unterbrochen wurden, nicht ewig als "running"
+   * in der UI hängen bleiben. Liefert die Anzahl betroffener Messages.
+   */
+  async failOrphanedCodeAgentTasks(): Promise<number> {
+    const r = await this.db.execute(
+      `UPDATE sandbox_chat_messages
+         SET task_phase = 'failed'
+       WHERE task_id LIKE 'code-%'
+         AND task_phase IS NOT NULL
+         AND task_phase NOT IN ('done', 'failed', 'stopped')`,
+      [],
+    );
+    return r.changes ?? 0;
+  }
+
+  /**
+   * v763 — Prüfen ob ein bestimmter Code-Agent-Task laut DB noch nicht terminal ist.
+   * Genutzt vom Stop-Endpoint um auch orphane Tasks (nicht mehr im Memory-Map) als stopped zu markieren.
+   */
+  async hasActiveTaskPhase(taskId: string): Promise<boolean> {
+    const rows = await this.db.query(
+      `SELECT 1 FROM sandbox_chat_messages WHERE task_id = ? AND task_phase IS NOT NULL AND task_phase NOT IN ('done','failed','stopped') LIMIT 1`,
+      [taskId],
+    );
+    return rows.length > 0;
+  }
+
   async deleteBySandbox(sandboxId: string): Promise<void> {
     await this.db.execute(`DELETE FROM sandbox_chat_messages WHERE sandbox_id = ?`, [sandboxId]);
   }
