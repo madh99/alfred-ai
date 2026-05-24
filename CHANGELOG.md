@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.765] - 2026-05-25
+
+### Fixed — Universal Orphan-Cleanup + Stop für Project-Agent-Tasks
+
+**Symptom (v763-Regression)**: Task `88a27c8e-...` (UUID ohne `code-`-Prefix → Project-Agent) blieb auch nach Restart als "coding" sichtbar. v763-Cleanup hat nur `task_id LIKE 'code-%'` erfasst und Project-Agent-Tasks ignoriert.
+
+**Fix (zwei Erweiterungen)**:
+
+**1. Broader Startup-Cleanup**:
+- `failOrphanedCodeAgentTasks()` cleanup-Query erweitert: jetzt ALLE Agent-Chat-Messages mit non-terminalem Phase (egal welcher Task-Typ)
+- Filter: `role = 'agent' AND task_id IS NOT NULL AND task_phase NOT IN ('done','failed','stopped','awaiting_user')`
+- `awaiting_user` bleibt erhalten (legitime Pause, Runner wartet auf User-Input)
+- Nach jedem Alfred-Init wird der UI-Stand sofort konsistent
+
+**2. Stop-Button für alle laufenden Tasks**:
+- UI zeigt ⏹ Stop nun für ALLE running Tasks (vorher nur `code-`-Prefix)
+- Stop-Callback im Backend probiert in der Reihenfolge:
+  1. Code-Agent-Map (in-memory AbortController) → SIGTERM Subprocess
+  2. Falls UUID ohne Prefix: `project_agent.execute({action:'stop',task_id})` → Stop-Signal via `pushInterjection('__STOP__')` + `activeAbortControllers`
+  3. Falls beides fehlschlägt: DB-only-Mark als `stopped` + Hinweis-Message
+- Tooltip zeigt den richtigen Task-Typ ("Code-Agent" vs "Project-Agent")
+- `awaiting_user`-Phase ist auch in den anderen Running-Detections (Polling, SSE-Subscribe) jetzt korrekt als non-running klassifiziert
+
 ## [0.19.0-multi-ha.764] - 2026-05-24
 
 ### Added — Project-Wizard mit LLM-Bootstrap (Phase 1 von 2)

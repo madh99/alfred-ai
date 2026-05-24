@@ -6323,28 +6323,52 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 return { ok: false, userMessageId: userMsg.id, reason: (err as Error).message };
               }
             },
-            // v762 — Stop einen laufenden Code-Agent-Task. taskId aus chatSendMessage-Response.
+            // v762 — Stop einen laufenden Task. taskId aus chatSendMessage-Response.
             // v763 — Robust: auch wenn nicht im Memory-Map (z.B. nach Alfred-Restart), DB als stopped markieren
+            // v765 — Funktioniert auch für Project-Agent-Tasks (UUID ohne Prefix): falls Code-Agent-Map kein
+            //        Match → check ob es ein laufender Project-Agent-Task ist und delegiere; sonst DB-only stop.
             chatStopTask: async (sandboxId: string, taskId: string) => {
+              // 1) Code-Agent Live-Task im Memory-Map?
               const ctrl = this.codeAgentTaskAborts.get(taskId);
               if (ctrl) {
-                // Live-Task: abbrechen, finally-Block schreibt 'stopped' in DB
                 ctrl.abort();
                 this.codeAgentTaskAborts.delete(taskId);
                 return { ok: true };
               }
-              // Nicht im Map → entweder schon fertig oder nach Restart verwaist
+              // 2) Status in DB checken
               const stillActive = await sandboxChatRepo.hasActiveTaskPhase(taskId);
               if (!stillActive) {
                 return { ok: false, reason: `Task ${taskId} ist bereits beendet` };
               }
-              // Orphan: einfach in DB als stopped markieren und Hinweis-Message anhängen
+              // 3) v765 — Falls Project-Agent: versuche dort sauber zu stoppen
+              if (!taskId.startsWith('code-') && this.projectAgentSkillRef) {
+                try {
+                  const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                  const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '' } as any;
+                  const r = await this.projectAgentSkillRef.execute({ action: 'stop', task_id: taskId }, ctx);
+                  if (r.success) {
+                    await sandboxChatRepo.updateTaskPhase(taskId, 'stopped');
+                    await sandboxChatRepo.append({
+                      sandboxId,
+                      userId: ownerUid || 'unknown',
+                      role: 'agent',
+                      text: '⏹ Project-Agent-Task gestoppt (User-Request).',
+                      taskId,
+                      taskPhase: 'stopped',
+                    });
+                    return { ok: true };
+                  }
+                } catch (err) {
+                  this.logger.warn({ err, taskId }, 'v765 project_agent.stop failed, falling back to DB-only mark');
+                }
+              }
+              // 4) Orphan (Restart-Überrest oder unbekannter Task-Typ): DB-only-Mark
               await sandboxChatRepo.updateTaskPhase(taskId, 'stopped');
               await sandboxChatRepo.append({
                 sandboxId,
                 userId: this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? 'unknown',
                 role: 'agent',
-                text: '⏹ Task war verwaist (nach Restart) und wurde als gestoppt markiert.',
+                text: '⏹ Task war verwaist und wurde als gestoppt markiert.',
                 taskId,
                 taskPhase: 'stopped',
               });

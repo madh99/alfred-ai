@@ -48,18 +48,23 @@ export class SandboxChatRepository {
   }
 
   /**
-   * v763 — Startup-Cleanup: alle nicht-terminalen Code-Agent-Chat-Messages als
-   * failed markieren. Wird beim Alfred-Init aufgerufen damit fire-and-forget-Tasks,
-   * die durch einen Crash/Restart unterbrochen wurden, nicht ewig als "running"
-   * in der UI hängen bleiben. Liefert die Anzahl betroffener Messages.
+   * v763/v765 — Startup-Cleanup: alle nicht-terminalen Agent-Chat-Messages als
+   * failed markieren. Wird beim Alfred-Init aufgerufen damit Tasks die durch
+   * Crash/Restart unterbrochen wurden, nicht ewig als "running" in der UI bleiben.
+   *
+   * Deckt v765 auch Project-Agent-Tasks ab (UUID-taskId ohne 'code-' Prefix) —
+   * nach Restart läuft kein Project-Agent-Runner mehr für eingefrorene Sessions,
+   * also sind alle non-terminal Phases real orphan.
+   * 'awaiting_user' bleibt erhalten (pausierte Sessions warten auf User-Input).
    */
   async failOrphanedCodeAgentTasks(): Promise<number> {
     const r = await this.db.execute(
       `UPDATE sandbox_chat_messages
          SET task_phase = 'failed'
-       WHERE task_id LIKE 'code-%'
+       WHERE role = 'agent'
+         AND task_id IS NOT NULL
          AND task_phase IS NOT NULL
-         AND task_phase NOT IN ('done', 'failed', 'stopped')`,
+         AND task_phase NOT IN ('done', 'failed', 'stopped', 'awaiting_user')`,
       [],
     );
     return r.changes ?? 0;
