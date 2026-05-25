@@ -5545,6 +5545,14 @@ export class Alfred {
       }
 
       // v609 — Wire Project-Agent-Sessions API on HTTP adapter (WebUI inspector)
+      // v787 — Agent-Session-Adapters API (für Multi-Agent-Picker im Frontend)
+      if (apiAdapter && this.agentSessionManager && 'setAgentSessionCallbacks' in apiAdapter) {
+        const mgr = this.agentSessionManager;
+        (apiAdapter as any).setAgentSessionCallbacks({
+          listAvailable: () => mgr.listAdapters(),
+        });
+      }
+
       if (apiAdapter && this.database && 'setProjectAgentCallbacks' in apiAdapter) {
         const { ProjectAgentSessionRepository } = await import('@alfred/storage');
         const sessionRepo = new ProjectAgentSessionRepository(this.database.getAdapter());
@@ -6356,6 +6364,8 @@ export class Alfred {
               attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
               mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
               engine?: 'project-agent' | 'code-agent' | 'discuss',
+              /** v787 — Optional CLI-Agent-Override aus Frontend-Picker */
+              agentNameOverride?: string,
             ) => {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) return { ok: false, reason: 'Sandbox not found' };
@@ -6624,7 +6634,12 @@ ${augmentedMessage}`;
                 if (!cAgent || codeAgents.length === 0) {
                   return { ok: false, userMessageId: userMsg.id, reason: 'code-agent nicht konfiguriert (config.codeAgents.enabled + agents)' };
                 }
-                const defaultAgent = codeAgents[0].name;
+                // v787 — Frontend kann via agentNameOverride eine spezifische CLI wählen.
+                // Wir nehmen die nur wenn sie tatsächlich konfiguriert ist (sonst silent fallback auf default).
+                const requestedAgent = agentNameOverride && codeAgents.some(a => a.name === agentNameOverride)
+                  ? agentNameOverride
+                  : codeAgents[0].name;
+                const defaultAgent = requestedAgent;
 
                 // Hybrid-Cap: letzte 15 Messages ODER ~4000 Tokens (~16000 chars), min 3 behalten
                 const allHistory = await sandboxChatRepo.list(sandboxId);

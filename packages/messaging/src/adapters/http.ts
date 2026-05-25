@@ -520,6 +520,8 @@ export class HttpAdapter extends MessagingAdapter {
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy 14-phase planner) | 'code-agent' (light, iterativ pro Iteration einen Commit). */
       engine?: 'project-agent' | 'code-agent' | 'discuss',
+      /** v787 — Optional override: welcher CLI-Agent (claude-code/vibe/codex/generic) für diesen Run. */
+      agentName?: string,
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -607,6 +609,8 @@ export class HttpAdapter extends MessagingAdapter {
       mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
       /** v760 — Engine-Wahl: 'project-agent' (default, heavy planner) | 'code-agent' (light, iterativ). */
       engine?: 'project-agent' | 'code-agent' | 'discuss',
+      /** v787 — Optional override: welcher CLI-Agent (claude-code/vibe/codex/generic) für diesen Run. */
+      agentName?: string,
     ) => Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }>;
     /** v762 — Laufenden Code-Agent-Run via taskId abbrechen. */
     chatStopTask?: (sandboxId: string, taskId: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -618,6 +622,16 @@ export class HttpAdapter extends MessagingAdapter {
     forceFail?: (sandboxId: string, reason?: string) => Promise<{ ok: boolean; reason?: string }>;
   }): void {
     this.sandboxCallbacks = cb;
+  }
+
+  /** v787 — Agent-Session-Adapter-Liste (für Frontend-Picker). */
+  private agentSessionCallbacks?: {
+    listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
+  };
+  setAgentSessionCallbacks(cb: {
+    listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
+  }): void {
+    this.agentSessionCallbacks = cb;
   }
 
   setInsightsCallbacks(opts: {
@@ -1156,6 +1170,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatStop(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/sandbox\/[^/]+\/chat\/resume$/) && req.method === 'POST') {
       this.handleSandboxChatResume(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/agent-session/adapters' && req.method === 'GET') {
+      this.handleAgentSessionAdapters(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4265,6 +4281,24 @@ export class HttpAdapter extends MessagingAdapter {
     }
   }
 
+  // v787 — Liste aller AgentSession-Adapter (für Picker im Frontend)
+  private async handleAgentSessionAdapters(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.agentSessionCallbacks) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ adapters: [] }));
+      return;
+    }
+    try {
+      const adapters = this.agentSessionCallbacks.listAvailable();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ adapters }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
   // v703 — Sandbox-Chat (Interactive-Mode)
   private async handleSandboxChatList(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
     if (!(await this.checkAuth(req, res))) return;
@@ -4289,11 +4323,16 @@ export class HttpAdapter extends MessagingAdapter {
     let attachments: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }> | undefined;
     let mentions: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }> | undefined;
     let engine: 'project-agent' | 'code-agent' | 'discuss' | undefined;
+    let agentName: string | undefined;
     try {
       const parsed = JSON.parse(body) as Record<string, unknown>;
       message = String(parsed.message ?? '');
       // v760/v769 — Engine-Wahl (default: project-agent für Backward-Compat)
       if (parsed.engine === 'code-agent' || parsed.engine === 'project-agent' || parsed.engine === 'discuss') engine = parsed.engine;
+      // v787 — Optional CLI-Agent-Override (Picker im Frontend)
+      if (typeof parsed.agentName === 'string' && parsed.agentName.length > 0 && parsed.agentName.length < 80) {
+        agentName = parsed.agentName;
+      }
       // v729a — Attachments aus dem Body validieren
       if (Array.isArray(parsed.attachments)) {
         attachments = [];
@@ -4336,7 +4375,7 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
     try {
-      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions, engine);
+      const r = await this.sandboxCallbacks.chatSendMessage(sandboxId, message.trim(), attachments, mentions, engine, agentName);
       res.writeHead(r.ok ? 200 : 500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

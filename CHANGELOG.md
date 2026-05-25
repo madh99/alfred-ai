@@ -5,6 +5,61 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.787] - 2026-05-25
+
+### Added — Agent-Picker UI: CLI-Agent pro Run wählen
+
+Frontend zeigt jetzt einen Dropdown direkt neben dem Engine-Toggle (💬/⚡/🚀): **welcher CLI-Agent** (claude-code/vibe/codex/generic) für diese Quick- oder Plan-Iteration läuft. Die Wahl ist orthogonal zum Engine-Mode — Discuss bleibt LLM-only (kein CLI), Quick und Plan nutzen den gewählten Adapter.
+
+**Neue Backend-API**: `GET /api/agent-session/adapters`
+```json
+{ "adapters": [
+  { "name": "claude-code", "capabilities": { "persistence": "flag-resume", ... } },
+  { "name": "vibe",        "capabilities": { "persistence": "flag-resume", ... } },
+  { "name": "codex",       "capabilities": { "persistence": "flag-resume", ... } },
+  { "name": "opencode",    "capabilities": { "persistence": "none", ... } }
+] }
+```
+
+**Backend-Änderungen**:
+- HTTP-Adapter: neue `setAgentSessionCallbacks({ listAvailable })` Callback-Slot
+- `handleAgentSessionAdapters` Route-Handler
+- alfred.ts: wired `apiAdapter.setAgentSessionCallbacks({ listAvailable: () => mgr.listAdapters() })`
+- `chatSendMessage` Signatur erweitert um optional `agentName?: string`
+- Body-Validation: `agentName` (string, 1-79 chars) wird durchgeschleift
+- `defaultAgent`-Resolution: `agentNameOverride` aus Request → falls in `codeAgents.agents` konfiguriert wird's verwendet, sonst silent fallback auf `codeAgents[0].name`
+
+**Frontend-Änderungen**:
+- `AlfredClient.fetchAvailableAgents()` → ruft neue API + cached lokal
+- `AlfredClient.sendSandboxChatMessage(...,agentName)` Parameter
+- `SandboxChatInput`:
+  - Neuer Prop: `sandboxId` für localStorage-Persist der Agent-Wahl pro Sandbox
+  - useEffect lädt verfügbare Adapter beim Mount
+  - State: `selectedAgent` aus `localStorage[alfred.sandbox.{sandboxId}.agent]` oder erster Adapter
+  - Neuer Dropdown `<select>` neben Engine-Toggle — wird nur gezeigt wenn ≥1 Adapter UND engine≠'discuss'
+  - Icon-Mapping: claude-code → 🤖, vibe → 🎸, codex → 🧬, sonstige → 🔧
+  - Adapter mit `persistence='none'` werden mit ⚠ markiert (kein Resume möglich)
+  - Tooltip listet welche Adapter persistente Sessions können
+- Interactive-Page: `sandboxId={sandbox.id}` an SandboxChatInput durchgereicht
+- `handleSendMessage(text, attachments, mentions, engineOverride, agentName)` schickt agent-name an Backend
+
+**Wie es sich anfühlt**:
+1. User öffnet Sandbox → Picker zeigt alle registrierten Adapter
+2. Default: erster konfigurierter Agent (z.B. `claude-code` falls primary)
+3. User wählt `🎸 vibe` → localStorage merkt sich das pro Sandbox
+4. Nächste Quick-Iteration → Backend nutzt VibeAdapter
+5. Backend lookup: `findAdapter(agentName) || codeAgents[0]` (silent fallback)
+6. Persistente Session pro (sandboxId, agentName): Wechsel zwischen Agents in derselben Sandbox bekommt jeder seine eigene Session, vorher gewählter merkt sich seinen Stand
+
+**Orthogonalität**:
+| Engine | CLI-Agent-Picker relevant? |
+|---|---|
+| 💬 Discuss | nein (LLM-only) |
+| ⚡ Quick | ja — wählt welche CLI iteriert |
+| 🚀 Plan | ja — wählt welche CLI in den Phasen läuft |
+
+**Phase 3 startet** — nächste Schritte: Session-Stats (v788), Reset-Session-Button (v789), Cross-Session-Context-Transfer (v790), Event-Replay-UI (v791).
+
 ## [0.19.0-multi-ha.786] - 2026-05-25
 
 ### Added — GenericPlainAdapter: Fallback für beliebige CLIs

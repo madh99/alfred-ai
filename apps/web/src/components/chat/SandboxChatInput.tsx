@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useLayoutEffect, type KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, type KeyboardEvent } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import { ItemMentionPicker, type MentionedItem } from './ItemMentionPicker';
 
@@ -15,7 +15,7 @@ export interface SandboxChatAttachment {
 export type SandboxChatEngine = 'project-agent' | 'code-agent' | 'discuss';
 
 interface SandboxChatInputProps {
-  onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[], engine?: SandboxChatEngine) => void;
+  onSend: (text: string, attachments?: SandboxChatAttachment[], mentions?: MentionedItem[], engine?: SandboxChatEngine, agentName?: string) => void;
   disabled?: boolean;
   placeholder?: string;
   /** v730 — Project-ID damit der Mention-Picker Open-Items/Decisions des Projekts laden kann */
@@ -23,6 +23,31 @@ interface SandboxChatInputProps {
   /** v761 — Engine-Toggle (⚡Quick = code-agent, 🚀Plan = project-agent). State von parent gehalten (für localStorage-Persist pro Sandbox). */
   engine?: SandboxChatEngine;
   onEngineChange?: (engine: SandboxChatEngine) => void;
+  /** v787 — Sandbox-ID für localStorage-Persist der Agent-Wahl pro Sandbox */
+  sandboxId?: string;
+}
+
+interface AvailableAgent {
+  name: string;
+  capabilities: {
+    persistence?: string;
+    structuredOutput?: boolean;
+    streamingTokens?: boolean;
+    supportsAbort?: boolean;
+    supportsCaching?: boolean;
+  };
+}
+
+// v787 — Icon-Mapping für bekannte Agents
+const AGENT_ICONS: Record<string, string> = {
+  'claude-code': '🤖',
+  'vibe': '🎸',
+  'mistral-vibe': '🎸',
+  'codex': '🧬',
+  'openai-codex': '🧬',
+};
+function agentIcon(name: string): string {
+  return AGENT_ICONS[name] ?? '🔧';
 }
 
 interface PendingAttachment {
@@ -37,7 +62,7 @@ const MAX_ROWS = 8;
 const MAX_FILE_MB = 10;
 const MAX_ATTACHMENTS = 5;
 
-export function SandboxChatInput({ onSend, disabled, placeholder, projectId, engine, onEngineChange }: SandboxChatInputProps) {
+export function SandboxChatInput({ onSend, disabled, placeholder, projectId, engine, onEngineChange, sandboxId }: SandboxChatInputProps) {
   const { client } = useConfig();
   const [text, setText] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -51,6 +76,34 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
   // v730 — Item-Mentions
   const [mentions, setMentions] = useState<MentionedItem[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // v787 — Multi-Agent-Picker (CLI-Auswahl: claude-code/vibe/codex/generic)
+  const [availableAgents, setAvailableAgents] = useState<AvailableAgent[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    client.fetchAvailableAgents().then(adapters => {
+      if (cancelled) return;
+      setAvailableAgents(adapters as AvailableAgent[]);
+      // localStorage-Persist pro Sandbox
+      if (sandboxId) {
+        try {
+          const saved = localStorage.getItem(`alfred.sandbox.${sandboxId}.agent`);
+          if (saved && adapters.some((a: AvailableAgent) => a.name === saved)) {
+            setSelectedAgent(saved);
+            return;
+          }
+        } catch { /* */ }
+      }
+      // Default: erster Adapter
+      if (adapters.length > 0 && !selectedAgent) setSelectedAgent(adapters[0].name);
+    }).catch(() => { /* */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, sandboxId]);
+  function changeAgent(name: string) {
+    setSelectedAgent(name);
+    if (sandboxId) try { localStorage.setItem(`alfred.sandbox.${sandboxId}.agent`, name); } catch { /* */ }
+  }
 
   async function fileToAttachment(file: File): Promise<PendingAttachment | null> {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
@@ -159,6 +212,8 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
         : undefined,
       mentions.length > 0 ? mentions : undefined,
       engine,
+      // v787 — Wenn Discuss-Mode aktiv ist, ist Agent egal (kein CLI-spawn). Sonst Picker-Wahl.
+      engine !== 'discuss' ? selectedAgent : undefined,
     );
     setText('');
     setAttachments([]);
@@ -296,6 +351,25 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
               title="Plan-basiert: 14-Phasen-Planner mit Tests/Fixes, 15-60min, für große Features"
               className={`px-2 py-1 ${engine === 'project-agent' ? 'bg-emerald-600 text-white' : 'bg-[#0a0a0a] text-gray-400 hover:bg-emerald-500/10 hover:text-emerald-300'}`}
             >🚀 Plan</button>
+          </div>
+        )}
+
+        {/* v787 — CLI-Agent-Picker: welcher Coding-Agent läuft (claude-code/vibe/codex/...). Nur bei Quick/Plan relevant. */}
+        {availableAgents.length > 0 && engine !== 'discuss' && (
+          <div className="relative">
+            <select
+              value={selectedAgent ?? ''}
+              onChange={(e) => changeAgent(e.target.value)}
+              disabled={disabled}
+              title={`CLI-Agent für diesen Run wählen. ${availableAgents.length} verfügbar. Persistente Sessions: ${availableAgents.filter(a => a.capabilities.persistence !== 'none').map(a => a.name).join(', ') || '–'}.`}
+              className="bg-[#0a0a0a] border border-[#2a2a2a] text-gray-300 rounded px-2 py-1 text-[10px] focus:outline-none focus:border-purple-500/40 disabled:opacity-40"
+            >
+              {availableAgents.map(a => (
+                <option key={a.name} value={a.name}>
+                  {agentIcon(a.name)} {a.name}{a.capabilities.persistence === 'none' ? ' ⚠' : ''}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

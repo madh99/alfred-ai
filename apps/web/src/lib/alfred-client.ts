@@ -479,17 +479,32 @@ export class AlfredClient {
     attachments?: Array<{ name: string; mime: string; dataUrl: string; dropInWorktree: boolean }>,
     mentions?: Array<{ id: string; type: 'open_item' | 'decision'; title: string; priority?: string; status?: string }>,
     engine?: 'project-agent' | 'code-agent' | 'discuss',
+    /** v787 — Optional override: welche CLI-Agent (claude-code/vibe/codex/...) für diesen Run. */
+    agentName?: string,
   ): Promise<{ ok: boolean; userMessageId?: string; taskId?: string; reason?: string }> {
     const body: Record<string, unknown> = { message };
     if (attachments && attachments.length > 0) body.attachments = attachments;
     if (mentions && mentions.length > 0) body.mentions = mentions;
     if (engine) body.engine = engine;
+    if (agentName) body.agentName = agentName;
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}/chat`, {
       method: 'POST', headers: this.jsonHeaders, body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
     return data;
+  }
+
+  /** v787 — Liste aller registrierten AgentSession-Adapter (claude-code/vibe/codex/generic). */
+  async fetchAvailableAgents(): Promise<Array<{ name: string; capabilities: Record<string, unknown> }>> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/agent-session/adapters`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({})) as { adapters?: Array<{ name: string; capabilities: Record<string, unknown> }> };
+      return data.adapters ?? [];
+    } catch {
+      return [];
+    }
   }
   async getSandbox(sandboxId: string): Promise<SandboxItem | null> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}`, { headers: this.authHeaders });

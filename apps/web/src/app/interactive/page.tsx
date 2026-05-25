@@ -357,13 +357,14 @@ export default function InteractivePage() {
     attachments?: import('@/components/chat/SandboxChatInput').SandboxChatAttachment[],
     mentions?: import('@/components/chat/ItemMentionPicker').MentionedItem[],
     engineOverride?: SandboxChatEngine,
+    agentName?: string,
   ) {
     if ((!text || !text.trim()) && (!attachments || attachments.length === 0) && (!mentions || mentions.length === 0)) return;
     if (!sandbox || !client) return;
     setBusy('send'); setError(null);
     setChatInput('');
     try {
-      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments, mentions, engineOverride ?? engine);
+      const r = await client.sendSandboxChatMessage(sandbox.id, text, attachments, mentions, engineOverride ?? engine, agentName);
       if (!r.ok) {
         setError(r.reason ?? 'Send failed');
       }
@@ -673,6 +674,7 @@ export default function InteractivePage() {
             projectId={sandbox.projectId}
             engine={engine}
             onEngineChange={changeEngine}
+            sandboxId={sandbox.id}
           />
         </div>
 
