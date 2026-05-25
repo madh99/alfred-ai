@@ -701,8 +701,9 @@ export class Alfred {
       // v779 — AgentSessionManager initialisieren.
       // v780 — ClaudeCodeAdapter registriert wenn claude-code in agents-config vorhanden.
       // v784 — VibeAdapter registriert wenn vibe in agents-config vorhanden.
+      // v785 — CodexAdapter registriert wenn codex in agents-config vorhanden.
       try {
-        const { AgentSessionManager, ClaudeCodeAdapter, VibeAdapter } = await import('@alfred/skills');
+        const { AgentSessionManager, ClaudeCodeAdapter, VibeAdapter, CodexAdapter } = await import('@alfred/skills');
         const { AgentSessionRepository: AgentSessionRepo } = await import('@alfred/storage');
         const agentSessionRepo = new AgentSessionRepo(adapter);
         this.agentSessionManager = new AgentSessionManager({
@@ -724,10 +725,17 @@ export class Alfred {
         if (hasVibeAgent) {
           this.agentSessionManager.registerAdapter(new VibeAdapter(this.logger.child({ component: 'vibe-adapter' })));
         }
+        // v785 — Codex-Adapter registrieren wenn `codex` Agent in config existiert (OpenAI Codex CLI)
+        const hasCodexAgent = this.config.codeAgents.agents.some(a =>
+          a.name === 'codex' || a.name === 'openai-codex' || a.command === 'codex',
+        );
+        if (hasCodexAgent) {
+          this.agentSessionManager.registerAdapter(new CodexAdapter(this.logger.child({ component: 'codex-adapter' })));
+        }
         this.agentSessionManager.startHealthMonitor();
-        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780/v784 AgentSessionManager initialized');
+        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780/v784/v785 AgentSessionManager initialized');
       } catch (err) {
-        this.logger.warn({ err }, 'v779/v780/v784 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
+        this.logger.warn({ err }, 'v779/v780/v784/v785 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
       }
     }
 

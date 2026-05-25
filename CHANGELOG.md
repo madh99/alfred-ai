@@ -5,6 +5,90 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.785] - 2026-05-25
+
+### Added — CodexAdapter: persistente OpenAI-Codex-CLI-Sessions
+
+Dritter konkreter AgentSession-Adapter. OpenAI Codex CLI ist damit first-class Code-Agent mit `codex exec resume <thread_id>`-Session-Continuation.
+
+**Neue Datei**: `packages/skills/src/agent-session/adapters/codex-adapter.ts`
+
+**Spawn-Command**:
+```
+codex exec [resume <thread_id>] --json --skip-git-repo-check --sandbox=danger-full-access -C <cwd> "<prompt>"
+```
+
+`--sandbox=danger-full-access` weil alfred eigene Worktree-Sandboxes verwaltet → Codex' Seatbelt/Landlock wäre doppelt + würde Edits blockieren.
+
+**Output-Format ist Event-stream mit `item.completed`-Wrapping** (unterscheidet sich von Claude per-block UND Vibe OpenAI-chat-style):
+
+```json
+{"type":"thread.started","thread_id":"7df1c8d0-..."}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"assistant_message","text":"..."}}
+{"type":"item.completed","item":{"type":"command_execution","command":"...","status":"success","exit_code":0,"output":"..."}}
+{"type":"item.completed","item":{"type":"file_change","path":"...","change_type":"modify","diff":"..."}}
+{"type":"item.completed","item":{"type":"mcp_tool_call","tool":"...","input":{...},"output":"..."}}
+{"type":"item.completed","item":{"type":"todo_list","todos":[...]}}
+{"type":"turn.completed","usage":{"input_tokens":N,"output_tokens":N,"cached_input_tokens":N}}
+```
+
+Codex sammelt eine Aktion vollständig + emit'd sie als `item.completed` mit getyptem Payload — wir mappen alle 8 item-Typen:
+
+| Codex Item-Type | → AgentEvent |
+|---|---|
+| `assistant_message` | `text` |
+| `reasoning` / `thinking` | `thinking` |
+| `command_execution` | `shell` (done mit exit-code + output) |
+| `file_change` | `edit` (mit unified-diff-Parsing → before/after/+lines/-lines) |
+| `mcp_tool_call` | `tool_call` + `tool_result` |
+| `web_search` | `tool_call` mit name=`web_search` |
+| `todo_list` | `progress` mit numerierter Liste im detail |
+| `plan` | `progress` mit text im detail |
+| `image_input` | `progress` |
+| sonst | `progress` mit `item:<type>` |
+
+**Session-ID**: kommt direkt im `thread.started` event als `thread_id` (UUID). Adapter persistiert sofort via AgentSessionRepository → nächster Run nutzt `codex exec resume <thread_id>`.
+
+**Token-Stats**: kommen sauber in `turn.completed.usage` als `input_tokens`/`output_tokens`/`cached_input_tokens` — kein stderr-Parsing nötig.
+
+**Unified-Diff-Parser**: `parseUnifiedDiff()` rekonstruiert before/after aus `file_change.diff`:
+- `+` → after
+- `-` → before
+- ` ` → beide (Kontext)
+- `change_type=create` → before='', `delete` → after=''
+
+**Process-Management**:
+- `stdio: ['ignore', 'pipe', 'pipe']` — kein hängender stdin-Read (codex blockiert sonst auf "Reading additional input from stdin...")
+- `detached + process.kill(-pid)` für sauberen tree-kill
+- Timeout default 30min, AbortSignal-Support
+- `sudo -u <user>` Wrapping wenn `runAsUser` gesetzt
+
+**ENV-Overrides**:
+- `ALFRED_CODEX_BIN=/usr/local/bin/codex` für custom paths
+- `ALFRED_CODEX_SANDBOX=workspace-write` falls strenger Mode gewünscht (default `danger-full-access`)
+
+**Wire-Up in alfred.ts**:
+```ts
+const hasCodexAgent = this.config.codeAgents.agents.some(a =>
+  a.name === 'codex' || a.name === 'openai-codex' || a.command === 'codex',
+);
+if (hasCodexAgent) {
+  this.agentSessionManager.registerAdapter(new CodexAdapter(...));
+}
+```
+
+**Capabilities**:
+| Feature | Wert |
+|---|---|
+| persistence | flag-resume |
+| structuredOutput | true |
+| streamingTokens | false (item-by-item) |
+| supportsAbort | true |
+| supportsCaching | true |
+
+**Phase 2c damit fertig** — claude-code + vibe + codex sind alle drei produktiv eingebaut. v786 = GenericPlainAdapter als Fallback für unbekannte CLIs (kilo, opencode, pi-code, vibe-code).
+
 ## [0.19.0-multi-ha.784] - 2026-05-25
 
 ### Added — VibeAdapter: persistente Mistral-Vibe-Sessions
