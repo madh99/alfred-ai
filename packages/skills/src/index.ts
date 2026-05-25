@@ -1,4 +1,6 @@
 export { Skill } from './skill.js';
+// v779 — AgentSession Layer (CLI-Coding-Agent persistent sessions across iterations)
+export * from './agent-session/index.js';
 export { resolveRelativeDates, extractRelevantUntil, extractSourceEventRefs } from './relative-date-resolver.js';
 export { validateSkillAction } from './validate-skill-action.js';
 export { effectiveUserId, allUserIds } from './user-utils.js';

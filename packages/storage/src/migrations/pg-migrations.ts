@@ -1462,4 +1462,43 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`ALTER TABLE projects ADD COLUMN IF NOT EXISTS max_concurrent_sandboxes INTEGER`, []);
     },
   },
+  {
+    version: 98,
+    description: 'v779 — agent_sessions: persistente CLI-Coding-Agent-Sessions pro Sandbox×Agent für tool-cache-retention',
+    async up(db) {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+          id TEXT PRIMARY KEY,
+          sandbox_id TEXT NOT NULL,
+          agent_name TEXT NOT NULL,
+          cli_session_id TEXT,
+          state_path TEXT,
+          capabilities_json TEXT,
+          message_count INTEGER NOT NULL DEFAULT 0,
+          total_tokens_input INTEGER NOT NULL DEFAULT 0,
+          total_tokens_output INTEGER NOT NULL DEFAULT 0,
+          total_cached_tokens INTEGER NOT NULL DEFAULT 0,
+          total_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+          last_health_ok INTEGER,
+          status TEXT NOT NULL DEFAULT 'active',
+          started_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL,
+          UNIQUE(sandbox_id, agent_name)
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_sessions_sandbox ON agent_sessions(sandbox_id)`, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_sessions_last_used ON agent_sessions(last_used_at DESC)`, []);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS agent_session_events (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          iteration INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          event_data TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_session_events_session ON agent_session_events(session_id, iteration, created_at)`, []);
+    },
+  },
 ];

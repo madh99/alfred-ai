@@ -176,6 +176,8 @@ export class Alfred {
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
   private codeAgentTaskAborts = new Map<string, AbortController>();
+  /** v779 — AgentSessionManager für persistente CLI-Coding-Agent-Sessions (claude/vibe/codex/...). Optional, nur initialisiert wenn config.codeAgents.enabled. */
+  private agentSessionManager?: import('@alfred/skills').AgentSessionManager;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
   private commitsRepoRef?: import('@alfred/storage').ProjectAgentCommitsRepository;
   private plansRepoRef?: import('@alfred/storage').ProjectAgentPlansRepository;
@@ -695,6 +697,23 @@ export class Alfred {
       skillRegistry.register(codeAgentSkill);
       this.codeAgentSkillRef = codeAgentSkill;
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
+
+      // v779 — AgentSessionManager initialisieren. Adapter werden in späteren Releases (v780+) registriert.
+      // Vorerst: leerer adapter-map, Manager kann noch nicht invoken aber existiert + Health-Monitor läuft.
+      try {
+        const { AgentSessionManager } = await import('@alfred/skills');
+        const { AgentSessionRepository: AgentSessionRepo } = await import('@alfred/storage');
+        const agentSessionRepo = new AgentSessionRepo(adapter);
+        this.agentSessionManager = new AgentSessionManager({
+          adapters: new Map(),
+          repo: agentSessionRepo,
+          logger: this.logger.child({ component: 'agent-session' }),
+        });
+        this.agentSessionManager.startHealthMonitor();
+        this.logger.info('v779 AgentSessionManager initialized (adapters will be registered in v780+)');
+      } catch (err) {
+        this.logger.warn({ err }, 'v779 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
+      }
     }
 
     // 4e1. Projects — long-lived containers for project-agent / code-agent / delegate sessions.

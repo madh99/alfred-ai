@@ -5,6 +5,55 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.779] - 2026-05-25
+
+### Added — AgentSession Foundation (Phase 2a)
+
+Erste Schicht der **AgentSession-Architektur** für persistente CLI-Coding-Agent-Sessions zwischen User-Iterationen. Nach Pre-Flight-Verifizierung dass claude-code 2.1.86, vibe 2.10.1 und codex 0.132.0 alle Session-Resume + Streaming-JSON unterstützen, ist dies die Foundation auf der die konkreten Adapter (v780+) aufsetzen.
+
+**Hintergrund**: bisher (v760-v776) startete jedes Quick-Mode-`cAgent.execute()` einen frischen `claude-code`-Subprocess ohne Memory der vorigen Iteration. Folge: pro User-Klick 5-30s File-Re-Exploration und ~5000 zusätzliche Input-Tokens. Mit Session-Resume bleibt der Tool-Call-Cache des CLI erhalten — verifiziert: claude-Resume-Run hat keine erneute File-Read gemacht.
+
+**Was v779 liefert** (keine Verhaltens-Änderung für User, reine Foundation):
+
+**DB-Schema** (Migration SQLite v95 / PG v98):
+- `agent_sessions` — pro (sandbox_id, agent_name)-Paar eine aktive Session mit `cli_session_id`, `capabilities_json`, Usage-Stats (Tokens/Cost), Status, Timestamps
+- `agent_session_events` — pro Event ein Row für Audit/Replay (in v790 für Event-Replay-UI nutzbar)
+- Indizes auf sandbox + last_used_at für LRU-Eviction
+
+**Types & Interface** (`@alfred/skills/agent-session`):
+- `AgentEvent` — diskriminierte Union mit 11 Event-Typen (session_id, text, thinking, tool_call, tool_result, edit, shell, usage, error, progress): einheitliche Cross-Adapter-Abstraction
+- `AgentSessionAdapter` — Strategy-Pattern-Interface mit `invoke()`, `isHealthy()`, `destroy()`
+- `AgentAdapterCapabilities` — pro Adapter dokumentierte Persistence-Strategy + Output-Features
+
+**Repository** (`AgentSessionRepository`):
+- CRUD: create / getById / findActive / listBySandbox / listOldestActive / update / delete / deleteBySandbox
+- `appendEvent` + `listEvents` für Audit-Trail
+- Increment-aware update für Token+Cost-Aggregation
+
+**Manager** (`AgentSessionManager`):
+- Zentrale `invoke()`-Methode: Adapter-Lookup → Session-Lookup-or-Create → Health-Check der existing session → CLI-Aufruf via Adapter → Event-Tap (persist + forward) → Stats-Update
+- `registerAdapter()` — Adapter werden ab v780 registriert
+- `resetSession()` / `cleanupSandbox()` für Lifecycle
+- LRU-Eviction wenn >4 active Sessions pro Sandbox
+- Health-Monitor-Loop mit konfigurierbarem Intervall (default 60s)
+
+**Wire-Up in alfred.ts**:
+- Manager wird instanziiert wenn `config.codeAgents.enabled === true`
+- Adapter-Map ist leer in v779 → Manager kann noch nichts invoken
+- Bestehender `executeAgent`-Pfad (legacy) bleibt unverändert — User merkt nichts
+- v780 (ClaudeCodeAdapter) registriert ersten konkreten Adapter; v781 wired ihn ins chatSendMessage als Opt-in
+- v784 (VibeAdapter) + v785 (CodexAdapter) folgen
+
+**Verifizierte Adapter-Implementations-Details** (von SSH-Pre-Flight):
+
+| Agent | Persistenz-Flag | Stream-Format | Capability |
+|---|---|---|---|
+| claude 2.1.86 | `--resume <uuid>` | `--output-format=stream-json --verbose` | flag-resume + streamingTokens + structuredOutput |
+| vibe 2.10.1 | `--resume [id]` | `--output streaming` | flag-resume + structuredOutput (batched) |
+| codex 0.132.0 | `codex exec resume <thread_id>` | `--json` | flag-resume + structuredOutput |
+
+Alle drei: native Prompt-Caching aktiv (in Tests bis zu 63% cached_input_token-Ratio gesehen).
+
 ## [0.19.0-multi-ha.776] - 2026-05-25
 
 ### Changed — Sticky-Scroll im Chat + Auto-Reload iframe nach Agent-Commit
