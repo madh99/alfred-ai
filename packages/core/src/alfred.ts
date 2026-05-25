@@ -698,10 +698,10 @@ export class Alfred {
       this.codeAgentSkillRef = codeAgentSkill;
       this.logger.info({ agents: this.config.codeAgents.agents.map(a => a.name) }, 'Code agent skill enabled');
 
-      // v779 — AgentSessionManager initialisieren. Adapter werden in späteren Releases (v780+) registriert.
-      // Vorerst: leerer adapter-map, Manager kann noch nicht invoken aber existiert + Health-Monitor läuft.
+      // v779 — AgentSessionManager initialisieren.
+      // v780 — ClaudeCodeAdapter registriert wenn claude-code in agents-config vorhanden.
       try {
-        const { AgentSessionManager } = await import('@alfred/skills');
+        const { AgentSessionManager, ClaudeCodeAdapter } = await import('@alfred/skills');
         const { AgentSessionRepository: AgentSessionRepo } = await import('@alfred/storage');
         const agentSessionRepo = new AgentSessionRepo(adapter);
         this.agentSessionManager = new AgentSessionManager({
@@ -709,10 +709,17 @@ export class Alfred {
           repo: agentSessionRepo,
           logger: this.logger.child({ component: 'agent-session' }),
         });
+        // v780 — Claude-Adapter registrieren wenn `claude-code` Agent in config existiert
+        const hasClaudeAgent = this.config.codeAgents.agents.some(a =>
+          a.name === 'claude-code' || a.command === 'claude' || a.command === 'claude-code',
+        );
+        if (hasClaudeAgent) {
+          this.agentSessionManager.registerAdapter(new ClaudeCodeAdapter(this.logger.child({ component: 'claude-code-adapter' })));
+        }
         this.agentSessionManager.startHealthMonitor();
-        this.logger.info('v779 AgentSessionManager initialized (adapters will be registered in v780+)');
+        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780 AgentSessionManager initialized');
       } catch (err) {
-        this.logger.warn({ err }, 'v779 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
+        this.logger.warn({ err }, 'v779/v780 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
       }
     }
 

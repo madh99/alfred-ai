@@ -5,6 +5,51 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.780] - 2026-05-25
+
+### Added — ClaudeCodeAdapter (erster konkreter AgentSessionAdapter)
+
+Erste Adapter-Implementation auf Basis der v779-Foundation. **Noch nicht im chatSendMessage-Flow wired** (das kommt in v781), aber Manager kann ihn jetzt invoken.
+
+**ClaudeCodeAdapter** (`@alfred/skills/agent-session`):
+- Spawnt `claude --print --verbose --output-format=stream-json --permission-mode=bypassPermissions`
+- Bei Resume: `--resume <cli-session-id>` (wir hatten via SSH verifiziert: claude erinnert sich an Tool-Call-Cache)
+- Bei Erst-Run mit preferredSessionId: `--session-id=<uuid>` (sonst lässt claude eigene generieren)
+- `sudo -u <runAsUser>` Wrapping wenn nötig
+- Line-by-line JSON-Parsing via readline aus stdout
+- AbortSignal-Support (SIGTERM → SIGKILL nach 3s)
+- Default-Timeout 30min hart
+
+**Event-Mapping** (Anthropic-message-blocks → AgentEvent):
+| Claude-Event | Mapping |
+|---|---|
+| `system.init` | `session_id` + `progress(session-init)` |
+| `assistant.content[].type=text` | `text` event |
+| `assistant.content[].type=thinking` | `thinking` event |
+| `assistant.content[].type=tool_use` | `tool_call` event |
+| `assistant.content[].type=tool_use` (name=Edit) | + zusätzlich `edit` event mit before/after/diff-lines |
+| `assistant.content[].type=tool_use` (name=Write) | + `edit` event mit before='' |
+| `assistant.content[].type=tool_use` (name=Bash) | + `shell` event (running) |
+| `user.content[].type=tool_result` (Bash) | `shell` event (done) mit output/exitCode |
+| `user.content[].type=tool_result` (andere) | `tool_result` event |
+| `result.success` | `usage` event + `progress(done)` |
+| `result.error` | `error` event |
+
+**Stats-Aggregation**:
+- inputTokens / outputTokens / cachedTokens (cache_read + cache_creation) summiert über alle assistant-events
+- costUsd aus `result.total_cost_usd`
+- modifiedFiles aus Edit/Write tool_use input.file_path
+- finalText = letztes assistant text-content (für UI-Display)
+
+**Registrierung in alfred.ts**:
+- Falls `config.codeAgents.agents` einen Agent mit `name='claude-code'` ODER `command='claude'/`claude-code'` hat → ClaudeCodeAdapter wird registriert
+- Sonst: Manager bleibt ohne Adapter (legacy executeAgent-Pfad)
+
+**Was v780 NICHT macht**:
+- chatSendMessage benutzt weiterhin den alten executeAgent — keine User-Verhaltens-Änderung
+- Frontend zeigt weiterhin Plain-Text-Live-Output (Cards kommen in v782+)
+- Vibe/Codex-Adapter folgen in v784+
+
 ## [0.19.0-multi-ha.779] - 2026-05-25
 
 ### Added — AgentSession Foundation (Phase 2a)
