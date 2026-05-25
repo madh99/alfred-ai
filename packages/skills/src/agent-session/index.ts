@@ -3,3 +3,4 @@ export { AgentSessionManager, type AgentSessionManagerDeps, type ManagerInvokeOp
 export { ClaudeCodeAdapter } from './adapters/claude-code-adapter.js';
 export { VibeAdapter } from './adapters/vibe-adapter.js';
 export { CodexAdapter } from './adapters/codex-adapter.js';
+export { GenericPlainAdapter, type GenericPlainAdapterConfig } from './adapters/generic-plain-adapter.js';

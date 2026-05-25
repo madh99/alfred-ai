@@ -5,6 +5,60 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.786] - 2026-05-25
+
+### Added — GenericPlainAdapter: Fallback für beliebige CLIs
+
+Vierter Adapter im AgentSession-Layer. **Universaler Fallback** für CLIs ohne strukturierte JSON-Events — z.B. die experimentellen kilo, opencode, pi-code, vibe-code oder beliebige zukünftige Coding-Agents.
+
+**Neue Datei**: `packages/skills/src/agent-session/adapters/generic-plain-adapter.ts`
+
+**Wie funktioniert's**:
+- Adapter wird **pro-Agent-Config instanziert** (nicht ein singleton wie claude/vibe/codex)
+- Konstruktor nimmt `{ name, command, argsTemplate, promptVia, env, cwd }`
+- `adapter.name` = `agent.name` aus der Config → Manager-Lookup findet ihn unter dem User-konfigurierten Namen
+- Spawnt `<command> [argsTemplate ...]` — `{{prompt}}`-Substitution (legacy convention)
+- Optional `promptVia: 'stdin'` statt 'arg' für CLIs die Prompt über STDIN erwarten
+- Stdout-chunks → `text`-events live an Frontend gestreamt
+- Stderr gebuffered, bei non-zero exit als `error`-event emit'd
+- `sudo -u <user>` Wrapping wenn `runAsUser` gesetzt
+- mtime-Snapshot vor/nach Run → `modifiedFiles` array (gleiche Logik wie legacy executeAgent)
+- Tree-kill via `process.kill(-pid)` mit SIGTERM→SIGKILL escalation
+- Timeout default 30min, AbortSignal-Support
+
+**Capabilities**:
+| Feature | Wert |
+|---|---|
+| persistence | **none** (kein --resume, jeder Run ist frisch) |
+| structuredOutput | false |
+| streamingTokens | true (chunks während sie reinkommen) |
+| supportsAbort | true |
+| supportsCaching | false |
+
+**Wire-Up in alfred.ts** (Iterativ über config-Agents):
+```ts
+const SPECIALIZED = new Set(['claude-code','vibe','mistral-vibe','codex','openai-codex']);
+const SPECIALIZED_COMMANDS = new Set(['claude','claude-code','vibe','codex']);
+for (const agent of this.config.codeAgents.agents) {
+  if (SPECIALIZED.has(agent.name) || SPECIALIZED_COMMANDS.has(unwrapSudo(agent).command)) continue;
+  if (alreadyRegistered) continue;
+  this.agentSessionManager.registerAdapter(new GenericPlainAdapter(logger, { name, command, argsTemplate, ...}));
+}
+```
+
+**sudo-Unwrap**: Wenn agent.command='sudo' + argsTemplate=['-u', user, real-cmd, ...] dann wird das Wrapping entfernt bevor an GenericPlainAdapter übergeben — der wendet sudo selbst basierend auf `opts.runAsUser` an. Verhindert doppeltes sudo.
+
+**Was du jetzt bekommst**:
+- User konfiguriert beliebigen Coding-Agent in config (z.B. `name: 'opencode', command: 'opencode', argsTemplate: ['{{prompt}}']`)
+- Adapter wird automatisch registriert als generic
+- Quick-Mode-Klick → CLI spawnt, stdout live im Chat als `text`-events
+- Modified-Files werden via mtime-Diff erkannt + zum Auto-Commit weitergegeben
+- KEINE Session-Continuation (Limitation) — jede Iteration startet frisch
+
+**Phase 2 jetzt komplett**: Alle CLIs sind über die AgentSession-Layer addressierbar. Spezialisierte Adapter (claude/vibe/codex) bekommen volle Persistierung + strukturierte Cards; alle anderen über Generic-Adapter mit Plain-Text-Streaming + automatischer mtime-Detection.
+
+Bleibt offen für v787+: Agent-Picker UI (3-way Engine wird Dropdown), Session-Stats-Anzeige, Reset-Button, Cross-Session-Context-Transfer, Event-Replay-UI.
+
 ## [0.19.0-multi-ha.785] - 2026-05-25
 
 ### Added — CodexAdapter: persistente OpenAI-Codex-CLI-Sessions

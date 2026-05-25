@@ -702,8 +702,9 @@ export class Alfred {
       // v780 — ClaudeCodeAdapter registriert wenn claude-code in agents-config vorhanden.
       // v784 — VibeAdapter registriert wenn vibe in agents-config vorhanden.
       // v785 — CodexAdapter registriert wenn codex in agents-config vorhanden.
+      // v786 — GenericPlainAdapter als Fallback für alle restlichen Agents (kilo, opencode, pi-code, etc.).
       try {
-        const { AgentSessionManager, ClaudeCodeAdapter, VibeAdapter, CodexAdapter } = await import('@alfred/skills');
+        const { AgentSessionManager, ClaudeCodeAdapter, VibeAdapter, CodexAdapter, GenericPlainAdapter } = await import('@alfred/skills');
         const { AgentSessionRepository: AgentSessionRepo } = await import('@alfred/storage');
         const agentSessionRepo = new AgentSessionRepo(adapter);
         this.agentSessionManager = new AgentSessionManager({
@@ -711,6 +712,15 @@ export class Alfred {
           repo: agentSessionRepo,
           logger: this.logger.child({ component: 'agent-session' }),
         });
+        // Helper: extract real command + args wenn agent via `sudo -u <user>` gewrappt ist.
+        // GenericPlainAdapter wendet sudo selbst an (basierend auf opts.runAsUser) — wir
+        // brauchen also die un-gewrappte Variante als Adapter-Config.
+        const unwrapSudo = (agent: { command: string; argsTemplate: string[] }) => {
+          if (agent.command === 'sudo' && agent.argsTemplate[0] === '-u' && agent.argsTemplate[1]) {
+            return { command: agent.argsTemplate[2], argsTemplate: agent.argsTemplate.slice(3) };
+          }
+          return { command: agent.command, argsTemplate: agent.argsTemplate };
+        };
         // v780 — Claude-Adapter registrieren wenn `claude-code` Agent in config existiert
         const hasClaudeAgent = this.config.codeAgents.agents.some(a =>
           a.name === 'claude-code' || a.command === 'claude' || a.command === 'claude-code',
@@ -732,10 +742,31 @@ export class Alfred {
         if (hasCodexAgent) {
           this.agentSessionManager.registerAdapter(new CodexAdapter(this.logger.child({ component: 'codex-adapter' })));
         }
+        // v786 — GenericPlainAdapter für alle übrigen Agents.
+        // Liste der "specialized" Adapter-Identifier (nach Agent-Name oder Command).
+        const SPECIALIZED = new Set(['claude-code', 'vibe', 'mistral-vibe', 'codex', 'openai-codex']);
+        const SPECIALIZED_COMMANDS = new Set(['claude', 'claude-code', 'vibe', 'codex']);
+        for (const agent of this.config.codeAgents.agents) {
+          const baseCmd = unwrapSudo(agent).command;
+          if (SPECIALIZED.has(agent.name) || SPECIALIZED_COMMANDS.has(baseCmd)) continue;
+          if (this.agentSessionManager.listAdapters().some(a => a.name === agent.name)) continue;
+          const unwrapped = unwrapSudo(agent);
+          this.agentSessionManager.registerAdapter(new GenericPlainAdapter(
+            this.logger.child({ component: `generic-adapter:${agent.name}` }),
+            {
+              name: agent.name,
+              command: unwrapped.command,
+              argsTemplate: unwrapped.argsTemplate,
+              promptVia: agent.promptVia ?? 'arg',
+              env: agent.env,
+              cwd: agent.cwd,
+            },
+          ));
+        }
         this.agentSessionManager.startHealthMonitor();
-        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780/v784/v785 AgentSessionManager initialized');
+        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780/v784/v785/v786 AgentSessionManager initialized');
       } catch (err) {
-        this.logger.warn({ err }, 'v779/v780/v784/v785 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
+        this.logger.warn({ err }, 'v779/v780/v784/v785/v786 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
       }
     }
 
