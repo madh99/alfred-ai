@@ -5545,7 +5545,7 @@ export class Alfred {
       }
 
       // v609 — Wire Project-Agent-Sessions API on HTTP adapter (WebUI inspector)
-      // v787/v788 — Agent-Session-Adapters API (für Multi-Agent-Picker + Stats im Frontend)
+      // v787/v788/v789 — Agent-Session-Adapters API (für Multi-Agent-Picker + Stats + Reset im Frontend)
       if (apiAdapter && this.agentSessionManager && 'setAgentSessionCallbacks' in apiAdapter) {
         const mgr = this.agentSessionManager;
         const dbForSessionStats = this.database!.getAdapter();
@@ -5574,6 +5574,22 @@ export class Alfred {
             } catch (err) {
               this.logger.warn({ err, sandboxId }, 'v788 listSessionsForSandbox failed');
               return [];
+            }
+          },
+          // v789 — Session-Reset: agentSessionManager.resetSession() macht adapter.destroy + repo.delete
+          resetSession: async (sandboxId: string, agentName: string) => {
+            try {
+              // Run-As-User aus Agent-Config bestimmen (gleiche Logik wie chatSendMessage)
+              const agentDef = this.config.codeAgents?.agents.find(a => a.name === agentName);
+              const runAsUser = (agentDef?.command === 'sudo' && agentDef.argsTemplate?.[0] === '-u' && agentDef.argsTemplate?.[1])
+                ? agentDef.argsTemplate[1]
+                : undefined;
+              await mgr.resetSession(sandboxId, agentName, runAsUser);
+              this.logger.info({ sandboxId, agentName, runAsUser }, 'v789 Session manually reset');
+              return { ok: true };
+            } catch (err) {
+              this.logger.warn({ err, sandboxId, agentName }, 'v789 resetSession failed');
+              return { ok: false, reason: (err as Error).message };
             }
           },
         });

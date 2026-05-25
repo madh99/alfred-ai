@@ -507,6 +507,21 @@ export class AlfredClient {
     }
   }
 
+  /** v789 — Session zurücksetzen: CLI-State + DB-Eintrag löschen. Nächster Run startet frisch. */
+  async resetAgentSession(sandboxId: string, agentName: string): Promise<{ ok: boolean; reason?: string }> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/agent-session/sessions/${encodeURIComponent(sandboxId)}/${encodeURIComponent(agentName)}`, {
+        method: 'DELETE',
+        headers: this.authHeaders,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, reason: data.reason ?? data.error ?? `http-${res.status}` };
+      return data;
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   /** v788 — Session-Stats für eine Sandbox (alle aktiven Agents). */
   async fetchAgentSessions(sandboxId: string): Promise<Array<{
     id: string;

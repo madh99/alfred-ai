@@ -624,15 +624,18 @@ export class HttpAdapter extends MessagingAdapter {
     this.sandboxCallbacks = cb;
   }
 
-  /** v787/v788 — Agent-Session-Adapter-Liste + Session-Stats. */
+  /** v787/v788/v789 — Agent-Session-Adapter-Liste + Session-Stats + Reset. */
   private agentSessionCallbacks?: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
     /** v788 — Stats für alle Sessions einer Sandbox (für UI-Anzeige). */
     listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
+    /** v789 — Session-Reset: CLI-State löschen + DB-Eintrag entfernen. */
+    resetSession?: (sandboxId: string, agentName: string) => Promise<{ ok: boolean; reason?: string }>;
   };
   setAgentSessionCallbacks(cb: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
     listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
+    resetSession?: (sandboxId: string, agentName: string) => Promise<{ ok: boolean; reason?: string }>;
   }): void {
     this.agentSessionCallbacks = cb;
   }
@@ -1177,6 +1180,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAgentSessionAdapters(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/agent-session\/sessions\/[^/]+$/) && req.method === 'GET') {
       this.handleAgentSessionStats(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/agent-session\/sessions\/[^/]+\/[^/]+$/) && req.method === 'DELETE') {
+      this.handleAgentSessionReset(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4320,6 +4325,32 @@ export class HttpAdapter extends MessagingAdapter {
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  // v789 — Session-Reset: CLI-State löschen + DB-Eintrag entfernen
+  private async handleAgentSessionReset(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.agentSessionCallbacks?.resetSession) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Reset nicht verfügbar' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const sandboxId = parts[4];
+    const agentName = decodeURIComponent(parts[5] ?? '');
+    if (!sandboxId || !agentName) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'sandboxId + agentName required' }));
+      return;
+    }
+    try {
+      const r = await this.agentSessionCallbacks.resetSession(sandboxId, agentName);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
     }
   }
 

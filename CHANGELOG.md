@@ -5,6 +5,82 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.789] - 2026-05-25
+
+### Added — Session-Reset-Button im Stats-Popover
+
+🗑-Button neben jedem active Session-Eintrag im Stats-Popover. Beim Klick wird die CLI-Session zurückgesetzt: adapter.destroy() + DB-Eintrag gelöscht → nächster Run startet frisch ohne `--resume`.
+
+**Neue Backend-API**: `DELETE /api/agent-session/sessions/:sandboxId/:agentName`
+- Antwort: `{ ok: boolean, reason?: string }`
+- Status 200 on success, 400 on failed reset, 501 wenn Callback nicht gesetzt
+
+**Backend-Wiring** (alfred.ts):
+- `setAgentSessionCallbacks` erweitert um `resetSession(sandboxId, agentName)`
+- Run-As-User wird aus Agent-Config extrahiert (gleiche Logik wie `chatSendMessage`):
+  ```ts
+  agentDef?.command === 'sudo' && argsTemplate?.[0] === '-u' && argsTemplate?.[1]
+    ? argsTemplate[1]
+    : undefined
+  ```
+- Aufruf: `agentSessionManager.resetSession(sandboxId, agentName, runAsUser)`
+- Manager ruft intern: `adapter.destroy(cliSessionId, runAsUser)` + `repo.delete(session.id)`
+
+**HTTP-Adapter**:
+- Neue Route `DELETE /api/agent-session/sessions/:sandboxId/:agentName`
+- Parts-Parsing: `parts[4]` = sandboxId, `parts[5]` = agentName (URL-decoded)
+- 400 wenn beide IDs fehlen
+
+**Frontend**:
+- `AlfredClient.resetAgentSession(sandboxId, agentName)` mit DELETE-Request
+- `AgentSessionStatsBadge`:
+  - Neuer State `resetting: string | null` (Session-ID die gerade resettet wird)
+  - Neuer State `internalRefresh` zum Re-Triggern des Polling-Effects nach Reset
+  - `handleReset(session)` Funktion:
+    1. Confirm-Dialog mit Verlust-Warnung (Iterations + Tokens + Cost)
+    2. Setzt resetting-State → 🗑-Button zeigt ⏳
+    3. Ruft Backend → bei Fehler: alert(), bei Erfolg: refresh-Trigger
+    4. Reset-Result: Session verschwindet aus Liste (Popover bleibt offen)
+
+**UI im Popover** (pro active Session):
+```
+[claude-code · active · abc12345…]                              [🗑]
+  5 iter · in 12k · out 200 · cache 11k · $0.04 · 30s ago
+```
+
+🗑-Button erscheint nur für `status === 'active'`-Sessions (expired/failed brauchen kein Reset).
+
+**Confirm-Dialog-Text** (bei messageCount > 0):
+```
+Session "claude-code" zurücksetzen?
+
+Damit gehen 5 Iteration(en) im CLI-Kontext verloren (Tool-Call-Cache,
+Conversation, --resume-ID).
+Gesamt-Stats: 5× · in 12300 / out 220 tokens · $0.0450
+
+Nächster Run startet frisch — der Agent muss den Code wieder
+von vorne explorieren.
+```
+
+Bei frischen Sessions (messageCount=0) wird die Verlust-Warnung weggelassen.
+
+**Use-Cases**:
+1. **CLI-State korrupt**: claude-code crashed mid-run, session-id verweist auf inkonsistenten Tool-Cache → Reset.
+2. **Context-Pollution**: lange Konversation hat zu viel "noise" angesammelt → Reset für sauberen Restart.
+3. **Pricing**: User will Caching-Vorteil neu aufbauen (z.B. nach grundlegender Code-Restrukturierung).
+4. **Multi-User-Sandbox-Übernahme**: anderer User übernimmt Sandbox, will keine Spuren des vorherigen Users haben.
+
+**Was beim Reset technisch passiert** (pro Adapter):
+- `ClaudeCodeAdapter.destroy(sessionId)`: no-op (claude-code persistiert in ~/.claude/, alfred löscht das nicht weil shared zwischen Sandboxes möglich)
+- `VibeAdapter.destroy(sessionId)`: no-op (vibe persistiert in ~/.vibe/)
+- `CodexAdapter.destroy(sessionId)`: no-op (codex in ~/.codex/sessions/)
+- `GenericPlainAdapter.destroy()`: no-op (kein State zum Löschen)
+- DB-Eintrag wird in allen Fällen entfernt → nächster Run bei `findActive()` findet keine → erstellt neue Session.
+
+→ Effekt: CLI würde technisch weiterhin "--resume <id>"-fähig sein, aber alfred verliert die Zuordnung und übergibt die ID nicht mehr → CLI startet effektiv frisch.
+
+Phase 3 schreitet voran. v790 = Cross-Session-Context-Transfer, v791 = Event-Replay-UI.
+
 ## [0.19.0-multi-ha.788] - 2026-05-25
 
 ### Added — Session-Stats-Badge: live Stats pro Sandbox×Agent

@@ -54,6 +54,9 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
   const { client } = useConfig();
   const [sessions, setSessions] = useState<AgentSessionStats[]>([]);
   const [expanded, setExpanded] = useState(false);
+  // v789 — Reset-State pro Session-ID
+  const [resetting, setResetting] = useState<string | null>(null);
+  const [internalRefresh, setInternalRefresh] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +72,29 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
     timer = setInterval(load, POLL_INTERVAL_MS);
 
     return () => { cancelled = true; if (timer) clearInterval(timer); };
-  }, [client, sandboxId, refreshKey]);
+  }, [client, sandboxId, refreshKey, internalRefresh]);
+
+  // v789 — Reset-Handler
+  async function handleReset(session: AgentSessionStats) {
+    const lossWarning = session.messageCount > 0
+      ? `\n\nDamit gehen ${session.messageCount} Iteration(en) im CLI-Kontext verloren (Tool-Call-Cache, Conversation, --resume-ID).\nGesamt-Stats: ${session.messageCount}× · in ${session.totalTokensInput} / out ${session.totalTokensOutput} tokens · $${session.totalCostUsd.toFixed(4)}`
+      : '';
+    if (!confirm(`Session "${session.agentName}" zurücksetzen?${lossWarning}\n\nNächster Run startet frisch — der Agent muss den Code wieder von vorne explorieren.`)) {
+      return;
+    }
+    setResetting(session.id);
+    try {
+      const r = await client.resetAgentSession(sandboxId, session.agentName);
+      if (!r.ok) {
+        alert(`Reset fehlgeschlagen: ${r.reason ?? 'unbekannt'}`);
+      } else {
+        // Trigger reload sodass Session aus Liste verschwindet
+        setInternalRefresh(k => k + 1);
+      }
+    } finally {
+      setResetting(null);
+    }
+  }
 
   const current = sessions.find(s => s.agentName === selectedAgent && s.status === 'active');
 
@@ -136,6 +161,17 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
                     <span className={`text-[9px] px-1 rounded ${s.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-500/20 text-gray-400'}`}>{s.status}</span>
                     {s.cliSessionId && (
                       <span className="text-[9px] text-gray-500 font-mono" title="CLI Session-ID">{s.cliSessionId.slice(0, 8)}…</span>
+                    )}
+                    {/* v789 — Reset-Button für active Sessions */}
+                    {s.status === 'active' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleReset(s); }}
+                        disabled={resetting === s.id}
+                        title={`Session zurücksetzen — ${s.agentName} startet beim nächsten Run frisch, ohne --resume. Tool-Call-Cache + Conversation gehen verloren.`}
+                        className="ml-auto text-[10px] text-red-400/70 hover:text-red-300 hover:bg-red-500/10 px-1.5 py-0.5 rounded transition disabled:opacity-30"
+                      >
+                        {resetting === s.id ? '⏳' : '🗑'}
+                      </button>
                     )}
                   </div>
                   <div className="flex items-center gap-2 mt-0.5 text-gray-400">
