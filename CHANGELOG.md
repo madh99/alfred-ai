@@ -5,6 +5,88 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.784] - 2026-05-25
+
+### Added — VibeAdapter: persistente Mistral-Vibe-Sessions
+
+Zweiter konkreter AgentSession-Adapter neben ClaudeCodeAdapter. Mistral Vibe ist damit ein vollwertiger first-class Code-Agent mit persistenter Session-Continuation.
+
+**Neue Datei**: `packages/skills/src/agent-session/adapters/vibe-adapter.ts`
+
+**Spawn-Command**:
+```
+vibe -p "<prompt>" --output streaming --trust --workdir <cwd> [--resume <session-id>]
+```
+
+**Output-Format ist OpenAI-Chat-Completion-style** (unterscheidet sich grundlegend von Claude's Anthropic-block-Format):
+```json
+{"role": "system",    "content": "<long system prompt>"}
+{"role": "user",      "content": "<prompt>"}
+{"role": "assistant", "content": "...", "reasoning_content": "...", "tool_calls": [{...}]}
+{"role": "tool",      "content": "...", "tool_call_id": "abc", "name": "read_file"}
+```
+
+**Tool-Call-Shape** (OpenAI Function-Calling):
+```json
+{"id":"abc","function":{"name":"search_replace","arguments":"{\"file_path\":...}"},"type":"function"}
+```
+
+**Mapping AgentEvent**:
+- `reasoning_content` → `thinking` event (Mistral's thinking)
+- `content` → `text` event
+- `tool_calls[]` → `tool_call` events (mit JSON-geparsten arguments)
+- `role: tool` → `tool_result` event
+- Spezialisierungen:
+  - `search_replace` → `edit` event mit Parse der SEARCH/REPLACE-Blöcke + line-counts
+  - `write_file` → `edit` event (before='', after=content)
+  - `bash` → `shell` events (running + done, mit exit-code-Erkennung)
+
+**Session-ID-Handling**: Vibe gibt Session-IDs NICHT in der stream-JSON aus. Stattdessen wird die ID am Run-Ende auf stderr geprintet:
+```
+Or: vibe --resume 418496da
+```
+Adapter parst stderr für regex `vibe\s+--resume\s+([0-9a-f]{6,})` und persistiert die ID via AgentSessionRepository → nächster Run nutzt `--resume <id>`.
+
+**Token-Stats** kommen auch via stderr (`input=17,011 output=55`) — werden in das finale `usage` event integriert.
+
+**Process-Management**:
+- `detached + process.kill(-pid)` für sauberen tree-kill
+- Timeout default 30min, configurable via `timeoutMs`
+- AbortSignal-Support für In-Flight-Cancel
+- `sudo -u <user>` Wrapping wenn `runAsUser` gesetzt
+
+**Wire-Up in alfred.ts**:
+```ts
+const hasVibeAgent = this.config.codeAgents.agents.some(a =>
+  a.name === 'vibe' || a.name === 'mistral-vibe' || a.command === 'vibe',
+);
+if (hasVibeAgent) {
+  this.agentSessionManager.registerAdapter(new VibeAdapter(...));
+}
+```
+
+Damit auto-detect: sobald User einen Code-Agent mit `name: 'vibe'` konfiguriert, läuft Vibe automatisch durch die AgentSession-Layer (statt durch legacy executeAgent).
+
+**Capabilities**:
+| Feature | Wert |
+|---|---|
+| persistence | flag-resume |
+| structuredOutput | true |
+| streamingTokens | false (message-by-message, nicht token-by-token) |
+| supportsAbort | true |
+| supportsCaching | true |
+
+**ENV-Override**: `ALFRED_VIBE_BIN=/usr/local/bin/vibe` falls `vibe` nicht im alfred-PATH.
+
+**Was du jetzt bekommst** (sobald User Vibe-Agent konfiguriert):
+- Quick-Mode-Klick mit Vibe → strukturierte AgentEventCards
+- Zweiter Klick: `--resume <id>` → Vibe weiß bereits welches File es vorher gelesen hat
+- Cross-Iteration Token-Akkumulation in `agent_sessions.total_*` columns
+- Event-Replay-Möglichkeit via `agent_session_events`
+
+Bleibt offen für v785: CodexAdapter (Event-stream items / thread.started / item.completed).
+Bleibt offen für v786: GenericPlainAdapter als Fallback für neue/unbekannte CLIs.
+
 ## [0.19.0-multi-ha.783] - 2026-05-25
 
 ### Added — AgentEventCard-Components: strukturierte Live-Anzeige im Chat

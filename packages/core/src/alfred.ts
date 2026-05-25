@@ -700,8 +700,9 @@ export class Alfred {
 
       // v779 — AgentSessionManager initialisieren.
       // v780 — ClaudeCodeAdapter registriert wenn claude-code in agents-config vorhanden.
+      // v784 — VibeAdapter registriert wenn vibe in agents-config vorhanden.
       try {
-        const { AgentSessionManager, ClaudeCodeAdapter } = await import('@alfred/skills');
+        const { AgentSessionManager, ClaudeCodeAdapter, VibeAdapter } = await import('@alfred/skills');
         const { AgentSessionRepository: AgentSessionRepo } = await import('@alfred/storage');
         const agentSessionRepo = new AgentSessionRepo(adapter);
         this.agentSessionManager = new AgentSessionManager({
@@ -716,10 +717,17 @@ export class Alfred {
         if (hasClaudeAgent) {
           this.agentSessionManager.registerAdapter(new ClaudeCodeAdapter(this.logger.child({ component: 'claude-code-adapter' })));
         }
+        // v784 — Vibe-Adapter registrieren wenn `vibe` Agent in config existiert (Mistral Vibe)
+        const hasVibeAgent = this.config.codeAgents.agents.some(a =>
+          a.name === 'vibe' || a.name === 'mistral-vibe' || a.command === 'vibe',
+        );
+        if (hasVibeAgent) {
+          this.agentSessionManager.registerAdapter(new VibeAdapter(this.logger.child({ component: 'vibe-adapter' })));
+        }
         this.agentSessionManager.startHealthMonitor();
-        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780 AgentSessionManager initialized');
+        this.logger.info({ adapters: this.agentSessionManager.listAdapters().map(a => a.name) }, 'v779/v780/v784 AgentSessionManager initialized');
       } catch (err) {
-        this.logger.warn({ err }, 'v779/v780 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
+        this.logger.warn({ err }, 'v779/v780/v784 AgentSessionManager init failed (non-fatal, falls back to legacy executeAgent)');
       }
     }
 
