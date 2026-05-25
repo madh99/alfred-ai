@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useConfig } from '@/context/ConfigContext';
 import type { SandboxItem, SandboxChatItem } from '@/lib/alfred-client';
 import { SandboxChatInput, type SandboxChatEngine } from '@/components/chat/SandboxChatInput';
+import { AgentEventCard } from '@/components/chat/AgentEventCards';
 import { SaveAsTemplateModal } from '@/components/sandbox/SaveAsTemplateModal';
 
 const STATUS_COLOR: Record<string, string> = {
@@ -594,6 +595,8 @@ export default function InteractivePage() {
             )}
             {chatHistory.map((m) => {
               const liveLines = m.taskId ? liveOutput.get(m.taskId) ?? [] : [];
+              const events = m.taskId ? liveEvents.get(m.taskId) ?? [] : [];
+              const hasStructuredEvents = events.length > 0;
               const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped' && m.taskPhase !== 'awaiting_user';
               // v765 — Stop-Button für ALLE laufenden Agent-Tasks (Code-Agent oder Project-Agent)
               const isCodeAgent = !!(m.taskId && m.taskId.startsWith('code-'));
@@ -639,7 +642,18 @@ export default function InteractivePage() {
                     </div>
                   </div>
                   <div className="whitespace-pre-wrap text-gray-200">{m.text}</div>
-                  {isRunning && liveLines.length > 0 && (
+                  {/* v783 — Strukturierte Cards wenn AgentEvents vorhanden, sonst Plain-Text-Fallback */}
+                  {(isRunning || hasStructuredEvents) && hasStructuredEvents && (
+                    <details className="mt-2" open>
+                      <summary className="cursor-pointer text-[10px] text-cyan-400 select-none">▾ Agent-Aktivität ({events.length})</summary>
+                      <div className="mt-1 max-h-96 overflow-y-auto bg-black/20 rounded p-1.5 space-y-1">
+                        {events.slice(-100).map((evt, i) => (
+                          <AgentEventCard key={`${evt.ts}-${i}`} entry={evt} />
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                  {isRunning && !hasStructuredEvents && liveLines.length > 0 && (
                     <details className="mt-2" open>
                       <summary className="cursor-pointer text-[10px] text-cyan-400">▾ Live-Output ({liveLines.length})</summary>
                       <div className="mt-1 max-h-48 overflow-y-auto bg-black/30 rounded p-1.5 font-mono text-[10px] text-gray-400 whitespace-pre-wrap">

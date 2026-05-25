@@ -5,6 +5,68 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.783] - 2026-05-25
+
+### Added — AgentEventCard-Components: strukturierte Live-Anzeige im Chat
+
+Phase 2b komplett. Frontend rendert AgentEvents als typed Cards statt Plain-Text — claude-code-Terminal-Erlebnis embedded im Alfred-Chat.
+
+**Neue Datei**: `apps/web/src/components/chat/AgentEventCards.tsx` (~280 LOC)
+
+**8 Card-Komponenten**:
+
+| Event-Type | Card | Visualisierung |
+|---|---|---|
+| `session_id` | `SessionIdCard` | 🔗 Session: abc12345… |
+| `progress` | `ProgressCard` | ▸ Phase-Name — detail |
+| `text` | `TextChunkCard` | normaler Markdown-Text |
+| `thinking` | `ThinkingCard` | 🤔 collapsible, default zugeklappt mit 200-char-preview |
+| `tool_call` | `ToolCallCard` | 🔍/✏️/$/etc + Tool-Name + Input-Preview (file_path / command / pattern) |
+| `tool_result` | `ToolResultCard` | ↳ kompakte Result-Vorschau |
+| `edit` | `EditCard` | ✏️ path · +5 / −2 · collapsible inline-Diff mit common-prefix/suffix-Erkennung |
+| `shell` | `ShellCard` | $ command · exit=0 (oder ✗ exit=1 wenn fail) · collapsible Output |
+| `usage` | `UsageCard` | 📊 in 3k · out 150 · cached 11k · $0.04 |
+| `error` | `ErrorCard` | ⚠️ recoverable / ❌ fatal |
+
+**Diff-Renderer**: simpler line-by-line diff mit common-prefix/suffix-Detection. Bei kleinen Edits im großen File werden 2 context-lines davor + danach gezeigt. Kein external diff-Library nötig.
+
+**Tool-Icon-Mapping** (claude-code + vibe-style):
+- `Read`/`read_file` → 🔍
+- `Write`/`write_file` → 📝
+- `Edit`/`search_replace` → ✏️
+- `Glob`/`web_fetch` → 🌐
+- `Grep`/`grep` → 🔎
+- `Bash`/`bash` → $
+- `Task`/`task` → 👥
+- `TodoWrite`/`todo` → ✓
+- Fallback → 🔧
+
+**Rendering-Logic in Interactive-Page**:
+```
+if (hasStructuredEvents) {
+  render <AgentEventCard /> for each event   ← NEW v783
+} else if (isRunning && liveLines) {
+  render plain-text live-output              ← LEGACY (project-agent)
+}
+```
+
+→ **Code-Agent-Sessions** (claude/vibe ab v780+) sehen jetzt strukturierte Cards mit Icons, kollabierbaren Diffs, Token-Stats.
+→ **Project-Agent-Sessions** sehen weiterhin Plain-Text (haben keine AgentEvents).
+
+**Was du nach Deploy + Restart siehst**:
+1. Quick-Mode-Klick startet claude
+2. Im Chat-Bubble erscheint expander "▾ Agent-Aktivität (N)"
+3. Innen: Cards live während Agent arbeitet
+   - 🔗 Session-ID
+   - ▸ session-init
+   - 🔍 Read src/Button.tsx
+   - 🤔 thinking (preview, klick → ausklappen)
+   - ✏️ src/Button.tsx · +3 / −1 (klick → Diff)
+   - $ npm run build · exit=0 (klick → Output)
+   - 📊 in 12k · out 200 · cached 11k · $0.04
+
+Phase 2b damit komplett. v784 = VibeAdapter (zweiter Adapter), v785 = CodexAdapter, v786 = GenericPlain-Adapter.
+
 ## [0.19.0-multi-ha.782] - 2026-05-25
 
 ### Added — Strukturierter AgentEvent-Stream parallel zu Text-Lines (Frontend bereit für Cards in v783)
