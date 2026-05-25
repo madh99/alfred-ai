@@ -186,13 +186,26 @@ export class Alfred {
   private codeAgentTaskAborts = new Map<string, AbortController>();
 
   /**
-   * v795 — git command in einem worktree als dessen Owner ausführen.
+   * v795/v796 — git command in einem worktree als dessen Owner ausführen.
    *
-   * Wenn alfred als root läuft + worktree gehört einem anderen User → wrap in
+   * Wenn alfred als root läuft + repo gehört einem anderen User → wrap in
    * `sudo -u <owner>`. Sonst direkter git-Aufruf. Behebt:
    * "fatal: detected dubious ownership in repository" (CVE-2022-24765 safety).
    *
-   * Identische Strategie wie v775 für `git worktree add`.
+   * **v796**: Korrektur der Ownership-Detection.
+   *
+   * Ein git-worktree hat einen `.git`-FILE (nicht dir) im worktree-root, der auf
+   * das tatsächliche gitdir in main-repo's `.git/worktrees/<name>/` zeigt.
+   * Die dubious-ownership-Prüfung von git inspiziert das gitdir-TARGET — nicht
+   * das worktree-Verzeichnis selbst.
+   *
+   * v795 hat `statSync(worktreePath).uid` benutzt — der Pfad ist root-owned
+   * (von alfred erstellt mit mkdir), gitdir-target dagegen madh-owned. Resultat:
+   * v795 hat "ownerUid === 0" gesehen, früh-return ohne sudo-wrap, git als root
+   * gerufen → dubious-ownership-error.
+   *
+   * v796: parse `.git`-File für `gitdir:`-pointer, stat dessen Target. Fallback
+   * auf worktreePath-uid wenn keine .git-File-Variante (regular non-worktree repo).
    */
   private async gitInWorktree(
     cwd: string,
@@ -202,6 +215,7 @@ export class Alfred {
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const fs = await import('node:fs');
+    const path = await import('node:path');
     const execAsync = promisify(execFile);
     const timeout = opts.timeout ?? 30_000;
     const maxBuffer = opts.maxBuffer ?? 1024 * 1024;
@@ -210,18 +224,46 @@ export class Alfred {
     if (!isRoot) {
       return execAsync('git', args, { cwd, timeout, maxBuffer });
     }
-    let ownerUid = 0;
-    try { ownerUid = fs.statSync(cwd).uid; } catch { /* */ }
-    if (ownerUid === 0) {
+
+    // v796 — Determine the EFFECTIVE git-repo-owner. Für worktrees ist das nicht
+    // der worktree-cwd (root-owned, nur Container), sondern das gitdir-target.
+    let effectiveUid = 0;
+    try {
+      const dotGitPath = path.join(cwd, '.git');
+      const dotGitStat = fs.statSync(dotGitPath);
+      if (dotGitStat.isFile()) {
+        // worktree-case: .git ist eine File mit "gitdir: <pfad>"
+        const content = fs.readFileSync(dotGitPath, 'utf8').trim();
+        const match = /^gitdir:\s*(.+)$/.exec(content);
+        if (match) {
+          const gitdirPath = match[1].trim();
+          // Resolve relative gitdirs
+          const absGitdir = path.isAbsolute(gitdirPath) ? gitdirPath : path.resolve(cwd, gitdirPath);
+          effectiveUid = fs.statSync(absGitdir).uid;
+        } else {
+          effectiveUid = dotGitStat.uid;
+        }
+      } else {
+        // regular repo: .git ist ein dir
+        effectiveUid = dotGitStat.uid;
+      }
+    } catch {
+      // Fallback: try worktreePath itself
+      try { effectiveUid = fs.statSync(cwd).uid; } catch { /* */ }
+    }
+
+    if (effectiveUid === 0) {
+      // Repo gehört root → direkter Call ok (auch wenn worktree-dir andere UID hat)
       return execAsync('git', args, { cwd, timeout, maxBuffer });
     }
+
     try {
-      const { stdout: nameRaw } = await execAsync('id', ['-nu', String(ownerUid)], { timeout: 3_000 });
+      const { stdout: nameRaw } = await execAsync('id', ['-nu', String(effectiveUid)], { timeout: 3_000 });
       const ownerName = nameRaw.trim();
-      if (!ownerName) throw new Error(`uid ${ownerUid} resolves to empty name`);
+      if (!ownerName) throw new Error(`uid ${effectiveUid} resolves to empty name`);
       return execAsync('sudo', ['-u', ownerName, 'git', ...args], { cwd, timeout, maxBuffer });
     } catch (err) {
-      this.logger.warn({ err, cwd, ownerUid }, 'v795 gitInWorktree sudo-wrap setup failed, falling back to direct git (may hit dubious-ownership)');
+      this.logger.warn({ err, cwd, effectiveUid }, 'v796 gitInWorktree sudo-wrap setup failed, falling back to direct git (may hit dubious-ownership)');
       return execAsync('git', args, { cwd, timeout, maxBuffer });
     }
   }

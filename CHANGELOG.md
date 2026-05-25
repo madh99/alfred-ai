@@ -5,6 +5,63 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.796] - 2026-05-25
+
+### Fixed — v795-Ownership-Detection war auf falschem Pfad
+
+v795 hat `statSync(worktreePath).uid` benutzt um zu entscheiden ob sudo-wrap nötig ist. Aber der worktree-PATH selbst ist root-owned (alfred mkdir'd das mit elevated rights), während das tatsächliche **gitdir-target** im main-repo madh-owned ist. Resultat: v795 sah `ownerUid === 0`, früh-return ohne sudo-wrap, git failte trotzdem.
+
+**Live-Reproduktion auf .92** nach v795-Deploy:
+```
+$ sudo env -i HOME=/root PATH=/usr/bin:/bin git -C <worktree> status --porcelain
+fatal: detected dubious ownership in repository at '<worktree>'
+```
+
+stat-output zeigt den eigentlichen Konflikt:
+```
+worktree-dir:  uid=0 user=root  gid=1000 group=madh  mode=2775
+.git-file:     uid=0 user=root  gid=1000 group=madh
+.git content:  gitdir: /home/madh/projects/alpbyte-games/.git/worktrees/ipk73ad8
+                       └─ that's madh-owned (in /home/madh/)
+```
+
+Worktree-Verzeichnis = root-owned (alfred-created container).
+Worktree's `.git`-File = root-owned (also alfred-created during worktree-add).
+ABER das `.git`-File enthält einen Pointer `gitdir: <pfad>` auf das eigentliche gitdir im main-repo — **das** ist madh-owned. Git's dubious-ownership-Check prüft das gitdir-target.
+
+`/root/.gitconfig` hat `safe.directory = /home/madh/projects/alpbyte-games` (main repo) — aber NICHT die worktree-Pfade. Git refused → ownership-error.
+
+**Fix v796**: `gitInWorktree()`-Helper liest jetzt das `.git`-File, parsed den `gitdir:`-Pointer, und stat'd das gitdir-target — DAS ist der effektive Repo-Owner.
+
+```ts
+const dotGitStat = fs.statSync(path.join(cwd, '.git'));
+if (dotGitStat.isFile()) {
+  const content = fs.readFileSync(dotGitPath, 'utf8').trim();
+  const match = /^gitdir:\s*(.+)$/.exec(content);
+  if (match) {
+    const gitdirPath = match[1].trim();
+    const absGitdir = path.isAbsolute(gitdirPath) ? gitdirPath : path.resolve(cwd, gitdirPath);
+    effectiveUid = fs.statSync(absGitdir).uid;  // ← der wahre Owner
+  }
+}
+```
+
+Fallback-Kette wenn `.git`-File fehlt/kaputt:
+1. dotGitStat (kann auch dir sein bei normalen non-worktree repos)
+2. worktreePath-uid (letzter Resort)
+
+**Auswirkung auf Detection**:
+
+| Repo-Typ | .git-Format | effektiveUid kommt von |
+|---|---|---|
+| Sandbox-Worktree | File mit `gitdir:`-pointer | gitdir-target im main-repo |
+| Normales Repo | Dir | .git/-dir |
+| Broken/missing .git | – | worktreePath-uid |
+
+**Verifiziert auf .92 worktree**:
+- `ls -lad /home/madh/projects/alpbyte-games/.git/worktrees/ipk73ad8` → owner=madh
+- v796 detected effectiveUid=madh-uid → sudo -u madh git ... → ✓ funktioniert (madh hat safe.directory entry)
+
 ## [0.19.0-multi-ha.795] - 2026-05-25
 
 ### Fixed — Auto-Commit + Sandbox-Git failt mit "fatal: detected dubious ownership"
