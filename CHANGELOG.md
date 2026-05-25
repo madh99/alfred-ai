@@ -5,6 +5,39 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.776] - 2026-05-25
+
+### Changed — Sticky-Scroll im Chat + Auto-Reload iframe nach Agent-Commit
+
+Zwei UX-Verbesserungen für den Interactive-Chat.
+
+**v776 — Sticky-Scroll-Pattern**:
+
+Bislang: jede neue Message (Chat-Nachricht ODER Live-Output-Line) hat den Chat-Container hart ans Bottom gescrolled — egal wo der User gerade liest. Wer hochgescrollt war um eine alte Antwort zu lesen wurde sofort wieder ans Ende gezerrt.
+
+Jetzt:
+- Scroll-Position wird beobachtet (Tolerance 50px vom Boden)
+- Auto-Scroll feuert nur wenn `userAtBottom === true`
+- Bei `userAtBottom === false` UND neuer Message: Counter wird inkrementiert, Float-Button erscheint unten-rechts: `↓ N neue Nachrichten` (animiert mit bounce-Animation)
+- Klick auf den Button: scroll-to-bottom + Counter-Reset
+- Singular/Plural-aware ("1 neue Nachricht" / "3 neue Nachrichten")
+
+**v778 — Auto-Reload iframe nach Code-Agent-Commit**:
+
+Bislang: User musste nach jedem Code-Agent-Commit manuell `🔄` klicken um die Änderung im Preview zu sehen.
+
+Jetzt:
+- Neuer Toolbar-Button `🔁 Auto ON/OFF` (default ON, emerald wenn aktiv, gray wenn aus)
+- Wenn ON: Frontend beobachtet Chat-History auf `taskPhase === 'done'` Messages mit `commit <hash>` im Text
+- Bei jeder neuen erkannten Commit-Message: iframe.key wird inkrementiert → React unmount+remount des iframes → frischer Reload
+- Tracking via `lastAutoReloadedTaskRef` damit derselbe Commit nicht doppelt triggert
+- Per-Sandbox-State in `localStorage.alfred.sandbox.<id>.autoReload`
+- User kann jederzeit toggeln, Wahl überlebt Page-Reload
+
+**Bekannte Limits**:
+- Auto-Reload nur bei `done`-Phase + commit-Hash im Text. Falls Code-Agent ohne Commit fertig wird (keine Files geändert), kein Reload.
+- Bei Project-Agent (`🚀 Plan`) wird nicht auto-reloaded — der commited am Ende einer Phase aber nicht per Message. Eigene Logik dafür fehlt noch.
+
 ## [0.19.0-multi-ha.775] - 2026-05-25
 
 ### Fixed — v774 war unvollständig: git worktree add erstellt DREI root-owned Dinge

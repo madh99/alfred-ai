@@ -70,6 +70,37 @@ export default function InteractivePage() {
   const [envNewKey, setEnvNewKey] = useState('');
   const [envNewValue, setEnvNewValue] = useState('');
   const [iframeReloadKey, setIframeReloadKey] = useState(0);
+  // v778 — Auto-Reload iframe nach Code-Agent-Commit (pro Sandbox in localStorage gemerkt)
+  const [autoReload, setAutoReload] = useState(true);
+  useEffect(() => {
+    if (!sandboxId) return;
+    try {
+      const saved = localStorage.getItem(`alfred.sandbox.${sandboxId}.autoReload`);
+      if (saved === '0') setAutoReload(false);
+      else if (saved === '1') setAutoReload(true);
+    } catch { /* */ }
+  }, [sandboxId]);
+  function toggleAutoReload() {
+    setAutoReload(prev => {
+      const next = !prev;
+      if (sandboxId) try { localStorage.setItem(`alfred.sandbox.${sandboxId}.autoReload`, next ? '1' : '0'); } catch { /* */ }
+      return next;
+    });
+  }
+  // v778 — wenn neuer 'done' Agent-Message mit commit-Reference: iframe-Reload triggern
+  const lastAutoReloadedTaskRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!autoReload) return;
+    // Letzte 'done' Agent-Message mit commit-Hash im Text suchen
+    const latestCommit = [...chatHistory].reverse().find(m =>
+      m.role === 'agent' && m.taskPhase === 'done' && m.taskId && /commit\s+`?[0-9a-f]{6,}/i.test(m.text || '')
+    );
+    if (latestCommit && latestCommit.id !== lastAutoReloadedTaskRef.current) {
+      lastAutoReloadedTaskRef.current = latestCommit.id;
+      setIframeReloadKey(k => k + 1);
+    }
+  }, [chatHistory, autoReload]);
+
   // v761 — Engine-Toggle (Quick=code-agent / Plan=project-agent) — pro Sandbox in localStorage
   const [engine, setEngine] = useState<SandboxChatEngine>('code-agent');
   useEffect(() => {
@@ -129,11 +160,41 @@ export default function InteractivePage() {
     return () => clearInterval(t);
   }, [sandbox?.status, loadSandbox]);
 
-  // Auto-Scroll Chat
+  // v776 — Sticky-Scroll: nur auto-scrollen wenn User unten ist
+  const [userAtBottom, setUserAtBottom] = useState(true);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const lastChatLengthRef = useRef(0);
+  const SCROLL_TOLERANCE = 50;
   useEffect(() => {
     const box = chatBoxRef.current;
+    if (!box) return;
+    const onScroll = () => {
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < SCROLL_TOLERANCE;
+      setUserAtBottom(atBottom);
+      if (atBottom) setUnseenCount(0);
+    };
+    box.addEventListener('scroll', onScroll, { passive: true });
+    return () => box.removeEventListener('scroll', onScroll);
+  }, []);
+  useEffect(() => {
+    const box = chatBoxRef.current;
+    if (!box) return;
+    const newCount = chatHistory.length;
+    const grew = newCount > lastChatLengthRef.current;
+    lastChatLengthRef.current = newCount;
+    if (userAtBottom) {
+      box.scrollTop = box.scrollHeight;
+      setUnseenCount(0);
+    } else if (grew) {
+      setUnseenCount(c => c + 1);
+    }
+  }, [chatHistory, liveOutput, userAtBottom]);
+  function scrollToBottom() {
+    const box = chatBoxRef.current;
     if (box) box.scrollTop = box.scrollHeight;
-  }, [chatHistory, liveOutput]);
+    setUserAtBottom(true);
+    setUnseenCount(0);
+  }
 
   // v747 — Tab-Title-Update + Browser-Notification bei Agent-Status-Change
   useEffect(() => {
@@ -474,6 +535,11 @@ export default function InteractivePage() {
             <>
               {/* v728 — Toolbar-Buttons */}
               <button onClick={handleReloadIframe} disabled={busy !== null} title="iframe neu laden" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">🔄</button>
+              <button
+                onClick={toggleAutoReload}
+                title={autoReload ? 'Auto-Reload nach Agent-Commit AN — klicken zum Deaktivieren' : 'Auto-Reload AUS — klicken zum Aktivieren (iframe lädt sich automatisch neu wenn Code-Agent commited)'}
+                className={`px-2 py-1 border rounded text-[11px] ${autoReload ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-gray-500/40 text-gray-500 hover:bg-gray-500/15'}`}
+              >🔁 Auto {autoReload ? 'ON' : 'OFF'}</button>
               <button onClick={handleRestart} disabled={busy !== null} title="Dev-Server restart (stop + .next/ clear + start)" className="px-2 py-1 border border-amber-500/40 text-amber-400 hover:bg-amber-500/15 rounded text-[11px] disabled:opacity-50">♻️ Restart</button>
               <button onClick={openLogsModal} disabled={busy !== null} title="Container-Logs anzeigen" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📜 Logs</button>
               <button onClick={openStatsModal} disabled={busy !== null} title="Container-Stats (CPU/RAM)" className="px-2 py-1 border border-gray-500/40 text-gray-300 hover:bg-gray-500/15 rounded text-[11px] disabled:opacity-50">📊 Stats</button>
@@ -493,7 +559,18 @@ export default function InteractivePage() {
       )}
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="w-[40%] flex flex-col border-r border-[#1a1a1a]">
+        <div className="w-[40%] flex flex-col border-r border-[#1a1a1a] relative">
+          {/* v776 — Floating "neue Nachrichten" Button wenn User hochgescrollt */}
+          {!userAtBottom && unseenCount > 0 && (
+            <button
+              onClick={scrollToBottom}
+              className="absolute bottom-20 right-3 z-10 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] rounded-full shadow-lg flex items-center gap-1.5 animate-bounce"
+              title="Zum unten Ende scrollen"
+            >
+              <span>↓</span>
+              <span>{unseenCount} neue {unseenCount === 1 ? 'Nachricht' : 'Nachrichten'}</span>
+            </button>
+          )}
           <div ref={chatBoxRef} className="flex-1 overflow-y-auto p-3 space-y-2">
             {chatHistory.length === 0 && (
               <div className="text-xs text-gray-500 italic">
