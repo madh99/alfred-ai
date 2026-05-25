@@ -5576,6 +5576,24 @@ export class Alfred {
               return [];
             }
           },
+          // v791 — Event-Replay: alle persistierten Events einer Session
+          listEventsForSession: async (sessionId: string, limit?: number) => {
+            try {
+              const { AgentSessionRepository: ASR } = await import('@alfred/storage');
+              const repo = new ASR(dbForSessionStats);
+              const events = await repo.listEvents(sessionId, undefined, limit ?? 500);
+              return events.map(e => ({
+                id: e.id,
+                iteration: e.iteration,
+                eventType: e.eventType,
+                eventData: e.eventData,
+                createdAt: e.createdAt,
+              }));
+            } catch (err) {
+              this.logger.warn({ err, sessionId }, 'v791 listEventsForSession failed');
+              return [];
+            }
+          },
           // v789 — Session-Reset: agentSessionManager.resetSession() macht adapter.destroy + repo.delete
           resetSession: async (sandboxId: string, agentName: string) => {
             try {

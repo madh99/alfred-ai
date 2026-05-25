@@ -624,18 +624,21 @@ export class HttpAdapter extends MessagingAdapter {
     this.sandboxCallbacks = cb;
   }
 
-  /** v787/v788/v789 — Agent-Session-Adapter-Liste + Session-Stats + Reset. */
+  /** v787/v788/v789/v791 — Agent-Session-Adapter-Liste + Session-Stats + Reset + Event-Replay. */
   private agentSessionCallbacks?: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
     /** v788 — Stats für alle Sessions einer Sandbox (für UI-Anzeige). */
     listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
     /** v789 — Session-Reset: CLI-State löschen + DB-Eintrag entfernen. */
     resetSession?: (sandboxId: string, agentName: string) => Promise<{ ok: boolean; reason?: string }>;
+    /** v791 — Alle Events einer Session für Replay-UI. */
+    listEventsForSession?: (sessionId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
   };
   setAgentSessionCallbacks(cb: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
     listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
     resetSession?: (sandboxId: string, agentName: string) => Promise<{ ok: boolean; reason?: string }>;
+    listEventsForSession?: (sessionId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
   }): void {
     this.agentSessionCallbacks = cb;
   }
@@ -1182,6 +1185,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleAgentSessionStats(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/agent-session\/sessions\/[^/]+\/[^/]+$/) && req.method === 'DELETE') {
       this.handleAgentSessionReset(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/agent-session\/events\/[^/]+$/) && req.method === 'GET') {
+      this.handleAgentSessionEvents(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4322,6 +4327,32 @@ export class HttpAdapter extends MessagingAdapter {
       const sessions = await this.agentSessionCallbacks.listSessionsForSandbox(sandboxId);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ sessions }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  // v791 — Event-Replay: alle Events einer Session chronologisch
+  private async handleAgentSessionEvents(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.agentSessionCallbacks?.listEventsForSession) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ events: [] }));
+      return;
+    }
+    const sessionId = url.pathname.split('/')[4];
+    const limitParam = url.searchParams.get('limit');
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 500, 2000) : 500;
+    if (!sessionId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'sessionId required' }));
+      return;
+    }
+    try {
+      const events = await this.agentSessionCallbacks.listEventsForSession(sessionId, limit);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ events }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));

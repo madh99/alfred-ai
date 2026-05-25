@@ -507,6 +507,27 @@ export class AlfredClient {
     }
   }
 
+  /** v791 — Alle persistierten Events einer Session abrufen (für Replay-UI). */
+  async fetchAgentSessionEvents(sessionId: string, limit?: number): Promise<Array<{
+    id: string;
+    iteration: number;
+    eventType: string;
+    eventData: any;
+    createdAt: string;
+  }>> {
+    try {
+      const url = limit
+        ? `${this.baseUrl}/api/agent-session/events/${encodeURIComponent(sessionId)}?limit=${limit}`
+        : `${this.baseUrl}/api/agent-session/events/${encodeURIComponent(sessionId)}`;
+      const res = await fetch(url, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({})) as { events?: Array<any> };
+      return data.events ?? [];
+    } catch {
+      return [];
+    }
+  }
+
   /** v789 — Session zurücksetzen: CLI-State + DB-Eintrag löschen. Nächster Run startet frisch. */
   async resetAgentSession(sandboxId: string, agentName: string): Promise<{ ok: boolean; reason?: string }> {
     try {

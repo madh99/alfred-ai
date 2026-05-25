@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useConfig } from '@/context/ConfigContext';
+import { AgentSessionReplayModal } from './AgentSessionReplayModal';
 
 /**
  * v788 — Kompakter Stats-Badge zeigt aktuelle Session-Stats für (sandbox × selectedAgent).
@@ -57,6 +58,8 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
   // v789 — Reset-State pro Session-ID
   const [resetting, setResetting] = useState<string | null>(null);
   const [internalRefresh, setInternalRefresh] = useState(0);
+  // v791 — Replay-Modal
+  const [replaySession, setReplaySession] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,15 +163,39 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
                     <span className="font-mono font-semibold">{s.agentName}</span>
                     <span className={`text-[9px] px-1 rounded ${s.status === 'active' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-gray-500/20 text-gray-400'}`}>{s.status}</span>
                     {s.cliSessionId && (
-                      <span className="text-[9px] text-gray-500 font-mono" title="CLI Session-ID">{s.cliSessionId.slice(0, 8)}…</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // v791 — Klick auf cli-session-id öffnet Replay-Modal
+                          setReplaySession({
+                            id: s.id,
+                            title: `${s.agentName} · ${s.cliSessionId?.slice(0, 16) ?? ''}… · ${s.messageCount} Iter`,
+                          });
+                          setExpanded(false);
+                        }}
+                        title="Klick zeigt Event-Replay aller Iterationen dieser Session"
+                        className="text-[9px] text-gray-500 hover:text-purple-300 font-mono underline decoration-dotted"
+                      >{s.cliSessionId.slice(0, 8)}…</button>
                     )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setReplaySession({
+                          id: s.id,
+                          title: `${s.agentName} · ${s.cliSessionId?.slice(0, 16) ?? '(no cli-id)'}… · ${s.messageCount} Iter`,
+                        });
+                        setExpanded(false);
+                      }}
+                      title="Event-Replay aller Iterationen anzeigen"
+                      className="ml-auto text-[10px] text-purple-400/70 hover:text-purple-300 hover:bg-purple-500/10 px-1.5 py-0.5 rounded transition"
+                    >📜</button>
                     {/* v789 — Reset-Button für active Sessions */}
                     {s.status === 'active' && (
                       <button
                         onClick={(e) => { e.stopPropagation(); handleReset(s); }}
                         disabled={resetting === s.id}
                         title={`Session zurücksetzen — ${s.agentName} startet beim nächsten Run frisch, ohne --resume. Tool-Call-Cache + Conversation gehen verloren.`}
-                        className="ml-auto text-[10px] text-red-400/70 hover:text-red-300 hover:bg-red-500/10 px-1.5 py-0.5 rounded transition disabled:opacity-30"
+                        className="text-[10px] text-red-400/70 hover:text-red-300 hover:bg-red-500/10 px-1.5 py-0.5 rounded transition disabled:opacity-30"
                       >
                         {resetting === s.id ? '⏳' : '🗑'}
                       </button>
@@ -201,6 +228,15 @@ export function AgentSessionStatsBadge({ sandboxId, selectedAgent, refreshKey }:
             schließen
           </button>
         </div>
+      )}
+
+      {/* v791 — Event-Replay-Modal (rendered ausserhalb der Popover-Hierarchie wegen z-index) */}
+      {replaySession && (
+        <AgentSessionReplayModal
+          sessionId={replaySession.id}
+          title={replaySession.title}
+          onClose={() => setReplaySession(null)}
+        />
       )}
     </div>
   );

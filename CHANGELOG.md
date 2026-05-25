@@ -5,6 +5,85 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.791] - 2026-05-25
+
+### Added — Event-Replay-UI: historische Sessions im Detail-Modal
+
+Click auf 📜-Button (oder cli-session-id) im Stats-Popover → Modal mit allen persistierten Events der Session, chronologisch gruppiert nach Iteration. Readonly Snapshot — keine Polling-Updates.
+
+**Neue Backend-API**: `GET /api/agent-session/events/:sessionId?limit=500`
+```json
+{ "events": [
+  { "id": "...", "iteration": 1, "eventType": "session_id", "eventData": {...}, "createdAt": "..." },
+  { "id": "...", "iteration": 1, "eventType": "text", "eventData": {...}, "createdAt": "..." },
+  { "id": "...", "iteration": 1, "eventType": "tool_call", "eventData": {...}, "createdAt": "..." },
+  { "id": "...", "iteration": 2, "eventType": "edit", "eventData": {...}, "createdAt": "..." }
+] }
+```
+
+Liefert alle Events einer Session über AgentSessionRepository.listEvents(), sortiert nach `created_at ASC`. Default-Limit 500, max 2000.
+
+**Backend-Wiring** (alfred.ts):
+- `setAgentSessionCallbacks` erweitert um `listEventsForSession(sessionId, limit?)`
+- JSON-safe mapping (id, iteration, eventType, eventData, createdAt)
+
+**HTTP-Adapter**:
+- Neue Route `GET /api/agent-session/events/:sessionId`
+- `?limit=N` Query-Param (clamped to ≤2000)
+- 200 mit leerem `events: []` wenn Callback nicht gesetzt
+
+**Frontend-Komponente**: `apps/web/src/components/chat/AgentSessionReplayModal.tsx` (~140 LOC)
+
+**Modal-Aufbau**:
+- Header: "📜 Session-Replay · {agentName · cli-id… · N Iter}" + Event-Counter
+- Body: Events gruppiert nach `iteration` → collapsible Sub-Sections
+- Pro Iteration: Header "▼ Iteration N" + Type-Stats (z.B. `text=2 · tool_call=5 · edit=3`)
+- Pro Event: Timestamp (lokale Zeit) + dieselbe `<AgentEventCard>` wie im Live-Stream
+- Click auf Iteration-Header → toggle collapsed
+- Click auf Backdrop oder ✕ → close
+
+**Konsistenz mit Live-Stream**: Events werden über die identische `<AgentEventCard>`-Komponente (aus v783) gerendert → User sieht historisch exakt dasselbe Format wie live. ToolCallCard mit Icons, EditCard mit inline-diff, ShellCard mit collapsible output, ThinkingCard collapsible, alles identisch.
+
+**Stats-Badge-Integration**:
+- 📜-Button neu pro Session-Eintrag (rechts neben status-pill, ml-auto)
+- cli-session-id-Link wird zum Button mit unterline-decoration-dotted: Klick öffnet auch Replay
+- 🗑-Reset-Button-Position bleibt (rechts vom 📜)
+
+**Fallback-States**:
+- Loading: "Lade Events…" centered
+- Error: rote Box mit Fehler-Message
+- 0 Events: "Keine Events für diese Session persistiert (möglicherweise wurde die Session vor v780 erstellt oder enthielt keinen vollständigen Run)"
+
+**Use-Cases**:
+1. **Debugging**: User will nachvollziehen warum eine Iteration failed — sieht ToolCalls + ToolResults + Errors in chronologischer Reihenfolge
+2. **Audit**: was hat Agent X in dieser Session konkret gemacht — alle `edit`-Events + `shell`-Commands sichtbar
+3. **Lernen**: User sieht wie ein erfahrener Agent strukturiert ein Problem löst (welche Tools in welcher Reihenfolge)
+4. **Cost-Analyse**: bei sehr teuren Sessions sehen welche Iteration die meisten Tokens verbrauchte (usage-Events sichtbar)
+5. **Reproduzierbarkeit**: Modal zeigt cli-session-id → User kann manuell `claude --resume <id>` außerhalb von Alfred starten
+
+**Performance**:
+- Default 500 Events Limit (typische Quick-Iteration: 20-40 events, Plan-Phase: 100-200 events)
+- Bei Approval ≤2000 events nachladbar via `?limit=2000`
+- Keine Polling — nur initial-load
+- Iteration-Collapse minimiert DOM-Footprint bei vielen Iterationen
+
+**Phase 3 komplett** — die AgentSession-Layer ist damit voll funktional:
+- v779 Foundation (Schema + Manager + Repo)
+- v780/v784/v785/v786 4 Adapter (claude-code/vibe/codex/generic)
+- v781 chatSendMessage Auto-Detection
+- v782/v783 Live-Stream + Cards
+- v787 Agent-Picker UI
+- v788 Stats-Badge
+- v789 Reset-Button
+- v790 Cross-Session-Context-Transfer
+- v791 Event-Replay-Modal
+
+Phase 4 (nächste Themen — offen):
+- Multi-User-Sandbox-Sharing (mehrere User parallel an einer Sandbox)
+- Session-Branching (Snapshot eines Standes → parallele Exploration)
+- Inter-Sandbox-Knowledge-Sharing (Pattern-Library aus erfolgreichen Sessions)
+- Vector-Search über alte Events (semantische Suche "wo hat claude jemals X geändert?")
+
 ## [0.19.0-multi-ha.790] - 2026-05-25
 
 ### Added — Cross-Session-Context-Transfer beim Agent-Wechsel
