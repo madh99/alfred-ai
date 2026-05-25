@@ -99,6 +99,8 @@ export function ProjectsPage() {
   const [newItemPriority, setNewItemPriority] = useState<'low' | 'normal' | 'high'>('normal');
   // v742 — Re-Match Open-Items mit OpenItemMatcher
   const [reMatching, setReMatching] = useState(false);
+  // v797 — Manueller Health-Check-Trigger
+  const [healthChecking, setHealthChecking] = useState(false);
   // v641 — Multi-Select + Bulk-Work + Audit
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [workingOnItems, setWorkingOnItems] = useState(false);
@@ -375,6 +377,20 @@ export function ProjectsPage() {
     } finally { setReMatching(false); }
   }
 
+  // v797 — Manueller Health-Check
+  async function runHealthCheck() {
+    if (!client || !detail) return;
+    setHealthChecking(true);
+    try {
+      const r = await client.triggerProjectHealthCheck(detail.project.id);
+      if (r.ok) {
+        await loadDetail(detail.project.id); // Reload damit neue Probe-Ergebnisse sichtbar werden
+      } else {
+        alert(`✗ Health-Check fehlgeschlagen: ${r.reason ?? 'unknown'}`);
+      }
+    } finally { setHealthChecking(false); }
+  }
+
   async function runAudit() {
     if (!client || !detail) return;
     setAuditing(true); setAuditData(null);
@@ -622,7 +638,16 @@ export function ProjectsPage() {
 
               {/* Health-Probes */}
               <div className="pt-2 border-t border-[#222]">
-                <h3 className="text-sm font-semibold text-gray-400 mb-2">Letzte Health-Checks</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-sm font-semibold text-gray-400">Letzte Health-Checks</h3>
+                  {/* v797 — Manueller Trigger (sonst läuft Health-Monitor nur alle 6h) */}
+                  <button
+                    onClick={runHealthCheck}
+                    disabled={healthChecking}
+                    className="px-2 py-0.5 text-[10px] text-cyan-400 hover:bg-cyan-500/10 border border-cyan-500/30 rounded disabled:opacity-60 disabled:cursor-wait"
+                    title="Health-Check jetzt ausführen (sonst nur alle 6h) — re-checks git/build/deps/http und persistiert frische Ergebnisse"
+                  >{healthChecking ? '⏳ Checke…' : '🔄 Health-Check jetzt'}</button>
+                </div>
                 {Object.keys(detail.health).length === 0 ? (
                   <div className="text-xs text-gray-600">Noch keine Probes gelaufen.</div>
                 ) : (

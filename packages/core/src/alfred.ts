@@ -7782,6 +7782,25 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               return { ok: false, reason: (err as Error).message };
             }
           },
+          // v797 — Manueller Health-Check (statt 6h-Schedule warten)
+          triggerHealthCheck: async (projectId: string) => {
+            if (!this.projectHealthMonitor) {
+              return { ok: false, reason: 'HealthMonitor nicht initialisiert' };
+            }
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return { ok: false, reason: 'Project nicht gefunden' };
+              const probes = await this.projectHealthMonitor.checkProject(project);
+              return {
+                ok: true,
+                probes: probes.map(p => ({ probe: p.probe, status: p.status, details: p.details })),
+              };
+            } catch (err) {
+              this.logger.warn({ err, projectId }, 'v797 triggerHealthCheck failed');
+              return { ok: false, reason: (err as Error).message };
+            }
+          },
           // v658 — Work-Stats Aggregation
           workStats: async (id: string) => {
             try {

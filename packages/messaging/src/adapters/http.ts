@@ -714,6 +714,8 @@ export class HttpAdapter extends MessagingAdapter {
     listSessionCommits?: (sessionId: string) => Promise<any[]>;
     // v742 — Re-Match Open-Items gegen letzten Session-Lauf
     reMatchOpenItems?: (projectId: string) => Promise<{ ok: boolean; matched?: number; resolved?: number; reason?: string }>;
+    // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
+    triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
 
   setProjectsCallbacks(cbs: typeof HttpAdapter.prototype.projectsCallbacks): void {
@@ -1209,6 +1211,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleDbSeedsDelete(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/re-match-open-items$/) && req.method === 'POST') {
       this.handleProjectsReMatchOpenItems(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-check$/) && req.method === 'POST') {
+      this.handleProjectsHealthCheck(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4257,6 +4261,26 @@ export class HttpAdapter extends MessagingAdapter {
     const projectId = parts[3];
     try {
       const r = await this.projectsCallbacks.reMatchOpenItems(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  /** v797 — POST /api/projects/:id/health-check → sofortiger Health-Check (statt 6h-Schedule warten). */
+  private async handleProjectsHealthCheck(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.triggerHealthCheck) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Health-Check nicht verfügbar' }));
+      return;
+    }
+    const parts = url.pathname.split('/');
+    const projectId = parts[3];
+    try {
+      const r = await this.projectsCallbacks.triggerHealthCheck(projectId);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

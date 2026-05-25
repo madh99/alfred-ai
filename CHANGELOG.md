@@ -5,6 +5,51 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.797] - 2026-05-25
+
+### Added — Manueller Health-Check-Trigger pro Projekt
+
+Bisher lief der Project-Health-Monitor nur alle **6h** (default `intervalHours: 6`) automatisch. Nach einem Sandbox-Merge oder anderen relevanten Änderungen am git-State zeigte die Project-Detail-Page weiterhin die alte gecachte `sha` aus `project_health_log` — bis zur nächsten scheduled cycle.
+
+Der "Aktualisieren"-Button in der UI hat nur die Project-Liste aus der DB neu geladen, KEINEN frischen Health-Check getriggert. → User sah weiterhin pre-merge sha trotz erfolgreichem Merge.
+
+**Fix v797**: Manueller Health-Check on-demand.
+
+**Backend**:
+- Neuer HTTP-Endpoint: `POST /api/projects/:id/health-check`
+- `ProjectsCallbacks` erweitert um `triggerHealthCheck(projectId)`
+- alfred.ts wiring: ruft `this.projectHealthMonitor.checkProject(project)` direkt auf
+- `checkProject()` war schon public + persistiert via `repo.recordHealth()` in `project_health_log` → keine neue Storage-Logic nötig
+- Response: `{ ok: true, probes: [{ probe, status, details }] }`
+
+**Frontend**:
+- `AlfredClient.triggerProjectHealthCheck(projectId)` — POST-Request
+- Neuer Button "🔄 Health-Check jetzt" in der Project-Detail-Page rechts neben "Letzte Health-Checks"-Header
+- State `healthChecking` für loading-Indicator (⏳ Checke…)
+- Nach Erfolg: `loadDetail(projectId)` reloaded die Project-Detail mit frischen Probe-Ergebnissen
+- Error-Handling: Alert mit reason
+
+**Was nach Deploy konkret möglich ist**:
+1. Sandbox merge → klicken
+2. Project-Detail-Page öffnen
+3. "🔄 Health-Check jetzt" klicken
+4. git/build/deps/http-Probes laufen sofort (~3-10s je nach Project-Größe)
+5. Page reloaded → neue `sha=...` mit echtem post-merge HEAD sichtbar
+
+**Default Probes** (bei `healthMode: 'full'`):
+- `git`: rev-parse + branch + age — zeigt aktuellen HEAD
+- `build`: `npm test`-equivalent — verifiziert nichts ist kaputt
+- `deps`: outdated/missing dependencies
+- `http`: pingen der `repoUrl` (z.B. gitlab)
+
+Bei `healthMode: 'minimal'` läuft nur `git`. Bei `'off'`: nichts.
+
+**Affected paths**:
+- `packages/messaging/src/adapters/http.ts` (callback type + route handler)
+- `packages/core/src/alfred.ts` (wiring)
+- `apps/web/src/lib/alfred-client.ts` (client method)
+- `apps/web/src/components/projects/ProjectsPage.tsx` (button + handler)
+
 ## [0.19.0-multi-ha.796] - 2026-05-25
 
 ### Fixed — v795-Ownership-Detection war auf falschem Pfad

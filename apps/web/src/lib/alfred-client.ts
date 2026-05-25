@@ -768,6 +768,15 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v797 — Manueller Health-Check-Trigger (statt 6h-Schedule warten)
+  async triggerProjectHealthCheck(projectId: string): Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/health-check`, {
+      method: 'POST', headers: this.authHeaders,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
