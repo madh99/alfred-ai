@@ -102,13 +102,18 @@ export class AgentSessionManager {
       }
     }
 
+    let handoffBriefing: string | undefined;
     if (!session) {
+      // v790 — Cross-Session-Context-Transfer: vor session.create() noch existing-sessions checken
+      // damit wir uns selbst nicht ausschließen müssen.
+      handoffBriefing = await this.buildHandoffBriefing(opts.sandboxId);
+
       session = await this.repo.create({
         sandboxId: opts.sandboxId,
         agentName: opts.agentName,
         capabilities: adapter.capabilities,
       });
-      this.logger.info({ sessionId: session.id, sandbox: opts.sandboxId, agent: opts.agentName }, 'v779 created new agent session');
+      this.logger.info({ sessionId: session.id, sandbox: opts.sandboxId, agent: opts.agentName, hasBriefing: !!handoffBriefing }, 'v779/v790 created new agent session');
 
       // LRU-Eviction wenn zu viele
       await this.enforceLimit(opts.sandboxId);
@@ -133,6 +138,14 @@ export class AgentSessionManager {
 
     // Run
     const startedAt = Date.now();
+    // v790 — handoffBriefing wird vor opts.promptPrefix prepend'd (User-Prefix gewinnt am Ende)
+    const promptPrefix = handoffBriefing
+      ? (opts.promptPrefix ? `${handoffBriefing}\n\n${opts.promptPrefix}` : handoffBriefing)
+      : opts.promptPrefix;
+    if (handoffBriefing) {
+      // Sichtbar machen im Event-stream — User sieht im UI dass Briefing aktiv war
+      onEventTapped({ type: 'progress', phase: 'handoff-briefing', detail: `${handoffBriefing.length} chars from previous agent(s)` });
+    }
     const result = await adapter.invoke({
       cliSessionId: session.cliSessionId ?? null,
       preferredSessionId: session.id, // kann der Adapter zum --session-id flag nutzen falls supported
@@ -142,7 +155,7 @@ export class AgentSessionManager {
       signal: opts.signal,
       onEvent: onEventTapped,
       timeoutMs: opts.timeoutMs,
-      promptPrefix: opts.promptPrefix,
+      promptPrefix,
     });
 
     // Falls Adapter neue session-id geliefert hat (z.B. erster Run)
@@ -228,5 +241,97 @@ export class AgentSessionManager {
     // Aktuell nur idle-timeout check (alle adapter spezifisch health-check ist optional via isHealthy).
     // Vollständigere health-checks würden alle active Sessions iterieren — costy bei vielen Sandboxes.
     // Erst aktivieren wenn nötig.
+  }
+
+  /**
+   * v790 — Cross-Session-Context-Transfer.
+   *
+   * Wenn in dieser Sandbox bereits andere AgentSessions existieren, baue ein kompaktes
+   * Briefing (~500-1000 chars) das den neuen Agent über den bisherigen Stand informiert.
+   * Wird vor opts.promptPrefix prepend'd → Agent kann sofort beim "richtigen" Punkt
+   * weiterarbeiten statt komplett bei null zu starten.
+   *
+   * Strategie:
+   *  - Nimm die zuletzt-genutzte andere Session (sortiert nach lastUsedAt DESC)
+   *  - Lese ihre letzten Events (alle Iterationen, neueste 50)
+   *  - Extrahiere:
+   *     - welcher Agent das war
+   *     - welche files geändert wurden (aus edit-events)
+   *     - welche shell-commands erfolgreich liefen
+   *     - finale assistant-text (kurz gekürzt)
+   *     - letzte Fehler falls Run failed
+   *  - Format: kompakt, in Markdown, max ~1000 chars
+   *
+   * Wenn keine andere Session existiert → returns undefined (kein Briefing).
+   */
+  private async buildHandoffBriefing(sandboxId: string): Promise<string | undefined> {
+    try {
+      const allSessions = await this.repo.listBySandbox(sandboxId);
+      if (allSessions.length === 0) return undefined;
+      // Schon nach lastUsedAt DESC sortiert via repo.listBySandbox(). Erste = letzte aktivität.
+      const lastOther = allSessions.find(s => s.messageCount > 0);
+      if (!lastOther) return undefined;
+
+      const events = await this.repo.listEvents(lastOther.id, undefined, 80);
+      if (events.length === 0) return undefined;
+
+      const editedFiles = new Set<string>();
+      const shellCmds: Array<{ cmd: string; ok: boolean }> = [];
+      const errors: string[] = [];
+      let lastAssistantText: string | undefined;
+
+      for (const e of events) {
+        const data = e.eventData as any;
+        if (!data || typeof data !== 'object') continue;
+        switch (e.eventType) {
+          case 'edit':
+            if (typeof data.path === 'string') editedFiles.add(data.path);
+            break;
+          case 'shell':
+            if (data.status === 'done' && typeof data.command === 'string' && data.command.trim()) {
+              shellCmds.push({ cmd: String(data.command).slice(0, 120), ok: data.exitCode === 0 });
+            }
+            break;
+          case 'text':
+            if (typeof data.text === 'string') lastAssistantText = data.text;
+            break;
+          case 'error':
+            if (typeof data.message === 'string') errors.push(data.message.slice(0, 200));
+            break;
+        }
+      }
+
+      const lines: string[] = [];
+      lines.push(`[Handoff-Briefing aus vorherigem Agent in dieser Sandbox]`);
+      lines.push(`Vorheriger Agent: "${lastOther.agentName}" · ${lastOther.messageCount} Iteration(en) · zuletzt aktiv ${lastOther.lastUsedAt}`);
+
+      if (editedFiles.size > 0) {
+        const files = Array.from(editedFiles).slice(0, 10);
+        lines.push(`Geänderte Dateien (letzte): ${files.join(', ')}${editedFiles.size > 10 ? ` (+${editedFiles.size - 10})` : ''}`);
+      }
+      if (shellCmds.length > 0) {
+        const recent = shellCmds.slice(-5);
+        const okCount = recent.filter(c => c.ok).length;
+        lines.push(`Letzte Shell-Commands (${okCount}/${recent.length} erfolgreich):`);
+        for (const c of recent) {
+          lines.push(`  ${c.ok ? '✓' : '✗'} ${c.cmd}`);
+        }
+      }
+      if (errors.length > 0) {
+        lines.push(`Letzter Fehler: ${errors[errors.length - 1].slice(0, 300)}`);
+      }
+      if (lastAssistantText) {
+        const summary = lastAssistantText.slice(0, 400).replace(/\s+/g, ' ').trim();
+        lines.push(`Letzte Aussage des vorherigen Agents: "${summary}${lastAssistantText.length > 400 ? '…' : ''}"`);
+      }
+      lines.push(`[Du startest jetzt frisch — keine direkten Tool-Results vorhanden. Verifiziere bei Bedarf den aktuellen Stand selbst per Read/Bash.]`);
+
+      const briefing = lines.join('\n');
+      // Cap auf 1500 chars um agent-context nicht zu fressen
+      return briefing.length > 1500 ? briefing.slice(0, 1500) + '…' : briefing;
+    } catch (err) {
+      this.logger.warn({ err, sandboxId }, 'v790 buildHandoffBriefing failed (continuing without)');
+      return undefined;
+    }
   }
 }

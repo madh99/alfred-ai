@@ -5,6 +5,69 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.790] - 2026-05-25
+
+### Added — Cross-Session-Context-Transfer beim Agent-Wechsel
+
+Wechselt der User von claude-code zu vibe (oder umgekehrt) in derselben Sandbox, bekommt der neue Agent jetzt ein **kompaktes Briefing-Prompt** aus den letzten Events des vorherigen Agents — damit er nicht komplett bei null beginnt.
+
+**Wo & wann**: in `AgentSessionManager.invoke()`, nachdem die neue Session erstellt wurde (`!session` Pfad) und bevor `adapter.invoke()` läuft.
+
+**Detektion**:
+```ts
+const allSessions = await this.repo.listBySandbox(sandboxId); // sortiert nach lastUsedAt DESC
+const lastOther = allSessions.find(s => s.messageCount > 0);
+if (!lastOther) return undefined; // kein Briefing wenn nichts anderes existiert
+```
+
+→ Bei erstem Run in einer Sandbox kein Briefing. Bei späteren Runs mit gleichem Agent ebenfalls kein Briefing (Session wird via `findActive()` reused, nicht neu erstellt). Nur bei tatsächlichem Agent-Switch (oder nach Reset) triggert das Briefing.
+
+**Was im Briefing steht** (gebaut aus `repo.listEvents(sessionId, undefined, 80)`):
+- Welcher Agent das war + Iter-Count + lastUsedAt
+- Geänderte Dateien (aus `edit`-Events, max 10 + "+N" overflow)
+- Letzte 5 Shell-Commands mit ✓/✗ exit-status
+- Letzter Fehler (falls Run failed)
+- Letzte Aussage des vorherigen Agents (max 400 chars, whitespace-normalisiert)
+- Hint: "Du startest frisch — verifiziere bei Bedarf selbst"
+
+**Beispiel-Briefing** (~600 chars):
+```
+[Handoff-Briefing aus vorherigem Agent in dieser Sandbox]
+Vorheriger Agent: "claude-code" · 5 Iteration(en) · zuletzt aktiv 2026-05-25T14:23:11Z
+Geänderte Dateien (letzte): src/components/Button.tsx, src/styles/theme.css, src/lib/utils.ts
+Letzte Shell-Commands (3/3 erfolgreich):
+  ✓ pnpm test src/components/Button.test.tsx
+  ✓ pnpm build
+  ✓ pnpm lint
+Letzte Aussage des vorherigen Agents: "Button-Komponente refactored, Hover-State entfernt, Tests grün. Theme-Variablen in CSS-Custom-Properties extrahiert für späteren Dark-Mode."
+[Du startest jetzt frisch — keine direkten Tool-Results vorhanden. Verifiziere bei Bedarf den aktuellen Stand selbst per Read/Bash.]
+```
+
+**Prepend-Logik**: `promptPrefix = briefing + opts.promptPrefix` — User-Prefix gewinnt am Ende, Briefing kommt davor. Das bedeutet:
+- Agent sieht Briefing am Anfang des System-Kontexts
+- User's eigener promptPrefix (z.B. von ProjectAgent) bleibt erhalten
+- User's tatsächlicher Prompt (`opts.prompt`) bleibt unverändert
+
+**Cap**: max 1500 chars (über `…` truncated) — damit der Briefing nicht den Agent-Context dominiert.
+
+**Sichtbarkeit im UI**: Manager emit'd ein `progress`-Event mit `phase: 'handoff-briefing'` und `detail: '<N> chars from previous agent(s)'`. Frontend zeigt das als ▸ Handoff-Briefing-Card → User weiß dass der neue Agent informiert wurde.
+
+**Wann's NICHT triggert**:
+- Erste Session in einer Sandbox (nichts zum brieefen)
+- Resume einer existierenden Session (Adapter hat eigenen Kontext, `--resume`)
+- Session-Reset: Beim nächsten Run nach Reset wird Briefing aus überlebenden Sessions gebaut (die DB-Eintrag ist weg, aber andere Agents in der Sandbox sind verfügbar)
+- Keine vorherige Session hat `messageCount > 0` (z.B. nur fehlgeschlagene Sessions ohne Events)
+
+**Fallback**: bei Fehler beim Briefing-Building → log warn + kein Briefing (kein Crash).
+
+**Use-Cases**:
+1. **Agent-Vergleich**: User probiert dasselbe Feature mit claude und mit codex aus → zweiter Agent kennt was der erste gemacht hat
+2. **Spezialisierung**: claude für Architektur, codex für Implementation → seamless handoff
+3. **Resilienz**: claude crashed → User wechselt zu vibe → vibe sieht den letzten Stand
+4. **Kosten-Optimierung**: User wechselt zwischen teuren und günstigen Agents → günstiger Agent bekommt Kontext geschenkt
+
+Phase 3 fast komplett. v791 = Event-Replay-UI (historische Sessions im Detail-View nachschauen).
+
 ## [0.19.0-multi-ha.789] - 2026-05-25
 
 ### Added — Session-Reset-Button im Stats-Popover
