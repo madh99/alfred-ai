@@ -6898,6 +6898,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
 
                     // v760 Phase 2 — Auto-Commit nach erfolgreichem Run
                     let commitNote = '';
+                    let commitSha = ''; // v794 — separat tracken: nur bei echtem Success setzen
                     if (result.success) {
                       try {
                         const { execFile } = await import('node:child_process');
@@ -6911,7 +6912,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                           await execAsync('git', ['add', '-A'], { cwd: sb.worktreePath, timeout: 30_000 });
                           await execAsync('git', ['commit', '-m', commitMsg], { cwd: sb.worktreePath, timeout: 30_000 });
                           const { stdout: shaRaw } = await execAsync('git', ['rev-parse', 'HEAD'], { cwd: sb.worktreePath, timeout: 10_000 });
-                          commitNote = ` · commit \`${shaRaw.trim().slice(0, 8)}\``;
+                          commitSha = shaRaw.trim().slice(0, 8);
+                          commitNote = ` · commit \`${commitSha}\``;
                         } else {
                           commitNote = ' · keine Änderungen';
                         }
@@ -6922,8 +6924,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     }
 
                     const attemptNote = attempts > 1 ? ` (nach ${attempts} Versuchen)` : '';
+                    // v794 — commitNote zurück in Summary-Zeile (war in v793 unterschlagen → commit-fail nicht mehr sichtbar)
                     const summary = result.success
-                      ? `✓ Fertig${attemptNote}${result.modifiedFiles.length ? ` — ${result.modifiedFiles.length} Dateien geändert` : ''}${useAgentSession ? ' · 🔗' : ''}`
+                      ? `✓ Fertig${attemptNote}${result.modifiedFiles.length ? ` — ${result.modifiedFiles.length} Dateien geändert` : ''}${commitNote}${useAgentSession ? ' · 🔗' : ''}`
                       : `❌ Fehlgeschlagen nach ${attempts} Versuchen: ${result.error ?? 'unbekannt'}`;
                     const display = (result.display ?? '').slice(0, 3000);
                     // v793 — In-Place-Update der initialen "läuft"-Bubble statt separater Append.
@@ -6932,14 +6935,14 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                       text: `${summary}${display ? `\n\n${display}` : ''}`,
                       phase: result.success ? 'done' : 'failed',
                     });
-                    // v793 — Auto-Commit-Info als separate kompakte Notiz-Bubble (falls relevant).
-                    // Macht für User sichtbar: commit-sha oder commit-failure ohne den Summary zu polluten.
-                    if (result.success && commitNote.trim()) {
+                    // v793/v794 — Separate kompakte Notiz-Bubble NUR bei echtem commit-sha
+                    // (nicht bei "keine Änderungen" oder commit-Failure — die stehen schon inline).
+                    if (commitSha) {
                       await sandboxChatRepo.append({
                         sandboxId,
                         userId: sb.userId,
                         role: 'agent',
-                        text: `🔧${commitNote}`,
+                        text: `🔧 · commit \`${commitSha}\``,
                         taskId,
                         taskPhase: 'done',
                       });

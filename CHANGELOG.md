@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.794] - 2026-05-25
+
+### Fixed — Commit-Info-Regression aus v793
+
+v793 hatte `${commitNote}` aus der Summary-Zeile entfernt und stattdessen eine separate Notiz-Bubble appended — aber nur bei `result.success && commitNote.trim()`. Das hat eine Regression eingeführt: bei **commit-failure** wurde commitNote zwar gesetzt (`(commit fehlgeschlagen: ...)`), war aber nirgends im UI sichtbar:
+- Summary hatte commitNote nicht (rausgenommen)
+- Separate Bubble: nur bei success-flow (aber commit failed, also kein neuer Bubble nötig?)
+
+→ User sah "✓ Fertig — 5 Dateien geändert" ohne Hinweis dass commit failte.
+
+**Fix**: `commitNote` zurück in Summary-Zeile (inline, immer sichtbar). Separate Bubble nur noch bei **echtem commit-sha** (also: nur bei genuine success, nicht bei "keine Änderungen" oder commit-fail). Damit:
+
+| Auto-Commit-Outcome | Summary-Zeile | Extra-Bubble |
+|---|---|---|
+| Success mit sha | `✓ Fertig · commit \`abc12345\` · 🔗` | `🔧 · commit \`abc12345\`` (Backup für Skimmer) |
+| Success ohne Änderungen | `✓ Fertig · keine Änderungen · 🔗` | – |
+| Commit fehlgeschlagen | `✓ Fertig · (commit fehlgeschlagen: detected dubio) · 🔗` | – |
+| Run failed | `❌ Fehlgeschlagen nach 2 Versuchen: ...` | – |
+
+**Implementation**:
+- Neuer separater Tracking-State `commitSha` in alfred.ts code-agent branch (statt commitNote.includes-Heuristik)
+- `commitSha` wird nur in `if (porcelain.trim())`-Block gesetzt — nach erfolgreichem `git commit + rev-parse HEAD`
+- Bei commit-fail oder "keine Änderungen" bleibt commitSha leer
+- Separate-Bubble-Condition: `if (commitSha)` statt `if (result.success && commitNote.trim())`
+
+**Affected paths**: `packages/core/src/alfred.ts` (1 method, ~5 lines changed)
+
 ## [0.19.0-multi-ha.793] - 2026-05-25
 
 ### Changed — Agent-Done UX: sofort sichtbar wenn fertig
