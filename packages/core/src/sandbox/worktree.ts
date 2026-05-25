@@ -11,6 +11,23 @@ async function git(args: string[], cwd: string, timeoutMs = 60_000): Promise<str
   return stdout.trim();
 }
 
+/**
+ * v775 — Auflösen der UID zu einem Username via `id -nu`. Wird gebraucht
+ * damit `git worktree add` direkt als der projectCwd-Owner laufen kann,
+ * statt als root und dann mit chown nachzubessern.
+ * Returnt null wenn UID nicht zu einem Username aufgelöst werden kann
+ * (z.B. UID ist im Container nicht bekannt).
+ */
+async function uidToUsername(uid: number): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('id', ['-nu', String(uid)], { timeout: 3_000 });
+    const name = stdout.trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Prüft ob ein Pfad ein gültiges git-Repo enthält. */
 export async function validateGitRepo(cwd: string): Promise<{ ok: boolean; reason?: string }> {
   if (!existsSync(cwd)) return { ok: false, reason: `path does not exist: ${cwd}` };
@@ -81,8 +98,42 @@ export async function createWorktree(input: CreateWorktreeInput): Promise<Create
     input.logger.warn({ original: input.branchName, used: finalBranch }, 'Branch existed, using suffixed name');
   } catch { /* doesn't exist → ok */ }
 
+  // v775 — `git worktree add` AS projectCwd-Owner ausführen. Hintergrund:
+  // v774 hatte nur `.git/worktrees/<name>/` gechownt. Aber `git worktree add -b NEW_BRANCH`
+  // erstellt drei root-owned Dinge in der MAIN .git (wenn alfred als root läuft):
+  //   1. .git/worktrees/<name>/  (v774 hat das gefixt)
+  //   2. .git/refs/heads/<branch>  (v774 hatte das NICHT gefixt)
+  //   3. .git/logs/refs/heads/<branch>  (v774 hatte das NICHT gefixt)
+  // → spätere `sudo -u <user> git commit` failt mit "Permission denied" auf den ref-log.
+  // Fix: gleich von Anfang an als der projectCwd-Owner ausführen.
+  let workTreeAddRunAsUser: string | null = null;
   try {
-    await git(['worktree', 'add', '-b', finalBranch, input.worktreePath, baseCommit], input.projectCwd, 120_000);
+    const projStat = statSync(input.projectCwd);
+    const currentUid = typeof process.getuid === 'function' ? process.getuid() : -1;
+    if (projStat.uid !== currentUid && currentUid === 0) {
+      // Wir sind root, projectCwd gehört anderem User → als der laufen
+      workTreeAddRunAsUser = await uidToUsername(projStat.uid);
+      if (!workTreeAddRunAsUser) {
+        input.logger.warn({ uid: projStat.uid }, 'v775 uidToUsername failed — fallback auf root + chown');
+      }
+    }
+  } catch (err) {
+    input.logger.warn({ err }, 'v775 ownership-detection failed — fallback auf root + chown');
+  }
+
+  try {
+    if (workTreeAddRunAsUser) {
+      // Als projectCwd-Owner: `sudo -u <user> git worktree add ...`
+      await execFileAsync('sudo', ['-u', workTreeAddRunAsUser, 'git', 'worktree', 'add', '-b', finalBranch, input.worktreePath, baseCommit], {
+        cwd: input.projectCwd,
+        timeout: 120_000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      input.logger.info({ runAsUser: workTreeAddRunAsUser, worktreePath: input.worktreePath }, 'v775 worktree created as projectCwd-owner');
+    } else {
+      // Fallback: als root (v774 chown-Pfad räumt nachher auf)
+      await git(['worktree', 'add', '-b', finalBranch, input.worktreePath, baseCommit], input.projectCwd, 120_000);
+    }
   } catch (err) {
     // Cleanup attempt bei partial create
     if (existsSync(input.worktreePath)) {

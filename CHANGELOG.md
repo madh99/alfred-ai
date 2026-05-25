@@ -5,6 +5,44 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.775] - 2026-05-25
+
+### Fixed — v774 war unvollständig: git worktree add erstellt DREI root-owned Dinge
+
+**Aus Server-Logs (Task c3885909) bewiesen**:
+```
+sudo -u madh git commit ...
+fatal: cannot update the ref 'refs/heads/agent-...':
+unable to append to '/home/madh/projects/alpbyte-games/.git/logs/refs/heads/agent-...': Permission denied
+```
+
+**v774 hatte nur 1/3 gefixt**. `git worktree add -b NEW_BRANCH WORKTREE_PATH BASE_COMMIT` erstellt als root:
+1. `<projectCwd>/.git/worktrees/<name>/` ← v774 hatte das gechownt ✓
+2. `<projectCwd>/.git/refs/heads/<branch>` ← NICHT gefixt ✗
+3. `<projectCwd>/.git/logs/refs/heads/<branch>` ← NICHT gefixt ✗
+
+Daher: `sudo -u madh git commit` versucht den ref-log zu appenden → root-owned File → Permission denied → **JEDER Phase-Commit failt** → 0 Dateien geändert obwohl Agent gearbeitet hat → Phase 2 Inactivity-Timeout nach 20min.
+
+**Fix v775 (richtig diesmal)**: `git worktree add` läuft direkt **als der projectCwd-Owner**, nicht mehr als root mit nachträglichem chown.
+
+```ts
+const projStat = statSync(input.projectCwd);
+if (projStat.uid !== process.getuid() && process.getuid() === 0) {
+  const ownerName = await uidToUsername(projStat.uid); // 'madh'
+  await execFileAsync('sudo', ['-u', ownerName, 'git', 'worktree', 'add', ...]);
+}
+```
+
+→ Alle drei erzeugten Files/Dirs gehören sofort dem richtigen User. Keine chown-Nachbesserung nötig. v774 chown-Code bleibt als Fallback drin falls `sudo -u` nicht greift (kein TTY, fehlende sudo-Permission, etc.).
+
+**Existierende kaputte Repos heal'd via SSH** (live-fix von Alfred selbst durchgeführt):
+```bash
+sudo chown -R madh:madh /home/madh/projects/alpbyte-games/.git/
+sudo chmod -R g+rwX /home/madh/projects/alpbyte-games/.git/
+```
+
+→ Alle 4 vorhandenen agent-*-Branch-Refs sind jetzt madh-owned. Bestehende Sessions können wieder committen.
+
 ## [0.19.0-multi-ha.773] - 2026-05-25
 
 ### Fixed — Project-Agent Stop schreibt Session-Phase auf 'failed' + Worktree-Metadata-Permissions
