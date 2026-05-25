@@ -184,6 +184,48 @@ export class Alfred {
   private projectAgentSkillRef?: import('@alfred/skills').ProjectAgentSkill;
   /** v762 — Aktive Code-Agent-Runs pro synthetischer task_id, damit Stop-Signal sie killen kann */
   private codeAgentTaskAborts = new Map<string, AbortController>();
+
+  /**
+   * v795 — git command in einem worktree als dessen Owner ausführen.
+   *
+   * Wenn alfred als root läuft + worktree gehört einem anderen User → wrap in
+   * `sudo -u <owner>`. Sonst direkter git-Aufruf. Behebt:
+   * "fatal: detected dubious ownership in repository" (CVE-2022-24765 safety).
+   *
+   * Identische Strategie wie v775 für `git worktree add`.
+   */
+  private async gitInWorktree(
+    cwd: string,
+    args: string[],
+    opts: { timeout?: number; maxBuffer?: number } = {},
+  ): Promise<{ stdout: string; stderr: string }> {
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const fs = await import('node:fs');
+    const execAsync = promisify(execFile);
+    const timeout = opts.timeout ?? 30_000;
+    const maxBuffer = opts.maxBuffer ?? 1024 * 1024;
+
+    const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+    if (!isRoot) {
+      return execAsync('git', args, { cwd, timeout, maxBuffer });
+    }
+    let ownerUid = 0;
+    try { ownerUid = fs.statSync(cwd).uid; } catch { /* */ }
+    if (ownerUid === 0) {
+      return execAsync('git', args, { cwd, timeout, maxBuffer });
+    }
+    try {
+      const { stdout: nameRaw } = await execAsync('id', ['-nu', String(ownerUid)], { timeout: 3_000 });
+      const ownerName = nameRaw.trim();
+      if (!ownerName) throw new Error(`uid ${ownerUid} resolves to empty name`);
+      return execAsync('sudo', ['-u', ownerName, 'git', ...args], { cwd, timeout, maxBuffer });
+    } catch (err) {
+      this.logger.warn({ err, cwd, ownerUid }, 'v795 gitInWorktree sudo-wrap setup failed, falling back to direct git (may hit dubious-ownership)');
+      return execAsync('git', args, { cwd, timeout, maxBuffer });
+    }
+  }
+
   /** v779 — AgentSessionManager für persistente CLI-Coding-Agent-Sessions (claude/vibe/codex/...). Optional, nur initialisiert wenn config.codeAgents.enabled. */
   private agentSessionManager?: import('@alfred/skills').AgentSessionManager;
   private projectAgentRunnerRef?: import('./project-agent-runner.js').ProjectAgentRunner;
@@ -3595,7 +3637,8 @@ export class Alfred {
                       const sb = await sandboxRepo.getById(sandboxId);
                       if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
                       try {
-                        const { stdout } = await execFileAsync('git', ['diff', `${sb.baseCommitSha}..HEAD`], { cwd: sb.worktreePath, maxBuffer: 10 * 1024 * 1024, timeout: 30_000 });
+                        // v795 — gitInWorktree() für sudo-u-wrap (dubious-ownership-safe)
+                        const { stdout } = await this.gitInWorktree(sb.worktreePath, ['diff', `${sb.baseCommitSha}..HEAD`], { maxBuffer: 10 * 1024 * 1024, timeout: 30_000 });
                         return stdout || '(no changes)';
                       } catch (err) {
                         return `# git diff failed: ${(err as Error).message}`;
@@ -6375,7 +6418,8 @@ export class Alfred {
               const sb = await sandboxRepoForApi.getById(sandboxId);
               if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
               try {
-                const { stdout } = await execFileAsyncForDiff('git', ['diff', `${sb.baseCommitSha}..HEAD`], { cwd: sb.worktreePath, maxBuffer: 10 * 1024 * 1024, timeout: 30_000 });
+                // v795 — gitInWorktree() für sudo-u-wrap (dubious-ownership-safe)
+                const { stdout } = await this.gitInWorktree(sb.worktreePath, ['diff', `${sb.baseCommitSha}..HEAD`], { maxBuffer: 10 * 1024 * 1024, timeout: 30_000 });
                 return stdout || '(no changes)';
               } catch (err) {
                 return `# git diff failed: ${(err as Error).message}`;
@@ -6646,16 +6690,14 @@ ${augmentedMessage}`;
                     }, ctxD);
 
                     // Safety-Net: hat der Agent trotz Verbot was geändert?
+                    // v795 — gitInWorktree() für sudo-u-wrap (dubious-ownership-safe)
                     let revertNote = '';
                     try {
-                      const { execFile: execFileD } = await import('node:child_process');
-                      const { promisify: promisifyD } = await import('node:util');
-                      const execAsyncD = promisifyD(execFileD);
-                      const { stdout: porcelainD } = await execAsyncD('git', ['status', '--porcelain'], { cwd: sb.worktreePath, maxBuffer: 1024 * 1024, timeout: 10_000 });
+                      const { stdout: porcelainD } = await this.gitInWorktree(sb.worktreePath, ['status', '--porcelain'], { maxBuffer: 1024 * 1024, timeout: 10_000 });
                       if (porcelainD.trim()) {
                         this.logger.warn({ sandboxId, taskId, dirty: porcelainD.slice(0, 500) }, 'v769 Discuss-Modus: Agent hat Files geändert obwohl read-only — Revert');
-                        try { await execAsyncD('git', ['checkout', '--', '.'], { cwd: sb.worktreePath, timeout: 20_000 }); } catch { /* */ }
-                        try { await execAsyncD('git', ['clean', '-fd'], { cwd: sb.worktreePath, timeout: 20_000 }); } catch { /* */ }
+                        try { await this.gitInWorktree(sb.worktreePath, ['checkout', '--', '.'], { timeout: 20_000 }); } catch { /* */ }
+                        try { await this.gitInWorktree(sb.worktreePath, ['clean', '-fd'], { timeout: 20_000 }); } catch { /* */ }
                         revertNote = `\n\n⚠️ **Hinweis**: Der Agent hat versucht Files zu ändern obwohl Read-Only — Änderungen wurden automatisch revertiert. Bei Bedarf wechsle in ⚡ Quick-Modus für tatsächliche Implementation.`;
                       }
                     } catch (err) {
@@ -6897,21 +6939,21 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     }
 
                     // v760 Phase 2 — Auto-Commit nach erfolgreichem Run
+                    // v795 — gitInWorktree() statt direkter execFile-git → sudo -u <owner> wrap
+                    // wenn alfred als root läuft + worktree gehört einem anderen User.
+                    // Behebt "fatal: detected dubious ownership in repository".
                     let commitNote = '';
                     let commitSha = ''; // v794 — separat tracken: nur bei echtem Success setzen
                     if (result.success) {
                       try {
-                        const { execFile } = await import('node:child_process');
-                        const { promisify } = await import('node:util');
-                        const execAsync = promisify(execFile);
-                        const { stdout: porcelain } = await execAsync('git', ['status', '--porcelain'], { cwd: sb.worktreePath, maxBuffer: 1024 * 1024, timeout: 15_000 });
+                        const { stdout: porcelain } = await this.gitInWorktree(sb.worktreePath, ['status', '--porcelain'], { maxBuffer: 1024 * 1024, timeout: 15_000 });
                         if (porcelain.trim()) {
                           // Commit-Msg aus User-Message (erste Zeile, sanitized, capped)
                           const firstLine = augmentedMessage.split('\n')[0].trim().replace(/\s+/g, ' ').slice(0, 72) || 'iteration';
                           const commitMsg = `[alfred-code-agent] ${firstLine}`;
-                          await execAsync('git', ['add', '-A'], { cwd: sb.worktreePath, timeout: 30_000 });
-                          await execAsync('git', ['commit', '-m', commitMsg], { cwd: sb.worktreePath, timeout: 30_000 });
-                          const { stdout: shaRaw } = await execAsync('git', ['rev-parse', 'HEAD'], { cwd: sb.worktreePath, timeout: 10_000 });
+                          await this.gitInWorktree(sb.worktreePath, ['add', '-A'], { timeout: 30_000 });
+                          await this.gitInWorktree(sb.worktreePath, ['commit', '-m', commitMsg], { timeout: 30_000 });
+                          const { stdout: shaRaw } = await this.gitInWorktree(sb.worktreePath, ['rev-parse', 'HEAD'], { timeout: 10_000 });
                           commitSha = shaRaw.trim().slice(0, 8);
                           commitNote = ` · commit \`${commitSha}\``;
                         } else {

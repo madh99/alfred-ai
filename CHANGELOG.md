@@ -5,6 +5,64 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.795] - 2026-05-25
+
+### Fixed — Auto-Commit + Sandbox-Git failt mit "fatal: detected dubious ownership"
+
+Wenn Alfred als **root** läuft (Standard auf den Cluster-Nodes) und der worktree gehört einem anderen User (z.B. madh), refusiert git **ALLE** Operationen mit:
+```
+fatal: detected dubious ownership in repository at '<path>'
+To add an exception for this directory, call:
+  git config --global --add safe.directory '<path>'
+```
+Das ist eine Security-Feature seit CVE-2022-24765.
+
+Konsequenz **vorher**:
+- Agent-Run macht alle Änderungen ✓
+- Auto-Commit failt sofort beim `git status --porcelain` → `(commit fehlgeschlagen: ...)` im Summary
+- Änderungen liegen uncommitted im worktree
+- Merge funktioniert nicht sauber
+- Sandbox-Diff-Endpoint failt → User sieht keinen Diff
+
+Identische Wurzel wie v775 (worktree-create als root failte mit dubious ownership). v775 hat das für `git worktree add` gefixt — aber alle git-Operationen DANACH liefen weiterhin als root.
+
+**Fix**: Neuer Helper `Alfred.gitInWorktree(cwd, args, opts?)` der:
+1. Detected ob Alfred als root läuft (`process.getuid() === 0`)
+2. Stat'd den worktree-cwd → liest UID
+3. Wenn root + worktree fremd-owned → wraps in `sudo -u <username> git ...`
+4. Sonst: direkter `git ...`-Call
+5. UID→username via `id -nu <uid>` (gleiche Strategie wie v775)
+6. Fallback bei Resolve-Failure: direkter git-Call mit log-warning
+
+**6 git-Sites in `packages/core/src/alfred.ts` umgestellt** auf `this.gitInWorktree(...)`:
+
+| Site | Code-Pfad | Was es macht |
+|---|---|---|
+| L3641 | sandboxCallbacks.diff (CRUD-API) | `git diff base..HEAD` für Sandbox-Diff-View |
+| L6422 | sandbox-flow diff | dito (zweite Wire-Up-Stelle) |
+| L6696 | Discuss-Mode safety-revert | `git status --porcelain` (check ob Agent doch was geändert hat) |
+| L6699 | Discuss-Mode revert | `git checkout -- .` |
+| L6700 | Discuss-Mode revert | `git clean -fd` |
+| L6949-6957 | Auto-Commit nach Code-Agent | `git status / add / commit / rev-parse` (4 Calls) |
+
+**Nicht geändert** (sind nicht sandbox-worktree):
+- Projekt-Wizard git-init/commit/push (L8308-L8344): operiert auf `projectCwd`, der von alfred selbst erstellt + chowned ist
+- Worktree-Add (`sandbox/worktree.ts`): wurde bereits in v775 sudo-u-gewrappt
+
+**Was nach Deploy konkret passiert**:
+- Auto-Commit funktioniert wieder bei sandbox-runs als root
+- Sandbox-Diff-View zeigt korrekte diffs
+- Discuss-Mode safety-revert kann wieder revertieren wenn Agent Files berührt hat
+- Commit-sha erscheint sauber im Summary + Backup-Bubble (v794)
+
+**Trade-off**:
+- 2 extra subprocess-spawns pro git-Call wenn als root: `id -nu <uid>` + `sudo -u ...`. Vernachlässigbar gegen die einzelnen git-Operationen.
+- Wenn alfred als nicht-root-User läuft (UID match), funktioniert alles direkt ohne sudo.
+
+**Alternative Optionen die NICHT gewählt wurden** (Begründung):
+- `git config --global --add safe.directory '*'` — wäre eine Zeile, aber: global state, gilt für alle Repos, bypassed das Security-Feature komplett
+- `safe.directory <path>` pro worktree — bräuchte explizites cleanup beim Sandbox-Discard, sonst growing config
+
 ## [0.19.0-multi-ha.794] - 2026-05-25
 
 ### Fixed — Commit-Info-Regression aus v793
