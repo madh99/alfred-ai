@@ -5,6 +5,53 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.781] - 2026-05-25
+
+### Changed — chatSendMessage nutzt AgentSessionManager wenn Adapter verfügbar
+
+Erster funktionaler Wire-Up der v779/v780-AgentSession-Architektur. **Backwards-kompatibel mit Auto-Detect**:
+
+**Logik**:
+```
+chatSendMessage(engine='code-agent', agent='claude-code'):
+  if (agentSessionManager has ClaudeCodeAdapter)
+    → NEW PATH: agentSessionManager.invoke() (persistent CLI-Session via --resume)
+  else
+    → LEGACY PATH: cAgent.execute() (fresh subprocess wie v760)
+```
+
+**Bei aktivem ClaudeCodeAdapter** (config hat agent name='claude-code'):
+- Erster User-Klick auf Quick → claude wird mit `--session-id=<uuid>` gestartet, session-id wird in agent_sessions persistiert
+- Zweiter Klick → claude --resume <session-id>, **Tool-Call-Cache erhalten** (claude erinnert sich an Files die er beim ersten Mal gelesen hat)
+- N-ter Klick → weiterhin gleiche session, kumulatives Tool-Cache + Conversation
+- AgentEvents werden über bestehende `appendOutputLine`-Pipeline an Frontend gestreamt (Backward-compat mit live-output)
+
+**Live-Output-Mapping** (jeder AgentEvent → eine line):
+- `session_id` → `🔗 Session: abc12345…`
+- `progress` → `▸ <phase>`
+- `text` → stdout-line
+- `thinking` → `🤔 <text-preview>` system-line
+- `tool_call` → `🔧 <tool>(<input-json>)` system-line
+- `tool_result` → `  ↳ result`
+- `edit` → `✏️ <path> (+5/-2)` system-line
+- `shell` → `$ <command>` + `↳ exit=0` lines
+- `usage` → `📊 tokens: 3000in/150out, cached=11k, $0.04` system-line
+- `error` → stderr-line
+
+**Auto-Commit + Retry-Loop bleiben unverändert**: arbeiten auf normalisiertem Run-Result-Shape (`{success, error, modifiedFiles, display, stderr}`). Retry-Versuche gehen weiterhin durch die GLEICHE session-id, profitieren also vom Cache.
+
+**Visuelles Indicator**: Bei AgentSession-Pfad bekommt die "✓ Fertig"-Message ein `· 🔗` Suffix damit User erkennt dass session-cache aktiv war.
+
+**Was sich NICHT ändert**:
+- Bei `config.codeAgents.agents` ohne `name='claude-code'`: legacy executeAgent läuft wie zuvor
+- Project-Agent (Plan-Mode) ist nicht betroffen — der hat eigenen Runner
+- Stop-Button funktioniert weiter (gemeinsame `codeAgentTaskAborts`-Map + AbortController)
+
+**Was du auf .92 testen kannst nach Deploy**:
+1. Quick-Mode-Klick: live-output zeigt `🔗 Session: ...`
+2. Zweiter Klick mit gleicher Sandbox: schauen ob claude einen Read-Tool-Call macht oder direkt arbeitet (sollte direkt — heißt Cache greift)
+3. Token-Stats in chat-output: `cached=N` sollte beim 2. Run höher sein
+
 ## [0.19.0-multi-ha.780] - 2026-05-25
 
 ### Added — ClaudeCodeAdapter (erster konkreter AgentSessionAdapter)

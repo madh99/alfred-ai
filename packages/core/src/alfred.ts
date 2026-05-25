@@ -6616,15 +6616,116 @@ Wichtig:
                   appendOutputLine(taskId, 'system', `▶ Code-Agent (${defaultAgent}) startet im worktree ${sb.worktreePath}`);
                 } catch { /* */ }
 
+                // v781 — Determine if AgentSession-Path is available (claude-code adapter registered)
+                const sessionAdapter = this.agentSessionManager?.listAdapters().find(a => a.name === defaultAgent);
+                const agentDef = this.config.codeAgents?.agents.find(a => a.name === defaultAgent);
+                const runAsUser = (agentDef?.command === 'sudo' && agentDef.argsTemplate?.[0] === '-u' && agentDef.argsTemplate?.[1])
+                  ? agentDef.argsTemplate[1]
+                  : undefined;
+                const useAgentSession = !!(this.agentSessionManager && sessionAdapter);
+
+                if (useAgentSession) {
+                  this.logger.info({ agent: defaultAgent, runAsUser, sandbox: sandboxId }, 'v781 using AgentSession-path (persistent CLI session)');
+                }
+
+                /** Normalisierte Run-Result-Shape, unabhängig vom Pfad. */
+                interface NormalizedRunResult { success: boolean; error?: string; stderr?: string; modifiedFiles: string[]; display: string; }
+
+                const runOnce = async (currentPrompt: string): Promise<NormalizedRunResult> => {
+                  if (useAgentSession && this.agentSessionManager) {
+                    // v781 — NEW PATH: AgentSessionManager mit persistent CLI-Session
+                    const collectedTexts: string[] = [];
+                    const collectedErrors: string[] = [];
+                    let appendOutputLineFn: ((tid: string, src: 'stdout' | 'stderr' | 'system', text: string) => void) | null = null;
+                    try {
+                      const mod = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+                      appendOutputLineFn = mod.appendOutputLine;
+                    } catch { /* */ }
+                    const onEvent = (e: import('@alfred/skills').AgentEvent) => {
+                      // Forward to live-output (Backward-compat — v782 will refactor frontend)
+                      if (!appendOutputLineFn) return;
+                      try {
+                        switch (e.type) {
+                          case 'session_id':
+                            appendOutputLineFn(taskId, 'system', `🔗 Session: ${(e.value as string).slice(0, 8)}…`); break;
+                          case 'progress':
+                            appendOutputLineFn(taskId, 'system', `▸ ${e.phase}${e.detail ? ` (${e.detail})` : ''}`); break;
+                          case 'text':
+                            collectedTexts.push(e.text);
+                            appendOutputLineFn(taskId, 'stdout', e.text); break;
+                          case 'thinking':
+                            appendOutputLineFn(taskId, 'system', `🤔 ${e.text.slice(0, 200)}${e.text.length > 200 ? '…' : ''}`); break;
+                          case 'tool_call':
+                            appendOutputLineFn(taskId, 'system', `🔧 ${e.tool}(${JSON.stringify(e.input).slice(0, 200)})`); break;
+                          case 'tool_result':
+                            appendOutputLineFn(taskId, 'system', `  ↳ result`); break;
+                          case 'edit':
+                            appendOutputLineFn(taskId, 'system', `✏️  ${e.path} (+${e.linesAdded}/-${e.linesRemoved})`); break;
+                          case 'shell':
+                            if (e.status === 'running') appendOutputLineFn(taskId, 'system', `$ ${e.command.slice(0, 200)}`);
+                            else appendOutputLineFn(taskId, 'system', `  ↳ exit=${e.exitCode ?? '?'}`); break;
+                          case 'usage':
+                            appendOutputLineFn(taskId, 'system', `📊 tokens: ${e.inputTokens}in/${e.outputTokens}out, cached=${e.cachedTokens ?? 0}${e.costUsd ? `, $${e.costUsd.toFixed(4)}` : ''}`); break;
+                          case 'error':
+                            collectedErrors.push(e.message);
+                            appendOutputLineFn(taskId, 'stderr', e.message); break;
+                        }
+                      } catch { /* */ }
+                    };
+                    try {
+                      const r = await this.agentSessionManager.invoke({
+                        sandboxId,
+                        agentName: defaultAgent,
+                        prompt: currentPrompt,
+                        cwd: sb.worktreePath,
+                        runAsUser,
+                        signal: abortController.signal,
+                        onEvent,
+                      });
+                      const success = r.exitCode === 0;
+                      return {
+                        success,
+                        error: success ? undefined : (collectedErrors.join('; ') || 'agent run failed'),
+                        stderr: collectedErrors.join('\n'),
+                        modifiedFiles: r.modifiedFiles,
+                        display: (r.finalText ?? collectedTexts.join('\n')).slice(0, 3000),
+                      };
+                    } catch (err) {
+                      return {
+                        success: false,
+                        error: (err as Error).message,
+                        stderr: (err as Error).message,
+                        modifiedFiles: [],
+                        display: '',
+                      };
+                    }
+                  }
+                  // LEGACY PATH: cAgent.execute mit frischem subprocess pro call (kein session-cache)
+                  const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
+                  const r = await cAgent.execute({
+                    action: 'run',
+                    agent: defaultAgent,
+                    prompt: currentPrompt,
+                    cwd: sb.worktreePath,
+                    taskId,
+                  }, ctxCa);
+                  return {
+                    success: !!r.success,
+                    error: r.error,
+                    stderr: (r.data as any)?.stderr,
+                    modifiedFiles: (r.data as any)?.modifiedFiles ?? [],
+                    display: r.display ?? '',
+                  };
+                };
+
                 // Fire-and-forget — User-Chat pollt nachträglich via fetchSandboxChat
                 (async () => {
-                  const ctxCa = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
                   try {
                     // v760 Phase 3 — Retry-Loop: bei Agent-Fail bis zu 2 Versuche mit Error-Context
                     const MAX_ATTEMPTS = 2;
                     let attempts = 0;
                     let currentPrompt = prompt;
-                    let result: any = null;
+                    let result: NormalizedRunResult = { success: false, modifiedFiles: [], display: '' };
                     while (attempts < MAX_ATTEMPTS) {
                       attempts++;
                       if (attempts > 1) {
@@ -6637,22 +6738,11 @@ Wichtig:
                           taskPhase: 'coding',
                         });
                       }
-                      result = await cAgent.execute({
-                        action: 'run',
-                        agent: defaultAgent,
-                        prompt: currentPrompt,
-                        cwd: sb.worktreePath,
-                        // v769 — Live-Output via shared outputBuffer (gleicher Buffer wie Project-Agent)
-                        taskId,
-                      }, ctxCa);
+                      result = await runOnce(currentPrompt);
                       if (result.success) break;
                       // Failure → Retry-Prompt mit Error-Context bauen (falls noch Versuche übrig)
                       if (attempts < MAX_ATTEMPTS) {
-                        const errOutput = (
-                          (result.data as any)?.stderr
-                          || result.error
-                          || ''
-                        ).slice(0, 1500);
+                        const errOutput = (result.stderr || result.error || '').slice(0, 1500);
                         currentPrompt = `Der vorherige Versuch (${attempts}/${MAX_ATTEMPTS}) ist fehlgeschlagen. Fehler:
 
 ${errOutput || '(kein Fehler-Output)'}
@@ -6691,7 +6781,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
 
                     const attemptNote = attempts > 1 ? ` (nach ${attempts} Versuchen)` : '';
                     const summary = result.success
-                      ? `✓ Fertig${attemptNote}${(result.data as any)?.modifiedFiles?.length ? ` — ${(result.data as any).modifiedFiles.length} Dateien geändert` : ''}${commitNote}`
+                      ? `✓ Fertig${attemptNote}${result.modifiedFiles.length ? ` — ${result.modifiedFiles.length} Dateien geändert` : ''}${commitNote}${useAgentSession ? ' · 🔗' : ''}`
                       : `❌ Fehlgeschlagen nach ${attempts} Versuchen: ${result.error ?? 'unbekannt'}`;
                     const display = (result.display ?? '').slice(0, 3000);
                     await sandboxChatRepo.append({
