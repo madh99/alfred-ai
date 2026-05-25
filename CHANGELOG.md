@@ -5,6 +5,52 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.793] - 2026-05-25
+
+### Changed — Agent-Done UX: sofort sichtbar wenn fertig
+
+Vorher: Während der Code-Agent-Run lief, blieb der Bubble bei "Code-Agent läuft (claude-code) …" mit Stop-Button + CODING-Pill. Selbst wenn der Agent intern fertig war (usage-Event + done-progress in Activity sichtbar), wartete der UI-Bubble auf den auto-commit-Abschluss (kann seconds bis Minuten dauern). Nach Abschluss erschien eine SEPARATE "✓ Fertig"-Bubble unter dem alten — der alte blieb mit "läuft"-Text + CODING-Pill (war ein Bug). User musste die Activity expandieren um zu sehen ob fertig.
+
+Jetzt: Bubble transitioniert **sofort** wenn agent-interner Done erreicht ist.
+
+**3-Phasen-Transition**:
+
+| Event | Bubble-Status |
+|---|---|
+| Run start | `coding` · Stop-Button · "⚡ Code-Agent läuft (claude-code) …" |
+| usage-event vom Adapter (= claude/vibe/codex intern fertig) | `finalizing` · **kein Stop mehr** · weiterhin "läuft"-Text |
+| Runner-Wrapper komplett (nach auto-commit) | `done` · Text wird **in-place überschrieben** mit "✓ Fertig — N Dateien geändert · 🔗" |
+| (falls commit-sha) | Zusätzliche kompakte Notiz-Bubble: "🔧 · commit `abc12345`" |
+
+**Backend**:
+- `SandboxChatRepository.updateMessage(id, { text?, phase? })` — neue Methode für In-Place-Update per Message-ID
+- `chatSendMessage` code-agent-Branch:
+  - Captures `initialAgentMsg.id` aus dem ersten `append()`
+  - In `onEvent` callback: bei `usage`-Event → `updateTaskPhase(taskId, 'finalizing')` (Stop-Button verschwindet sofort)
+  - Nach Run-Completion: `updateMessage(initialAgentMsg.id, { text: summary, phase: 'done' })` statt separatem `append()`
+  - Bei `result.success && commitNote.trim()`: kompakte Commit-Info-Bubble als separater append (z.B. `🔧 · commit abc12345`)
+  - Bei Error/Abort: identisch in-place-update statt separater Append
+
+**Frontend**:
+- `interactive/page.tsx`:
+  - Neuer Computed-Value `isStoppable = isRunning && taskPhase !== 'finalizing' && taskPhase !== 'committing'`
+  - Stop-Button verwendet `isStoppable` statt `isRunning`
+  - SSE-Stream + 4s-loadChat-Poll bleiben aktiv solange `isRunning` (poll braucht Updates bis `done`)
+- `PHASE_BADGES`: `finalizing` als indigo-pill (gleich wie `committing`)
+
+**Was nach Deploy + Restart sichtbar wird**:
+1. Agent läuft, claude-code arbeitet ~2min, Stats-Badge updated live
+2. Letzter Event vom Adapter: `usage` (token-counts)
+3. **Sofort**: Stop-Button weg, Badge wird indigo `finalizing`
+4. ~2-5s später (nach git add + commit): Bubble-Text wird "✓ Fertig — 5 Dateien geändert · 🔗", Badge wird grün `done`
+5. Falls Commit erfolgreich: kleine Notiz-Bubble drunter "🔧 · commit `abc12345`"
+
+User sieht ohne Activity-Expand sofort den Status — kein "ist es fertig oder nicht?" mehr.
+
+**Was NICHT betroffen ist**:
+- Project-Agent-Phasen (planning/building/etc.) — die haben eigene Phase-Transitions
+- Retry-Versuche ("🔁 Fix-Versuch 2/2 …") — bleiben als separate Bubbles wie bisher
+
 ## [0.19.0-multi-ha.792] - 2026-05-25
 
 ### Fixed — Live-Output + Live-Cards: kaputte Subpath-Imports in Bundle

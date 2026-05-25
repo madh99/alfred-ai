@@ -48,6 +48,24 @@ export class SandboxChatRepository {
   }
 
   /**
+   * v793 — Update text and/or phase of a single message by id.
+   * Genutzt von Code-Agent-Runner um die initiale "läuft"-Bubble in-place mit
+   * Summary zu überschreiben (statt separate "✓ Fertig"-Bubble anzuhängen).
+   */
+  async updateMessage(id: string, fields: { text?: string; phase?: string }): Promise<void> {
+    const sets: string[] = [];
+    const params: unknown[] = [];
+    if (fields.text !== undefined) { sets.push('text = ?'); params.push(fields.text); }
+    if (fields.phase !== undefined) { sets.push('task_phase = ?'); params.push(fields.phase); }
+    if (sets.length === 0) return;
+    params.push(id);
+    await this.db.execute(
+      `UPDATE sandbox_chat_messages SET ${sets.join(', ')} WHERE id = ?`,
+      params,
+    );
+  }
+
+  /**
    * v763/v765 — Startup-Cleanup: alle nicht-terminalen Agent-Chat-Messages als
    * failed markieren. Wird beim Alfred-Init aufgerufen damit Tasks die durch
    * Crash/Restart unterbrochen wurden, nicht ewig als "running" in der UI bleiben.

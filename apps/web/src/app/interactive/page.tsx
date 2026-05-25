@@ -25,6 +25,7 @@ const PHASE_BADGES: Record<string, string> = {
   fixing: 'bg-orange-500/20 text-orange-400',
   validating: 'bg-cyan-500/20 text-cyan-400',
   committing: 'bg-indigo-500/20 text-indigo-400',
+  finalizing: 'bg-indigo-500/20 text-indigo-400',
   done: 'bg-emerald-500/20 text-emerald-400',
   failed: 'bg-red-500/20 text-red-400',
   stopped: 'bg-gray-500/20 text-gray-400',
@@ -599,6 +600,9 @@ export default function InteractivePage() {
               const events = m.taskId ? liveEvents.get(m.taskId) ?? [] : [];
               const hasStructuredEvents = events.length > 0;
               const isRunning = m.taskId && m.taskPhase && m.taskPhase !== 'done' && m.taskPhase !== 'failed' && m.taskPhase !== 'stopped' && m.taskPhase !== 'awaiting_user';
+              // v793 — Stop-Button NUR bei aktiv-laufenden Phasen, NICHT mehr während finalizing/committing
+              // (Agent intern fertig, nur noch auto-commit läuft → Stop sinnlos)
+              const isStoppable = isRunning && m.taskPhase !== 'finalizing' && m.taskPhase !== 'committing';
               // v765 — Stop-Button für ALLE laufenden Agent-Tasks (Code-Agent oder Project-Agent)
               const isCodeAgent = !!(m.taskId && m.taskId.startsWith('code-'));
               // v771 — Resume-Button für failed/stopped Project-Agent-Tasks (NICHT für code-* — die haben keinen Plan)
@@ -608,7 +612,7 @@ export default function InteractivePage() {
                   <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-gray-500 mb-1">
                     <span>{m.role === 'user' ? '👤 Du' : '🤖 Agent'}</span>
                     <div className="flex items-center gap-2">
-                      {isRunning && m.taskId && (
+                      {isStoppable && m.taskId && (
                         <button
                           onClick={async () => {
                             if (!client || !sandbox) return;

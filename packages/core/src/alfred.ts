@@ -6732,7 +6732,8 @@ Wichtig:
 - Wenn unklar was gemeint ist, nimm die plausibelste Interpretation, frag NICHT nach.`;
 
                 const taskId = `code-${randomUUID()}`;
-                await sandboxChatRepo.append({
+                // v793 — Capture initial agent-msg-id für In-Place-Update beim Run-Ende.
+                const initialAgentMsg = await sandboxChatRepo.append({
                   sandboxId,
                   userId: sb.userId,
                   role: 'agent',
@@ -6799,7 +6800,14 @@ Wichtig:
                             if (e.status === 'running') appendOutputLineFn(taskId, 'system', `$ ${e.command.slice(0, 200)}`);
                             else appendOutputLineFn(taskId, 'system', `  ↳ exit=${e.exitCode ?? '?'}`); break;
                           case 'usage':
-                            appendOutputLineFn(taskId, 'system', `📊 tokens: ${e.inputTokens}in/${e.outputTokens}out, cached=${e.cachedTokens ?? 0}${e.costUsd ? `, $${e.costUsd.toFixed(4)}` : ''}`); break;
+                            appendOutputLineFn(taskId, 'system', `📊 tokens: ${e.inputTokens}in/${e.outputTokens}out, cached=${e.cachedTokens ?? 0}${e.costUsd ? `, $${e.costUsd.toFixed(4)}` : ''}`);
+                            // v793 — Agent intern fertig (usage = letztes adapter-event vor close).
+                            // Stop-Button + CODING-Badge sofort weg. Final-Update mit Summary kommt
+                            // nach auto-commit (in-place auf initialAgentMsg.id).
+                            sandboxChatRepo.updateTaskPhase(taskId, 'finalizing').catch(err => {
+                              this.logger.warn({ err, taskId }, 'v793 finalizing flip failed');
+                            });
+                            break;
                           case 'error':
                             collectedErrors.push(e.message);
                             appendOutputLineFn(taskId, 'stderr', e.message); break;
@@ -6915,28 +6923,35 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
 
                     const attemptNote = attempts > 1 ? ` (nach ${attempts} Versuchen)` : '';
                     const summary = result.success
-                      ? `✓ Fertig${attemptNote}${result.modifiedFiles.length ? ` — ${result.modifiedFiles.length} Dateien geändert` : ''}${commitNote}${useAgentSession ? ' · 🔗' : ''}`
+                      ? `✓ Fertig${attemptNote}${result.modifiedFiles.length ? ` — ${result.modifiedFiles.length} Dateien geändert` : ''}${useAgentSession ? ' · 🔗' : ''}`
                       : `❌ Fehlgeschlagen nach ${attempts} Versuchen: ${result.error ?? 'unbekannt'}`;
                     const display = (result.display ?? '').slice(0, 3000);
-                    await sandboxChatRepo.append({
-                      sandboxId,
-                      userId: sb.userId,
-                      role: 'agent',
-                      text: `${summary}\n\n${display}`,
-                      taskId,
-                      taskPhase: result.success ? 'done' : 'failed',
+                    // v793 — In-Place-Update der initialen "läuft"-Bubble statt separater Append.
+                    // Eine Bubble pro Run, transitioniert von "läuft" → "✓ Fertig".
+                    await sandboxChatRepo.updateMessage(initialAgentMsg.id, {
+                      text: `${summary}${display ? `\n\n${display}` : ''}`,
+                      phase: result.success ? 'done' : 'failed',
                     });
+                    // v793 — Auto-Commit-Info als separate kompakte Notiz-Bubble (falls relevant).
+                    // Macht für User sichtbar: commit-sha oder commit-failure ohne den Summary zu polluten.
+                    if (result.success && commitNote.trim()) {
+                      await sandboxChatRepo.append({
+                        sandboxId,
+                        userId: sb.userId,
+                        role: 'agent',
+                        text: `🔧${commitNote}`,
+                        taskId,
+                        taskPhase: 'done',
+                      });
+                    }
                   } catch (err) {
                     const aborted = abortController.signal.aborted;
-                    await sandboxChatRepo.append({
-                      sandboxId,
-                      userId: sb.userId,
-                      role: 'agent',
+                    // v793 — Auch bei Fehler: in-place-Update statt append.
+                    await sandboxChatRepo.updateMessage(initialAgentMsg.id, {
                       text: aborted
                         ? '⏹ Vom User gestoppt.'
                         : `❌ Code-Agent-Fehler: ${(err as Error).message}`,
-                      taskId,
-                      taskPhase: aborted ? 'stopped' : 'failed',
+                      phase: aborted ? 'stopped' : 'failed',
                     });
                   } finally {
                     // v762 — Cleanup: AbortController-Eintrag entfernen
