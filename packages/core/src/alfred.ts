@@ -47,6 +47,14 @@ import {
   TodoSkill,
   FeedReaderSkill,
   HelpSkill,
+  // v792 — Project-Agent-Skill internal output buffer helpers.
+  // Müssen statisch importiert werden — dynamic subpath imports (`@alfred/skills/built-in/...`)
+  // funktionieren NICHT im bundle (esbuild leaves them as runtime imports, package.json exports
+  // declares only `.` → ERR_MODULE_NOT_FOUND at runtime, try-catch swallows → null functions).
+  appendOutputLine,
+  appendOutputEvent,
+  markOutputEnded,
+  createForgeClient,
 } from '@alfred/skills';
 import { ConversationManager } from './conversation-manager.js';
 import { MessagePipeline } from './message-pipeline.js';
@@ -6623,10 +6631,8 @@ ${augmentedMessage}`;
                 const abortController = new AbortController();
                 this.codeAgentTaskAborts.set(taskId, abortController);
 
-                try {
-                  const { appendOutputLine } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
-                  appendOutputLine(taskId, 'system', `💬 Discuss-Modus (read-only) startet im worktree ${sb.worktreePath}`);
-                } catch { /* */ }
+                // v792 — direkter Aufruf (static import oben)
+                try { appendOutputLine(taskId, 'system', `💬 Discuss-Modus (read-only) startet im worktree ${sb.worktreePath}`); } catch { /* */ }
 
                 (async () => {
                   const ctxD = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
@@ -6677,10 +6683,8 @@ ${augmentedMessage}`;
                     });
                   } finally {
                     this.codeAgentTaskAborts.delete(taskId);
-                    try {
-                      const { markOutputEnded } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
-                      markOutputEnded(taskId);
-                    } catch { /* */ }
+                    // v792 — direkter Aufruf (static import oben)
+                    try { markOutputEnded(taskId); } catch { /* */ }
                   }
                 })().catch(err => this.logger.warn({ err }, 'v769 discuss fire-and-forget failed'));
 
@@ -6742,10 +6746,8 @@ Wichtig:
                 this.codeAgentTaskAborts.set(taskId, abortController);
 
                 // v769 — Initial-System-Line damit User sieht "verbunden"
-                try {
-                  const { appendOutputLine } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
-                  appendOutputLine(taskId, 'system', `▶ Code-Agent (${defaultAgent}) startet im worktree ${sb.worktreePath}`);
-                } catch { /* */ }
+                // v792 — direkter Aufruf (static import oben)
+                try { appendOutputLine(taskId, 'system', `▶ Code-Agent (${defaultAgent}) startet im worktree ${sb.worktreePath}`); } catch { /* */ }
 
                 // v781 — Determine if AgentSession-Path is available (claude-code adapter registered)
                 const sessionAdapter = this.agentSessionManager?.listAdapters().find(a => a.name === defaultAgent);
@@ -6765,22 +6767,17 @@ Wichtig:
                 const runOnce = async (currentPrompt: string): Promise<NormalizedRunResult> => {
                   if (useAgentSession && this.agentSessionManager) {
                     // v781 — NEW PATH: AgentSessionManager mit persistent CLI-Session
+                    // v792 — direkter Aufruf der static-imports statt dynamic subpath imports.
+                    // Letztere failten zur Laufzeit (ERR_MODULE_NOT_FOUND wegen package.json
+                    // exports nur "."), wurden vom try-catch silent geschluckt → buffer leer.
                     const collectedTexts: string[] = [];
                     const collectedErrors: string[] = [];
-                    let appendOutputLineFn: ((tid: string, src: 'stdout' | 'stderr' | 'system', text: string) => void) | null = null;
-                    let appendOutputEventFn: ((tid: string, type: string, data: unknown) => void) | null = null;
-                    try {
-                      const mod = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
-                      appendOutputLineFn = mod.appendOutputLine;
-                      appendOutputEventFn = mod.appendOutputEvent;
-                    } catch { /* */ }
+                    const appendOutputLineFn = appendOutputLine;
+                    const appendOutputEventFn = appendOutputEvent;
                     const onEvent = (e: import('@alfred/skills').AgentEvent) => {
                       // v782 — Auch strukturierten Event ins Event-Stream pushen (für Card-Rendering)
-                      if (appendOutputEventFn) {
-                        try { appendOutputEventFn(taskId, e.type, e); } catch { /* */ }
-                      }
+                      try { appendOutputEventFn(taskId, e.type, e); } catch { /* */ }
                       // Forward to live-output text-lines (Backward-compat)
-                      if (!appendOutputLineFn) return;
                       try {
                         switch (e.type) {
                           case 'session_id':
@@ -6945,10 +6942,8 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     // v762 — Cleanup: AbortController-Eintrag entfernen
                     this.codeAgentTaskAborts.delete(taskId);
                     // v769 — Output-Buffer als ended markieren (retain 5min für nachladende UIs)
-                    try {
-                      const { markOutputEnded } = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
-                      markOutputEnded(taskId);
-                    } catch { /* */ }
+                    // v792 — direkter Aufruf (static import oben)
+                    try { markOutputEnded(taskId); } catch { /* */ }
                   }
                 })().catch(err => this.logger.warn({ err }, 'v760 code-agent fire-and-forget failed'));
 
@@ -8221,7 +8216,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                     return { ok: false, reason: `Konfigurierter Forge-Provider ist '${forge.provider}', User wählte '${input.repoMode}' — Mismatch.` };
                   }
                   try {
-                    const { createForgeClient } = await import('@alfred/skills/built-in/code-agent/forge-client.js' as any);
+                    // v792 — direkter Aufruf (static import oben)
                     const fc = createForgeClient(forge);
                     const r = await fc.createProject({
                       name: slug,

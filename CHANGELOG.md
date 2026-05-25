@@ -5,6 +5,88 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.792] - 2026-05-25
+
+### Fixed — Live-Output + Live-Cards: kaputte Subpath-Imports in Bundle
+
+Schwerwiegender Production-Bug: Während eines laufenden Code-Agent-Runs zeigte das Frontend weder Live-Text noch strukturierte Event-Cards. Nur die finale Summary erschien (aus DB-Update). Backend-Adapter parsten alle Events korrekt + persistierten sie in `agent_session_events` (verifiziert: 462 Events in einem 10min-Run), aber der parallele Push in den in-memory project-agent-skill-Buffer wurde nie ausgeführt.
+
+**Root Cause** — kaputte dynamic subpath imports in `packages/core/src/alfred.ts`:
+
+```ts
+const mod = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
+appendOutputLineFn = mod.appendOutputLine;
+appendOutputEventFn = mod.appendOutputEvent;
+```
+
+5 Stellen mit diesem Pattern. `@alfred/skills/package.json` deklariert nur:
+```json
+"exports": { ".": { "types": "...", "default": "..." } }
+```
+
+→ Esbuild kann den Subpath nicht inlinen (kein Mapping deklariert), lässt ihn als **runtime dynamic import** im Bundle stehen.
+→ Zur Laufzeit sucht Node.js nach `@alfred/skills` in `node_modules/` — findet nichts (Bundle ist installiert als `@madh-io/alfred-ai`).
+→ `ERR_MODULE_NOT_FOUND` → try-catch schluckt → `appendOutputEventFn` bleibt `null`.
+→ Bei jedem AgentEvent vom Adapter:
+  - DB-Persist via `AgentSessionManager.repo.appendEvent` ✓ funktioniert
+  - Buffer-Push via `appendOutputEventFn(taskId, ...)` ✗ no-op weil null
+→ `subscribeOutputEvents(taskId, cb)` liefert leere history + nie live events.
+
+**Verifikation** — direkter SSE-Test:
+```
+$ curl -skN "https://localhost:3420/api/project-agents/<taskId>/output?token=..."
+event: history
+data: {"lines":[]}
+
+event: history-events
+data: {"events":[]}    ← LEER trotz 462 Events in DB
+```
+
+**Bundle-Diagnose**:
+```bash
+grep -c 'import("@alfred/skills"'                  bundle/index.js  → 0   (Root: inlined ✓)
+grep -c 'import("@alfred/skills/built-in/...'      bundle/index.js  → 5   (Subpath: NICHT inlined ✗)
+```
+
+**Fix**: Top-Level static imports statt dynamic subpath imports.
+
+```ts
+// Top of alfred.ts
+import {
+  ...,
+  // v792 — Project-Agent-Skill internal output buffer helpers.
+  // Müssen statisch importiert werden — dynamic subpath imports funktionieren NICHT im bundle.
+  appendOutputLine,
+  appendOutputEvent,
+  markOutputEnded,
+} from '@alfred/skills';
+```
+
+`@alfred/skills` Root-Index re-exportiert alle drei Funktionen bereits (verifiziert: `packages/skills/src/index.ts:108`). Static top-level imports werden von esbuild korrekt geinlined → eine Module-Instanz, ein outputBuffers-Map.
+
+5 Call-Sites in alfred.ts:
+1. Discuss-Mode startup-line (`💬 Discuss-Modus...`)
+2. Code-Agent legacy-path startup-line (`▶ Code-Agent ... startet im worktree`)
+3. AgentSession-NEW-path: `appendOutputLineFn = appendOutputLine; appendOutputEventFn = appendOutputEvent;` (statt null-defaults)
+4. Code-Agent terminal `markOutputEnded(taskId)` 
+5. Project-Agent terminal `markOutputEnded(taskId)`
+
+Alle 5 try-catch-Wrapper bleiben (Schutz gegen unerwartete Runtime-Errors — aber jetzt feuern sie nicht mehr wegen MODULE_NOT_FOUND).
+
+**Was sich nach Deploy ändert**:
+- Live-Output-Text (legacy fallback) erscheint sofort während Run
+- Live-Cards (v783) erscheinen als strukturierte UI
+- Stats-Badge sieht Tokens live updaten (war bei DB-Reads zwar OK, aber jetzt schneller)
+- SSE-Stream liefert nicht-leere histories und live events
+
+**Affected paths**:
+- `packages/core/src/alfred.ts` (5 sites changed + 3 new top-level imports)
+
+**Nicht betroffen**:
+- AgentSession-Layer + DB-Persistierung war immer korrekt
+- ClaudeCodeAdapter / VibeAdapter / CodexAdapter / GenericPlainAdapter — alles OK
+- Frontend-Rendering-Code — war korrekt, hatte nur keine Daten zum Rendern
+
 ## [0.19.0-multi-ha.791] - 2026-05-25
 
 ### Added — Event-Replay-UI: historische Sessions im Detail-Modal
