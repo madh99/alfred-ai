@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useLayoutEffect, type KeyboardEvent } from 'react';
 import { useConfig } from '@/context/ConfigContext';
 import { ItemMentionPicker, type MentionedItem } from './ItemMentionPicker';
+import { AgentSessionStatsBadge } from './AgentSessionStatsBadge';
 
 export interface SandboxChatAttachment {
   name: string;
@@ -79,6 +80,8 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
   // v787 — Multi-Agent-Picker (CLI-Auswahl: claude-code/vibe/codex/generic)
   const [availableAgents, setAvailableAgents] = useState<AvailableAgent[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | undefined>(undefined);
+  // v788 — Stats-Refresh-Trigger nach jedem Send
+  const [statsRefreshKey, setStatsRefreshKey] = useState(0);
   useEffect(() => {
     let cancelled = false;
     client.fetchAvailableAgents().then(adapters => {
@@ -219,6 +222,8 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
     setAttachments([]);
     setMentions([]);
     textareaRef.current?.focus();
+    // v788 — Stats-Badge soll nach kurzer Pause refreshen (Backend hat dann erste Tokens persistiert)
+    setTimeout(() => setStatsRefreshKey(k => k + 1), 2000);
   }
 
   function pickMention(item: MentionedItem) {
@@ -356,7 +361,7 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
 
         {/* v787 — CLI-Agent-Picker: welcher Coding-Agent läuft (claude-code/vibe/codex/...). Nur bei Quick/Plan relevant. */}
         {availableAgents.length > 0 && engine !== 'discuss' && (
-          <div className="relative">
+          <div className="flex flex-col gap-1 items-stretch">
             <select
               value={selectedAgent ?? ''}
               onChange={(e) => changeAgent(e.target.value)}
@@ -370,6 +375,14 @@ export function SandboxChatInput({ onSend, disabled, placeholder, projectId, eng
                 </option>
               ))}
             </select>
+            {/* v788 — Stats-Badge unter dem Picker */}
+            {sandboxId && (
+              <AgentSessionStatsBadge
+                sandboxId={sandboxId}
+                selectedAgent={selectedAgent}
+                refreshKey={statsRefreshKey}
+              />
+            )}
           </div>
         )}
 

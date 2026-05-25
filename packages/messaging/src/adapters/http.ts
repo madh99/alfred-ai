@@ -624,12 +624,15 @@ export class HttpAdapter extends MessagingAdapter {
     this.sandboxCallbacks = cb;
   }
 
-  /** v787 — Agent-Session-Adapter-Liste (für Frontend-Picker). */
+  /** v787/v788 — Agent-Session-Adapter-Liste + Session-Stats. */
   private agentSessionCallbacks?: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
+    /** v788 — Stats für alle Sessions einer Sandbox (für UI-Anzeige). */
+    listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
   };
   setAgentSessionCallbacks(cb: {
     listAvailable: () => Array<{ name: string; capabilities: Record<string, unknown> }>;
+    listSessionsForSandbox?: (sandboxId: string) => Promise<Array<Record<string, unknown>>>;
   }): void {
     this.agentSessionCallbacks = cb;
   }
@@ -1172,6 +1175,8 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleSandboxChatResume(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/agent-session/adapters' && req.method === 'GET') {
       this.handleAgentSessionAdapters(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/agent-session\/sessions\/[^/]+$/) && req.method === 'GET') {
+      this.handleAgentSessionStats(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments$/) && req.method === 'GET') {
       this.handleEnvironmentsList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/environments\/scan$/) && req.method === 'GET') {
@@ -4293,6 +4298,25 @@ export class HttpAdapter extends MessagingAdapter {
       const adapters = this.agentSessionCallbacks.listAvailable();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ adapters }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  }
+
+  // v788 — Session-Stats für eine Sandbox (alle aktiven Agents)
+  private async handleAgentSessionStats(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.agentSessionCallbacks?.listSessionsForSandbox) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions: [] }));
+      return;
+    }
+    const sandboxId = url.pathname.split('/')[4];
+    try {
+      const sessions = await this.agentSessionCallbacks.listSessionsForSandbox(sandboxId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sessions }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));

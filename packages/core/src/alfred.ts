@@ -5545,11 +5545,37 @@ export class Alfred {
       }
 
       // v609 — Wire Project-Agent-Sessions API on HTTP adapter (WebUI inspector)
-      // v787 — Agent-Session-Adapters API (für Multi-Agent-Picker im Frontend)
+      // v787/v788 — Agent-Session-Adapters API (für Multi-Agent-Picker + Stats im Frontend)
       if (apiAdapter && this.agentSessionManager && 'setAgentSessionCallbacks' in apiAdapter) {
         const mgr = this.agentSessionManager;
+        const dbForSessionStats = this.database!.getAdapter();
         (apiAdapter as any).setAgentSessionCallbacks({
           listAvailable: () => mgr.listAdapters(),
+          listSessionsForSandbox: async (sandboxId: string) => {
+            try {
+              const { AgentSessionRepository: ASR } = await import('@alfred/storage');
+              const repo = new ASR(dbForSessionStats);
+              const sessions = await repo.listBySandbox(sandboxId);
+              return sessions.map(s => ({
+                id: s.id,
+                agentName: s.agentName,
+                cliSessionId: s.cliSessionId,
+                status: s.status,
+                messageCount: s.messageCount,
+                totalTokensInput: s.totalTokensInput,
+                totalTokensOutput: s.totalTokensOutput,
+                totalCachedTokens: s.totalCachedTokens,
+                totalCostUsd: s.totalCostUsd,
+                lastHealthOk: s.lastHealthOk,
+                startedAt: s.startedAt,
+                lastUsedAt: s.lastUsedAt,
+                capabilities: s.capabilities,
+              }));
+            } catch (err) {
+              this.logger.warn({ err, sandboxId }, 'v788 listSessionsForSandbox failed');
+              return [];
+            }
+          },
         });
       }
 

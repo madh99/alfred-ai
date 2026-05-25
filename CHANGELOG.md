@@ -5,6 +5,75 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.788] - 2026-05-25
+
+### Added — Session-Stats-Badge: live Stats pro Sandbox×Agent
+
+Kompakter Stats-Badge unter dem Agent-Picker zeigt live: Iterations-Count, Tokens (in/out/cached), Cache-Hit-Ratio, akkumulierte Kosten. Click expandiert ein Popover mit Stats für ALLE Agent-Sessions der Sandbox.
+
+**Neue Backend-API**: `GET /api/agent-session/sessions/:sandboxId`
+```json
+{ "sessions": [
+  { "id": "...", "agentName": "claude-code", "cliSessionId": "abc12345",
+    "status": "active", "messageCount": 5,
+    "totalTokensInput": 12300, "totalTokensOutput": 220, "totalCachedTokens": 11000,
+    "totalCostUsd": 0.045, "startedAt": "...", "lastUsedAt": "...",
+    "capabilities": {...} },
+  { "id": "...", "agentName": "vibe", "status": "active", ... }
+] }
+```
+
+Liefert alle Sessions egal Status, sortiert nach `lastUsedAt DESC` (via `AgentSessionRepository.listBySandbox()`).
+
+**Backend-Wiring** (alfred.ts):
+- `setAgentSessionCallbacks` erweitert um `listSessionsForSandbox(sandboxId) → AgentSession[]`
+- Mapping in JSON-safe Form (kein Date-Objekt, kein internal id mit deserialize-Risiko)
+- Auf failure: leere Liste statt 500 (non-critical für UI)
+
+**HTTP-Adapter**:
+- Neue Route `GET /api/agent-session/sessions/:sandboxId`
+- `handleAgentSessionStats` Route-Handler
+- 200 mit leerem `sessions: []` wenn Callback nicht gesetzt (statt 404)
+
+**Frontend-Komponente**: `apps/web/src/components/chat/AgentSessionStatsBadge.tsx`
+
+| Element | Format |
+|---|---|
+| Iterations | `📊 5×` |
+| Total Tokens | `12.5k tok` |
+| Cached Tokens | `11k ⚡` (emerald-Tinte, mit cache-ratio im Tooltip) |
+| Cost | `$0.04` |
+
+Klick öffnet Popover über dem Badge mit:
+- Liste aller Sessions in dieser Sandbox
+- Pro Session: Agent-Name + status-Pill + cli-session-id (erste 8 chars)
+- `in / out / cache / cost` aufgesplittet
+- "X ago" timestamp (sekunden/minuten/stunden/tage)
+- Aktuelle Session ist purple-highlighted
+- Cache-Hit-Ratio im Tooltip des Badges (input_tokens vs cached_tokens)
+
+**Polling**:
+- Initial-Load beim Mount
+- Periodisch alle 8s (live-Update während Run läuft)
+- Manual-Refresh-Trigger via `refreshKey`-Prop nach jedem Send-Klick (2s delay damit Backend Tokens persistiert hat)
+
+**UI-Integration**: Badge wird unter dem Agent-Picker in SandboxChatInput angezeigt. Nur sichtbar wenn `sandboxId` + `engine ≠ 'discuss'` + ≥1 Adapter verfügbar.
+
+**Fallback-States**:
+- Noch keine Session: `no session` (italic gray)
+- Aktuelle Session nicht active aber andere existieren: `📊 N other`-Button zum Popover-Öffnen
+- Aktive Session ohne Tokens (frisch erstellt): zeigt `📊 0× · 0 tok · $0.00`
+
+**Was du nach Deploy siehst**:
+1. Sandbox öffnen, Quick-Mode-Klick mit claude-code
+2. Während Agent läuft: Stats-Badge füllt sich live (poll alle 8s)
+3. Nach Run: `📊 1× · 12.5k tok · 11k ⚡ · $0.04`
+4. Zweiter Klick → cache-ratio steigt (sollte 50%+ sein bei prompt-caching)
+5. Agent wechseln zu vibe → Stats-Badge zeigt 0 für vibe (frische Session)
+6. Klick auf Badge → Popover mit beiden Sessions parallel sichtbar
+
+Phase 3 läuft. v789 = Reset-Session-Button im Popover, v790 = Cross-Session-Context-Transfer, v791 = Event-Replay-UI.
+
 ## [0.19.0-multi-ha.787] - 2026-05-25
 
 ### Added — Agent-Picker UI: CLI-Agent pro Run wählen

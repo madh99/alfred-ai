@@ -506,6 +506,32 @@ export class AlfredClient {
       return [];
     }
   }
+
+  /** v788 — Session-Stats für eine Sandbox (alle aktiven Agents). */
+  async fetchAgentSessions(sandboxId: string): Promise<Array<{
+    id: string;
+    agentName: string;
+    cliSessionId?: string;
+    status: string;
+    messageCount: number;
+    totalTokensInput: number;
+    totalTokensOutput: number;
+    totalCachedTokens: number;
+    totalCostUsd: number;
+    lastHealthOk?: number;
+    startedAt: string;
+    lastUsedAt: string;
+    capabilities?: Record<string, unknown>;
+  }>> {
+    try {
+      const res = await fetch(`${this.baseUrl}/api/agent-session/sessions/${encodeURIComponent(sandboxId)}`, { headers: this.authHeaders });
+      if (!res.ok) return [];
+      const data = await res.json().catch(() => ({})) as { sessions?: Array<any> };
+      return data.sessions ?? [];
+    } catch {
+      return [];
+    }
+  }
   async getSandbox(sandboxId: string): Promise<SandboxItem | null> {
     const res = await fetch(`${this.baseUrl}/api/sandbox/${sandboxId}`, { headers: this.authHeaders });
     if (res.status === 404) return null;
