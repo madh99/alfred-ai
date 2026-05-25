@@ -46,6 +46,8 @@ export default function InteractivePage() {
   const [chatHistory, setChatHistory] = useState<SandboxChatItem[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [liveOutput, setLiveOutput] = useState<Map<string, Array<{ ts: number; source: string; text: string }>>>(new Map());
+  // v782 — Strukturierte AgentEvents parallel (für Card-Rendering in v783)
+  const [liveEvents, setLiveEvents] = useState<Map<string, Array<{ ts: number; type: string; data: unknown }>>>(new Map());
   const esRef = useRef<EventSource | null>(null);
   const currentTaskRef = useRef<string | null>(null);
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
@@ -288,6 +290,19 @@ export default function InteractivePage() {
         },
         (history) => {
           setLiveOutput(prev => { const next = new Map(prev); next.set(taskId, history); return next; });
+        },
+        // v782 — Strukturierte AgentEvents
+        (entry) => {
+          setLiveEvents(prev => {
+            const next = new Map(prev);
+            const existing = next.get(taskId) ?? [];
+            const updated = [...existing, entry];
+            next.set(taskId, updated.length > 300 ? updated.slice(-300) : updated);
+            return next;
+          });
+        },
+        (eventHistory) => {
+          setLiveEvents(prev => { const next = new Map(prev); next.set(taskId, eventHistory); return next; });
         },
       );
       es.addEventListener('error', () => {

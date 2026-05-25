@@ -293,7 +293,14 @@ export class AlfredClient {
 
   // v651 — SSE-EventSource für Output-Stream. EventSource trägt das auth-token via
   // query-string (?token=…) weil der Browser kein Authorization-Header bei EventSource erlaubt.
-  openProjectAgentOutputStream(taskId: string, onLine: (line: { ts: number; source: string; text: string }) => void, onHistory?: (lines: Array<{ ts: number; source: string; text: string }>) => void): EventSource {
+  openProjectAgentOutputStream(
+    taskId: string,
+    onLine: (line: { ts: number; source: string; text: string }) => void,
+    onHistory?: (lines: Array<{ ts: number; source: string; text: string }>) => void,
+    /** v782 — Optional: strukturierte AgentEvents (für Card-Rendering). */
+    onEvent?: (entry: { ts: number; type: string; data: unknown }) => void,
+    onEventHistory?: (events: Array<{ ts: number; type: string; data: unknown }>) => void,
+  ): EventSource {
     const qs = this.token ? `?token=${encodeURIComponent(this.token)}` : '';
     const es = new EventSource(`${this.baseUrl}/api/project-agents/${taskId}/output${qs}`);
     es.addEventListener('line', (ev) => {
@@ -303,6 +310,19 @@ export class AlfredClient {
       try {
         const payload = JSON.parse((ev as MessageEvent).data);
         if (onHistory && Array.isArray(payload.lines)) onHistory(payload.lines);
+      } catch { /* skip */ }
+    });
+    // v782 — Strukturierte Events
+    es.addEventListener('event', (ev) => {
+      try {
+        const entry = JSON.parse((ev as MessageEvent).data);
+        if (onEvent) onEvent(entry);
+      } catch { /* skip */ }
+    });
+    es.addEventListener('history-events', (ev) => {
+      try {
+        const payload = JSON.parse((ev as MessageEvent).data);
+        if (onEventHistory && Array.isArray(payload.events)) onEventHistory(payload.events);
       } catch { /* skip */ }
     });
     return es;

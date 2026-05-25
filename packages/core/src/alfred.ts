@@ -5501,7 +5501,7 @@ export class Alfred {
       if (apiAdapter && this.database && 'setProjectAgentCallbacks' in apiAdapter) {
         const { ProjectAgentSessionRepository } = await import('@alfred/storage');
         const sessionRepo = new ProjectAgentSessionRepository(this.database.getAdapter());
-        const { pushInterjection, subscribeOutput } = await import('@alfred/skills');
+        const { pushInterjection, subscribeOutput, subscribeOutputEvents } = await import('@alfred/skills');
         (apiAdapter as any).setProjectAgentCallbacks({
           list: async (filter?: { phase?: string }) => {
             try {
@@ -5565,6 +5565,15 @@ export class Alfred {
               return subscribeOutput(taskId, cb);
             } catch (err) {
               this.logger.warn({ err, taskId }, 'Project-Agent API subscribeOutput failed');
+              return null;
+            }
+          },
+          // v782 — Strukturierter AgentEvent-Stream (parallel zu Text-Lines, für Card-Rendering)
+          subscribeEvents: (taskId: string, cb: (entry: { ts: number; type: string; data: unknown }) => void) => {
+            try {
+              return subscribeOutputEvents(taskId, cb);
+            } catch (err) {
+              this.logger.warn({ err, taskId }, 'v782 subscribeEvents failed');
               return null;
             }
           },
@@ -6637,12 +6646,18 @@ Wichtig:
                     const collectedTexts: string[] = [];
                     const collectedErrors: string[] = [];
                     let appendOutputLineFn: ((tid: string, src: 'stdout' | 'stderr' | 'system', text: string) => void) | null = null;
+                    let appendOutputEventFn: ((tid: string, type: string, data: unknown) => void) | null = null;
                     try {
                       const mod = await import('@alfred/skills/built-in/code-agent/project-agent-skill.js' as any);
                       appendOutputLineFn = mod.appendOutputLine;
+                      appendOutputEventFn = mod.appendOutputEvent;
                     } catch { /* */ }
                     const onEvent = (e: import('@alfred/skills').AgentEvent) => {
-                      // Forward to live-output (Backward-compat — v782 will refactor frontend)
+                      // v782 — Auch strukturierten Event ins Event-Stream pushen (für Card-Rendering)
+                      if (appendOutputEventFn) {
+                        try { appendOutputEventFn(taskId, e.type, e); } catch { /* */ }
+                      }
+                      // Forward to live-output text-lines (Backward-compat)
                       if (!appendOutputLineFn) return;
                       try {
                         switch (e.type) {

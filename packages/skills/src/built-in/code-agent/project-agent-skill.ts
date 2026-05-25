@@ -56,18 +56,40 @@ const activeAbortControllers = new Map<string, AbortController>();
  * Output-Lines pro aktiver Session + Liste der SSE-Subscriber. Wird bei Session-Ende
  * 5min lang behalten damit Spät-Connector noch das Ende sieht, dann gelöscht.
  */
+/** v782 — Strukturierter Agent-Event parallel zu Text-Lines. Frontend kann beide konsumieren. */
+export interface AgentEventEntry {
+  ts: number;
+  /** Diskriminator für Frontend-Rendering. Common-Types: session_id, text, thinking, tool_call, tool_result, edit, shell, usage, error, progress */
+  type: string;
+  /** AgentEvent-Payload (alfred-skills/agent-session AgentEvent). Frontend kennt die Shape per type. */
+  data: unknown;
+}
+
 interface OutputBuffer {
   lines: Array<{ ts: number; source: 'stdout' | 'stderr' | 'system'; text: string }>;
+  /** v782 — strukturierte AgentEvents für Card-Rendering im Frontend. */
+  events: AgentEventEntry[];
   subscribers: Set<(line: { ts: number; source: string; text: string }) => void>;
+  /** v782 — separater Subscriber-Stream für AgentEvents. */
+  eventSubscribers: Set<(entry: AgentEventEntry) => void>;
   endedAt?: number;
 }
 const outputBuffers = new Map<string, OutputBuffer>();
 const OUTPUT_BUFFER_MAX_LINES = 500;
+const OUTPUT_BUFFER_MAX_EVENTS = 500;
 const OUTPUT_BUFFER_RETAIN_MS = 5 * 60_000;
 
-export function appendOutputLine(taskId: string, source: 'stdout' | 'stderr' | 'system', text: string): void {
+function ensureBuffer(taskId: string): OutputBuffer {
   let buf = outputBuffers.get(taskId);
-  if (!buf) { buf = { lines: [], subscribers: new Set() }; outputBuffers.set(taskId, buf); }
+  if (!buf) {
+    buf = { lines: [], events: [], subscribers: new Set(), eventSubscribers: new Set() };
+    outputBuffers.set(taskId, buf);
+  }
+  return buf;
+}
+
+export function appendOutputLine(taskId: string, source: 'stdout' | 'stderr' | 'system', text: string): void {
+  const buf = ensureBuffer(taskId);
   const entry = { ts: Date.now(), source, text: text.slice(0, 4000) };
   buf.lines.push(entry);
   if (buf.lines.length > OUTPUT_BUFFER_MAX_LINES) buf.lines.splice(0, buf.lines.length - OUTPUT_BUFFER_MAX_LINES);
@@ -76,13 +98,33 @@ export function appendOutputLine(taskId: string, source: 'stdout' | 'stderr' | '
   }
 }
 
+/** v782 — Push einen strukturierten AgentEvent in den Buffer + an Subscriber. */
+export function appendOutputEvent(taskId: string, eventType: string, data: unknown): void {
+  const buf = ensureBuffer(taskId);
+  const entry: AgentEventEntry = { ts: Date.now(), type: eventType, data };
+  buf.events.push(entry);
+  if (buf.events.length > OUTPUT_BUFFER_MAX_EVENTS) buf.events.splice(0, buf.events.length - OUTPUT_BUFFER_MAX_EVENTS);
+  for (const sub of buf.eventSubscribers) {
+    try { sub(entry); } catch { /* dropped */ }
+  }
+}
+
 export function subscribeOutput(taskId: string, cb: (line: { ts: number; source: string; text: string }) => void): { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } {
-  let buf = outputBuffers.get(taskId);
-  if (!buf) { buf = { lines: [], subscribers: new Set() }; outputBuffers.set(taskId, buf); }
+  const buf = ensureBuffer(taskId);
   buf.subscribers.add(cb);
   return {
     history: [...buf.lines],
-    unsubscribe: () => { buf!.subscribers.delete(cb); },
+    unsubscribe: () => { buf.subscribers.delete(cb); },
+  };
+}
+
+/** v782 — Event-Stream-Subscriber. Returnt history der bisherigen Events + unsub-callback. */
+export function subscribeOutputEvents(taskId: string, cb: (entry: AgentEventEntry) => void): { history: AgentEventEntry[]; unsubscribe: () => void } {
+  const buf = ensureBuffer(taskId);
+  buf.eventSubscribers.add(cb);
+  return {
+    history: [...buf.events],
+    unsubscribe: () => { buf.eventSubscribers.delete(cb); },
   };
 }
 

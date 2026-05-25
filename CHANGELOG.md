@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.782] - 2026-05-25
+
+### Added — Strukturierter AgentEvent-Stream parallel zu Text-Lines (Frontend bereit für Cards in v783)
+
+**Backend**:
+- `appendOutputEvent(taskId, type, data)` parallel zu `appendOutputLine` — pusht strukturierte AgentEvents in den Buffer
+- `subscribeOutputEvents(taskId, cb)` parallel zu `subscribeOutput` — separate Subscriber-Liste für Event-Stream
+- `AgentEventEntry`-Type: `{ ts, type, data: unknown }` (data ist der AgentEvent payload aus @alfred/skills)
+- Ringbuffer max 500 Events (parallel zu max 500 Text-Lines)
+
+**v781 onEvent erweitert**: emittiert jetzt BEIDE — text-lines (für Backward-compat live-output) UND strukturierte Events (für Card-Rendering in v783).
+
+**SSE-Stream-Endpoint** `/api/project-agents/:id/output` sendet jetzt zusätzliche Events:
+- `event: event` — strukturierte AgentEventEntry (live, einzeln)
+- `event: history-events` — Replay aller bisherigen Events beim Connect
+- Existing `event: line` und `event: history` bleiben unverändert
+
+**Frontend**:
+- Neue `liveEvents: Map<taskId, AgentEventEntry[]>` parallel zu `liveOutput`
+- `openProjectAgentOutputStream()` erweitert um `onEvent` + `onEventHistory` callbacks (optional, bestehende Aufrufer unverändert)
+- Interactive-Page subscribed beide Streams gleichzeitig, fill beide Maps
+- Rendering: aktuell weiterhin liveOutput-Text-Lines (v783 wird Cards hinzufügen wenn liveEvents present)
+
+**Was sich für User ändert**: noch nichts sichtbar — v783 nutzt liveEvents für strukturierte Cards (ToolCallCard, EditCard mit Diff, BashCard, ThinkingCard).
+
+**Was sich für Backwards-Compat-Pfade ändert**: nichts. Project-Agent emittiert keine AgentEvents (nur Text-Lines), liveEvents bleibt für project-agent-Tasks leer. v783 fällt für solche Tasks auf Text-Rendering zurück.
+
 ## [0.19.0-multi-ha.781] - 2026-05-25
 
 ### Changed — chatSendMessage nutzt AgentSessionManager wenn Adapter verfügbar

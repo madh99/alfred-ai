@@ -339,6 +339,8 @@ export class HttpAdapter extends MessagingAdapter {
   private projectAgentsPlanFn?: (taskId: string) => Promise<any[]>;
   // v651 — Live-Output-Stream + Live-Interjection
   private projectAgentsSubscribeOutputFn?: (taskId: string, cb: (line: { ts: number; source: string; text: string }) => void) => { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } | null;
+  // v782 — Strukturierter AgentEvent-Subscribe-Stream parallel zu Text-Lines
+  private projectAgentsSubscribeEventsFn?: (taskId: string, cb: (entry: { ts: number; type: string; data: unknown }) => void) => { history: Array<{ ts: number; type: string; data: unknown }>; unsubscribe: () => void } | null;
   private projectAgentsInterjectFn?: (taskId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
 
   setProjectAgentCallbacks(opts: {
@@ -348,6 +350,8 @@ export class HttpAdapter extends MessagingAdapter {
     resume?: (taskId: string, notes?: string) => Promise<{ ok: boolean; taskId?: string; error?: string }>;
     plan?: (taskId: string) => Promise<any[]>;
     subscribeOutput?: (taskId: string, cb: (line: { ts: number; source: string; text: string }) => void) => { history: Array<{ ts: number; source: string; text: string }>; unsubscribe: () => void } | null;
+    /** v782 — strukturierte AgentEvents (für Card-Rendering). */
+    subscribeEvents?: (taskId: string, cb: (entry: { ts: number; type: string; data: unknown }) => void) => { history: Array<{ ts: number; type: string; data: unknown }>; unsubscribe: () => void } | null;
     interject?: (taskId: string, text: string) => Promise<{ ok: boolean; error?: string }>;
   }): void {
     this.projectAgentsListFn = opts.list;
@@ -356,6 +360,7 @@ export class HttpAdapter extends MessagingAdapter {
     this.projectAgentsResumeFn = opts.resume;
     this.projectAgentsPlanFn = opts.plan;
     this.projectAgentsSubscribeOutputFn = opts.subscribeOutput;
+    this.projectAgentsSubscribeEventsFn = opts.subscribeEvents;
     this.projectAgentsInterjectFn = opts.interject;
   }
 
@@ -2039,8 +2044,19 @@ export class HttpAdapter extends MessagingAdapter {
       return;
     }
 
-    // Replay history first
+    // v782 — Falls Event-Subscriber verfügbar: zusätzlich strukturierte AgentEvents streamen
+    let eventSub: { history: Array<{ ts: number; type: string; data: unknown }>; unsubscribe: () => void } | null = null;
+    if (this.projectAgentsSubscribeEventsFn) {
+      try {
+        eventSub = this.projectAgentsSubscribeEventsFn(taskId, (entry) => send('event', entry));
+      } catch { /* */ }
+    }
+
+    // Replay history first (lines + events)
     send('history', { lines: sub.history });
+    if (eventSub) {
+      send('history-events', { events: eventSub.history });
+    }
 
     // Heartbeat every 25s so proxies don't close the connection
     const heartbeat = setInterval(() => {
@@ -2050,6 +2066,7 @@ export class HttpAdapter extends MessagingAdapter {
     const cleanup = () => {
       clearInterval(heartbeat);
       try { sub.unsubscribe(); } catch { /* ignore */ }
+      if (eventSub) try { eventSub.unsubscribe(); } catch { /* ignore */ }
       try { res.end(); } catch { /* ignore */ }
     };
     req.on('close', cleanup);
