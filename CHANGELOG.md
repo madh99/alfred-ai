@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.800] - 2026-05-26
+
+### Fixed — findOrCreate Multi-User-Filter erzeugt Orphans bei cross-user Sandbox-Runs
+
+v798 hat `params.projectId` als primary key zu findOrCreate eingeführt:
+```ts
+if (params.projectId) {
+  const proj = await this.repo.getById(params.userId, params.projectId);
+  if (proj) return proj;
+}
+```
+
+`getById(userId, projectId)` filtert nach `user_id` im WHERE-Clause. In einem **Multi-User-Setup** (z.B. admin-user arbeitet an madh's Projekt) trifft:
+- `sandbox.userId = '91df4602' (admin)`
+- `project.user_id = 'f165df7a' (madh)`
+
+`getById('91df4602', AlpbyteId)` → NULL (kein Row mit `id=AlpbyteId AND user_id='91df4602'`).
+
+→ Code fällt durch in cwd-heuristik (line 230+) → `findByCwd` findet nichts → `repo.create()` erstellt neuen orphan mit `name=basename(worktree-path)`.
+
+**Live-Beweis** vom heutigen Run (sandbox c8517c2e):
+- sandbox.user_id = `91df4602` (admin)
+- Alpbyte.user_id = `f165df7a` (madh)
+- Orphan 6c88734c created mit user_id=`91df4602`, name=`ipmeixnr`
+- Session 5ac27b57 + 2 open items + 2 decisions alle linked zu orphan statt Alpbyte
+
+**Fix**: `getByIdAnyOwner(projectId)` statt `getById(userId, projectId)`. ProjectRepository bietet diese Methode bereits seit v667 (für genau diesen Multi-User-Fall im Reasoning-Pipeline). Sie ignoriert ownership-filter, gibt das Project zurück unabhängig vom Owner.
+
+Wichtig: das ist **safe**. Die Session wird unter `project.id` linked (FK), das Project behält seinen owner. Permission-Check passierte bereits VORHER (beim Sandbox-Create) — wer die Sandbox erstellen durfte, darf auch dessen Output dem Project zuordnen.
+
+**Code-Change** (1 Site in `packages/core/src/projects/project-manager.ts:findOrCreate`):
+```diff
+- const proj = await this.repo.getById(params.userId, params.projectId);
++ const proj = await this.repo.getByIdAnyOwner(params.projectId);
+```
+
+### Migration — manueller Cleanup für orphan 6c88734c
+
+v798-Migration läuft nur beim Startup und konnte 6c88734c nicht erwischen (das Orphan entstand 9 Minuten NACH dem Migration-Lauf). Manueller SQL-Cleanup beim v800-Deploy:
+
+```sql
+UPDATE project_sessions    SET project_id='3a407ced-...' WHERE project_id='6c88734c-...';
+UPDATE project_open_items  SET project_id='3a407ced-...' WHERE project_id='6c88734c-...';
+UPDATE project_decisions   SET project_id='3a407ced-...' WHERE project_id='6c88734c-...';
+DELETE FROM project_sessions WHERE id='v799-manual-restore-4ee4db2b';  -- duplicate
+UPDATE projects SET status='archived', name='[ORPHAN-v800] ipmeixnr' WHERE id='6c88734c-...';
+```
+
+Bewegt: 1 session, 2 open items, 2 decisions an Alpbyte Games. Orphan archiviert.
+
+**Affected paths**: `packages/core/src/projects/project-manager.ts` (1 line changed in findOrCreate)
+
 ## [0.19.0-multi-ha.799] - 2026-05-26
 
 ### Fixed — Quick-Mode Sessions wurden nicht in project_sessions registriert

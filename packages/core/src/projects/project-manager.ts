@@ -234,13 +234,18 @@ export class ProjectManager {
     // v798 — Explicit projectId hat Vorrang vor cwd-Heuristik. Wenn der caller
     // weiß zu welchem Project die Session gehört (z.B. sandbox-flow kennt
     // sandbox.projectId), wird direkt geladen — keine orphan-Erstellung möglich.
+    // v800 — getByIdAnyOwner (statt getById) für Multi-User-Setup. Ein admin-user
+    // kann via Sandbox an einem madh-Projekt arbeiten; sandbox.userId != project.userId.
+    // getById(userId,...) filtert nach userId und gibt dann null zurück → Fallback
+    // erstellte orphan-Projekt. getByIdAnyOwner ignoriert ownership-filter.
+    // Session wird trotzdem unter project.id linked, owner bleibt unverändert.
     if (params.projectId) {
       try {
-        const proj = await this.repo.getById(params.userId, params.projectId);
+        const proj = await this.repo.getByIdAnyOwner(params.projectId);
         if (proj) return proj;
-        this.logger.warn({ projectId: params.projectId, userId: params.userId }, 'v798 explicit projectId not found, falling back to cwd-heuristik');
+        this.logger.warn({ projectId: params.projectId, userId: params.userId }, 'v800 explicit projectId not found (any-owner-lookup), falling back to cwd-heuristik');
       } catch (err) {
-        this.logger.warn({ err, projectId: params.projectId }, 'v798 getById for explicit projectId failed, falling back to cwd-heuristik');
+        this.logger.warn({ err, projectId: params.projectId }, 'v800 getByIdAnyOwner for explicit projectId failed, falling back to cwd-heuristik');
       }
     }
     if (this.autoBindByCwd && params.cwd) {
