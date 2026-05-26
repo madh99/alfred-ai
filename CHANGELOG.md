@@ -5,6 +5,68 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.801] - 2026-05-26
+
+### Fixed — Deploy-Modal UX + redundante Host-side install/build bei docker-compose
+
+User-Beobachtung: Beim Deploy mit `Process-Manager=docker-compose` aber `Runtime=pm2` (oder beliebigem nicht-Docker-Runtime) wurde der Container trotzdem korrekt deployed — aber das UI war verwirrend (Runtime-Wahl irrelevant) und das Backend führte redundante Host-side `npm install` + `npm run build` aus.
+
+Plus: Branch-default war hardcoded `'main'` statt aus `project.defaultBranch` (führte zu git-Fehler wenn Projekt `master` verwendet).
+
+**Backend (`packages/skills/src/built-in/deploy.ts`)** — Skip Host-side install/build bei docker-compose:
+
+```ts
+const installCmd = input.install_command
+  ?? (pm === 'docker-compose' ? ''   // ← NEW: Container baut deps selbst
+   : runtime === 'node' ? 'npm install'
+   : runtime === 'python' ? 'pip install -r requirements.txt'
+   : '');
+// + same logic für buildCmd
+```
+
+Bei docker-compose-deploy:
+- Vorher: `git clone` → `npm install` (HOST, 30-60s) → `npm run build` (HOST) → `docker compose up -d --build` (Container baut neu)
+- Jetzt: `git clone` → `docker compose up -d --build` (alle deps + build im Container)
+
+Status-Step gibt jetzt explizit aus: `📦 Host-side install übersprungen (docker-compose baut deps im Container)`.
+
+`install_command`/`build_command` als explicit input override bleibt erhalten — Backdoor falls jemand WIRKLICH Host-side install will (z.B. für Pre-Compile-Schritt vor docker-build).
+
+**UI (`apps/web/src/components/projects/ProjectDeployModal.tsx`)**:
+
+1. **Runtime-Select disabled bei pm=docker-compose**:
+   ```tsx
+   <select disabled={processManager === 'docker-compose'} ...>
+   ```
+   Plus Label-Hinweis: `via Dockerfile` (italic gray) statt `🔍 detected`-Badge.
+
+2. **Branch-Default aus project.defaultBranch**:
+   ```tsx
+   useEffect(() => {
+     client.fetchProject(projectId).then(detail => {
+       if (detail?.project?.defaultBranch) setBranch(detail.project.defaultBranch);
+     });
+   }, [...]);
+   ```
+   Mit `branchTouched`-Flag: sobald User manuell tippt, kein Override mehr.
+
+3. **Deploy-Vorschau aware**:
+   - Bei pm=docker-compose: install/build-Schritte werden NICHT als Items angezeigt
+   - Stattdessen: italic gray "Host-side install/build übersprungen — Container baut sich selbst"
+   - Start-Befehl korrigiert: `docker compose up -d --build` (war `docker compose up -d`)
+
+**Effekt**:
+
+| pm | Vorher | Nachher |
+|---|---|---|
+| docker-compose + runtime=node | 4 Steps: install (30-60s redundant) + build (redundant) + compose up | 1 Step: compose up (~30-60s schneller) |
+| docker-compose + runtime=docker | 1 Step: compose up | 1 Step: compose up (unverändert) |
+| pm2 + runtime=node | 3 Steps: install + build + pm2 start | 3 Steps: install + build + pm2 start (unverändert) |
+
+**Affected paths**:
+- `packages/skills/src/built-in/deploy.ts` (~15 LOC change in `doDeploy()`)
+- `apps/web/src/components/projects/ProjectDeployModal.tsx` (~25 LOC change: branch-effect, runtime-disabled, preview-aware)
+
 ## [0.19.0-multi-ha.800] - 2026-05-26
 
 ### Fixed — findOrCreate Multi-User-Filter erzeugt Orphans bei cross-user Sandbox-Runs

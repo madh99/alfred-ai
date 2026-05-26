@@ -35,7 +35,9 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
   const [processManager, setProcessManager] = useState<ProcessManager>('docker-compose');
   const [runtime, setRuntime] = useState<Runtime>('node');
   const [appPort, setAppPort] = useState<string>('');
+  // v801 — Branch wird aus project.defaultBranch initialisiert (fallback 'main')
   const [branch, setBranch] = useState('main');
+  const [branchTouched, setBranchTouched] = useState(false);
   const [repoUrl, setRepoUrl] = useState(defaultRepoUrl ?? '');
   // v736 — ENV-Stage-Wahl
   const [envStage, setEnvStage] = useState<string>('prod');
@@ -73,6 +75,17 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
   }, [client, projectId]);
 
   useEffect(() => { loadDeploys(); }, [loadDeploys]);
+
+  // v801 — Branch-Default aus project.defaultBranch (statt hardcoded 'main')
+  useEffect(() => {
+    if (!client || branchTouched) return;
+    let cancelled = false;
+    client.fetchProject(projectId).then(detail => {
+      if (cancelled || !detail?.project?.defaultBranch) return;
+      setBranch(detail.project.defaultBranch);
+    }).catch(() => { /* */ });
+    return () => { cancelled = true; };
+  }, [client, projectId, branchTouched]);
 
   // v736 — Verfügbare ENV-Stages laden für Select
   useEffect(() => {
@@ -215,7 +228,10 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5 flex items-center justify-between gap-1">
                 <span>Runtime</span>
-                {detectedRuntime && (
+                {processManager === 'docker-compose' ? (
+                  // v801 — Bei docker-compose definiert das Dockerfile die runtime; UI-Wahl irrelevant
+                  <span className="text-gray-500 text-[9px] normal-case italic" title="Bei docker-compose definiert das Dockerfile die Runtime — diese Wahl ist inaktiv">via Dockerfile</span>
+                ) : detectedRuntime && (
                   <span
                     className={runtime === detectedRuntime ? 'text-emerald-400 text-[9px] normal-case' : 'text-amber-400 text-[9px] normal-case'}
                     title={detectionReason ?? 'aus cwd erkannt'}
@@ -227,7 +243,8 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
               <select
                 value={runtime}
                 onChange={(e) => { setRuntime(e.target.value as Runtime); setRuntimeOverridden(true); }}
-                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500"
+                disabled={processManager === 'docker-compose'}
+                className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-blue-500 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <option value="node">Node.js{detectedRuntime === 'node' ? ' (detected)' : ''}</option>
                 <option value="python">Python{detectedRuntime === 'python' ? ' (detected)' : ''}</option>
@@ -253,7 +270,7 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
               <label className="block text-[10px] uppercase tracking-wider text-gray-500 mb-0.5">Branch</label>
               <input
                 value={branch}
-                onChange={(e) => setBranch(e.target.value)}
+                onChange={(e) => { setBranch(e.target.value); setBranchTouched(true); }}
                 placeholder="main"
                 className="w-full bg-[#0d0d0d] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-200 font-mono focus:outline-none focus:border-blue-500"
               />
@@ -303,10 +320,17 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
         {previewOpen && (() => {
           const stageInfo = envStages.find(s => s.stage === envStage);
           const stageKeys = skipEnv ? 0 : (stageInfo?.keyCount ?? 0);
-          const installCmd = runtime === 'node' ? 'npm install' : runtime === 'python' ? 'pip install -r requirements.txt' : '(none)';
-          const buildCmd = runtime === 'node' ? 'npm run build --if-present' : '(none)';
+          // v801 — Bei docker-compose laufen install + build IM Container, nicht auf Host
+          const skipHostInstall = processManager === 'docker-compose';
+          const installCmd = skipHostInstall ? null
+            : runtime === 'node' ? 'npm install'
+            : runtime === 'python' ? 'pip install -r requirements.txt'
+            : '(none)';
+          const buildCmd = skipHostInstall ? null
+            : runtime === 'node' ? 'npm run build --if-present'
+            : '(none)';
           const startCmd = processManager === 'pm2' ? `pm2 start … --name ${projectName}`
-            : processManager === 'docker-compose' ? 'docker compose up -d'
+            : processManager === 'docker-compose' ? 'docker compose up -d --build'
             : processManager === 'systemd' ? `systemctl restart ${projectName}.service`
             : '(custom)';
           return (
@@ -341,8 +365,11 @@ export function ProjectDeployModal({ projectId, projectName, defaultRepoUrl, onC
                   {!skipEnv && stageKeys > 0 && (
                     <li className="text-emerald-300">.env-File mit {stageKeys} Keys schreiben (chmod 600)</li>
                   )}
-                  <li className="text-gray-300">{installCmd}</li>
-                  <li className="text-gray-300">{buildCmd}</li>
+                  {installCmd && <li className="text-gray-300">{installCmd}</li>}
+                  {buildCmd && <li className="text-gray-300">{buildCmd}</li>}
+                  {skipHostInstall && (
+                    <li className="text-gray-500 italic">Host-side install/build übersprungen — Container baut sich selbst</li>
+                  )}
                   <li className="text-gray-300">{startCmd}</li>
                 </ol>
               </div>

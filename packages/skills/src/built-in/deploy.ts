@@ -386,8 +386,15 @@ export class DeploySkill extends Skill {
     }
 
     // 3. Install dependencies
+    // v801 — Bei pm=docker-compose installiert sich das Container-Image seine
+    // deps selbst beim Build (RUN npm install im Dockerfile). Host-side npm install
+    // ist redundant + verschwendet 30-60s. User kann explicit install_command
+    // setzen falls doch Host-side install gewünscht (Backdoor).
     const installCmd = (input.install_command as string)
-      ?? (runtime === 'node' ? 'npm install' : runtime === 'python' ? 'pip install -r requirements.txt' : '');
+      ?? (pm === 'docker-compose' ? ''
+        : runtime === 'node' ? 'npm install'
+        : runtime === 'python' ? 'pip install -r requirements.txt'
+        : '');
     if (installCmd) {
       try {
         await this.ssh(host, user, `cd ${projectDir} && ${installCmd}`);
@@ -395,11 +402,16 @@ export class DeploySkill extends Skill {
       } catch (err) {
         steps.push(`⚠️ Install-Warnung: ${err instanceof Error ? err.message.slice(0, 100) : ''}`);
       }
+    } else if (pm === 'docker-compose') {
+      steps.push(`📦 Host-side install übersprungen (docker-compose baut deps im Container)`);
     }
 
     // 4. Build
+    // v801 — Analog zu install: Container baut sich selbst im docker-compose-Flow.
     const buildCmd = (input.build_command as string)
-      ?? (runtime === 'node' ? 'npm run build --if-present' : '');
+      ?? (pm === 'docker-compose' ? ''
+        : runtime === 'node' ? 'npm run build --if-present'
+        : '');
     if (buildCmd) {
       try {
         await this.ssh(host, user, `cd ${projectDir} && ${buildCmd}`);
