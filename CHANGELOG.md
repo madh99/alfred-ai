@@ -5,6 +5,152 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.804] - 2026-05-27
+
+### Changed — User-Identity-Architektur-Refactor (8 Phasen)
+
+Tiefer Architektur-Fix nach v798/v800/v803-Bug-Serie. Statt weiterer Pflaster auf einzelnen Callsites: zentralisierte User-ID-Resolution durch einen `IdentityResolver`-Service plus Type-Branding gegen Format-Verwechslung.
+
+Siehe vollständige Architektur-Begründung in `docs/adr/0001-user-identity-model.md`.
+
+#### Phase 1 — Branded Types
+
+`packages/types/src/identity.ts` (neu):
+- `UserUUID = string & {brand}` — garantiert UUID-Format
+- `PlatformUserId = string & {brand}` — Telegram/Matrix/Discord-IDs
+- `MasterUserId = UserUUID & {brand}` — semantic-cast für linked-account-Aware-Code
+
+Helper:
+- `isUserUUID(v)` — runtime check
+- `asUserUUID(v)` — strict cast, throws bei Invalid
+- `tryUserUUID(v)` — soft cast, returns undefined bei invalid
+- `classifyUserIdFormat(v)` — 'uuid' | 'platform'
+
+Compiler-Erkennung von Format-Verwechslung: `getById(telegramId, id)` failt ab v804 zur Compile-Zeit, weil `getById` jetzt `UserUUID` erwartet.
+
+#### Phase 2 — IdentityResolver Service
+
+`packages/core/src/identity/resolver.ts` (neu, ~140 LOC):
+
+```ts
+class IdentityResolver {
+  resolveOwnerFromConfig(envVar, platformHint?): Promise<UserUUID>
+  resolveMasterId(uuid): Promise<UserUUID>
+  findProjectOwner(projectId): Promise<UserUUID | null>
+}
+```
+
+**Akzeptiert beide Formate** (UUID oder Platform-ID), nutzt `UserRepository.findOrCreate()` für Platform-ID → UUID-Resolution. Auto-detect Platform aus Format (numerisch → telegram, `@user:server` → matrix). Logs ausführlich beim Resolve.
+
+#### Phase 3 — Init-Time Validation
+
+`Alfred.initialize()` nutzt jetzt IdentityResolver statt direkten `userRepo.findOrCreate('telegram', envVar)`:
+
+```ts
+this.identityResolver = new IdentityResolver(userRepo, projectRepo, logger);
+const resolvedOwner = await this.identityResolver.resolveOwnerFromConfig(
+  this.config.security.ownerUserId,
+  config.security?.ownerPlatform ?? 'telegram',
+);
+this.ownerMasterUserId = await this.identityResolver.resolveMasterId(resolvedOwner);
+```
+
+**Wichtig**: `this.ownerMasterUserId` ist jetzt vom Type `UserUUID` (Branded). Garantiert UUID-Format ab Init — keine Platform-ID kann mehr in DB-Lookups landen.
+
+`config.security.ownerPlatform` als optionale ENV-Variable (default `'telegram'` für Backward-Compat).
+
+#### Phase 4 — Repository-API Normalization
+
+Repos die getById hatten OHNE getByIdAnyOwner-Variante bekommen sie jetzt:
+- `GoalsRepository.getByIdAnyOwner(id)` — neu
+- `RunbookRepository.getByIdAnyOwner(id)` — neu (mit 8-char prefix-match-Support)
+
+Bestehende `getByIdAnyOwner`-Methoden: `ProjectRepository` (seit v667).
+
+Repos ohne user-filter (TodoRepository, NoteRepository, MemoryRepository) bleiben unverändert — sie haben kein ownership-problem.
+
+#### Phase 5 — Critical Callsite Refactor
+
+3 Sites in `packages/core/src/alfred.ts` umgestellt:
+
+1. **Line 1575** (project-agent completion → conversation-create): `getById(userId, ...)` → `getByIdAnyOwner(...)`. Conversation wird jetzt unter `proj.userId` (project-owner) angelegt, nicht unter `ownerMasterUserId` (könnten verschiedene User sein).
+2. **Line 1613** (project-agent post-commit lookup): analoge Umstellung.
+3. **Line 3541** (`projectQuotaLookup` für sandbox-quota): `getById(this.ownerMasterUserId, ...)` → `getByIdAnyOwner(...)`. Quota ist projekt-eigene Eigenschaft, nicht user-scoped.
+
+Weitere ~15 Callsites in user-facing-Endpoints behalten `getById(uid, ...)` — diese sind owner-scoped korrekt (uid kommt aus context.masterUserId via buildSkillContext, schon UUID).
+
+#### Phase 6 — DB-Migration + Format-Validation
+
+SQLite Migration v96 + PostgreSQL Migration v99 (parallel):
+
+```sql
+CREATE TABLE user_id_format_audit (
+  id TEXT PRIMARY KEY,
+  table_name TEXT NOT NULL,
+  column_name TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  user_id_value TEXT NOT NULL,
+  format_class TEXT NOT NULL, -- 'uuid' | 'platform' | 'invalid'
+  detected_at TEXT NOT NULL
+);
+```
+
+**Read-only** — diese Migration ändert keine existierenden Daten. Future-Release nutzt die Audit-Tabelle für gezielte Migration von Legacy-non-UUID-Werten.
+
+#### Phase 7 — Tests
+
+`packages/core/src/identity/resolver.test.ts` (neu, 18 Tests):
+
+- UUID-Input akzeptiert (case-insensitive, mit + ohne users-Row)
+- Platform-ID-Input (Telegram numerisch, Matrix `@user:server`)
+- Auto-detect Platform aus Format
+- Error-Cases (leer, non-UUID-Output von findOrCreate, kein Platform-Hint)
+- `resolveMasterId` (mit/ohne linked-accounts, DB-Fehler)
+- `findProjectOwner` (existing, missing, kein ProjectRepo, corrupt userId)
+- **Regression-Tests für v798/v800/v803-Szenarien**:
+  - env-var=Telegram-ID, project.user_id=UUID → korrekt resolved
+  - sandbox owned by admin, project owned by madh → findProjectOwner returns madh
+
+Erste Multi-User-Tests im Codebase. **Alle 18 grün.**
+
+#### Phase 8 — ADR
+
+`docs/adr/0001-user-identity-model.md` (neu):
+- Kontext der 3 inkompatiblen Formate
+- Problem-Beschreibung mit konkretem Bug-Pattern
+- Entscheidung: Branded Types + Resolver + Repo-API-Disziplin
+- Konsequenzen (positiv, negativ, Risiken)
+- Migrationspfad von v667 → v721 → v798 → v800 → v803 → v804
+- Folge-Arbeiten (v805+ Refactor weiterer Callsites, v810+ Legacy-Audit-Migration)
+
+### Migration für Bestand
+
+Keine destructive Änderungen in v804. Existing rows mit non-UUID `user_id` werden vom Audit erfasst (Read-Only). Gezielte Korrektur in einem späteren Release.
+
+### Affected paths
+
+- `packages/types/src/identity.ts` (NEW, ~100 LOC)
+- `packages/types/src/index.ts` (+1 line export)
+- `packages/core/src/identity/resolver.ts` (NEW, ~140 LOC)
+- `packages/core/src/identity/resolver.test.ts` (NEW, ~200 LOC, 18 tests)
+- `packages/core/src/alfred.ts` (~50 LOC: init + 3 callsite refactors)
+- `packages/storage/src/repositories/goals-repository.ts` (+8 LOC)
+- `packages/storage/src/repositories/runbook-repository.ts` (+12 LOC)
+- `packages/storage/src/migrations/index.ts` (+18 LOC SQLite v96)
+- `packages/storage/src/migrations/pg-migrations.ts` (+22 LOC PG v99)
+- `docs/adr/0001-user-identity-model.md` (NEW, ~120 LOC)
+
+### Was nach Deploy + Restart konkret passiert
+
+1. Migration v96 (SQLite) + v99 (PG) legt `user_id_format_audit` Tabelle an
+2. Alfred-Init: IdentityResolver wird konstruiert, ownerMasterUserId zur UUID resolved
+3. Logs zeigen: `v804 ownerMasterUserId resolved via IdentityResolver { envValue, resolved, platformHint }`
+4. Neue Sandbox-Runs (Project-Agent oder Code-Agent): 0% Orphan-Wahrscheinlichkeit weil ownerMasterUserId garantiert UUID
+
+### Phase 5 Out-Of-Scope (Future v805)
+
+15+ weitere `getById(uid, ...)` Callsites in alfred.ts wurden in v804 NICHT refactored — sie sind owner-scoped korrekt (uid kommt aus context.masterUserId). Diese werden in einem Audit-Sweep in v805 noch durchgegangen, ist aber nicht kritisch.
+
 ## [0.19.0-multi-ha.803] - 2026-05-27
 
 ### Fixed — v721/v798-Resolution-Code-Stellen brauchten Multi-User-Fix auch (Orphans entstanden weiterhin)

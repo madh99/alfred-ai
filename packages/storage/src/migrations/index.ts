@@ -2191,4 +2191,22 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_session_events_session ON agent_session_events(session_id, iteration, created_at)`);
     },
   },
+  {
+    version: 96,
+    description: 'v804 — User-ID-Format-Sanity: Audit-Tabelle für non-UUID user_id-Rows (read-only Migration)',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_id_format_audit (
+          id TEXT PRIMARY KEY,
+          table_name TEXT NOT NULL,
+          column_name TEXT NOT NULL,
+          row_id TEXT NOT NULL,
+          user_id_value TEXT NOT NULL,
+          format_class TEXT NOT NULL,
+          detected_at TEXT NOT NULL
+        )
+      `);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_uid_audit_table ON user_id_format_audit(table_name, format_class)`);
+    },
+  },
 ];

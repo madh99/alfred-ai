@@ -317,7 +317,12 @@ export class Alfred {
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
-  private ownerMasterUserId?: string;
+  // v804 — Branded type. Garantiert UUID-Format ab init() durch IdentityResolver.
+  // Vorher: optional `string` mit gemischtem Format (Telegram-ID/UUID-Mix) — Quelle
+  // der v798/v800/v803-Orphan-Bugs.
+  private ownerMasterUserId?: import('@alfred/types').UserUUID;
+  /** v804 — Single entry-point für User-ID-Resolution. Late-bound in init(). */
+  private identityResolver?: import('./identity/resolver.js').IdentityResolver;
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
 
@@ -1565,16 +1570,20 @@ export class Alfred {
           try {
             const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
             if (userId) {
-              // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
+              // v721/v804 — Direkt-Match via resolvedProjectId. getByIdAnyOwner für
+              // System-internal lookup (sandbox-completion-callback ist owner-agnostisch).
               let proj = resolvedProjectId
-                ? await this.projectRepo.getById(userId, resolvedProjectId).catch(() => null)
+                ? await this.projectRepo.getByIdAnyOwner(resolvedProjectId).catch(() => null)
                 : null;
               if (!proj) {
                 const projects = await this.projectRepo.list(userId);
                 proj = projects.find(p => p.cwd === resolvedCwd) ?? projects.find(p => p.cwd && resolvedCwd?.startsWith(p.cwd)) ?? null;
               }
               if (proj) {
-                const conv = await this.conversationRepo.findOrCreateForProject(userId, proj.id);
+                // v804 — Conversation wird unter dem Project-Owner angelegt (nicht
+                // unter ownerMasterUserId — die könnten verschieden sein im Multi-User-Setup).
+                const projOwnerId = proj.userId ?? userId;
+                const conv = await this.conversationRepo.findOrCreateForProject(projOwnerId, proj.id);
                 const summary = success
                   ? `✅ **Project-Agent fertig**\n\n` +
                     `- Phasen: ${state.projectIteration}\n` +
@@ -1599,9 +1608,9 @@ export class Alfred {
               const { execFile } = await import('node:child_process');
               const { promisify } = await import('node:util');
               const exec = promisify(execFile);
-              // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
+              // v721/v804 — getByIdAnyOwner für system-internal sandbox→project lookup.
               let proj = resolvedProjectId
-                ? await this.projectRepo.getById(userId, resolvedProjectId).catch(() => null)
+                ? await this.projectRepo.getByIdAnyOwner(resolvedProjectId).catch(() => null)
                 : null;
               if (!proj) {
                 const projects = await this.projectRepo.list(userId);
@@ -3525,11 +3534,12 @@ export class Alfred {
               envCrypto: this.envCryptoRef,
               dbSeedRepo: this.dbSeedRepoRef,
               uploadSeedsPath: this.config.sandbox.uploadSeedsPath ?? undefined,
-              // v755 — Per-Project-Quota-Lookup
+              // v755/v804 — Per-Project-Quota-Lookup. getByIdAnyOwner weil Quota
+              // unabhängig vom Anrufer-User auf das Projekt bezogen ist.
               projectQuotaLookup: async (projectId: string) => {
-                if (!this.projectRepo || !this.ownerMasterUserId) return null;
+                if (!this.projectRepo) return null;
                 try {
-                  const p = await this.projectRepo.getById(this.ownerMasterUserId, projectId);
+                  const p = await this.projectRepo.getByIdAnyOwner(projectId);
                   return p?.maxConcurrentSandboxes ?? null;
                 } catch { return null; }
               },
@@ -4176,11 +4186,29 @@ export class Alfred {
         }
         // Resolve the MASTER user ID (from `users` table, not `alfred_users` table)
         // adminUser.id is the alfred_users ID — we need the users.master_user_id instead
+        // v804 — IdentityResolver: behandelt UUID + Platform-ID Format automatisch.
+        // Vorher hardcoded 'telegram' platform → wenn env-var UUID war, wurde ein neuer
+        // user mit platform='telegram' + platform_user_id=UUID erstellt (Doppel-User-Bug).
         try {
-          const ownerUser = await userRepo.findOrCreate('telegram' as any, this.config.security.ownerUserId);
-          this.ownerMasterUserId = ownerUser.masterUserId ?? ownerUser.id;
-        } catch {
-          this.ownerMasterUserId = adminUser.id; // fallback
+          const { IdentityResolver } = await import('./identity/resolver.js');
+          this.identityResolver = new IdentityResolver(userRepo, this.projectRepo, this.logger.child({ component: 'identity-resolver' }));
+          const ownerPlatformHint = (this.config.security as { ownerPlatform?: string })?.ownerPlatform ?? 'telegram';
+          const resolvedOwner = await this.identityResolver.resolveOwnerFromConfig(
+            this.config.security.ownerUserId,
+            ownerPlatformHint,
+          );
+          // Apply master-id resolution für linked-account-Setups
+          this.ownerMasterUserId = await this.identityResolver.resolveMasterId(resolvedOwner);
+          this.logger.info({
+            envValue: this.config.security.ownerUserId.slice(0, 12) + '…',
+            resolved: this.ownerMasterUserId.slice(0, 8) + '…',
+            platformHint: ownerPlatformHint,
+          }, 'v804 ownerMasterUserId resolved via IdentityResolver');
+        } catch (err) {
+          this.logger.error({ err, ownerUserId: this.config.security.ownerUserId }, 'v804 IdentityResolver failed — fallback to adminUser.id (may not be valid UUID for Project-Lookups)');
+          // Fallback: best-effort cast
+          const { tryUserUUID } = await import('@alfred/types');
+          this.ownerMasterUserId = tryUserUUID(adminUser.id);
         }
 
         // v694 — Legacy-Daten-UIDs aufspüren. Pre-multi-user-Migration hat KG/Conversation-

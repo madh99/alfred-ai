@@ -60,6 +60,16 @@ export class GoalsRepository {
     return row ? this.mapRow(row) : null;
   }
 
+  /**
+   * v804 — Owner-Filter umgehen. Wird vom IdentityResolver + System-internen
+   * Lookups (z.B. Pipeline) verwendet wenn ownership-check anderswo passiert.
+   * Wer normal user-scoped lesen will: getById(userId, id) bleibt der Default.
+   */
+  async getByIdAnyOwner(id: string): Promise<Goal | null> {
+    const row = await this.db.queryOne(`SELECT * FROM alfred_goals WHERE id = ?`, [id]) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : null;
+  }
+
   async list(userId: string, filters?: { status?: GoalStatus; category?: GoalCategory; limit?: number }): Promise<Goal[]> {
     const where: string[] = ['user_id = ?'];
     const params: unknown[] = [userId];

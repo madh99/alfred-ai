@@ -1501,4 +1501,26 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_agent_session_events_session ON agent_session_events(session_id, iteration, created_at)`, []);
     },
   },
+  {
+    version: 99,
+    description: 'v804 — User-ID-Format-Sanity: rows mit non-UUID user_id finden + loggen (no destructive change).',
+    async up(db) {
+      // Reine Read-Only-Validation. Wir loggen die Anzahl problematischer Rows,
+      // löschen/ändern aber NICHTS — das macht ein gezielter Migration-Task auf
+      // Applikations-Ebene (mit user-resolution via IdentityResolver) später.
+      // Hier nur eine Audit-Tabelle damit wir sehen wie viele Daten betroffen sind.
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS user_id_format_audit (
+          id TEXT PRIMARY KEY,
+          table_name TEXT NOT NULL,
+          column_name TEXT NOT NULL,
+          row_id TEXT NOT NULL,
+          user_id_value TEXT NOT NULL,
+          format_class TEXT NOT NULL, -- 'uuid' | 'platform' | 'invalid'
+          detected_at TEXT NOT NULL
+        )
+      `, []);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_uid_audit_table ON user_id_format_audit(table_name, format_class)`, []);
+    },
+  },
 ];

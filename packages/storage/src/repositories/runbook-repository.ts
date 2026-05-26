@@ -112,6 +112,21 @@ export class RunbookRepository {
     return row ? rowToRunbook(row) : null;
   }
 
+  /**
+   * v804 — Owner-Filter umgehen für System-Lookups.
+   */
+  async getByIdAnyOwner(id: string): Promise<Runbook | null> {
+    let row = await this.adapter.queryOne(
+      `SELECT * FROM runbooks WHERE id = ?`, [id],
+    ) as Record<string, unknown> | undefined;
+    if (!row && id.length >= 6 && id.length <= 12 && /^[0-9a-f]+$/i.test(id)) {
+      row = await this.adapter.queryOne(
+        `SELECT * FROM runbooks WHERE id LIKE ?`, [id + '%'],
+      ) as Record<string, unknown> | undefined;
+    }
+    return row ? rowToRunbook(row) : null;
+  }
+
   async list(userId: string, filters?: { status?: RunbookStatus; sourceType?: RunbookSource; limit?: number }): Promise<Runbook[]> {
     let sql = `SELECT * FROM runbooks WHERE user_id = ?`;
     const params: unknown[] = [userId];
