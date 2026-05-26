@@ -44,11 +44,15 @@ export class ClaudeCodeAdapter implements AgentSessionAdapter {
   constructor(private readonly logger: Logger) {}
 
   async invoke(opts: AgentInvokeOptions): Promise<AgentInvokeResult> {
+    // v802 — Read-only-Modus für Discuss/Beratung: claude --permission-mode=plan
+    // restringiert auf Read/Grep/Glob/WebFetch/WebSearch/TodoWrite — keine Edit/Write/Bash.
+    // Default 'bypassPermissions' = volle Tools für Quick/Plan-Mode.
+    const permMode = opts.readOnly ? 'plan' : 'bypassPermissions';
     const args: string[] = [
       '--print',
       '--verbose',
       '--output-format=stream-json',
-      '--permission-mode', 'bypassPermissions',
+      '--permission-mode', permMode,
     ];
     if (opts.cliSessionId) {
       args.push('--resume', opts.cliSessionId);

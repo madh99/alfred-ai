@@ -85,6 +85,13 @@ export interface AgentInvokeOptions {
   timeoutMs?: number;
   /** Optional: kurze Zusatz-Anweisung die im Prompt vorangestellt wird (z.B. read-only-mode-hint für Discuss). */
   promptPrefix?: string;
+  /**
+   * v802 — Read-only-Modus für Discuss/Beratung. Adapter mappen zu CLI-spezifischen
+   * Flags (claude-code: --permission-mode=plan; andere ignorieren oder setzen
+   * eigene read-only-flag).
+   * Default false (= normal write-able mode).
+   */
+  readOnly?: boolean;
 }
 
 

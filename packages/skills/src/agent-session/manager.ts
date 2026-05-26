@@ -41,6 +41,11 @@ export interface ManagerInvokeOptions {
   promptPrefix?: string;
   /** Force new session (ignore existing). Z.B. nach Reset-Button. */
   forceNew?: boolean;
+  /**
+   * v802 — Read-only-Modus (Discuss/Beratung). Adapter mappen zu CLI-spezifischen Flags.
+   * Default false.
+   */
+  readOnly?: boolean;
 }
 
 export class AgentSessionManager {
@@ -156,6 +161,7 @@ export class AgentSessionManager {
       onEvent: onEventTapped,
       timeoutMs: opts.timeoutMs,
       promptPrefix,
+      readOnly: opts.readOnly, // v802 — Discuss-Mode propagation
     });
 
     // Falls Adapter neue session-id geliefert hat (z.B. erster Run)

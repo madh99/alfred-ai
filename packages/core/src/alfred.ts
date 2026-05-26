@@ -6745,7 +6745,8 @@ Aktuelle Frage des Users:
 ${augmentedMessage}`;
 
                 const taskId = `code-${randomUUID()}`;
-                await sandboxChatRepo.append({
+                // v802 — Capture initial-msg-id für in-place-update (gleich wie v793 Quick-Mode)
+                const initialAgentMsg = await sandboxChatRepo.append({
                   sandboxId,
                   userId: sb.userId,
                   role: 'agent',
@@ -6760,16 +6761,86 @@ ${augmentedMessage}`;
                 // v792 — direkter Aufruf (static import oben)
                 try { appendOutputLine(taskId, 'system', `💬 Discuss-Modus (read-only) startet im worktree ${sb.worktreePath}`); } catch { /* */ }
 
+                // v802 — AgentSession-Path bevorzugt (Live-Cards, finishSession, --permission-mode=plan).
+                // Legacy cAgent.execute() fallback nur wenn kein Session-Adapter da ist.
+                const sessionAdapterD = this.agentSessionManager?.listAdapters().find(a => a.name === defaultAgent);
+                const agentDefD = this.config.codeAgents?.agents.find(a => a.name === defaultAgent);
+                const runAsUserD = (agentDefD?.command === 'sudo' && agentDefD.argsTemplate?.[0] === '-u' && agentDefD.argsTemplate?.[1])
+                  ? agentDefD.argsTemplate[1]
+                  : undefined;
+                const useAgentSessionD = !!(this.agentSessionManager && sessionAdapterD && sessionAdapterD.capabilities.structuredOutput);
+
                 (async () => {
-                  const ctxD = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
                   try {
-                    const result = await cAgent.execute({
-                      action: 'run',
-                      agent: defaultAgent,
-                      prompt: discussPrompt,
-                      cwd: sb.worktreePath,
-                      taskId,
-                    }, ctxD);
+                    let resultSuccess = false;
+                    let resultDisplay = '';
+                    let resultError: string | undefined;
+
+                    if (useAgentSessionD && this.agentSessionManager) {
+                      // v802 — NEW PATH: AgentSession mit readOnly=true → live Cards, --permission-mode=plan
+                      const collectedTextsD: string[] = [];
+                      const collectedErrorsD: string[] = [];
+                      const onEventD = (e: import('@alfred/skills').AgentEvent) => {
+                        // Forward strukturierter Event ins Event-Stream (für Card-Rendering)
+                        try { appendOutputEvent(taskId, e.type, e); } catch { /* */ }
+                        // Text-Fallback für Backward-Compat
+                        try {
+                          switch (e.type) {
+                            case 'session_id': appendOutputLine(taskId, 'system', `🔗 Session: ${(e.value as string).slice(0, 8)}…`); break;
+                            case 'progress': appendOutputLine(taskId, 'system', `▸ ${e.phase}${e.detail ? ` (${e.detail})` : ''}`); break;
+                            case 'text':
+                              collectedTextsD.push(e.text);
+                              appendOutputLine(taskId, 'stdout', e.text);
+                              break;
+                            case 'thinking': appendOutputLine(taskId, 'system', `🤔 ${e.text.slice(0, 200)}${e.text.length > 200 ? '…' : ''}`); break;
+                            case 'tool_call': appendOutputLine(taskId, 'system', `🔧 ${e.tool}(${JSON.stringify(e.input).slice(0, 200)})`); break;
+                            case 'edit': appendOutputLine(taskId, 'system', `✏️ ${e.path} (+${e.linesAdded}/-${e.linesRemoved})`); break;
+                            case 'shell':
+                              if (e.status === 'running') appendOutputLine(taskId, 'system', `$ ${e.command.slice(0, 200)}`);
+                              else appendOutputLine(taskId, 'system', `  ↳ exit=${e.exitCode ?? '?'}`); break;
+                            case 'usage':
+                              appendOutputLine(taskId, 'system', `📊 tokens: ${e.inputTokens}in/${e.outputTokens}out, cached=${e.cachedTokens ?? 0}${e.costUsd ? `, $${e.costUsd.toFixed(4)}` : ''}`);
+                              sandboxChatRepo.updateTaskPhase(taskId, 'finalizing').catch(() => { /* */ });
+                              break;
+                            case 'error':
+                              collectedErrorsD.push(e.message);
+                              appendOutputLine(taskId, 'stderr', e.message); break;
+                          }
+                        } catch { /* */ }
+                      };
+                      try {
+                        const r = await this.agentSessionManager.invoke({
+                          sandboxId,
+                          agentName: defaultAgent,
+                          prompt: discussPrompt,
+                          cwd: sb.worktreePath,
+                          runAsUser: runAsUserD,
+                          signal: abortController.signal,
+                          onEvent: onEventD,
+                          readOnly: true, // v802 — claude bekommt --permission-mode=plan
+                        });
+                        resultSuccess = r.exitCode === 0;
+                        resultError = resultSuccess ? undefined : (collectedErrorsD.join('; ') || 'discuss run failed');
+                        resultDisplay = r.finalText ?? collectedTextsD.join('\n');
+                      } catch (err) {
+                        resultSuccess = false;
+                        resultError = (err as Error).message;
+                        resultDisplay = '';
+                      }
+                    } else {
+                      // LEGACY PATH: cAgent.execute (kein Live-Feedback, no stream-json)
+                      const ctxD = { userId: sb.userId, masterUserId: sb.userId, chatId: '', platform: 'api', conversationId: '', abortSignal: abortController.signal } as any;
+                      const r = await cAgent.execute({
+                        action: 'run',
+                        agent: defaultAgent,
+                        prompt: discussPrompt,
+                        cwd: sb.worktreePath,
+                        taskId,
+                      }, ctxD);
+                      resultSuccess = !!r.success;
+                      resultError = r.error;
+                      resultDisplay = r.display ?? '';
+                    }
 
                     // Safety-Net: hat der Agent trotz Verbot was geändert?
                     // v795 — gitInWorktree() für sudo-u-wrap (dubious-ownership-safe)
@@ -6786,24 +6857,38 @@ ${augmentedMessage}`;
                       this.logger.warn({ err }, 'v769 Discuss safety-revert failed (non-fatal)');
                     }
 
-                    const display = (result.display ?? '').slice(0, 6000);
-                    await sandboxChatRepo.append({
-                      sandboxId,
-                      userId: sb.userId,
-                      role: 'agent',
-                      text: `💬 Beratung${result.success ? '' : ' (mit Fehler)'}\n\n${display}${revertNote}`,
-                      taskId,
-                      taskPhase: result.success ? 'done' : 'failed',
+                    const display = (resultDisplay ?? '').slice(0, 6000);
+                    // v802 — In-Place-Update der initialen Bubble (statt separater Append)
+                    await sandboxChatRepo.updateMessage(initialAgentMsg.id, {
+                      text: `💬 Beratung${resultSuccess ? '' : ' (mit Fehler)'}\n\n${display}${revertNote}`,
+                      phase: resultSuccess ? 'done' : 'failed',
                     });
+
+                    // v802 — finishSession damit Discuss unter "Letzte Sessions" sichtbar wird (gleich wie v799 Quick-Mode)
+                    if (useAgentSessionD && this.projectManager) {
+                      try {
+                        await this.projectManager.finishSession({
+                          userId: sb.userId,
+                          sessionType: 'code_agent',
+                          sourceId: taskId,
+                          goal: augmentedMessage,
+                          cwd: sb.worktreePath,
+                          projectId: sb.projectId,
+                          success: resultSuccess,
+                          transcript: display,
+                          files: [],
+                          totalFilesChanged: 0,
+                          startedAt: initialAgentMsg.createdAt,
+                        });
+                      } catch (err) {
+                        this.logger.warn({ err, taskId }, 'v802 finishSession after Discuss run failed (non-critical)');
+                      }
+                    }
                   } catch (err) {
                     const aborted = abortController.signal.aborted;
-                    await sandboxChatRepo.append({
-                      sandboxId,
-                      userId: sb.userId,
-                      role: 'agent',
+                    await sandboxChatRepo.updateMessage(initialAgentMsg.id, {
                       text: aborted ? '⏹ Discuss vom User gestoppt.' : `❌ Discuss-Fehler: ${(err as Error).message}`,
-                      taskId,
-                      taskPhase: aborted ? 'stopped' : 'failed',
+                      phase: aborted ? 'stopped' : 'failed',
                     });
                   } finally {
                     this.codeAgentTaskAborts.delete(taskId);
@@ -7127,10 +7212,28 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               const ctx = { userId: sb.userId, masterUserId: sb.userId, chatId: ownerChat, platform: ownerPlatform, conversationId: '' } as any;
               // Activity-Touch (sandbox idle-timer reset)
               sandboxRepoForApi.touchActivity(sandboxId).catch(() => { /* */ });
+
+              // v802 — Plan-Mode bekommt Chat-Verlauf als Kontext (vorher: nur "option c" ohne Bezug).
+              // Wenn User von Discuss→Plan wechselt mit kurzer Antwort "option c", wusste der
+              // project-agent nicht was "option c" sich bezieht. Jetzt: history wird ans goal
+              // prepended (gleiche Hybrid-Cap-Logik wie Quick/Discuss).
+              const allHistoryP = await sandboxChatRepo.list(sandboxId);
+              const MAX_MSGS_P = 15, MAX_CHARS_P = 16000, MIN_KEEP_P = 3;
+              let trimmedP = allHistoryP.filter(m => m.id !== userMsg.id).slice(-MAX_MSGS_P);
+              let totalP = trimmedP.reduce((s, m) => s + (m.text || '').length, 0);
+              while (totalP > MAX_CHARS_P && trimmedP.length > MIN_KEEP_P) {
+                const r = trimmedP.shift();
+                totalP -= (r?.text || '').length;
+              }
+              const historyTextP = trimmedP.map(m => `${m.role === 'user' ? 'User:' : 'Agent:'} ${(m.text || '').slice(0, 1500)}`).join('\n\n');
+              const planGoal = trimmedP.length > 0
+                ? `Bisheriger Chat-Verlauf (für Kontext):\n\n${historyTextP}\n\nAktuelle Aufgabe:\n${augmentedMessage}`
+                : augmentedMessage;
+
               try {
                 const result = await skill.execute({
                   action: 'start',
-                  goal: augmentedMessage,
+                  goal: planGoal,
                   cwd: sb.worktreePath,
                   // v721 — sandbox_id mitgeben damit Completion-Callback zum Original-Project bindet statt Ghost-Project zu erzeugen
                   sandbox_id: sandboxId,

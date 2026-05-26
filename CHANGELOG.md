@@ -5,6 +5,65 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.802] - 2026-05-26
+
+### Added — Discuss-Mode durch AgentSession-Layer (Live-Cards) + Plan-Mode Chat-History-Context
+
+Zwei zusammenhängende UX-Fixes für Sandbox-Chat-Modi.
+
+#### 1. Discuss-Mode (💬) bekommt Live-Cards
+
+**Vorher**: Discuss-Mode rief `cAgent.execute()` legacy auf. claude wurde ohne `--output-format=stream-json` gestartet → komplett buffered output → User sah 5-7 Min lang nur "💬 Berater liest Codebase …" mit `task_phase='coding'` ohne jedes Live-Feedback. Erst am Ende erschien eine SEPARATE zweite Bubble mit dem ganzen Output.
+
+**Jetzt**: Discuss-Mode geht durch den AgentSessionManager — gleiche Live-Cards wie Quick/Plan-Mode.
+
+**Neue Option `readOnly: boolean`** in `AgentInvokeOptions` + `ManagerInvokeOptions`:
+- ClaudeCodeAdapter mappt `readOnly: true` zu `--permission-mode=plan` (claude's plan-mode = Read/Grep/Glob/WebFetch only, kein Edit/Write/Bash)
+- Andere Adapter (vibe/codex/generic) ignorieren das Flag (würden eigene read-only-flag setzen wenn vorhanden)
+
+**Code-Refactor in `chatSendMessage` Discuss-Branch**:
+- Pfad-Wahl: wenn AgentSession + adapter.structuredOutput → NEW PATH, sonst Legacy fallback
+- onEvent-Callback gleich wie Quick-Mode: pushed Events ins Buffer + Text-Fallback-Lines
+- Phase-Flip auf 'finalizing' bei usage-Event (Stop-Button verschwindet sofort)
+- In-Place-Update der initialen Bubble (statt separater Append) → eine Bubble pro Run
+- finishSession() nach Run → Discuss erscheint unter "Letzte Sessions" im Project
+- Safety-revert bleibt (auch wenn `--permission-mode=plan` Edits verbietet, als Fallback)
+
+**Was du jetzt sehen wirst** im Discuss-Mode:
+1. User stellt Frage
+2. Bubble "💬 Berater liest Codebase …" mit phase='coding'
+3. **Live-Cards** erscheinen während claude arbeitet:
+   - 🔍 Read src/app/community/...
+   - 🔍 Glob *.tsx
+   - 🤔 thinking (collapsible)
+   - 🔎 Grep ACTIVE_CONDITIONS
+4. Phase wird 'finalizing' wenn usage-Event kommt (Stop weg)
+5. Bubble-Text wird in-place überschrieben mit Empfehlung + Optionen
+
+#### 2. Plan-Mode (🚀) bekommt Chat-History-Context
+
+**Vorher**: Plan-Mode rief `project_agent.execute({ goal: augmentedMessage, ... })` mit nur dem aktuellen User-Prompt. Bei kurzen Antworten wie "option c" hatte der project-agent keine Ahnung was sich der User auf das vorher beraten wurde bezieht → planlose Implementation.
+
+**Jetzt**: Plan-Mode prependet den Chat-Verlauf an das Goal mit der gleichen Hybrid-Cap-Logik wie Quick/Discuss (15 msgs / 16000 chars / min 3 keep).
+
+```ts
+const planGoal = trimmedHistory.length > 0
+  ? `Bisheriger Chat-Verlauf (für Kontext):\n\n${historyText}\n\nAktuelle Aufgabe:\n${augmentedMessage}`
+  : augmentedMessage;
+await skill.execute({ action: 'start', goal: planGoal, ... });
+```
+
+Damit kennt der project-agent jetzt:
+- Was im Discuss-Mode davor beraten wurde
+- Welche Option der User gewählt hat
+- Vorherige Quick-Mode-Iterations im selben Sandbox
+
+**Affected paths**:
+- `packages/skills/src/agent-session/types.ts` (+5 LOC — readOnly option)
+- `packages/skills/src/agent-session/manager.ts` (+5 LOC — propagate readOnly)
+- `packages/skills/src/agent-session/adapters/claude-code-adapter.ts` (+3 LOC — permission-mode mapping)
+- `packages/core/src/alfred.ts` (Discuss-Branch refactor ~70 LOC + Plan-Mode-Context ~15 LOC)
+
 ## [0.19.0-multi-ha.801] - 2026-05-26
 
 ### Fixed — Deploy-Modal UX + redundante Host-side install/build bei docker-compose
