@@ -5,6 +5,71 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.798] - 2026-05-26
+
+### Fixed — Sandbox-Worktree-Trilogie: Permissions + Orphan-Projects + Session-Linking
+
+Drei verbundene Bugs in einem Release:
+
+#### Bug A — `git worktree add` failt mit "could not create leading directories"
+
+Symptom: Sandbox-Erstellung schlug fehl mit `Permission denied`. Root cause: `mkdirSync(parent, { recursive: true })` in `worktree.ts:86` nutzt default umask (0022 → mode 2755). Parent-dir hat group=madh aber **kein group-write**. Wenn `sudo -u madh git worktree add` darin schreiben will → fehlerhaft.
+
+Fix: `chmodSync(parent, 0o2775)` nach `mkdirSync`. Heilt auch bestehende parent-dirs mit wrong mode.
+
+#### Bug B — Orphan-Projects entstanden bei jedem Sandbox-Run
+
+Symptom: Nach jedem Sandbox-Lauf erscheint ein Projekt mit dem Worktree-Slug als Name (z.B. `ipk73ad8`) in der Project-Liste.
+
+Root cause: `ProjectManager.findOrCreate(params)` in `project-manager.ts:223` matched nur per cwd-string. Für sandbox-worktree-cwd (z.B. `/mnt/.../ipk73ad8`) findet `findByCwd()` kein existing project → `repo.create()` wird gerufen → `deriveProjectName()` nimmt das Basename (`ipk73ad8`) als Name → Orphan-Projekt entsteht.
+
+Fix:
+- `AttachSessionParams.projectId?: string` als neuer optionaler primary key
+- `findOrCreate()`: wenn `projectId` gesetzt → `repo.getById()` direkt, keine cwd-Heuristik
+- `FinishSessionParams.projectId?: string` analog
+- Caller wiring:
+  - `project-agent-runner` completion-callback (alfred.ts:1481): nutzt bereits v721's `resolvedProjectId`, jetzt explicit übergeben
+  - `code-agent` completion-callback (alfred.ts:1113): **neu** sandbox→project Resolution via `project_agent_sandboxes.worktree_path` lookup. Vorher: code-agent runs im worktree erstellten orphans (war v721 nur für project-agent gefixed).
+
+#### Bug C — Sessions/Items aus Sandbox-Runs unsichtbar im Parent-Project
+
+Symptom: Nach Sandbox-Merge erscheint die Arbeit nicht unter "Letzte Sessions" / "Offene Punkte" des echten Projekts (z.B. Alpbyte Games), sondern unter dem Orphan-Projekt.
+
+Folge von Bug B: project_sessions / project_open_items / project_decisions wurden mit `project_id = orphan.id` erstellt. Project-Detail-Page für Parent-Projekt zeigt sie nicht.
+
+Fix: One-shot Migration `ProjectManager.migrateOrphanProjects()`, gerufen beim alfred-Startup. Idempotent (skipt already-archived):
+1. Finde alle aktiven Projekte mit `cwd LIKE '%/sandbox-worktrees/%'`
+2. Pro Orphan: lookup parent via `SELECT project_id FROM project_agent_sandboxes WHERE worktree_path = orphan.cwd`
+3. Re-link FK-references:
+   - `UPDATE project_sessions SET project_id = parent WHERE project_id = orphan`
+   - `UPDATE project_open_items SET project_id = parent ...`
+   - `UPDATE project_decisions SET project_id = parent ...`
+   - `UPDATE project_environments SET project_id = parent ...` (best-effort)
+   - `UPDATE project_db_seeds SET project_id = parent ...` (best-effort)
+   - `DELETE FROM project_health_log WHERE project_id = orphan` (parent re-checks fresh)
+4. `UPDATE projects SET status='archived', name=concat('[ORPHAN-v798] ', name) WHERE id = orphan`
+
+Archivierung statt DELETE: schützt vor unentdeckten FK-references die sonst CASCADE-deleten würden.
+
+**Erwartete Migration nach deinem Deploy** (basierend auf `2026-05-26` DB-Stand):
+- 2× Orphan `ipk73ad8` → re-link zu Alpbyte Games (project_id `3a407ced...`)
+- 4 sessions migriert
+- 11 open items migriert
+- Orphans als `[ORPHAN-v798] ipk73ad8` archiviert (verschwinden aus active-Liste)
+
+#### Was nach Deploy sichtbar wird
+
+1. Neue Sandbox-Erstellung funktioniert wieder (Bug A) — keine "Permission denied"
+2. Alpbyte Games Project-Detail-Page zeigt 37 sessions statt 33 (4 aus Newsletter-Run wieder linked)
+3. Offene Punkte: 162 → 173 (11 newsletter-todos mit re-linked)
+4. Sidebar ohne `ipk73ad8` (archived, verschwindet aus active-default-filter)
+5. Neue sandbox-runs erstellen keine orphan-projects mehr
+
+**Affected paths**:
+- `packages/core/src/sandbox/worktree.ts` (chmod parent)
+- `packages/core/src/projects/project-manager.ts` (AttachSessionParams.projectId + findOrCreate logic + migrateOrphanProjects)
+- `packages/core/src/alfred.ts` (code-agent sandbox→project resolution + startup migration call)
+
 ## [0.19.0-multi-ha.797] - 2026-05-25
 
 ### Added — Manueller Health-Check-Trigger pro Projekt

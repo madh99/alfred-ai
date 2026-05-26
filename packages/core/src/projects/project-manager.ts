@@ -11,8 +11,15 @@ export interface AttachSessionParams {
   sessionType: ProjectSessionType;
   /** Goal/title of the work, used to seed an auto-created project. */
   goal: string;
-  /** Working directory — primary key for auto-binding to existing projects. */
+  /** Working directory — fallback primary key for auto-binding when projectId is unknown. */
   cwd?: string;
+  /**
+   * v798 — Explicit project-ID. Wenn gesetzt überspringt findOrCreate die
+   * cwd-basierte Heuristik komplett und nimmt direkt das Projekt mit dieser ID.
+   * Verhindert orphan-Projekte bei sandbox-runs (worktree-cwd matched sonst kein
+   * existing project → neuer orphan-Eintrag).
+   */
+  projectId?: string;
   /** Optional repo URL. */
   repoUrl?: string;
   /**
@@ -30,6 +37,8 @@ export interface FinishSessionParams {
   sourceId: string;
   goal: string;
   cwd?: string;
+  /** v798 — Explicit project-ID, siehe AttachSessionParams.projectId. */
+  projectId?: string;
   milestones?: string[];
   totalFilesChanged?: number;
   success?: boolean;
@@ -124,6 +133,7 @@ export class ProjectManager {
         sessionType: params.sessionType,
         goal: params.goal,
         cwd: params.cwd,
+        projectId: params.projectId, // v798 — explicit project-Linking (verhindert orphan-Creation bei sandbox-runs)
         startedAt: params.startedAt, // v668 — echte Startzeit für korrekte Arbeitszeit-Statistik
       });
 
@@ -221,6 +231,18 @@ export class ProjectManager {
   }
 
   private async findOrCreate(params: AttachSessionParams): Promise<Project> {
+    // v798 — Explicit projectId hat Vorrang vor cwd-Heuristik. Wenn der caller
+    // weiß zu welchem Project die Session gehört (z.B. sandbox-flow kennt
+    // sandbox.projectId), wird direkt geladen — keine orphan-Erstellung möglich.
+    if (params.projectId) {
+      try {
+        const proj = await this.repo.getById(params.userId, params.projectId);
+        if (proj) return proj;
+        this.logger.warn({ projectId: params.projectId, userId: params.userId }, 'v798 explicit projectId not found, falling back to cwd-heuristik');
+      } catch (err) {
+        this.logger.warn({ err, projectId: params.projectId }, 'v798 getById for explicit projectId failed, falling back to cwd-heuristik');
+      }
+    }
     if (this.autoBindByCwd && params.cwd) {
       const existing = await this.repo.findByCwd(params.userId, params.cwd);
       if (existing) return existing;
@@ -324,5 +346,87 @@ export class ProjectManager {
       filesTouched: params.files?.slice(0, 20),
       status: params.success === true ? 'success' : params.success === false ? 'failed' : 'partial',
     };
+  }
+
+  /**
+   * v798 — One-shot Migration: orphan-Projekte (cwd unter sandbox-worktrees/)
+   * an ihre parent-Projekte re-linken und dann archivieren.
+   *
+   * Vorher hat `findOrCreate(cwd=worktree-path)` orphan-Projekte mit
+   * name=basename(worktree-path) (z.B. "ipk73ad8") angelegt. Dadurch landeten
+   * sessions/items/decisions unter dem orphan statt unter dem echten Parent.
+   *
+   * Migration-Strategie:
+   *  1. Finde alle orphan-Projekte mit cwd LIKE %sandbox-worktrees%
+   *  2. Für jeden: lookup sandbox via worktree_path → parent project_id
+   *  3. Re-link project_sessions, project_open_items, project_decisions,
+   *     project_environments, project_db_seeds an parent
+   *  4. orphan-project status='archived' setzen
+   *
+   * Idempotent — kann mehrfach gerufen werden, archived orphans werden übersprungen.
+   *
+   * @returns Statistik: {migrated: int, relinkedSessions, relinkedItems, relinkedDecisions}
+   */
+  async migrateOrphanProjects(repo: {
+    adapter: { execute: (sql: string, params?: unknown[]) => Promise<{ changes?: number; rows?: unknown[] }>; query: (sql: string, params?: unknown[]) => Promise<unknown[]> };
+  }): Promise<{ migrated: number; relinkedSessions: number; relinkedItems: number; relinkedDecisions: number; errors: string[] }> {
+    const stats = { migrated: 0, relinkedSessions: 0, relinkedItems: 0, relinkedDecisions: 0, errors: [] as string[] };
+    try {
+      // 1. Finde orphan-Projekte (cwd unter sandbox-worktrees/, status active)
+      const orphans = await repo.adapter.query(
+        `SELECT id, user_id, cwd, name FROM projects WHERE status = 'active' AND cwd LIKE '%/sandbox-worktrees/%'`,
+        [],
+      ) as Array<{ id: string; user_id: string; cwd: string; name: string }>;
+      if (orphans.length === 0) {
+        this.logger.debug('v798 migrateOrphanProjects: keine orphans gefunden');
+        return stats;
+      }
+      this.logger.info({ count: orphans.length, names: orphans.map(o => o.name).slice(0, 10) }, 'v798 migrateOrphanProjects: orphans gefunden');
+
+      // 2. Für jeden orphan: parent project finden + re-link
+      for (const orphan of orphans) {
+        try {
+          const sbRows = await repo.adapter.query(
+            `SELECT project_id FROM project_agent_sandboxes WHERE worktree_path = ? LIMIT 1`,
+            [orphan.cwd],
+          ) as Array<{ project_id: string }>;
+          const parentId = sbRows[0]?.project_id;
+          if (!parentId) {
+            this.logger.warn({ orphanId: orphan.id, orphanCwd: orphan.cwd }, 'v798 no sandbox→parent found, skipping orphan');
+            continue;
+          }
+          if (parentId === orphan.id) {
+            this.logger.warn({ orphanId: orphan.id }, 'v798 sandbox.project_id matches orphan id — likely already healthy, skipping');
+            continue;
+          }
+
+          // Re-link FK-references. Best-effort, sammle changes-count.
+          const movedSessions = (await repo.adapter.execute(`UPDATE project_sessions SET project_id = ? WHERE project_id = ?`, [parentId, orphan.id])).changes ?? 0;
+          const movedItems = (await repo.adapter.execute(`UPDATE project_open_items SET project_id = ? WHERE project_id = ?`, [parentId, orphan.id])).changes ?? 0;
+          const movedDecisions = (await repo.adapter.execute(`UPDATE project_decisions SET project_id = ? WHERE project_id = ?`, [parentId, orphan.id])).changes ?? 0;
+          // project_environments + project_db_seeds: best-effort, manche DBs haben evt. nicht alle Tabellen
+          try { await repo.adapter.execute(`UPDATE project_environments SET project_id = ? WHERE project_id = ?`, [parentId, orphan.id]); } catch { /* table missing OK */ }
+          try { await repo.adapter.execute(`UPDATE project_db_seeds SET project_id = ? WHERE project_id = ?`, [parentId, orphan.id]); } catch { /* */ }
+          // project_health_log: löschen statt re-linken — parent hat eigene fresh checks
+          try { await repo.adapter.execute(`DELETE FROM project_health_log WHERE project_id = ?`, [orphan.id]); } catch { /* */ }
+          // Orphan archivieren statt löschen (FK-CASCADE würde sonst die re-linked rows mit löschen falls eine FK vergessen wurde)
+          await repo.adapter.execute(`UPDATE projects SET status = 'archived', name = ? WHERE id = ?`, [`[ORPHAN-v798] ${orphan.name}`, orphan.id]);
+
+          stats.migrated++;
+          stats.relinkedSessions += movedSessions;
+          stats.relinkedItems += movedItems;
+          stats.relinkedDecisions += movedDecisions;
+          this.logger.info({ orphanId: orphan.id, orphanName: orphan.name, parentId, movedSessions, movedItems, movedDecisions }, 'v798 migrated orphan');
+        } catch (err) {
+          const msg = `${orphan.name}: ${(err as Error).message}`;
+          stats.errors.push(msg);
+          this.logger.warn({ err, orphanId: orphan.id }, 'v798 migrate orphan failed');
+        }
+      }
+      this.logger.info(stats, 'v798 migrateOrphanProjects done');
+    } catch (err) {
+      this.logger.warn({ err }, 'v798 migrateOrphanProjects top-level failed');
+    }
+    return stats;
   }
 }

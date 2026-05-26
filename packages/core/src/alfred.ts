@@ -974,6 +974,19 @@ export class Alfred {
         } catch (err) { this.logger.debug({ err }, 'v616 NA1 startup rebuild failed (non-critical)'); }
       })().catch(() => {});
 
+      // v798 — One-shot Migration für orphan-Projekte (sandbox-worktree cwd → parent-project).
+      // Idempotent — bei jedem Startup geprüft, aber nur orphans mit status='active' werden bearbeitet.
+      // Nach erfolgreichem Migrate werden orphans archived → keine erneute Bearbeitung.
+      (async () => {
+        try {
+          if (!this.database) return;
+          const result = await projectManager.migrateOrphanProjects({ adapter: this.database.getAdapter() as any });
+          if (result.migrated > 0 || result.errors.length > 0) {
+            this.logger.info(result, 'v798 orphan-project migration complete');
+          }
+        } catch (err) { this.logger.debug({ err }, 'v798 orphan-migration startup failed (non-critical)'); }
+      })().catch(() => {});
+
       const { ProjectSkill } = await import('@alfred/skills');
       const projectSkill = new ProjectSkill(projectRepo);
       // v602 P4 — forward open-item resolve to ITSM (best-effort, errors swallowed).
@@ -1109,13 +1122,38 @@ export class Alfred {
               ? new Date(Date.now() - info.durationMs).toISOString()
               : undefined;
             if (info.cwd) {
+              // v798 — Sandbox→Project Resolution wenn info.cwd unter sandbox-worktrees liegt.
+              // Vorher: code-agent runs im sandbox-worktree erstellten orphan-Projekte
+              // (ipk73ad8 etc.) weil findByCwd auf worktree-cwd kein parent-project findet.
+              // Jetzt: lookup sandbox→project, übergibt projectId explicit an finishSession.
+              let resolvedCodeCwd = info.cwd;
+              let resolvedCodeProjectId: string | undefined;
+              try {
+                if (info.cwd.includes('/sandbox-worktrees/') && this.database) {
+                  const adapter = this.database.getAdapter();
+                  const sbRow = await adapter.queryOne(
+                    `SELECT project_id FROM project_agent_sandboxes WHERE worktree_path = ?`,
+                    [info.cwd],
+                  ).catch(() => null) as { project_id?: string } | null;
+                  if (sbRow?.project_id && this.projectRepo) {
+                    const proj = await this.projectRepo.getById(userId, sbRow.project_id).catch(() => null);
+                    if (proj?.cwd) {
+                      resolvedCodeCwd = proj.cwd;
+                      resolvedCodeProjectId = proj.id;
+                    }
+                  }
+                }
+              } catch (err) {
+                this.logger.debug({ err, cwd: info.cwd }, 'v798 code-agent sandbox→project resolution failed');
+              }
               // cwd present → standard auto-bind by cwd (creates or joins a project)
               await projectManager.finishSession({
                 userId,
                 sessionType: 'code_agent',
                 sourceId: `code-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
                 goal: info.agentOrTask,
-                cwd: info.cwd,
+                cwd: resolvedCodeCwd,
+                projectId: resolvedCodeProjectId, // v798 — explicit, verhindert orphan
                 success: info.success,
                 transcript: info.finalOutput,
                 files: info.modifiedFiles,
@@ -1485,6 +1523,8 @@ export class Alfred {
                 goal: cfg.goal,
                 // v721 — resolvedCwd zeigt bei Sandbox-Sessions auf das Original-Project (statt worktree)
                 cwd: resolvedCwd,
+                // v798 — explicit projectId (verhindert orphan-Creation auch wenn resolvedCwd nicht matched)
+                projectId: resolvedProjectId,
                 milestones: state.milestonesReached,
                 totalFilesChanged: state.totalFilesChanged,
                 success,

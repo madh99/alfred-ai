@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, statSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import type { Logger } from 'pino';
 
@@ -81,9 +81,15 @@ export async function createWorktree(input: CreateWorktreeInput): Promise<Create
     throw new Error(`Worktree path already exists: ${input.worktreePath}`);
   }
 
-  // Parent-Dir anlegen falls nötig
+  // Parent-Dir anlegen falls nötig.
+  // v798 — chmod 2775 setzen damit der projectCwd-Owner (z.B. madh) im parent
+  // schreiben kann. Default mkdir mit umask 0022 ergibt 2755 (group r-x, kein write).
+  // Wenn alfred als root läuft + git worktree add als madh laufen soll, scheitert
+  // sonst die Erstellung des worktree-Subordners mit "Permission denied".
+  // chmod auch wenn parent existiert (heilt vorhandene falsch-modes).
   const parent = path.dirname(input.worktreePath);
   if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+  try { chmodSync(parent, 0o2775); } catch (err) { input.logger.warn({ err, parent }, 'v798 chmod parent to 2775 failed (continuing — may hit Permission denied later)'); }
 
   const baseCommit = input.fromBranch
     ? await git(['rev-parse', input.fromBranch], input.projectCwd, 5_000)
