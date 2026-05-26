@@ -5,6 +5,47 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.803] - 2026-05-27
+
+### Fixed — v721/v798-Resolution-Code-Stellen brauchten Multi-User-Fix auch (Orphans entstanden weiterhin)
+
+v800 hatte den Multi-User-Fix nur in `ProjectManager.findOrCreate()`. Aber `findOrCreate` bekommt seinen `projectId` erst wenn die UPSTREAM-Resolution funktioniert. Diese Resolution-Code-Stellen nutzten **weiterhin `getById(userId, projectId)`** mit user-filter:
+
+1. **Line 1456** (project-agent completion-callback, v721-resolution)
+2. **Line 1138** (code-agent legacy completion-callback, v798-resolution)
+
+**Problem**: `userId` = `this.ownerMasterUserId ?? this.config.security?.ownerUserId`. Bei `ALFRED_OWNER_USER_ID=5060785419` (Telegram-ID-Format) statt UUID-Format, scheitert `getById` weil project.user_id = UUID `f165df7a` ≠ `5060785419`.
+
+Resolution-Chain damals:
+```
+sandbox.project_id (3a407ced = Alpbyte) ✓
+→ getById(telegram-id, 3a407ced) → null  ← FAIL hier
+→ resolvedProjectId stays undefined
+→ finishSession called WITHOUT projectId
+→ findOrCreate: no projectId → cwd-Heuristik → findByCwd(worktree-cwd) → null
+→ repo.create() → ORPHAN
+```
+
+Beweis vom heutigen Run (sandbox ipn0o396):
+- Alpbyte.user_id = `f165df7a` (madh)
+- Sandbox.user_id = `91df4602` (admin)
+- ownerMasterUserId = wird aus ENV resolved, evt. Telegram-ID
+- v721 resolution scheiterte → orphan `578e5274` (ipn0o396) created
+
+**Fix**: `getByIdAnyOwner(projectId)` in beiden Resolution-Stellen. Identische Strategie wie v800 in findOrCreate. ProjectRepository hat diese Methode seit v667 explizit für diese Multi-User-Cases (Reasoning-Pipeline braucht sie auch).
+
+**Code-Change**: 2 Sites, je ~5 LOC change (entfernt user-filter-Wrapping, ersetzt durch direkten Anyowner-Lookup).
+
+### Migration — manueller Cleanup für orphan ipn0o396
+
+```sql
+-- 1 session (86b26f28) + items + decisions von orphan zu Alpbyte
+UPDATE project_sessions    SET project_id='3a407ced-...' WHERE project_id='578e5274-...';
+UPDATE project_open_items  SET project_id='3a407ced-...' WHERE project_id='578e5274-...';
+UPDATE project_decisions   SET project_id='3a407ced-...' WHERE project_id='578e5274-...';
+UPDATE projects SET status='archived', name='[ORPHAN-v803] ipn0o396' WHERE id='578e5274-...';
+```
+
 ## [0.19.0-multi-ha.802] - 2026-05-26
 
 ### Added — Discuss-Mode durch AgentSession-Layer (Live-Cards) + Plan-Mode Chat-History-Context

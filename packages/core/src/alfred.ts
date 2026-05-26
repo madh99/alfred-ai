@@ -1136,7 +1136,8 @@ export class Alfred {
                     [info.cwd],
                   ).catch(() => null) as { project_id?: string } | null;
                   if (sbRow?.project_id && this.projectRepo) {
-                    const proj = await this.projectRepo.getById(userId, sbRow.project_id).catch(() => null);
+                    // v803 — getByIdAnyOwner statt getById (siehe v721-resolution comment).
+                    const proj = await this.projectRepo.getByIdAnyOwner(sbRow.project_id).catch(() => null);
                     if (proj?.cwd) {
                       resolvedCodeCwd = proj.cwd;
                       resolvedCodeProjectId = proj.id;
@@ -1144,7 +1145,7 @@ export class Alfred {
                   }
                 }
               } catch (err) {
-                this.logger.debug({ err, cwd: info.cwd }, 'v798 code-agent sandbox→project resolution failed');
+                this.logger.debug({ err, cwd: info.cwd }, 'v798/v803 code-agent sandbox→project resolution failed');
               }
               // cwd present → standard auto-bind by cwd (creates or joins a project)
               await projectManager.finishSession({
@@ -1451,14 +1452,17 @@ export class Alfred {
                 [sandboxId],
               ).catch(() => null) as { project_id?: string } | null;
               if (sbRow?.project_id && this.projectRepo) {
-                const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
-                if (userId) {
-                  const proj = await this.projectRepo.getById(userId, sbRow.project_id).catch(() => null);
-                  if (proj?.cwd) {
-                    resolvedCwd = proj.cwd;
-                    resolvedProjectId = proj.id;
-                    this.logger.debug({ sessionId, sandboxId, projectId: proj.id, originalCwd: cfg.cwd, resolvedCwd }, 'v721 sandbox→project resolved');
-                  }
+                // v803 — getByIdAnyOwner statt getById: ownerMasterUserId/ownerUserId können
+                // Telegram-IDs (5060785419) sein, aber project.user_id ist UUID (z.B. f165df7a).
+                // getById mit user-filter scheitert dann → resolvedProjectId bleibt undefined
+                // → finishSession ohne projectId → findOrCreate fällt zurück auf cwd-Heuristik
+                // → ORPHAN-Projekt mit worktree-name. v800 hatte das nur in findOrCreate gefixt;
+                // hier in der v721-resolution ist die gleiche Quelle.
+                const proj = await this.projectRepo.getByIdAnyOwner(sbRow.project_id).catch(() => null);
+                if (proj?.cwd) {
+                  resolvedCwd = proj.cwd;
+                  resolvedProjectId = proj.id;
+                  this.logger.debug({ sessionId, sandboxId, projectId: proj.id, originalCwd: cfg.cwd, resolvedCwd }, 'v721/v803 sandbox→project resolved');
                 }
               }
             }
