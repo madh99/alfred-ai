@@ -5,6 +5,57 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.805] - 2026-05-27
+
+### Changed — v805: Audit-Sweep + Repo-API-Symmetrie
+
+Follow-up zu v804 für die OUT-OF-SCOPE-Punkte (Phase 5a + 5c). v806 wird die Legacy-Daten-Migration (Phase 5b) bringen.
+
+#### Phase 5a — Audit-Sweep & Fixes der DANGEROUS-A Patterns
+
+Subagent-Audit aller 46 `getById()`-Callsites in alfred.ts ergab:
+- 16× SAFE-A (via resolveOwnerProj → findOrCreate → masterUserId)
+- 3× SAFE-B (this.ownerMasterUserId nach v804)
+- **3× DANGEROUS-A** (Fallback zu `config.security.ownerUserId` raw env-var)
+- 9× DANGEROUS-B (Todo/Note/Seed-Repos ohne uid — separater Refactor v810+)
+- 12× INTERNAL-ID-Lookups (Sandbox/Workflow IDs, kein User-Filter nötig)
+
+**Fixes der 3 DANGEROUS-A Patterns**:
+
+1. **Runbook API resolveOwner (line 5668)** — vorher: catch-Fallback gab RAW `config.security.ownerUserId` zurück (Telegram-ID). Jetzt: nutzt `IdentityResolver.resolveOwnerFromConfig` mit Format-Konversion, fallback zu leerem String + Log-Warning statt raw-string-Leak.
+
+2. **Goals API ownerForGoals (line 7428)** — vorher: `this.ownerMasterUserId ?? this.config.security?.ownerUserId`. Jetzt: nur `this.ownerMasterUserId` (UUID nach v804-init). Falls undefined → skip wire-up + log-warning.
+
+3. **Insights API ownerUidForInsights (line 3486 + 6107)** — analog: OR-Fallback entfernt.
+
+**Effekt**: Goals-/Insights-/Runbook-Endpoints liefern keine leeren Listen mehr nur weil `ownerMasterUserId` einen falschen Format-Fallback trafen.
+
+#### Phase 5c — Repo-API-Symmetrie
+
+`getByIdAnyOwner` zu Insights-Repository hinzugefügt:
+
+```ts
+async getByIdAnyOwner(id: string): Promise<Insight | null> {
+  const row = await this.db.queryOne(
+    `SELECT * FROM alfred_insights WHERE id = ?`, [id],
+  );
+  return row ? this.mapRow(row) : null;
+}
+```
+
+**Memory, Conversation, KG, Watch**: Audit zeigt — die haben keine `getById(uid, id)`-Pattern. Memory hat `recall(userId, ...)` (Query-Pattern), Conversation hat `findOrCreateForProject`, KG hat composite-key-Lookups. Keine eindeutige owner-scoped-`getById` zu spiegeln. → kein Refactor in v805 nötig.
+
+#### Was NICHT in v805 (für v806)
+
+- **Phase 5b — Legacy-Daten-Migration**: Audit-Tabelle `user_id_format_audit` (v804) muss zuerst ausgewertet werden um zu sehen WIEVIELE non-UUID-Rows existieren. Dann zielgerichteter Fix mit dry-run-Modus.
+
+- **DANGEROUS-B Refactor**: Todo/Note/Seed-Repos haben `getById(id)` ohne uid — das ist ein **separater Bug-Typ** (fehlender ownership-scope, nicht falsche-UUID-Format). Hat eigenes Risiko-Profil (data-leak zwischen Usern) und braucht eigenes Release (v810+).
+
+### Affected paths
+
+- `packages/core/src/alfred.ts` (3 callsite refactors, ~30 LOC)
+- `packages/storage/src/repositories/insights-repository.ts` (+10 LOC: getByIdAnyOwner)
+
 ## [0.19.0-multi-ha.804] - 2026-05-27
 
 ### Changed — User-Identity-Architektur-Refactor (8 Phasen)

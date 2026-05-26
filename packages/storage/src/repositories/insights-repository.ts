@@ -122,6 +122,15 @@ export class InsightsRepository {
     return row ? this.mapRow(row) : null;
   }
 
+  /**
+   * v805 — Owner-Filter umgehen. Für System-internal-Lookups (z.B.
+   * cross-user-confirmation oder admin-actions).
+   */
+  async getByIdAnyOwner(id: string): Promise<Insight | null> {
+    const row = await this.db.queryOne(`SELECT * FROM alfred_insights WHERE id = ?`, [id]) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : null;
+  }
+
   async dismiss(userId: string, id: string): Promise<void> {
     const now = new Date().toISOString();
     await this.db.execute(`UPDATE alfred_insights SET status = 'dismissed', dismissed_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`, [now, now, id, userId]);

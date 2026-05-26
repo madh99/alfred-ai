@@ -3483,7 +3483,9 @@ export class Alfred {
           skillRegistry.register(insightsSkill);
 
           // Daily sweep at 09:00 local
-          const ownerUidForInsights = this.ownerMasterUserId || this.config.security?.ownerUserId;
+          // v805 — Nur ownerMasterUserId (UUID nach v804). Vorher OR-Fallback führte
+          // bei missing master-uid zu raw env-var, also Telegram-ID statt UUID.
+          const ownerUidForInsights = this.ownerMasterUserId;
           if (ownerUidForInsights) {
             const linked = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForInsights)).map(u => u.id) : [ownerUidForInsights];
             if (!linked.includes(ownerUidForInsights)) linked.push(ownerUidForInsights);
@@ -5665,14 +5667,25 @@ export class Alfred {
       // Wire Runbook API on HTTP adapter
       if (apiAdapter && this.runbookRepo && 'setRunbookCallbacks' in apiAdapter) {
         const rbRepo = this.runbookRepo;
+        // v805 — IdentityResolver-Path statt direkter findOrCreate.
+        // Vorher: catch-Fallback gab RAW env-var-String zurück (Telegram-ID)
+        // → repo.list/get/update filterte nach user_id = telegram-id → null.
+        // Jetzt: bevorzugt ownerMasterUserId (garantiert UUID nach v804-init),
+        // falls undefined log + leerer Fallback (kein raw-string-leak mehr).
         const resolveOwner = async () => {
-          const ownerId = this.config.security?.ownerUserId ?? '';
-          try {
-            const user = await this.userRepo!.findOrCreate('telegram' as any, ownerId);
-            return user.masterUserId ?? user.id;
-          } catch {
-            return ownerId;
+          if (this.ownerMasterUserId) return this.ownerMasterUserId;
+          if (this.identityResolver && this.config.security?.ownerUserId) {
+            try {
+              return await this.identityResolver.resolveOwnerFromConfig(
+                this.config.security.ownerUserId,
+                (this.config.security as { ownerPlatform?: string })?.ownerPlatform ?? 'telegram',
+              );
+            } catch (err) {
+              this.logger.warn({ err }, 'v805 Runbook resolveOwner via IdentityResolver failed');
+            }
           }
+          this.logger.warn({}, 'v805 Runbook resolveOwner returned empty (no ownerMasterUserId, no resolver)');
+          return '';
         };
         (apiAdapter as any).setRunbookCallbacks({
           list: async (filter?: { status?: string; sourceType?: string }) => {
@@ -6091,7 +6104,8 @@ export class Alfred {
       if (apiAdapter && this.insightsRepo && this.insightEngine && 'setInsightsCallbacks' in apiAdapter) {
         const insightsRepo = this.insightsRepo;
         const insightEngine = this.insightEngine;
-        const ownerUidForInsights = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        // v805 — Nur ownerMasterUserId (UUID nach v804-init).
+        const ownerUidForInsights = this.ownerMasterUserId;
         const resolveLinked = async (): Promise<string[]> => {
           if (!ownerUidForInsights || !this.userRepo) return ownerUidForInsights ? [ownerUidForInsights] : [];
           try {
@@ -7414,7 +7428,13 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
         try {
           const { GoalsRepository: GoalsRepo } = await import('@alfred/storage');
           const goalsRepoForApi = new GoalsRepo(this.database.getAdapter());
-          const ownerForGoals = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          // v805 — Nur ownerMasterUserId (UUID nach v804-init). Fallback zu
+          // config.ownerUserId entfernt — der war Telegram-ID-Format und
+          // matched user_id=UUID nicht → leere Listen.
+          const ownerForGoals = this.ownerMasterUserId;
+          if (!ownerForGoals) {
+            this.logger.warn({}, 'v805 Goals API: ownerMasterUserId undefined — skipping wire-up');
+          }
           (apiAdapter as any).setGoalsCallbacks({
             list: async (filter?: { status?: string; category?: string }) => {
               if (!ownerForGoals) return [];
