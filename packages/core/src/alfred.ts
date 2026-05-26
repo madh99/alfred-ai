@@ -7071,6 +7071,33 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                         taskPhase: 'done',
                       });
                     }
+
+                    // v799 — Im v781 NEW PATH (AgentSession) wird `codeAgentSkill.execute()`
+                    // bypassed → der `setSessionCompletionCallback` (alfred.ts:1110) feuert
+                    // NICHT → keine project_sessions-Row, keine Open-Items-Extraction.
+                    // Folge: Quick-Mode-Arbeit war unsichtbar unter "Letzte Sessions" und
+                    // Items wurden nicht ge-summarized.
+                    // Fix: nach NEW-PATH-Run manuell finishSession() rufen.
+                    // Legacy-Path (cAgent.execute) erhält weiterhin Callback → KEIN double-insert.
+                    if (useAgentSession && this.projectManager) {
+                      try {
+                        await this.projectManager.finishSession({
+                          userId: sb.userId,
+                          sessionType: 'code_agent',
+                          sourceId: taskId,
+                          goal: augmentedMessage,
+                          cwd: sb.worktreePath,
+                          projectId: sb.projectId, // v798 — explicit, verhindert orphan
+                          success: result.success,
+                          transcript: display,
+                          files: result.modifiedFiles,
+                          totalFilesChanged: result.modifiedFiles.length,
+                          startedAt: initialAgentMsg.createdAt,
+                        });
+                      } catch (err) {
+                        this.logger.warn({ err, taskId, sandboxId }, 'v799 finishSession after AgentSession run failed (non-critical, run results still in git)');
+                      }
+                    }
                   } catch (err) {
                     const aborted = abortController.signal.aborted;
                     // v793 — Auch bei Fehler: in-place-Update statt append.

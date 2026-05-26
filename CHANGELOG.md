@@ -5,6 +5,70 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.799] - 2026-05-26
+
+### Fixed — Quick-Mode Sessions wurden nicht in project_sessions registriert
+
+Symptom nach v798-Deploy: User startete Sandbox, machte Quick-Mode-Iterations mit claude-code, mergte erfolgreich → Code ist in master, aber die Arbeit erscheint NICHT unter "Letzte Sessions" im Project-Detail. Open-Items aus der Arbeit ebenfalls nicht extracted.
+
+**Root Cause** — v781-introduced Regression:
+
+Der v781 AgentSession-Path (Quick-Mode mit persistent CLI-Sessions) bypassed `codeAgentSkill.execute()` und ruft `agentSessionManager.invoke()` direkt:
+
+```ts
+// chatSendMessage code-agent branch
+if (useAgentSession && this.agentSessionManager) {
+  // v781 — NEW PATH
+  const r = await this.agentSessionManager.invoke({...});
+  return {...};
+}
+// → cAgent.execute() (legacy path)
+```
+
+Das Problem: der `codeAgentSkill.setSessionCompletionCallback` (alfred.ts:1110) feuert NUR wenn `codeAgentSkill.execute()` gerufen wird. Der NEW PATH umgeht das komplett → der Callback ruft nie `projectManager.finishSession()` → keine `project_sessions`-Row → UI zeigt die Session nicht.
+
+Beweis im DB:
+
+| Tabelle | Eintrag für sandbox 33f913e1 / task code-75769a5a? |
+|---|---|
+| `sandbox_chat_messages` | ✅ User-msg + "✓ Fertig — 3 Dateien geändert · commit `19cfd6e5`" |
+| `project_agent_sandboxes` | ✅ status=cleaned, project_id=Alpbyte korrekt |
+| `agent_session_events` | ✅ Adapter-Events persistiert (v780+) |
+| `project_sessions` | ❌ **fehlt** |
+| `project_open_items` | ❌ keine items aus diesem Run extracted |
+| `git master` | ✅ `e17e88e` squash-merge enthält die changes |
+
+Code-Daten sind alle in git ✓ — nur die UI-Sichtbarkeit fehlt.
+
+**Fix**: Im v781 NEW PATH nach erfolgreichem (oder failed) `agentSessionManager.invoke()`-Run manuell `projectManager.finishSession()` rufen mit:
+- `sessionType: 'code_agent'`
+- `sourceId: taskId` (z.B. `code-...`)
+- `goal: augmentedMessage` (User-Prompt)
+- `cwd: sb.worktreePath` (wird zu Alpbyte-cwd auto-resolved durch v798)
+- `projectId: sb.projectId` (explicit, verhindert orphan)
+- `transcript`, `files`, `totalFilesChanged`, `success`, `startedAt` aus result + initialAgentMsg
+
+`projectManager.finishSession()` macht intern:
+1. `attachSession()` → erstellt project_sessions-Row (oder findet existing)
+2. `summarizer.summarize()` → LLM extrahiert openItems + decisions
+3. `addOpenItem()`/`addDecision()` für jeden extrahierten Eintrag
+4. Update `nextCheckAt` based on summary
+
+**Wichtig**: KEIN double-insert für Legacy-Path. Der Code prüft `if (useAgentSession && this.projectManager)`. Legacy-Path (cAgent.execute) erhält weiterhin den setSessionCompletionCallback und wird normal verarbeitet.
+
+**Was nach Deploy passiert**:
+- Quick-Mode-Runs erscheinen in "Letzte Sessions" mit echter started_at/ended_at
+- Open-Items werden automatisch aus dem Transcript extracted
+- Decisions/Milestones werden persistiert
+- nextCheckIn wird aus Session-Inhalt abgeleitet
+
+**Affected paths**:
+- `packages/core/src/alfred.ts` (1 location, ~25 LOC neu nach der commit-notiz-bubble in chatSendMessage code-agent branch)
+
+### Migration für verpasste Sessions
+
+Folgende manuelle DB-Inserts werden mit diesem Release in MIGRATION_v799_MISSING_SESSIONS.sql dokumentiert (kein automatischer Restore — User-Aktion). Heutiger Run (2026-05-26 08:12-08:20) müsste manuell eingespielt werden falls "Letzte Sessions" rückwirkend stimmen soll.
+
 ## [0.19.0-multi-ha.798] - 2026-05-26
 
 ### Fixed — Sandbox-Worktree-Trilogie: Permissions + Orphan-Projects + Session-Linking
