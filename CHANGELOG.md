@@ -5,6 +5,118 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.807] - 2026-05-27
+
+### Changed — OR-Fallback-Pattern Cleanup + Type-Strengthening (v807, 4 Phasen)
+
+Follow-up zu v804/v805. Bringt das User-Identity-Modell zu type-safety-Vollständigkeit.
+
+Plus: **Daten-Migration "A"** vor diesem Release direkt auf .91 ausgeführt — 18 non-UUID-Rows (1 memories + 7 documents + 10 embeddings) migriert zu madh's UUID `f165df7a-...`. Alle Tabellen jetzt 0 non-UUID-Rows.
+
+#### Phase 7a — `requireOwner()` + `tryOwner()` Helper
+
+`Alfred`-Klasse bekommt zwei Helper-Methoden:
+
+```ts
+/** Returns UserUUID oder wirft (init-required). */
+private requireOwner(): UserUUID { ... }
+
+/** Returns UserUUID oder undefined (best-effort). */
+private tryOwner(): UserUUID | undefined { ... }
+```
+
+→ Strict-Mode in Methoden die Owner brauchen, soft-Mode für Background-Tasks die VOR init laufen können.
+
+#### Phase 7b — OR-Fallback-Pattern Replace
+
+**50 Patterns ersetzt** in `alfred.ts`:
+- `this.ownerMasterUserId ?? this.config.security?.ownerUserId` → `this.tryOwner()` (41 sites)
+- `this.ownerMasterUserId || this.config.security?.ownerUserId` → `this.tryOwner()` (8 sites)
+- Plus 1 manueller Fix in setMemoryRepo-Wire-Up (line 2186-2195)
+
+**Was NICHT ersetzt** (~20 Sites): `config.security.ownerUserId` als **Platform-Chat-ID** für proaktive Nachrichten:
+- `chatId: this.config.security?.ownerUserId` (SkillContext-chatId)
+- `adapter.sendMessage(this.config.security?.ownerUserId, ...)` (Telegram-DM-Target)
+- `CalendarWatcher(... ownerUserId ...)` (Notification-Target)
+
+Diese Verwendungen brauchen das **Telegram-Chat-ID-Format**, nicht UUID. Korrekt by-design.
+
+#### Phase 7c — Type-Strengthening project-agent-skill + deploy
+
+```diff
+- private ownerUserId?: string;
+- setProjectLookup(repo: ..., ownerUserId: string | undefined): void
++ private ownerUserId?: UserUUID;
++ setProjectLookup(repo: ..., ownerUserId: UserUUID | undefined): void
+```
+
+Gleicher Refactor in `deploy.ts:setMemoryRepo`.
+
+**Compiler-Erkennung bestätigt funktionsfähig**: alter Wire-Up bei `setMemoryRepo(this.memoryRepo, ownerMasterId ?? ownerId)` failte sofort — `ownerId` war raw env-var (Telegram-ID), wurde durch `this.tryOwner()` ersetzt.
+
+#### Phase 7d — Tests (28 neue)
+
+`packages/types/src/identity.test.ts` (28 tests):
+- `isUserUUID`: UUID, Uppercase, Telegram-ID, Matrix-ID, leer, ohne-Bindestriche, zu-kurz, invalide-Zeichen
+- `asUserUUID`: cast + throw + truncated-error-message
+- `tryUserUUID`: valid, non-UUID, null, undefined, non-string
+- `asMasterUserId`: semantic-cast
+- `asPlatformUserId`: Telegram, Matrix, leer, zu-lang
+- `classifyUserIdFormat`: uuid vs platform vs default
+- **Regression-Tests** für v798/v800/v803-Bug-Quellen
+
+Gesamt-Test-Coverage für Identity-Modell: **46 tests** (18 IdentityResolver + 28 Branded-Types).
+
+### Migration vor Release (out-of-band)
+
+Bevor v807 deployed wurde:
+
+```sql
+BEGIN;
+UPDATE memories SET user_id='f165df7a-8689-49b6-9318-41839913846f' WHERE user_id='5060785419';
+-- 1 row: project_names_rebuilt_v616 marker
+UPDATE documents SET user_id='f165df7a-8689-49b6-9318-41839913846f' WHERE user_id='5060785419';
+-- 7 rows: old file-uploads
+UPDATE embeddings SET user_id='f165df7a-8689-49b6-9318-41839913846f' WHERE user_id='5060785419';
+-- 10 rows: pre-v667 RAG vectors
+COMMIT;
+```
+
+→ 18 non-UUID-Rows migriert (vor v807). Audit-Re-Run: 0 non-UUID in 15 geprüften Tabellen.
+
+### Affected paths
+
+- `packages/core/src/alfred.ts` (Helper-Methoden + ~50 callsite-Replacements + 1 setMemoryRepo-fix)
+- `packages/skills/src/built-in/code-agent/project-agent-skill.ts` (ownerUserId Type → UserUUID)
+- `packages/skills/src/built-in/deploy.ts` (ownerUserId Type → UserUUID)
+- `packages/types/src/identity.test.ts` (NEW, 28 tests)
+
+### Was nach Deploy konkret passiert
+
+1. Background-Tasks (Calendar/Todo-Watcher, KG-Sweep, Insights-Sweep) nutzen garantiert UUID-Format
+2. Falls jemand Code commited der `this.config.security.ownerUserId` als user_id-FK durchreicht → **Compile-Fail** (Branded Type blockt)
+3. Background-Tasks die vor init() laufen können (race-conditions) → bekommen `undefined` von `tryOwner()` und können kontrolliert handlen (statt silent telegram-id-fallback)
+4. Falls `requireOwner()` vor init() gerufen wird → klarer Stack-Trace mit ADR-Verweis statt silent Bug
+
+### Stand der Multi-User-Foundation
+
+| Release | Was |
+|---|---|
+| v798/v800/v803 | Symptom-Fixes der orphan-creation |
+| v804 | Architektur-Refactor (IdentityResolver, Branded Types, ADR, 18 Tests) |
+| v805 | DANGEROUS-A Sweep + Repo-API-Symmetrie |
+| **v807** | **OR-Fallback-Cleanup + Type-Strengthening + 28 Tests + Daten-Migration A** |
+
+Damit ist die Multi-User-Foundation **systemisch geschlossen**. Zukünftiger Code kann den Bug strukturell nicht mehr produzieren.
+
+### Was BLEIBT als Tech-Debt (für später)
+
+- DANGEROUS-B Sites (Todo/Note/Seed-Repos ohne uid-filter) — separater Bug-Typ (fehlender ownership-scope, nicht falsche-UUID-Format). Geplant v810+.
+- 8 Repos ohne `getByIdAnyOwner` (Memory hat keine `getById(uid, id)`-Pattern, Conversation/KG/Watch ebenfalls nicht — daher kein refactor-need)
+- Audit-Tabelle Populate-Code (für künftige Self-Healing-Migrations)
+
+Keiner davon ist akut, alle defensive Verbesserungen.
+
 ## [0.19.0-multi-ha.805] - 2026-05-27
 
 ### Changed — v805: Audit-Sweep + Repo-API-Symmetrie

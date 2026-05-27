@@ -218,9 +218,15 @@ export class DeploySkill extends Skill {
       type?: string, confidence?: number,
     ): Promise<unknown>;
   };
-  private ownerUserId?: string;
+  // v807 — UserUUID statt string. Branded Type aus @alfred/types.
+  private ownerUserId?: import('@alfred/types').UserUUID;
 
-  setMemoryRepo(repo: typeof this.memoryRepo, ownerUserId: string | undefined): void {
+  /**
+   * v807 — Type-strengthening: ownerUserId garantiert UserUUID-Format (kein
+   * raw env-var/Telegram-ID). Caller (alfred.ts) muss this.requireOwner() /
+   * this.tryOwner() verwenden statt direkter env-var-Reads.
+   */
+  setMemoryRepo(repo: typeof this.memoryRepo, ownerUserId: import('@alfred/types').UserUUID | undefined): void {
     this.memoryRepo = repo;
     this.ownerUserId = ownerUserId;
   }

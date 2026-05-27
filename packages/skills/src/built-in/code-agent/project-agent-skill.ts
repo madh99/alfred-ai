@@ -288,10 +288,18 @@ export class ProjectAgentSkill extends Skill {
     findByCwd?(userId: string, cwd: string): Promise<{ id: string; name: string; cwd?: string } | null>;
     list(userId: string, opts?: { status?: string; limit?: number }): Promise<Array<{ id: string; name: string; slug: string; cwd?: string }>>;
   };
-  private ownerUserId?: string;
+  // v807 — UserUUID statt string. Compiler erkennt jetzt wenn ein Caller
+  // ein non-UUID-Format (z.B. Telegram-ID) durchreicht — der war v798/v800/v803
+  // Bug-Quelle. Branded Type aus @alfred/types/identity.
+  private ownerUserId?: import('@alfred/types').UserUUID;
 
-  /** v615 M1 — wire from alfred.ts after Skill construction. */
-  setProjectLookup(repo: typeof this.projectRepo, ownerUserId: string | undefined): void {
+  /**
+   * v615 M1 — wire from alfred.ts after Skill construction.
+   * v807 — Type-strengthening: ownerUserId muss UserUUID sein (kein raw string).
+   * Caller in alfred.ts ruft via `this.requireOwner()` / `this.tryOwner()` —
+   * beide returnen garantiert UserUUID (oder werfen / undefined).
+   */
+  setProjectLookup(repo: typeof this.projectRepo, ownerUserId: import('@alfred/types').UserUUID | undefined): void {
     this.projectRepo = repo;
     this.ownerUserId = ownerUserId;
   }

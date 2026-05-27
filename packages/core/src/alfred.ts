@@ -323,6 +323,38 @@ export class Alfred {
   private ownerMasterUserId?: import('@alfred/types').UserUUID;
   /** v804 — Single entry-point für User-ID-Resolution. Late-bound in init(). */
   private identityResolver?: import('./identity/resolver.js').IdentityResolver;
+
+  /**
+   * v807 — Helper: garantiert UserUUID, wirft wenn init() noch nicht durchgelaufen.
+   *
+   * Ersetzt das OR-Fallback-Pattern `this.tryOwner()`
+   * — das war vor v804 die Quelle der Multi-User-Bugs (Telegram-ID rutschte in
+   * UUID-only-DB-Queries). Nach v804 ist `ownerMasterUserId` garantiert UUID
+   * sobald init() complete ist; der Fallback war nur noch defensive Code der
+   * im Edge-Case (sehr früher Init-Race) wieder Telegram-ID zurückgegeben hätte.
+   *
+   * Wer diese Methode vor init() ruft → bekommt sofort einen klaren Stack-Trace
+   * statt silent fallback zu Telegram-ID. Das ist gewollt.
+   */
+  private requireOwner(): import('@alfred/types').UserUUID {
+    if (!this.ownerMasterUserId) {
+      throw new Error(
+        'Alfred.requireOwner() called before init() completed. ' +
+        'Check that this code path runs AFTER alfred.initialize() — ' +
+        'see ADR-0001 (docs/adr/0001-user-identity-model.md) for the init-order requirement.',
+      );
+    }
+    return this.ownerMasterUserId;
+  }
+
+  /**
+   * v807 — Wie requireOwner aber ohne throw — gibt undefined zurück bei nicht-initialisiert.
+   * Für Background-Tasks die VOR init laufen können (z.B. early-startup-hooks).
+   * In den meisten Fällen `requireOwner()` bevorzugen.
+   */
+  private tryOwner(): import('@alfred/types').UserUUID | undefined {
+    return this.ownerMasterUserId;
+  }
   private userServiceResolverRef?: { getServiceConfig: Function; getUserServices: Function; saveServiceConfig: Function; removeServiceConfig: Function };
   private readonly startedAt = new Date().toISOString();
 
@@ -887,7 +919,7 @@ export class Alfred {
 
       // v726 — Late-Wire EnvironmentsSkill, jetzt da projectRepo da ist
       if (this.envSkillFactory) {
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        const ownerUid = this.tryOwner() ?? '';
         if (ownerUid) {
           try { this.envSkillFactory(projectRepo, ownerUid); } catch (err) {
             this.logger.warn({ err }, 'v726 EnvironmentsSkill late-wire failed');
@@ -960,7 +992,7 @@ export class Alfred {
       // jedem Start läuft.
       (async () => {
         try {
-          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const ownerUid = this.tryOwner();
           if (!ownerUid) return;
           if (this.memoryRepo) {
             const markerKey = 'project_names_rebuilt_v616';
@@ -1000,7 +1032,7 @@ export class Alfred {
         try {
           const itsmSkill = skillRegistry.get('itsm');
           if (!itsmSkill) return false;
-          const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          const userId = this.tryOwner() ?? '';
           if (!userId) return false;
           const ctx = { userId, masterUserId: userId, chatId: this.config.security?.ownerUserId ?? '', platform: 'api' } as unknown as import('@alfred/types').SkillContext;
           await itsmSkill.execute({ action: status === 'closed' ? 'close_incident' : 'update_incident', incident_id: incidentId, status }, ctx);
@@ -1080,7 +1112,7 @@ export class Alfred {
           }, thresholdConfig)) {
             return;
           }
-          const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          const userId = info.context.masterUserId ?? this.tryOwner() ?? '';
           if (!userId) return;
           const sourceId = `delegate-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           // v668 — echte Startzeit aus durationMs ableiten
@@ -1119,7 +1151,7 @@ export class Alfred {
           }, thresholdConfig)) {
             return;
           }
-          const userId = info.context.masterUserId ?? this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          const userId = info.context.masterUserId ?? this.tryOwner() ?? '';
           if (!userId) return;
           try {
             // v668 — echte Startzeit aus durationMs ableiten
@@ -1211,7 +1243,7 @@ export class Alfred {
         const { HealthMonitor } = await import('./projects/health-monitor.js');
         const healthMonitor = new HealthMonitor(
           projectRepo,
-          () => this.ownerMasterUserId ?? this.config.security?.ownerUserId,
+          () => this.tryOwner(),
           this.logger.child({ component: 'project-health-monitor' }),
           {
             intervalHours: this.config.projects?.healthCheckIntervalHours,
@@ -1227,7 +1259,7 @@ export class Alfred {
         // whether to delegate a repair (e.g. via code-agent).
         healthMonitor.onStatusChange(async (event) => {
           if (!this.confirmationQueue) return;
-          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          const ownerUid = this.tryOwner() ?? '';
           if (!ownerUid) return;
           const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
             : this.config.discord?.enabled ? 'discord'
@@ -1311,7 +1343,7 @@ export class Alfred {
               this.logger.warn({ failedTaskId }, 'Auto-Resume: project_agent skill not registered');
               return;
             }
-            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const uid = this.tryOwner() ?? '';
             const ownerChatId = this.config.security?.ownerUserId ?? '';
             const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
               : this.config.matrix?.enabled ? 'matrix'
@@ -1330,7 +1362,7 @@ export class Alfred {
         const commitsRepo = new ProjectAgentCommitsRepository(adapter);
         const projectIdResolver = async (cwd: string): Promise<string | undefined> => {
           if (!this.projectRepo) return undefined;
-          const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const uid = this.tryOwner();
           if (!uid) return undefined;
           try {
             const list = await this.projectRepo.list(uid);
@@ -1343,7 +1375,7 @@ export class Alfred {
         // v663a — Conventions-Resolver: cwd → Project.conventions
         projectRunner.setProjectConventionsResolver(async (cwd: string) => {
           if (!this.projectRepo) return undefined;
-          const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const uid = this.tryOwner();
           if (!uid) return undefined;
           try {
             const list = await this.projectRepo.list(uid);
@@ -1358,7 +1390,7 @@ export class Alfred {
         projectRunner.setProjectLockHooks(
           async (cwd: string, _sessionId: string) => {
             if (!this.projectRepo) return { acquired: true };
-            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+            const uid = this.tryOwner();
             if (!uid) return { acquired: true };
             try {
               const list = await this.projectRepo.list(uid);
@@ -1378,7 +1410,7 @@ export class Alfred {
           },
           async (cwd: string, _sessionId: string) => {
             if (!this.projectRepo) return;
-            const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+            const uid = this.tryOwner();
             if (!uid) return;
             try {
               const list = await this.projectRepo.list(uid);
@@ -1425,7 +1457,7 @@ export class Alfred {
       // set later in init(); we pass `this` as ref-holder and the skill
       // re-reads it at call time. ownerMasterUserId is resolved similarly.
       if (this.projectRepo) {
-        projectAgentSkill.setProjectLookup(this.projectRepo, this.ownerMasterUserId ?? this.config.security?.ownerUserId);
+        projectAgentSkill.setProjectLookup(this.projectRepo, this.tryOwner());
       } else {
         // Late binding: set once the ProjectRepository exists. We do this from
         // the same init phase that constructs projectRepo (see further below).
@@ -1482,7 +1514,7 @@ export class Alfred {
         // findet. Best-effort — Memory-Fehler bricht den Completion-Flow nicht ab.
         if (this.memoryRepo && resolvedCwd) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
             if (userId && projectName) {
               const safeKey = `project_workspace_${projectName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -1509,7 +1541,7 @@ export class Alfred {
 
         if (this.projectManager) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             if (userId) {
               // v668/v686 — echte Startzeit aus project_agent_sessions lesen damit
               // Arbeitszeit-Statistik die Agent-Laufzeit zeigt (nicht nur die
@@ -1568,7 +1600,7 @@ export class Alfred {
         // Damit beim nächsten Öffnen des Project-Chats die History den Run-Abschluss zeigt.
         if (this.conversationRepo && resolvedCwd && this.projectRepo) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             if (userId) {
               // v721/v804 — Direkt-Match via resolvedProjectId. getByIdAnyOwner für
               // System-internal lookup (sandbox-completion-callback ist owner-agnostisch).
@@ -1603,7 +1635,7 @@ export class Alfred {
         // v643 — Repo-URL + Default-Branch auto-detect aus cwd
         if (this.projectRepo && resolvedCwd) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             if (userId) {
               const { execFile } = await import('node:child_process');
               const { promisify } = await import('node:util');
@@ -1678,7 +1710,7 @@ export class Alfred {
         // mit konservativer Confidence (≥0.6 → auto-done, sonst nur markieren).
         if (success && this.projectRepo && this.llmProvider) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             if (userId) {
               // Find project for this cwd (project-manager.finishSession attached it via cwd)
               // v721 — Direkt-Match via resolvedProjectId wenn Sandbox-Resolution erfolgt ist
@@ -1736,7 +1768,7 @@ export class Alfred {
         // Trigger B (existing): with ≥3 milestones, propose a runbook.
         if (state.milestonesReached.length >= 3 && this.runbookRepo && this.confirmationQueue) {
         try {
-          const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          const userId = this.tryOwner() ?? '';
           if (!userId) { /* skip runbook */ } else {
           // Avoid duplicate suggestion if a runbook already exists for this session
           const existing = await this.runbookRepo.findBySource(userId, 'project_agent', sessionId);
@@ -1789,7 +1821,7 @@ export class Alfred {
         // the existing ConfirmationQueue, so the user keeps full control.
         if (success && this.memoryRepo && this.confirmationQueue) {
           try {
-            const userId = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const userId = this.tryOwner() ?? '';
             if (!userId) return;
             // v721 — resolvedCwd zeigt bei Sandbox-Sessions auf das Original-Project
             const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
@@ -2151,21 +2183,16 @@ export class Alfred {
         deploySkill.setHostCapabilitiesRepo(new HostCapabilitiesRepository(this.database.getAdapter()));
       }
       // v609 — auto-save a fact-memory after each successful deploy
+      // v807 — Nutzt tryOwner() statt manueller findOrCreate-Resolution.
+      // Vorher: catch-Fallback gab raw env-var (Telegram-ID) zurück.
+      // Jetzt: UserUUID oder undefined — Branded Type catched falsche Casts.
       if (this.memoryRepo) {
-        const ownerId = this.config.security?.ownerUserId;
-        let ownerMasterId: string | undefined;
-        try {
-          if (ownerId && this.userRepo) {
-            const ownerUser = await this.userRepo.findOrCreate('telegram' as any, ownerId);
-            ownerMasterId = ownerUser.masterUserId ?? ownerUser.id;
-          }
-        } catch { /* fall back to raw owner id */ }
-        deploySkill.setMemoryRepo(this.memoryRepo, ownerMasterId ?? ownerId);
+        deploySkill.setMemoryRepo(this.memoryRepo, this.tryOwner());
       }
       // v733 — ENV-Provider: liefert ENVs aus project_environments[stage] für Auto-.env-Write beim Deploy
       deploySkill.setEnvProvider(async (projectName: string, stage: string) => {
         if (!this.envRepoRef || !this.envCryptoRef || !this.projectRepo) return undefined;
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const ownerUid = this.tryOwner();
         if (!ownerUid) return undefined;
         try {
           const projects = await this.projectRepo.list(ownerUid);
@@ -2568,7 +2595,7 @@ export class Alfred {
         // Wire post-deploy callback: CMDB discovery + Deep Scan + Service creation
         deploySkill.setPostDeployCallback?.(async (host: string, project: string) => {
           try {
-            const userId = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+            const userId = this.tryOwner() || '';
 
             // Step 1: CMDB Discovery — register VM/LXC as asset
             const cmdbSkill = skillRegistry.get('cmdb');
@@ -2915,7 +2942,7 @@ export class Alfred {
         // Alerts → minIncidents=3 in 14d gehört dazu). Auto-Promote-Logik ist mit der
         // Monitor-Path-Logik identisch (≥5 in 7d oder ≥8 absolut → automatisch Problem).
         if (this.config.cmdb?.autoIncidentFromMonitor !== false) {
-          const ownerUidForSweep = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const ownerUidForSweep = this.tryOwner();
           if (ownerUidForSweep) {
             const ownerPlatformForSweep = (this.config.telegram?.enabled ? 'telegram'
               : this.config.discord?.enabled ? 'discord'
@@ -3401,7 +3428,7 @@ export class Alfred {
                 },
               };
               const generator = new KgQuestionGenerator(facadeQg, kgQuestRepo, new ConfRepoQg(adapter), this.logger.child({ component: 'kg-question-gen' }));
-              const ownerUidQg = this.ownerMasterUserId || this.config.security?.ownerUserId;
+              const ownerUidQg = this.tryOwner();
               const ownerPlatformQg = (this.config.telegram?.enabled ? 'telegram'
                 : this.config.matrix?.enabled ? 'matrix'
                 : this.config.discord?.enabled ? 'discord'
@@ -3443,7 +3470,7 @@ export class Alfred {
                 new ConfirmationRepository(adapter),
                 this.logger.child({ component: 'goal-extractor' }),
               );
-              const ownerUidForGoals = this.ownerMasterUserId || this.config.security?.ownerUserId;
+              const ownerUidForGoals = this.tryOwner();
               if (ownerUidForGoals) {
                 const linkedForGoals = this.userRepo ? (await this.userRepo.getLinkedUsers(ownerUidForGoals)).map(u => u.id) : [ownerUidForGoals];
                 if (!linkedForGoals.includes(ownerUidForGoals)) linkedForGoals.push(ownerUidForGoals);
@@ -3884,7 +3911,7 @@ export class Alfred {
                 if (tplHttpAdapter && typeof tplHttpAdapter.setSandboxTemplatesCallbacks === 'function') {
                   const { SandboxTemplateRepository } = await import('@alfred/storage');
                   const tplRepo = new SandboxTemplateRepository(adapter);
-                  const ownerUid = () => this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                  const ownerUid = () => this.tryOwner() ?? '';
                   tplHttpAdapter.setSandboxTemplatesCallbacks({
                     list: async (projectId: string | null | undefined) => {
                       const uid = ownerUid();
@@ -4088,7 +4115,7 @@ export class Alfred {
         if (discoveryIntervalH > 0) {
           const discoveryMs = discoveryIntervalH * 3_600_000;
           setTimeout(() => {
-            const uid = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+            const uid = this.tryOwner() || '';
             if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
             this.cmdbDiscoveryTimer = setInterval(() => {
               if (uid) cmdbSkill.execute({ action: 'discover' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
@@ -4102,7 +4129,7 @@ export class Alfred {
         if (healthCheckMin > 0) {
           const healthMs = healthCheckMin * 60_000;
           setTimeout(() => {
-            const uid = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+            const uid = this.tryOwner() || '';
             const runHealthCheck = () => {
               if (uid) itsmSkill.execute({ action: 'health_check' }, { userId: uid, masterUserId: uid } as any).catch(() => {});
             };
@@ -4649,7 +4676,7 @@ export class Alfred {
     // Re-classifies via LLM and routes to correct memory-type (or deletes).
     // Gated by an internal marker memory so it runs at most once per user.
     setTimeout(() => {
-      const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+      const ownerUid = this.tryOwner();
       if (ownerUid) {
         feedbackService.migrateCorrectionMemories(ownerUid)
           .then(stats => this.logger.info({ ...stats }, 'Feedback: correction-migration completed'))
@@ -5253,7 +5280,7 @@ export class Alfred {
           // "kein neuer Tag um 00:00 lokal" (vorher: UTC).
           const ownerTz = await (async () => {
             try {
-              const ownerIdLocal = this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+              const ownerIdLocal = this.tryOwner() || '';
               const p = await this.userRepo?.getProfile?.(ownerIdLocal);
               return p?.timezone;
             } catch { return undefined; }
@@ -5827,7 +5854,7 @@ export class Alfred {
             try {
               const skill = this.skillRegistry?.get('project_agent');
               if (!skill) return { ok: false, error: 'project_agent-Skill nicht registriert' };
-              const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+              const uid = this.tryOwner() ?? '';
               const ownerChatId = this.config.security?.ownerUserId ?? '';
               const ownerPlatform = (this.config.telegram?.enabled ? 'telegram'
                 : this.config.matrix?.enabled ? 'matrix'
@@ -5924,7 +5951,7 @@ export class Alfred {
         const { ConversationRepository, SummaryRepository } = await import('@alfred/storage');
         const convRepo = new ConversationRepository(this.database.getAdapter());
         const summaryRepo = new SummaryRepository(this.database.getAdapter());
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const ownerUid = this.tryOwner();
         // v637 — Resolve linked user-IDs for matrix/discord/whatsapp etc.
         // `conversations.user_id` stores the platform-specific user UUID, not the
         // master. ohne diese Auflösung wurden Matrix/Discord-Chats des Owners als
@@ -6030,7 +6057,7 @@ export class Alfred {
                 const parsed = JSON.parse(msg.toolCalls);
                 toolCalls = Array.isArray(parsed) ? parsed : [parsed];
               } catch { return { ok: false, reason: 'cannot parse tool_calls' }; }
-              const uid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+              const uid = this.tryOwner() ?? '';
               const results: any[] = [];
               for (const tc of toolCalls) {
                 const skillName = (tc.name ?? tc.tool ?? tc.function) as string | undefined;
@@ -6067,7 +6094,7 @@ export class Alfred {
             this.logger.warn({ err }, 'ConversationRepository wiring for ConfirmationQueue failed');
           }
         }
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const ownerUid = this.tryOwner();
         const resolveLinkedConfirmUserIds = async (): Promise<string[]> => {
           if (!ownerUid || !this.userRepo) return ownerUid ? [ownerUid] : [];
           try {
@@ -6289,7 +6316,7 @@ export class Alfred {
           if (typeof tplHttpAdapter.setSandboxTemplatesCallbacks === 'function') {
             const { SandboxTemplateRepository } = await import('@alfred/storage');
             const tplRepo = new SandboxTemplateRepository(adapter);
-            const ownerUid = () => this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+            const ownerUid = () => this.tryOwner() ?? '';
             tplHttpAdapter.setSandboxTemplatesCallbacks({
               list: async (projectId: string | null | undefined) => {
                 const uid = ownerUid();
@@ -6457,7 +6484,7 @@ export class Alfred {
               return [];
             },
             listAll: async (userId: string) => {
-              const uid = userId || this.ownerMasterUserId || this.config.security?.ownerUserId;
+              const uid = userId || this.tryOwner();
               if (!uid) return [];
               return sandboxRepoForApi.listActiveByUser(uid);
             },
@@ -7312,7 +7339,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 return { ok: false, reason: 'Project-Agent-Skill nicht registriert' };
               }
               try {
-                const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                const ownerUid = this.tryOwner() ?? '';
                 // v772 — userRole='admin' für Konsistenz mit stop, falls Resume später auch verifyTaskAccess nutzt
                 const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin' } as any;
                 const r = await this.projectAgentSkillRef.execute({ action: 'resume', failed_task_id: failedTaskId }, ctx);
@@ -7357,7 +7384,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               // 3) v765 — Falls Project-Agent: versuche dort sauber zu stoppen
               if (!taskId.startsWith('code-') && this.projectAgentSkillRef) {
                 try {
-                  const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+                  const ownerUid = this.tryOwner() ?? '';
                   // v772 — userRole='admin' damit verifyTaskAccess in project-agent-skill durchlässt
                   // (sonst chatId=='' Check schlägt fehl → falsch-orphan-marking, Agent läuft echt weiter)
                   const ctx = { userId: ownerUid, masterUserId: ownerUid, chatId: '', platform: 'api', conversationId: '', userRole: 'admin' } as any;
@@ -7385,7 +7412,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               await sandboxChatRepo.updateTaskPhase(taskId, 'stopped');
               await sandboxChatRepo.append({
                 sandboxId,
-                userId: this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? 'unknown',
+                userId: this.tryOwner() ?? 'unknown',
                 role: 'agent',
                 text: '⏹ Task war verwaist und wurde als gestoppt markiert.',
                 taskId,
@@ -7491,7 +7518,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
       // v661 — Todos + Notes API
       if (apiAdapter && 'setTodosCallbacks' in apiAdapter) {
         const resolveOwnerTodo = async (): Promise<string> => {
-          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          return this.tryOwner() ?? '';
         };
         (apiAdapter as any).setTodosCallbacks({
           list: async (opts?: { list?: string; includeCompleted?: boolean }) => {
@@ -7683,7 +7710,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
       }
       if (apiAdapter && 'setNotesCallbacks' in apiAdapter) {
         const resolveOwnerNote = async (): Promise<string> => {
-          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          return this.tryOwner() ?? '';
         };
         (apiAdapter as any).setNotesCallbacks({
           list: async (opts?: { query?: string; limit?: number }) => {
@@ -7714,7 +7741,7 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
       // v673 — Attachments API (Documents/Files/URLs/Uploads für Todos + Notes)
       if (apiAdapter && 'setAttachmentsCallbacks' in apiAdapter) {
         const resolveOwnerAtt = async (): Promise<string> => {
-          return this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+          return this.tryOwner() ?? '';
         };
         (apiAdapter as any).setAttachmentsCallbacks({
           list: async (entityType: 'todo' | 'note', entityId: string) => {
@@ -8781,7 +8808,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
               return user.masterUserId ?? user.id ?? this.config.security.ownerUserId;
             } catch { return this.config.security.ownerUserId; }
           }
-          return userId || this.ownerMasterUserId || this.config.security?.ownerUserId || '';
+          return userId || this.tryOwner() || '';
         };
 
         (apiAdapter as any).setCmdbCallbacks({
@@ -9525,7 +9552,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
           cmdbRepo: reflectionCmdbRepo,
           projectRepo: this.projectRepo, // v614 L1
           runbookRepo: this.runbookRepo, // v614 L2 (passed for symmetry, used elsewhere)
-          ownerUserId: this.ownerMasterUserId ?? this.config.security?.ownerUserId, // v614 L1
+          ownerUserId: this.tryOwner(), // v614 L1
           confirmationQueue: this.confirmationQueue, // v657 — für Multi-Action-Open-Item-Eskalation
           skillRegistry: this.skillRegistry,
           skillSandbox: this.skillSandbox,
@@ -9586,7 +9613,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         );
         // Sweep every 15 minutes — patterns need a few minutes to form anyway
         setInterval(async () => {
-          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const ownerUid = this.tryOwner();
           if (!ownerUid || !this.confirmationQueue) return;
           try {
             const patterns = await failureReflector.detect(ownerUid);
@@ -9674,7 +9701,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
         );
         // Sweep every 30 minutes — Pattern braucht User-Reaktion + Skill-Erfolg
         setInterval(async () => {
-          const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+          const ownerUid = this.tryOwner();
           if (!ownerUid) return;
           try {
             const detected = await refusalReflector.scanForUser(ownerUid);
@@ -9698,7 +9725,7 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.memoryRepo && this.confirmationQueue && this.learnedRecipeRepo) {
       // Fire-and-forget, leicht verzögert damit der Startup-Pfad nicht blockiert
       setTimeout(async () => {
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId;
+        const ownerUid = this.tryOwner();
         if (!ownerUid || !this.confirmationQueue || !this.memoryRepo) return;
         try {
           const existingRecipes = await this.learnedRecipeRepo!.list(ownerUid, { includeInvalidated: true, limit: 500 });
@@ -10377,7 +10404,7 @@ Antworte auf Deutsch, fokussiert auf den hier sichtbaren Pattern. Keine generisc
         if (!lastAssistant) return;
 
         // Owner-Master-User-ID resolven
-        const ownerUid = this.ownerMasterUserId ?? this.config.security?.ownerUserId ?? '';
+        const ownerUid = this.tryOwner() ?? '';
         if (!ownerUid) return;
 
         // Memory speichern: snippet der assistant-message + sentiment
