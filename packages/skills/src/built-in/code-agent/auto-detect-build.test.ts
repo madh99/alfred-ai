@@ -103,14 +103,14 @@ describe('Regression — Fix-Versuch-Ursache', () => {
     }
   });
 
-  it('v813: Sandbox-Kontext erzeugt KEINE Tests (musl/glibc ABI-Konflikt im Bind-Mount)', async () => {
+  it('v816: Sandbox-Kontext hat Tests WIEDER (validateBuild läuft sie im Container, nicht Host)', async () => {
     const paused = await autoDetectBuildCommands(tmpDir, { devSafe: true });
     const running = await autoDetectBuildCommands(tmpDir, { runningSandbox: { hostPort: 3000 }, devSafe: true });
-    expect(paused!.test).toEqual([]);
-    expect(running!.test).toEqual([]);
+    expect(paused!.test).toContain('npm test');
+    expect(running!.test).toContain('npm test');
   });
 
-  it('v813: Nicht-devSafe (klassischer Run) hat npm test weiterhin', async () => {
+  it('v816: Nicht-devSafe (klassischer Run) hat npm test weiterhin', async () => {
     const r = await autoDetectBuildCommands(tmpDir);
     expect(r!.test).toContain('npm test');
   });

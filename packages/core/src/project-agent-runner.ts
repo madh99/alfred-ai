@@ -162,6 +162,19 @@ export class ProjectAgentRunner {
     this.devServerLogProvider = fn;
   }
 
+  /**
+   * v816 — Liefert eine ContainerExec-Funktion für eine Session (oder undefined
+   * bei klassischem Run ohne Sandbox). Wird in validateBuild als 6. Param
+   * verwendet, damit Test-Commands per `docker exec` IM Container laufen statt
+   * auf dem Host. Behebt das musl/glibc-ABI-Problem das v813 zwang Tests aus
+   * der per-Phase-Validierung rauszunehmen.
+   * Gesetzt von alfred.ts (verdrahtet zu sandboxRepo + docker.runContainerCommand).
+   */
+  private containerExecLookup?: (sessionId: string) => Promise<((cmd: string, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }>) | undefined>;
+  setContainerExecLookup(fn: (sessionId: string) => Promise<((cmd: string, timeoutMs: number) => Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }>) | undefined>): void {
+    this.containerExecLookup = fn;
+  }
+
   constructor(
     private readonly agents: Map<string, CodeAgentDefinitionConfig>,
     private readonly llm: LLMProvider,
@@ -249,6 +262,17 @@ export class ProjectAgentRunner {
     const runAsUser = (agentDef.command === 'sudo' && agentDef.argsTemplate[0] === '-u' && agentDef.argsTemplate[1])
       ? agentDef.argsTemplate[1]
       : undefined;
+
+    // v816 — ContainerExec einmal pro Run auflösen. Wenn die Session in einer
+    // Sandbox läuft, liefert lookup eine Funktion die test-Commands via
+    // `docker exec` im Container ausführt (musl-ABI-konform). Klassische Runs
+    // ohne Sandbox → undefined → validateBuild fällt auf Host zurück.
+    const containerExec = this.containerExecLookup
+      ? await this.containerExecLookup(sessionId).catch(() => undefined)
+      : undefined;
+    if (containerExec) {
+      this.logger.info({ sessionId }, 'v816 container-exec available for per-phase tests');
+    }
 
     // v665a — Cluster-Lock acquire (für shared Projekte zwingend, für local no-op wenn Hook
     // nicht gesetzt). Bei Konflikt: Abort vor Session-Aufbau.
@@ -634,7 +658,7 @@ export class ProjectAgentRunner {
           }
 
           const buildResult = await validateBuild(
-            config.cwd, config.buildCommands, config.testCommands, config.buildTimeoutMs, runAsUser,
+            config.cwd, config.buildCommands, config.testCommands, config.buildTimeoutMs, runAsUser, containerExec,
           );
           state.lastBuildOutput = buildResult.combinedOutput;
 

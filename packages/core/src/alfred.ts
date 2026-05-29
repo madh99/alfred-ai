@@ -3707,6 +3707,33 @@ export class Alfred {
                 this.projectAgentRunnerRef.setDevServerLogProvider(
                   (cwd: string, tail?: number) => sandboxManager.getDevServerLog(cwd, tail ?? 120),
                 );
+
+                // v816 — ContainerExec-Lookup: für Sandbox-Sessions liefert er eine Funktion
+                // die test-Commands via `docker exec` IM Container laufen lässt. Behebt
+                // das musl/glibc-ABI-Problem das v813 zwang Tests aus per-Phase rauszunehmen.
+                // Plan-Agent sieht damit Test-Failures im Fix-Versuch-Loop und kann sie
+                // sofort beheben statt Merge-Gate-Failure am Ende.
+                const adapter = this.database?.getAdapter();
+                this.projectAgentRunnerRef.setContainerExecLookup(async (sessionId: string) => {
+                  if (!adapter) return undefined;
+                  try {
+                    const sessRow = await adapter.queryOne(
+                      `SELECT sandbox_id FROM project_agent_sessions WHERE task_id = ?`,
+                      [sessionId],
+                    ).catch(() => null) as { sandbox_id?: string } | null;
+                    const sandboxId = sessRow?.sandbox_id;
+                    if (!sandboxId) return undefined;
+                    const sb = await sandboxRepo.getById(sandboxId).catch(() => null);
+                    if (!sb?.containerId) return undefined;
+                    const containerId = sb.containerId;
+                    const { runContainerCommand } = await import('./sandbox/docker.js');
+                    return (cmd: string, timeoutMs: number) =>
+                      runContainerCommand(containerId, cmd, { cwd: '/workspace', timeoutMs });
+                  } catch (err) {
+                    this.logger.debug({ err, sessionId }, 'v816 containerExecLookup failed (non-fatal)');
+                    return undefined;
+                  }
+                });
               }
 
               // v749 — Auto-Cleanup stuck Sandboxes beim Startup + periodisch.

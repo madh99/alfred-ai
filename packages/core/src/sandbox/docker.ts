@@ -94,6 +94,67 @@ export async function getContainerStatus(containerId: string): Promise<string | 
   } catch { return null; }
 }
 
+/**
+ * v816 — Führt ein Shell-Kommando IM CONTAINER aus via `docker exec`. Wird
+ * vom Project-Agent-Runner für Test-Validierung im Sandbox-Kontext genutzt:
+ * der Container ist musl, der Host glibc → Host-Tests failen am ABI. Container-
+ * Tests laufen genau im Build-Kontext (gleiches node_modules, gleiches /workspace),
+ * der dev-server bleibt unbeeinflusst (separate exec-Session).
+ *
+ * Liefert exitCode, stdout, stderr, durationMs (für validateBuild-Pipeline).
+ */
+export async function runContainerCommand(
+  containerId: string,
+  cmd: string,
+  opts: { cwd?: string; timeoutMs?: number } = {},
+): Promise<{ exitCode: number; stdout: string; stderr: string; durationMs: number }> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const args = ['exec'];
+    if (opts.cwd) args.push('-w', opts.cwd);
+    args.push(containerId, 'sh', '-c', cmd);
+
+    const proc = spawn('docker', args);
+    let stdout = '';
+    let stderr = '';
+    let killed = false;
+
+    const timeoutMs = opts.timeoutMs ?? 10 * 60_000;
+    const timer = setTimeout(() => {
+      killed = true;
+      try { proc.kill('SIGTERM'); } catch { /* */ }
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* */ } }, 3000);
+    }, timeoutMs);
+
+    proc.stdout?.on('data', (d: Buffer) => {
+      stdout += d.toString();
+      if (stdout.length > 200_000) stdout = stdout.slice(-200_000);
+    });
+    proc.stderr?.on('data', (d: Buffer) => {
+      stderr += d.toString();
+      if (stderr.length > 200_000) stderr = stderr.slice(-200_000);
+    });
+    proc.on('close', (exitCode) => {
+      clearTimeout(timer);
+      resolve({
+        exitCode: killed ? 124 : (exitCode ?? -1),
+        stdout,
+        stderr: killed ? stderr + `\n[runContainerCommand] killed: timeout after ${timeoutMs}ms` : stderr,
+        durationMs: Date.now() - start,
+      });
+    });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({
+        exitCode: -1,
+        stdout,
+        stderr: stderr + `\n[runContainerCommand] spawn-error: ${err.message}`,
+        durationMs: Date.now() - start,
+      });
+    });
+  });
+}
+
 /** v728 — Liefert die letzten N Zeilen aus stdout+stderr eines Containers. */
 export async function getContainerLogs(containerId: string, tail = 200): Promise<string> {
   try {

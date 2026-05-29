@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.816] - 2026-05-30
+
+### Fixed — Per-Phase Tests im Container statt Host (v816)
+
+**Bisheriger Schmerzpunkt** (v813): Tests waren aus per-Phase-Validierung ausgeschlossen wegen musl/glibc-ABI-Konflikt im geteilten `node_modules` (Container = musl, Host = glibc). Plan-Agent sah Test-Failures **nie während des Runs**, fixte nur typecheck-Probleme → Merge-Gate failte am Ende mit 11+ Test-Failures → User musste manuell neu starten + Output kopieren + Plan-Agent neu beauftragen. Genau die Schleife die der Sandbox-Workflow vermeiden sollte.
+
+**Architektonische Wurzel**: Tests gehörten nie auf den Host. Der Container hat das korrekte musl-Build-Environment (npm rebuild beim Start), Tests sollten dort laufen.
+
+**Lösung**: Test-Commands werden im **Container** ausgeführt via `docker exec`, Build-Commands bleiben auf dem Host (typecheck/lint sind ABI-unkritisch, git-Operationen brauchen Host-Zugriff).
+
+#### Implementation
+
+1. **`runContainerCommand`** in `sandbox/docker.ts` — `docker exec`-Wrapper mit cwd, Timeout (Default 10min), stdout/stderr-Capture mit 200k-Cap, SIGTERM→SIGKILL-Escalation. Liefert `{exitCode, stdout, stderr, durationMs}`.
+
+2. **`validateBuild`** Signatur erweitert um optionalen 6. Param `containerExec`. Wenn gesetzt: Test-Commands gehen durch Container-Exec, Build-Commands bleiben Host. Backward-compat: ohne Param funktioniert alles wie vorher (klassische, nicht-sandbox Runs).
+
+3. **`autoDetectBuildCommands`** im devSafe-Pfad: `npm test` ist **wieder dabei**. Der v813-Ausschluss war der Workaround für das ABI-Problem das jetzt gelöst ist.
+
+4. **`ProjectAgentRunner.setContainerExecLookup`** — neuer Setter, liefert pro sessionId eine `ContainerExec`-Funktion (oder undefined wenn nicht in Sandbox). Runner löst einmal pro Run auf, gibt an validateBuild.
+
+5. **`alfred.ts`** verdrahtet den Lookup: session → sandbox_id → containerId → `runContainerCommand`-Closure mit `/workspace` als cwd.
+
+#### Was sich für den User ändert
+
+Vorheriger Ablauf:
+```
+Plan-Run → Phase 1 codes → typecheck ok → ✓ commit
+         → Phase 2 codes → typecheck ok → ✓ commit
+         → ... 14 Phasen
+         → Merge-Versuch → Merge-Gate npm test → 11 Tests fail
+         → Sandbox bleibt paused → User muss manuell
+```
+
+Neu:
+```
+Plan-Run → Phase 1 codes → typecheck + npm test (im Container) → Tests fail
+         → Fix-Versuch 1/3 (Plan-Agent sieht Test-Output) → Tests grün → ✓
+         → Phase 2 ... gleicher Loop pro Phase
+         → Merge-Gate npm test → meistens grün (war ja schon per-Phase grün)
+         → Merge geht durch
+```
+
+Hard-Limits unverändert: 3 Fix-Versuche pro Phase, 14 Phasen, 8h Total-Dauer. Bei Erschöpfung geht Phase auf `awaiting_user` — User sieht Test-Failures im Chat, kann per Interject Hinweis geben oder discarden. Kein endloser Loop.
+
+#### Trade-off
+
+`npm test` voller Suite kann mehrere Minuten dauern (User-Beispiel: 207s). Per-Phase × 14 + Fix-Versuche × 3 → Test-Zeit kann substantiell zur Run-Dauer beitragen. Mitigation in zukünftigen Releases möglich: vitest `--changed` per-Phase + voller Lauf im Merge-Gate. Für jetzt: voller Suite ist gründlich und vorhersehbar.
+
+#### Tests
+
+`auto-detect-build.test.ts` aktualisiert — Sandbox-Kontext hat npm test wieder dabei, klassischer Run unverändert. 10/10 grün.
+
 ## [0.19.0-multi-ha.815] - 2026-05-30
 
 ### Fixed — System-Audit-Findings A-D (v815)

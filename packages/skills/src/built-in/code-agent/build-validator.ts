@@ -95,22 +95,53 @@ async function runCommand(
  * Run build and test commands sequentially in a given directory.
  * Returns a combined result indicating whether all commands passed.
  */
+/**
+ * v816 — Optionaler Container-Exec für Test-Commands. Wird vom Project-Agent-
+ * Runner gesetzt wenn der Run in einem Sandbox-Container läuft: Tests laufen
+ * dann via `docker exec` IM Container statt auf dem Host. Behebt das musl/glibc
+ * ABI-Problem (Host kann musl-rebuilte Bindings nicht laden) das v813 dazu zwang
+ * Tests aus der per-Phase-Validierung rauszunehmen. Build-Commands bleiben am Host.
+ */
+export type ContainerExec = (cmd: string, timeoutMs: number) => Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}>;
+
 export async function validateBuild(
   cwd: string,
   buildCommands: string[],
   testCommands: string[],
   timeoutMs = DEFAULT_TIMEOUT_MS,
   runAsUser?: string,
+  containerExec?: ContainerExec,
 ): Promise<BuildValidationResult> {
   const startTime = Date.now();
   const commands: CommandResult[] = [];
-  const allCommands = [...buildCommands, ...testCommands];
 
-  for (const cmd of allCommands) {
+  // Build-Commands laufen weiter auf dem Host (npm install / typecheck etc.
+  // sind ABI-unkritisch oder explizit Host-Operationen wie git rebase).
+  for (const cmd of buildCommands) {
     const result = await runCommand(cmd, cwd, timeoutMs, runAsUser);
     commands.push(result);
-    // Stop on first failure — no point running tests if build fails
     if (result.exitCode !== 0) break;
+  }
+
+  // Wenn Build durchlief: Test-Commands. Mit containerExec im Container,
+  // sonst Fallback Host (Backwards-Compat für klassische, nicht-sandbox Runs).
+  if (commands.every((c) => c.exitCode === 0)) {
+    for (const cmd of testCommands) {
+      let result: CommandResult;
+      if (containerExec) {
+        const r = await containerExec(cmd, timeoutMs);
+        result = { command: cmd, exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr, durationMs: r.durationMs, timedOut: r.exitCode === 124 };
+      } else {
+        result = await runCommand(cmd, cwd, timeoutMs, runAsUser);
+      }
+      commands.push(result);
+      if (result.exitCode !== 0) break;
+    }
   }
 
   const passed = commands.every(c => c.exitCode === 0);
