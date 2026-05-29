@@ -218,7 +218,12 @@ export async function autoDetectBuildCommands(
       // (sb wird hier bewusst nicht mehr verwendet — bleibt im Signatur-Typ für
       //  Abwärtskompatibilität / explizite buildCommands-Overrides.)
       // Test commands
-      if (scripts.test && !/^echo\s/.test(scripts.test)) test.push('npm test');
+      // v813 — Im devSafe-Pfad KEINE Tests per-Phase. Der Worktree teilt node_modules
+      // mit dem Container; Container-Start macht `npm rebuild` (musl) → Host-Tests
+      // failen deterministisch am ABI-Mismatch (libc.musl vs glibc) → unfixbare
+      // Fix-Versuch-Schleifen. Tests gehören an den Merge-Gate (Container aus,
+      // einmaliger sauberer Run), nicht in die per-Phase-Validierung.
+      if (scripts.test && !/^echo\s/.test(scripts.test) && !devSafe) test.push('npm test');
       return { build, test };
     }
     const cargoPath = path.join(cwd, 'Cargo.toml');

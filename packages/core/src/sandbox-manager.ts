@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, statSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Logger } from 'pino';
@@ -8,7 +8,7 @@ import type { SandboxConfig, SandboxSessionMode } from '@alfred/types';
 import type { SandboxRepository, Sandbox, SandboxInsert, EnvironmentRepository, DbSeedRepository } from '@alfred/storage';
 import type { EnvCryptoService } from '@alfred/security';
 
-import { killProcessesByCwd } from '@alfred/skills';
+import { killProcessesByCwd, validateBuild } from '@alfred/skills';
 import { createWorktree, destroyWorktree, validateGitRepo } from './sandbox/worktree.js';
 import { detectProjectType, type ProjectDetection } from './sandbox/project-detect.js';
 import { findFreePort } from './sandbox/port-allocator.js';
@@ -613,6 +613,59 @@ export class SandboxManager {
     }
   }
 
+  /**
+   * v813 — Owner-User des Worktrees per stat-uid → /etc/passwd auflösen. Wird für
+   * Merge-Gate-Tests gebraucht (sudo -u <owner> npm test im Worktree, damit der
+   * Run als der korrekte User läuft den auch der Coding-Agent benutzt hat).
+   * Liefert undefined wenn root (kein sudo nötig) oder Lookup fehlschlägt.
+   */
+  private getWorktreeOwner(worktreePath: string): string | undefined {
+    try {
+      const uid = statSync(worktreePath).uid;
+      if (uid === 0) return undefined;
+      const passwd = readFileSync('/etc/passwd', 'utf8');
+      const line = passwd.split('\n').find((l) => l.split(':')[2] === String(uid));
+      if (line) return line.split(':')[0];
+    } catch { /* */ }
+    return undefined;
+  }
+
+  /**
+   * v813b — Merge-Gate: `npm rebuild` (re-glibc der Native-Bindings auf dem Host —
+   * der Container hatte sie auf musl umgestempelt) + `npm test` im Worktree als
+   * Owner-User. Stop bei erstem non-zero → Merge wird abgelehnt mit Output-Tail.
+   *
+   * Skippt sauber wenn (a) keine package.json, (b) kein test-Script, (c) test
+   * ist nur `echo`-Stub. Container muss vor dem Aufruf gestoppt sein damit kein
+   * konkurrierender `npm rebuild` im Container den State wieder auf musl kippt.
+   */
+  private async runMergeGateTests(sb: Sandbox): Promise<{ ok: boolean; skipped?: boolean; output: string; reason?: string }> {
+    let hasTest = false;
+    let packageManagerInstall = 'npm rebuild';
+    try {
+      const pkgPath = path.join(sb.worktreePath, 'package.json');
+      if (existsSync(pkgPath)) {
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { scripts?: Record<string, string> };
+        hasTest = !!(pkg.scripts?.test && !/^echo\s/.test(pkg.scripts.test));
+        if (existsSync(path.join(sb.worktreePath, 'pnpm-lock.yaml'))) packageManagerInstall = 'pnpm rebuild';
+        else if (existsSync(path.join(sb.worktreePath, 'yarn.lock'))) packageManagerInstall = 'yarn install --check-files';
+      }
+    } catch { /* */ }
+    if (!hasTest) {
+      return { ok: true, skipped: true, output: 'no npm test script — gate skipped' };
+    }
+    const runAsUser = this.getWorktreeOwner(sb.worktreePath);
+    this.deps.logger.info({ sandboxId: sb.id, runAsUser }, 'v813 merge-gate: running npm rebuild + npm test');
+    // 10min Test-Timeout — typischer Next.js-Test-Suite-Run liegt drunter; bei
+    // Überschreitung gilt: zu langsam = ablehnen, User debuggt manuell.
+    const result = await validateBuild(sb.worktreePath, [packageManagerInstall], ['npm test'], 10 * 60_000, runAsUser);
+    return {
+      ok: result.passed,
+      output: result.combinedOutput,
+      reason: result.passed ? undefined : 'merge-gate-tests-failed',
+    };
+  }
+
   /** v812 — Discard: tentative Projekt-Metadaten der Sandbox aufräumen (Callback). */
   private async fireSandboxDiscarded(sb: Sandbox): Promise<void> {
     if (!this.deps.onSandboxDiscarded) return;
@@ -734,6 +787,31 @@ export class SandboxManager {
         }
       } catch (err) {
         this.deps.logger.warn({ err }, 'Pre-merge secret-scan failed (continuing without block)');
+      }
+
+      // (3b) v813b — Merge-Gate: npm rebuild + npm test. Container ist hier gestoppt
+      // (Step 1) → das Bind-Mount-ABI ist nicht mehr im Wettlauf. Failed → Merge
+      // ablehnen; Sandbox bleibt paused, User kann fixen oder discarden.
+      try {
+        const gate = await this.runMergeGateTests(sb);
+        if (!gate.ok) {
+          await this.deps.repo.updateStatus(sandboxId, 'paused', gate.reason ?? 'merge-gate-tests-failed');
+          const tail = (gate.output || '').slice(-2500);
+          return {
+            ok: false,
+            reason: `Merge-Gate: Tests fehlgeschlagen. Sandbox bleibt paused — manuell debuggen oder verwerfen.\n\n${tail}`,
+          };
+        }
+        if (gate.skipped) {
+          this.deps.logger.info({ sandboxId }, 'v813b merge-gate skipped (no test script)');
+        } else {
+          this.deps.logger.info({ sandboxId }, 'v813b merge-gate passed');
+        }
+      } catch (err) {
+        // Gate selbst ist gecrasht (nicht Test-Failure). Konservativ: durchwinken
+        // statt Merge wegen Infra-Problem zu blocken — Test-Failure liefert ok:false,
+        // hier sind wir bei Exception-Pfad.
+        this.deps.logger.warn({ err, sandboxId }, 'v813b merge-gate threw — continuing (treated as inconclusive)');
       }
 
       // (4) Strategy

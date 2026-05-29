@@ -5,6 +5,20 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.813] - 2026-05-29
+
+### Fixed — Tests aus per-Phase-Validierung raus + Merge-Gate (v813)
+
+v811 hat per-Phase `npm test` weiter laufen lassen — Fehler bei meiner Behauptung „dev-safe = nur typecheck". Im Sandbox-Worktree fail`t `npm test` deterministisch wegen Bind-Mount-ABI-Konflikt: Container macht beim Start `npm rebuild` (musl) → Host-`validateBuild` failt am `libc.musl-x86_64.so.1` (Host = glibc). Der Agent kann das nicht per Code-Edit fixen → unendliche Fix-Versuche.
+
+**v813a — testCommands aus devSafe-Pfad entfernt** (`autoDetectBuildCommands`): `npm test` wird im Sandbox-Kontext (devSafe) nicht mehr in die per-Phase-Validierung aufgenommen. Klassische Runs (echte Projekt-cwd) bleiben unverändert mit Tests.
+
+**v813b — Merge-Gate** (`sandbox-manager.merge()`): vor jedem Merge (Direct + PR) läuft jetzt `npm rebuild` (re-glibc) + `npm test` im Worktree als Worktree-Owner. Container ist dann gestoppt → kein ABI-Wettlauf. Failed → Merge wird abgelehnt, Sandbox bleibt paused mit Output-Tail, User debuggt manuell oder discarded. Skippt sauber bei `(a)` keiner package.json, `(b)` keinem test-Script, `(c)` echo-Stub. 10min Timeout.
+
+**Architektonischer Hintergrund**: Tests gehören an den Übergang Sandbox→main (ein sauberer Lauf), nicht in die Phasen-Schleife (wo das ABI-Problem garantiert beißt). typecheck reicht per-Phase als "kompiliert das?". Runtime-Probleme fängt die Live-Preview, Test-Regressionen fängt der Merge-Gate.
+
+Tests: `auto-detect-build.test.ts` erweitert (10 grün) — Sandbox-Kontext erzeugt nie `npm test`; klassischer Run weiterhin schon.
+
 ## [0.19.0-multi-ha.812] - 2026-05-29
 
 ### Changed — Sandbox-Sessions: Projekt-Historie erst bei Merge (v812)
