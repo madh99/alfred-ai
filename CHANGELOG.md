@@ -5,6 +5,40 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.814] - 2026-05-29
+
+### Fixed — OpenItemMatcher Pre-Filter via Embeddings + sichtbares Logging (v814)
+
+**Root-Cause** (Bug seit v641 latent, deterministisch ab ~50 Items): `open-item-matcher.ts:75` schnitt die Items-JSON-Payload bei 12.000 Zeichen ab — `slice(0, 12000)`. Bei 255 offenen Items × ~600 chars (title 200 + description 400) = **150k chars Payload → 92% mitten im Items-Array abgeschnitten** → invalides JSON → LLM gibt nichts Strukturiertes zurück → `llmResults: 0` → `resolved: 0`. Silent: der Parse-Error war auf `debug`-Level versteckt, in Live-Logs unsichtbar.
+
+Live-verifiziert auf .92 (3 Aufrufe in den letzten 48h): considered=255-270, llmResults=**0**, resolved=**0**. Plus: der „Re-Match"-Button (`alfred.ts:8198 reMatchOpenItems`) rief denselben Matcher → selber Bug → UI „macht nichts".
+
+#### Option 4 — Embedding-Vorfilter
+
+`OpenItemMatcher` bekommt optional `{ service: EmbeddingService; repo: EmbeddingRepository }`. Ab > 40 offenen Items:
+1. **Lazy Backfill**: Items ohne Embedding werden in 5er-Batches embedded (`embedAndStore(uid, title+description, 'open_item', itemId)`)
+2. **Query-Embedding** aus `goal + milestones + changedFiles`
+3. **`vectorSearch(uid, query, 300)`** + clientseitig auf `sourceType='open_item'` filtern → Top-30
+4. Nur diese 30 ans LLM. Bei 30 Items × 600 chars = 18k chars → passt locker in das auf 16k erhöhte Cap (vorher 12k).
+
+Fallback wenn vectorSearch null liefert (SQLite ohne pgvector): erste 30 Items als harter Cut (kein JSON-Crash). PG mit pgvector auf .92/.93 → echter semantischer Filter.
+
+#### Option 5 — Silent-Failure-Logging sichtbar
+
+Drei Stellen waren stumm:
+- LLM-Call/Parse-Error: `logger.debug` → **`logger.warn`** mit projectId/sessionId
+- Prompt-Truncation: NEU, `logger.warn` wenn `JSON.stringify(payload)` länger als Cap (sollte mit Vorfilter nie feuern)
+- Silent-Result-0: `llmResults: 0 && candidates > 0` → **`logger.warn`** „LLM lieferte 0 strukturierte Ergebnisse"
+
+Plus das info-Level „complete"-Log enthält jetzt zusätzlich `candidates` und `prefilterUsed` (`embedding` | `truncate` | `all`) für Diagnose.
+
+#### Was NICHT Schuld ist
+v808-v812 haben nichts an der Matcher-Logik geändert. v812 betrifft Sandbox-Sessions (deferred) — die Live-Aufrufe (`considered: 255+`) waren klassische Plan-Runs, kein Sandbox-Pfad. Empirische Beobachtung „hat 2x funktioniert, dann nicht mehr": korrekt — die Item-Population wuchs über die 12k-Schwelle.
+
+#### Wiring
+- `Alfred`-Klasse: neue private Felder `embeddingServiceRef` + `embeddingRepoRef` (für Callbacks außerhalb des init-Closures)
+- 3 OpenItemMatcher-Konstruktor-Sites (completion 1746, post-merge 3614, reMatch 8198): bekommen `{ service, repo }` als 4. Arg
+
 ## [0.19.0-multi-ha.813] - 2026-05-29
 
 ### Fixed — Tests aus per-Phase-Validierung raus + Merge-Gate (v813)

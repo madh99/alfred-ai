@@ -162,6 +162,9 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
+  /** v813c — für OpenItemMatcher Embedding-Pre-Filter (vermeidet 12k-Truncation bei vielen Items). */
+  private embeddingServiceRef?: EmbeddingService;
+  private embeddingRepoRef?: EmbeddingRepository;
   /** v722 — Self-Learning: LearnedRecipeRepo (Pre-Hook + Action) */
   private learnedRecipeRepo?: import('@alfred/storage').LearnedRecipeRepository;
   /** v726 — Environment-Management */
@@ -480,6 +483,10 @@ export class Alfred {
       embeddingRepo,
       this.logger.child({ component: 'embeddings' }),
     );
+    // v813c — auf this. legen damit Callbacks außerhalb dieses Closures
+    // (z.B. reMatchOpenItems API) darauf zugreifen können.
+    this.embeddingServiceRef = embeddingService;
+    this.embeddingRepoRef = embeddingRepo;
 
     // Validate embedding model consistency — invalidate + re-embed if model changed
     const embeddingModelName = this.config.llm.embeddings?.model
@@ -1743,7 +1750,7 @@ export class Alfred {
                 : (projects.find(p => p.cwd === resolvedCwd) ?? projects.find(p => resolvedCwd?.includes(p.cwd ?? '')));
               if (proj) {
                 const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
-                const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+                const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }), { service: embeddingService, repo: embeddingRepo });
                 // Best-effort fetch changed files from the latest session row
                 let changedFiles: string[] = [];
                 try {
@@ -3611,7 +3618,7 @@ export class Alfred {
                   if (this.llmProvider) {
                     try {
                       const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
-                      const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+                      const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }), { service: embeddingService, repo: embeddingRepo });
                       await matcher.matchAfterSession({
                         projectId: proj.id,
                         sessionId: merged[0].id,
@@ -8195,7 +8202,10 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               let milestones: string[] = [];
               try { const parsed = JSON.parse(row.milestones); if (Array.isArray(parsed)) milestones = parsed; } catch { /* */ }
               const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
-              const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+              const embedDeps = this.embeddingServiceRef && this.embeddingRepoRef
+                ? { service: this.embeddingServiceRef, repo: this.embeddingRepoRef }
+                : undefined;
+              const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }), embedDeps);
               const result = await matcher.matchAfterSession({
                 projectId,
                 sessionId: row.task_id,
