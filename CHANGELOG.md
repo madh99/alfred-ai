@@ -5,6 +5,111 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.809] - 2026-05-29
+
+### Fixed — Sandbox-Plan-Mode: dev-safe Build-Validierung (v809)
+
+Plan-Mode aus dem Sandbox-Chat löste fälschlich "🔧 Fix-Versuch 1/3" aus, obwohl die Phase fachlich erfolgreich war.
+
+#### Ursache (per Live-DB + Logs + Code verifiziert)
+
+Der Project-Agent validiert nach jeder Phase via `validateBuild()` — das läuft mit `sudo -u` auf dem **Host** im Worktree-Pfad (`build-validator.ts`), nicht im Container. Bei einem Sandbox-Run schrieb `npm run build` (next build) damit in dasselbe `.next`, das der Container-dev-server nutzt → Build-Crash → Fix-Versuch.
+
+Der bestehende v727-Schutz (running-Sandbox → Build durch HTTP-Health-Check ersetzen) griff nicht: die Detection nutzte die Heuristik `cwd.startsWith(project.cwd)`, die bei Worktree-Pfaden (`/mnt/cluster-projects/sandbox-worktrees/...`) nie den Projekt-Pfad (`/home/madh/projects/...`) matcht.
+
+#### Fix in `packages/skills/src/built-in/code-agent/project-agent-skill.ts`
+
+- **Sandbox-Detection via `sandbox_id`** (statt cwd-Heuristik): Der Sandbox-Chat übergibt `sandbox_id` bereits an den Skill — jetzt wird die Sandbox direkt per `sandboxRepo.getById()` aufgelöst. Die cwd-Heuristik bleibt als Fallback für ProjectChat/Telegram-Runs ohne `sandbox_id`.
+- **dev-safe auch bei pausierter Sandbox**: Neues `inSandboxWorktree`-Flag. Im Sandbox-Worktree (running ODER paused) werden `npm install` und `npm run build` übersprungen — beide fassen das vom Container geteilte `node_modules`/`.next` an. Validierung läuft rein über `typecheck`/`lint` (+ HTTP-Health-Check wenn dev-server live).
+
+#### Verhalten nach dem Fix
+
+| Kontext | Build-Commands |
+|---|---|
+| Sandbox-Chat Plan, dev-server läuft | `typecheck`, `lint`, `curl :port` |
+| Sandbox-Chat Plan, dev-server pausiert | `typecheck`, `lint` |
+| ProjectChat/Telegram (echtes Projekt) | `npm install`, `npm run build`, `typecheck`, `lint` (unverändert) |
+| Quick-Mode (code-agent) | unverändert — ruft den Skill nicht auf |
+
+#### Tests
+
+`auto-detect-build.test.ts` (7 Tests): normaler Run enthält `npm install`+`npm run build`; devSafe überspringt beide, behält typecheck/lint; runningSandbox ersetzt durch curl-Check; Regression-Schutz dass Sandbox-Kontext nie `npm run build` erzeugt.
+
+## [0.19.0-multi-ha.808] - 2026-05-27
+
+### Security — DANGEROUS-B Sweep + Audit-Populate (v808, 3 Phasen)
+
+Follow-up zu v804/v805/v807. Schließt die User-Identity-Foundation mit Defense-in-Depth für die WebUI-API-Layer.
+
+#### Phase 8a — DANGEROUS-B Sweep (Cross-User-Isolation)
+
+Vor v808: Mehrere WebUI-API-Callbacks riefen `repo.getById(id)` ohne uid-filter. In Multi-User-Setups konnte User A potentiell User B's IDs auflösen.
+
+Behoben in `packages/core/src/alfred.ts`:
+
+| Callback | Site | Fix |
+|---|---|---|
+| Todos `update` (return-fallback) | 1 site | `getByIdForUser(id, uid)` statt `getById(id)` |
+| Todos `complete` | 1 site | uid-Resolution + `getByIdForUser` + early-return wenn fremd |
+| Todos `delete` | 1 site | uid-Resolution + `getByIdForUser` + early-return wenn fremd |
+| Todos `listLinkedNotes` | 1 site | uid-Resolution + Owner-Todo-Check + `noteRepo.getByIdForUser` |
+| Todos `listLinkedTodos` | 1 site | uid-Resolution + Owner-Note-Check + `todoRepo.getByIdForUser` |
+| OpenItem→Todo Status-Sync | 1 site | `resolveOwnerProj` + `getByIdForUser` |
+| DB-Seeds `list/upload/registerRepoPath/delete/setDefault` (v732 + v770 Blöcke) | 10 sites | Neuer `verifyProjectOwner()` Helper — prüft `proj.userId === tryOwner()` |
+| Project-Automations `runAutomationNow` | 1 site | `auto.userId === tryOwner()` Check |
+| Background-Tasks `get/cancel/list` | 3 sites | Neuer `BackgroundTaskRepository.getByIdForUser(id, uid)` + Owner-Filter in `list` |
+
+`BackgroundTaskRepository` erweitert um `getByIdForUser(id, userId)` für die WebUI-Inspector-API.
+
+**Was NICHT geändert** (separates Bug-Pattern für v810+):
+- Sandbox-CRUD-API (`sandboxRepo.getById` in 7+ Sites) — gehört zu deeper sandbox-create-Ownership-Refactor
+- Skill-internal Sandbox-Calls (Alfred-execution-context, owner-side)
+- Workflow-Trigger-Manager (system-internal, cron-triggered)
+
+#### Phase 8b — UserIdAuditScanner Startup-Task
+
+Neues Modul `packages/core/src/identity/audit-scanner.ts`. Scanner-Klasse die DB-Tabellen mit user_id-Spalten scannt und non-UUID-Werte in `user_id_format_audit` flaggt.
+
+Schlüssel-Eigenschaften:
+- **Idempotent**: Eintrag pro `(table_name, column_name, row_id)` nur einmal
+- **Robust**: fehlende Tabellen werden graceful übersprungen (DB-Variante)
+- **Fire-and-forget**: Startup blockiert nicht — Scan läuft im Hintergrund
+
+15 Default-Targets: memories, documents, document_chunks, todos, notes, reminders, conversations, projects, background_tasks, agent_sessions, sandboxes, project_automations, goals, runbooks, insights.
+
+In `alfred.ts` direkt nach IdentityResolver-Init verdrahtet:
+```ts
+const scanner = new UserIdAuditScanner(adapter, this.logger.child(...));
+void scanner.scan().catch(...);
+```
+
+Erwartung nach Manual-Migration-A (v805): 0 new-flagged Rows beim Production-Startup.
+
+#### Phase 8c — Tests (7 neue)
+
+`packages/core/src/identity/audit-scanner.test.ts` (4 Tests):
+- non-UUID Rows flaggen, UUID-Rows ignorieren
+- Idempotenz: zweiter Scan flagged nichts Neues
+- Fehlende Tabellen graceful überspringen
+- Telegram-ID → format_class='platform'
+
+`packages/storage/src/repositories/background-task-repository.uid-isolation.test.ts` (3 Tests):
+- `getByIdForUser` liefert bei matching uid
+- `getByIdForUser` liefert `undefined` bei wrong uid (Cross-User-Schutz)
+- Regression-Test: `getById` (unsafe) vs `getByIdForUser` (safe)
+
+### Multi-User-Foundation: STATUS
+
+| Phase | Was | Release |
+|---|---|---|
+| v794-v803 | Format-Bug-Quick-Fixes (Telegram-ID vs UUID) | shipped |
+| v804 | Architektonisch (Branded Types + IdentityResolver + 8-Phasen) | shipped |
+| v805 | Audit-Sweep + Repo-API-Symmetrie + Manual-Migration-A | shipped |
+| v807 | OR-Fallback-Cleanup + Type-Strengthening | shipped |
+| **v808** | **DANGEROUS-B Sweep + Audit-Populate** | **dieses Release** |
+
+Multi-User-Foundation jetzt vollständig — alle erkannten Bug-Klassen geschlossen.
+
 ## [0.19.0-multi-ha.807] - 2026-05-27
 
 ### Changed — OR-Fallback-Pattern Cleanup + Type-Strengthening (v807, 4 Phasen)

@@ -3964,8 +3964,18 @@ export class Alfred {
                   const seedRepoLocal = this.dbSeedRepoRef;
                   const projRepoLocal = this.projectRepo;
                   const uploadsPath = this.config.sandbox?.uploadSeedsPath ?? '/var/alfred/db-seeds';
+                  // v808 — Defense-in-depth: prüft ob projectId dem aktuellen Owner gehört.
+                  const verifyProjectOwner = async (projectId: string): Promise<boolean> => {
+                    const ownerId = this.tryOwner();
+                    if (!ownerId) return false;
+                    try {
+                      const proj = await projRepoLocal.getByIdAnyOwner(projectId);
+                      return !!proj && proj.userId === ownerId;
+                    } catch { return false; }
+                  };
                   seedsHttpAdapter.setDbSeedsCallbacks({
                     list: async (projectId: string) => {
+                      if (!(await verifyProjectOwner(projectId))) return [];
                       const seeds = await seedRepoLocal.listForProject(projectId);
                       return seeds.map(s => ({
                         id: s.id,
@@ -3978,6 +3988,7 @@ export class Alfred {
                     },
                     upload: async (projectId: string, name: string, dataBase64: string) => {
                       try {
+                        if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                         const fs = await import('node:fs');
                         const pth2 = await import('node:path');
                         // Filename sanitization
@@ -4006,6 +4017,7 @@ export class Alfred {
                     },
                     registerRepoPath: async (projectId: string, name: string, repoPath: string) => {
                       try {
+                        if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                         const proj = await projRepoLocal.getByIdAnyOwner(projectId).catch(() => null);
                         if (!proj || !proj.cwd) return { ok: false, reason: 'project oder cwd nicht gefunden' };
                         const fs = await import('node:fs');
@@ -4030,6 +4042,7 @@ export class Alfred {
                     },
                     delete: async (projectId: string, seedId: string) => {
                       try {
+                        if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                         const seed = await seedRepoLocal.getById(seedId);
                         if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
                         if (seed.projectId !== projectId) return { ok: false, reason: 'Seed gehört zu anderem Project' };
@@ -4060,6 +4073,7 @@ export class Alfred {
                     },
                     setDefault: async (projectId: string, seedId: string | null) => {
                       try {
+                        if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                         if (seedId) {
                           const seed = await seedRepoLocal.getById(seedId);
                           if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
@@ -4238,6 +4252,19 @@ export class Alfred {
           // Fallback: best-effort cast
           const { tryUserUUID } = await import('@alfred/types');
           this.ownerMasterUserId = tryUserUUID(adminUser.id);
+        }
+
+        // v808 — UserIdAuditScanner: scannt DB-Tabellen mit user_id-Spalten, flaggt
+        // non-UUID-Werte in user_id_format_audit. Best-effort, non-blocking.
+        try {
+          const { UserIdAuditScanner } = await import('./identity/audit-scanner.js');
+          const scanner = new UserIdAuditScanner(adapter, this.logger.child({ component: 'user-id-audit' }));
+          // Fire-and-forget — der Scan darf den Startup nicht blockieren.
+          void scanner.scan().catch((err) => {
+            this.logger.debug({ err }, 'v808 UserIdAuditScanner background-scan failed (non-fatal)');
+          });
+        } catch (err) {
+          this.logger.debug({ err }, 'v808 UserIdAuditScanner import/init failed (non-fatal)');
         }
 
         // v694 — Legacy-Daten-UIDs aufspüren. Pre-multi-user-Migration hat KG/Conversation-
@@ -5923,7 +5950,11 @@ export class Alfred {
         (apiAdapter as any).setBackgroundTaskCallbacks({
           list: async (filter?: { status?: string }) => {
             try {
-              return await taskRepo.listAll({ status: filter?.status as any, limit: 200 });
+              const ownerId = this.tryOwner();
+              if (!ownerId) return [];
+              // v808 — Filter zum Owner. listAll war zuvor admin-uneingeschränkt.
+              const all = await taskRepo.listAll({ status: filter?.status as any, limit: 1000 });
+              return all.filter(t => t.userId === ownerId).slice(0, 200);
             } catch (err) {
               this.logger.warn({ err }, 'Background-Tasks API list failed');
               return [];
@@ -5931,11 +5962,17 @@ export class Alfred {
           },
           get: async (id: string) => {
             try {
-              return await taskRepo.getById(id) ?? null;
+              const ownerId = this.tryOwner();
+              if (!ownerId) return null;
+              return await taskRepo.getByIdForUser(id, ownerId) ?? null;
             } catch { return null; }
           },
           cancel: async (id: string) => {
             try {
+              const ownerId = this.tryOwner();
+              if (!ownerId) return false;
+              const t = await taskRepo.getByIdForUser(id, ownerId);
+              if (!t) return false;
               return await taskRepo.cancel(id);
             } catch (err) {
               this.logger.warn({ err, id }, 'Background-Tasks API cancel failed');
@@ -6369,8 +6406,18 @@ export class Alfred {
             const seedRepoLocal = this.dbSeedRepoRef;
             const projRepoLocal = this.projectRepo;
             const uploadsPath = this.config.sandbox?.uploadSeedsPath ?? '/var/alfred/db-seeds';
+            // v808 — Defense-in-depth: prüft ob projectId dem aktuellen Owner gehört.
+            const verifyProjectOwner = async (projectId: string): Promise<boolean> => {
+              const ownerId = this.tryOwner();
+              if (!ownerId) return false;
+              try {
+                const proj = await projRepoLocal.getByIdAnyOwner(projectId);
+                return !!proj && proj.userId === ownerId;
+              } catch { return false; }
+            };
             seedsHttpAdapter.setDbSeedsCallbacks({
               list: async (projectId: string) => {
+                if (!(await verifyProjectOwner(projectId))) return [];
                 const seeds = await seedRepoLocal.listForProject(projectId);
                 return seeds.map(s => ({
                   id: s.id, name: s.name, kind: s.kind, storageRef: s.storageRef,
@@ -6379,6 +6426,7 @@ export class Alfred {
               },
               upload: async (projectId: string, name: string, dataBase64: string) => {
                 try {
+                  if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                   const fs = await import('node:fs');
                   const pth2 = await import('node:path');
                   const safeName = name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 150);
@@ -6395,6 +6443,7 @@ export class Alfred {
               },
               registerRepoPath: async (projectId: string, name: string, repoPath: string) => {
                 try {
+                  if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                   const proj = await projRepoLocal.getByIdAnyOwner(projectId).catch(() => null);
                   if (!proj || !proj.cwd) return { ok: false, reason: 'project oder cwd nicht gefunden' };
                   const fs = await import('node:fs');
@@ -6409,6 +6458,7 @@ export class Alfred {
               },
               delete: async (projectId: string, seedId: string) => {
                 try {
+                  if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                   const seed = await seedRepoLocal.getById(seedId);
                   if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
                   if (seed.projectId !== projectId) return { ok: false, reason: 'Seed gehört zu anderem Project' };
@@ -6431,6 +6481,7 @@ export class Alfred {
               },
               setDefault: async (projectId: string, seedId: string | null) => {
                 try {
+                  if (!(await verifyProjectOwner(projectId))) return { ok: false, reason: 'Project nicht gefunden oder nicht autorisiert' };
                   if (seedId) {
                     const seed = await seedRepoLocal.getById(seedId);
                     if (!seed) return { ok: false, reason: 'Seed nicht gefunden' };
@@ -7606,13 +7657,15 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   } catch (err) { this.logger.debug({ err }, 'Todo→OpenItem field-sync failed'); }
                 }
               }
-              return updated ?? (await this.todoRepo.getById(id));
+              return updated ?? (await this.todoRepo.getByIdForUser(id, uid));
             } catch (err) { this.logger.warn({ err }, 'Todos API update failed'); return null; }
           },
           complete: async (id: string) => {
             try {
               if (!this.todoRepo) return false;
-              const before = await this.todoRepo.getById(id);
+              const uid = await resolveOwnerTodo();
+              const before = await this.todoRepo.getByIdForUser(id, uid);
+              if (!before) return false;
               const ok = await this.todoRepo.complete(id);
               // v671 — Status-Sync zum gelinkten Open-Item
               if (ok && before?.linkedOpenItemId && this.projectRepo) {
@@ -7629,7 +7682,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           delete: async (id: string) => {
             try {
               if (!this.todoRepo) return false;
-              const before = await this.todoRepo.getById(id);
+              const uid = await resolveOwnerTodo();
+              const before = await this.todoRepo.getByIdForUser(id, uid);
+              if (!before) return false;
               const ok = await this.todoRepo.delete(id);
               // v671 — beim Delete NUR Verlinkung entfernen (Open-Item bleibt)
               if (ok && before?.linkedOpenItemId && this.projectRepo) {
@@ -7664,10 +7719,13 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           listLinkedNotes: async (todoId: string) => {
             try {
               if (!this.todoRepo || !this.noteRepo) return [];
+              const uid = await resolveOwnerTodo();
+              const owningTodo = await this.todoRepo.getByIdForUser(todoId, uid);
+              if (!owningTodo) return [];
               const ids = await this.todoRepo.listLinkedNoteIds(todoId);
               const notes: any[] = [];
               for (const nid of ids) {
-                const n = await this.noteRepo.getById(nid);
+                const n = await this.noteRepo.getByIdForUser(nid, uid);
                 if (n) notes.push(n);
               }
               return notes;
@@ -7695,11 +7753,14 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
           },
           listLinkedTodos: async (noteId: string) => {
             try {
-              if (!this.todoRepo) return [];
+              if (!this.todoRepo || !this.noteRepo) return [];
+              const uid = await resolveOwnerTodo();
+              const owningNote = await this.noteRepo.getByIdForUser(noteId, uid);
+              if (!owningNote) return [];
               const ids = await this.todoRepo.listLinkedTodoIds(noteId);
               const todos: any[] = [];
               for (const tid of ids) {
-                const t = await this.todoRepo.getById(tid);
+                const t = await this.todoRepo.getByIdForUser(tid, uid);
                 if (t) todos.push(t);
               }
               return todos;
@@ -7919,9 +7980,10 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 if (ok) anyChange = true;
                 if (ok && this.todoRepo) {
                   try {
+                    const uid = await resolveOwnerProj();
                     const oi = await projRepo.getOpenItemByIdRaw(itemId);
                     if (oi?.linkedTodoId) {
-                      const t = await this.todoRepo.getById(oi.linkedTodoId);
+                      const t = await this.todoRepo.getByIdForUser(oi.linkedTodoId, uid);
                       if (t) {
                         if (patch.status === 'done' && !t.completed) await this.todoRepo.complete(t.id);
                         else if (patch.status === 'open' && t.completed) await this.todoRepo.uncomplete(t.id);
@@ -8171,6 +8233,9 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (!this.projectAutomationsRepo || !this.automationEngine) return { ok: false, error: 'Engine nicht verfügbar' };
               const auto = await this.projectAutomationsRepo.getById(id);
               if (!auto) return { ok: false, error: 'Automation nicht gefunden' };
+              // v808 — Defense-in-depth: Automation muss dem aktuellen Owner gehören.
+              const ownerId = this.tryOwner();
+              if (ownerId && auto.userId !== ownerId) return { ok: false, error: 'Automation nicht autorisiert' };
               const output = await this.automationEngine.runAutomation(auto);
               return { ok: true, output };
             } catch (err) { return { ok: false, error: (err as Error).message }; }

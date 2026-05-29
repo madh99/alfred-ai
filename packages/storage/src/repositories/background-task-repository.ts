@@ -118,6 +118,15 @@ export class BackgroundTaskRepository {
     return row ? this.mapRow(row) : undefined;
   }
 
+  /** v808 — uid-scoped Variante für Defense-in-depth in der WebUI API. */
+  async getByIdForUser(id: string, userId: string): Promise<BackgroundTask | undefined> {
+    const row = await this.adapter.queryOne(
+      'SELECT * FROM background_tasks WHERE id = ? AND user_id = ?',
+      [id, userId],
+    ) as Record<string, unknown> | undefined;
+    return row ? this.mapRow(row) : undefined;
+  }
+
   /**
    * v623 — Liste ALLER background_tasks (für WebUI-Inspector). Optional Status-Filter.
    * Sortiert nach created_at desc; älteste Einträge können per cleanup() entfernt werden.

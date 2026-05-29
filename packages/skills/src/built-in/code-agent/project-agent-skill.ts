@@ -172,9 +172,10 @@ export function removeAbortController(sessionId: string): void {
  * Liest package.json/Cargo.toml/pyproject.toml und mappt sinnvolle Scripts.
  * Gracefully degrades wenn nichts erkennbar.
  */
-async function autoDetectBuildCommands(
+// v809 — exportiert für Unit-Tests der dev-safe Build-Command-Wahl.
+export async function autoDetectBuildCommands(
   cwd: string,
-  opts?: { runningSandbox?: { hostPort: number } },
+  opts?: { runningSandbox?: { hostPort: number }; devSafe?: boolean },
 ): Promise<{ build: string[]; test: string[] } | null> {
   const fs = await import('node:fs');
   const path = await import('node:path');
@@ -186,16 +187,21 @@ async function autoDetectBuildCommands(
       const scripts = pkg.scripts ?? {};
       const build: string[] = [];
       const test: string[] = [];
-      // Install first
-      if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) build.push('pnpm install');
-      else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) build.push('yarn install');
-      else build.push('npm install');
       // v727 — Bei laufender Sandbox: NICHT `npm run build` ausführen weil das den
       // .next/-Cache des dev-servers überschreibt → dev-server crashed mit ENOENT
       // build-manifest. Stattdessen typecheck + lint + Live-HTTP-Check der Sandbox-URL
       // (200 = code rendert, 500 = code kaputt). Die Page selbst ist die Validation.
+      // v809 — devSafe gilt auch bei pausierter Sandbox: der Worktree teilt
+      // node_modules/.next mit dem Container, daher kein npm install + kein build.
       const sb = opts?.runningSandbox;
-      if (scripts.build && !sb) build.push('npm run build');
+      const devSafe = opts?.devSafe || !!sb;
+      // Install first — im Sandbox-Worktree überspringen (Container hat deps schon)
+      if (!devSafe) {
+        if (fs.existsSync(path.join(cwd, 'pnpm-lock.yaml'))) build.push('pnpm install');
+        else if (fs.existsSync(path.join(cwd, 'yarn.lock'))) build.push('yarn install');
+        else build.push('npm install');
+      }
+      if (scripts.build && !devSafe) build.push('npm run build');
       if (scripts.typecheck) build.push('npm run typecheck');
       else if (scripts['type-check']) build.push('npm run type-check');
       if (scripts.lint) build.push('npm run lint');
@@ -307,6 +313,7 @@ export class ProjectAgentSkill extends Skill {
   /** v727 — Sandbox-Repo damit der Skill running Sandboxes erkennen + Build entsprechend anpassen kann. */
   private sandboxRepo?: {
     listByProject(projectId: string, statuses?: string[]): Promise<Array<{ id: string; worktreePath: string; hostPort: number | null; status: string; projectId: string }>>;
+    getById(id: string): Promise<{ id: string; worktreePath: string; hostPort: number | null; status: string; projectId: string } | null>;
   };
   setSandboxRepo(repo: typeof this.sandboxRepo): void {
     this.sandboxRepo = repo;
@@ -641,8 +648,32 @@ ${planSummary}${commits}${userNotes}
     // .next/-Cache des dev-servers killen → page rendert 500). Stattdessen HTTP-200-Check
     // gegen die Sandbox-URL als runtime-Validation.
     let runningSandbox: { hostPort: number } | undefined;
+    let inSandboxWorktree = false; // v809 — true wenn der Run in einer Sandbox läuft (running ODER paused)
     let sandboxValidationHint: string | undefined;
-    if (this.sandboxRepo && this.projectRepo && this.ownerUserId) {
+
+    // v809 — Primär: präziser Lookup via sandbox_id (der Sandbox-Chat übergibt sie).
+    // Vorher scheiterte die cwd-startsWith-Heuristik weil der Worktree-Pfad
+    // (/mnt/cluster-projects/sandbox-worktrees/...) NIE mit project.cwd
+    // (/home/madh/projects/...) matcht → v727-Schutz feuerte nicht → destruktiver
+    // `npm run build` killte das .next des Container-dev-servers → Fix-Versuch.
+    const sandboxIdForDetect = (input.sandbox_id as string | undefined) ?? (input.sandboxId as string | undefined);
+    if (this.sandboxRepo && sandboxIdForDetect) {
+      try {
+        const sb = await this.sandboxRepo.getById(sandboxIdForDetect);
+        if (sb) {
+          inSandboxWorktree = true;
+          if (sb.status === 'running' && typeof sb.hostPort === 'number' && sb.hostPort > 0) {
+            runningSandbox = { hostPort: sb.hostPort };
+            sandboxValidationHint = `Sandbox läuft (port ${sb.hostPort}) — Build durch HTTP-Health-Check ersetzt, dev-server bleibt intakt.`;
+          } else {
+            sandboxValidationHint = `Sandbox-Worktree erkannt (status=${sb.status}) — destruktiver \`npm run build\` übersprungen (nur typecheck/lint).`;
+          }
+        }
+      } catch { /* non-critical */ }
+    }
+
+    // Fallback: cwd-Heuristik (für ProjectChat/Telegram OHNE sandbox_id — dort korrekt).
+    if (!inSandboxWorktree && this.sandboxRepo && this.projectRepo && this.ownerUserId) {
       try {
         // cwd ist entweder Original-Project-cwd ODER worktree-path einer Sandbox
         const projects = await this.projectRepo.list(this.ownerUserId);
@@ -652,6 +683,7 @@ ${planSummary}${commits}${userNotes}
           const live = running.find(s => typeof s.hostPort === 'number' && s.hostPort > 0);
           if (live && typeof live.hostPort === 'number') {
             runningSandbox = { hostPort: live.hostPort };
+            inSandboxWorktree = true;
             sandboxValidationHint = `Live-Sandbox erkannt (port ${live.hostPort}) — Build-Step durch HTTP-Health-Check ersetzt damit der dev-server intakt bleibt.`;
           }
         }
@@ -660,7 +692,7 @@ ${planSummary}${commits}${userNotes}
 
     // v649 — Auto-Test-Discovery aus package.json/Cargo.toml/pyproject.toml
     // v727 — runningSandbox-info weiterreichen für dev-safe Command-Wahl
-    const autoDetected = await autoDetectBuildCommands(cwd, { runningSandbox }).catch(() => null);
+    const autoDetected = await autoDetectBuildCommands(cwd, { runningSandbox, devSafe: inSandboxWorktree }).catch(() => null);
     const buildCommands = (input.buildCommands as string[])
       ?? template?.buildCommands
       ?? autoDetected?.build
