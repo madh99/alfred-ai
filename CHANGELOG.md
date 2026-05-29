@@ -5,6 +5,18 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.811] - 2026-05-29
+
+### Fixed — curl-Health-Check aus per-Phase-Validierung entfernt (v811)
+
+Live-Diagnose (typecheck EXIT 0, curl FAIL) zeigte: der curl-Health-Check (v727/v809/v810) war in JEDEM Test der wiederkehrende Fix-Versuch-Auslöser. Er gated die Phasen-Validierung an der dev-server-Liveness (Port-Reachability) — die fragil ist: next-dev crasht/rekompiliert/wird neu gestartet → curl failt → Fix-Versuch, den der Agent NICHT per Code-Edit beheben kann (Infra ≠ Code). Der `--retry` aus v810 half nicht, weil der dev-server bei einem echten Down dauerhaft nicht antwortet.
+
+`autoDetectBuildCommands` dev-safe-Pfad: **nur noch `npm run typecheck`** — kein `npm install`, kein `npm run build` (v809), kein `npm run lint` (v810-B1), kein curl (v811). typecheck ist das zuverlässige per-Phase-„kompiliert es"-Signal; Runtime-Validierung passiert über die Live-Preview (HMR) durch den User — analog zum funktionierenden ⚡ Quick-Modus.
+
+Verifiziert: `killProcessesByCwd` (v810) killt den dev-server NICHT — der Container-cgroup (`0::/system.slice/docker-<id>.scope`) wird vom Ausschluss-Regex korrekt erkannt. Keine Regression.
+
+Tests: `auto-detect-build.test.ts` aktualisiert (Sandbox-Kontext erzeugt nie build/lint/curl, nur typecheck) — 8 grün.
+
 ## [0.19.0-multi-ha.810] - 2026-05-29
 
 ### Fixed — Project-Agent/Sandbox Lifecycle-Härtung (v810, 8 Fixes)

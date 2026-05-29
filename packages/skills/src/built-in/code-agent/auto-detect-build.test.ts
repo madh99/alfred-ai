@@ -68,12 +68,13 @@ describe('autoDetectBuildCommands — Sandbox-Worktree pausiert (devSafe=true, k
 });
 
 describe('autoDetectBuildCommands — Sandbox läuft (runningSandbox gesetzt)', () => {
-  it('ersetzt npm run build durch curl-Health-Check gegen den dev-server', async () => {
+  it('v811: nur typecheck, KEIN build/install/curl (dev-server-Liveness kein Gate)', async () => {
     const r = await autoDetectBuildCommands(tmpDir, { runningSandbox: { hostPort: 31234 }, devSafe: true });
     expect(r!.build).not.toContain('npm run build');
     expect(r!.build).not.toContain('npm install');
     expect(r!.build).toContain('npm run typecheck');
-    expect(r!.build.some(c => c.includes('curl') && c.includes('31234'))).toBe(true);
+    // v811 — curl entfernt: fragile dev-server-Liveness löste unfixbare Fix-Versuche aus
+    expect(r!.build.some(c => c.includes('curl'))).toBe(false);
   });
 
   it('runningSandbox impliziert devSafe auch ohne explizites Flag', async () => {
@@ -89,5 +90,16 @@ describe('Regression — Fix-Versuch-Ursache', () => {
     const running = await autoDetectBuildCommands(tmpDir, { runningSandbox: { hostPort: 3000 }, devSafe: true });
     expect(paused!.build).not.toContain('npm run build');
     expect(running!.build).not.toContain('npm run build');
+  });
+
+  it('v811: Sandbox-Kontext erzeugt NIE curl/lint (fragile/Scope-Creep Fix-Versuch-Quellen)', async () => {
+    const paused = await autoDetectBuildCommands(tmpDir, { devSafe: true });
+    const running = await autoDetectBuildCommands(tmpDir, { runningSandbox: { hostPort: 3000 }, devSafe: true });
+    for (const r of [paused!, running!]) {
+      expect(r.build.some(c => c.includes('curl'))).toBe(false);
+      expect(r.build).not.toContain('npm run lint');
+      // typecheck bleibt das einzige verlässliche per-Phase-Gate
+      expect(r.build).toContain('npm run typecheck');
+    }
   });
 });

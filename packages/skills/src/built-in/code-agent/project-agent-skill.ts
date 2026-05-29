@@ -209,12 +209,14 @@ export async function autoDetectBuildCommands(
       // satisfied exhaustive-deps teils mit instabilen Deps → Render-Loops/Crashes.
       // Lint ist Code-Qualität, kein "läuft die App"-Signal → nicht per-Phase blockend.
       if (scripts.lint && !devSafe) build.push('npm run lint');
-      if (sb) {
-        // v810 — resilient gegen transiente next-dev-Recompile-500s: --retry mit
-        // --retry-all-errors. Ein ECHTER App-Crash failt weiterhin (alle Retries 5xx)
-        // → wird dann mit dev-server-Log-Kontext im Fix-Prompt fixbar (v810-C2).
-        build.push(`curl -fsS --retry 3 --retry-delay 2 --retry-all-errors --max-time 20 http://127.0.0.1:${sb.hostPort}/ -o /dev/null`);
-      }
+      // v811 — KEIN curl-Health-Check mehr im devSafe-Pfad. Der Check hing an der
+      // dev-server-Liveness (Port-Reachability), die fragil ist: next-dev crasht/
+      // rekompiliert/wird neu gestartet → curl failt → Fix-Versuch, den der Agent
+      // NICHT per Code-Edit beheben kann (Infra ≠ Code). typecheck ist das
+      // zuverlässige per-Phase-Signal; Runtime-Validierung passiert über die Live-
+      // Preview (HMR) durch den User — analog zum funktionierenden Quick-Modus.
+      // (sb wird hier bewusst nicht mehr verwendet — bleibt im Signatur-Typ für
+      //  Abwärtskompatibilität / explizite buildCommands-Overrides.)
       // Test commands
       if (scripts.test && !/^echo\s/.test(scripts.test)) test.push('npm test');
       return { build, test };
