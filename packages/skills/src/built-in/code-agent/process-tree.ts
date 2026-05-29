@@ -55,12 +55,20 @@ export function killProcessesByCwd(
     // Agent-Abort nicht getroffen werden. Bei A2-Destroy ist der Container eh
     // schon gestoppt; dort kann includeContainer=true gesetzt werden.
     if (!opts?.includeContainer) {
+      let cgroup = '';
       try {
-        const cgroup = readFileSync(`/proc/${pid}/cgroup`, 'utf8');
-        if (/docker|containerd|libpod|\/docker[-/]/.test(cgroup)) continue;
+        cgroup = readFileSync(`/proc/${pid}/cgroup`, 'utf8');
       } catch {
-        /* kein cgroup lesbar — als Host-Prozess behandeln */
+        // v815 CC3 — Default-Umkehr: cgroup nicht lesbar → CONSERVATIVE skip (statt
+        // killen). Erspart Schaden bei restriktiven Mount-Namespaces / hardened
+        // Containern wo /proc nicht voll lesbar ist.
+        continue;
       }
+      // v815 CC3 — Regex erweitert: zusätzlich podman, lxc, kubepods, crio.
+      // Vorher: nur docker/containerd/libpod-Patterns. Custom Runtimes (Podman in
+      // rootless mode, lxc bei legacy setups) waren nicht abgedeckt → Container-
+      // Prozesse hätten gekillt werden können.
+      if (/docker|containerd|libpod|podman|\/docker[-/]|\bkubepods\b|\bcrio\b|\blxc\b/.test(cgroup)) continue;
     }
 
     try {

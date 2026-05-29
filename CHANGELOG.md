@@ -5,6 +5,37 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.815] - 2026-05-30
+
+### Fixed — System-Audit-Findings A-D (v815)
+
+Konsolidierte Behebung von Bugs/Gaps aus dem 3-Agent-Audit von Projects + Project-Agent + Sandbox-Chat (Quick/Discuss/Plan) + Lifecycle.
+
+#### A — Daten-Integrität
+- **SB1 — `sandbox-manager.destroy()`** nutzt jetzt `markDestroyed('discarded')` statt `updateStatus('cleaned')`. Vorher blieb `result`-Spalte NULL → v812-mergeState-Inferenz konnte 'discarded' vs 'cleaned' nicht unterscheiden.
+- **CC1 — `onMergeApplied` Race-Retry**: Wenn der Merge-Callback feuert bevor `project-manager.finishSession` die Sessions persistiert hat, fand `markSessionsMergedBySandbox` 0 pending Rows → OpenItemMatcher lief silent gar nicht. Jetzt 3 Retries à 500ms.
+- **CC2 — Idempotenz**: `markSessionsMergedBySandbox` filtert atomar auf `merge_state='pending'`. Ein zweiter Call (Reconnect/Retry) findet 0 Rows → kein OpenItemMatcher-Duplikat. Idempotenz bereits inhärent in der Query, jetzt explizit dokumentiert.
+
+#### B — Robustheit
+- **PL3 — Plan-Mode Start-Retry**: 1 Retry nach 2s bei transientem `skill.execute('start')`-Fail (z.B. LLM-Provider gerade nicht erreichbar während project-planner-Call). Quick hatte das seit v760, Plan war asymmetrisch.
+- **SB6 — Merge-Gate Exception strikter**: Crasht der Gate selbst (nicht Test-Failure, sondern z.B. `validateBuild` wirft / OOM beim Test-Spawn / sudo-Error), wird Merge jetzt **abgelehnt** statt durchgewunken. Sandbox bleibt paused mit Exception-Message; User entscheidet manuell. Vorher hätten Infra-Probleme unvalidierte Code-Änderungen in main durchgelassen.
+- **SB5 — `cleanupStuckSandboxes` konfigurierbar**: `sandbox.stuckThresholdMinutes` (Default 10) + `sandbox.stuckCleanupIntervalMinutes` (Default 5). Langsame Infra/Container-Pulls können höhere Schwellen setzen.
+
+#### C — UX (Backend, Frontend-Buttons in v816)
+- **P1 — `addDecision` API-Endpoint**: Backend hatte `repo.addDecision` bereits, aber keinen HTTP-Endpoint → Decisions entstanden nur via Session-Summary, nie manuell. Jetzt: `POST /api/projects/:id/decisions` (`{title, choice, rationale}`) + `addProjectDecision()` im alfred-client. **Frontend-Button** verschoben in v816.
+- **P2 + P3** (collapsed Running-Indikator + OpenItemMatcher UI-Feedback): reine Frontend-Polish, in v816 wenn ein UI-Pass ansteht.
+
+#### D — Hygiene
+- **CC3 — cgroup-Regex erweitert + Default umgekehrt**: `killProcessesByCwd` cgroup-Check matcht jetzt zusätzlich `podman`, `kubepods`, `crio`, `lxc`. Wichtiger: wenn `/proc/<pid>/cgroup` nicht lesbar ist → CONSERVATIVE **skip** (statt vorher: als Host-Prozess behandeln + killen). Schützt vor Schaden in restriktiven Mount-Namespaces / hardened Containern.
+- **CM3 — `finishSession` Retry-Loop**: 3 Retries mit linearem Backoff (0.5s / 1s / 1.5s) bei DB-/Summarizer-Fehlern. Vorher: einmal, bei Fail nur `logger.warn` → Chat zeigte "fertig" aber Session existierte nicht in `project_sessions` → Arbeitszeit-Statistik + Open-Items broken für diesen Run. Bei finaler Erschöpfung: `logger.error` mit explizitem Hinweis was verloren geht.
+
+#### TBD (in v816 oder später separat)
+- **Q1 — Legacy `cAgent.execute` Branch**: laut v792-Kommentar tot (subpath dynamic imports failten silent). Bevor löschen/reparieren: Code-Audit ob noch jemand reinfällt.
+- **P4 — Conventions ohne Konsumenten**: Daten werden gespeichert (`projects.conventions`), aber kein Code liest sie aktiv beim Commit/Release. Entscheidung nötig: implementieren oder als „nur Spec-Storage" dokumentieren.
+- **PL2 — Phase-Badge SSE-Push** statt 4s-Poll im Sandbox-Chat.
+- **CM2 — Persistenz-Asymmetrie Plan vs Quick**: Plan schreibt `project_agent_sessions`, Quick nur `project_sessions`. Orphan-Risiko bei Mode-Switch.
+- **D1 — `readOnly`-Cap am Adapter-Boundary** für Discuss-Mode statt Verlassen auf Agent-Discipline + nachgelagerten Revert.
+
 ## [0.19.0-multi-ha.814] - 2026-05-29
 
 ### Fixed — OpenItemMatcher Pre-Filter via Embeddings + sichtbares Logging (v814)

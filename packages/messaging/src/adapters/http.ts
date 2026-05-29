@@ -703,6 +703,8 @@ export class HttpAdapter extends MessagingAdapter {
     addOpenItem: (projectId: string, input: Record<string, unknown>) => Promise<any | null>;
     /** v704 — Erweitert: status + title + description. Status-only bleibt rückwärtskompatibel. */
     updateOpenItem: (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => Promise<boolean>;
+    /** v815 P1 — manuelle Decision-Erstellung (vorher nur via Session-Summary). */
+    addDecision?: (projectId: string, input: { title: string; choice: string; rationale?: string }) => Promise<any | null>;
     listHealthLog: (id: string, limit: number) => Promise<any[]>;
     // v641 — Bulk-Work + Audit
     workOnOpenItems?: (projectId: string, itemIds: string[], maxItems: number) => Promise<{ ok: boolean; taskId?: string; reason?: string }>;
@@ -1278,6 +1280,9 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsAddOpenItem(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/open-items\/[^/]+$/) && req.method === 'PATCH') {
       this.handleProjectsUpdateOpenItem(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/decisions$/) && req.method === 'POST') {
+      // v815 P1 — manuelle Decision-Erstellung
+      this.handleProjectsAddDecision(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-log$/) && req.method === 'GET') {
       this.handleProjectsHealthLog(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/work-on-items$/) && req.method === 'POST') {
@@ -2894,6 +2899,22 @@ export class HttpAdapter extends MessagingAdapter {
     if (!item) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ item }));
+  }
+
+  /** v815 P1 — manuelle Decision-Erstellung. POST /api/projects/:id/decisions */
+  private async handleProjectsAddDecision(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.addDecision) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not configured' })); return; }
+    const parts = url.pathname.split('/');
+    const projectId = parts[parts.length - 2];
+    const body = await this.readBody(req);
+    let input: { title?: string; choice?: string; rationale?: string };
+    try { input = JSON.parse(body); } catch { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!input.title || !input.choice) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'title + choice required' })); return; }
+    const decision = await this.projectsCallbacks.addDecision(projectId, { title: input.title, choice: input.choice, rationale: input.rationale });
+    if (!decision) { res.writeHead(404, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: 'Not found' })); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ decision }));
   }
 
   private async handleProjectsUpdateOpenItem(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

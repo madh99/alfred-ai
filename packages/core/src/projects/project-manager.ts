@@ -136,8 +136,32 @@ export class ProjectManager {
       }, 'project-manager: skipping auto-create (session failed without changes)');
       return;
     }
-    try {
-      const { project, session } = await this.attachSession({
+    // v815 CM3 — Retry-Loop bei transientem DB-/LLM-Fehler. Vorher: einmal,
+    // bei Fail → warn + silent return → Chat zeigt "fertig" aber Session existiert
+    // nicht in project_sessions → analytics + open-items broken.
+    await this.finishSessionWithRetry(params, 3);
+  }
+
+  private async finishSessionWithRetry(params: FinishSessionParams, maxAttempts: number): Promise<void> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.finishSessionImpl(params);
+        if (attempt > 1) this.logger.info({ sourceId: params.sourceId, attempt }, 'v815 finishSession succeeded on retry');
+        return;
+      } catch (err) {
+        if (attempt < maxAttempts) {
+          const delayMs = 500 * attempt;
+          this.logger.warn({ err, sourceId: params.sourceId, attempt, maxAttempts, delayMs }, 'v815 finishSession failed, retrying');
+          await new Promise((r) => setTimeout(r, delayMs));
+        } else {
+          this.logger.error({ err, sourceId: params.sourceId, maxAttempts }, 'v815 finishSession failed after all retries — session NOT persisted (analytics/open-items will miss this run)');
+        }
+      }
+    }
+  }
+
+  private async finishSessionImpl(params: FinishSessionParams): Promise<void> {
+    const { project, session } = await this.attachSession({
         userId: params.userId,
         sourceId: params.sourceId,
         sessionType: params.sessionType,
@@ -208,9 +232,6 @@ export class ProjectManager {
         openItems: summary.openItems?.length ?? 0,
         decisions: summary.keyDecisions?.length ?? 0,
       }, 'project-manager: session finished + summarized');
-    } catch (err) {
-      this.logger.warn({ err, sourceId: params.sourceId }, 'project-manager: finishSession failed');
-    }
   }
 
   /**

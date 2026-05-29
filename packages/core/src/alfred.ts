@@ -3607,8 +3607,21 @@ export class Alfred {
               onMergeApplied: async ({ sandboxId, projectId }) => {
                 if (!this.projectRepo) return;
                 try {
-                  const merged = await this.projectRepo.markSessionsMergedBySandbox(sandboxId);
-                  if (merged.length === 0) return;
+                  // v815 CC1 — Race-Retry: project-manager.finishSession kann noch
+                  // laufen wenn der Merge-Callback feuert → 0 pending Sessions →
+                  // OpenItemMatcher würde silent gar nicht laufen. 3 Retries à 500ms.
+                  // CC2 — markSessionsMergedBySandbox filtert atomar auf 'pending':
+                  // ein evtl. zweiter Aufruf (Reconnect/Retry) findet 0 Rows → exit
+                  // ohne OpenItemMatcher-Duplikate. Idempotenz inhärent in der Query.
+                  let merged = await this.projectRepo.markSessionsMergedBySandbox(sandboxId);
+                  for (let attempt = 0; merged.length === 0 && attempt < 3; attempt++) {
+                    await new Promise((r) => setTimeout(r, 500));
+                    merged = await this.projectRepo.markSessionsMergedBySandbox(sandboxId);
+                  }
+                  if (merged.length === 0) {
+                    this.logger.info({ sandboxId, projectId }, 'v815 onMergeApplied: no pending sessions after retries — nothing to confirm');
+                    return;
+                  }
                   const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
                   if (!proj) return;
                   // Aggregierte Inhalte aus den gemergten Sessions (Summary-Felder)
@@ -3696,14 +3709,17 @@ export class Alfred {
                 );
               }
 
-              // v749 — Auto-Cleanup stuck Sandboxes beim Startup + periodisch alle 5min
-              // Damit creating-Sandboxes nach Alfred-Crash nicht ewig hängen
-              sandboxManager.cleanupStuckSandboxes(10).then(n => {
-                if (n > 0) this.logger.info({ cleaned: n }, 'v749 Startup-Cleanup: stuck sandboxes marked as failed');
+              // v749 — Auto-Cleanup stuck Sandboxes beim Startup + periodisch.
+              // v815 SB5 — Threshold + Interval konfigurierbar (langsame Infra braucht
+              // höhere Werte; Defaults wie bisher: 10min stuck, 5min Interval).
+              const stuckThresholdMin = (this.config.sandbox as { stuckThresholdMinutes?: number }).stuckThresholdMinutes ?? 10;
+              const stuckIntervalMs = ((this.config.sandbox as { stuckCleanupIntervalMinutes?: number }).stuckCleanupIntervalMinutes ?? 5) * 60_000;
+              sandboxManager.cleanupStuckSandboxes(stuckThresholdMin).then(n => {
+                if (n > 0) this.logger.info({ cleaned: n, threshold: stuckThresholdMin }, 'v749 Startup-Cleanup: stuck sandboxes marked as failed');
               }).catch(() => { /* */ });
               setInterval(() => {
-                sandboxManager.cleanupStuckSandboxes(10).catch(() => { /* */ });
-              }, 5 * 60_000).unref?.();
+                sandboxManager.cleanupStuckSandboxes(stuckThresholdMin).catch(() => { /* */ });
+              }, stuckIntervalMs).unref?.();
 
               // v700 — NFS-Detection (best-effort, nur logging — hilft bei HA-Cluster-Diagnose)
               try {
@@ -7477,8 +7493,12 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 ? `Bisheriger Chat-Verlauf (für Kontext):\n\n${historyTextP}\n\nAktuelle Aufgabe:\n${augmentedMessage}`
                 : augmentedMessage;
 
+              // v815 PL3 — Start-Retry: bei transientem Start-Fail (z.B. LLM-Provider
+                // gerade nicht erreichbar während des project-planner-Calls) ein Mal mit
+                // 2s Pause neu versuchen. Quick hatte das seit v760, Plan nicht — der
+                // Audit deckte diese Asymmetrie auf.
               try {
-                const result = await skill.execute({
+                let result = await skill.execute({
                   action: 'start',
                   goal: planGoal,
                   cwd: sb.worktreePath,
@@ -7487,6 +7507,17 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                   // v731 — mention-IDs ans skill → session-Persist → completion-callback macht Auto-Done-Mark
                   mentioned_item_ids: mentions && mentions.length > 0 ? mentions.map(m => m.id) : undefined,
                 }, ctx);
+                if (!result.success) {
+                  this.logger.warn({ taskId: undefined, sandboxId, error: result.error }, 'v815 PL3 plan start failed, retrying once in 2s');
+                  await new Promise((r) => setTimeout(r, 2000));
+                  result = await skill.execute({
+                    action: 'start',
+                    goal: planGoal,
+                    cwd: sb.worktreePath,
+                    sandbox_id: sandboxId,
+                    mentioned_item_ids: mentions && mentions.length > 0 ? mentions.map(m => m.id) : undefined,
+                  }, ctx);
+                }
                 const taskId = (result.data as any)?.taskId;
                 if (taskId) {
                   await sandboxChatRepo.append({
@@ -8084,6 +8115,21 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               if (!project) return null;
               return await projRepo.addOpenItem(project.id, input as any);
             } catch (err) { this.logger.warn({ err }, 'Projects API addOpenItem failed'); return null; }
+          },
+          // v815 P1 — manuelle Decision-Erstellung. Vorher gab es im Backend
+          // projRepo.addDecision aber kein API-Endpoint → Decisions entstanden nur
+          // via Session-Summary, nie manuell.
+          addDecision: async (projectId: string, input: { title: string; choice: string; rationale?: string }) => {
+            try {
+              const uid = await resolveOwnerProj();
+              const project = await projRepo.getById(uid, projectId);
+              if (!project) return null;
+              return await projRepo.addDecision(project.id, {
+                title: input.title.slice(0, 200),
+                choice: input.choice.slice(0, 500),
+                rationale: input.rationale?.slice(0, 1000),
+              });
+            } catch (err) { this.logger.warn({ err }, 'Projects API addDecision failed'); return null; }
           },
           // v704 — Erweitert: status + title + description
           updateOpenItem: async (itemId: string, patch: { status?: string; title?: string; description?: string | null }) => {

@@ -1374,6 +1374,18 @@ export class AlfredClient {
     return data.item ?? null;
   }
 
+  /** v815 P1 — manuelle Decision-Erstellung (vorher: nur via Session-Summary). */
+  async addProjectDecision(projectId: string, input: { title: string; choice: string; rationale?: string }): Promise<{ id: string; title: string; choice: string; rationale?: string } | null> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/decisions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.decision ?? null;
+  }
+
   async updateProjectOpenItem(itemId: string, status: 'open' | 'in_progress' | 'done' | 'cancelled'): Promise<boolean> {
     const res = await fetch(`${this.baseUrl}/api/projects/open-items/${itemId}`, {
       method: 'PATCH',

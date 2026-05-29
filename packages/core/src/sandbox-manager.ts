@@ -725,7 +725,10 @@ export class SandboxManager {
     } catch (err) {
       this.deps.logger.warn({ err, sandboxId }, 'Worktree destroy partially failed');
     }
-    await this.deps.repo.updateStatus(sandboxId, 'cleaned');
+    // v815 SB1 — markDestroyed setzt status + result-Spalte atomar; vorher nur
+    // updateStatus('cleaned') → result blieb NULL → mergeState-Inferenz downstream
+    // (v812) konnte 'discarded' vs 'cleaned' nicht unterscheiden.
+    await this.deps.repo.markDestroyed(sandboxId, 'discarded');
   }
 
   /**
@@ -808,10 +811,14 @@ export class SandboxManager {
           this.deps.logger.info({ sandboxId }, 'v813b merge-gate passed');
         }
       } catch (err) {
-        // Gate selbst ist gecrasht (nicht Test-Failure). Konservativ: durchwinken
-        // statt Merge wegen Infra-Problem zu blocken — Test-Failure liefert ok:false,
-        // hier sind wir bei Exception-Pfad.
-        this.deps.logger.warn({ err, sandboxId }, 'v813b merge-gate threw — continuing (treated as inconclusive)');
+        // v815 SB6 — Merge-Gate-Exception MUSS Merge ablehnen. Vorher: "durchwinken
+        // bei Infra-Problem". Folge: ein crashender Gate (z.B. validateBuild wirft,
+        // OOM beim Test-Spawn, sudo-Fehler) hätte unvalidierte Code-Änderungen in
+        // main durchgelassen. Sicher: ablehnen, User muss manuell freigeben.
+        const msg = err instanceof Error ? err.message : String(err);
+        this.deps.logger.error({ err, sandboxId }, 'v815 merge-gate threw — aborting merge');
+        await this.deps.repo.updateStatus(sandboxId, 'paused', `merge-gate-exception: ${msg.slice(0, 100)}`);
+        return { ok: false, reason: `Merge-Gate-Exception: ${msg.slice(0, 200)}\nSandbox bleibt paused. Manuell debuggen oder Merge erneut versuchen.` };
       }
 
       // (4) Strategy
