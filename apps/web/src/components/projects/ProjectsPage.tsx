@@ -1185,6 +1185,16 @@ function SessionRow({ session, projectId, repoUrl }: { session: ProjectSession; 
         {session.summary?.status && (
           <span className={`text-[10px] ${session.summary.status === 'success' ? 'text-emerald-400' : session.summary.status === 'failed' ? 'text-red-400' : 'text-amber-400'}`}>{session.summary.status}</span>
         )}
+        {/* v812 — Sandbox-Merge-State Badge: pending/merged/discarded sichtbar machen */}
+        {session.mergeState && session.mergeState !== 'applied' && (
+          <span className={`px-1.5 py-0.5 text-[10px] rounded border ${
+            session.mergeState === 'pending' ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+            : session.mergeState === 'merged' ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+            : 'bg-gray-500/10 text-gray-400 border-gray-500/30 line-through'
+          }`}>
+            {session.mergeState === 'pending' ? '🧪 ungemerged' : session.mergeState === 'merged' ? '✓ gemerged' : '🗑 verworfen'}
+          </span>
+        )}
       </div>
       {session.summary?.whatWasDone && <div className="text-gray-400 mt-0.5 ml-5">{session.summary.whatWasDone}</div>}
       {expanded && (

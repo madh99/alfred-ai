@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.812] - 2026-05-29
+
+### Changed — Sandbox-Sessions: Projekt-Historie erst bei Merge (v812)
+
+Bisher schrieb der Completion-Callback ALLE Projekt-Metadaten (Session, Open-Items, Decisions, OpenItemMatcher-Auto-Done bestehender Items, Workspace-Memory, „✅ fertig"-Chat) sofort bei Agent-Completion — unabhängig von Merge. Bei Sandbox-Runs ist der Code aber erst bei **Merge** im Projekt. Discard räumte die Metadaten nicht auf → das Projekt zeigte erledigte Items + abgeschlossene Sessions für verworfenen Code. Besonders kritisch: der OpenItemMatcher mutierte **bestehende** Projekt-Items auf „done".
+
+Neues Modell — **Projekt-Historie folgt dem Code-Lifecycle**:
+- **Run-Completion (Sandbox)**: Session wird mit `merge_state='pending'` angelegt (Arbeitszeit/Agent-Statistik zählt sofort), aber OpenItemMatcher + mentioned-item-done + Workspace-Memory werden **aufgeschoben**. Project-Chat zeigt „🧪 Review & Merge ausstehend".
+- **Merge**: `pending`→`merged`, OpenItemMatcher läuft jetzt gegen den angewendeten Stand, Workspace-Memory + „✅ gemerged"-Chat. Funktioniert für **mehrere Runs in einer Sandbox** (1 Quick + N Plan → 1 Merge → konsolidiert).
+- **Discard**: `pending`→`discarded`, tentative Open-Items + Decisions gelöscht. Sessions bleiben für die Arbeitszeit-Statistik (Zeit fiel real an), als „🗑 verworfen" gebadgt.
+- **Klassische Runs** (cwd = echtes Projekt): unverändert `applied` (Completion = im Projekt).
+
+**Arbeitszeit-Statistik**: verworfene Runs zählen weiter mit (`discardedCount`/`discardedSeconds` separat ausgewiesen). byType/byAgent/Arbeitszeit bleiben vollständig erhalten (per-Run `project_sessions` unverändert).
+
+#### Technisch
+- Migration SQLite v97 / PG v101: `project_sessions.merge_state` + `sandbox_id`
+- `ProjectRepository`: `markSessionsMergedBySandbox`, `discardSandboxSessionArtifacts`, `getWorkStats` discarded-Breakdown
+- `SandboxManager`: `onMergeApplied`/`onSandboxDiscarded` Callbacks, in merge()/discard()/destroy() verdrahtet
+- `alfred.ts`: Completion-Suppress bei Sandbox-Origin (Plan/Quick), Merge/Discard-Callback-Impl
+- WebUI „Letzte Sessions": Merge-State-Badge (🧪 ungemerged / ✓ gemerged / 🗑 verworfen)
+
 ## [0.19.0-multi-ha.811] - 2026-05-29
 
 ### Fixed — curl-Health-Check aus per-Phase-Validierung entfernt (v811)

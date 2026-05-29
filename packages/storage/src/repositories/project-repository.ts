@@ -109,6 +109,10 @@ export interface ProjectSession {
   summary?: ProjectSessionSummary;
   startedAt: string;
   endedAt?: string;
+  /** v812 — 'applied' (klassisch, sofort im Projekt) | 'pending' (Sandbox, ungemerged) | 'merged' | 'discarded' */
+  mergeState?: 'applied' | 'pending' | 'merged' | 'discarded';
+  /** v812 — verknüpft Sandbox-Runs mit ihrer Sandbox (für Merge/Discard-Cleanup) */
+  sandboxId?: string;
 }
 
 export interface ProjectOpenItem {
@@ -212,6 +216,8 @@ function rowToSession(row: Record<string, unknown>): ProjectSession {
     summary: parseSummary(row.summary_json),
     startedAt: row.started_at as string,
     endedAt: (row.ended_at as string | null) ?? undefined,
+    mergeState: ((row.merge_state as string | null) ?? 'applied') as ProjectSession['mergeState'],
+    sandboxId: (row.sandbox_id as string | null) ?? undefined,
   };
 }
 
@@ -393,22 +399,71 @@ export class ProjectRepository {
 
   // ── Sessions ────────────────────────────────────────────────────────────
 
-  async createSession(projectId: string, input: { sessionType: ProjectSessionType; sourceId?: string; summary?: ProjectSessionSummary; startedAt?: string; endedAt?: string }): Promise<ProjectSession> {
+  async createSession(projectId: string, input: { sessionType: ProjectSessionType; sourceId?: string; summary?: ProjectSessionSummary; startedAt?: string; endedAt?: string; mergeState?: ProjectSession['mergeState']; sandboxId?: string }): Promise<ProjectSession> {
     const id = randomUUID();
     const now = new Date().toISOString();
+    const mergeState = input.mergeState ?? 'applied';
     await this.adapter.execute(
-      `INSERT INTO project_sessions (id, project_id, session_type, source_id, summary_json, started_at, ended_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO project_sessions (id, project_id, session_type, source_id, summary_json, started_at, ended_at, merge_state, sandbox_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, projectId, input.sessionType, input.sourceId ?? null,
         input.summary ? JSON.stringify(input.summary) : null,
         input.startedAt ?? now, input.endedAt ?? null,
+        mergeState, input.sandboxId ?? null,
       ],
     );
     return {
       id, projectId, sessionType: input.sessionType, sourceId: input.sourceId,
       summary: input.summary, startedAt: input.startedAt ?? now, endedAt: input.endedAt,
+      mergeState, sandboxId: input.sandboxId,
     };
+  }
+
+  /**
+   * v812 — Beim Merge: alle pending Sandbox-Sessions als 'merged' bestätigen.
+   * Liefert die betroffenen Session-IDs (für nachgelagerte OpenItemMatcher-Auslösung).
+   */
+  async markSessionsMergedBySandbox(sandboxId: string): Promise<ProjectSession[]> {
+    const rows = await this.adapter.query(
+      `SELECT * FROM project_sessions WHERE sandbox_id = ? AND merge_state = 'pending'`,
+      [sandboxId],
+    ) as Record<string, unknown>[];
+    if (rows.length > 0) {
+      await this.adapter.execute(
+        `UPDATE project_sessions SET merge_state = 'merged' WHERE sandbox_id = ? AND merge_state = 'pending'`,
+        [sandboxId],
+      );
+    }
+    return rows.map(rowToSession);
+  }
+
+  /**
+   * v812 — Beim Discard: pending Sandbox-Sessions als 'discarded' markieren (bleiben
+   * für Arbeitszeit-Statistik erhalten) UND deren tentativ angelegte Open-Items +
+   * Decisions löschen (die Arbeit wurde nicht angewendet → keine Projekt-Historie).
+   * Liefert {sessions, openItems, decisions} Counts.
+   */
+  async discardSandboxSessionArtifacts(sandboxId: string): Promise<{ sessions: number; openItems: number; decisions: number }> {
+    const sessions = await this.adapter.query(
+      `SELECT id FROM project_sessions WHERE sandbox_id = ? AND merge_state = 'pending'`,
+      [sandboxId],
+    ) as Array<{ id: string }>;
+    let openItems = 0;
+    let decisions = 0;
+    for (const s of sessions) {
+      const oi = await this.adapter.execute(`DELETE FROM project_open_items WHERE session_id = ?`, [s.id]);
+      const dec = await this.adapter.execute(`DELETE FROM project_decisions WHERE session_id = ?`, [s.id]);
+      openItems += oi.changes ?? 0;
+      decisions += dec.changes ?? 0;
+    }
+    if (sessions.length > 0) {
+      await this.adapter.execute(
+        `UPDATE project_sessions SET merge_state = 'discarded' WHERE sandbox_id = ? AND merge_state = 'pending'`,
+        [sandboxId],
+      );
+    }
+    return { sessions: sessions.length, openItems, decisions };
   }
 
   async updateSessionSummary(sessionId: string, summary: ProjectSessionSummary, endedAt?: string): Promise<void> {
@@ -444,7 +499,7 @@ export class ProjectRepository {
    * der User die Live-Zeit aktiv laufender Agents sieht.
    */
   async getWorkStats(projectId: string): Promise<{
-    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number };
+    total: { count: number; totalSeconds: number; runningCount: number; failedCount: number; discardedCount: number; discardedSeconds: number };
     byType: Array<{ sessionType: string; count: number; totalSeconds: number; completedCount: number; failedCount: number }>;
     byAgent: Array<{ agent: string; count: number; totalSeconds: number }>;
   }> {
@@ -452,10 +507,10 @@ export class ProjectRepository {
     // damit "abgebrochene" Sessions separat zählbar sind. Die Duration kommt aus
     // (ended_at - started_at) — beide jetzt korrekt gesetzt (v668 Fix in finishSession).
     const sessionRows = await this.adapter.query(
-      `SELECT id, session_type, source_id, started_at, ended_at, summary_json
+      `SELECT id, session_type, source_id, started_at, ended_at, summary_json, merge_state
        FROM project_sessions WHERE project_id = ?`,
       [projectId],
-    ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null; summary_json: string | null }>;
+    ) as Array<{ id: string; session_type: string; source_id: string | null; started_at: string; ended_at: string | null; summary_json: string | null; merge_state: string | null }>;
 
     // Map source_id → agent_name aus project_agent_sessions (alle in einem Roundtrip, dann lookup)
     const agentNameByTaskId = new Map<string, string>();
@@ -469,6 +524,10 @@ export class ProjectRepository {
     let totalSeconds = 0;
     let runningCount = 0;
     let failedCount = 0;
+    // v812 — verworfene (discarded) Sandbox-Runs zählen weiter mit (die Zeit fiel an),
+    // werden aber separat ausgewiesen damit die UI sie badgen/filtern kann.
+    let discardedCount = 0;
+    let discardedSeconds = 0;
     const byTypeMap = new Map<string, { count: number; seconds: number; completed: number; failed: number }>();
     const byAgentMap = new Map<string, { count: number; seconds: number }>();
 
@@ -478,6 +537,7 @@ export class ProjectRepository {
       const sec = Math.max(0, Math.floor((end - start) / 1000));
       totalSeconds += sec;
       if (!s.ended_at) runningCount++;
+      if (s.merge_state === 'discarded') { discardedCount++; discardedSeconds += sec; }
 
       // v668 — failed/cancelled-Status aus summary_json extrahieren (best-effort)
       let isFailed = false;
@@ -508,7 +568,7 @@ export class ProjectRepository {
     }
 
     return {
-      total: { count: sessionRows.length, totalSeconds, runningCount, failedCount },
+      total: { count: sessionRows.length, totalSeconds, runningCount, failedCount, discardedCount, discardedSeconds },
       byType: [...byTypeMap.entries()]
         .map(([sessionType, v]) => ({ sessionType, count: v.count, totalSeconds: v.seconds, completedCount: v.completed, failedCount: v.failed }))
         .sort((a, b) => b.totalSeconds - a.totalSeconds),

@@ -1475,6 +1475,7 @@ export class Alfred {
         // Completion-Flow nicht abbrechen.
         let resolvedCwd = cfg.cwd;
         let resolvedProjectId: string | undefined;
+        let resolvedSandboxId: string | undefined; // v812 — Sandbox-Origin-Marker für pending/suppress
         try {
           const adapter = this.database?.getAdapter();
           if (adapter) {
@@ -1483,6 +1484,7 @@ export class Alfred {
               [sessionId],
             ).catch(() => null) as { sandbox_id?: string } | null;
             const sandboxId = sessRow?.sandbox_id;
+            resolvedSandboxId = sandboxId ?? undefined;
             if (sandboxId) {
               const sbRow = await adapter.queryOne(
                 `SELECT project_id FROM project_agent_sandboxes WHERE id = ?`,
@@ -1512,7 +1514,10 @@ export class Alfred {
         // (success ODER failure). Dual zu v609 V2 deploy-Memory: speichert wo gearbeitet
         // wurde, damit der nächste "weiter am Projekt X"-Request den richtigen cwd
         // findet. Best-effort — Memory-Fehler bricht den Completion-Flow nicht ab.
-        if (this.memoryRepo && resolvedCwd) {
+        // v812 — Bei Sandbox-Runs NICHT speichern: resolvedCwd wäre zwar das Projekt,
+        // aber die Arbeit ist erst bei Merge angewendet — Workspace-Memory wird dann
+        // im onMergeApplied-Callback gesetzt. Vor Merge kein "applied"-Signal.
+        if (this.memoryRepo && resolvedCwd && !resolvedSandboxId) {
           try {
             const userId = this.tryOwner() ?? '';
             const projectName = (resolvedCwd ?? '').replace(/\/+$/, '').split('/').filter(Boolean).pop();
@@ -1570,6 +1575,10 @@ export class Alfred {
                 totalFilesChanged: state.totalFilesChanged,
                 success,
                 startedAt,
+                // v812 — Sandbox-Run → 'pending' (erst bei Merge in die Historie). Analytik
+                // (Arbeitszeit/Agent) zählt trotzdem. Klassischer Run → undefined = 'applied'.
+                mergeState: resolvedSandboxId ? 'pending' : undefined,
+                sandboxId: resolvedSandboxId,
               });
             }
           } catch (err) { this.logger.debug({ err }, 'project-manager finishSession failed'); }
@@ -1616,16 +1625,25 @@ export class Alfred {
                 // unter ownerMasterUserId — die könnten verschieden sein im Multi-User-Setup).
                 const projOwnerId = proj.userId ?? userId;
                 const conv = await this.conversationRepo.findOrCreateForProject(projOwnerId, proj.id);
-                const summary = success
-                  ? `✅ **Project-Agent fertig**\n\n` +
-                    `- Phasen: ${state.projectIteration}\n` +
-                    `- Geänderte Dateien: ${state.totalFilesChanged}\n` +
-                    (state.milestonesReached.length > 0 ? `- Milestones: ${state.milestonesReached.slice(0, 5).join(', ')}\n` : '') +
-                    `- Task-ID: \`${sessionId.slice(0, 8)}\``
-                  : `❌ **Project-Agent fehlgeschlagen**\n\n` +
+                // v812 — Sandbox-Runs sind noch NICHT im Projekt (erst bei Merge). Klar
+                // kennzeichnen statt "✅ fertig" das fälschlich "im Projekt" suggeriert.
+                const summary = !success
+                  ? `❌ **Project-Agent fehlgeschlagen**\n\n` +
                     `- Phasen versucht: ${state.projectIteration}\n` +
                     `- Geänderte Dateien: ${state.totalFilesChanged}\n` +
-                    `- Task-ID: \`${sessionId.slice(0, 8)}\``;
+                    `- Task-ID: \`${sessionId.slice(0, 8)}\``
+                  : resolvedSandboxId
+                    ? `🧪 **Sandbox-Plan fertig — Review & Merge ausstehend**\n\n` +
+                      `- Phasen: ${state.projectIteration}\n` +
+                      `- Geänderte Dateien: ${state.totalFilesChanged} (im Sandbox-Branch, noch NICHT im Projekt)\n` +
+                      (state.milestonesReached.length > 0 ? `- Milestones: ${state.milestonesReached.slice(0, 5).join(', ')}\n` : '') +
+                      `- Im Sandbox-Chat reviewen, dann **Merge** (übernehmen) oder **Discard** (verwerfen).\n` +
+                      `- Task-ID: \`${sessionId.slice(0, 8)}\``
+                    : `✅ **Project-Agent fertig**\n\n` +
+                      `- Phasen: ${state.projectIteration}\n` +
+                      `- Geänderte Dateien: ${state.totalFilesChanged}\n` +
+                      (state.milestonesReached.length > 0 ? `- Milestones: ${state.milestonesReached.slice(0, 5).join(', ')}\n` : '') +
+                      `- Task-ID: \`${sessionId.slice(0, 8)}\``;
                 await this.conversationRepo.addMessage(conv.id, 'assistant', summary);
               }
             }
@@ -1677,7 +1695,9 @@ export class Alfred {
         // Wenn der User per 📋-Picker Items zur Chat-Message gehängt hat und der Agent erfolgreich
         // beendet hat, gelten diese Items als implementiert → Status 'done'. Konservativer als
         // OpenItemMatcher weil hier User-Intention explizit war.
-        if (success && this.projectRepo) {
+        // v812 — Bei Sandbox-Runs aufgeschoben bis Merge (mutiert bestehende Projekt-Items;
+        // bei Discard wäre das nicht rückgängig zu machen). Läuft dann in onMergeApplied.
+        if (success && this.projectRepo && !resolvedSandboxId) {
           try {
             const sessRow = await this.database?.getAdapter().queryOne(
               `SELECT mentioned_item_ids FROM project_agent_sessions WHERE task_id = ?`,
@@ -1708,7 +1728,10 @@ export class Alfred {
         // v641 — OpenItemMatcher: nach erfolgreichem Lauf prüfen welche der bestehenden
         // open Items des Projekts durch die Milestones+Files erledigt wurden. LLM-Pass
         // mit konservativer Confidence (≥0.6 → auto-done, sonst nur markieren).
-        if (success && this.projectRepo && this.llmProvider) {
+        // v812 — Bei Sandbox-Runs aufgeschoben bis Merge: dieser Matcher mutiert
+        // BESTEHENDE Projekt-Items auf 'done'. Bei Discard wäre das schwer rückgängig.
+        // Läuft daher erst in onMergeApplied gegen den gemergten Diff.
+        if (success && this.projectRepo && this.llmProvider && !resolvedSandboxId) {
           try {
             const userId = this.tryOwner() ?? '';
             if (userId) {
@@ -3571,6 +3594,85 @@ export class Alfred {
                   const p = await this.projectRepo.getByIdAnyOwner(projectId);
                   return p?.maxConcurrentSandboxes ?? null;
                 } catch { return null; }
+              },
+              // v812 — Merge bestätigt: pending Sessions → merged, OpenItemMatcher gegen
+              // gemergten Stand, Workspace-Memory + "applied"-Chat.
+              onMergeApplied: async ({ sandboxId, projectId }) => {
+                if (!this.projectRepo) return;
+                try {
+                  const merged = await this.projectRepo.markSessionsMergedBySandbox(sandboxId);
+                  if (merged.length === 0) return;
+                  const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
+                  if (!proj) return;
+                  // Aggregierte Inhalte aus den gemergten Sessions (Summary-Felder)
+                  const changedFiles = merged.flatMap(s => s.summary?.filesTouched ?? []);
+                  const goal = merged.map(s => s.summary?.whatWasDone ?? '').filter(Boolean).join('; ').slice(0, 500) || 'Sandbox merge';
+                  // OpenItemMatcher gegen den jetzt angewendeten Stand (mutiert bestehende Items)
+                  if (this.llmProvider) {
+                    try {
+                      const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
+                      const matcher = new OpenItemMatcher(this.projectRepo, this.llmProvider, this.logger.child({ component: 'open-item-matcher' }));
+                      await matcher.matchAfterSession({
+                        projectId: proj.id,
+                        sessionId: merged[0].id,
+                        goal,
+                        milestones: [],
+                        changedFiles,
+                        totalFilesChanged: changedFiles.length,
+                      });
+                    } catch (err) { this.logger.debug({ err, sandboxId }, 'v812 post-merge OpenItemMatcher failed'); }
+                  }
+                  // Workspace-Memory (jetzt ist die Arbeit wirklich im Projekt)
+                  if (this.memoryRepo && proj.cwd) {
+                    try {
+                      const uid = proj.userId ?? this.tryOwner() ?? '';
+                      const pname = proj.cwd.replace(/\/+$/, '').split('/').filter(Boolean).pop();
+                      if (uid && pname) {
+                        const key = `project_workspace_${pname.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+                        const val = `Dev-Workspace für Projekt "${pname}": ${proj.cwd} (lokal). last_merge=${new Date().toISOString().slice(0, 16).replace('T', ' ')}`;
+                        const up = (this.memoryRepo as { upsertSystemMemory?: (u: string, k: string, v: string, c: string, t?: string, cf?: number) => Promise<unknown> }).upsertSystemMemory;
+                        if (up) await up.call(this.memoryRepo, uid, key, val, 'workspace', 'fact', 0.95);
+                      }
+                    } catch (err) { this.logger.debug({ err }, 'v812 post-merge workspace-memory failed'); }
+                  }
+                  // "applied"-Chat in den Project-Chat
+                  if (this.conversationRepo) {
+                    try {
+                      const uid = proj.userId ?? this.tryOwner() ?? '';
+                      if (uid) {
+                        const conv = await this.conversationRepo.findOrCreateForProject(uid, proj.id);
+                        await this.conversationRepo.addMessage(conv.id, 'assistant',
+                          `✅ **Sandbox gemerged** — ${merged.length} Session(s) ins Projekt übernommen.${changedFiles.length > 0 ? `\n- Geänderte Dateien: ${changedFiles.length}` : ''}`);
+                      }
+                    } catch (err) { this.logger.debug({ err }, 'v812 post-merge chat failed'); }
+                  }
+                  this.logger.info({ sandboxId, projectId, mergedSessions: merged.length }, 'v812 merge applied — sessions confirmed + matched');
+                } catch (err) {
+                  this.logger.warn({ err, sandboxId }, 'v812 onMergeApplied failed');
+                }
+              },
+              // v812 — Discard: pending Sessions → discarded, tentative Open-Items/Decisions löschen.
+              onSandboxDiscarded: async ({ sandboxId, projectId }) => {
+                if (!this.projectRepo) return;
+                try {
+                  const r = await this.projectRepo.discardSandboxSessionArtifacts(sandboxId);
+                  if (r.sessions > 0) {
+                    this.logger.info({ sandboxId, ...r }, 'v812 sandbox discarded — pending session-artefacts cleaned');
+                    if (this.conversationRepo) {
+                      try {
+                        const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
+                        const uid = proj?.userId ?? this.tryOwner() ?? '';
+                        if (proj && uid) {
+                          const conv = await this.conversationRepo.findOrCreateForProject(uid, proj.id);
+                          await this.conversationRepo.addMessage(conv.id, 'assistant',
+                            `🗑 **Sandbox verworfen** — ${r.sessions} ungemmergte Session(s) entfernt (Code nicht übernommen). Arbeitszeit bleibt in der Statistik.`);
+                        }
+                      } catch { /* non-fatal */ }
+                    }
+                  }
+                } catch (err) {
+                  this.logger.warn({ err, sandboxId }, 'v812 onSandboxDiscarded failed');
+                }
               },
             });
             const hc = await sandboxManager.runHealthCheck();
@@ -7311,6 +7413,11 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                           files: result.modifiedFiles,
                           totalFilesChanged: result.modifiedFiles.length,
                           startedAt: initialAgentMsg.createdAt,
+                          // v812 — Quick-Run läuft IMMER in einer Sandbox → 'pending' bis Merge.
+                          // Analytik (Arbeitszeit/Agent) zählt trotzdem; Open-Items werden bei
+                          // Discard entfernt, bei Merge bestätigt.
+                          mergeState: 'pending',
+                          sandboxId,
                         });
                       } catch (err) {
                         this.logger.warn({ err, taskId, sandboxId }, 'v799 finishSession after AgentSession run failed (non-critical, run results still in git)');

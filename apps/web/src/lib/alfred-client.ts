@@ -2368,6 +2368,9 @@ export interface ProjectSession {
   };
   startedAt: string;
   endedAt?: string;
+  /** v812 — Sandbox-Lifecycle: 'applied' (klassisch) | 'pending' (ungemerged) | 'merged' | 'discarded' */
+  mergeState?: 'applied' | 'pending' | 'merged' | 'discarded';
+  sandboxId?: string;
 }
 
 export interface ProjectOpenItem {

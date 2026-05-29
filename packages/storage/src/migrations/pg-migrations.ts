@@ -1539,4 +1539,13 @@ export const PG_MIGRATIONS: PgMigration[] = [
       }
     },
   },
+  {
+    version: 101,
+    description: 'v812 — project_sessions.merge_state + sandbox_id: Sandbox-Runs erst bei Merge in die Projekt-Historie übernehmen.',
+    async up(db) {
+      try { await db.execute(`ALTER TABLE project_sessions ADD COLUMN merge_state TEXT NOT NULL DEFAULT 'applied'`, []); } catch { /* exists */ }
+      try { await db.execute(`ALTER TABLE project_sessions ADD COLUMN sandbox_id TEXT`, []); } catch { /* exists */ }
+      try { await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_sessions_sandbox ON project_sessions(sandbox_id)`, []); } catch { /* exists */ }
+    },
+  },
 ];

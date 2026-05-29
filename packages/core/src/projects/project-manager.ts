@@ -29,6 +29,10 @@ export interface AttachSessionParams {
    * zeigt nur die Dauer der Summary-Erstellung statt der echten Agent-Laufzeit.
    */
   startedAt?: string;
+  /** v812 — Merge-State für Sandbox-Runs: 'pending' = noch nicht gemerged. Default 'applied'. */
+  mergeState?: 'applied' | 'pending' | 'merged' | 'discarded';
+  /** v812 — Sandbox-ID für Merge/Discard-Cleanup-Verknüpfung. */
+  sandboxId?: string;
 }
 
 export interface FinishSessionParams {
@@ -46,6 +50,10 @@ export interface FinishSessionParams {
   files?: string[];
   /** v668 — Echte Startzeit (siehe AttachSessionParams.startedAt). */
   startedAt?: string;
+  /** v812 — Merge-State für Sandbox-Runs: 'pending' = noch nicht gemerged. Default 'applied'. */
+  mergeState?: 'applied' | 'pending' | 'merged' | 'discarded';
+  /** v812 — Sandbox-ID für Merge/Discard-Cleanup-Verknüpfung. */
+  sandboxId?: string;
 }
 
 /**
@@ -106,6 +114,8 @@ export class ProjectManager {
         sessionType: params.sessionType,
         sourceId: params.sourceId,
         startedAt: params.startedAt, // v668 — echte Startzeit durchreichen falls bekannt
+        mergeState: params.mergeState, // v812 — 'pending' für Sandbox-Runs
+        sandboxId: params.sandboxId,   // v812 — Sandbox-Verknüpfung
       });
     }
     await this.repo.touch(project.id);
@@ -135,6 +145,8 @@ export class ProjectManager {
         cwd: params.cwd,
         projectId: params.projectId, // v798 — explicit project-Linking (verhindert orphan-Creation bei sandbox-runs)
         startedAt: params.startedAt, // v668 — echte Startzeit für korrekte Arbeitszeit-Statistik
+        mergeState: params.mergeState, // v812 — Sandbox-Runs als 'pending'
+        sandboxId: params.sandboxId,   // v812 — Sandbox-Verknüpfung
       });
 
       const summarizerInput: SummarizerInput = {

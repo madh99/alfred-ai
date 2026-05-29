@@ -2209,4 +2209,16 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_uid_audit_table ON user_id_format_audit(table_name, format_class)`);
     },
   },
+  {
+    version: 97,
+    description: 'v812 — project_sessions.merge_state + sandbox_id: Sandbox-Runs erst bei Merge in die Projekt-Historie übernehmen.',
+    up(db) {
+      // merge_state: 'applied' (klassischer Run, sofort im Projekt) | 'pending'
+      // (Sandbox-Run, noch nicht gemerged) | 'merged' | 'discarded'.
+      // sandbox_id: verknüpft die Session mit ihrer Sandbox für Merge/Discard-Cleanup.
+      try { db.exec(`ALTER TABLE project_sessions ADD COLUMN merge_state TEXT NOT NULL DEFAULT 'applied'`); } catch { /* exists */ }
+      try { db.exec(`ALTER TABLE project_sessions ADD COLUMN sandbox_id TEXT`); } catch { /* exists */ }
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_project_sessions_sandbox ON project_sessions(sandbox_id)`);
+    },
+  },
 ];

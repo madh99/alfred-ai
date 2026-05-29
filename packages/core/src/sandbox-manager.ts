@@ -41,6 +41,18 @@ export interface SandboxManagerDeps {
   uploadSeedsPath?: string;
   /** v755 — Optional: Lookup-Callback für Per-Project-Quota. Liefert maxConcurrentSandboxes oder null. */
   projectQuotaLookup?: (projectId: string) => Promise<number | null>;
+  /**
+   * v812 — Wird nach erfolgreichem Merge gerufen: bestätigt die pending Projekt-
+   * Sessions dieser Sandbox ('merged'), löst den OpenItemMatcher gegen den
+   * gemergten Diff aus und schreibt Workspace-Memory + "applied"-Chat.
+   */
+  onMergeApplied?: (input: { sandboxId: string; projectId: string; mergedSha?: string }) => Promise<void>;
+  /**
+   * v812 — Wird beim Discard/Destroy gerufen: markiert die pending Sessions als
+   * 'discarded' (bleiben für Arbeitszeit-Statistik) und löscht deren tentativ
+   * angelegte Open-Items + Decisions (Arbeit wurde nicht angewendet).
+   */
+  onSandboxDiscarded?: (input: { sandboxId: string; projectId: string }) => Promise<void>;
 }
 
 export interface CreateForSessionInput {
@@ -591,6 +603,26 @@ export class SandboxManager {
     }
   }
 
+  /** v812 — Merge bestätigt: Projekt-Sessions dieser Sandbox übernehmen (Callback). */
+  private async fireMergeApplied(sb: Sandbox, mergedSha?: string): Promise<void> {
+    if (!this.deps.onMergeApplied) return;
+    try {
+      await this.deps.onMergeApplied({ sandboxId: sb.id, projectId: sb.projectId, mergedSha });
+    } catch (err) {
+      this.deps.logger.warn({ err, sandboxId: sb.id }, 'v812 onMergeApplied callback failed (non-fatal)');
+    }
+  }
+
+  /** v812 — Discard: tentative Projekt-Metadaten der Sandbox aufräumen (Callback). */
+  private async fireSandboxDiscarded(sb: Sandbox): Promise<void> {
+    if (!this.deps.onSandboxDiscarded) return;
+    try {
+      await this.deps.onSandboxDiscarded({ sandboxId: sb.id, projectId: sb.projectId });
+    } catch (err) {
+      this.deps.logger.warn({ err, sandboxId: sb.id }, 'v812 onSandboxDiscarded callback failed (non-fatal)');
+    }
+  }
+
   async discard(sandboxId: string, projectCwd: string): Promise<void> {
     const sb = await this.deps.repo.getById(sandboxId);
     if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
@@ -601,6 +633,7 @@ export class SandboxManager {
       try { await removeContainer(sb.containerId, true); } catch { /* */ }
     }
     this.killWorktreeHolders(sb.worktreePath);
+    await this.fireSandboxDiscarded(sb); // v812 — pending Projekt-Metadaten aufräumen
     try {
       await destroyWorktree({
         projectCwd,
@@ -626,6 +659,7 @@ export class SandboxManager {
       try { await removeContainer(sb.containerId, true); } catch { /* */ }
     }
     this.killWorktreeHolders(sb.worktreePath);
+    await this.fireSandboxDiscarded(sb); // v812 — pending Projekt-Metadaten aufräumen
     try {
       await destroyWorktree({
         projectCwd,
@@ -709,6 +743,10 @@ export class SandboxManager {
           await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'pr-failed');
           return result;
         }
+        // v812 — PR-Strategie: Code ist noch NICHT in main (Forge-Merge ausstehend).
+        // Wir bestätigen die Sessions trotzdem als 'merged' (PR erstellt) — der eigentliche
+        // Forge-Merge ist außerhalb von Alfreds Kontrolle. onMergeApplied markiert + matched.
+        await this.fireMergeApplied(sb, undefined);
         await this.cleanupAfterMerge(sb, opts.projectCwd);
         await this.deps.repo.markDestroyed(sandboxId, 'merged_via_pr', result.prUrl);
         return result;
@@ -718,6 +756,7 @@ export class SandboxManager {
           await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'direct-failed');
           return result;
         }
+        await this.fireMergeApplied(sb, result.mergedSha); // v812
         await this.cleanupAfterMerge(sb, opts.projectCwd);
         await this.deps.repo.markDestroyed(sandboxId, 'merged_to_main');
         return result;
