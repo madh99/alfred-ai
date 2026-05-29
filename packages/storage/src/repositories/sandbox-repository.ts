@@ -118,6 +118,12 @@ export class SandboxRepository {
     return row ? this.mapRow(row) : null;
   }
 
+  /** v810 — Lookup über Worktree-Pfad (für dev-server-Log-Fetch aus dem Project-Agent-Runner). */
+  async getByWorktreePath(worktreePath: string): Promise<Sandbox | null> {
+    const row = await this.db.queryOne(`SELECT * FROM project_agent_sandboxes WHERE worktree_path = ? ORDER BY created_at DESC LIMIT 1`, [worktreePath]) as DbRow | undefined;
+    return row ? this.mapRow(row) : null;
+  }
+
   async listByProject(projectId: string, statuses?: SandboxStatus[]): Promise<Sandbox[]> {
     if (statuses && statuses.length > 0) {
       const placeholders = statuses.map(() => '?').join(',');

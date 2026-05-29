@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CodeAgentDefinitionConfig } from '@alfred/types';
 import { appendOutputLine } from './project-agent-skill.js';
+import { killAgentTree } from './process-tree.js';
 
 // v635 — Default auf 12min angehoben (war 10min v625). Praxisbefund Phase 24
 // (Datenmodell/Migration): claude-code ging 600s lang stdout-stumm obwohl
@@ -224,19 +225,14 @@ export async function executeAgent(
     let killed = false;
     let killReason: 'inactivity' | 'absolute' | 'aborted' | undefined;
 
-    // v650 — Stop-Cleanup: wenn Caller via AbortSignal aborted, child + Process-Tree killen
+    // v650/v810 — Stop-Cleanup: wenn Caller via AbortSignal aborted, kompletten
+    // Agent-Baum killen. v810: killAgentTree erfasst auch reparentete Sub-Sessions
+    // (claude-code spawnt Bash-Tools in eigenen Sessions → Group-Kill verfehlt sie
+    // → Waisen halten den Worktree offen). Kill via cwd-Match als Backstop.
     const onAbort = () => {
       killed = true;
       killReason = 'aborted';
-      try {
-        if (!isWindows && child.pid) {
-          process.kill(-child.pid, 'SIGTERM');
-          setTimeout(() => { try { if (child.pid) process.kill(-child.pid!, 'SIGKILL'); } catch { /* gone */ } }, 3_000);
-        } else {
-          child.kill('SIGTERM');
-          setTimeout(() => child.kill('SIGKILL'), 3_000);
-        }
-      } catch { /* best effort */ }
+      killAgentTree(child.pid, cwd, { detached: !isWindows });
     };
     if (options.signal) {
       if (options.signal.aborted) onAbort();
@@ -273,8 +269,8 @@ export async function executeAgent(
       inactivityTimer = setTimeout(() => {
         killed = true;
         killReason = 'inactivity';
-        child.kill('SIGTERM');
-        setTimeout(() => child.kill('SIGKILL'), 5_000);
+        // v810 — kompletter Baum statt nur child.kill (erfasst Sub-Sessions)
+        killAgentTree(child.pid, cwd, { detached: !isWindows, graceMs: 5_000 });
       }, timeoutMs);
     };
     resetInactivity();
@@ -305,8 +301,8 @@ export async function executeAgent(
     const absoluteTimer = setTimeout(() => {
       killed = true;
       killReason = 'absolute';
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 5_000);
+      // v810 — kompletter Baum statt nur child.kill (erfasst Sub-Sessions)
+      killAgentTree(child.pid, cwd, { detached: !isWindows, graceMs: 5_000 });
     }, ABSOLUTE_CAP_MS);
 
     child.stdout?.on('data', (chunk: Buffer) => {

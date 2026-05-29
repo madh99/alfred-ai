@@ -2,6 +2,7 @@ export { CodeAgentSkill } from './code-agent-skill.js';
 export type { CodeAgentSkillConfig, CodeAgentSessionInfo } from './code-agent-skill.js';
 export { executeAgent } from './agent-executor.js';
 export type { AgentExecutionResult } from './agent-executor.js';
+export { killProcessesByCwd, killAgentTree } from './process-tree.js';
 export { orchestrate, orchestrateWithGit } from './orchestrator.js';
 export type { OrchestrationPlan, SubTask, SubTaskResult, OrchestrationResult, GitOrchestrationResult, GitOrchestrationOptions, GitInfo } from './orchestrator.js';
 export { gitStatus, gitCreateBranch, gitStageAll, gitCommit, gitPush, slugifyBranch, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl } from './git-ops.js';

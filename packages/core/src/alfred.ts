@@ -3578,6 +3578,15 @@ export class Alfred {
               this.sandboxManager = sandboxManager;
               this.logger.info({ ...sandboxManager.getStatus() }, 'v697 Sandbox-Manager initialized');
 
+              // v810 — dev-server-Log-Provider an den Project-Agent-Runner verdrahten.
+              // Bei curl-Health-Check-Fail im Fix-Loop holt der Runner so den echten
+              // Runtime-Crash-Stacktrace statt den Agent blind raten zu lassen.
+              if (this.projectAgentRunnerRef) {
+                this.projectAgentRunnerRef.setDevServerLogProvider(
+                  (cwd: string, tail?: number) => sandboxManager.getDevServerLog(cwd, tail ?? 120),
+                );
+              }
+
               // v749 — Auto-Cleanup stuck Sandboxes beim Startup + periodisch alle 5min
               // Damit creating-Sandboxes nach Alfred-Crash nicht ewig hängen
               sandboxManager.cleanupStuckSandboxes(10).then(n => {

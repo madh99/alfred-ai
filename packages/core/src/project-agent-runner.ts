@@ -151,6 +151,17 @@ export class ProjectAgentRunner {
     this.fileStore = fs;
   }
 
+  /**
+   * v810 — Liefert die letzten Zeilen dev-server-stdout für einen Worktree-cwd.
+   * Wird in den Fix-Prompt eingespeist wenn die App nicht antwortet (curl-Fail),
+   * damit der Agent den echten Runtime-Crash sieht statt blind zu raten.
+   * Gesetzt von alfred.ts (verdrahtet zu sandboxManager.getDevServerLog).
+   */
+  private devServerLogProvider?: (cwd: string, tail?: number) => Promise<string | null>;
+  setDevServerLogProvider(fn: (cwd: string, tail?: number) => Promise<string | null>): void {
+    this.devServerLogProvider = fn;
+  }
+
   constructor(
     private readonly agents: Map<string, CodeAgentDefinitionConfig>,
     private readonly llm: LLMProvider,
@@ -270,6 +281,11 @@ export class ProjectAgentRunner {
     };
 
     let lastBuildActuallyPassed = false;
+    // v810 — Tracking ob completionCallback schon gefeuert wurde. Diverse return-Pfade
+    // (abort, max-duration, pre-flight) verließen den Runner ohne completion + ohne
+    // terminal-Phase → Session hing in DB auf 'fixing'/'coding' → UI zeigte ewig "läuft".
+    // Der finally-Guard setzt garantiert terminal + feuert completion falls noch offen.
+    let completionFired = false;
     // v652 — Lessons aus früheren Failed-Runs in derselben cwd. Wird einmal pro
     // Run geladen und in jeder Phase per assemblePrompt eingespeist.
     let lessonsHint: string[] = [];
@@ -417,6 +433,7 @@ export class ProjectAgentRunner {
                   { goal: config.goal, cwd: config.cwd },
                   { milestonesReached: state.milestonesReached, totalFilesChanged: 0, projectIteration: 0 },
                   false);
+                completionFired = true;
               } catch { /* swallow */ }
             }
             return;
@@ -663,7 +680,23 @@ export class ProjectAgentRunner {
           await this.sendProgress(platform, chatId,
             `🔧 Fix-Versuch ${fixAttempt + 1}/${config.maxFixAttempts}...`);
 
-          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
+          // v810 — Wenn die App nicht antwortet (curl-Health-Check fehlgeschlagen),
+          // den dev-server-stdout holen damit der Agent den echten Runtime-Crash
+          // (Stacktrace, ReferenceError, Render-Loop, …) sieht statt nur "build failed".
+          // Vorher: curl-Fail → Agent rät blind → fixt Lint-Debt statt des Crashes.
+          let devServerCrashLog = '';
+          if (this.devServerLogProvider && /\bcurl\b/.test(buildResult.combinedOutput)) {
+            try {
+              const log = await this.devServerLogProvider(config.cwd, 120);
+              if (log && log.trim()) {
+                devServerCrashLog = `\n\n--- dev-server Log (letzte Zeilen, App antwortete nicht) ---\n${log.slice(-4000)}\n--- Ende dev-server Log ---\nFokus: Wenn hier ein Runtime-Fehler/Crash steht, behebe DIESEN — nicht Lint-Warnungen.`;
+              }
+            } catch (err) {
+              this.logger.debug({ err, sessionId }, 'v810 devServerLogProvider failed (non-fatal)');
+            }
+          }
+
+          const fixPrompt = `Der Build ist fehlgeschlagen. Hier ist der Output:\n\n${buildResult.combinedOutput}${devServerCrashLog}\n\nBitte behebe die Fehler. Das Ziel war: ${phase}${fixUserMessages.length > 0 ? '\n\nUser-Hinweise:\n' + fixUserMessages.map(m => `- ${m}`).join('\n') : ''}`;
           const fixResult = await executeAgent(agentDef, fixPrompt, {
             cwd: config.cwd,
             // v624 D — Fix-Läufe rufen oft `npm run build` zum Reparieren auf → langer Timeout
@@ -910,6 +943,7 @@ export class ProjectAgentRunner {
             { goal: config.goal, cwd: config.cwd },
             { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
             overallSuccess);
+          completionFired = true;
         } catch (err) { this.logger.debug({ err }, 'Project-agent completion callback failed'); }
       }
 
@@ -926,9 +960,37 @@ export class ProjectAgentRunner {
             { goal: config.goal, cwd: config.cwd },
             { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
             false);
+          completionFired = true;
         } catch (cbErr) { this.logger.debug({ err: cbErr }, 'Project-agent completion callback (failure path) failed'); }
       }
     } finally {
+      // v810 — Lifecycle-Guard: garantiert dass die Session NIE non-terminal hängt.
+      // Mehrere return-Pfade (abort Z.475, max-duration Z.481) verließen den Runner
+      // ohne terminal-Phase → DB blieb 'fixing'/'coding' → UI zeigte ewig "läuft".
+      // Hier: bei Exit prüfen ob die Phase noch aktiv ist, dann auf 'failed' zwingen
+      // und completion nachholen falls noch nicht gefeuert. 'awaiting_user' ist ein
+      // gewollter Wartezustand (Resume per Interject) und bleibt unangetastet.
+      try {
+        const sess = await this.sessionRepo.getByTaskId(sessionId);
+        const phase = sess?.currentPhase;
+        const ACTIVE = ['planning', 'coding', 'fixing', 'validating', 'committing'];
+        if (phase && ACTIVE.includes(phase)) {
+          state.projectPhase = 'failed';
+          await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+          this.logger.warn({ sessionId, prevPhase: phase }, 'v810 lifecycle-guard: forced terminal phase on runner exit');
+          if (!completionFired && this.completionCallback) {
+            try {
+              await this.completionCallback(sessionId,
+                { goal: config.goal, cwd: config.cwd },
+                { milestonesReached: state.milestonesReached, totalFilesChanged: state.totalFilesChanged, projectIteration: state.projectIteration },
+                false);
+              completionFired = true;
+            } catch { /* best-effort */ }
+          }
+        }
+      } catch (err) {
+        this.logger.warn({ err, sessionId }, 'v810 lifecycle-guard failed');
+      }
       removeAbortController(sessionId);
       try { markOutputEnded(sessionId); } catch { /* best-effort */ }
       // v665a — Projekt-Lock freigeben

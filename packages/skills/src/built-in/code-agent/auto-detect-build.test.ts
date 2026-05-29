@@ -55,10 +55,10 @@ describe('autoDetectBuildCommands — Sandbox-Worktree pausiert (devSafe=true, k
     expect(r!.build).not.toContain('npm run build');
   });
 
-  it('behält typecheck + lint (nicht-destruktiv)', async () => {
+  it('behält typecheck, aber NICHT lint (v810: kein --max-warnings-0 Scope-Creep)', async () => {
     const r = await autoDetectBuildCommands(tmpDir, { devSafe: true });
     expect(r!.build).toContain('npm run typecheck');
-    expect(r!.build).toContain('npm run lint');
+    expect(r!.build).not.toContain('npm run lint');
   });
 
   it('fügt keinen curl-Health-Check hinzu wenn kein dev-server läuft', async () => {

@@ -8,6 +8,7 @@ import type { SandboxConfig, SandboxSessionMode } from '@alfred/types';
 import type { SandboxRepository, Sandbox, SandboxInsert, EnvironmentRepository, DbSeedRepository } from '@alfred/storage';
 import type { EnvCryptoService } from '@alfred/security';
 
+import { killProcessesByCwd } from '@alfred/skills';
 import { createWorktree, destroyWorktree, validateGitRepo } from './sandbox/worktree.js';
 import { detectProjectType, type ProjectDetection } from './sandbox/project-detect.js';
 import { findFreePort } from './sandbox/port-allocator.js';
@@ -507,6 +508,47 @@ export class SandboxManager {
     return { ok: true, logs };
   }
 
+  /**
+   * v810 — dev-server-stdout für einen Worktree-cwd (für den Project-Agent-Fix-Loop).
+   * Findet die Sandbox über den Worktree-Pfad und liefert die Container-Logs.
+   * Null wenn keine Sandbox/Container — der Runner behandelt das als "kein Kontext".
+   */
+  async getDevServerLog(worktreePath: string, tail = 120): Promise<string | null> {
+    try {
+      const sb = await this.deps.repo.getByWorktreePath(worktreePath);
+      if (!sb?.containerId) return null;
+      const { getContainerLogs } = await import('./sandbox/docker.js');
+      return await getContainerLogs(sb.containerId, tail);
+    } catch (err) {
+      this.deps.logger.debug({ err, worktreePath }, 'v810 getDevServerLog failed');
+      return null;
+    }
+  }
+
+  /**
+   * v810 — Snapshot der dev-server-Logs auf Platte BEVOR der Container entfernt wird.
+   * Überlebt den Discard → Post-Mortem-Debugging möglich (vorher: docker logs weg
+   * sobald der Container gelöscht ist, Crash-Ursache unwiederbringlich verloren).
+   */
+  private async snapshotDevServerLog(sb: Sandbox): Promise<void> {
+    if (!sb.containerId) return;
+    try {
+      const { getContainerLogs } = await import('./sandbox/docker.js');
+      const logs = await getContainerLogs(sb.containerId, 2000);
+      if (!logs?.trim()) return;
+      const base = this.deps.config.worktreeBasePath ?? '/var/alfred/worktrees';
+      const logDir = path.join(path.dirname(base), 'sandbox-devserver-logs');
+      mkdirSync(logDir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(logDir, `${sb.id}_${ts}.log`);
+      const { writeFileSync } = await import('node:fs');
+      writeFileSync(file, logs, { mode: 0o644 });
+      this.deps.logger.info({ sandboxId: sb.id, file }, 'v810 dev-server log snapshotted before teardown');
+    } catch (err) {
+      this.deps.logger.debug({ err, sandboxId: sb.id }, 'v810 snapshotDevServerLog failed (non-fatal)');
+    }
+  }
+
   /** v728 — Container-Stats (CPU, RAM, Status, Uptime). */
   async getStats(sandboxId: string): Promise<{
     ok: boolean;
@@ -534,14 +576,31 @@ export class SandboxManager {
   /**
    * Discard: Container + Worktree + Branch komplett entfernen, DB markiert als 'discarded'.
    */
+  /**
+   * v810 — Host-Prozesse killen die den Worktree als cwd halten, BEVOR er entfernt
+   * wird. Sonst scheitert `git worktree remove` mit "Directory not empty" (z.B.
+   * verwaiste `npx vitest`-Prozesse die der Coding-Agent gestartet hat und die den
+   * Abort überlebt haben). Container ist zu diesem Zeitpunkt bereits gestoppt.
+   */
+  private killWorktreeHolders(worktreePath: string): void {
+    try {
+      const n = killProcessesByCwd(worktreePath, 'SIGKILL');
+      if (n > 0) this.deps.logger.info({ worktreePath, killed: n }, 'v810 killed leftover processes holding worktree');
+    } catch (err) {
+      this.deps.logger.debug({ err, worktreePath }, 'v810 killWorktreeHolders failed (non-fatal)');
+    }
+  }
+
   async discard(sandboxId: string, projectCwd: string): Promise<void> {
     const sb = await this.deps.repo.getById(sandboxId);
     if (!sb) throw new Error(`Sandbox not found: ${sandboxId}`);
 
     if (sb.containerId) {
       try { await stopContainer(sb.containerId, 5); } catch { /* */ }
+      await this.snapshotDevServerLog(sb); // v810 — Logs sichern bevor Container weg
       try { await removeContainer(sb.containerId, true); } catch { /* */ }
     }
+    this.killWorktreeHolders(sb.worktreePath);
     try {
       await destroyWorktree({
         projectCwd,
@@ -563,8 +622,10 @@ export class SandboxManager {
     if (!sb) return;
     if (sb.containerId) {
       try { await stopContainer(sb.containerId, 5); } catch { /* */ }
+      await this.snapshotDevServerLog(sb); // v810 — Logs sichern bevor Container weg
       try { await removeContainer(sb.containerId, true); } catch { /* */ }
     }
+    this.killWorktreeHolders(sb.worktreePath);
     try {
       await destroyWorktree({
         projectCwd,

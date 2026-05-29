@@ -5,6 +5,35 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.810] - 2026-05-29
+
+### Fixed — Project-Agent/Sandbox Lifecycle-Härtung (v810, 8 Fixes)
+
+Vollständige Aufräumung der Prozess-, Validierungs-, Observability- und State-Probleme im Sandbox-Plan-Modus. Alle Befunde live (PG + Logs + Code) verifiziert.
+
+#### Prozess-Lifecycle
+
+- **A1 — Descendant-Kill by cwd** (`agent-executor.ts` + neu `process-tree.ts`): Beim Abort/Timeout killte `process.kill(-pid)` nur die Prozess-Gruppe von claude-code. Dessen Bash-Tool-Subprozesse (z.B. `npx vitest`) laufen in EIGENEN Sessions → überlebten als Init-Waisen (PPID 1) und hielten den Worktree offen. Neuer `killAgentTree`/`killProcessesByCwd`: killt zusätzlich alle Host-Prozesse deren cwd im Worktree liegt (cwd wird vererbt + ist immutable → überlebt reparenting). Container-Prozesse (dev-server) werden via cgroup-Check ausgenommen. Gilt jetzt für alle drei Kill-Pfade (abort/inactivity/absolute).
+- **A2 — Worktree-Destroy killt Holder zuerst** (`sandbox-manager.ts`): vor `git worktree remove` werden cwd-Holder gekillt → behebt "Directory not empty".
+- **A3 — Runner finally-Guard** (`project-agent-runner.ts`): diverse `return`-Pfade (Abort Z.475, Max-Duration) verließen den Runner ohne terminal-Phase → Session hing in DB auf `fixing`/`coding` → UI zeigte ewig "läuft". Neuer finally-Guard erzwingt `failed` falls die Phase beim Exit noch aktiv ist (`awaiting_user` bleibt unangetastet), und holt die completion-Callback nach (Doppel-Fire via Flag verhindert).
+
+#### Validierung
+
+- **B1 — lint aus dev-safe Validierung entfernt** (`project-agent-skill.ts`): `eslint --max-warnings 0` failte auf pre-existing Lint-Debt → der Agent "fixte" fremde Dateien (Scope-Creep) und satisfied exhaustive-deps teils mit instabilen Deps. Lint ist Code-Qualität, kein "läuft die App"-Signal → nicht mehr per-Phase blockend (nur im echten Projekt-Run).
+- **B2 — curl-Health-Check resilient**: `--retry 3 --retry-delay 2 --retry-all-errors` gegen transiente next-dev-Recompile-500s. Echter Crash failt weiterhin (dann mit Log-Kontext fixbar).
+
+#### Observability
+
+- **C1 — dev-server-Log-Snapshot** (`sandbox-manager.ts`): vor Container-Entfernung (discard/destroy) werden die dev-server-Logs nach `…/sandbox-devserver-logs/<id>_<ts>.log` gesichert → Post-Mortem-Crash-Debugging möglich (vorher: mit dem Container weg).
+- **C2 — Crash-Log in Fix-Prompt** (`project-agent-runner.ts` + `sandbox-manager.getDevServerLog`): wenn der curl-Check fehlschlägt (App antwortet nicht), holt der Runner den dev-server-stdout (Container lebt noch) und hängt ihn an den Fix-Prompt → der Agent fixt den echten Runtime-Crash statt blind Lint-Debt.
+
+#### State-Konsistenz
+
+- **D1 — `agent_sessions.last_health_ok` INTEGER→BIGINT** (PG-Migration v100): `Date.now()`-ms (~1.78e12) überlief die int32-Spalte → jeder Health-Check warf `22003` → Spalte blieb NULL, Stale-Detection broken. SQLite unbetroffen (dynamic typing).
+
+#### Tests
+`auto-detect-build.test.ts` aktualisiert (devSafe ohne lint). Skills-Suite grün (195).
+
 ## [0.19.0-multi-ha.809] - 2026-05-29
 
 ### Fixed — Sandbox-Plan-Mode: dev-safe Build-Validierung (v809)

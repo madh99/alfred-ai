@@ -1479,7 +1479,7 @@ export const PG_MIGRATIONS: PgMigration[] = [
           total_tokens_output INTEGER NOT NULL DEFAULT 0,
           total_cached_tokens INTEGER NOT NULL DEFAULT 0,
           total_cost_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
-          last_health_ok INTEGER,
+          last_health_ok BIGINT,
           status TEXT NOT NULL DEFAULT 'active',
           started_at TEXT NOT NULL,
           last_used_at TEXT NOT NULL,
@@ -1521,6 +1521,22 @@ export const PG_MIGRATIONS: PgMigration[] = [
         )
       `, []);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_uid_audit_table ON user_id_format_audit(table_name, format_class)`, []);
+    },
+  },
+  {
+    version: 100,
+    description: 'v810 — agent_sessions.last_health_ok INTEGER→BIGINT (Date.now()-ms überläuft int32).',
+    async up(db) {
+      // Bug: last_health_ok speichert Date.now() (ms, ~1.78e12) in eine int32-Spalte
+      // (max 2.147e9) → jeder Health-Check-Update warf "value out of range for type
+      // integer" (code 22003), die Spalte blieb NULL, Stale-Session-Detection broken.
+      // SQLite ist nicht betroffen (dynamic typing, 64-bit INTEGER).
+      try {
+        await db.execute(`ALTER TABLE agent_sessions ALTER COLUMN last_health_ok TYPE BIGINT`, []);
+      } catch {
+        // Tabelle/Spalte existiert evtl. noch nicht (frische DB legt sie bereits als
+        // korrekten Typ an) — non-fatal.
+      }
     },
   },
 ];

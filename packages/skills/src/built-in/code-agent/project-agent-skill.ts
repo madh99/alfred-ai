@@ -204,10 +204,16 @@ export async function autoDetectBuildCommands(
       if (scripts.build && !devSafe) build.push('npm run build');
       if (scripts.typecheck) build.push('npm run typecheck');
       else if (scripts['type-check']) build.push('npm run type-check');
-      if (scripts.lint) build.push('npm run lint');
+      // v810 — lint NUR im Nicht-devSafe-Pfad. `eslint --max-warnings 0` failt auf
+      // pre-existing Lint-Debt → der Agent "fixt" fremde Dateien (Scope-Creep) und
+      // satisfied exhaustive-deps teils mit instabilen Deps → Render-Loops/Crashes.
+      // Lint ist Code-Qualität, kein "läuft die App"-Signal → nicht per-Phase blockend.
+      if (scripts.lint && !devSafe) build.push('npm run lint');
       if (sb) {
-        // curl --fail-with-body retourniert exit-code != 0 bei 4xx/5xx, max 20s timeout
-        build.push(`curl -fsS --max-time 20 http://127.0.0.1:${sb.hostPort}/ -o /dev/null`);
+        // v810 — resilient gegen transiente next-dev-Recompile-500s: --retry mit
+        // --retry-all-errors. Ein ECHTER App-Crash failt weiterhin (alle Retries 5xx)
+        // → wird dann mit dev-server-Log-Kontext im Fix-Prompt fixbar (v810-C2).
+        build.push(`curl -fsS --retry 3 --retry-delay 2 --retry-all-errors --max-time 20 http://127.0.0.1:${sb.hostPort}/ -o /dev/null`);
       }
       // Test commands
       if (scripts.test && !/^echo\s/.test(scripts.test)) test.push('npm test');
