@@ -103,8 +103,18 @@ export function ProjectsPage() {
   const [decisionFormOpen, setDecisionFormOpen] = useState(false);
   // v742 — Re-Match Open-Items mit OpenItemMatcher
   const [reMatching, setReMatching] = useState(false);
-  // v818 P3 — Inline-Notice statt alert() für Re-Match-Resultate
-  const [matcherNotice, setMatcherNotice] = useState<{ matched: number; resolved: number; ok: boolean; reason?: string } | null>(null);
+  // v818 P3 / v820 — Inline-Notice statt alert() für Re-Match-Resultate
+  // considered = offene Items im Projekt, candidates = post-Prefilter ans LLM,
+  // matched = LLM hat strukturierte Ergebnisse zurück, resolved = davon als done markiert.
+  const [matcherNotice, setMatcherNotice] = useState<{
+    matched: number;
+    resolved: number;
+    considered?: number;
+    candidates?: number;
+    filesUsed?: number;
+    ok: boolean;
+    reason?: string;
+  } | null>(null);
   // v797 — Manueller Health-Check-Trigger
   const [healthChecking, setHealthChecking] = useState(false);
   // v641 — Multi-Select + Bulk-Work + Audit
@@ -393,13 +403,20 @@ export function ProjectsPage() {
     try {
       const r = await client.reMatchProjectOpenItems(detail.project.id);
       if (r.ok) {
-        setMatcherNotice({ matched: r.matched ?? 0, resolved: r.resolved ?? 0, ok: true });
+        setMatcherNotice({
+          matched: r.matched ?? 0,
+          resolved: r.resolved ?? 0,
+          considered: r.considered,
+          candidates: r.candidates,
+          filesUsed: r.filesUsed,
+          ok: true,
+        });
         await loadDetail(detail.project.id);
       } else {
         setMatcherNotice({ matched: 0, resolved: 0, ok: false, reason: r.reason ?? 'unknown' });
       }
-      // Notice nach 8s automatisch ausblenden
-      setTimeout(() => setMatcherNotice(null), 8000);
+      // Notice nach 12s automatisch ausblenden (v820: längere Texte → mehr Lesezeit)
+      setTimeout(() => setMatcherNotice(null), 12000);
     } finally { setReMatching(false); }
   }
 
@@ -729,9 +746,27 @@ export function ProjectsPage() {
                           : 'bg-red-500/10 text-red-300 border-red-500/30'
                       }`}>
                         {matcherNotice.ok
-                          ? matcherNotice.resolved > 0
-                            ? `✓ ${matcherNotice.resolved} auto-resolved (${matcherNotice.matched} analysiert)`
-                            : `${matcherNotice.matched} analysiert, 0 gematcht`
+                          ? (() => {
+                              // v820 — Differenziertes Feedback statt nur matched/resolved.
+                              const considered = matcherNotice.considered ?? 0;
+                              const candidates = matcherNotice.candidates ?? 0;
+                              const matched = matcherNotice.matched;
+                              const resolved = matcherNotice.resolved;
+                              const filesUsed = matcherNotice.filesUsed ?? 0;
+                              if (resolved > 0) {
+                                return `✓ ${resolved} auto-resolved von ${matched} LLM-Treffern (Kontext: ${considered} offen, ${candidates} Kandidaten, ${filesUsed} Dateien)`;
+                              }
+                              if (matched > 0) {
+                                return `${matched} LLM-Treffer, 0 als done markiert (low confidence) · ${considered} offene Punkte geprüft, ${filesUsed} Dateien`;
+                              }
+                              if (considered === 0) {
+                                return 'Keine offenen Punkte zum Prüfen vorhanden';
+                              }
+                              if (filesUsed === 0) {
+                                return `${considered} offen geprüft · 0 Dateien aus letztem Lauf rekonstruierbar → LLM ohne Diff-Kontext → keine Treffer`;
+                              }
+                              return `${considered} offen, ${candidates} Kandidaten, ${filesUsed} Dateien → LLM hat 0 Übereinstimmungen erkannt`;
+                            })()
                           : `✗ ${matcherNotice.reason}`}
                       </span>
                     )}

@@ -5,6 +5,32 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.820] - 2026-05-30
+
+### Fixed — Re-Match-Button lieferte "0 Items analysiert" trotz vorhandener Offener Punkte (v820)
+
+User-Problem: Manueller Re-Match-Trigger zeigte "Re-Match: 0 Items
+analysiert, 0 als erledigt markiert" obwohl 195 offene Punkte sichtbar
+waren. Ursache: zwei Probleme.
+
+**Backend-Fix (`alfred.ts` reMatchOpenItems-Callback)**
+- Bisher wurde `changedFiles: []` an den Matcher übergeben → der LLM hatte
+  nur goal+milestones+open_items als Kontext und konnte keine konkreten
+  Code-Änderungen mit Items verknüpfen → 0 strukturierte Ergebnisse.
+- Jetzt: Tatsächliche Dateinamen aus `project_agent_commits` der
+  Session via `git show --name-only` rekonstruieren (cap auf 20 Commits
+  und 200 Files). Der LLM bekommt jetzt echten Diff-Kontext.
+
+**Reporting-Fix (`open-item-matcher.ts` + ProjectsPage)**
+- `matchAfterSession` liefert zusätzlich `considered` (alle offenen Items)
+  und `candidates` (nach Embedding-Prefilter ans LLM).
+- API forwarded zusätzlich `filesUsed` (Anzahl rekonstruierter Dateien).
+- Frontend zeigt differenzierte Texte je nach Outcome:
+  - Wenn `filesUsed=0` → "0 Dateien rekonstruierbar → kein Diff-Kontext"
+  - Wenn `matched=0` aber `considered>0` → "X offen, Y Kandidaten, Z Dateien"
+  - Wenn `resolved>0` → "X auto-resolved von Y LLM-Treffern (Kontext: …)"
+- Statt "0 Items analysiert" sieht der User jetzt was wirklich passiert ist.
+
 ## [0.19.0-multi-ha.819] - 2026-05-30
 
 ### Added — Merge-Fortschrittsanzeige + Heartbeat (v819)

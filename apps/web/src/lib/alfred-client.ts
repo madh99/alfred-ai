@@ -759,8 +759,8 @@ export class AlfredClient {
     return data;
   }
 
-  // v742 — Re-Match Open-Items
-  async reMatchProjectOpenItems(projectId: string): Promise<{ ok: boolean; matched?: number; resolved?: number; reason?: string }> {
+  // v742/v820 — Re-Match Open-Items (considered/candidates/filesUsed kommen aus dem Matcher für sinnvollere UI-Texte)
+  async reMatchProjectOpenItems(projectId: string): Promise<{ ok: boolean; matched?: number; resolved?: number; considered?: number; candidates?: number; filesUsed?: number; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/re-match-open-items`, {
       method: 'POST', headers: this.authHeaders,
     });

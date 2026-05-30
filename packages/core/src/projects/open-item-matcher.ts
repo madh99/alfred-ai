@@ -72,11 +72,14 @@ export class OpenItemMatcher {
     milestones: string[];
     changedFiles?: string[];
     totalFilesChanged: number;
-  }): Promise<{ matched: number; resolved: number }> {
-    if (opts.totalFilesChanged === 0) return { matched: 0, resolved: 0 };
+  }): Promise<{ matched: number; resolved: number; considered: number; candidates: number }> {
+    // v820 — considered/candidates auch im Early-Exit-Fall zurückliefern damit
+    // das Frontend "X offene Punkte gefunden, 0 verarbeitet" anzeigen kann
+    // statt nur "0 analysiert".
+    if (opts.totalFilesChanged === 0) return { matched: 0, resolved: 0, considered: 0, candidates: 0 };
 
     const openItems = await this.projects.listOpenItemsForProject(opts.projectId);
-    if (openItems.length === 0) return { matched: 0, resolved: 0 };
+    if (openItems.length === 0) return { matched: 0, resolved: 0, considered: 0, candidates: 0 };
 
     // v813c — Embedding-Vorfilter wenn verfügbar UND Item-Anzahl groß genug.
     // Findet die relevantesten N Items per Cosine-Similarity → nur die gehen ans LLM.
@@ -142,7 +145,7 @@ export class OpenItemMatcher {
       // Praxis unsichtbar. Jetzt WARN damit Silent-Failures auffallen.
       llmCallFailed = true;
       this.logger.warn({ err, projectId: opts.projectId, sessionId: opts.sessionId }, 'OpenItemMatcher: LLM-Call/Parse fehlgeschlagen');
-      return { matched: 0, resolved: 0 };
+      return { matched: 0, resolved: 0, considered: openItems.length, candidates: candidateItems.length };
     }
 
     const knownIds = new Set(openItems.map(i => i.id));
@@ -174,7 +177,7 @@ export class OpenItemMatcher {
       considered: openItems.length, candidates: candidateItems.length, prefilterUsed,
       llmResults: results.length, resolved,
     }, 'OpenItemMatcher complete');
-    return { matched: results.length, resolved };
+    return { matched: results.length, resolved, considered: openItems.length, candidates: candidateItems.length };
   }
 
   /**

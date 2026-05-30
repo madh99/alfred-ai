@@ -8310,6 +8310,42 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
               }
               let milestones: string[] = [];
               try { const parsed = JSON.parse(row.milestones); if (Array.isArray(parsed)) milestones = parsed; } catch { /* */ }
+
+              // v820 — Echte Changed-Files aus git ziehen damit der LLM-Matcher
+              // Diff-Kontext bekommt. Vorher: changedFiles=[] → LLM hatte nur
+              // goal+milestones+open_items → meist 0 strukturierte Ergebnisse →
+              // "0 Items analysiert" obwohl 100+ offene Punkte da waren.
+              let changedFiles: string[] = [];
+              try {
+                const commits = await this.database.getAdapter().query(
+                  `SELECT sha FROM project_agent_commits WHERE session_id = ? ORDER BY committed_at ASC`,
+                  [row.task_id],
+                ).catch(() => []) as Array<{ sha: string }>;
+                if (commits.length > 0) {
+                  const { execFile } = await import('node:child_process');
+                  const { promisify } = await import('node:util');
+                  const exec = promisify(execFile);
+                  const fileSet = new Set<string>();
+                  const cwd = project.cwd;
+                  for (const c of commits.slice(0, 20)) { // cap auf 20 commits
+                    try {
+                      const { stdout } = await exec(
+                        'git', ['-C', cwd, 'show', '--name-only', '--pretty=format:', c.sha],
+                        { timeout: 8000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' },
+                      );
+                      for (const line of String(stdout).split('\n')) {
+                        const f = line.trim();
+                        if (f) fileSet.add(f);
+                      }
+                    } catch { /* einzelner commit unreadable → skip */ }
+                    if (fileSet.size > 200) break; // cap auf 200 files
+                  }
+                  changedFiles = Array.from(fileSet);
+                }
+              } catch (err) {
+                this.logger.debug({ err, sessionId: row.task_id }, 'v820 reMatch: changedFiles-extract aus git fehlgeschlagen (non-fatal, weiter ohne Files)');
+              }
+
               const { OpenItemMatcher } = await import('./projects/open-item-matcher.js');
               const embedDeps = this.embeddingServiceRef && this.embeddingRepoRef
                 ? { service: this.embeddingServiceRef, repo: this.embeddingRepoRef }
@@ -8320,10 +8356,17 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
                 sessionId: row.task_id,
                 goal: row.goal,
                 milestones,
-                changedFiles: [],
+                changedFiles,
                 totalFilesChanged: row.total_files_changed,
               });
-              return { ok: true, matched: result.matched, resolved: result.resolved };
+              return {
+                ok: true,
+                matched: result.matched,
+                resolved: result.resolved,
+                considered: result.considered,
+                candidates: result.candidates,
+                filesUsed: changedFiles.length,
+              };
             } catch (err) {
               return { ok: false, reason: (err as Error).message };
             }

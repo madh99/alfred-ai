@@ -715,7 +715,7 @@ export class HttpAdapter extends MessagingAdapter {
     listProjectCommits?: (projectId: string, limit: number) => Promise<any[]>;
     listSessionCommits?: (sessionId: string) => Promise<any[]>;
     // v742 — Re-Match Open-Items gegen letzten Session-Lauf
-    reMatchOpenItems?: (projectId: string) => Promise<{ ok: boolean; matched?: number; resolved?: number; reason?: string }>;
+    reMatchOpenItems?: (projectId: string) => Promise<{ ok: boolean; matched?: number; resolved?: number; considered?: number; candidates?: number; filesUsed?: number; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
