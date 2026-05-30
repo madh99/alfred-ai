@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.821] - 2026-05-30
+
+### Fixed — Agent-Bubble während finalizing/committing zeigte falschen Text (v821)
+
+User-Problem: Während ein Code-Agent-Task in der Phase 'finalizing' (oder
+Project-Agent in 'committing') war, zeigte die Chat-Bubble weiterhin
+"⚡ Code-Agent läuft (claude-code) …" obwohl der Agent seine Hauptarbeit
+schon abgeschlossen hatte. User konnte nicht erkennen ob noch was
+passiert oder ob's hängt — Auto-Commit / Session-Write können 5-30s
+dauern.
+
+**Frontend-Fix (`interactive/page.tsx`)**
+- Bubble-Render überschreibt den Text wenn `taskPhase in ('finalizing', 'committing')`:
+  - "✓ Agent fertig — Post-Processing (auto-commit, session-write, OpenItemMatcher) …"
+  - bzw. "✓ Agent fertig — committe & finalisiere …"
+- Sekunden-Counter seit letztem AgentEvent (Heartbeat-Quelle)
+- Amber-Warnung bei >90s ohne Update
+
+Sobald das Backend die Bubble in-place auf "✓ Fertig" mit Summary
+updatet, fällt der Override automatisch weg (Pattern matcht nicht mehr).
+
 ## [0.19.0-multi-ha.820] - 2026-05-30
 
 ### Fixed — Re-Match-Button lieferte "0 Items analysiert" trotz vorhandener Offener Punkte (v820)

@@ -724,7 +724,34 @@ export default function InteractivePage() {
                       <span className="text-gray-600">{new Date(m.createdAt).toLocaleTimeString('de-AT')}</span>
                     </div>
                   </div>
-                  <div className="whitespace-pre-wrap text-gray-200">{m.text}</div>
+                  {(() => {
+                    // v821 — Während finalizing/committing zeigt die "läuft"-Bubble den
+                    // Initial-Text bis das Backend in-place auf "✓ Fertig" updatet (nach
+                    // auto-commit + finishSession). Das wirkt als hätte er nichts gemacht.
+                    // Wir overrideden den Text mit Status + Elapsed-Timer damit User sieht
+                    // dass der Agent fertig ist und nur noch Post-Processing läuft.
+                    const isFinalizingOrCommitting = m.taskPhase === 'finalizing' || m.taskPhase === 'committing';
+                    const initialPattern = /^(⚡|🔥)\s*(Code-Agent|Project-Agent).*l[äa]uft/;
+                    if (isFinalizingOrCommitting && initialPattern.test(m.text)) {
+                      const ref = events.length > 0
+                        ? new Date(events[events.length - 1].ts).getTime()
+                        : new Date(m.createdAt).getTime();
+                      const elapsed = Math.max(0, Math.floor((nowTick - ref) / 1000));
+                      const isStuck = elapsed > 90;
+                      const label = m.taskPhase === 'committing'
+                        ? 'Agent fertig — committe & finalisiere'
+                        : 'Agent fertig — Post-Processing (auto-commit, session-write, OpenItemMatcher)';
+                      return (
+                        <div className="text-gray-200 text-xs">
+                          <div>✓ {label} …</div>
+                          <div className={`text-[10px] mt-1 ${isStuck ? 'text-amber-400' : 'text-gray-500'}`}>
+                            {isStuck && '⚠ '}seit {elapsed}s{isStuck ? ' — möglicherweise blockiert' : ''}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return <div className="whitespace-pre-wrap text-gray-200">{m.text}</div>;
+                  })()}
                   {/* v783 — Strukturierte Cards wenn AgentEvents vorhanden, sonst Plain-Text-Fallback */}
                   {(isRunning || hasStructuredEvents) && hasStructuredEvents && (
                     <details className="mt-2" open>
