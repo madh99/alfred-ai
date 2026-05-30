@@ -62,6 +62,14 @@ security:
   rulesPath: ./config/rules
   defaultEffect: deny
 
+# v838 — Host-Subprocess Node-Heap (build-probe + Plan-Mode validateBuild +
+# Test-Harness). Verhindert tsc/vitest exit 134 (V8 SIGABRT) bei großen
+# Monorepos. Default 4096 MB (genug für die meisten Repos).
+#
+# projects:
+#   hostNodeMaxOldSpaceSizeMb: 4096   # NODE_OPTIONS=--max-old-space-size=4096
+#                                      # NULL/weglassen = Node-Default ~1.4GB
+
 # v837 — Sandbox-Container-Resources. Defaults sind großzügig damit tsc/vitest
 # auf großen Monorepos nicht OOM-crashen. Bei knappem Host-RAM reduzieren +
 # maxConcurrentSandboxes setzen.

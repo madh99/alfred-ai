@@ -12,6 +12,8 @@ export interface HealthMonitorConfig {
   intervalHours?: number;
   /** Per-probe timeout. Build-probe gets its own larger default. */
   probeTimeoutMs?: number;
+  /** v838 — NODE_OPTIONS=--max-old-space-size=<N> für tsc-spawn im build-probe. Default 4096. */
+  nodeMaxOldSpaceSizeMb?: number;
 }
 
 /**
@@ -132,7 +134,12 @@ export class HealthMonitor {
     if (mode === 'off') return [];
 
     const probes: Array<() => Promise<ProbeResult>> = [];
-    const ctx = { cwd: project.cwd, repoUrl: project.repoUrl, timeoutMs: this.config.probeTimeoutMs };
+    const ctx = {
+      cwd: project.cwd,
+      repoUrl: project.repoUrl,
+      timeoutMs: this.config.probeTimeoutMs,
+      nodeMaxOldSpaceSizeMb: this.config.nodeMaxOldSpaceSizeMb, // v838
+    };
 
     probes.push(() => gitProbe(ctx));
     if (mode === 'full') {

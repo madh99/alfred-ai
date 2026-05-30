@@ -65,8 +65,17 @@ export async function buildProbe(ctx: ProbeContext): Promise<ProbeResult> {
   }
 
   try {
+    // v838 — NODE_OPTIONS=--max-old-space-size=<N> setzen damit tsc auf großen
+    // Monorepos nicht mit V8 SIGABRT (exit 134) abbricht. Default 4096 MB.
+    // Vererbt zusätzlich existierendes NODE_OPTIONS aus parent-env.
+    const nodeHeapMb = ctx.nodeMaxOldSpaceSizeMb ?? 4096;
+    const parentNodeOpts = process.env.NODE_OPTIONS ?? '';
+    const nodeOpts = /max-old-space-size/.test(parentNodeOpts)
+      ? parentNodeOpts // parent hat schon ein Override → nicht doppelt setzen
+      : `${parentNodeOpts} --max-old-space-size=${nodeHeapMb}`.trim();
+    const childEnv = { ...process.env, NODE_OPTIONS: nodeOpts };
     const { stdout, stderr } = await execFileAsync(detected.cmd, detected.args, {
-      cwd: ctx.cwd, timeout: timeoutMs, maxBuffer: 1024 * 1024,
+      cwd: ctx.cwd, timeout: timeoutMs, maxBuffer: 1024 * 1024, env: childEnv,
     });
     const tail = (stdout || stderr).trim().split('\n').slice(-3).join(' | ').slice(0, 300);
     return {

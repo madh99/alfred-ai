@@ -602,6 +602,13 @@ export const ProjectsConfigSchema = z.object({
   defaultShareId: z.string().optional(),
   /** v665a — rsync-Excludes beim Move (Default-Liste). Pro-Move überschreibbar. */
   rsyncExcludes: z.array(z.string()).optional(),
+  /**
+   * v838 — Host-Node-V8-Heap für Subprocesses die Alfred spawnt (build-probe,
+   * Plan-Mode validateBuild, canonical-tasks). Default 4096 (4 GB).
+   * Verhindert V8 SIGABRT bei tsc/vitest auf großen Monorepos.
+   * NULL = nicht setzen (default Node-Behavior ~1.4 GB).
+   */
+  hostNodeMaxOldSpaceSizeMb: z.coerce.number().int().positive().optional(),
 });
 
 export const CmdbConfigSchema = z.object({

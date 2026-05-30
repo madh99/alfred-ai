@@ -49,11 +49,17 @@ async function runCommand(
     let stderr = '';
     let killed = false;
 
+    // v838 — NODE_OPTIONS für tsc/vitest-spawn auf Host. Verhindert V8 SIGABRT bei
+    // großen Monorepos. Vererbt existierendes parent-NODE_OPTIONS wenn schon gesetzt.
+    const parentNodeOpts = process.env.NODE_OPTIONS ?? '';
+    const nodeOpts = /max-old-space-size/.test(parentNodeOpts)
+      ? parentNodeOpts
+      : `${parentNodeOpts} --max-old-space-size=4096`.trim();
     const child = spawn(finalCmd, finalArgs, {
       cwd,
       shell: !runAsUser, // Don't use shell when wrapping with sudo (already using bash -c)
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, CI: 'true', FORCE_COLOR: '0' },
+      env: { ...process.env, CI: 'true', FORCE_COLOR: '0', NODE_OPTIONS: nodeOpts },
     });
 
     const timer = setTimeout(() => {

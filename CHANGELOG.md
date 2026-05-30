@@ -5,6 +5,58 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.838] - 2026-05-30
+
+### Fixed — Host-Subprocess Node-Heap OOM (v838)
+
+User-Problem: Build-Health-Check + Plan-Mode-Agent crashen mit `exit 134`
+(V8 SIGABRT, `Runtime_AllocateInYoungGeneration`). Heap-OOM beim
+`npx -y tsc --noEmit` auf großem Monorepo wie alpbyte-games.
+
+**Root-Cause (echte Diagnose, v837 hat falsches Problem gefixt):**
+
+`exit 134` kam NICHT aus dem Sandbox-Container (v837), sondern von
+Host-Subprocesses die Alfred selbst spawnt:
+
+| File | Was | Default-Heap |
+|---|---|---|
+| `projects/probes/build-probe.ts` | Project-Health-Build-Check | Node-Default ~1.4GB |
+| `code-agent/build-validator.ts` | Plan-Mode validateBuild (classical/Host-Mode) | ~1.4GB |
+| `agent-conventions/agent-conventions-skill.ts` | Test-Harness canonical-tasks | ~1.4GB |
+
+`tsc --noEmit` auf großem Monorepo braucht 2-4GB Heap → V8 gibt vor
+Container-OOM-Killer auf (würde nicht greifen, weil's der Host-Prozess
+ist und der Host hat mehr RAM).
+
+**Fix — 3 Host-spawn-Stellen + Config-Setting:**
+
+**Schicht 1: Config + Type**
+- `ProjectsConfig.hostNodeMaxOldSpaceSizeMb` neu (Default 4096 / 4GB)
+- Zod-Schema + Type erweitert
+- `null` = kein Override (Node-Default)
+
+**Schicht 2: build-probe**
+- `ProbeContext.nodeMaxOldSpaceSizeMb` neu
+- `execFileAsync(... env: { NODE_OPTIONS: '--max-old-space-size=4096' })`
+- Vererbt existing parent-NODE_OPTIONS wenn schon gesetzt (kein Doppel)
+- `HealthMonitor` wired die Config durch
+
+**Schicht 3: build-validator**
+- `spawn(... env: { NODE_OPTIONS })` in runCommand
+- Wirkt auf Plan-Mode classical (Host-Mode, ohne Sandbox)
+
+**Schicht 4: Test-Harness**
+- `exec(... env: childEnv)` mit NODE_OPTIONS
+
+**Aktivierung:** Default 4096 MB greift automatisch — keine Aktion nötig.
+Override via `config.projects.hostNodeMaxOldSpaceSizeMb: 6144` möglich.
+
+**Antwort auf "war v837 falsch?":** v837 hat das Container-Pfad-Problem
+(Sandbox/Plan-Mode-mit-Sandbox) korrekt gefixt. Aber der gemeldete Fehler
+kam vom Host-Pfad (Health-Check + Plan-Mode-classical). v838 ergänzt die
+Host-Stellen. Beide Fixes bleiben gültig — sie betreffen verschiedene
+Code-Pfade.
+
 ## [0.19.0-multi-ha.837] - 2026-05-30
 
 ### Fixed — Sandbox-Container OOM-Crashes + Merge-Gate Environment-Asymmetrie (v837)

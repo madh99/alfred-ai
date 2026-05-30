@@ -1274,13 +1274,19 @@ export class AgentConventionsSkill extends Skill {
     const { execFile } = await import('node:child_process');
     const { promisify } = await import('node:util');
     const exec = promisify(execFile);
+    // v838 — NODE_OPTIONS für tsc/vitest-spawn (Test-Harness läuft tsc --noEmit etc.)
+    const parentNodeOpts = process.env.NODE_OPTIONS ?? '';
+    const nodeOpts = /max-old-space-size/.test(parentNodeOpts)
+      ? parentNodeOpts
+      : `${parentNodeOpts} --max-old-space-size=4096`.trim();
+    const childEnv = { ...process.env, NODE_OPTIONS: nodeOpts };
     const runCmd = async (cmd: string, timeoutMs: number): Promise<{ ok: boolean; exitCode: number; output: string }> => {
       // Spawn via shell für Pipe/Glob-Support
       const isWin = process.platform === 'win32';
       const shellCmd = isWin ? 'cmd' : 'sh';
       const shellArgs = isWin ? ['/c', cmd] : ['-c', cmd];
       try {
-        const { stdout, stderr } = await exec(shellCmd, shellArgs, { cwd: proj.cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+        const { stdout, stderr } = await exec(shellCmd, shellArgs, { cwd: proj.cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: childEnv });
         return { ok: true, exitCode: 0, output: `${stdout}\n${stderr}`.slice(-3000) };
       } catch (err) {
         const e = err as { code?: number; stdout?: string; stderr?: string };

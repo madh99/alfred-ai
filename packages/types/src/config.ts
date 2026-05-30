@@ -925,6 +925,13 @@ export interface ProjectsConfig {
   defaultShareId?: string;
   /** v665a — rsync-Excludes-Default beim Move (Default: node_modules, dist, build, etc.) */
   rsyncExcludes?: string[];
+  /**
+   * v838 — Host-Node-V8-Heap-Limit für Subprocesses die Alfred spawnt
+   * (build-probe, Plan-Mode validateBuild, canonical-tasks Test-Harness).
+   * Default 4096 (= --max-old-space-size=4096). Verhindert V8 SIGABRT
+   * (exit 134) bei tsc/vitest auf großen Monorepos. NULL = kein Override.
+   */
+  hostNodeMaxOldSpaceSizeMb?: number;
 }
 
 export interface CmdbConfig {

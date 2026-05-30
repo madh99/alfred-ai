@@ -1326,6 +1326,7 @@ export class Alfred {
           {
             intervalHours: this.config.projects?.healthCheckIntervalHours,
             probeTimeoutMs: this.config.projects?.healthProbeTimeoutMs,
+            nodeMaxOldSpaceSizeMb: this.config.projects?.hostNodeMaxOldSpaceSizeMb ?? 4096, // v838
           },
           // v602 P1 — cluster-claim resolver: at cycle-fire time, ask the (late-init)
           // adapterClaimManager if this node holds the claim. Single-node SQLite gets

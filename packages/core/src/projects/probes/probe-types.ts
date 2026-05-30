@@ -11,4 +11,6 @@ export interface ProbeContext {
   cwd?: string;
   repoUrl?: string;
   timeoutMs?: number;
+  /** v838 — NODE_OPTIONS Override für gespawnte Subprocesses (verhindert tsc-OOM auf großen Monorepos). */
+  nodeMaxOldSpaceSizeMb?: number;
 }
