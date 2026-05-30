@@ -50,6 +50,8 @@ export default function InteractivePage() {
   const [liveOutput, setLiveOutput] = useState<Map<string, Array<{ ts: number; source: string; text: string }>>>(new Map());
   // v782 — Strukturierte AgentEvents parallel (für Card-Rendering in v783)
   const [liveEvents, setLiveEvents] = useState<Map<string, Array<{ ts: number; type: string; data: unknown }>>>(new Map());
+  // v817 — Live-Tick alle 1s wenn Sandbox running, für Laufzeit-Counter im Header
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const esRef = useRef<EventSource | null>(null);
   const currentTaskRef = useRef<string | null>(null);
   const chatBoxRef = useRef<HTMLDivElement | null>(null);
@@ -91,6 +93,14 @@ export default function InteractivePage() {
       return next;
     });
   }
+  // v817 — Live-Tick (1s) nur wenn Sandbox aktuell running, damit der Laufzeit-Counter
+  // im Header tickt. Bei paused/discarded kein Re-Render — Wert ist statisch.
+  useEffect(() => {
+    if (sandbox?.status !== 'running') return;
+    const id = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [sandbox?.status]);
+
   // v778 — wenn neuer 'done' Agent-Message mit commit-Reference: iframe-Reload triggern
   const lastAutoReloadedTaskRef = useRef<string | null>(null);
   useEffect(() => {
@@ -542,7 +552,8 @@ export default function InteractivePage() {
 
   return (
     <div className="flex flex-col h-screen bg-[#0a0a0a] text-gray-200">
-      <header className="flex items-center justify-between border-b border-[#1a1a1a] px-4 py-2 text-xs">
+      <header className="flex flex-col gap-1 border-b border-[#1a1a1a] px-4 py-2 text-xs">
+        <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <span className="font-semibold text-gray-200">💬 Interactive · {sandbox.branchName}</span>
           <span className={`px-2 py-0.5 rounded border ${STATUS_COLOR[sandbox.status] ?? 'text-gray-400 border-gray-500/40'}`}>{sandbox.status}</span>
@@ -570,6 +581,47 @@ export default function InteractivePage() {
           )}
           <button onClick={() => window.close()} className="px-2 py-1 border border-gray-500/40 text-gray-400 hover:bg-gray-500/15 rounded text-[11px]">Schließen</button>
         </div>
+        </div>
+        {/* v817 — Lifecycle-Sub-Row: gestartet / pausiert / resumed / Laufzeit (live wenn running). */}
+        {(() => {
+          const fmtTs = (iso: string | null | undefined): string => {
+            if (!iso) return '—';
+            try {
+              const d = new Date(iso);
+              const pad = (n: number) => String(n).padStart(2, '0');
+              return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}. ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            } catch { return '—'; }
+          };
+          const fmtDuration = (totalSeconds: number): string => {
+            const s = Math.max(0, Math.floor(totalSeconds));
+            const h = Math.floor(s / 3600);
+            const m = Math.floor((s % 3600) / 60);
+            const sec = s % 60;
+            if (h > 0) return `${h}h ${m}m ${sec}s`;
+            if (m > 0) return `${m}m ${sec}s`;
+            return `${sec}s`;
+          };
+          const isRunning = sandbox.status === 'running';
+          const liveSinceResume = (isRunning && sandbox.lastResumedAt)
+            ? Math.floor((nowTick - new Date(sandbox.lastResumedAt).getTime()) / 1000)
+            : 0;
+          const totalSeconds = (sandbox.totalRunSeconds ?? 0) + liveSinceResume;
+          const hadPauseCycle = !!sandbox.lastPausedAt;
+          return (
+            <div className="flex items-center gap-3 text-[10px] text-gray-500 flex-wrap">
+              <span>🕐 gestartet: <span className="text-gray-400">{fmtTs(sandbox.createdAt)}</span></span>
+              {hadPauseCycle && (
+                <span>⏸ letztes paused: <span className="text-gray-400">{fmtTs(sandbox.lastPausedAt)}</span></span>
+              )}
+              {hadPauseCycle && isRunning && (
+                <span>▶ resumed: <span className="text-gray-400">{fmtTs(sandbox.lastResumedAt)}</span></span>
+              )}
+              <span>
+                ⏱ Laufzeit{isRunning ? ' (live)' : ''}: <span className={isRunning ? 'text-emerald-400' : 'text-gray-400'}>{fmtDuration(totalSeconds)}</span>
+              </span>
+            </div>
+          );
+        })()}
       </header>
 
       {error && (

@@ -5,6 +5,46 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.817] - 2026-05-30
+
+### Added — Sandbox-Lifecycle-Anzeige im Interactive-Header (v817)
+
+Im Header der Interactive-Sandbox-Page (`/interactive`) wird jetzt die Lifecycle-Information eingeblendet: **gestartet** + **letztes paused/resumed** (falls Pause-Zyklus stattfand) + **Laufzeit** mit Live-Counter wenn die Sandbox `running` ist.
+
+#### Datenmodell — Single-Source-of-Truth ohne Event-Log
+
+Neue Spalten in `project_agent_sandboxes` (Migration SQLite v98 / PG v102):
+- `total_run_seconds INTEGER DEFAULT 0` — kumulierte Sekunden über alle Pause/Resume-Zyklen
+- `last_resumed_at TEXT` — Zeitstempel des letzten Übergangs nach `running`
+- `last_paused_at TEXT` — Zeitstempel des letzten Übergangs nach `paused`
+
+Backfill für existierende `running`-Sandboxes: `last_resumed_at = created_at`.
+
+Live-Laufzeit-Formel: `total_run_seconds + (running ? (now - last_resumed_at) : 0)`. Damit braucht es **keine Event-Log-Tabelle**.
+
+#### Lifecycle-Methoden im Repo
+
+- `markResumed(id)`: setzt `status='running'`, `status_reason=NULL`, `last_resumed_at=now`, `last_active_at=now`
+- `markPaused(id, reason?)`: holt `last_resumed_at`, addiert die Differenz in Sekunden zu `total_run_seconds`, setzt `last_paused_at=now`, `status='paused'`
+
+#### sandbox-manager Wiring
+
+- `pause()` → `markPaused('user-requested')`
+- `resume()` → `markResumed()`
+- `restart()` → `markResumed()` (akkumuliert die vorherige Running-Phase)
+- `createForSession()` Initial-Transition nach `running` → `markResumed()`
+
+#### Frontend (`apps/web/src/app/interactive/page.tsx`)
+
+- Neuer `nowTick`-State + `useEffect` mit `setInterval(1000)` — tickt nur wenn `sandbox.status === 'running'` (kein unnötiges Re-Render bei paused)
+- Subtitle-Zeile unter dem bestehenden Header-Titel mit den Lifecycle-Chips
+- Format-Helper inline (Date → `DD.MM. HH:MM`, Duration → `Hh Mm Ss`)
+- Bei laufender Sandbox wird die Laufzeit emerald (statt grau) und sekündlich aktualisiert
+
+#### Frontend-Type (`alfred-client.ts`)
+
+`SandboxItem` erweitert um optional `totalRunSeconds`, `lastResumedAt`, `lastPausedAt`.
+
 ## [0.19.0-multi-ha.816] - 2026-05-30
 
 ### Fixed — Per-Phase Tests im Container statt Host (v816)

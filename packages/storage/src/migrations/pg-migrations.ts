@@ -1548,4 +1548,14 @@ export const PG_MIGRATIONS: PgMigration[] = [
       try { await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_sessions_sandbox ON project_sessions(sandbox_id)`, []); } catch { /* exists */ }
     },
   },
+  {
+    version: 102,
+    description: 'v817 — sandbox runtime tracking: total_run_seconds + last_resumed_at + last_paused_at.',
+    async up(db) {
+      try { await db.execute(`ALTER TABLE project_agent_sandboxes ADD COLUMN total_run_seconds INTEGER NOT NULL DEFAULT 0`, []); } catch { /* */ }
+      try { await db.execute(`ALTER TABLE project_agent_sandboxes ADD COLUMN last_resumed_at TEXT`, []); } catch { /* */ }
+      try { await db.execute(`ALTER TABLE project_agent_sandboxes ADD COLUMN last_paused_at TEXT`, []); } catch { /* */ }
+      try { await db.execute(`UPDATE project_agent_sandboxes SET last_resumed_at = created_at WHERE last_resumed_at IS NULL AND status = 'running'`, []); } catch { /* */ }
+    },
+  },
 ];

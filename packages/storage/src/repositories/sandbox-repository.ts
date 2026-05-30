@@ -34,6 +34,13 @@ export interface Sandbox {
 
   result: SandboxResult;
   resultPrUrl: string | null;
+
+  /** v817 — kumulierte „running" Sekunden über alle Pause/Resume-Zyklen. */
+  totalRunSeconds: number;
+  /** v817 — Zeitstempel des letzten Übergangs nach 'running' (für Live-Counter). */
+  lastResumedAt: string | null;
+  /** v817 — Zeitstempel des letzten Übergangs nach 'paused' (für UI-Anzeige). */
+  lastPausedAt: string | null;
 }
 
 export interface SandboxInsert {
@@ -84,6 +91,11 @@ export class SandboxRepository {
       destroyedAt: null,
       result: null,
       resultPrUrl: null,
+      // v817 — Lifecycle-Tracking. Initial: noch nicht resumed, total_run_seconds=0.
+      // Wird beim ersten Übergang nach 'running' (in markResumed) auf now() gesetzt.
+      totalRunSeconds: 0,
+      lastResumedAt: null,
+      lastPausedAt: null,
     };
     await this.db.execute(
       `INSERT INTO project_agent_sandboxes (
@@ -93,8 +105,9 @@ export class SandboxRepository {
         status, status_reason, node_id,
         ram_peak_mb, disk_used_mb,
         created_at, last_active_at, destroyed_at,
-        result, result_pr_url
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        result, result_pr_url,
+        total_run_seconds, last_resumed_at, last_paused_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         row.id, row.projectId, row.sessionId, row.userId,
         row.worktreePath, row.branchName, row.baseCommitSha,
@@ -103,6 +116,7 @@ export class SandboxRepository {
         row.ramPeakMb, row.diskUsedMb,
         row.createdAt, row.lastActiveAt, row.destroyedAt,
         row.result, row.resultPrUrl,
+        row.totalRunSeconds, row.lastResumedAt, row.lastPausedAt,
       ],
     );
     return row;
@@ -167,6 +181,46 @@ export class SandboxRepository {
     await this.db.execute(
       `UPDATE project_agent_sandboxes SET status = ?, status_reason = ?, last_active_at = ? WHERE id = ?`,
       [status, reason ?? null, new Date().toISOString(), id],
+    );
+  }
+
+  /**
+   * v817 — Übergang nach 'running' (initial-start oder resume): last_resumed_at = now.
+   * Wird vom sandbox-manager bei `createForSession` (nach Container-ready) und bei
+   * `resume()` aufgerufen. Setzt zusätzlich status='running'.
+   */
+  async markResumed(id: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.db.execute(
+      `UPDATE project_agent_sandboxes
+       SET status = 'running', status_reason = NULL,
+           last_resumed_at = ?, last_active_at = ?
+       WHERE id = ?`,
+      [now, now, id],
+    );
+  }
+
+  /**
+   * v817 — Übergang nach 'paused': total_run_seconds += (now - last_resumed_at),
+   * last_paused_at = now, status='paused'. SQLite/PG-kompatibel: wir holen die
+   * Differenz in JS damit kein DB-spezifisches Datums-SQL nötig ist.
+   */
+  async markPaused(id: string, reason?: string): Promise<void> {
+    const sb = await this.getById(id);
+    if (!sb) return;
+    const now = new Date().toISOString();
+    let addSeconds = 0;
+    if (sb.lastResumedAt) {
+      const delta = Date.now() - new Date(sb.lastResumedAt).getTime();
+      addSeconds = Math.max(0, Math.floor(delta / 1000));
+    }
+    await this.db.execute(
+      `UPDATE project_agent_sandboxes
+       SET status = 'paused', status_reason = ?,
+           total_run_seconds = total_run_seconds + ?,
+           last_paused_at = ?, last_active_at = ?
+       WHERE id = ?`,
+      [reason ?? null, addSeconds, now, now, id],
     );
   }
 
@@ -243,6 +297,9 @@ export class SandboxRepository {
       destroyedAt: row.destroyed_at ? String(row.destroyed_at) : null,
       result: (row.result as SandboxResult) ?? null,
       resultPrUrl: row.result_pr_url ? String(row.result_pr_url) : null,
+      totalRunSeconds: row.total_run_seconds == null ? 0 : Number(row.total_run_seconds),
+      lastResumedAt: row.last_resumed_at ? String(row.last_resumed_at) : null,
+      lastPausedAt: row.last_paused_at ? String(row.last_paused_at) : null,
     };
   }
 }

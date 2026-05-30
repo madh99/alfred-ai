@@ -274,7 +274,11 @@ export class SandboxManager {
       if (wantsContainer && !detection.hasDevServer) {
         this.deps.logger.warn({ sessionId: input.sessionId, projectType: detection.type }, 'Mode requested preview but project has no dev-server → fallback to sandbox-only');
       }
-      await this.deps.repo.updateStatus(sandbox.id, 'running', wantsContainer ? 'no-dev-server-script' : undefined);
+      // v817 — markResumed setzt last_resumed_at damit der Live-Counter ab jetzt zählt.
+      await this.deps.repo.markResumed(sandbox.id);
+      if (wantsContainer && !detection.hasDevServer) {
+        await this.deps.repo.updateStatus(sandbox.id, 'running', 'no-dev-server-script');
+      }
       return { sandbox, detection, containerStarted: false };
     }
 
@@ -392,7 +396,8 @@ export class SandboxManager {
         throw new Error('dev-server did not become healthy within 5 minutes (npm install or dev start failed — check `sudo docker logs ' + containerName + '` for details)');
       }
 
-      await this.deps.repo.updateStatus(sandboxId, 'running');
+      // v817 — markResumed setzt last_resumed_at für Live-Counter
+      await this.deps.repo.markResumed(sandboxId);
       this.deps.logger.info({ sandboxId, hostPort, containerId }, 'v708 Sandbox container ready');
     } catch (err) {
       this.deps.logger.error({ err, sandboxId }, 'Sandbox spinUp failed (async), capturing logs + rolling back');
@@ -443,7 +448,9 @@ export class SandboxManager {
     if (sb.containerId) {
       await stopContainer(sb.containerId, 10);
     }
-    await this.deps.repo.updateStatus(sandboxId, 'paused', 'user-requested');
+    // v817 — markPaused statt updateStatus: addiert (now - last_resumed_at) zu
+    // total_run_seconds + setzt last_paused_at für UI-Anzeige.
+    await this.deps.repo.markPaused(sandboxId, 'user-requested');
   }
 
   /** Pausierten Container neu starten. */
@@ -465,7 +472,8 @@ export class SandboxManager {
       const healthy = await waitForDevServer(sb.hostPort, { intervalMs: 1500, timeoutMs: 60_000, logger: this.deps.logger });
       if (!healthy) throw new Error('dev-server did not respond after resume');
     }
-    await this.deps.repo.updateStatus(sandboxId, 'running');
+    // v817 — markResumed statt updateStatus: setzt last_resumed_at für Live-Counter.
+    await this.deps.repo.markResumed(sandboxId);
   }
 
   /**
@@ -496,11 +504,15 @@ export class SandboxManager {
       if (sb.hostPort) {
         const healthy = await waitForDevServer(sb.hostPort, { intervalMs: 1500, timeoutMs: 120_000, logger: this.deps.logger });
         if (!healthy) {
-          await this.deps.repo.updateStatus(sandboxId, 'paused', 'restart: dev-server did not respond');
+          await this.deps.repo.markPaused(sandboxId, 'restart: dev-server did not respond');
           return { ok: false, reason: 'dev-server did not respond within 2 minutes' };
         }
       }
-      await this.deps.repo.updateStatus(sandboxId, 'running', 'restart: ok');
+      // v817 — markResumed: Restart akkumuliert die vorherige Running-Zeit (war ja
+      // im Container am laufen) und setzt last_resumed_at = now für den nächsten
+      // Abschnitt. updateStatus mit 'restart: ok' war Status-Hinweis; markResumed
+      // setzt status='running' und clear statusReason.
+      await this.deps.repo.markResumed(sandboxId);
       return { ok: true };
     } catch (err) {
       const msg = (err as Error).message;

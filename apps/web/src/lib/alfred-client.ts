@@ -2468,6 +2468,12 @@ export interface SandboxItem {
   destroyedAt: string | null;
   result: string | null;
   resultPrUrl: string | null;
+  /** v817 — kumulierte Sekunden aller bisherigen Running-Phasen. */
+  totalRunSeconds?: number;
+  /** v817 — Zeitstempel des letzten Übergangs nach 'running' (für Live-Counter). */
+  lastResumedAt?: string | null;
+  /** v817 — Zeitstempel des letzten Übergangs nach 'paused'. */
+  lastPausedAt?: string | null;
   /** v723 — Default-Branch des Projects (dynamisch resolved für Merge-Dialog). */
   defaultBranch?: string;
 }

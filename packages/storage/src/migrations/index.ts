@@ -2221,4 +2221,16 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_project_sessions_sandbox ON project_sessions(sandbox_id)`);
     },
   },
+  {
+    version: 98,
+    description: 'v817 — sandbox runtime tracking: total_run_seconds + last_resumed_at + last_paused_at.',
+    up(db) {
+      try { db.exec(`ALTER TABLE project_agent_sandboxes ADD COLUMN total_run_seconds INTEGER NOT NULL DEFAULT 0`); } catch { /* */ }
+      try { db.exec(`ALTER TABLE project_agent_sandboxes ADD COLUMN last_resumed_at TEXT`); } catch { /* */ }
+      try { db.exec(`ALTER TABLE project_agent_sandboxes ADD COLUMN last_paused_at TEXT`); } catch { /* */ }
+      // Backfill: existierende Sandboxes bekommen last_resumed_at = created_at
+      // damit der Live-Counter ab dem Erstellzeitpunkt zählt.
+      try { db.exec(`UPDATE project_agent_sandboxes SET last_resumed_at = created_at WHERE last_resumed_at IS NULL AND status = 'running'`); } catch { /* */ }
+    },
+  },
 ];
