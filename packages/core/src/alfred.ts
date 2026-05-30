@@ -3381,6 +3381,17 @@ export class Alfred {
             skillRegistry.register(agentConvSkill);
             this.logger.info({}, 'v824 agent-conventions skill registered');
 
+            // v831 Phase 3.6 — Default-Skill-Contributions registrieren
+            try {
+              const { DEFAULT_CONTRIBUTIONS } = await import('@alfred/skills');
+              for (const c of DEFAULT_CONTRIBUTIONS) {
+                agentConvSkill.addSkillContribution(c);
+              }
+              this.logger.info({ count: DEFAULT_CONTRIBUTIONS.length }, 'v831 default skill-contributions registered');
+            } catch (err) {
+              this.logger.warn({ err }, 'v831 default-contributions register failed (non-fatal)');
+            }
+
             // v825 — Periodischer Drift-Check (Phase 2). Default 24h. 5min nach Startup
             // initial-Lauf damit Boot nicht blockt.
             const cfg = (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions;

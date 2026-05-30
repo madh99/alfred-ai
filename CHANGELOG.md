@@ -5,6 +5,29 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.831] - 2026-05-30
+
+### Added — Default-Skill-Contributions für Agent-Conventions (v831, Punkt 5)
+
+Phase 3.6 API existierte bisher leer. Nun mit 7 sofort-aktiven Default-
+Contributions, die als Pre-Set für jede Generate-Operation einfließen:
+
+- **next-js-dev-server** — Next.js Dev-Server in Sandbox (kein npm run build)
+- **vitest-test-db-setup** — In-Memory-Test-DB-Pflege (genau der Bug aus
+  unserer Session: Migration ohne setup.ts → broken tests)
+- **better-sqlite3-native** — ABI-Mismatch zwischen Host/Container
+- **merge-gate-host-tests** — Pre-Merge Tests laufen auf Host
+- **pnpm-workspace-monorepo** — pnpm -r build statt einzelnem npm run build
+- **typescript-strict-mode** — no any, ESM .js suffix
+- **env-example-secrets** — nie .env in commit, .env.example pflegen
+
+Jede Contribution hat `detectIfUsed(scan)`-Check und wird nur eingespielt
+wenn das Pattern im aktuellen Repo-Scan zutrifft. Erweiterbar in
+`packages/skills/src/built-in/agent-conventions/default-contributions.ts`.
+
+User-Whitelist via `config.agentConventions.allowedSkillContributions`
+(Default '*' = alle erlaubt).
+
 ## [0.19.0-multi-ha.830] - 2026-05-30
 
 ### Added — Agent-Conventions Embedding-Injection + Auto-Violation-Trigger (v830)
