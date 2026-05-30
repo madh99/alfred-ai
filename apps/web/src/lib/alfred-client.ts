@@ -777,6 +777,64 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v824 — Agent-Conventions API (Phase 1 vollständig, alle 7 Actions)
+  async conventionsStatus(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: AgentConventionsStatus; reason?: string }> {
+    const url = `${this.baseUrl}/api/projects/${projectId}/conventions/status${packagePath ? `?package_path=${encodeURIComponent(packagePath)}` : ''}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsGenerate(projectId: string, opts?: { packagePath?: string; language?: 'de' | 'en'; tier?: 'fast' | 'default' | 'strong' }): Promise<{ ok: boolean; data?: AgentConventionsGenerateData; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/generate`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsApply(projectId: string, opts?: { packagePath?: string; content?: string; commitToGit?: boolean; outputs?: string[] }): Promise<{ ok: boolean; data?: AgentConventionsApplyData; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/apply`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsRefresh(projectId: string, opts?: { packagePath?: string; language?: 'de' | 'en' }): Promise<{ ok: boolean; data?: AgentConventionsGenerateData; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/refresh`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts ?? {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsDriftCheck(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: { driftScore: number; reasons: string[]; checkedAt: string }; reason?: string }> {
+    const url = `${this.baseUrl}/api/projects/${projectId}/conventions/drift-check${packagePath ? `?package_path=${encodeURIComponent(packagePath)}` : ''}`;
+    const res = await fetch(url, { method: 'POST', headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsHistory(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: { entries: AgentConventionsHistoryEntry[] }; reason?: string }> {
+    const url = `${this.baseUrl}/api/projects/${projectId}/conventions/history${packagePath ? `?package_path=${encodeURIComponent(packagePath)}` : ''}`;
+    const res = await fetch(url, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsRollback(projectId: string, historyId: string, packagePath?: string): Promise<{ ok: boolean; data?: { rolledBackTo: string; filePath: string }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/rollback`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ historyId, packagePath }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
@@ -2502,4 +2560,57 @@ export interface SandboxStatusResponse {
   maxParallelPerUser?: number;
   diskQuotaPerUserMb?: number;
   idleTimeoutMin?: number;
+}
+
+// v824 — Agent-Conventions Frontend-Types (Phase 1)
+export interface AgentConventionsStatus {
+  projectId: string;
+  packagePath: string;
+  badge: 'present-fresh' | 'present-drift' | 'present-user-managed' | 'missing';
+  filePath: string | null;
+  filePresent: boolean;
+  alfredManaged: boolean;
+  lastAppliedAt: string | null;
+  driftScore: number;
+  contentHashCurrent: string | null;
+  contentHashOnDisk: string | null;
+}
+
+export interface AgentConventionsGenerateData {
+  draft: string;
+  scanHash: string;
+  contentHash: string;
+  warnings: string[];
+  costUsd: number;
+  scanSnapshot: {
+    framework?: string;
+    packageManager?: string;
+    testRunner?: string;
+    workspaces?: string[];
+    totalFiles: number;
+    totalCodeFiles: number;
+  };
+}
+
+export interface AgentConventionsApplyData {
+  filesWritten: string[];
+  commitSha?: string;
+  historyId: string;
+  backupCreated: boolean;
+}
+
+export interface AgentConventionsHistoryEntry {
+  id: string;
+  projectId: string;
+  packagePath: string;
+  appliedAt: string;
+  appliedBy: string;
+  prevContentHash: string | null;
+  newContentHash: string;
+  prevContentSnapshot: string | null;
+  diffSummary: string | null;
+  triggerSource: string;
+  triggerSessionId: string | null;
+  rolledBackAt: string | null;
+  rolledBackBy: string | null;
 }

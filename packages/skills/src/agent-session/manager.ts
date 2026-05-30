@@ -46,6 +46,11 @@ export interface ManagerInvokeOptions {
    * Default false.
    */
   readOnly?: boolean;
+  /**
+   * v824 — Wenn true: lade CLAUDE.md/AGENTS.md NICHT ins prompt-prefix.
+   * Default false (= immer laden wenn vorhanden, "just works"-Default).
+   */
+  skipConventions?: boolean;
 }
 
 export class AgentSessionManager {
@@ -143,10 +148,36 @@ export class AgentSessionManager {
 
     // Run
     const startedAt = Date.now();
+
+    // v824 — Conventions-Injection: lädt CLAUDE.md/AGENTS.md aus dem cwd und
+    // prepended sie zum promptPrefix. Damit sehen auch vibe/codex/generic
+    // (die KEINE native CLAUDE.md-Autoload haben) die Project-Konventionen.
+    // claude-code bekommt es als belt+suspenders zusätzlich zum Native-Load.
+    // Default opt-in damit's "einfach funktioniert"; disable via opts.skipConventions
+    // oder config.agentConventions.embeddingInjection=false (Phase 4.5 control).
+    let conventionsBlock: string | undefined;
+    if (!opts.skipConventions) {
+      try {
+        const { loadConventionsForCwd } = await import('../built-in/agent-conventions/agent-conventions-skill.js');
+        const c = await loadConventionsForCwd(opts.cwd, 8192);
+        if (c) {
+          conventionsBlock = `=== PROJECT-KONVENTIONEN (auto-injected) ===\n${c}\n=== ENDE KONVENTIONEN ===`;
+          onEventTapped({ type: 'progress', phase: 'conventions-loaded', detail: `${c.length} chars from CLAUDE.md/AGENTS.md` });
+        }
+      } catch (err) {
+        this.logger.debug({ err, cwd: opts.cwd }, 'v824 conventions-injection failed (non-fatal, continuing without)');
+      }
+    }
+
     // v790 — handoffBriefing wird vor opts.promptPrefix prepend'd (User-Prefix gewinnt am Ende)
-    const promptPrefix = handoffBriefing
-      ? (opts.promptPrefix ? `${handoffBriefing}\n\n${opts.promptPrefix}` : handoffBriefing)
-      : opts.promptPrefix;
+    // v824 — Reihenfolge: conventions → handoff → user-prefix (Konventionen sind Foundation,
+    // dann session-context, dann task-spezifisch — innerste Schicht sticht durch).
+    const prefixParts: string[] = [];
+    if (conventionsBlock) prefixParts.push(conventionsBlock);
+    if (handoffBriefing) prefixParts.push(handoffBriefing);
+    if (opts.promptPrefix) prefixParts.push(opts.promptPrefix);
+    const promptPrefix = prefixParts.length > 0 ? prefixParts.join('\n\n') : undefined;
+
     if (handoffBriefing) {
       // Sichtbar machen im Event-stream — User sieht im UI dass Briefing aktiv war
       onEventTapped({ type: 'progress', phase: 'handoff-briefing', detail: `${handoffBriefing.length} chars from previous agent(s)` });

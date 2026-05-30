@@ -716,6 +716,14 @@ export class HttpAdapter extends MessagingAdapter {
     listSessionCommits?: (sessionId: string) => Promise<any[]>;
     // v742 — Re-Match Open-Items gegen letzten Session-Lauf
     reMatchOpenItems?: (projectId: string) => Promise<{ ok: boolean; matched?: number; resolved?: number; considered?: number; candidates?: number; filesUsed?: number; reason?: string }>;
+    // v824 — Agent-Conventions (CLAUDE.md/AGENTS.md) Phase 1 vollständig
+    conventionsStatus?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsGenerate?: (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en'; tier?: 'fast' | 'default' | 'strong' }) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsApply?: (projectId: string, opts: { packagePath?: string; content?: string; commitToGit?: boolean; outputs?: string[] }) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsRefresh?: (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en' }) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsDriftCheck?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsHistory?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsRollback?: (projectId: string, historyId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
@@ -1215,6 +1223,20 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleProjectsReMatchOpenItems(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/health-check$/) && req.method === 'POST') {
       this.handleProjectsHealthCheck(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/status$/) && req.method === 'GET') {
+      this.handleConventionsStatus(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/generate$/) && req.method === 'POST') {
+      this.handleConventionsGenerate(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/apply$/) && req.method === 'POST') {
+      this.handleConventionsApply(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/refresh$/) && req.method === 'POST') {
+      this.handleConventionsRefresh(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/drift-check$/) && req.method === 'POST') {
+      this.handleConventionsDriftCheck(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/history$/) && req.method === 'GET') {
+      this.handleConventionsHistory(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/rollback$/) && req.method === 'POST') {
+      this.handleConventionsRollback(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4302,6 +4324,145 @@ export class HttpAdapter extends MessagingAdapter {
     const projectId = parts[3];
     try {
       const r = await this.projectsCallbacks.triggerHealthCheck(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  // v824 — Agent-Conventions Phase 1 endpoints. Alle 7 Routes implementiert.
+  private async handleConventionsStatus(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsStatus) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const packagePath = url.searchParams.get('package_path') ?? undefined;
+    try {
+      const r = await this.projectsCallbacks.conventionsStatus(projectId, packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsGenerate(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsGenerate) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { packagePath?: string; language?: 'de' | 'en'; tier?: 'fast' | 'default' | 'strong' } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    try {
+      const r = await this.projectsCallbacks.conventionsGenerate(projectId, opts);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsApply(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsApply) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { packagePath?: string; content?: string; commitToGit?: boolean; outputs?: string[] } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    try {
+      const r = await this.projectsCallbacks.conventionsApply(projectId, opts);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsRefresh(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsRefresh) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { packagePath?: string; language?: 'de' | 'en' } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    try {
+      const r = await this.projectsCallbacks.conventionsRefresh(projectId, opts);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsDriftCheck(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsDriftCheck) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const packagePath = url.searchParams.get('package_path') ?? undefined;
+    try {
+      const r = await this.projectsCallbacks.conventionsDriftCheck(projectId, packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsHistory(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsHistory) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const packagePath = url.searchParams.get('package_path') ?? undefined;
+    try {
+      const r = await this.projectsCallbacks.conventionsHistory(projectId, packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsRollback(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsRollback) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { historyId?: string; packagePath?: string } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    if (!opts.historyId) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'historyId required' })); return;
+    }
+    try {
+      const r = await this.projectsCallbacks.conventionsRollback(projectId, opts.historyId, opts.packagePath);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

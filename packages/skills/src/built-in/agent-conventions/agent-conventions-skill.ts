@@ -1,0 +1,504 @@
+/**
+ * v824 — AgentConventionsSkill.
+ *
+ * Steuert das Lifecycle der projekt-spezifischen Agent-Conventions
+ * (CLAUDE.md / AGENTS.md). Actions: detect, generate, apply, refresh,
+ * drift_check, learn, status, history, rollback.
+ *
+ * Side-Effects:
+ * - `generate`: read-only Repo-Scan + LLM-Call. KEIN File-Write.
+ * - `apply`: schreibt CLAUDE.md (und optional AGENTS.md) ins cwd, optional git-commit.
+ *   Erstellt Backup wenn Datei schon existiert.
+ * - `rollback`: schreibt prev_content_snapshot zurück.
+ * - alle anderen: nur DB-Reads/-Writes ohne FS-Modifikation.
+ */
+
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import path from 'node:path';
+import { execFile as execFileCb } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
+import type { Logger } from 'pino';
+import type {
+  SkillMetadata, SkillContext, SkillResult,
+  AgentConventions, ConventionsStatus, ConventionsStatusBadge,
+  ConventionsOutputFormat, ConventionsLanguage,
+  AgentConventionsConfig,
+} from '@alfred/types';
+import { Skill } from '../../skill.js';
+import type { AgentConventionsRepository } from '@alfred/storage';
+
+// Scanner + Generator werden via DI hereingereicht (live in @alfred/core,
+// das wegen Circular-Dep nicht von hier importiert werden darf).
+export interface RepoScannerLike {
+  scan(cwd: string): Promise<{
+    snapshot: import('@alfred/types').ConventionsScanSnapshot;
+    llmContext: string;
+    scanHash: string;
+    warnings: string[];
+  }>;
+}
+
+export interface ConventionsGeneratorLike {
+  generate(opts: {
+    cwd: string;
+    llmContext: string;
+    scanSnapshot: import('@alfred/types').ConventionsScanSnapshot;
+    scanHash: string;
+    language: ConventionsLanguage;
+    generateMode: import('@alfred/types').ConventionsGenerateMode;
+    tier: 'fast' | 'default' | 'strong';
+    existingContent?: string;
+  }): Promise<{
+    ok: boolean;
+    markdown?: string;
+    neutralFormat?: import('@alfred/types').NeutralConventions;
+    scanHash: string;
+    contentHash?: string;
+    warnings: string[];
+    costUsd: number;
+    reason?: string;
+  }>;
+}
+
+const exec = promisify(execFileCb);
+
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history';
+
+interface SkillDeps {
+  scanner: RepoScannerLike;
+  generator: ConventionsGeneratorLike;
+  conventionsRepo: AgentConventionsRepository;
+  logger: Logger;
+  /** Lookup von projectId → project mit cwd. Wird durch alfred.ts gesetzt. */
+  resolveProject: (projectId: string) => Promise<{ id: string; cwd: string; userId: string } | null>;
+  /** Config-Snapshot — defaults werden bei missing-keys angewendet. */
+  config: () => Partial<AgentConventionsConfig>;
+}
+
+const DEFAULT_CONFIG: AgentConventionsConfig = {
+  enabled: false,
+  generateMode: 'single',
+  generateTier: 'strong',
+  language: 'de',
+  outputs: ['claude.md'],
+  primaryOutput: 'claude.md',
+  autoApplyMode: 'off',
+  driftCheckIntervalHours: 24,
+  driftRefreshAuto: false,
+  lessonsAggressiveLearning: true,
+  crossProjectPool: 'off',
+  selfModifyAgent: { enabled: false, intervalDays: 7, sessionThreshold: 10 },
+  embeddingInjection: false,
+  inverseLearning: true,
+  testHarness: { enabled: false, runsPerVersion: 10 },
+  budget: { monthlyUsdCap: 50, alertAt: 0.8 },
+  autoApplyAllowedSections: ['gotchas', 'doNotTouch'],
+  allowedSkillContributions: '*',
+};
+
+function fileNameFor(format: ConventionsOutputFormat): string {
+  switch (format) {
+    case 'claude.md': return 'CLAUDE.md';
+    case 'agents.md': return 'AGENTS.md';
+    case 'cursor.rules': return '.cursor/rules/00-project.md';
+    case 'copilot.md': return '.github/copilot-instructions.md';
+    case 'codex.md': return '.codex/instructions.md';
+    default: return 'CLAUDE.md';
+  }
+}
+
+export class AgentConventionsSkill extends Skill {
+  readonly metadata: SkillMetadata;
+
+  constructor(private readonly deps: SkillDeps) {
+    super();
+
+    this.metadata = {
+      name: 'agent_conventions',
+      category: 'automation',
+      description: 'Verwaltet projekt-spezifische CLAUDE.md/AGENTS.md-Konventionen für Coding-Agents (claude-code, vibe, codex). Auto-Generate aus Repo-Scan + LLM-Synthesis, Drift-Detection, Lessons-Loop.',
+      riskLevel: 'write',
+      version: '1.0.0',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          action: {
+            type: 'string',
+            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history'],
+            description: 'Action to perform',
+          },
+          project_id: { type: 'string', description: 'Project ID' },
+          package_path: { type: 'string', description: 'Package-Path für Monorepos. Leer = root.' },
+          language: { type: 'string', enum: ['de', 'en'], description: 'Output-Sprache. Default: aus config.' },
+          tier: { type: 'string', enum: ['fast', 'default', 'strong'], description: 'LLM-Tier. Default: strong für generate.' },
+          commit_to_git: { type: 'boolean', description: 'Apply: zusätzlich git commit (default true)' },
+          outputs: { type: 'array', items: { type: 'string' }, description: 'Welche Output-Files schreiben. Default: claude.md only.' },
+          history_id: { type: 'string', description: 'Für rollback: zu welcher History-Version zurück.' },
+        },
+        required: ['action', 'project_id'],
+      },
+    };
+  }
+
+  async execute(input: Record<string, unknown>, _ctx: SkillContext): Promise<SkillResult> {
+    const action = input.action as Action;
+    const projectId = input.project_id as string;
+    const packagePath = (input.package_path as string | undefined) ?? '';
+
+    if (!projectId) return { success: false, error: 'project_id required' };
+
+    try {
+      switch (action) {
+        case 'status': return await this.handleStatus(projectId, packagePath);
+        case 'detect': return await this.handleDetect(projectId, packagePath);
+        case 'generate': return await this.handleGenerate(projectId, packagePath, input);
+        case 'apply': return await this.handleApply(projectId, packagePath, input);
+        case 'refresh': return await this.handleRefresh(projectId, packagePath, input);
+        case 'drift_check': return await this.handleDriftCheck(projectId, packagePath);
+        case 'rollback': return await this.handleRollback(projectId, packagePath, input);
+        case 'history': return await this.handleHistory(projectId, packagePath);
+        default: return { success: false, error: `Unknown action: ${action}` };
+      }
+    } catch (err) {
+      this.deps.logger.warn({ err, action, projectId }, 'v824 AgentConventionsSkill.execute failed');
+      return { success: false, error: (err as Error).message };
+    }
+  }
+
+  // ── status ─────────────────────────────────────────────────────────────
+  private async handleStatus(projectId: string, packagePath: string): Promise<SkillResult> {
+    const status = await this.computeStatus(projectId, packagePath);
+    return { success: true, data: status };
+  }
+
+  private async computeStatus(projectId: string, packagePath: string): Promise<ConventionsStatus> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) {
+      return {
+        projectId, packagePath,
+        badge: 'missing', filePath: null, filePresent: false, alfredManaged: false,
+        lastAppliedAt: null, driftScore: 0,
+        contentHashCurrent: null, contentHashOnDisk: null,
+      };
+    }
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    const filePath = path.join(proj.cwd, packagePath, 'CLAUDE.md');
+    const filePresent = existsSync(filePath);
+    let contentHashOnDisk: string | null = null;
+    let alfredManaged = false;
+    if (filePresent) {
+      try {
+        const onDisk = readFileSync(filePath, 'utf8');
+        contentHashOnDisk = createHash('sha256').update(onDisk).digest('hex').slice(0, 16);
+        alfredManaged = /generated_by:\s*alfred-agent-conventions/i.test(onDisk.slice(0, 500));
+      } catch { /* ignore */ }
+    }
+
+    let badge: ConventionsStatusBadge = 'missing';
+    if (!filePresent) badge = 'missing';
+    else if (!alfredManaged) badge = 'present-user-managed';
+    else if (conv && conv.driftScore > 0.4) badge = 'present-drift';
+    else badge = 'present-fresh';
+
+    return {
+      projectId, packagePath,
+      badge,
+      filePath,
+      filePresent,
+      alfredManaged,
+      lastAppliedAt: conv?.lastAppliedAt ?? null,
+      driftScore: conv?.driftScore ?? 0,
+      contentHashCurrent: conv?.contentHash ?? null,
+      contentHashOnDisk,
+    };
+  }
+
+  // ── detect ─────────────────────────────────────────────────────────────
+  private async handleDetect(projectId: string, packagePath: string): Promise<SkillResult> {
+    return await this.handleStatus(projectId, packagePath);
+  }
+
+  // ── generate ──────────────────────────────────────────────────────────
+  private async handleGenerate(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    if (!existsSync(proj.cwd)) return { success: false, error: `cwd does not exist: ${proj.cwd}` };
+
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const language = (input.language as ConventionsLanguage | undefined) ?? cfg.language;
+    const tier = (input.tier as 'fast' | 'default' | 'strong' | undefined) ?? cfg.generateTier;
+    const scanCwd = packagePath ? path.join(proj.cwd, packagePath) : proj.cwd;
+
+    const scan = await this.deps.scanner.scan(scanCwd);
+    const existing = await this.deps.conventionsRepo.get(projectId, packagePath);
+
+    const gen = await this.deps.generator.generate({
+      cwd: scanCwd,
+      llmContext: scan.llmContext,
+      scanSnapshot: scan.snapshot,
+      scanHash: scan.scanHash,
+      language,
+      generateMode: cfg.generateMode,
+      tier,
+      existingContent: existing?.content,
+    });
+
+    if (!gen.ok || !gen.markdown || !gen.neutralFormat) {
+      return { success: false, error: gen.reason ?? 'generation failed', data: { warnings: [...scan.warnings, ...gen.warnings] } };
+    }
+
+    // Persist draft (NICHT apply!). User reviewed + apply später.
+    await this.deps.conventionsRepo.upsert({
+      projectId,
+      packagePath,
+      draftContent: gen.markdown,
+      neutralFormat: gen.neutralFormat,
+      scanHash: gen.scanHash,
+      sourceScan: scan.snapshot,
+      language,
+      generatedBy: 'auto',
+      generatedAt: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      data: {
+        draft: gen.markdown,
+        scanHash: gen.scanHash,
+        contentHash: gen.contentHash,
+        warnings: [...scan.warnings, ...gen.warnings],
+        costUsd: gen.costUsd,
+        scanSnapshot: scan.snapshot,
+      },
+    };
+  }
+
+  // ── apply ──────────────────────────────────────────────────────────────
+  private async handleApply(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: false, error: 'No conventions row (run generate first)' };
+    const contentToApply = (input.content as string | undefined) ?? conv.draftContent ?? conv.content;
+    if (!contentToApply) return { success: false, error: 'No content to apply (no draft, no existing)' };
+
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const outputs: ConventionsOutputFormat[] = (input.outputs as ConventionsOutputFormat[] | undefined) ?? cfg.outputs;
+    const commitToGit = (input.commit_to_git as boolean | undefined) ?? true;
+    const baseDir = packagePath ? path.join(proj.cwd, packagePath) : proj.cwd;
+
+    // Backup existing
+    const filesWritten: string[] = [];
+    const prevSnapshot: { path: string; content: string } | null = (() => {
+      const primaryPath = path.join(baseDir, fileNameFor(cfg.primaryOutput));
+      if (existsSync(primaryPath)) {
+        try {
+          const c = readFileSync(primaryPath, 'utf8');
+          const backupPath = `${primaryPath}.backup-${Date.now()}`;
+          renameSync(primaryPath, backupPath);
+          this.deps.logger.info({ from: primaryPath, to: backupPath }, 'v824 backup of existing file');
+          return { path: primaryPath, content: c };
+        } catch (err) {
+          this.deps.logger.warn({ err, primaryPath }, 'v824 backup failed (continuing without)');
+        }
+      }
+      return null;
+    })();
+
+    for (const format of outputs) {
+      const filePath = path.join(baseDir, fileNameFor(format));
+      try {
+        const dir = path.dirname(filePath);
+        if (!existsSync(dir)) {
+          await import('node:fs').then(fs => fs.mkdirSync(dir, { recursive: true }));
+        }
+        writeFileSync(filePath, contentToApply, { encoding: 'utf8' });
+        filesWritten.push(filePath);
+      } catch (err) {
+        return { success: false, error: `Write failed for ${filePath}: ${(err as Error).message}`, data: { filesWritten } };
+      }
+    }
+
+    const newContentHash = createHash('sha256').update(contentToApply).digest('hex').slice(0, 16);
+
+    // History eintragen
+    const historyId = await this.deps.conventionsRepo.addHistory({
+      projectId,
+      packagePath,
+      appliedBy: 'user',
+      prevContentHash: conv.contentHash || null,
+      newContentHash,
+      prevContentSnapshot: prevSnapshot?.content ?? null,
+      diffSummary: 'manual apply',
+      triggerSource: (input.trigger_source as string | undefined) ?? 'user-apply',
+      triggerSessionId: (input.trigger_session_id as string | undefined) ?? null,
+    });
+
+    // Conventions-Row: content+contentHash+lastAppliedAt
+    await this.deps.conventionsRepo.upsert({
+      projectId,
+      packagePath,
+      content: contentToApply,
+      draftContent: null,
+      contentHash: newContentHash,
+      lastAppliedAt: new Date().toISOString(),
+      filesWritten: outputs,
+    });
+
+    // Optional git-commit
+    let commitSha: string | undefined;
+    if (commitToGit) {
+      try {
+        await exec('git', ['-C', proj.cwd, 'add', ...filesWritten.map(f => path.relative(proj.cwd, f))], { timeout: 5000 });
+        await exec('git', ['-C', proj.cwd, '-c', 'user.name=Alfred', '-c', 'user.email=alfred@local',
+          'commit', '-m', 'chore: update agent conventions (auto-generated)'], { timeout: 8000 });
+        const { stdout } = await exec('git', ['-C', proj.cwd, 'rev-parse', 'HEAD'], { timeout: 3000 });
+        commitSha = String(stdout).trim().slice(0, 12);
+      } catch (err) {
+        this.deps.logger.warn({ err, projectId }, 'v824 git commit after apply failed (non-fatal)');
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        filesWritten: filesWritten.map(f => path.relative(proj.cwd, f)),
+        commitSha,
+        historyId,
+        backupCreated: !!prevSnapshot,
+      },
+    };
+  }
+
+  // ── refresh ────────────────────────────────────────────────────────────
+  private async handleRefresh(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    // Refresh = generate mit existingContent als Context. Identisch zu generate
+    // bei nicht-existierendem File. Differenziert sich nur durch logging/UI.
+    return await this.handleGenerate(projectId, packagePath, input);
+  }
+
+  // ── drift_check ────────────────────────────────────────────────────────
+  private async handleDriftCheck(projectId: string, packagePath: string): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: true, data: { driftScore: 0, reasons: ['no conventions yet'] } };
+
+    const scanCwd = packagePath ? path.join(proj.cwd, packagePath) : proj.cwd;
+    const scan = await this.deps.scanner.scan(scanCwd);
+
+    const reasons: string[] = [];
+    let score = 0;
+
+    // 1) scan_hash changed
+    if (conv.scanHash && scan.scanHash !== conv.scanHash) {
+      score += 0.1;
+      reasons.push('repo-scan hash changed');
+    }
+
+    // 2) setup-files changed (höchstes Gewicht)
+    const oldSetup = conv.sourceScan?.testSetupFiles ?? [];
+    const newSetup = scan.snapshot.testSetupFiles ?? [];
+    if (JSON.stringify(oldSetup) !== JSON.stringify(newSetup)) {
+      score += 0.3;
+      reasons.push('test-setup files changed');
+    }
+
+    // 3) package.json scripts changed
+    const oldScripts = JSON.stringify(conv.sourceScan?.packageJsonScripts ?? {});
+    const newScripts = JSON.stringify(scan.snapshot.packageJsonScripts ?? {});
+    if (oldScripts !== newScripts) {
+      score += 0.15;
+      reasons.push('package.json scripts changed');
+    }
+
+    // 4) new top-level dirs
+    const oldDirs = new Set(conv.sourceScan?.topLevelDirs ?? []);
+    const newDirsAdded = (scan.snapshot.topLevelDirs ?? []).filter(d => !oldDirs.has(d));
+    if (newDirsAdded.length > 0) {
+      score += Math.min(0.15, newDirsAdded.length * 0.05);
+      reasons.push(`${newDirsAdded.length} new top-level dirs: ${newDirsAdded.slice(0, 3).join(', ')}`);
+    }
+
+    // 5) age since last apply
+    if (conv.lastAppliedAt) {
+      const days = (Date.now() - new Date(conv.lastAppliedAt).getTime()) / (1000 * 60 * 60 * 24);
+      const ageScore = Math.min(0.15, days / 30 * 0.15);
+      if (days > 30) {
+        score += ageScore;
+        reasons.push(`${Math.floor(days)} days since last apply`);
+      }
+    }
+
+    score = Math.min(1, score);
+    await this.deps.conventionsRepo.setDriftScore(projectId, packagePath, score);
+
+    return {
+      success: true,
+      data: {
+        driftScore: score,
+        reasons,
+        checkedAt: new Date().toISOString(),
+      },
+    };
+  }
+
+  // ── rollback ───────────────────────────────────────────────────────────
+  private async handleRollback(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+
+    const historyId = input.history_id as string | undefined;
+    if (!historyId) return { success: false, error: 'history_id required' };
+
+    const history = await this.deps.conventionsRepo.listHistory(projectId, packagePath, 200);
+    const entry = history.find(h => h.id === historyId);
+    if (!entry) return { success: false, error: 'history entry not found' };
+    if (!entry.prevContentSnapshot) return { success: false, error: 'no previous snapshot stored for this entry' };
+
+    // Write the snapshot back
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const filePath = path.join(packagePath ? path.join(proj.cwd, packagePath) : proj.cwd, fileNameFor(cfg.primaryOutput));
+    try {
+      writeFileSync(filePath, entry.prevContentSnapshot, { encoding: 'utf8' });
+    } catch (err) {
+      return { success: false, error: `Rollback write failed: ${(err as Error).message}` };
+    }
+
+    await this.deps.conventionsRepo.markRolledBack(historyId, 'user');
+    await this.deps.conventionsRepo.upsert({
+      projectId, packagePath,
+      content: entry.prevContentSnapshot,
+      contentHash: entry.prevContentHash ?? '',
+      draftContent: null,
+      lastAppliedAt: new Date().toISOString(),
+    });
+
+    return { success: true, data: { rolledBackTo: historyId, filePath: path.relative(proj.cwd, filePath) } };
+  }
+
+  // ── history ────────────────────────────────────────────────────────────
+  private async handleHistory(projectId: string, packagePath: string): Promise<SkillResult> {
+    const entries = await this.deps.conventionsRepo.listHistory(projectId, packagePath, 50);
+    return { success: true, data: { entries } };
+  }
+}
+
+/** Helper für AgentSessionManager — Lädt Conventions aus cwd. */
+export async function loadConventionsForCwd(cwd: string, capBytes = 8192): Promise<string | null> {
+  const candidates = [
+    path.join(cwd, 'CLAUDE.md'),
+    path.join(cwd, 'AGENTS.md'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) {
+        const content = readFileSync(p, 'utf8');
+        return content.length > capBytes ? content.slice(0, capBytes) + '\n... (truncated)' : content;
+      }
+    } catch { /* skip */ }
+  }
+  return null;
+}

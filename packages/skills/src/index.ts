@@ -104,6 +104,8 @@ export { UserManagementSkill, ROLE_SKILL_ACCESS } from './built-in/user-manageme
 export { SharingSkill } from './built-in/sharing.js';
 export { OneDriveSkill } from './built-in/onedrive.js';
 export { ShoppingSkill } from './built-in/shopping.js';
+export { AgentConventionsSkill, loadConventionsForCwd } from './built-in/agent-conventions/agent-conventions-skill.js';
+export type { RepoScannerLike, ConventionsGeneratorLike } from './built-in/agent-conventions/agent-conventions-skill.js';
 export { VoiceSkill } from './built-in/voice.js';
 export { CodeAgentSkill, orchestrate, orchestrateWithGit, createForgeClient, ForgeClient, gitGetRemoteUrl, gitInitRepo, gitAddRemote, parseRemoteUrl, ProjectAgentSkill, validateBuild, createProjectPlan, executeAgent, killProcessesByCwd, killAgentTree, drainInterjections, pushInterjection, setInterjectionRepo, registerAbortController, removeAbortController, extractBuildError, stageAssetsForProject, findAssetKeys, appendOutputLine, subscribeOutput, markOutputEnded, appendOutputEvent, subscribeOutputEvents, type AgentEventEntry } from './built-in/code-agent/index.js';
 export type { ExtractedError, ExtractedAsset, StageAssetsResult } from './built-in/code-agent/index.js';

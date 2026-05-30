@@ -5,6 +5,77 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.824] - 2026-05-30
+
+### Added — Agent-Conventions System Phase 1 Vollständig (v824)
+
+Komplette End-to-End-Funktionalität für CLAUDE.md/AGENTS.md-Verwaltung.
+Coding-Agents (claude-code, vibe, codex, generic) sehen ab sofort
+projekt-spezifische Konventionen.
+
+**RepoScanner (`@alfred/core/agent-conventions/repo-scanner.ts`)**
+- Read-only-Scan des Projekt-cwd: package.json, tsconfig, vitest/jest/next
+  configs, eslint/biome, File-Tree (3 Levels, max 2000 Einträge),
+  README + docs/ (max 5 Files), Test-Setup-Files (kritisch für Bug-Klasse
+  "Migration ohne setup.ts"), Migration-Dirs, .env.example, git-log + churn
+- Framework-Detection: nextjs/vite/remix/astro/express/fastify/nestjs/
+  react/vue/svelte/rust/python/go
+- Test-Runner-Detection: vitest/jest/playwright/mocha
+- Token-Cap: 60KB Gesamt-Context für LLM, 8KB pro Datei
+
+**ConventionsGenerator (`@alfred/core/agent-conventions/conventions-generator.ts`)**
+- LLM-Call (Tier `strong` Default) mit strukturiertem System-Prompt
+- Output: Markdown mit YAML-Frontmatter (`generated_by: alfred-agent-conventions`)
+- 7 Standard-Sections: Stack/Commands/TestSetup/Architecture/Style/Gotchas/DoNotTouch
+- Sprach-Support: de/en
+- Parser extrahiert NeutralConventions (Source-of-Truth in DB)
+- Refresh-Modus: bestehender Inhalt als Kontext für inkrementelle Updates
+
+**AgentConventionsSkill (`@alfred/skills/agent-conventions`)**
+- 7 Actions: status, detect, generate, apply, refresh, drift_check, rollback, history
+- Apply schreibt CLAUDE.md (+ optional AGENTS.md, cursor.rules etc. je nach
+  config.outputs), erstellt Backup, optional git commit
+- Drift-Check: Score-Berechnung aus Setup-Files-Change (30%), package.json-
+  Scripts (15%), neue Top-Level-Dirs (15%), scan_hash-Change (10%), age (15%)
+- Rollback: schreibt prev_content_snapshot zurück + markiert History-Entry
+
+**AgentSessionManager Conventions-Injection**
+- v824 — `loadConventionsForCwd()` lädt CLAUDE.md/AGENTS.md aus dem cwd
+- Wird vor handoffBriefing + opts.promptPrefix in den Adapter-Call eingebaut
+- Reihenfolge: conventions → handoff → user-prefix (innerste Schicht sticht)
+- vibe (Mistral), codex, generic-plain bekommen damit Konventionen die sie
+  sonst NIE sehen würden (kein nativer CLAUDE.md-Autoload wie claude-code)
+- Opt-out via `opts.skipConventions: true`
+
+**7 HTTP-Endpoints**
+- GET  /api/projects/:id/conventions/status
+- POST /api/projects/:id/conventions/generate
+- POST /api/projects/:id/conventions/apply
+- POST /api/projects/:id/conventions/refresh
+- POST /api/projects/:id/conventions/drift-check
+- GET  /api/projects/:id/conventions/history
+- POST /api/projects/:id/conventions/rollback
+
+**Frontend**
+- ProjectsPage: 📜 Konventionen-Button mit farbigem Badge je nach Status
+  (grün=fresh, amber=drift, blau=user-managed, rot=missing)
+- AgentConventionsModal: 3 Tabs (Aktuelle Datei / Draft / Historie),
+  Sprach-Wahl, Generate/Refresh/Drift-Check/Apply-Buttons, git-commit Toggle,
+  Rollback pro History-Entry
+
+**Mistral als LLM-Provider:**
+- Generate/Refresh-Calls laufen via `llmProvider.complete({ tier: 'strong', ... })`
+- Mistral als OpenAI-kompatibler Provider transparent unterstützt
+- Tier-Mapping bestimmt das Modell (mistral-large-latest bei tier=strong)
+
+**Side-Effect-Strategie:**
+- Migration in v823 bereits geschehen — keine Schema-Änderungen in v824
+- Skill ist NEU registriert, ersetzt nichts
+- promptPrefix-Injection ist ADDITIV (existierender Code unverändert)
+- AgentConventions feature ist auto-on, kann via `opts.skipConventions` deaktiviert werden
+- Generate ist nie automatisch — User muss explizit Button klicken
+- Apply hat Backup + History + Rollback als Sicherheitsnetz
+
 ## [0.19.0-multi-ha.823] - 2026-05-30
 
 ### Added — Agent-Conventions System Foundation (v823, Phase 1-4 DB-Schema)

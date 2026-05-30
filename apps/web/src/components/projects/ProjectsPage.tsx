@@ -12,6 +12,7 @@ import { RunningAgentsBanner } from './RunningAgentsBanner';
 import { ProjectWorkStatsView } from './ProjectWorkStatsView';
 import { ProjectDeployModal } from './ProjectDeployModal';
 import { ProjectConventionsView } from './ProjectConventionsView';
+import { AgentConventionsModal } from './AgentConventionsModal';
 import { ProjectRoadmapView } from './ProjectRoadmapView';
 import { ProjectAutomationsView } from './ProjectAutomationsView';
 import { ProjectEnvironmentsView } from './ProjectEnvironmentsView';
@@ -117,6 +118,9 @@ export function ProjectsPage() {
   } | null>(null);
   // v797 — Manueller Health-Check-Trigger
   const [healthChecking, setHealthChecking] = useState(false);
+  // v824 — Agent-Conventions Modal-State
+  const [conventionsModalOpen, setConventionsModalOpen] = useState(false);
+  const [conventionsBadge, setConventionsBadge] = useState<'present-fresh' | 'present-drift' | 'present-user-managed' | 'missing' | null>(null);
   // v641 — Multi-Select + Bulk-Work + Audit
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [workingOnItems, setWorkingOnItems] = useState(false);
@@ -231,6 +235,11 @@ export function ProjectsPage() {
     try {
       const d = await client.fetchProject(id);
       setDetail(d);
+      // v824 — Agent-Conventions Badge laden (best-effort, non-blocking)
+      client.conventionsStatus(id).then(r => {
+        if (r.ok && r.data) setConventionsBadge(r.data.badge);
+        else setConventionsBadge(null);
+      }).catch(() => setConventionsBadge(null));
     } catch { setDetail(null); }
   }, [client]);
 
@@ -627,6 +636,31 @@ export function ProjectsPage() {
                       className="px-3 py-1 text-xs text-blue-400 hover:bg-blue-500/10 rounded border border-blue-500/30"
                       title="Deploy mit konfigurierbaren Parametern (pm2/docker/systemd, host, user, port)"
                     >🚀 Deploy</button>
+                  )}
+                  {/* v824 — Agent-Konventionen (CLAUDE.md/AGENTS.md) Verwaltung */}
+                  {detail.project.status !== 'archived' && (
+                    <button
+                      onClick={() => setConventionsModalOpen(true)}
+                      className={`px-3 py-1 text-xs rounded border flex items-center gap-1 ${
+                        conventionsBadge === 'present-fresh' ? 'text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10' :
+                        conventionsBadge === 'present-drift' ? 'text-amber-400 border-amber-500/40 hover:bg-amber-500/10' :
+                        conventionsBadge === 'present-user-managed' ? 'text-blue-400 border-blue-500/30 hover:bg-blue-500/10' :
+                        conventionsBadge === 'missing' ? 'text-red-400 border-red-500/40 hover:bg-red-500/10' :
+                        'text-gray-400 border-gray-500/30 hover:bg-gray-500/10'
+                      }`}
+                      title={
+                        conventionsBadge === 'present-fresh' ? 'CLAUDE.md aktuell — klicken zum Reviewen/Refreshen' :
+                        conventionsBadge === 'present-drift' ? '⚠ CLAUDE.md könnte veraltet sein — Refresh empfohlen' :
+                        conventionsBadge === 'present-user-managed' ? '🔵 User-verwaltete CLAUDE.md (kein Alfred-Frontmatter)' :
+                        conventionsBadge === 'missing' ? '⚠ Keine CLAUDE.md — Auto-Generate empfohlen damit Coding-Agents Projekt-Konventionen kennen' :
+                        '📜 Agent-Konventionen verwalten (Auto-Generate aus Repo-Scan + LLM)'
+                      }
+                    >
+                      📜 Konventionen
+                      {conventionsBadge === 'present-fresh' && <span className="text-[9px]">✓</span>}
+                      {conventionsBadge === 'present-drift' && <span className="text-[9px]">⚠</span>}
+                      {conventionsBadge === 'missing' && <span className="text-[9px]">✕</span>}
+                    </button>
                   )}
                   {detail.project.status !== 'archived' && (
                     <button onClick={() => archiveProject(detail.project)} className="px-3 py-1 text-xs text-red-400 hover:bg-red-500/10 rounded border border-red-500/30">Archivieren</button>
@@ -1221,6 +1255,23 @@ export function ProjectsPage() {
                   projectName={detail.project.name}
                   defaultRepoUrl={detail.project.repoUrl}
                   onClose={() => setDeployModalOpen(false)}
+                />
+              )}
+
+              {/* v824 — Agent-Conventions-Modal (CLAUDE.md/AGENTS.md verwalten) */}
+              {client && conventionsModalOpen && (
+                <AgentConventionsModal
+                  client={client}
+                  projectId={detail.project.id}
+                  projectName={detail.project.name}
+                  open={conventionsModalOpen}
+                  onClose={() => {
+                    setConventionsModalOpen(false);
+                    // Badge nach Schließen refreshen — kann sich durch Apply/Rollback geändert haben
+                    client.conventionsStatus(detail.project.id).then(r => {
+                      if (r.ok && r.data) setConventionsBadge(r.data.badge);
+                    }).catch(() => { /* */ });
+                  }}
                 />
               )}
 

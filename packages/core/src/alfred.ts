@@ -7,7 +7,7 @@ import type { AlfredConfig, NormalizedMessage, Platform, SecurityRule } from '@a
 import type { Logger } from 'pino';
 import type { MessagingAdapter } from '@alfred/messaging';
 import { createLogger } from '@alfred/logger';
-import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, type AsyncDbAdapter } from '@alfred/storage';
+import { Database, ConversationRepository, UserRepository, AuditRepository, MemoryRepository, ReminderRepository, NoteRepository, EmbeddingRepository, LinkTokenRepository, BackgroundTaskRepository, ScheduledActionRepository, DocumentRepository, TodoRepository, WatchRepository, SummaryRepository, UsageRepository, CalendarNotificationRepository, ConfirmationRepository, ActivityRepository, SkillHealthRepository, WorkflowRepository, FeedbackRepository, SkillStateRepository, KnowledgeGraphRepository, BmwTelematicRepository, ServiceUsageRepository, CmdbRepository, ItsmRepository, AgentConventionsRepository, type AsyncDbAdapter } from '@alfred/storage';
 import { ConfigLoader, reloadDotenv } from '@alfred/config';
 import { createModelRouter } from '@alfred/llm';
 import { RuleEngine, SecurityManager, RuleLoader } from '@alfred/security';
@@ -162,6 +162,10 @@ export class Alfred {
   private memoryRepo?: MemoryRepository;
   private runbookRepo?: import('@alfred/storage').RunbookRepository;
   private projectRepo?: import('@alfred/storage').ProjectRepository;
+  /** v824 — Agent-Conventions Repository für CLAUDE.md/AGENTS.md-Lifecycle. */
+  private agentConventionsRepo?: import('@alfred/storage').AgentConventionsRepository;
+  /** v824 — Agent-Conventions Skill-Instance (für API-Endpoints + Background-Jobs). */
+  private agentConventionsSkillRef?: import('@alfred/skills').AgentConventionsSkill;
   /** v813c — für OpenItemMatcher Embedding-Pre-Filter (vermeidet 12k-Truncation bei vielen Items). */
   private embeddingServiceRef?: EmbeddingService;
   private embeddingRepoRef?: EmbeddingRepository;
@@ -914,6 +918,9 @@ export class Alfred {
       const { ProjectManager } = await import('./projects/project-manager.js');
       const { SessionSummarizer } = await import('./projects/session-summarizer.js');
       const projectRepo = new ProjectRepository(adapter);
+      // v824 — Agent-Conventions Repository (Phase 1 wire)
+      const agentConventionsRepo = new AgentConventionsRepository(adapter);
+      this.agentConventionsRepo = agentConventionsRepo;
       const summarizer = new SessionSummarizer(llmProvider, this.config.projects?.summarizerLlmTier ?? 'strong');
       const projectManager = new ProjectManager(
         projectRepo,
@@ -3272,6 +3279,39 @@ export class Alfred {
         skillRegistry.register(itsmSkill);
         skillRegistry.register(infraDocsSkill);
         skillRegistry.register(runbookSkill);
+
+        // v824 — AgentConventionsSkill (Phase 1 vollständig: detect/generate/apply/refresh/drift/rollback/history)
+        try {
+          const { AgentConventionsSkill } = await import('@alfred/skills');
+          const { RepoScanner } = await import('./agent-conventions/repo-scanner.js');
+          const { ConventionsGenerator } = await import('./agent-conventions/conventions-generator.js');
+          if (!this.agentConventionsRepo) {
+            this.logger.warn({}, 'v824 agent-conventions: repo not initialized, skipping skill registration');
+          } else if (!this.llmProvider) {
+            this.logger.warn({}, 'v824 agent-conventions: llmProvider not initialized, skipping skill registration');
+          } else {
+            const scanner = new RepoScanner(this.logger.child({ component: 'repo-scanner' }));
+            const generator = new ConventionsGenerator(this.llmProvider, this.logger.child({ component: 'conventions-generator' }));
+            const agentConvSkill = new AgentConventionsSkill({
+              scanner,
+              generator,
+              conventionsRepo: this.agentConventionsRepo,
+              logger: this.logger.child({ component: 'agent-conventions-skill' }),
+              resolveProject: async (projectId: string) => {
+                if (!this.projectRepo) return null;
+                const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
+                if (!proj || !proj.cwd) return null;
+                return { id: proj.id, cwd: proj.cwd, userId: proj.userId };
+              },
+              config: () => (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions ?? {},
+            });
+            this.agentConventionsSkillRef = agentConvSkill;
+            skillRegistry.register(agentConvSkill);
+            this.logger.info({}, 'v824 agent-conventions skill registered');
+          }
+        } catch (err) {
+          this.logger.warn({ err }, 'v824 agent-conventions skill setup failed (non-fatal)');
+        }
 
         // v638 — Insight-Engine (Cross-Domain). Lebt im selben Block weil sie auf
         // CMDB/ITSM/Problem/MetricSamples zugreift. Adapter registriert sich selbst.
@@ -8370,6 +8410,67 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             } catch (err) {
               return { ok: false, reason: (err as Error).message };
             }
+          },
+          // v824 — Agent-Conventions Callbacks (Phase 1 vollständig, alle 7 Actions)
+          conventionsStatus: async (projectId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'status', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsGenerate: async (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en'; tier?: 'fast' | 'default' | 'strong' }) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({
+              action: 'generate',
+              project_id: projectId,
+              package_path: opts.packagePath ?? '',
+              language: opts.language,
+              tier: opts.tier,
+            }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsApply: async (projectId: string, opts: { packagePath?: string; content?: string; commitToGit?: boolean; outputs?: string[] }) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({
+              action: 'apply',
+              project_id: projectId,
+              package_path: opts.packagePath ?? '',
+              content: opts.content,
+              commit_to_git: opts.commitToGit,
+              outputs: opts.outputs,
+            }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsRefresh: async (projectId: string, opts: { packagePath?: string; language?: 'de' | 'en' }) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({
+              action: 'refresh',
+              project_id: projectId,
+              package_path: opts.packagePath ?? '',
+              language: opts.language,
+            }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsDriftCheck: async (projectId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'drift_check', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsHistory: async (projectId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'history', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsRollback: async (projectId: string, historyId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'rollback', project_id: projectId, package_path: packagePath ?? '', history_id: historyId }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
           },
           // v797 — Manueller Health-Check (statt 6h-Schedule warten)
           triggerHealthCheck: async (projectId: string) => {
