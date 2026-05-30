@@ -1038,6 +1038,8 @@ export interface AlfredConfig {
   pfsense?: PfSenseConfig;
   infra?: InfraDefaultsConfig;
   cmdb?: CmdbConfig;
+  /** v828 — Agent-Conventions (CLAUDE.md/AGENTS.md) Verwaltung. Opt-in. */
+  agentConventions?: import('./agent-conventions.js').AgentConventionsConfig;
   /** v696 — Project-Agent Sandbox (opt-in). Wenn nicht gesetzt: classic-only Verhalten. */
   sandbox?: SandboxConfig;
   projects?: ProjectsConfig;

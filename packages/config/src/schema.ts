@@ -613,6 +613,39 @@ export const CmdbConfigSchema = z.object({
   healthCheckIntervalMinutes: z.number().optional(),
 });
 
+// v828 — Agent-Conventions (CLAUDE.md/AGENTS.md Verwaltung). Opt-in.
+export const AgentConventionsConfigSchema = z.object({
+  enabled: z.coerce.boolean().optional(),
+  generateMode: z.enum(['single', 'quorum-2', 'quorum-3', 'quorum-first-time']).optional(),
+  generateTier: z.enum(['fast', 'default', 'strong']).optional(),
+  language: z.enum(['de', 'en']).optional(),
+  outputs: z.array(z.enum(['claude.md', 'agents.md', 'cursor.rules', 'copilot.md', 'codex.md'])).optional(),
+  primaryOutput: z.enum(['claude.md', 'agents.md', 'cursor.rules', 'copilot.md', 'codex.md']).optional(),
+  translateTo: z.enum(['de', 'en']).optional(),
+  autoApplyMode: z.enum(['off', 'minor', 'confident', 'aggressive', 'auto-pr']).optional(),
+  driftCheckIntervalHours: z.coerce.number().positive().optional(),
+  driftRefreshAuto: z.coerce.boolean().optional(),
+  lessonsAggressiveLearning: z.coerce.boolean().optional(),
+  crossProjectPool: z.enum(['on', 'off', 'per-project-optin']).optional(),
+  selfModifyAgent: z.object({
+    enabled: z.coerce.boolean().optional(),
+    intervalDays: z.coerce.number().positive().optional(),
+    sessionThreshold: z.coerce.number().positive().optional(),
+  }).optional(),
+  embeddingInjection: z.coerce.boolean().optional(),
+  inverseLearning: z.coerce.boolean().optional(),
+  testHarness: z.object({
+    enabled: z.coerce.boolean().optional(),
+    runsPerVersion: z.coerce.number().positive().optional(),
+  }).optional(),
+  budget: z.object({
+    monthlyUsdCap: z.coerce.number().nonnegative().optional(),
+    alertAt: z.coerce.number().min(0).max(1).optional(),
+  }).optional(),
+  autoApplyAllowedSections: z.array(z.enum(['stack', 'commands', 'testSetup', 'architecture', 'style', 'gotchas', 'doNotTouch'])).optional(),
+  allowedSkillContributions: z.union([z.literal('*'), z.array(z.string())]).optional(),
+});
+
 // v696 — Project-Agent Sandbox + Live-Preview (opt-in)
 export const SandboxConfigSchema = z.object({
   enabled: z.coerce.boolean().optional(),
@@ -693,6 +726,7 @@ export const AlfredConfigSchema = z.object({
   pfsense: PfSenseConfigSchema.optional(),
   infra: InfraDefaultsConfigSchema.optional(),
   cmdb: CmdbConfigSchema.optional(),
+  agentConventions: AgentConventionsConfigSchema.optional(),
   sandbox: SandboxConfigSchema.optional(),
   projects: ProjectsConfigSchema.optional(),
   backup: z.object({

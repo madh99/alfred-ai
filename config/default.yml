@@ -61,3 +61,80 @@ logger:
 security:
   rulesPath: ./config/rules
   defaultEffect: deny
+
+# v823-v828 — Agent-Conventions (CLAUDE.md/AGENTS.md Verwaltung für Coding-Agents).
+# Opt-in. Wenn nicht gesetzt: kein Effekt. Aktiviere agentConventions.enabled für
+# das gesamte Feature, danach pro Sub-Feature einzeln.
+#
+# agentConventions:
+#   enabled: true
+#
+#   # LLM-Tier für Generate (strong empfohlen für Qualität, default für Cost-Save)
+#   generateTier: strong
+#
+#   # Generate-Modus: single = ein LLM-Call (Default), quorum-2/quorum-3 = N parallel
+#   # LLM-Calls + Judge wählt beste Version (höhere Qualität, höhere Cost)
+#   generateMode: single
+#
+#   # Sprache der generierten CLAUDE.md (de | en)
+#   language: de
+#
+#   # Optional: zweite Sprache als <CLAUDE.lang.md> mitgenerieren (extra LLM-Call)
+#   # translateTo: en
+#
+#   # Welche Output-Files schreiben. CLAUDE.md = Anthropic-Standard,
+#   # AGENTS.md = generisch (Codex/Cursor/andere), cursor.rules = Cursor-spezifisch
+#   outputs:
+#     - claude.md
+#     # - agents.md
+#     # - cursor.rules
+#   primaryOutput: claude.md
+#
+#   # Auto-Apply-Mode nach Lesson-Consolidate. NIE für User-managed Files (Frontmatter-Check).
+#   # off       = User-Review-Pflicht (sicher, Default)
+#   # minor     = Auto bei Confidence >= 0.8
+#   # confident = Auto bei Confidence >= 0.85 (empfohlen)
+#   # aggressive= Auto bei Confidence >= 0.7
+#   # auto-pr   = Phase 3.x (noch nicht implementiert)
+#   autoApplyMode: confident
+#
+#   # Background-Job-Intervall für Drift-Check (alle X Stunden)
+#   driftCheckIntervalHours: 24
+#
+#   # Cross-Project Pattern-Pool (Phase 3.3). 'on' = Lessons aus allen Projekten
+#   # werden geclustert + ähnliche Patterns übergreifend angeboten.
+#   crossProjectPool: on
+#
+#   # Self-Modifying-Agent (Phase 4.3) — periodischer Refactor der CLAUDE.md
+#   # mit allen gesammelten Lessons/Violations/Drift-Daten
+#   selfModifyAgent:
+#     enabled: true
+#     intervalDays: 7
+#     sessionThreshold: 10
+#
+#   # Embedding-Injection (Phase 4.5) — task-relevante Lessons werden bei
+#   # Session-Start in den Agent-Prompt injiziert (noch keine Auswirkung
+#   # ohne alfred.ts-Wiring zum EmbeddingService — kommt in Folge-Version)
+#   embeddingInjection: true
+#
+#   # Inverse-Learning (Phase 4.2) — tracke welche Conventions oft verletzt werden
+#   # und resolved-anyway durchgehen, schlage Entfernung vor
+#   inverseLearning: true
+#
+#   # Test-Harness (Phase 4.6) — Power-User-Feature, kanonische Tasks runs
+#   testHarness:
+#     enabled: false
+#     runsPerVersion: 10
+#
+#   # Budget-Cap für LLM-Calls dieses Features (Monthly USD)
+#   budget:
+#     monthlyUsdCap: 50
+#     alertAt: 0.8
+#
+#   # Welche Sections dürfen auto-applied werden (Stack/Architektur NIE)
+#   autoApplyAllowedSections:
+#     - gotchas
+#     - doNotTouch
+#
+#   # Skill-Contributions (Phase 3.6) — Whitelist welche Skills Conventions beitragen dürfen
+#   allowedSkillContributions: "*"

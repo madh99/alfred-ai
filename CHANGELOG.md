@@ -5,6 +5,38 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.829] - 2026-05-30
+
+### Added — Agent-Conventions Config-Wiring (v829)
+
+Nachgezogenes Config-Wiring damit `agentConventions`-Einstellungen tatsächlich
+geladen werden. War in v823-v828 vergessen worden.
+
+**Hinzugefügt:**
+- `AgentConventionsConfigSchema` in `@alfred/config/schema.ts` (Zod-Schema)
+- `agentConventions` Feld im `AlfredConfigSchema`
+- `agentConventions?: AgentConventionsConfig` Feld im `AlfredConfig`-Type
+  (`@alfred/types/config.ts`)
+- Komplette kommentierte Beispiel-Section in `config/default.yml`
+
+**Aktivierung:**
+
+Im `config/default.yml` (oder dem File auf das `ALFRED_CONFIG_PATH` zeigt):
+
+```yaml
+agentConventions:
+  enabled: true
+  generateTier: strong
+  language: de
+  autoApplyMode: confident
+  crossProjectPool: on
+  selfModifyAgent:
+    enabled: true
+    intervalDays: 7
+```
+
+Alfred-Restart erforderlich nach Config-Änderung.
+
 ## [0.19.0-multi-ha.828] - 2026-05-30
 
 ### Added — Agent-Conventions Phase 4 Vollständig (v828)
