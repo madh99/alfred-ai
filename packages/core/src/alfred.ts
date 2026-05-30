@@ -321,6 +321,8 @@ export class Alfred {
   private clusterMonitorTimer?: ReturnType<typeof setInterval>;
   private cmdbDiscoveryTimer?: ReturnType<typeof setInterval>;
   private cmdbHealthCheckTimer?: ReturnType<typeof setInterval>;
+  /** v825 — Periodischer Drift-Check für Agent-Conventions (Phase 2). */
+  private agentConventionsDriftTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
@@ -3308,6 +3310,40 @@ export class Alfred {
             this.agentConventionsSkillRef = agentConvSkill;
             skillRegistry.register(agentConvSkill);
             this.logger.info({}, 'v824 agent-conventions skill registered');
+
+            // v825 — Periodischer Drift-Check (Phase 2). Default 24h. 5min nach Startup
+            // initial-Lauf damit Boot nicht blockt.
+            const cfg = (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions;
+            const driftHours = cfg?.driftCheckIntervalHours ?? 24;
+            if (driftHours > 0 && cfg?.enabled !== false) {
+              const driftMs = driftHours * 3_600_000;
+              const runDriftCycle = async () => {
+                if (!this.agentConventionsSkillRef || !this.agentConventionsRepo) return;
+                try {
+                  const all = await this.agentConventionsRepo.listAllForDriftCheck();
+                  this.logger.info({ count: all.length }, 'v825 agent-conventions drift cycle start');
+                  for (const item of all) {
+                    try {
+                      const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+                      await this.agentConventionsSkillRef.execute({
+                        action: 'drift_check',
+                        project_id: item.projectId,
+                        package_path: item.packagePath,
+                      }, ctx);
+                    } catch (err) {
+                      this.logger.debug({ err, projectId: item.projectId }, 'v825 drift-check failed for project (non-fatal)');
+                    }
+                  }
+                } catch (err) {
+                  this.logger.debug({ err }, 'v825 drift cycle failed (non-fatal)');
+                }
+              };
+              setTimeout(() => {
+                runDriftCycle();
+                this.agentConventionsDriftTimer = setInterval(runDriftCycle, driftMs);
+              }, 5 * 60_000); // 5 min nach Startup
+              this.logger.info({ intervalHours: driftHours }, 'v825 agent-conventions drift-check scheduled');
+            }
           }
         } catch (err) {
           this.logger.warn({ err }, 'v824 agent-conventions skill setup failed (non-fatal)');
@@ -3726,6 +3762,74 @@ export class Alfred {
                   this.logger.warn({ err, sandboxId }, 'v812 onMergeApplied failed');
                 }
               },
+              // v825 — Merge-Gate-Failure → Lesson aus Test-Output ableiten (Lessons-Loop Phase 2).
+              // Höchste Confidence-Trust-Source ("merge-gate-failure" → trust 0.9).
+              onMergeGateFailed: async ({ sandboxId, projectId, testSummary, rawOutputTail }) => {
+                if (!this.agentConventionsSkillRef || !this.llmProvider) return;
+                try {
+                  // LLM extrahiert die generalisierbare Lesson aus dem Test-Output.
+                  // Constraint: nur wenn der Fehler eine Pattern hat das wiederholbar wäre
+                  // (nicht "test X failed weil mock falsch") sondern strukturell.
+                  const prompt = `Hier ist ein Test-Failure-Output aus einem Coding-Agent-Run:
+
+${testSummary}
+
+Vollständiger Output-Tail:
+${rawOutputTail.slice(0, 3000)}
+
+Frage: Lässt sich daraus eine PROJEKT-SPEZIFISCHE Konvention ableiten die der Agent in zukünftigen Sessions wissen sollte, damit dieser Fehler nicht wieder passiert?
+
+Antworte STRENG in diesem JSON-Format (keine Erklärung drumherum):
+{"learnable": true|false, "confidence": 0.0-1.0, "lesson_text": "1-3 Sätze, direkt an den Agent gerichtet, deutsch"}
+
+Falls nicht learnable (z.B. einmaliger Mock-Issue, Flaky-Test, Infrastruktur-Problem): {"learnable": false, "confidence": 0, "lesson_text": ""}.
+
+Beispiel für eine gute Lesson: "Wenn du eine Migration in migrations/*.sql hinzufügst, MUSS src/__tests__/setup.ts mit den neuen Tabellen-Definitionen erweitert werden. Sonst failen Tests die diese Tabellen anfragen mit 'no such table'."`;
+
+                  const res = await this.llmProvider.complete({
+                    messages: [{ role: 'user', content: prompt }],
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    tier: 'default' as any,
+                    maxTokens: 500,
+                    temperature: 0.2,
+                  });
+                  const cleaned = res.content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+                  const start = cleaned.indexOf('{');
+                  const end = cleaned.lastIndexOf('}');
+                  if (start < 0 || end <= start) return;
+                  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { learnable: boolean; confidence: number; lesson_text: string };
+                  if (!parsed.learnable || !parsed.lesson_text || parsed.confidence < 0.5) {
+                    this.logger.debug({ sandboxId, projectId, learnable: parsed.learnable, confidence: parsed.confidence }, 'v825 merge-gate-failure: not learnable (skipped)');
+                    return;
+                  }
+                  const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+                  const lesson = await this.agentConventionsSkillRef.execute({
+                    action: 'learn',
+                    project_id: projectId,
+                    package_path: '',
+                    lesson_text: parsed.lesson_text,
+                    lesson_source: 'merge-gate-failure',
+                    lesson_confidence: Math.min(0.95, parsed.confidence * 0.9 + 0.1), // base 0.9 trust * model-confidence
+                    lesson_session_id: sandboxId,
+                  }, ctx);
+                  this.logger.info({ sandboxId, projectId, lessonId: (lesson.data as { lessonId?: string })?.lessonId }, 'v825 lesson learned from merge-gate-failure');
+                  // Optional: ChatBubble in Project-Chat damit User sieht
+                  try {
+                    if (this.conversationRepo && this.projectRepo) {
+                      const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
+                      if (proj) {
+                        const conv = await this.conversationRepo.findOrCreateForProject(proj.userId, projectId);
+                        await this.conversationRepo.addMessage(conv.id, 'assistant',
+                          `💡 **Lesson Learned aus Merge-Gate-Failure**\n\n${parsed.lesson_text}\n\n_Wird beim nächsten Conventions-Refresh in CLAUDE.md vorgeschlagen._`);
+                      }
+                    }
+                  } catch (err) {
+                    this.logger.debug({ err, projectId }, 'v825 lesson-chat-notice failed (non-fatal)');
+                  }
+                } catch (err) {
+                  this.logger.debug({ err, sandboxId, projectId }, 'v825 onMergeGateFailed handling failed (non-fatal)');
+                }
+              },
               // v812 — Discard: pending Sessions → discarded, tentative Open-Items/Decisions löschen.
               onSandboxDiscarded: async ({ sandboxId, projectId }) => {
                 if (!this.projectRepo) return;
@@ -3803,6 +3907,65 @@ export class Alfred {
                   } catch (err) {
                     this.logger.debug({ err, sessionId }, 'v816 containerExecLookup failed (non-fatal)');
                     return undefined;
+                  }
+                });
+
+                // v825 — Lessons-Loop-Hook für Plan-Agent. awaiting_user (high trust) + fix-resolved
+                // (low trust) → LLM extrahiert Lesson + persistiert via agent_conventions skill.
+                this.projectAgentRunnerRef.setLessonOpportunityHook(async ({ sessionId, cwd, source, buildOutput, diagnosis, fixAttempts }) => {
+                  if (!this.agentConventionsSkillRef || !this.llmProvider) return;
+                  try {
+                    // ProjectId aus cwd ableiten
+                    if (!this.projectRepo) return;
+                    const userId = this.tryOwner() ?? '';
+                    if (!userId) return;
+                    const projects = await this.projectRepo.list(userId).catch(() => []);
+                    const proj = projects.find(p => p.cwd === cwd) ?? projects.find(p => p.cwd && cwd.startsWith(p.cwd));
+                    if (!proj) return;
+
+                    const baseTrust = source === 'plan-awaiting-user' ? 0.7 : 0.5;
+                    const minLLMConfidence = source === 'plan-awaiting-user' ? 0.5 : 0.7;
+
+                    const prompt = `Hier ist ein Build/Test-Failure aus einem Plan-Agent-Run (${source}, nach ${fixAttempts} Fix-Versuchen):
+
+${diagnosis ? `Diagnose: ${diagnosis}\n\n` : ''}Output-Tail:
+${buildOutput.slice(-3500)}
+
+Frage: Lässt sich daraus eine PROJEKT-SPEZIFISCHE Konvention ableiten die der Agent in zukünftigen Sessions wissen sollte?
+
+STRENG JSON: {"learnable": true|false, "confidence": 0.0-1.0, "lesson_text": "1-3 Sätze, direkt an den Agent gerichtet, deutsch"}
+
+Bei Mock-Issues/Flaky-Tests/Infra-Problemen: {"learnable": false, "confidence": 0, "lesson_text": ""}.`;
+
+                    const res = await this.llmProvider.complete({
+                      messages: [{ role: 'user', content: prompt }],
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      tier: 'default' as any,
+                      maxTokens: 400,
+                      temperature: 0.2,
+                    });
+                    const cleaned = res.content.replace(/```(?:json)?\s*([\s\S]*?)\s*```/g, '$1').trim();
+                    const start = cleaned.indexOf('{');
+                    const end = cleaned.lastIndexOf('}');
+                    if (start < 0 || end <= start) return;
+                    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { learnable: boolean; confidence: number; lesson_text: string };
+                    if (!parsed.learnable || !parsed.lesson_text || parsed.confidence < minLLMConfidence) {
+                      this.logger.debug({ sessionId, source, confidence: parsed.confidence }, 'v825 plan-agent-lesson: not learnable (skipped)');
+                      return;
+                    }
+                    const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+                    await this.agentConventionsSkillRef.execute({
+                      action: 'learn',
+                      project_id: proj.id,
+                      package_path: '',
+                      lesson_text: parsed.lesson_text,
+                      lesson_source: source,
+                      lesson_confidence: Math.min(0.95, baseTrust * parsed.confidence + 0.1),
+                      lesson_session_id: sessionId,
+                    }, ctx);
+                    this.logger.info({ sessionId, projectId: proj.id, source }, 'v825 lesson learned from plan-agent');
+                  } catch (err) {
+                    this.logger.debug({ err, sessionId, source }, 'v825 lesson-opportunity-hook failed (non-fatal)');
                   }
                 });
               }
@@ -8472,6 +8635,18 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             const r = await this.agentConventionsSkillRef.execute({ action: 'rollback', project_id: projectId, package_path: packagePath ?? '', history_id: historyId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
+          conventionsListLessons: async (projectId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'list_lessons', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsConsolidateLessons: async (projectId: string, packagePath?: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'consolidate_lessons', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
           // v797 — Manueller Health-Check (statt 6h-Schedule warten)
           triggerHealthCheck: async (projectId: string) => {
             if (!this.projectHealthMonitor) {
@@ -10307,6 +10482,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.cmdbDiscoveryTimer) {
       clearInterval(this.cmdbDiscoveryTimer);
       this.cmdbDiscoveryTimer = undefined;
+    }
+    if (this.agentConventionsDriftTimer) {
+      clearInterval(this.agentConventionsDriftTimer);
+      this.agentConventionsDriftTimer = undefined;
     }
     if (this.cmdbHealthCheckTimer) {
       clearInterval(this.cmdbHealthCheckTimer);

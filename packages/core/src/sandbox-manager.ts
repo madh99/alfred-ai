@@ -53,6 +53,12 @@ export interface SandboxManagerDeps {
    * angelegte Open-Items + Decisions (Arbeit wurde nicht angewendet).
    */
   onSandboxDiscarded?: (input: { sandboxId: string; projectId: string }) => Promise<void>;
+  /**
+   * v825 — Wird beim Merge-Gate-Failure (Tests fehlgeschlagen) gerufen damit der
+   * Conventions-Lessons-Loop daraus eine Erkenntnis ableiten + persistieren kann.
+   * Test-Output ist ANSI-stripped + via summarizeTestFailure verkürzt.
+   */
+  onMergeGateFailed?: (input: { sandboxId: string; projectId: string; testSummary: string; rawOutputTail: string }) => Promise<void>;
 }
 
 export interface CreateForSessionInput {
@@ -844,6 +850,18 @@ export class SandboxManager {
           // die Error-Message lesbar ist (vorher: wall of \x1b[2m\x1b[22m\x1b... Müll).
           const cleaned = stripAnsi(gate.output || '');
           const summary = summarizeTestFailure(cleaned);
+          // v825 — Lessons-Loop: Merge-Gate-Failure ist der zuverlässigste Trigger für
+          // generalisierbare Lessons. Wir geben den Callback fire-and-forget — non-fatal.
+          if (this.deps.onMergeGateFailed) {
+            this.deps.onMergeGateFailed({
+              sandboxId,
+              projectId: sb.projectId,
+              testSummary: summary,
+              rawOutputTail: cleaned.slice(-4000),
+            }).catch(err => {
+              this.deps.logger.debug({ err, sandboxId }, 'v825 onMergeGateFailed callback failed (non-fatal)');
+            });
+          }
           return {
             ok: false,
             reason: `Merge-Gate: Tests fehlgeschlagen. Sandbox bleibt paused — manuell debuggen oder verwerfen.\n\n${summary}`,

@@ -11,6 +11,7 @@ import type {
   AgentConventionsStatus,
   AgentConventionsHistoryEntry,
   AgentConventionsGenerateData,
+  AgentConventionsLesson,
 } from '../../lib/alfred-client';
 
 interface Props {
@@ -21,13 +22,15 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'view' | 'draft' | 'history';
+type Tab = 'view' | 'draft' | 'history' | 'lessons';
 
 export function AgentConventionsModal({ client, projectId, projectName, open, onClose }: Props) {
   const [status, setStatus] = useState<AgentConventionsStatus | null>(null);
   const [draft, setDraft] = useState<string>('');
   const [draftMeta, setDraftMeta] = useState<AgentConventionsGenerateData | null>(null);
   const [history, setHistory] = useState<AgentConventionsHistoryEntry[]>([]);
+  const [lessons, setLessons] = useState<AgentConventionsLesson[]>([]);
+  const [pendingLessonsCount, setPendingLessonsCount] = useState(0);
   const [tab, setTab] = useState<Tab>('view');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,13 +49,22 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     if (r.ok && r.data) setHistory(r.data.entries);
   }, [client, projectId]);
 
+  const loadLessons = useCallback(async () => {
+    const r = await client.conventionsListLessons(projectId);
+    if (r.ok && r.data) {
+      setLessons(r.data.lessons);
+      setPendingLessonsCount(r.data.pendingCount);
+    }
+  }, [client, projectId]);
+
   useEffect(() => {
     if (open) {
       setError(null); setNotice(null);
       loadStatus();
       loadHistory();
+      loadLessons();
     }
-  }, [open, loadStatus, loadHistory]);
+  }, [open, loadStatus, loadHistory, loadLessons]);
 
   async function runGenerate() {
     setBusy('generate'); setError(null); setNotice(null);
@@ -100,6 +112,21 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
         await loadHistory();
       } else {
         setError(r.reason ?? 'Apply failed');
+      }
+    } finally { setBusy(null); }
+  }
+
+  async function runConsolidate() {
+    setBusy('consolidate'); setError(null); setNotice(null);
+    try {
+      const r = await client.conventionsConsolidateLessons(projectId);
+      if (r.ok && r.data) {
+        setDraft(r.data.draft);
+        setDraftMeta(r.data);
+        setTab('draft');
+        setNotice(`✓ ${r.data.consolidatedLessonsCount} Lessons in Draft integriert. Review + Apply nicht vergessen!`);
+      } else {
+        setError(r.reason ?? 'Consolidate failed');
       }
     } finally { setBusy(null); }
   }
@@ -164,6 +191,10 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
         <div className="flex border-b border-[#1f1f1f] text-xs">
           <button onClick={() => setTab('view')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'view' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>📄 Aktuelle Datei</button>
           <button onClick={() => setTab('draft')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'draft' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>✏️ Draft {draft && '●'}</button>
+          <button onClick={() => setTab('lessons')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'lessons' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>
+            💡 Lessons ({lessons.length})
+            {pendingLessonsCount > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200">{pendingLessonsCount} pending</span>}
+          </button>
           <button onClick={() => setTab('history')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'history' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>🕐 Historie ({history.length})</button>
         </div>
 
@@ -221,6 +252,35 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
             </div>
           )}
 
+          {tab === 'lessons' && (
+            <div>
+              <div className="mb-3 text-[11px] text-gray-500">
+                Lessons werden automatisch aus Merge-Gate-Failures, Plan-Agent-awaiting-user und
+                Fix-Loop-Resolutions abgeleitet. Mit "Consolidate" werden alle pending Lessons in
+                einen neuen Draft-CLAUDE.md integriert.
+              </div>
+              {lessons.length === 0 ? (
+                <div className="text-gray-500 italic">Noch keine Lessons gesammelt.</div>
+              ) : (
+                <div className="space-y-2">
+                  {lessons.map(l => (
+                    <div key={l.id} className={`p-2 border rounded ${l.appliedToMain ? 'border-gray-700 opacity-60' : 'border-amber-500/40 bg-amber-500/5'}`}>
+                      <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+                        <span>
+                          {l.appliedToMain ? '✓ applied' : '⏳ pending'} ·
+                          <span className="ml-1 font-mono">{l.source}</span> ·
+                          <span className="ml-1">conf {(l.confidence * 100).toFixed(0)}%</span> ·
+                          <span className="ml-1">{new Date(l.learnedAt).toLocaleString('de-AT')}</span>
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-300 whitespace-pre-wrap">{l.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {tab === 'history' && (
             <div>
               {history.length === 0 ? (
@@ -270,6 +330,14 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
           </button>
           <button onClick={runDriftCheck} disabled={busy !== null || !status?.filePresent} className="px-3 py-1 bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30 rounded disabled:opacity-60">
             {busy === 'drift' ? '⏳ Drift …' : '📊 Drift-Check'}
+          </button>
+          <button
+            onClick={runConsolidate}
+            disabled={busy !== null || pendingLessonsCount === 0}
+            title={pendingLessonsCount === 0 ? 'Keine pending Lessons' : `${pendingLessonsCount} Lessons konsolidieren`}
+            className="px-3 py-1 bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 rounded disabled:opacity-60"
+          >
+            {busy === 'consolidate' ? '⏳ Consolidate …' : `💡 Consolidate Lessons${pendingLessonsCount > 0 ? ` (${pendingLessonsCount})` : ''}`}
           </button>
           <div className="flex-1" />
           <label className="flex items-center gap-1 text-[10px] text-gray-500">

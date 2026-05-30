@@ -835,6 +835,22 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v825 — Phase 2 Lessons-Loop API
+  async conventionsListLessons(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: { lessons: AgentConventionsLesson[]; pendingCount: number; appliedCount: number }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/lessons${packagePath ? `?package_path=${encodeURIComponent(packagePath)}` : ''}`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsConsolidateLessons(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: AgentConventionsGenerateData & { consolidatedLessonsCount: number }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/consolidate-lessons`, {
+      method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ packagePath: packagePath ?? '' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
@@ -2597,6 +2613,17 @@ export interface AgentConventionsApplyData {
   commitSha?: string;
   historyId: string;
   backupCreated: boolean;
+}
+
+export interface AgentConventionsLesson {
+  id: string;
+  learnedAt: string;
+  source: 'merge-gate-failure' | 'plan-fix-loop-resolved' | 'plan-awaiting-user' | 'user-chat-explicit' | 'drift-refresh-detected' | 'cross-project-pattern' | 'scan-update';
+  text: string;
+  sessionId?: string;
+  confidence: number;
+  appliedToMain: boolean;
+  userApproved: boolean | null;
 }
 
 export interface AgentConventionsHistoryEntry {

@@ -5,6 +5,71 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.825] - 2026-05-30
+
+### Added — Agent-Conventions Phase 2: Lessons-Loop + Drift-Background-Job (v825)
+
+Closed-Loop-Learning für Agent-Konventionen. Aus realen Fehlern werden
+Konventionen abgeleitet, persistent gespeichert, und auf User-Wunsch in
+die CLAUDE.md konsolidiert.
+
+**4 neue Skill-Actions (`agent_conventions`)**
+- `learn` — Append einer Lesson mit Source (merge-gate-failure /
+  plan-fix-loop-resolved / plan-awaiting-user / user-chat-explicit) +
+  Confidence + Session-ID
+- `list_lessons` — alle Lessons + pending/applied Count
+- `consolidate_lessons` — LLM-Call der pending Lessons in einen neuen
+  Draft-CLAUDE.md integriert (existing content als Refresh-Vorlage)
+- `mark_lesson_applied` — markiert Lesson(s) als angewendet nach
+  consolidate+apply
+
+**3 Lessons-Trigger-Punkte (automatisch)**
+- `sandbox-manager.ts merge()`: `onMergeGateFailed` Callback bei
+  Test-Failure im Merge-Gate. LLM-Extraktion mit Constraint "STRENG JSON",
+  trust-Source `merge-gate-failure` mit baseTrust 0.9. Chat-Bubble im
+  Project-Chat informiert User.
+- `project-agent-runner.ts`: `onLessonOpportunity` Hook in zwei Stellen:
+  - awaiting_user nach maxFixAttempts (baseTrust 0.7, minLLMConf 0.5)
+  - fix-loop-resolved nach fixAttempts > 0 (baseTrust 0.5, minLLMConf 0.7)
+- User-Chat: bereits über `learn`-Action erreichbar
+- LLM kann jede Failure als "not learnable" markieren → Skip (kein
+  unnützer Lesson-Spam).
+
+**Background-Job: Drift-Check (Phase 2)**
+- Periodisch alle 24h (`agentConventions.driftCheckIntervalHours`)
+- Initial-Lauf 5min nach Startup
+- Iteriert über alle agent_conventions-Rows, ruft drift_check per Projekt
+- Aktualisiert drift_score + last_drift_check_at
+- Cleanup-Timer im Alfred.stop()
+
+**HTTP-Endpoints (2 neu)**
+- `GET  /api/projects/:id/conventions/lessons`
+- `POST /api/projects/:id/conventions/consolidate-lessons`
+
+**UI**
+- AgentConventionsModal: neuer "💡 Lessons"-Tab mit
+  pending-Badge (amber) im Tab-Header
+- Lesson-Cards mit source/confidence/timestamp + Status (pending/applied)
+- "💡 Consolidate Lessons (N)"-Button im Footer (greyed out wenn pending=0)
+- AlfredClient: `conventionsListLessons` + `conventionsConsolidateLessons`
+
+**Trust-Source Confidence-Matrix**
+| Source | baseTrust | minLLMConf | Final-Range |
+|---|---|---|---|
+| merge-gate-failure | 0.9 | 0.5 | 0.5-0.95 |
+| plan-awaiting-user | 0.7 | 0.5 | 0.4-0.85 |
+| plan-fix-loop-resolved | 0.5 | 0.7 | 0.4-0.6 |
+| user-chat-explicit | 1.0 | n/a | 1.0 |
+| drift-refresh-detected | 0.5 | n/a | 0.5 |
+| cross-project-pattern | 0.4 | n/a | 0.4 |
+
+**Side-Effects:**
+- Drift-Background-Job ist opt-in via `agentConventions.enabled`
+- Trigger-Callbacks sind fire-and-forget, non-fatal
+- LLM-Lesson-Extraction kostet ~$0.001-0.01 pro Trigger (Tier default)
+- Lessons werden NIE gelöscht (Audit-Trail), nur als applied markiert
+- Consolidate erstellt NUR draft — User muss explizit Apply machen
+
 ## [0.19.0-multi-ha.824] - 2026-05-30
 
 ### Added — Agent-Conventions System Phase 1 Vollständig (v824)

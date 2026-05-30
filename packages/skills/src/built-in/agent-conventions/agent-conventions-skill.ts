@@ -22,7 +22,7 @@ import type { Logger } from 'pino';
 import type {
   SkillMetadata, SkillContext, SkillResult,
   AgentConventions, ConventionsStatus, ConventionsStatusBadge,
-  ConventionsOutputFormat, ConventionsLanguage,
+  ConventionsOutputFormat, ConventionsLanguage, ConventionsSection,
   AgentConventionsConfig,
 } from '@alfred/types';
 import { Skill } from '../../skill.js';
@@ -63,7 +63,7 @@ export interface ConventionsGeneratorLike {
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -125,7 +125,7 @@ export class AgentConventionsSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history'],
+            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied'],
             description: 'Action to perform',
           },
           project_id: { type: 'string', description: 'Project ID' },
@@ -135,6 +135,11 @@ export class AgentConventionsSkill extends Skill {
           commit_to_git: { type: 'boolean', description: 'Apply: zusätzlich git commit (default true)' },
           outputs: { type: 'array', items: { type: 'string' }, description: 'Welche Output-Files schreiben. Default: claude.md only.' },
           history_id: { type: 'string', description: 'Für rollback: zu welcher History-Version zurück.' },
+          lesson_text: { type: 'string', description: 'Für learn: was wurde gelernt (1-3 Zeilen, projekt-spezifisch).' },
+          lesson_source: { type: 'string', description: 'Für learn: Trust-Source (merge-gate-failure | plan-fix-loop-resolved | plan-awaiting-user | user-chat-explicit).' },
+          lesson_confidence: { type: 'number', description: 'Für learn: 0..1.' },
+          lesson_session_id: { type: 'string', description: 'Für learn: optional Quell-Session.' },
+          lesson_id: { type: 'string', description: 'Für mark_lesson_applied: ID der Lesson.' },
         },
         required: ['action', 'project_id'],
       },
@@ -158,6 +163,10 @@ export class AgentConventionsSkill extends Skill {
         case 'drift_check': return await this.handleDriftCheck(projectId, packagePath);
         case 'rollback': return await this.handleRollback(projectId, packagePath, input);
         case 'history': return await this.handleHistory(projectId, packagePath);
+        case 'learn': return await this.handleLearn(projectId, packagePath, input);
+        case 'list_lessons': return await this.handleListLessons(projectId, packagePath);
+        case 'consolidate_lessons': return await this.handleConsolidateLessons(projectId, packagePath, input);
+        case 'mark_lesson_applied': return await this.handleMarkLessonApplied(projectId, packagePath, input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
@@ -483,6 +492,156 @@ export class AgentConventionsSkill extends Skill {
   private async handleHistory(projectId: string, packagePath: string): Promise<SkillResult> {
     const entries = await this.deps.conventionsRepo.listHistory(projectId, packagePath, 50);
     return { success: true, data: { entries } };
+  }
+
+  // ── learn (Phase 2) ────────────────────────────────────────────────────
+  // Append einer Lesson aus einem Trigger-Punkt (merge-gate-fail / awaiting-user / fix-loop / user-chat).
+  // Wird in convention-Row als pending lesson gespeichert; consolidate_lessons mergt sie später ins content.
+  private async handleLearn(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const lessonText = (input.lesson_text as string | undefined)?.trim();
+    const source = (input.lesson_source as string | undefined) ?? 'user-chat-explicit';
+    const confidence = (input.lesson_confidence as number | undefined) ?? 0.7;
+    const sessionId = input.lesson_session_id as string | undefined;
+
+    if (!lessonText || lessonText.length < 10) return { success: false, error: 'lesson_text required (min 10 chars)' };
+    if (lessonText.length > 1000) return { success: false, error: 'lesson_text too long (max 1000 chars)' };
+
+    // Sicherstellen dass eine conventions-row existiert (auto-create wenn nötig)
+    const existing = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!existing) {
+      // Empty conventions-row anlegen damit lessons sich anhängen können
+      await this.deps.conventionsRepo.upsert({
+        projectId,
+        packagePath,
+        generatedBy: 'lesson-derived',
+      });
+    }
+    const lessonId = await this.deps.conventionsRepo.appendLesson(projectId, packagePath, {
+      text: lessonText,
+      source,
+      confidence,
+      sessionId,
+    });
+    this.deps.logger.info({ projectId, packagePath, lessonId, source, confidence }, 'v825 lesson recorded');
+    return { success: true, data: { lessonId, source, confidence } };
+  }
+
+  // ── list_lessons (Phase 2) ─────────────────────────────────────────────
+  private async handleListLessons(projectId: string, packagePath: string): Promise<SkillResult> {
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: true, data: { lessons: [], pendingCount: 0 } };
+    const lessons = conv.neutralFormat.lessons;
+    const pending = lessons.filter(l => !l.appliedToMain);
+    return {
+      success: true,
+      data: {
+        lessons,
+        pendingCount: pending.length,
+        appliedCount: lessons.length - pending.length,
+      },
+    };
+  }
+
+  // ── consolidate_lessons (Phase 2) ──────────────────────────────────────
+  // LLM-Call: nimmt pending lessons + existing content → produziert refactored Draft
+  // mit Lessons integriert. Schreibt in draft_content. User reviewed dann + apply.
+  private async handleConsolidateLessons(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: false, error: 'No conventions row (run generate first)' };
+
+    const pendingLessons = conv.neutralFormat.lessons.filter(l => !l.appliedToMain);
+    if (pendingLessons.length === 0) {
+      return { success: false, error: 'No pending lessons to consolidate' };
+    }
+
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const language = (input.language as ConventionsLanguage | undefined) ?? cfg.language;
+    const tier = (input.tier as 'fast' | 'default' | 'strong' | undefined) ?? cfg.generateTier;
+
+    // Generator wird mit existingContent + lessons-as-prompt-extension aufgerufen.
+    // Wir piggybacken auf generate() statt einen separaten LLM-Call zu bauen —
+    // der Generator versteht "Refresh mit Vorlage" + die Lessons werden via
+    // patternSuggestions reingegeben damit sie als Cross-Reference erscheinen.
+    const scanCwd = packagePath ? path.join(proj.cwd, packagePath) : proj.cwd;
+    const scan = await this.deps.scanner.scan(scanCwd);
+
+    const lessonsAsPatterns = pendingLessons.map(l => ({
+      patternText: l.text,
+      section: 'gotchas' as ConventionsSection,
+      confidence: l.confidence,
+    }));
+
+    const gen = await this.deps.generator.generate({
+      cwd: scanCwd,
+      llmContext: scan.llmContext,
+      scanSnapshot: scan.snapshot,
+      scanHash: scan.scanHash,
+      language,
+      generateMode: cfg.generateMode,
+      tier,
+      existingContent: conv.content,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...(({ patternSuggestions: lessonsAsPatterns }) as any),
+    });
+
+    if (!gen.ok || !gen.markdown || !gen.neutralFormat) {
+      return { success: false, error: gen.reason ?? 'consolidate generation failed' };
+    }
+
+    // Lessons-Carry-Over: alle pending lessons werden in den neuen neutralFormat überführt
+    // (Generator kann den lessons-array leer setzen — wir merge zurück damit nichts verloren geht)
+    const mergedNeutral = {
+      ...gen.neutralFormat,
+      lessons: conv.neutralFormat.lessons, // behalte komplette Lesson-Historie
+    };
+    mergedNeutral.meta.lessonsCount = mergedNeutral.lessons.length;
+
+    await this.deps.conventionsRepo.upsert({
+      projectId,
+      packagePath,
+      draftContent: gen.markdown,
+      neutralFormat: mergedNeutral,
+      sourceScan: scan.snapshot,
+      generatedAt: new Date().toISOString(),
+      generatedBy: 'lesson-derived',
+    });
+
+    return {
+      success: true,
+      data: {
+        draft: gen.markdown,
+        scanHash: gen.scanHash,
+        contentHash: gen.contentHash,
+        warnings: gen.warnings,
+        costUsd: gen.costUsd,
+        consolidatedLessonsCount: pendingLessons.length,
+        scanSnapshot: scan.snapshot,
+      },
+    };
+  }
+
+  // ── mark_lesson_applied (Phase 2) ──────────────────────────────────────
+  // Nach erfolgreichem Apply einer consolidated-CLAUDE.md markieren wir die
+  // Lessons als applied damit sie nicht erneut konsolidiert werden.
+  private async handleMarkLessonApplied(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const lessonId = input.lesson_id as string | undefined;
+    if (lessonId) {
+      await this.deps.conventionsRepo.markLessonApplied(projectId, packagePath, lessonId);
+      return { success: true, data: { lessonId } };
+    }
+    // Ohne lesson_id: alle pending → applied (typischer Workflow nach consolidate+apply)
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    if (!conv) return { success: false, error: 'No conventions row' };
+    let marked = 0;
+    for (const l of conv.neutralFormat.lessons) {
+      if (!l.appliedToMain) {
+        await this.deps.conventionsRepo.markLessonApplied(projectId, packagePath, l.id);
+        marked++;
+      }
+    }
+    return { success: true, data: { marked } };
   }
 }
 

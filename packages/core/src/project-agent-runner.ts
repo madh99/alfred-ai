@@ -175,6 +175,24 @@ export class ProjectAgentRunner {
     this.containerExecLookup = fn;
   }
 
+  /**
+   * v825 — Lessons-Loop-Hook: wird gerufen wenn der Plan-Agent in awaiting_user landet
+   * (nach maxFixAttempts) ODER eine Phase nach mehreren Fix-Versuchen schließlich passed.
+   * Source unterscheidet: 'plan-awaiting-user' (high trust) vs 'plan-fix-loop-resolved' (lower).
+   */
+  private onLessonOpportunity?: (input: {
+    sessionId: string;
+    projectId?: string;
+    cwd: string;
+    source: 'plan-awaiting-user' | 'plan-fix-loop-resolved';
+    buildOutput: string;
+    diagnosis?: string;
+    fixAttempts: number;
+  }) => Promise<void>;
+  setLessonOpportunityHook(fn: typeof this.onLessonOpportunity): void {
+    this.onLessonOpportunity = fn;
+  }
+
   constructor(
     private readonly agents: Map<string, CodeAgentDefinitionConfig>,
     private readonly llm: LLMProvider,
@@ -667,6 +685,18 @@ export class ProjectAgentRunner {
             lastBuildActuallyPassed = true;
             await this.sendProgress(platform, chatId,
               `✅ Build passed (Phase ${phaseIdx + 1}). ${codeResult.modifiedFiles.length} Dateien geändert.`);
+            // v825 — Lessons-Loop: wenn der Build NACH Fix-Versuchen passed (also fixAttempt > 0),
+            // ist möglicherweise eine Lesson dabei. Lower-trust als awaiting_user (transient mocks,
+            // flaky tests), aber wert anzubieten. Hook entscheidet wie aggressiv gelernt wird.
+            if (this.onLessonOpportunity && fixAttempt > 0 && state.lastBuildOutput) {
+              this.onLessonOpportunity({
+                sessionId,
+                cwd: config.cwd,
+                source: 'plan-fix-loop-resolved',
+                buildOutput: state.lastBuildOutput,
+                fixAttempts: fixAttempt,
+              }).catch(err => this.logger.debug({ err, sessionId }, 'v825 onLessonOpportunity (fix-resolved) failed (non-fatal)'));
+            }
             break;
           }
 
@@ -682,6 +712,18 @@ export class ProjectAgentRunner {
               `Sende "interject" mit Hinweisen oder "stop" zum Abbrechen.`);
             state.projectPhase = 'awaiting_user';
             await this.updateSession(sessionId, state, lastBuildActuallyPassed);
+            // v825 — Lessons-Loop: awaiting_user nach maxFixAttempts ist ein zuverlässiger
+            // Lesson-Trigger (das Problem ist strukturell, nicht transient).
+            if (this.onLessonOpportunity) {
+              this.onLessonOpportunity({
+                sessionId,
+                cwd: config.cwd,
+                source: 'plan-awaiting-user',
+                buildOutput: buildResult.combinedOutput,
+                diagnosis: extracted.recognized ? extracted.summary : undefined,
+                fixAttempts: config.maxFixAttempts,
+              }).catch(err => this.logger.debug({ err, sessionId }, 'v825 onLessonOpportunity (awaiting_user) failed (non-fatal)'));
+            }
             break;
           }
 

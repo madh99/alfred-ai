@@ -724,6 +724,8 @@ export class HttpAdapter extends MessagingAdapter {
     conventionsDriftCheck?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsHistory?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsRollback?: (projectId: string, historyId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsListLessons?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsConsolidateLessons?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
@@ -1237,6 +1239,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConventionsHistory(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/rollback$/) && req.method === 'POST') {
       this.handleConventionsRollback(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/lessons$/) && req.method === 'GET') {
+      this.handleConventionsListLessons(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/consolidate-lessons$/) && req.method === 'POST') {
+      this.handleConventionsConsolidateLessons(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4463,6 +4469,44 @@ export class HttpAdapter extends MessagingAdapter {
     }
     try {
       const r = await this.projectsCallbacks.conventionsRollback(projectId, opts.historyId, opts.packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsListLessons(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsListLessons) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const packagePath = url.searchParams.get('package_path') ?? undefined;
+    try {
+      const r = await this.projectsCallbacks.conventionsListLessons(projectId, packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsConsolidateLessons(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsConsolidateLessons) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { packagePath?: string } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    try {
+      const r = await this.projectsCallbacks.conventionsConsolidateLessons(projectId, opts.packagePath);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {
