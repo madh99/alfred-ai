@@ -5,6 +5,69 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.827] - 2026-05-30
+
+### Added — Agent-Conventions Phase 3.3-3.6 Vollständig (v827)
+
+Cross-Project Pattern-Pool + Multi-Format-Output (bereits seit v824) +
+Translation + Skill-Contributions-API.
+
+**Phase 3.3 — Cross-Project Pattern Pool**
+- 3 neue Skill-Actions: `mine_patterns`, `list_patterns`, `retire_pattern`
+- Pattern-Mining-Algorithm: Jaccard-Similarity auf bag-of-words (Stopwords
+  gefiltert, min Token-Länge 3, Threshold 0.45). KEINE Embeddings (Phase 4.5).
+- Cluster mit ≥ 2 Lessons aus ≥ 2 Projekten → Pattern persistiert in
+  `convention_patterns` (Schema seit v823).
+- Pattern-Lookup automatisch in `handleGenerate` integriert:
+  - Wenn `config.crossProjectPool != 'off'`
+  - Top 20 Patterns mit `occurrenceCount >= 2`
+  - Werden als `patternSuggestions` an Generator übergeben
+- Background-Job: wöchentliches Pattern-Mining (`crossProjectPool != 'off'`).
+  Initial-Run 10min nach Startup, danach alle 7d.
+- listProjectsForUser-Lookup im Skill-Dep für Cross-Project-Iteration
+
+**Phase 3.4 — Multi-Format-Output (war bereits seit v824)**
+- `cfg.outputs` Array steuert welche Files geschrieben werden:
+  CLAUDE.md / AGENTS.md / cursor.rules / copilot.md / codex.md
+- `fileNameFor()` mapped Format → Pfad
+- `handleApply` schreibt alle konfigurierten Outputs
+- Phase 3.4 ist damit komplett — keine v827-Änderung nötig.
+
+**Phase 3.5 — Translation**
+- `ConventionsGenerator.translate()` — LLM-Call der eine fertige CLAUDE.md
+  in die Ziel-Sprache übersetzt. Code-Snippets/File-Pfade/Framework-Namen
+  bleiben unverändert. Frontmatter wird mit `translated_from` ergänzt.
+- `handleApply` schreibt zusätzliches File `CLAUDE.<lang>.md` wenn
+  `config.translateTo` gesetzt ist und ≠ primary-language.
+- Costs: ein extra LLM-Call pro Apply (~$0.01-0.05 je nach Tier+Größe).
+
+**Phase 3.6 — Skill-Contributions-API**
+- `addSkillContribution(c: SkillConventionsContribution)` — andere Alfred-
+  Skills registrieren projekt-spezifische Konventionen (z.B. Recipe-Skill
+  registriert "Spoonacular Rate-Limit ist 150/d" etc.).
+- `detectIfUsed(scan)` — Skill prüft selbst ob er im Projekt aktiv ist.
+- `config.allowedSkillContributions: '*' | string[]` — Whitelist.
+- `getActiveContributions()` sammelt alle passenden Contributions beim
+  Generate, übergibt sie als `skillContributions` an den Generator.
+- Generator-Prompt fügt sie als "Skill-Contributions"-Section in den
+  User-Prompt ein damit der LLM sie in die richtige Section integriert.
+
+**Konkretes Use-Case-Beispiel (Cross-Project)**
+- Projekt A lernt: "Migration ohne setup.ts → Test-Fail" (merge-gate)
+- Projekt B lernt: "Vergessene migrations/*.sql Sync zu setup.ts" (plan-fix)
+- Mining-Job erkennt Cluster (Jaccard ≥ 0.45 wegen "migration"/"setup.ts")
+- Pattern persistiert (occurrenceCount=2, appliesToCount=0)
+- Neues Projekt C macht Generate → Pattern wird als Suggestion injiziert
+- LLM integriert die Konvention in C's CLAUDE.md ohne dass dort jemals
+  ein Lesson-Trigger feuern musste
+
+**Side-Effects:**
+- Phase 3.5 Translation kostet extra LLM-Call pro Apply (opt-in via Config)
+- Phase 3.3 Mining kostet keine LLM-Calls (pur Jaccard auf Text)
+- Phase 3.6 ContributionRegistry ist OPT-IN (Skills müssen explizit register)
+- Cross-Project-Pattern-Pool ist user-scoped via masterUserId (keine
+  Cross-User-Leak ohne config-Override)
+
 ## [0.19.0-multi-ha.826] - 2026-05-30
 
 ### Added — Agent-Conventions Phase 3.1 Monorepo + Phase 3.2 Auto-Apply (v826)

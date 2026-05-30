@@ -274,6 +274,76 @@ Reply ONLY with the raw CLAUDE.md markdown (no preamble, no YAML).`;
     return frontmatter + markdown.trim() + '\n';
   }
 
+  /**
+   * Phase 3.5 — Übersetzt eine fertige CLAUDE.md in die Ziel-Sprache.
+   * Bewahrt Code-Snippets, File-Pfade, Skill-Namen und Framework-Namen unverändert.
+   * Costs: ein zusätzlicher LLM-Call pro Apply wenn config.language=both.
+   */
+  async translate(opts: {
+    markdown: string;
+    fromLanguage: ConventionsLanguage;
+    toLanguage: ConventionsLanguage;
+    tier?: 'fast' | 'default' | 'strong';
+  }): Promise<{ ok: boolean; markdown?: string; costUsd: number; reason?: string }> {
+    if (opts.fromLanguage === opts.toLanguage) {
+      return { ok: true, markdown: opts.markdown, costUsd: 0 };
+    }
+    const tier = opts.tier ?? 'default';
+    const langNames = { de: 'Deutsch', en: 'English' };
+    const systemPrompt = `Du bist ein technischer Übersetzer für Software-Dokumentation. Übersetze die folgende CLAUDE.md von ${langNames[opts.fromLanguage]} nach ${langNames[opts.toLanguage]}.
+
+WICHTIGE REGELN:
+- Code-Snippets (in \`\`\` Blöcken oder \`inline\`) NIEMALS übersetzen
+- File-Pfade NIEMALS übersetzen (z.B. src/__tests__/setup.ts bleibt)
+- Framework-Namen, Tool-Namen, Library-Namen NIEMALS übersetzen
+- Variable-Namen, Function-Namen, Class-Namen NIEMALS übersetzen
+- Markdown-Struktur (Headings, Listen, Tabellen) exakt beibehalten
+- YAML-Frontmatter exakt beibehalten (NICHT übersetzen)
+- Tonalität: präzise, direkt, "du"-Form
+
+Antworte NUR mit der reinen übersetzten Markdown, keine Vorrede.`;
+
+    try {
+      const startTime = Date.now();
+      const res = await this.llm.complete({
+        messages: [{ role: 'user', content: opts.markdown }],
+        system: systemPrompt,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tier: tier as any,
+        maxTokens: 4000,
+        temperature: 0.1,
+      });
+      const usage = res.usage as { costUsd?: number; cost?: number } | undefined;
+      const costUsd = usage?.costUsd ?? usage?.cost ?? 0;
+      const durationMs = Date.now() - startTime;
+      this.logger.info({
+        fromLang: opts.fromLanguage,
+        toLang: opts.toLanguage,
+        durationMs,
+        inputChars: opts.markdown.length,
+        outputChars: res.content.length,
+        costUsd,
+      }, 'v827 ConventionsGenerator translate complete');
+
+      const cleaned = this.extractMarkdown(res.content);
+      if (!cleaned || cleaned.length < 50) {
+        return { ok: false, costUsd, reason: 'translate returned empty content' };
+      }
+      // Übersetzungs-Output bekommt eigenes Frontmatter mit translated_from
+      const frontmatterMatch = opts.markdown.match(/^---\n([\s\S]*?)\n---\n/);
+      let translated = cleaned;
+      if (frontmatterMatch) {
+        const frontmatter = frontmatterMatch[1] + `\ntranslated_from: ${opts.fromLanguage}`;
+        // Strip frontmatter aus translated wenn der LLM doch eines reingehauen hat
+        translated = cleaned.replace(/^---\n[\s\S]*?\n---\n/, '');
+        translated = `---\n${frontmatter}\n---\n\n${translated.trim()}\n`;
+      }
+      return { ok: true, markdown: translated, costUsd };
+    } catch (err) {
+      return { ok: false, costUsd: 0, reason: (err as Error).message };
+    }
+  }
+
   private parseToNeutralFormat(markdown: string, opts: GenerateOptions): NeutralConventions {
     const sections: Partial<Record<ConventionsSection, string>> = {};
     const labels = opts.language === 'de' ? SECTION_LABELS_DE : SECTION_LABELS_EN;

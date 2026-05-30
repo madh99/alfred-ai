@@ -323,6 +323,8 @@ export class Alfred {
   private cmdbHealthCheckTimer?: ReturnType<typeof setInterval>;
   /** v825 — Periodischer Drift-Check für Agent-Conventions (Phase 2). */
   private agentConventionsDriftTimer?: ReturnType<typeof setInterval>;
+  /** v827 — Wöchentliches Pattern-Mining für Cross-Project-Conventions (Phase 3.3). */
+  private agentConventionsPatternMiningTimer?: ReturnType<typeof setInterval>;
   private insightTracker?: InsightTracker;
   /** v696 — Project-Agent Sandbox (opt-in). NUR initialisiert wenn `config.sandbox?.enabled === true` */
   private sandboxManager?: import('./sandbox-manager.js').SandboxManager;
@@ -3306,6 +3308,14 @@ export class Alfred {
                 return { id: proj.id, cwd: proj.cwd, userId: proj.userId };
               },
               config: () => (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions ?? {},
+              // v827 Phase 3.3 — Cross-Project-Pattern-Mining braucht alle Projekte des Master-Users
+              listProjectsForUser: async (masterUserId: string) => {
+                if (!this.projectRepo) return [];
+                try {
+                  const projs = await this.projectRepo.list(masterUserId).catch(() => []);
+                  return projs.filter(p => p.cwd).map(p => ({ id: p.id, userId: p.userId, cwd: p.cwd! }));
+                } catch { return []; }
+              },
             });
             this.agentConventionsSkillRef = agentConvSkill;
             skillRegistry.register(agentConvSkill);
@@ -3343,6 +3353,32 @@ export class Alfred {
                 this.agentConventionsDriftTimer = setInterval(runDriftCycle, driftMs);
               }, 5 * 60_000); // 5 min nach Startup
               this.logger.info({ intervalHours: driftHours }, 'v825 agent-conventions drift-check scheduled');
+            }
+
+            // v827 Phase 3.3 — Wöchentliches Cross-Project-Pattern-Mining
+            if (cfg?.crossProjectPool && cfg.crossProjectPool !== 'off') {
+              const miningMs = 7 * 24 * 3_600_000;
+              const runMiningCycle = async () => {
+                if (!this.agentConventionsSkillRef) return;
+                const uid = this.tryOwner();
+                if (!uid) return;
+                try {
+                  const ctx = { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+                  const r = await this.agentConventionsSkillRef.execute({
+                    action: 'mine_patterns',
+                    project_id: 'system', // not used for mining
+                    master_user_id: uid,
+                  }, ctx);
+                  this.logger.info({ data: r.data }, 'v827 cross-project pattern-mining cycle complete');
+                } catch (err) {
+                  this.logger.debug({ err }, 'v827 pattern-mining cycle failed (non-fatal)');
+                }
+              };
+              setTimeout(() => {
+                runMiningCycle();
+                this.agentConventionsPatternMiningTimer = setInterval(runMiningCycle, miningMs);
+              }, 10 * 60_000); // 10 min nach Startup, danach wöchentlich
+              this.logger.info({}, 'v827 cross-project pattern-mining scheduled (weekly)');
             }
           }
         } catch (err) {
@@ -10521,6 +10557,10 @@ A clean, idiomatic scaffold matching the stack. After this, "npm run dev" (or eq
     if (this.agentConventionsDriftTimer) {
       clearInterval(this.agentConventionsDriftTimer);
       this.agentConventionsDriftTimer = undefined;
+    }
+    if (this.agentConventionsPatternMiningTimer) {
+      clearInterval(this.agentConventionsPatternMiningTimer);
+      this.agentConventionsPatternMiningTimer = undefined;
     }
     if (this.cmdbHealthCheckTimer) {
       clearInterval(this.cmdbHealthCheckTimer);

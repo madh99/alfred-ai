@@ -49,6 +49,8 @@ export interface ConventionsGeneratorLike {
     generateMode: import('@alfred/types').ConventionsGenerateMode;
     tier: 'fast' | 'default' | 'strong';
     existingContent?: string;
+    skillContributions?: Array<{ skill: string; markdown: string; section: import('@alfred/types').ConventionsSection }>;
+    patternSuggestions?: Array<{ patternText: string; section: import('@alfred/types').ConventionsSection; confidence: number }>;
   }): Promise<{
     ok: boolean;
     markdown?: string;
@@ -59,11 +61,27 @@ export interface ConventionsGeneratorLike {
     costUsd: number;
     reason?: string;
   }>;
+  /** Phase 3.5 — Übersetzt eine fertige CLAUDE.md in die andere Sprache. */
+  translate?(opts: {
+    markdown: string;
+    fromLanguage: ConventionsLanguage;
+    toLanguage: ConventionsLanguage;
+    tier?: 'fast' | 'default' | 'strong';
+  }): Promise<{ ok: boolean; markdown?: string; costUsd: number; reason?: string }>;
+}
+
+/** Phase 3.6 — Skill-Contribution-API. Jeder Alfred-Skill kann eine
+ *  ConventionsContribution registrieren die in Generate einfließt wenn der
+ *  Skill im Projekt aktiv ist (detect via projectScan). */
+export interface SkillConventionsContribution {
+  skillName: string;
+  detectIfUsed: (scan: import('@alfred/types').ConventionsScanSnapshot) => boolean;
+  contribution: { section: import('@alfred/types').ConventionsSection; markdown: string };
 }
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -74,6 +92,9 @@ interface SkillDeps {
   resolveProject: (projectId: string) => Promise<{ id: string; cwd: string; userId: string } | null>;
   /** Config-Snapshot — defaults werden bei missing-keys angewendet. */
   config: () => Partial<AgentConventionsConfig>;
+  /** Phase 3.3 — Lookup aller Projekte eines Master-Users für Cross-Project Pattern-Mining.
+   *  Optional. Wenn nicht gesetzt: Pattern-Mining returns 0 patterns. */
+  listProjectsForUser?: (masterUserId: string) => Promise<Array<{ id: string; userId: string; cwd: string }>>;
 }
 
 const DEFAULT_CONFIG: AgentConventionsConfig = {
@@ -137,6 +158,25 @@ function fileNameFor(format: ConventionsOutputFormat): string {
 
 export class AgentConventionsSkill extends Skill {
   readonly metadata: SkillMetadata;
+  /** Phase 3.6 — Registry für Skill-Contributions. alfred.ts ruft addContribution()
+   *  beim Skill-Setup für jeden teilnehmenden Skill auf. */
+  private readonly skillContributions: SkillConventionsContribution[] = [];
+  addSkillContribution(c: SkillConventionsContribution): void {
+    // Dedup nach skillName — neuer ersetzt alten
+    const idx = this.skillContributions.findIndex(x => x.skillName === c.skillName);
+    if (idx >= 0) this.skillContributions[idx] = c;
+    else this.skillContributions.push(c);
+  }
+  /** Gibt alle Skill-Contributions zurück die zum aktuellen Scan passen. */
+  private getActiveContributions(scan: import('@alfred/types').ConventionsScanSnapshot, cfg: AgentConventionsConfig): Array<{ skill: string; markdown: string; section: ConventionsSection }> {
+    const allowList = cfg.allowedSkillContributions;
+    return this.skillContributions
+      .filter(c => allowList === '*' || (Array.isArray(allowList) && allowList.includes(c.skillName)))
+      .filter(c => {
+        try { return c.detectIfUsed(scan); } catch { return false; }
+      })
+      .map(c => ({ skill: c.skillName, markdown: c.contribution.markdown, section: c.contribution.section }));
+  }
 
   constructor(private readonly deps: SkillDeps) {
     super();
@@ -152,7 +192,7 @@ export class AgentConventionsSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied', 'list_packages', 'generate_all_packages'],
+            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied', 'list_packages', 'generate_all_packages', 'mine_patterns', 'list_patterns', 'retire_pattern'],
             description: 'Action to perform',
           },
           project_id: { type: 'string', description: 'Project ID' },
@@ -196,6 +236,9 @@ export class AgentConventionsSkill extends Skill {
         case 'mark_lesson_applied': return await this.handleMarkLessonApplied(projectId, packagePath, input);
         case 'list_packages': return await this.handleListPackages(projectId);
         case 'generate_all_packages': return await this.handleGenerateAllPackages(projectId, input);
+        case 'mine_patterns': return await this.handleMinePatterns(input);
+        case 'list_patterns': return await this.handleListPatterns(input);
+        case 'retire_pattern': return await this.handleRetirePattern(input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
@@ -271,6 +314,26 @@ export class AgentConventionsSkill extends Skill {
     const scan = await this.deps.scanner.scan(scanCwd);
     const existing = await this.deps.conventionsRepo.get(projectId, packagePath);
 
+    // Phase 3.6 — Skill-Contributions sammeln die zum Scan passen
+    const skillContributions = this.getActiveContributions(scan.snapshot, cfg);
+    if (skillContributions.length > 0) {
+      this.deps.logger.info({ count: skillContributions.length, skills: skillContributions.map(c => c.skill) }, 'v827 skill-contributions injected into generate');
+    }
+
+    // Phase 3.3 — Cross-Project-Pattern-Suggestions wenn pool aktiv + master_user_id ableitbar
+    let patternSuggestions: Array<{ patternText: string; section: ConventionsSection; confidence: number }> | undefined;
+    if (cfg.crossProjectPool !== 'off') {
+      try {
+        const patterns = await this.deps.conventionsRepo.listPatterns(proj.userId, { minOccurrence: 2, limit: 20 });
+        if (patterns.length > 0) {
+          patternSuggestions = patterns.map(p => ({ patternText: p.patternText, section: p.patternSection, confidence: p.confidence }));
+          this.deps.logger.info({ count: patternSuggestions.length }, 'v827 cross-project patterns injected into generate');
+        }
+      } catch (err) {
+        this.deps.logger.debug({ err }, 'v827 pattern-lookup failed (non-fatal)');
+      }
+    }
+
     const gen = await this.deps.generator.generate({
       cwd: scanCwd,
       llmContext: scan.llmContext,
@@ -280,6 +343,8 @@ export class AgentConventionsSkill extends Skill {
       generateMode: cfg.generateMode,
       tier,
       existingContent: existing?.content,
+      skillContributions: skillContributions.length > 0 ? skillContributions : undefined,
+      patternSuggestions,
     });
 
     if (!gen.ok || !gen.markdown || !gen.neutralFormat) {
@@ -356,6 +421,42 @@ export class AgentConventionsSkill extends Skill {
         filesWritten.push(filePath);
       } catch (err) {
         return { success: false, error: `Write failed for ${filePath}: ${(err as Error).message}`, data: { filesWritten } };
+      }
+    }
+
+    // v827 Phase 3.5 — Translation: zusätzliches File in 2. Sprache wenn
+    // config.language=both ODER config.translateTo gesetzt.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const translateTo = (cfg as any).translateTo as ConventionsLanguage | undefined;
+    let translationCost = 0;
+    if (translateTo && translateTo !== cfg.language && this.deps.generator.translate) {
+      try {
+        const t = await this.deps.generator.translate({
+          markdown: contentToApply,
+          fromLanguage: cfg.language,
+          toLanguage: translateTo,
+        });
+        if (t.ok && t.markdown) {
+          translationCost = t.costUsd;
+          // Naming-Konvention: CLAUDE.md (primary) + CLAUDE.en.md (sec) bzw. CLAUDE.de.md
+          for (const format of outputs) {
+            const primaryFile = fileNameFor(format);
+            const ext = path.extname(primaryFile);
+            const base = primaryFile.slice(0, -ext.length);
+            const translatedFile = `${base}.${translateTo}${ext}`;
+            const translatedPath = path.join(baseDir, translatedFile);
+            try {
+              writeFileSync(translatedPath, t.markdown, { encoding: 'utf8' });
+              filesWritten.push(translatedPath);
+            } catch (err) {
+              this.deps.logger.warn({ err, translatedPath }, 'v827 translation write failed (non-fatal)');
+            }
+          }
+        } else {
+          this.deps.logger.warn({ reason: t.reason }, 'v827 translation failed (non-fatal)');
+        }
+      } catch (err) {
+        this.deps.logger.warn({ err }, 'v827 translation threw (non-fatal)');
       }
     }
 
@@ -800,6 +901,127 @@ export class AgentConventionsSkill extends Skill {
         perPackage: results,
       },
     };
+  }
+
+  // ── mine_patterns (Phase 3.3) ──────────────────────────────────────────
+  // Cross-Project-Pattern-Mining: scannt alle Lessons aller User-Projekte,
+  // clustert via einfacher Text-Ähnlichkeit (Jaccard auf bag-of-words),
+  // persistiert Cluster mit >= 2 Lessons aus >= 2 Projekten als Pattern.
+  // KEINE Embeddings (Phase 4.5) — pragmatisch und ausreichend für v827.
+  private async handleMinePatterns(input: Record<string, unknown>): Promise<SkillResult> {
+    const masterUserId = (input.master_user_id as string | undefined) ?? '';
+    if (!masterUserId) return { success: false, error: 'master_user_id required' };
+    if (!this.deps.listProjectsForUser) return { success: false, error: 'project-list lookup not configured' };
+
+    const cfg = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    if (cfg.crossProjectPool === 'off') {
+      return { success: false, error: 'cross-project pool disabled (config.crossProjectPool=off)' };
+    }
+
+    const projects = await this.deps.listProjectsForUser(masterUserId);
+    // Sammle alle pending+applied lessons mit project-anchor
+    const allLessons: Array<{ projectId: string; lessonId: string; text: string; confidence: number }> = [];
+    for (const proj of projects) {
+      const convs = await this.deps.conventionsRepo.listForProject(proj.id);
+      for (const conv of convs) {
+        for (const l of conv.neutralFormat.lessons) {
+          if (l.confidence < 0.5) continue;
+          allLessons.push({ projectId: proj.id, lessonId: l.id, text: l.text, confidence: l.confidence });
+        }
+      }
+    }
+
+    if (allLessons.length === 0) {
+      return { success: true, data: { lessonsAnalyzed: 0, patternsCreated: 0, patternsUpdated: 0 } };
+    }
+
+    // Simple Jaccard-Cluster: tokenisiere zu lowercase word-set, ignore stopwords
+    const stopwords = new Set(['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'in', 'auf', 'mit', 'für', 'zu', 'von', 'the', 'a', 'an', 'and', 'or', 'in', 'on', 'with', 'for', 'to', 'of', 'is', 'are', 'was', 'were', 'ist', 'sind']);
+    const tokenize = (s: string): Set<string> => {
+      const tokens = s.toLowerCase().match(/[a-zA-Z_][\w./-]{2,}/g) ?? [];
+      return new Set(tokens.filter(t => !stopwords.has(t) && t.length >= 3));
+    };
+    const jaccard = (a: Set<string>, b: Set<string>): number => {
+      const intersect = [...a].filter(x => b.has(x)).length;
+      const union = new Set([...a, ...b]).size;
+      return union === 0 ? 0 : intersect / union;
+    };
+    const SIMILARITY_THRESHOLD = 0.45;
+
+    type Cluster = { lessons: typeof allLessons; tokenUnion: Set<string> };
+    const clusters: Cluster[] = [];
+    for (const lesson of allLessons) {
+      const lessonTokens = tokenize(lesson.text);
+      if (lessonTokens.size < 3) continue;
+      let assigned = false;
+      for (const cluster of clusters) {
+        if (jaccard(lessonTokens, cluster.tokenUnion) >= SIMILARITY_THRESHOLD) {
+          cluster.lessons.push(lesson);
+          for (const t of lessonTokens) cluster.tokenUnion.add(t);
+          assigned = true;
+          break;
+        }
+      }
+      if (!assigned) {
+        clusters.push({ lessons: [lesson], tokenUnion: new Set(lessonTokens) });
+      }
+    }
+
+    // Nur Cluster mit >= 2 Lessons aus >= 2 verschiedenen Projekten = Pattern
+    let patternsCreated = 0;
+    let patternsUpdated = 0;
+    for (const cluster of clusters) {
+      const projectIds = new Set(cluster.lessons.map(l => l.projectId));
+      if (cluster.lessons.length < 2 || projectIds.size < 2) continue;
+
+      // Pattern-Text: nehme die längste Lesson als Repräsentant
+      const representative = cluster.lessons.sort((a, b) => b.text.length - a.text.length)[0];
+      const avgConfidence = cluster.lessons.reduce((s, l) => s + l.confidence, 0) / cluster.lessons.length;
+
+      const before = await this.deps.conventionsRepo.listPatterns(masterUserId);
+      const beforeMatch = before.find(p => p.patternText === representative.text);
+      const pattern = await this.deps.conventionsRepo.upsertPattern({
+        masterUserId,
+        patternText: representative.text,
+        section: 'gotchas',
+        category: 'gotcha',
+        frameworkTags: [], // Phase 3.x: derive from project scans
+        confidence: avgConfidence,
+      });
+      if (beforeMatch) patternsUpdated++;
+      else patternsCreated++;
+
+      // Link sources
+      for (const lesson of cluster.lessons) {
+        await this.deps.conventionsRepo.linkPatternSource(pattern.id, lesson.projectId, lesson.lessonId);
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        lessonsAnalyzed: allLessons.length,
+        clustersFound: clusters.length,
+        patternsCreated,
+        patternsUpdated,
+      },
+    };
+  }
+
+  // ── list_patterns (Phase 3.3) ──────────────────────────────────────────
+  private async handleListPatterns(input: Record<string, unknown>): Promise<SkillResult> {
+    const masterUserId = (input.master_user_id as string | undefined) ?? '';
+    if (!masterUserId) return { success: false, error: 'master_user_id required' };
+    const patterns = await this.deps.conventionsRepo.listPatterns(masterUserId, { minOccurrence: 2 });
+    return { success: true, data: { patterns } };
+  }
+
+  // ── retire_pattern (Phase 3.3) ─────────────────────────────────────────
+  private async handleRetirePattern(input: Record<string, unknown>): Promise<SkillResult> {
+    const patternId = input.pattern_id as string | undefined;
+    if (!patternId) return { success: false, error: 'pattern_id required' };
+    await this.deps.conventionsRepo.retirePattern(patternId);
+    return { success: true, data: { patternId } };
   }
 
   // ── mark_lesson_applied (Phase 2) ──────────────────────────────────────
