@@ -5,6 +5,36 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.832] - 2026-05-30
+
+### Added — Agent-Conventions Effectiveness + Patterns + Section-Health UI (v832, Punkte 4+7)
+
+Backend-Daten von Phase 4.1+4.2+3.3 endlich im Modal sichtbar.
+
+**Effectiveness-Tab (Phase 4.1)**
+- Pre/Post-Apply Vergleich der Convention-Violations
+- 3-Spalten-Layout: Pre / Post / Improvement-%
+- Confidence-Label (statistically-relevant ab N≥10)
+- Lessons-Counter + Drift-Score
+- Section-Health-Übersicht (Phase 4.2):
+  - Per-Section Health-Score in Farbe (grün ≥70%, amber ≥40%, rot <40%)
+  - Suggested-Removal-Liste bei niedrigem Score + ≥5 Violations
+- Tab-Badge ⚠ wenn Removals empfohlen
+
+**Cross-Project-Tab (Phase 3.3)**
+- Pattern-Liste mit Section + Confidence + Occurrence-Count + Applies-To-Count
+- Framework-Tags als farbige Badges
+- "Noch keine Patterns"-Empty-State mit Hinweis dass Mining wöchentlich läuft
+
+**API-Endpoints (3 neu)**
+- GET /api/projects/:id/conventions/effectiveness
+- GET /api/projects/:id/conventions/section-health
+- GET /api/conventions/patterns
+
+**Client + Types:**
+- `conventionsEffectivenessMetrics` / `conventionsListPatterns` / `conventionsSectionHealth`
+- `AgentConventionsEffectivenessData`, `AgentConventionsPattern`, `AgentConventionsSectionHealth`
+
 ## [0.19.0-multi-ha.831] - 2026-05-30
 
 ### Added — Default-Skill-Contributions für Agent-Conventions (v831, Punkt 5)

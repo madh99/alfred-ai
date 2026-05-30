@@ -866,6 +866,25 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  // v832 — Phase 4.1 Effectiveness + Phase 3.3 Patterns UI
+  async conventionsEffectivenessMetrics(projectId: string): Promise<{ ok: boolean; data?: AgentConventionsEffectivenessData; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/effectiveness`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsListPatterns(): Promise<{ ok: boolean; data?: { patterns: AgentConventionsPattern[] }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/conventions/patterns`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsSectionHealth(projectId: string): Promise<{ ok: boolean; data?: { stats: AgentConventionsSectionHealth[]; suggestedRemoval: AgentConventionsSectionHealth[] }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/section-health`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   /** Preview-URL: für iframe-src, embed-fähig dank ?_alfred_auth=<token> (setzt Cookie via redirect). */
   buildSandboxPreviewUrl(sandboxId: string): string {
     return `${this.baseUrl}/preview/${sandboxId}/?_alfred_auth=${encodeURIComponent(this.token ?? '')}`;
@@ -2651,6 +2670,42 @@ export interface AgentConventionsLesson {
   confidence: number;
   appliedToMain: boolean;
   userApproved: boolean | null;
+}
+
+export interface AgentConventionsEffectivenessData {
+  hasBaseline: boolean;
+  reason?: string;
+  appliedAt?: string;
+  preApplyViolations?: number;
+  postApplyViolations?: number;
+  lessonsTotal?: number;
+  lessonsApplied?: number;
+  driftScore?: number;
+  improvement?: number | null;
+  confidence?: 'statistically-relevant' | 'too-few-samples';
+}
+
+export interface AgentConventionsPattern {
+  id: string;
+  masterUserId: string;
+  patternText: string;
+  patternSection: string;
+  category: string;
+  frameworkTags: string[];
+  occurrenceCount: number;
+  appliesToCount: number;
+  confidence: number;
+  firstObservedAt: string;
+  lastObservedAt: string;
+  retiredAt: string | null;
+}
+
+export interface AgentConventionsSectionHealth {
+  section: string;
+  violations: number;
+  resolvedAnyway: number;
+  manualOverrides: number;
+  healthScore: number;
 }
 
 export interface AgentConventionsHistoryEntry {

@@ -8867,6 +8867,26 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             const r = await this.agentConventionsSkillRef.execute({ action: 'generate_all_packages', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
+          conventionsEffectiveness: async (projectId: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'effectiveness_metrics', project_id: projectId }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsSectionHealth: async (projectId: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'section_health', project_id: projectId }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsGlobalPatterns: async () => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const uid = this.tryOwner() ?? '';
+            if (!uid) return { ok: false, reason: 'no owner' };
+            const ctx = { userId: uid, masterUserId: uid, chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'list_patterns', project_id: 'system', master_user_id: uid }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
           // v797 — Manueller Health-Check (statt 6h-Schedule warten)
           triggerHealthCheck: async (projectId: string) => {
             if (!this.projectHealthMonitor) {

@@ -728,6 +728,9 @@ export class HttpAdapter extends MessagingAdapter {
     conventionsConsolidateLessons?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsListPackages?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsGenerateAllPackages?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsEffectiveness?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsSectionHealth?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsGlobalPatterns?: () => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
@@ -1249,6 +1252,12 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConventionsListPackages(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/generate-all-packages$/) && req.method === 'POST') {
       this.handleConventionsGenerateAllPackages(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/effectiveness$/) && req.method === 'GET') {
+      this.handleConventionsEffectiveness(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/section-health$/) && req.method === 'GET') {
+      this.handleConventionsSectionHealth(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname === '/api/conventions/patterns' && req.method === 'GET') {
+      this.handleConventionsGlobalPatterns(req, res).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4513,6 +4522,56 @@ export class HttpAdapter extends MessagingAdapter {
     try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
     try {
       const r = await this.projectsCallbacks.conventionsConsolidateLessons(projectId, opts.packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsEffectiveness(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsEffectiveness) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.projectsCallbacks.conventionsEffectiveness(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsSectionHealth(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsSectionHealth) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.projectsCallbacks.conventionsSectionHealth(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsGlobalPatterns(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsGlobalPatterns) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    try {
+      const r = await this.projectsCallbacks.conventionsGlobalPatterns();
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

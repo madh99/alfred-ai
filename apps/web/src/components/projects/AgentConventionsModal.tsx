@@ -13,6 +13,9 @@ import type {
   AgentConventionsGenerateData,
   AgentConventionsLesson,
   AgentConventionsPackage,
+  AgentConventionsEffectivenessData,
+  AgentConventionsPattern,
+  AgentConventionsSectionHealth,
 } from '../../lib/alfred-client';
 
 interface Props {
@@ -23,7 +26,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'view' | 'draft' | 'history' | 'lessons';
+type Tab = 'view' | 'draft' | 'history' | 'lessons' | 'effectiveness' | 'patterns';
 
 export function AgentConventionsModal({ client, projectId, projectName, open, onClose }: Props) {
   const [status, setStatus] = useState<AgentConventionsStatus | null>(null);
@@ -36,6 +39,11 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   const [packages, setPackages] = useState<AgentConventionsPackage[]>([]);
   const [isMonorepo, setIsMonorepo] = useState(false);
   const [selectedPackagePath, setSelectedPackagePath] = useState<string>('');
+  // v832 — Phase 4.1 + 3.3 UI
+  const [effectiveness, setEffectiveness] = useState<AgentConventionsEffectivenessData | null>(null);
+  const [patterns, setPatterns] = useState<AgentConventionsPattern[]>([]);
+  const [sectionHealth, setSectionHealth] = useState<AgentConventionsSectionHealth[]>([]);
+  const [suggestedRemovals, setSuggestedRemovals] = useState<AgentConventionsSectionHealth[]>([]);
   const [tab, setTab] = useState<Tab>('view');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,13 +85,34 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     }
   }, [open, loadPackages]);
 
+  const loadEffectiveness = useCallback(async () => {
+    const r = await client.conventionsEffectivenessMetrics(projectId);
+    if (r.ok && r.data) setEffectiveness(r.data);
+  }, [client, projectId]);
+
+  const loadPatterns = useCallback(async () => {
+    const r = await client.conventionsListPatterns();
+    if (r.ok && r.data) setPatterns(r.data.patterns);
+  }, [client]);
+
+  const loadSectionHealth = useCallback(async () => {
+    const r = await client.conventionsSectionHealth(projectId);
+    if (r.ok && r.data) {
+      setSectionHealth(r.data.stats);
+      setSuggestedRemovals(r.data.suggestedRemoval);
+    }
+  }, [client, projectId]);
+
   useEffect(() => {
     if (open) {
       loadStatus();
       loadHistory();
       loadLessons();
+      loadEffectiveness();
+      loadPatterns();
+      loadSectionHealth();
     }
-  }, [open, selectedPackagePath, loadStatus, loadHistory, loadLessons]);
+  }, [open, selectedPackagePath, loadStatus, loadHistory, loadLessons, loadEffectiveness, loadPatterns, loadSectionHealth]);
 
   async function runGenerate() {
     setBusy('generate'); setError(null); setNotice(null);
@@ -254,6 +283,11 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
             {pendingLessonsCount > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200">{pendingLessonsCount} pending</span>}
           </button>
           <button onClick={() => setTab('history')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'history' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>🕐 Historie ({history.length})</button>
+          <button onClick={() => setTab('effectiveness')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'effectiveness' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>
+            📊 Effectiveness
+            {suggestedRemovals.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200">⚠ {suggestedRemovals.length}</span>}
+          </button>
+          <button onClick={() => setTab('patterns')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'patterns' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>🌐 Cross-Project ({patterns.length})</button>
         </div>
 
         {/* Body */}
@@ -332,6 +366,119 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
                         </span>
                       </div>
                       <div className="text-[11px] text-gray-300 whitespace-pre-wrap">{l.text}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'effectiveness' && (
+            <div>
+              <div className="mb-3 text-[11px] text-gray-500">
+                Pre/Post-Apply Vergleich der Convention-Violations. Wertet aus ob die
+                Konventionen Coding-Quality tatsächlich messbar verbessern.
+              </div>
+              {!effectiveness?.hasBaseline ? (
+                <div className="text-gray-500 italic">
+                  ⏳ Noch keine Baseline. {effectiveness?.reason ?? 'Conventions müssen erst einmal applied werden, dann werden Violations vor/nach getrennt gezählt.'}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-3 border border-[#1f1f1f] rounded bg-[#0d0d0d]">
+                    <div className="text-[10px] text-gray-500 mb-2">Apply-Cutoff: {new Date(effectiveness.appliedAt!).toLocaleString('de-AT')}</div>
+                    <div className="grid grid-cols-3 gap-3 text-center">
+                      <div>
+                        <div className="text-2xl text-red-400">{effectiveness.preApplyViolations}</div>
+                        <div className="text-[10px] text-gray-500">Pre-Apply Violations</div>
+                      </div>
+                      <div>
+                        <div className="text-2xl text-emerald-400">{effectiveness.postApplyViolations}</div>
+                        <div className="text-[10px] text-gray-500">Post-Apply Violations</div>
+                      </div>
+                      <div>
+                        <div className={`text-2xl ${effectiveness.improvement == null ? 'text-gray-500' : effectiveness.improvement > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                          {effectiveness.improvement == null ? '—' : `${effectiveness.improvement}%`}
+                        </div>
+                        <div className="text-[10px] text-gray-500">Improvement</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 text-[10px] text-gray-500 text-center">
+                      Confidence: {effectiveness.confidence === 'statistically-relevant'
+                        ? <span className="text-emerald-400">statistically-relevant (≥10 samples)</span>
+                        : <span className="text-amber-400">too-few-samples (warten)</span>}
+                    </div>
+                  </div>
+                  <div className="p-3 border border-[#1f1f1f] rounded bg-[#0d0d0d]">
+                    <div className="text-[10px] text-gray-500 mb-2">Lessons</div>
+                    <div className="flex justify-between text-xs">
+                      <span>Total: <span className="text-gray-300">{effectiveness.lessonsTotal}</span></span>
+                      <span>Applied: <span className="text-emerald-400">{effectiveness.lessonsApplied}</span></span>
+                      <span>Drift-Score: <span className={`${(effectiveness.driftScore ?? 0) > 0.4 ? 'text-amber-400' : 'text-gray-300'}`}>{((effectiveness.driftScore ?? 0) * 100).toFixed(0)}%</span></span>
+                    </div>
+                  </div>
+                  {sectionHealth.length > 0 && (
+                    <div className="p-3 border border-[#1f1f1f] rounded bg-[#0d0d0d]">
+                      <div className="text-[10px] text-gray-500 mb-2">Section-Health (Phase 4.2 Inverse-Learning)</div>
+                      <div className="space-y-1">
+                        {sectionHealth.map(s => (
+                          <div key={s.section} className="flex items-center justify-between text-xs">
+                            <span className="font-mono">{s.section}</span>
+                            <span className={`${s.healthScore >= 0.7 ? 'text-emerald-400' : s.healthScore >= 0.4 ? 'text-amber-400' : 'text-red-400'}`}>
+                              health {(s.healthScore * 100).toFixed(0)}% ({s.violations} violations, {s.resolvedAnyway} resolved-anyway)
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {suggestedRemovals.length > 0 && (
+                        <div className="mt-2 p-2 border border-amber-500/40 bg-amber-500/5 rounded">
+                          <div className="text-[10px] text-amber-300 font-semibold mb-1">⚠ Suggested Removal:</div>
+                          {suggestedRemovals.map(s => (
+                            <div key={s.section} className="text-[11px] text-amber-200">
+                              "{s.section}" ist möglicherweise zu eng — {s.violations} violations, davon {s.resolvedAnyway} resolved-anyway. Refactor oder entfernen empfohlen.
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'patterns' && (
+            <div>
+              <div className="mb-3 text-[11px] text-gray-500">
+                Cross-Project-Patterns aus dem Lessons-Pool aller deiner Projekte. Wird
+                wöchentlich gemined (Jaccard-Similarity). Patterns mit ≥2 Lessons aus
+                ≥2 Projekten werden hier sichtbar + automatisch beim Generate vorgeschlagen.
+              </div>
+              {patterns.length === 0 ? (
+                <div className="text-gray-500 italic">
+                  Noch keine Cross-Project-Patterns. Tritt auf wenn dieselbe Lesson in
+                  mehreren Projekten gelernt wird (Pattern-Mining läuft alle 7 Tage automatisch).
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {patterns.map(p => (
+                    <div key={p.id} className="p-2 border border-[#1f1f1f] rounded bg-[#0d0d0d]">
+                      <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+                        <span>
+                          <span className="font-mono">{p.patternSection}</span> ·
+                          <span className="ml-1">conf {(p.confidence * 100).toFixed(0)}%</span> ·
+                          <span className="ml-1">{p.occurrenceCount}× beobachtet</span> ·
+                          <span className="ml-1">{p.appliesToCount} Projekte applied</span>
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-300 whitespace-pre-wrap">{p.patternText}</div>
+                      {p.frameworkTags.length > 0 && (
+                        <div className="mt-1 flex gap-1">
+                          {p.frameworkTags.map(t => (
+                            <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{t}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
