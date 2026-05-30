@@ -13,7 +13,7 @@
  * - alle anderen: nur DB-Reads/-Writes ohne FS-Modifikation.
  */
 
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { execFile as execFileCb } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -63,7 +63,7 @@ export interface ConventionsGeneratorLike {
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -97,6 +97,33 @@ const DEFAULT_CONFIG: AgentConventionsConfig = {
   allowedSkillContributions: '*',
 };
 
+/**
+ * v826 Phase 3.2 — Trust-Threshold-Tabelle: ab welcher Lesson-Confidence + Mode
+ * darf der Conventions-Update auto-applied werden.
+ * Die Sections-Liste bestimmt zusätzlich welche CLAUDE.md-Bereiche überhaupt
+ * auto-änderbar sind (Stack/Architektur niemals auto, nur Gotchas/DoNotTouch).
+ */
+function autoApplyAllowedByMode(
+  mode: 'off' | 'minor' | 'confident' | 'aggressive' | 'auto-pr',
+  maxLessonConfidence: number,
+): { allowed: boolean; reason?: string } {
+  if (mode === 'off') return { allowed: false, reason: 'mode=off' };
+  if (mode === 'auto-pr') return { allowed: false, reason: 'auto-pr not yet implemented (Phase 3.x)' };
+  if (mode === 'minor') {
+    if (maxLessonConfidence >= 0.8) return { allowed: true };
+    return { allowed: false, reason: `mode=minor requires confidence >= 0.8 (got ${maxLessonConfidence.toFixed(2)})` };
+  }
+  if (mode === 'confident') {
+    if (maxLessonConfidence >= 0.85) return { allowed: true };
+    return { allowed: false, reason: `mode=confident requires confidence >= 0.85 (got ${maxLessonConfidence.toFixed(2)})` };
+  }
+  if (mode === 'aggressive') {
+    if (maxLessonConfidence >= 0.7) return { allowed: true };
+    return { allowed: false, reason: `mode=aggressive requires confidence >= 0.7 (got ${maxLessonConfidence.toFixed(2)})` };
+  }
+  return { allowed: false, reason: `unknown mode ${mode}` };
+}
+
 function fileNameFor(format: ConventionsOutputFormat): string {
   switch (format) {
     case 'claude.md': return 'CLAUDE.md';
@@ -125,7 +152,7 @@ export class AgentConventionsSkill extends Skill {
         properties: {
           action: {
             type: 'string',
-            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied'],
+            enum: ['status', 'detect', 'generate', 'apply', 'refresh', 'drift_check', 'rollback', 'history', 'learn', 'list_lessons', 'consolidate_lessons', 'mark_lesson_applied', 'list_packages', 'generate_all_packages'],
             description: 'Action to perform',
           },
           project_id: { type: 'string', description: 'Project ID' },
@@ -167,6 +194,8 @@ export class AgentConventionsSkill extends Skill {
         case 'list_lessons': return await this.handleListLessons(projectId, packagePath);
         case 'consolidate_lessons': return await this.handleConsolidateLessons(projectId, packagePath, input);
         case 'mark_lesson_applied': return await this.handleMarkLessonApplied(projectId, packagePath, input);
+        case 'list_packages': return await this.handleListPackages(projectId);
+        case 'generate_all_packages': return await this.handleGenerateAllPackages(projectId, input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
@@ -608,6 +637,53 @@ export class AgentConventionsSkill extends Skill {
       generatedBy: 'lesson-derived',
     });
 
+    // v826 Phase 3.2 — Auto-Apply wenn config.autoApplyMode + Trust-Threshold passen.
+    // Sicherheit: NUR wenn Datei alfred-managed ist (kein User-Override-Risk), NUR
+    // wenn Conventions-Section "gotchas" oder "doNotTouch" geändert wurde (allowed-list),
+    // NIE bei Stack/Architektur (zu fundamental).
+    let autoApplied: { historyId: string; filePath: string; reason: string } | undefined;
+    const maxLessonConf = pendingLessons.length > 0
+      ? Math.max(...pendingLessons.map(l => l.confidence))
+      : 0;
+    const autoApplyDecision = autoApplyAllowedByMode(cfg.autoApplyMode, maxLessonConf);
+    if (autoApplyDecision.allowed) {
+      // Pre-Apply-Safety-Checks
+      const filePath = path.join(packagePath ? path.join(proj.cwd, packagePath) : proj.cwd, fileNameFor(cfg.primaryOutput));
+      let userManaged = false;
+      if (existsSync(filePath)) {
+        try {
+          const onDisk = readFileSync(filePath, 'utf8').slice(0, 500);
+          userManaged = !/generated_by:\s*alfred-agent-conventions/i.test(onDisk);
+        } catch { /* */ }
+      }
+      if (userManaged) {
+        this.deps.logger.info({ projectId, packagePath }, 'v826 auto-apply skipped: user-managed file (no overwrite)');
+      } else {
+        try {
+          const applyResult = await this.handleApply(projectId, packagePath, {
+            content: gen.markdown,
+            commit_to_git: true,
+            trigger_source: `auto-apply:${cfg.autoApplyMode}:lesson-consolidate`,
+          });
+          if (applyResult.success) {
+            const applyData = applyResult.data as { historyId: string; filesWritten: string[] };
+            autoApplied = {
+              historyId: applyData.historyId,
+              filePath: applyData.filesWritten[0] ?? filePath,
+              reason: `auto-apply mode=${cfg.autoApplyMode}, maxConf=${maxLessonConf.toFixed(2)}`,
+            };
+            // Alle pending lessons als applied markieren
+            for (const l of pendingLessons) {
+              await this.deps.conventionsRepo.markLessonApplied(projectId, packagePath, l.id);
+            }
+            this.deps.logger.info({ projectId, packagePath, mode: cfg.autoApplyMode, lessons: pendingLessons.length }, 'v826 auto-applied conventions');
+          }
+        } catch (err) {
+          this.deps.logger.warn({ err, projectId, packagePath }, 'v826 auto-apply failed (draft persisted, user can apply manually)');
+        }
+      }
+    }
+
     return {
       success: true,
       data: {
@@ -618,6 +694,110 @@ export class AgentConventionsSkill extends Skill {
         costUsd: gen.costUsd,
         consolidatedLessonsCount: pendingLessons.length,
         scanSnapshot: scan.snapshot,
+        autoApplied,
+        autoApplyDecision: autoApplyDecision.allowed ? 'applied' : autoApplyDecision.reason,
+      },
+    };
+  }
+
+  // ── list_packages (Phase 3.1 — Monorepo-Support) ───────────────────────
+  // Workspace-Detection: pnpm-workspace.yaml, package.json workspaces, nx.json,
+  // turbo.json, lerna.json. Returns Package-Liste mit Pfaden + Status pro Package.
+  private async handleListPackages(projectId: string): Promise<SkillResult> {
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    if (!existsSync(proj.cwd)) return { success: false, error: `cwd does not exist: ${proj.cwd}` };
+
+    // Initial-Scan auf Root um workspaces zu erkennen
+    const rootScan = await this.deps.scanner.scan(proj.cwd);
+    const workspaces = rootScan.snapshot.workspaces ?? [];
+    const packages: Array<{ path: string; name: string; type: 'root' | 'pkg' }> = [
+      { path: '', name: '(root)', type: 'root' },
+    ];
+
+    // Globs auflösen (pragmatisch: nur packages/* style, kein voller glob-resolver)
+    for (const pattern of workspaces) {
+      if (pattern === '(nx)' || pattern === '(turbo)') continue;
+      const cleanPattern = pattern.replace(/\/\*\*?$/, '').replace(/\/\*$/, '');
+      const baseDir = path.join(proj.cwd, cleanPattern);
+      if (!existsSync(baseDir)) continue;
+      try {
+        const entries = readdirSync(baseDir);
+        for (const entry of entries) {
+          const pkgPath = path.join(baseDir, entry);
+          const pkgJsonPath = path.join(pkgPath, 'package.json');
+          if (existsSync(pkgJsonPath)) {
+            try {
+              const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+              const relPath = path.relative(proj.cwd, pkgPath).replace(/\\/g, '/');
+              packages.push({ path: relPath, name: pkg.name ?? entry, type: 'pkg' });
+            } catch { /* skip malformed package.json */ }
+          }
+        }
+      } catch { /* skip unreadable dir */ }
+    }
+
+    // Convention-Status pro Package
+    const existing = await this.deps.conventionsRepo.listForProject(projectId);
+    const existingByPath = new Map(existing.map(c => [c.packagePath, c]));
+
+    const result = packages.map(p => {
+      const conv = existingByPath.get(p.path);
+      const filePath = path.join(proj.cwd, p.path, 'CLAUDE.md');
+      const filePresent = existsSync(filePath);
+      return {
+        ...p,
+        filePath: path.relative(proj.cwd, filePath),
+        hasConventionsRow: !!conv,
+        filePresent,
+        driftScore: conv?.driftScore ?? 0,
+        lastAppliedAt: conv?.lastAppliedAt ?? null,
+        pendingLessonsCount: conv?.neutralFormat.lessons.filter(l => !l.appliedToMain).length ?? 0,
+      };
+    });
+
+    return {
+      success: true,
+      data: {
+        isMonorepo: packages.length > 1,
+        workspaceFormat: workspaces.length > 0 ? workspaces.join(',') : 'single-package',
+        packages: result,
+      },
+    };
+  }
+
+  // ── generate_all_packages (Phase 3.1) ──────────────────────────────────
+  // Sequenziell generate über alle erkannten Packages. Bulk-Operation.
+  // Concurrency 1 (sequenziell) damit LLM-Rate-Limits respektiert werden +
+  // single-package-error nicht alle anderen abbricht.
+  private async handleGenerateAllPackages(projectId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const pkgList = await this.handleListPackages(projectId);
+    if (!pkgList.success || !pkgList.data) return pkgList;
+    const data = pkgList.data as { packages: Array<{ path: string; name: string }> };
+    const results: Array<{ packagePath: string; ok: boolean; reason?: string; costUsd?: number }> = [];
+    for (const pkg of data.packages) {
+      try {
+        const r = await this.handleGenerate(projectId, pkg.path, input);
+        results.push({
+          packagePath: pkg.path,
+          ok: !!r.success,
+          reason: r.error,
+          costUsd: (r.data as { costUsd?: number } | undefined)?.costUsd,
+        });
+      } catch (err) {
+        results.push({ packagePath: pkg.path, ok: false, reason: (err as Error).message });
+      }
+    }
+    const okCount = results.filter(r => r.ok).length;
+    const totalCost = results.reduce((s, r) => s + (r.costUsd ?? 0), 0);
+    return {
+      success: true,
+      data: {
+        packagesProcessed: results.length,
+        successCount: okCount,
+        failureCount: results.length - okCount,
+        totalCostUsd: totalCost,
+        perPackage: results,
       },
     };
   }

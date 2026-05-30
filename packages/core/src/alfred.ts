@@ -3813,14 +3813,37 @@ Beispiel für eine gute Lesson: "Wenn du eine Migration in migrations/*.sql hinz
                     lesson_session_id: sandboxId,
                   }, ctx);
                   this.logger.info({ sandboxId, projectId, lessonId: (lesson.data as { lessonId?: string })?.lessonId }, 'v825 lesson learned from merge-gate-failure');
+
+                  // v826 Phase 3.2 — Auto-Apply-Check: wenn config erlaubt, direkt consolidate
+                  // (das wiederum entscheidet via autoApplyAllowedByMode ob's geschrieben wird).
+                  const acfg = (this.config as { agentConventions?: import('@alfred/types').AgentConventionsConfig }).agentConventions;
+                  let autoApplyResult: { autoApplied?: { filePath: string; historyId: string } } | undefined;
+                  if (acfg?.autoApplyMode && acfg.autoApplyMode !== 'off') {
+                    try {
+                      const consolidateResult = await this.agentConventionsSkillRef.execute({
+                        action: 'consolidate_lessons',
+                        project_id: projectId,
+                        package_path: '',
+                      }, ctx);
+                      if (consolidateResult.success && consolidateResult.data) {
+                        autoApplyResult = consolidateResult.data as typeof autoApplyResult;
+                      }
+                    } catch (err) {
+                      this.logger.debug({ err, projectId }, 'v826 auto-apply-after-merge-fail-lesson failed (non-fatal)');
+                    }
+                  }
+
                   // Optional: ChatBubble in Project-Chat damit User sieht
                   try {
                     if (this.conversationRepo && this.projectRepo) {
                       const proj = await this.projectRepo.getByIdAnyOwner(projectId).catch(() => null);
                       if (proj) {
                         const conv = await this.conversationRepo.findOrCreateForProject(proj.userId, projectId);
+                        const autoApplyLine = autoApplyResult?.autoApplied
+                          ? `\n\n✅ **Auto-Applied** in \`${autoApplyResult.autoApplied.filePath}\` (Rollback via History-Tab möglich, ID: \`${autoApplyResult.autoApplied.historyId.slice(0, 12)}\`)`
+                          : '\n\n_Wird beim nächsten Conventions-Refresh in CLAUDE.md vorgeschlagen._';
                         await this.conversationRepo.addMessage(conv.id, 'assistant',
-                          `💡 **Lesson Learned aus Merge-Gate-Failure**\n\n${parsed.lesson_text}\n\n_Wird beim nächsten Conventions-Refresh in CLAUDE.md vorgeschlagen._`);
+                          `💡 **Lesson Learned aus Merge-Gate-Failure**\n\n${parsed.lesson_text}${autoApplyLine}`);
                       }
                     }
                   } catch (err) {
@@ -8645,6 +8668,18 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
             const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
             const r = await this.agentConventionsSkillRef.execute({ action: 'consolidate_lessons', project_id: projectId, package_path: packagePath ?? '' }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsListPackages: async (projectId: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'list_packages', project_id: projectId }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsGenerateAllPackages: async (projectId: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'generate_all_packages', project_id: projectId }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
           // v797 — Manueller Health-Check (statt 6h-Schedule warten)

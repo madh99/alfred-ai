@@ -5,6 +5,66 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.826] - 2026-05-30
+
+### Added — Agent-Conventions Phase 3.1 Monorepo + Phase 3.2 Auto-Apply (v826)
+
+Monorepo-Support für CLAUDE.md/AGENTS.md (per-Package) plus Trust-Score-
+basiertes Auto-Apply nach Lesson-Consolidate.
+
+**Phase 3.1 — Monorepo per-Package Conventions**
+- 2 neue Skill-Actions:
+  - `list_packages` — erkennt pnpm-workspace.yaml / npm-workspaces /
+    nx.json / turbo.json / lerna.json. Returns Package-Liste mit Status
+    pro Package (filePresent, driftScore, lastAppliedAt, pendingLessonsCount).
+  - `generate_all_packages` — Bulk-Generate sequenziell über alle Pakete
+    (Concurrency 1, kein LLM-Rate-Limit-Risiko).
+- 2 neue HTTP-Endpoints + Client-Methoden
+- Modal-UI:
+  - Package-Selector im Header (nur wenn monorepo detected)
+  - Per-Package-Anzeige mit Pending-Lessons-Badge (💡) + Drift-Warnung (⚠)
+  - "✨ All (N)"-Button im Footer für Bulk-Generate
+  - Alle Actions (Generate/Refresh/Apply/DriftCheck/Consolidate/Rollback)
+    respektieren selectedPackagePath
+- DB-Schema bereits in v823 vorbereitet (`package_path` Column als PK).
+
+**Phase 3.2 — Auto-Apply mit Trust-Score**
+- Neue Config-Mode-Stufe in `config.agentConventions.autoApplyMode`:
+  - `off` (Default) — User-Review Pflicht
+  - `minor` — Auto bei Confidence ≥ 0.8
+  - `confident` — Auto bei Confidence ≥ 0.85
+  - `aggressive` — Auto bei Confidence ≥ 0.7
+  - `auto-pr` — Phase 3.x (noch nicht implementiert)
+- Auto-Apply integriert in `consolidate_lessons`:
+  - Pre-Check: Datei MUSS alfred-managed sein (Frontmatter-Detect),
+    nie eine User-eigene CLAUDE.md überschreiben
+  - Bei Erfolg: alle pending Lessons werden als applied markiert
+  - History-Entry mit appliedBy=`auto-apply:<mode>:lesson-consolidate`
+  - Bei Fehler: Draft bleibt persistiert, User kann manuell apply
+- `onMergeGateFailed`-Callback in alfred.ts triggert nach Lesson-Save
+  direkt consolidate_lessons → wenn Auto-Mode aktiv: Auto-Apply direkt
+- Chat-Bubble informiert User über Auto-Apply + bietet Rollback-ID an
+
+**Trust-Threshold-Tabelle (autoApplyAllowedByMode)**
+| Mode | Min-Lesson-Confidence | Effekt |
+|---|---|---|
+| off | n/a | nie auto |
+| minor | 0.8 | konservativ |
+| confident | 0.85 | praktischer Default |
+| aggressive | 0.7 | maximaler Auto-Effekt |
+
+**Sicherheits-Constraints (additiv, nicht zu umgehen):**
+- Auto-Apply NIE auf User-managed CLAUDE.md (Frontmatter-Check)
+- Auto-Apply NIE für Stack/Architektur-Sections (zu fundamental)
+- Auto-Apply hat IMMER History + Rollback als Sicherheitsnetz
+- Auto-Apply ist OPT-IN (Default `off`)
+- Lessons bleiben Audit-Trail (werden nie gelöscht, nur als applied markiert)
+
+**Side-Effects:**
+- Phase 3.1+3.2 sind feature-flags via config
+- Alle bestehenden v824/v825 Workflows funktionieren unverändert
+- Bei NICHT-monorepo: keine UI-Änderung (Package-Selector verborgen)
+
 ## [0.19.0-multi-ha.825] - 2026-05-30
 
 ### Added — Agent-Conventions Phase 2: Lessons-Loop + Drift-Background-Job (v825)

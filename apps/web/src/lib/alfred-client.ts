@@ -842,10 +842,25 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
-  async conventionsConsolidateLessons(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: AgentConventionsGenerateData & { consolidatedLessonsCount: number }; reason?: string }> {
+  async conventionsConsolidateLessons(projectId: string, packagePath?: string): Promise<{ ok: boolean; data?: AgentConventionsGenerateData & { consolidatedLessonsCount: number; autoApplied?: { historyId: string; filePath: string; reason: string }; autoApplyDecision?: string }; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/consolidate-lessons`, {
       method: 'POST', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
       body: JSON.stringify({ packagePath: packagePath ?? '' }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  // v826 — Phase 3.1 Monorepo + 3.2 Auto-Apply API
+  async conventionsListPackages(projectId: string): Promise<{ ok: boolean; data?: { isMonorepo: boolean; workspaceFormat: string; packages: AgentConventionsPackage[] }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/packages`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsGenerateAllPackages(projectId: string): Promise<{ ok: boolean; data?: { packagesProcessed: number; successCount: number; failureCount: number; totalCostUsd: number; perPackage: Array<{ packagePath: string; ok: boolean; reason?: string; costUsd?: number }> }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/generate-all-packages`, {
+      method: 'POST', headers: this.authHeaders,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
@@ -2613,6 +2628,18 @@ export interface AgentConventionsApplyData {
   commitSha?: string;
   historyId: string;
   backupCreated: boolean;
+}
+
+export interface AgentConventionsPackage {
+  path: string;
+  name: string;
+  type: 'root' | 'pkg';
+  filePath: string;
+  hasConventionsRow: boolean;
+  filePresent: boolean;
+  driftScore: number;
+  lastAppliedAt: string | null;
+  pendingLessonsCount: number;
 }
 
 export interface AgentConventionsLesson {

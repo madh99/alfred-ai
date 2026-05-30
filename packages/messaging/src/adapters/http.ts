@@ -726,6 +726,8 @@ export class HttpAdapter extends MessagingAdapter {
     conventionsRollback?: (projectId: string, historyId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsListLessons?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsConsolidateLessons?: (projectId: string, packagePath?: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsListPackages?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsGenerateAllPackages?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
@@ -1243,6 +1245,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConventionsListLessons(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/consolidate-lessons$/) && req.method === 'POST') {
       this.handleConventionsConsolidateLessons(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/packages$/) && req.method === 'GET') {
+      this.handleConventionsListPackages(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/generate-all-packages$/) && req.method === 'POST') {
+      this.handleConventionsGenerateAllPackages(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4507,6 +4513,40 @@ export class HttpAdapter extends MessagingAdapter {
     try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
     try {
       const r = await this.projectsCallbacks.conventionsConsolidateLessons(projectId, opts.packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsListPackages(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsListPackages) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.projectsCallbacks.conventionsListPackages(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsGenerateAllPackages(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsGenerateAllPackages) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.projectsCallbacks.conventionsGenerateAllPackages(projectId);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

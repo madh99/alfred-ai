@@ -12,6 +12,7 @@ import type {
   AgentConventionsHistoryEntry,
   AgentConventionsGenerateData,
   AgentConventionsLesson,
+  AgentConventionsPackage,
 } from '../../lib/alfred-client';
 
 interface Props {
@@ -31,6 +32,10 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   const [history, setHistory] = useState<AgentConventionsHistoryEntry[]>([]);
   const [lessons, setLessons] = useState<AgentConventionsLesson[]>([]);
   const [pendingLessonsCount, setPendingLessonsCount] = useState(0);
+  // v826 — Monorepo-Support: Package-Selector
+  const [packages, setPackages] = useState<AgentConventionsPackage[]>([]);
+  const [isMonorepo, setIsMonorepo] = useState(false);
+  const [selectedPackagePath, setSelectedPackagePath] = useState<string>('');
   const [tab, setTab] = useState<Tab>('view');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,37 +44,51 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   const [commitToGit, setCommitToGit] = useState(true);
 
   const loadStatus = useCallback(async () => {
-    const r = await client.conventionsStatus(projectId);
+    const r = await client.conventionsStatus(projectId, selectedPackagePath);
     if (r.ok && r.data) setStatus(r.data);
     else setError(r.reason ?? null);
-  }, [client, projectId]);
+  }, [client, projectId, selectedPackagePath]);
 
   const loadHistory = useCallback(async () => {
-    const r = await client.conventionsHistory(projectId);
+    const r = await client.conventionsHistory(projectId, selectedPackagePath);
     if (r.ok && r.data) setHistory(r.data.entries);
-  }, [client, projectId]);
+  }, [client, projectId, selectedPackagePath]);
 
   const loadLessons = useCallback(async () => {
-    const r = await client.conventionsListLessons(projectId);
+    const r = await client.conventionsListLessons(projectId, selectedPackagePath);
     if (r.ok && r.data) {
       setLessons(r.data.lessons);
       setPendingLessonsCount(r.data.pendingCount);
+    }
+  }, [client, projectId, selectedPackagePath]);
+
+  const loadPackages = useCallback(async () => {
+    const r = await client.conventionsListPackages(projectId);
+    if (r.ok && r.data) {
+      setPackages(r.data.packages);
+      setIsMonorepo(r.data.isMonorepo);
     }
   }, [client, projectId]);
 
   useEffect(() => {
     if (open) {
       setError(null); setNotice(null);
+      loadPackages();
+    }
+  }, [open, loadPackages]);
+
+  useEffect(() => {
+    if (open) {
       loadStatus();
       loadHistory();
       loadLessons();
     }
-  }, [open, loadStatus, loadHistory, loadLessons]);
+  }, [open, selectedPackagePath, loadStatus, loadHistory, loadLessons]);
 
   async function runGenerate() {
     setBusy('generate'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsGenerate(projectId, { language, tier: 'strong' });
+      const r = await client.conventionsGenerate(projectId, { packagePath: selectedPackagePath, language, tier: 'strong' });
       if (r.ok && r.data) {
         setDraft(r.data.draft);
         setDraftMeta(r.data);
@@ -86,7 +105,7 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   async function runRefresh() {
     setBusy('refresh'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsRefresh(projectId, { language });
+      const r = await client.conventionsRefresh(projectId, { packagePath: selectedPackagePath, language });
       if (r.ok && r.data) {
         setDraft(r.data.draft);
         setDraftMeta(r.data);
@@ -102,7 +121,7 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     if (!draft) { setError('Kein Draft zum Apply'); return; }
     setBusy('apply'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsApply(projectId, { content: draft, commitToGit });
+      const r = await client.conventionsApply(projectId, { packagePath: selectedPackagePath, content: draft, commitToGit });
       if (r.ok && r.data) {
         setNotice(`✓ Apply: ${r.data.filesWritten.join(', ')}${r.data.commitSha ? ` · commit ${r.data.commitSha}` : ''}${r.data.backupCreated ? ' · Backup erstellt' : ''}`);
         setDraft('');
@@ -119,7 +138,7 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   async function runConsolidate() {
     setBusy('consolidate'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsConsolidateLessons(projectId);
+      const r = await client.conventionsConsolidateLessons(projectId, selectedPackagePath);
       if (r.ok && r.data) {
         setDraft(r.data.draft);
         setDraftMeta(r.data);
@@ -134,7 +153,7 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   async function runDriftCheck() {
     setBusy('drift'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsDriftCheck(projectId);
+      const r = await client.conventionsDriftCheck(projectId, selectedPackagePath);
       if (r.ok && r.data) {
         setNotice(`✓ Drift-Score: ${(r.data.driftScore * 100).toFixed(0)}% · Gründe: ${r.data.reasons.join('; ') || 'keine'}`);
         await loadStatus();
@@ -144,11 +163,26 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     } finally { setBusy(null); }
   }
 
+  async function runGenerateAllPackages() {
+    if (!confirm(`Generate für ALLE ${packages.length} Pakete starten? Das macht ${packages.length} LLM-Calls sequenziell (kann mehrere Minuten dauern + entsprechend kosten).`)) return;
+    setBusy('generate-all'); setError(null); setNotice(null);
+    try {
+      const r = await client.conventionsGenerateAllPackages(projectId);
+      if (r.ok && r.data) {
+        setNotice(`✓ ${r.data.successCount}/${r.data.packagesProcessed} Pakete generiert · $${r.data.totalCostUsd.toFixed(4)}${r.data.failureCount > 0 ? ` · ${r.data.failureCount} Fehler` : ''}`);
+        await loadPackages();
+        await loadStatus();
+      } else {
+        setError(r.reason ?? 'Generate-All failed');
+      }
+    } finally { setBusy(null); }
+  }
+
   async function runRollback(historyId: string) {
     if (!confirm(`Rollback auf Version ${historyId.slice(0, 12)}? Aktueller Inhalt wird überschrieben.`)) return;
     setBusy('rollback'); setError(null); setNotice(null);
     try {
-      const r = await client.conventionsRollback(projectId, historyId);
+      const r = await client.conventionsRollback(projectId, historyId, selectedPackagePath);
       if (r.ok && r.data) {
         setNotice(`✓ Rollback erfolgreich auf ${historyId.slice(0, 12)} (${r.data.filePath})`);
         await loadStatus();
@@ -172,9 +206,33 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
       <div className="bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg w-[min(1100px,95vw)] max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#1f1f1f]">
-          <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#1f1f1f] gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2 className="text-sm font-semibold text-gray-200">📜 Agent-Konventionen · {projectName}</h2>
+            {/* v826 — Monorepo Package-Selector */}
+            {isMonorepo && (
+              <div className="flex items-center gap-1 text-[11px]">
+                <span className="text-gray-500">Package:</span>
+                <select
+                  value={selectedPackagePath}
+                  onChange={e => setSelectedPackagePath(e.target.value)}
+                  className="bg-[#0d0d0d] border border-[#1f1f1f] rounded px-2 py-1 text-gray-300 max-w-[280px]"
+                  title="Package wählen — root = projekt-globale Konventionen, sonst per-Package"
+                >
+                  {packages.map(p => {
+                    const lessonsLabel = p.pendingLessonsCount > 0 ? ` · ${p.pendingLessonsCount}💡` : '';
+                    const driftLabel = p.driftScore > 0.4 ? ' · ⚠' : '';
+                    const presentLabel = p.filePresent ? '' : ' (fehlt)';
+                    return (
+                      <option key={p.path || 'root'} value={p.path}>
+                        {p.name}{presentLabel}{lessonsLabel}{driftLabel}
+                      </option>
+                    );
+                  })}
+                </select>
+                <span className="text-[10px] text-gray-500">{packages.length} Pakete</span>
+              </div>
+            )}
             {status && (
               <span className={`text-[10px] px-2 py-0.5 border rounded ${badgeColor[status.badge]}`}>
                 {status.badge === 'present-fresh' && '✓ Aktuell'}
@@ -323,8 +381,13 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
             </select>
           </div>
           <button onClick={runGenerate} disabled={busy !== null} className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 rounded disabled:opacity-60">
-            {busy === 'generate' ? '⏳ Generate …' : '✨ Generate (neu)'}
+            {busy === 'generate' ? '⏳ Generate …' : `✨ Generate${isMonorepo && selectedPackagePath ? ` (${selectedPackagePath})` : ''}`}
           </button>
+          {isMonorepo && (
+            <button onClick={runGenerateAllPackages} disabled={busy !== null} className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/30 rounded disabled:opacity-60" title={`Generate für alle ${packages.length} Pakete sequenziell`}>
+              {busy === 'generate-all' ? '⏳ All …' : `✨ All (${packages.length})`}
+            </button>
+          )}
           <button onClick={runRefresh} disabled={busy !== null || !status?.filePresent} className="px-3 py-1 bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/30 rounded disabled:opacity-60">
             {busy === 'refresh' ? '⏳ Refresh …' : '🔄 Refresh (mit Vorlage)'}
           </button>
