@@ -5,6 +5,33 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.819] - 2026-05-30
+
+### Added — Merge-Fortschrittsanzeige + Heartbeat (v819)
+
+User-Problem: Während eine Sandbox im Status `merging` war, zeigte der
+Interactive-Header nur ein statisches "merging"-Badge. Ohne weitere
+Information konnte man nicht unterscheiden, ob der Merge noch arbeitet
+(z.B. npm test läuft) oder ob er hängt.
+
+**Backend (`sandbox-manager.ts`)**
+- Merge-Flow setzt nun an jeder Phase `status_reason = 'step:<phase>'`:
+  `init` → `container-stop` → `auto-commit` → `secret-scan` →
+  `tests-rebuild` / `tests-run` → `git-merge` / `pr-push` → `finalize` → `cleanup`.
+- `runMergeGateTests` zusätzlich mit 30s-Async-Heartbeat-Intervall während
+  des laufenden `validateBuild`-Calls (sonst keine Updates während der
+  langen Test-Phase → UI würde "hängt"-Warnung zeigen obwohl alles läuft).
+- `last_active_at` wird bei jedem `updateStatus` aktualisiert und dient
+  als Heartbeat-Quelle für das Frontend.
+
+**Frontend (`interactive/page.tsx`)**
+- Header: Kompaktes Step-Badge neben `merging` (z.B. `tests-run · 12s`),
+  färbt sich amber bei >90s ohne Update (möglicher Hänger).
+- Body-Center: Dedizierter Merge-Fortschritts-Block mit menschenlesbarem
+  Step-Label, Heartbeat-Sekunden-Counter und Hänger-Warnung.
+- Live-Tick (1s) läuft jetzt auch während `merging`-Status, sodass der
+  Counter sichtbar tickt.
+
 ## [0.19.0-multi-ha.818] - 2026-05-30
 
 ### Audit-Follow-ups — Projects/Project-Agent/Sandbox-Chat (v818, 7 Themen)

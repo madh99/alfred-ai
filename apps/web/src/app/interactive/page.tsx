@@ -95,8 +95,10 @@ export default function InteractivePage() {
   }
   // v817 — Live-Tick (1s) nur wenn Sandbox aktuell running, damit der Laufzeit-Counter
   // im Header tickt. Bei paused/discarded kein Re-Render — Wert ist statisch.
+  // v819 — auch während merging ticken, damit der Heartbeat-Sekunden-Counter sichtbar zählt
+  // (User erkennt Hänger an "letztes Update vor 95s" Warnung).
   useEffect(() => {
-    if (sandbox?.status !== 'running') return;
+    if (sandbox?.status !== 'running' && sandbox?.status !== 'merging') return;
     const id = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(id);
   }, [sandbox?.status]);
@@ -568,6 +570,19 @@ export default function InteractivePage() {
         <div className="flex items-center gap-3">
           <span className="font-semibold text-gray-200">💬 Interactive · {sandbox.branchName}</span>
           <span className={`px-2 py-0.5 rounded border ${STATUS_COLOR[sandbox.status] ?? 'text-gray-400 border-gray-500/40'}`}>{sandbox.status}</span>
+          {/* v819 — Merging-Step inline am Badge: User sieht beim ersten Hinschauen wo's gerade ist. */}
+          {sandbox.status === 'merging' && sandbox.statusReason && (() => {
+            const step = sandbox.statusReason.replace(/^step:/, '').split(' · ')[0];
+            const sinceUpdate = sandbox.lastActiveAt
+              ? Math.floor((nowTick - new Date(sandbox.lastActiveAt).getTime()) / 1000)
+              : 0;
+            const isStuck = sinceUpdate > 90;
+            return (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isStuck ? 'text-amber-400 border-amber-500/40 bg-amber-500/10' : 'text-purple-300 border-purple-500/30 bg-purple-500/5'}`}>
+                {isStuck && '⚠ '}{step} · {sinceUpdate}s
+              </span>
+            );
+          })()}
           <span className="text-gray-500">type: {sandbox.projectType ?? '—'} · port {sandbox.hostPort ?? '—'}</span>
         </div>
         <div className="flex gap-2">
@@ -774,6 +789,46 @@ export default function InteractivePage() {
                   </div>
                 </>
               )}
+              {/* v819 — Merging-Fortschritt: zeigt Schritt + Heartbeat-Sekunden seit letztem
+                 Update damit User sieht ob noch Fortschritt passiert oder ob's hängt. */}
+              {sandbox.status === 'merging' && (() => {
+                const reason = sandbox.statusReason ?? '';
+                const step = reason.replace(/^step:/, '').split(' · ')[0] ?? 'init';
+                const sinceUpdate = sandbox.lastActiveAt
+                  ? Math.floor((nowTick - new Date(sandbox.lastActiveAt).getTime()) / 1000)
+                  : 0;
+                const isStuck = sinceUpdate > 90;
+                const stepLabel: Record<string, string> = {
+                  'init': 'Initialisierung',
+                  'container-stop': 'Container stoppen',
+                  'auto-commit': 'Uncommitted Changes committen',
+                  'secret-scan': 'Secret-Scan auf Diff',
+                  'tests-rebuild': 'npm rebuild (ABI-Fix)',
+                  'tests-run': 'npm test läuft',
+                  'git-merge': 'git merge --squash → main',
+                  'pr-push': 'Branch push + PR erstellen',
+                  'finalize': 'Sessions als merged markieren',
+                  'cleanup': 'Worktree + Container aufräumen',
+                };
+                return (
+                  <>
+                    <div className="text-3xl mb-3 animate-pulse">🔀</div>
+                    <div className="text-lg text-purple-300 mb-2">Merge läuft …</div>
+                    <div className="text-xs text-purple-200 bg-purple-500/10 border border-purple-500/30 rounded px-3 py-2 max-w-xl">
+                      <div className="font-mono">{stepLabel[step] ?? step}</div>
+                      <div className={`text-[10px] mt-1 ${isStuck ? 'text-amber-400' : 'text-gray-500'}`}>
+                        {isStuck ? '⚠ ' : ''}letztes Update vor {sinceUpdate}s{isStuck ? ' — möglicherweise blockiert' : ''}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-gray-600 mt-4 max-w-xl">
+                      Reihenfolge: Container-Stop → Auto-Commit → Secret-Scan → Tests (npm rebuild + npm test, kann mehrere Min. dauern) → git merge → Cleanup.
+                    </div>
+                    <div className="text-[10px] text-gray-700 mt-2 font-mono">
+                      Status wird alle 2s gepollt · Test-Phase sendet 30s-Heartbeat.
+                    </div>
+                  </>
+                );
+              })()}
               {sandbox.status === 'paused' && <div>⏸ Sandbox pausiert — Resume im Project-Chat</div>}
               {sandbox.status === 'failed' && (
                 <>

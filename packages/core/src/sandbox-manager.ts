@@ -651,7 +651,7 @@ export class SandboxManager {
    * ist nur `echo`-Stub. Container muss vor dem Aufruf gestoppt sein damit kein
    * konkurrierender `npm rebuild` im Container den State wieder auf musl kippt.
    */
-  private async runMergeGateTests(sb: Sandbox): Promise<{ ok: boolean; skipped?: boolean; output: string; reason?: string }> {
+  private async runMergeGateTests(sb: Sandbox, sandboxId?: string): Promise<{ ok: boolean; skipped?: boolean; output: string; reason?: string }> {
     let hasTest = false;
     let packageManagerInstall = 'npm rebuild';
     try {
@@ -668,14 +668,35 @@ export class SandboxManager {
     }
     const runAsUser = this.getWorktreeOwner(sb.worktreePath);
     this.deps.logger.info({ sandboxId: sb.id, runAsUser }, 'v813 merge-gate: running npm rebuild + npm test');
-    // 10min Test-Timeout — typischer Next.js-Test-Suite-Run liegt drunter; bei
-    // Überschreitung gilt: zu langsam = ablehnen, User debuggt manuell.
-    const result = await validateBuild(sb.worktreePath, [packageManagerInstall], ['npm test'], 10 * 60_000, runAsUser);
-    return {
-      ok: result.passed,
-      output: result.combinedOutput,
-      reason: result.passed ? undefined : 'merge-gate-tests-failed',
-    };
+    // v819 — Sub-Step für UI-Heartbeat. validateBuild liefert keinen Phase-Callback,
+    // daher splitten wir auf "tests-rebuild" (während rebuild läuft) und "tests-run"
+    // sobald validateBuild rein heuristisch >60s gelaufen ist (ABI-Build done → tests).
+    // Pragmatisch: zwei explizite Markers vor und während des Calls.
+    if (sandboxId) await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:tests-rebuild');
+    // Async-Heartbeat-Interval: alle 30s last_active_at refreshen damit UI nicht "hängt" zeigt.
+    let heartbeat: NodeJS.Timeout | undefined;
+    if (sandboxId) {
+      let phase: 'tests-rebuild' | 'tests-run' = 'tests-rebuild';
+      const start = Date.now();
+      heartbeat = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - start) / 1000);
+        // Heuristik: nach 60s gilt rebuild als done, ab dann tests-run
+        if (phase === 'tests-rebuild' && elapsed > 60) phase = 'tests-run';
+        this.deps.repo.updateStatus(sandboxId, 'merging', `step:${phase} · ${elapsed}s`).catch(() => {/* non-fatal */});
+      }, 30_000);
+    }
+    try {
+      // 10min Test-Timeout — typischer Next.js-Test-Suite-Run liegt drunter; bei
+      // Überschreitung gilt: zu langsam = ablehnen, User debuggt manuell.
+      const result = await validateBuild(sb.worktreePath, [packageManagerInstall], ['npm test'], 10 * 60_000, runAsUser);
+      return {
+        ok: result.passed,
+        output: result.combinedOutput,
+        reason: result.passed ? undefined : 'merge-gate-tests-failed',
+      };
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+    }
   }
 
   /** v812 — Discard: tentative Projekt-Metadaten der Sandbox aufräumen (Callback). */
@@ -766,10 +787,15 @@ export class SandboxManager {
       return { ok: false, reason: `Sandbox in status '${sb.status}' — only running/paused can be merged` };
     }
 
-    await this.deps.repo.updateStatus(sandboxId, 'merging', `strategy=${opts.strategy}`);
+    // v819 — Fein-granulare Merge-Schritte als status_reason damit der User im
+    // Interactive-Header sieht ob noch Fortschritt passiert oder ob's hängt.
+    // last_active_at wird bei jedem updateStatus aktualisiert → Frontend nutzt
+    // das als Heartbeat (wenn >90s ohne Update → "hängt-Warnung").
+    await this.deps.repo.updateStatus(sandboxId, 'merging', `step:init · strategy=${opts.strategy}`);
 
     try {
       // (1) Container stoppen vor git operations (Lock-Konflikte vermeiden)
+      await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:container-stop');
       if (sb.containerId) {
         try { await stopContainer(sb.containerId, 5); } catch { /* ignore */ }
       }
@@ -777,6 +803,7 @@ export class SandboxManager {
       // (2) Uncommitted changes committen — v726: .alfred-data/ + .env* explizit ausschließen
       // damit Sandbox-Test-Daten (DB-Files, Logs, Uploads) und Secrets NICHT ins Repo wandern.
       // Defensiv zusätzlich zu .gitignore (User könnte die Einträge entfernt haben).
+      await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:auto-commit');
       try {
         const status = await runGit(['status', '--porcelain'], sb.worktreePath);
         if (status.trim()) {
@@ -793,6 +820,7 @@ export class SandboxManager {
       }
 
       // (3) Pre-Merge-Secret-Scan
+      await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:secret-scan');
       try {
         const diff = await runGit(['diff', `${sb.baseCommitSha}..HEAD`, '--unified=0'], sb.worktreePath);
         const findings = scanForSecrets(diff);
@@ -807,8 +835,9 @@ export class SandboxManager {
       // (3b) v813b — Merge-Gate: npm rebuild + npm test. Container ist hier gestoppt
       // (Step 1) → das Bind-Mount-ABI ist nicht mehr im Wettlauf. Failed → Merge
       // ablehnen; Sandbox bleibt paused, User kann fixen oder discarden.
+      // v819 — runMergeGateTests setzt selbst step:tests-rebuild / step:tests-run.
       try {
-        const gate = await this.runMergeGateTests(sb);
+        const gate = await this.runMergeGateTests(sb, sandboxId);
         if (!gate.ok) {
           await this.deps.repo.updateStatus(sandboxId, 'paused', gate.reason ?? 'merge-gate-tests-failed');
           const tail = (gate.output || '').slice(-2500);
@@ -835,6 +864,7 @@ export class SandboxManager {
 
       // (4) Strategy
       if (opts.strategy === 'pr') {
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:pr-push');
         const result = await this.mergeViaPr(sb, opts);
         if (!result.ok) {
           await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'pr-failed');
@@ -843,17 +873,22 @@ export class SandboxManager {
         // v812 — PR-Strategie: Code ist noch NICHT in main (Forge-Merge ausstehend).
         // Wir bestätigen die Sessions trotzdem als 'merged' (PR erstellt) — der eigentliche
         // Forge-Merge ist außerhalb von Alfreds Kontrolle. onMergeApplied markiert + matched.
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:finalize');
         await this.fireMergeApplied(sb, undefined);
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:cleanup');
         await this.cleanupAfterMerge(sb, opts.projectCwd);
         await this.deps.repo.markDestroyed(sandboxId, 'merged_via_pr', result.prUrl);
         return result;
       } else {
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:git-merge');
         const result = await this.mergeDirect(sb, opts);
         if (!result.ok) {
           await this.deps.repo.updateStatus(sandboxId, 'paused', result.reason ?? 'direct-failed');
           return result;
         }
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:finalize');
         await this.fireMergeApplied(sb, result.mergedSha); // v812
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:cleanup');
         await this.cleanupAfterMerge(sb, opts.projectCwd);
         await this.deps.repo.markDestroyed(sandboxId, 'merged_to_main');
         return result;
