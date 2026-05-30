@@ -81,7 +81,7 @@ export interface SkillConventionsContribution {
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern' | 'record_violation' | 'section_health' | 'effectiveness_metrics' | 'self_modify' | 'test_harness_run' | 'get_config_overrides' | 'set_config_overrides';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern' | 'record_violation' | 'section_health' | 'effectiveness_metrics' | 'self_modify' | 'test_harness_run' | 'get_config_overrides' | 'set_config_overrides' | 'run_canonical_task' | 'list_canonical_tasks';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -249,6 +249,8 @@ export class AgentConventionsSkill extends Skill {
         case 'test_harness_run': return await this.handleTestHarnessRun(projectId, input);
         case 'get_config_overrides': return await this.handleGetConfigOverrides(projectId, packagePath);
         case 'set_config_overrides': return await this.handleSetConfigOverrides(projectId, packagePath, input);
+        case 'list_canonical_tasks': return await this.handleListCanonicalTasks();
+        case 'run_canonical_task': return await this.handleRunCanonicalTask(projectId, input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
@@ -1248,6 +1250,101 @@ export class AgentConventionsSkill extends Skill {
     });
 
     return { success: true, data: { runId, versionHash, withConventions } };
+  }
+
+  // ── canonical_tasks (Phase 4.6 — Test-Harness-Runner) ────────────────
+  private async handleListCanonicalTasks(): Promise<SkillResult> {
+    const { CANONICAL_TASKS } = await import('./canonical-tasks.js');
+    return { success: true, data: { tasks: CANONICAL_TASKS } };
+  }
+
+  private async handleRunCanonicalTask(projectId: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const taskId = (input.task_id as string | undefined)?.trim();
+    if (!taskId) return { success: false, error: 'task_id required' };
+
+    const proj = await this.deps.resolveProject(projectId);
+    if (!proj) return { success: false, error: 'Project not found' };
+    if (!existsSync(proj.cwd)) return { success: false, error: `cwd does not exist: ${proj.cwd}` };
+
+    const { CANONICAL_TASKS } = await import('./canonical-tasks.js');
+    const task = CANONICAL_TASKS.find(t => t.id === taskId);
+    if (!task) return { success: false, error: `task '${taskId}' not found. List: ${CANONICAL_TASKS.map(t => t.id).join(', ')}` };
+
+    const startTime = Date.now();
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exec = promisify(execFile);
+    const runCmd = async (cmd: string, timeoutMs: number): Promise<{ ok: boolean; exitCode: number; output: string }> => {
+      // Spawn via shell für Pipe/Glob-Support
+      const isWin = process.platform === 'win32';
+      const shellCmd = isWin ? 'cmd' : 'sh';
+      const shellArgs = isWin ? ['/c', cmd] : ['-c', cmd];
+      try {
+        const { stdout, stderr } = await exec(shellCmd, shellArgs, { cwd: proj.cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 });
+        return { ok: true, exitCode: 0, output: `${stdout}\n${stderr}`.slice(-3000) };
+      } catch (err) {
+        const e = err as { code?: number; stdout?: string; stderr?: string };
+        return { ok: false, exitCode: e.code ?? -1, output: `${e.stdout ?? ''}\n${e.stderr ?? ''}`.slice(-3000) };
+      }
+    };
+
+    // Setup-Phase
+    if (task.setup) {
+      for (const cmd of task.setup) {
+        const r = await runCmd(cmd, task.timeoutMs ?? 5 * 60_000);
+        if (!r.ok) {
+          return { success: false, error: `setup failed: ${cmd}`, data: { output: r.output, exitCode: r.exitCode } };
+        }
+      }
+    }
+
+    // Validate-Phase: alle Commands müssen passen
+    const outputs: string[] = [];
+    let outcomePassed = true;
+    let lastExitCode = 0;
+    for (const cmd of task.validate) {
+      const r = await runCmd(cmd, task.timeoutMs ?? 5 * 60_000);
+      outputs.push(`$ ${cmd} (exit=${r.exitCode})\n${r.output}`);
+      if (!r.ok) {
+        outcomePassed = false;
+        lastExitCode = r.exitCode;
+        break; // stoppe bei erstem Fehler
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+
+    // Outcome-Record via test_harness_run
+    const conv = await this.deps.conventionsRepo.get(projectId, '');
+    const versionHash = conv?.contentHash || 'no-conventions';
+    const withConventions = !!conv?.content;
+    const runId = await this.deps.conventionsRepo.recordTestRun({
+      projectId,
+      conventionsVersionHash: versionHash,
+      canonicalTaskId: taskId,
+      stack: task.stack,
+      withConventions,
+      outcomePassed,
+      outcomeDetails: outputs.join('\n\n').slice(-5000),
+      durationMs,
+      costUsd: 0, // local execution, no LLM cost
+    });
+
+    this.deps.logger.info({ projectId, taskId, outcomePassed, durationMs, withConventions }, 'v836 canonical-task run complete');
+
+    return {
+      success: true,
+      data: {
+        runId,
+        taskId,
+        outcomePassed,
+        durationMs,
+        withConventions,
+        versionHash,
+        lastExitCode,
+        outputTail: outputs.join('\n\n').slice(-2000),
+      },
+    };
   }
 
   // ── mark_lesson_applied (Phase 2) ──────────────────────────────────────

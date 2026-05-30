@@ -5,6 +5,52 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.836] - 2026-05-30
+
+### Added — Test-Harness-Runner (v836, Punkt 2 — ALLE 9 PUNKTE FERTIG)
+
+Phase 4.6 Test-Harness war bisher nur Outcome-Recording-Action ohne
+Runner. Jetzt mit Canonical-Tasks + execution + auto-record.
+
+**Neue Datei `canonical-tasks.ts`:**
+- 4 vordefinierte Tasks: baseline-build, baseline-tests, baseline-lint,
+  baseline-typecheck
+- Per Task: id + stack + setup-commands + validate-commands + timeoutMs
+- Erweiterbar für stack-spezifische Tasks (Next.js add-route etc.)
+
+**Skill (2 neue Actions):**
+- `list_canonical_tasks` — Liste aller verfügbaren Tasks
+- `run_canonical_task` — Führt Task im project.cwd aus, validiert,
+  recordet via existing test_harness_run
+
+**Run-Workflow:**
+1. Setup-Commands sequenziell (optional)
+2. Validate-Commands sequenziell — alle müssen exitCode=0 zurückgeben
+3. Stop bei erstem Fehler
+4. Outcome-Record mit conventionsVersionHash (zur Pre/Post-Vergleich)
+5. Returns runId + outcomePassed + outputTail
+
+**Minimal-Implementation:** Nutzt project.cwd direkt (kein Sandbox-Spawn).
+Für volle Sandbox-Isolierung mit Template-Spawn kommt Phase 4.6-Polish
+in späterem Release.
+
+### ALLE 9 Punkte aus der Vervollständigungs-Roadmap (v830-v836) FERTIG
+
+| Punkt | Version | Inhalt |
+|---|---|---|
+| 1 | v830 | Phase 4.5 Embedding-Lookup-Wiring |
+| 3 | v830 | Phase 4.2 Auto-Violation-Trigger |
+| 5 | v831 | Default-Skill-Contributions (7 Patterns) |
+| 4 | v832 | Effectiveness-UI-Tab |
+| 7 | v832 | Cross-Project Patterns-UI-Tab |
+| 6 | v833 | Embedding-basiertes Pattern-Mining |
+| 8 | v834 | Per-Project Settings-Override |
+| 9 | v835 | Multi-Provider Quorum |
+| 2 | v836 | Test-Harness-Runner |
+
+Damit ist das gesamte Agent-Conventions-System Phase 1-4 + alle 9
+Vervollständigungs-Punkte komplett implementiert und end-to-end nutzbar.
+
 ## [0.19.0-multi-ha.835] - 2026-05-30
 
 ### Added — Multi-Provider Quorum für Agent-Conventions (v835, Punkt 9)
