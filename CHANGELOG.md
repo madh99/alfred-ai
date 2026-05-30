@@ -5,6 +5,28 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.822] - 2026-05-30
+
+### Fixed — Merge-Gate-Fehler-Anzeige unlesbar wegen ANSI-Escape-Codes (v822)
+
+User-Problem: Beim Click auf Merge zeigte die Fehler-Anzeige nach
+fehlgeschlagenem Merge-Gate einen Wall aus `0[2m0[22m0[2m...` (raw
+ANSI-Escape-Codes von vitest). Man konnte nicht erkennen welche Tests
+warum gefailed sind.
+
+**Backend (`sandbox-manager.ts`)**
+- Neue Helper `stripAnsi()` entfernt SGR-/Cursor-/Erase-Codes aus
+  Test-Output.
+- Neue Helper `summarizeTestFailure()` extrahiert eine strukturierte
+  Vitest-Summary:
+  - `📊 Test Files X failed | Y passed (Z)`
+  - `🧪 Tests X failed | Y passed`
+  - `⏱  Duration …`
+  - `❌ Fehlgeschlagene Test-Files:` Liste (max 25)
+  - `— Erster Fehler —` Snippet aus erstem AssertionError/FAIL
+- Fallback: stripped Tail wenn keine Vitest-Pattern erkannt werden.
+- Ersetzt das alte `.slice(-2500)` der Reason-Message.
+
 ## [0.19.0-multi-ha.821] - 2026-05-30
 
 ### Fixed — Agent-Bubble während finalizing/committing zeigte falschen Text (v821)

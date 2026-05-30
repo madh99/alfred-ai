@@ -840,10 +840,13 @@ export class SandboxManager {
         const gate = await this.runMergeGateTests(sb, sandboxId);
         if (!gate.ok) {
           await this.deps.repo.updateStatus(sandboxId, 'paused', gate.reason ?? 'merge-gate-tests-failed');
-          const tail = (gate.output || '').slice(-2500);
+          // v822 — ANSI-Codes strippen + strukturierte Vitest-Summary extrahieren damit
+          // die Error-Message lesbar ist (vorher: wall of \x1b[2m\x1b[22m\x1b... Müll).
+          const cleaned = stripAnsi(gate.output || '');
+          const summary = summarizeTestFailure(cleaned);
           return {
             ok: false,
-            reason: `Merge-Gate: Tests fehlgeschlagen. Sandbox bleibt paused — manuell debuggen oder verwerfen.\n\n${tail}`,
+            reason: `Merge-Gate: Tests fehlgeschlagen. Sandbox bleibt paused — manuell debuggen oder verwerfen.\n\n${summary}`,
           };
         }
         if (gate.skipped) {
@@ -1180,6 +1183,80 @@ const SECRET_PATTERNS: Array<{ name: string; re: RegExp }> = [
   { name: 'Private Key', re: /-----BEGIN (?:RSA |EC |DSA )?PRIVATE KEY-----/g },
   { name: 'JWT Token', re: /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g },
 ];
+
+/**
+ * v822 — Strippt ANSI-Escape-Sequenzen (Color/Cursor/SGR-Codes) aus Test-Output
+ * damit das Error-Message-Display lesbar ist statt ein Wall von \x1b[2m\x1b[22m...
+ * Pattern deckt SGR (Color/Style), Cursor-Moves und Erase-Codes ab.
+ */
+function stripAnsi(s: string): string {
+  if (!s) return '';
+  return s
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B\][^\x07]*\x07/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/\x1B[=>]/g, '');
+}
+
+/**
+ * v822 — Extrahiert eine strukturierte Vitest-Summary aus dem (bereits
+ * ANSI-stripped) Output: Failing-File-Liste + Test-Counts + Duration.
+ * Fallback: Tail des Outputs wenn keine Vitest-Pattern erkannt werden.
+ */
+function summarizeTestFailure(output: string): string {
+  if (!output) return '(kein Output)';
+  const lines = output.split(/\r?\n/);
+  const failingFiles: string[] = [];
+  let testFilesLine = '';
+  let testsLine = '';
+  let durationLine = '';
+
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Vitest "FAIL  src/path/file.test.ts" oder "❯ src/path/file.test.ts"
+    const failMatch = line.match(/^(?:FAIL|×|❯)\s+(\S+\.(?:test|spec)\.(?:[jt]sx?))/);
+    if (failMatch) {
+      if (!failingFiles.includes(failMatch[1])) failingFiles.push(failMatch[1]);
+      continue;
+    }
+    if (/^Test Files\s+\d/.test(line)) testFilesLine = line;
+    else if (/^Tests\s+\d/.test(line)) testsLine = line;
+    else if (/^Duration\s+\d/.test(line) || /^\s*Duration:?\s+\d/.test(line)) durationLine = line;
+  }
+
+  const parts: string[] = [];
+  if (testFilesLine) parts.push(`📊 ${testFilesLine}`);
+  if (testsLine) parts.push(`🧪 ${testsLine}`);
+  if (durationLine) parts.push(`⏱  ${durationLine}`);
+  if (failingFiles.length > 0) {
+    parts.push('');
+    parts.push(`❌ Fehlgeschlagene Test-Files (${failingFiles.length}):`);
+    for (const f of failingFiles.slice(0, 25)) parts.push(`  - ${f}`);
+    if (failingFiles.length > 25) parts.push(`  … +${failingFiles.length - 25} weitere`);
+  }
+
+  if (parts.length === 0) {
+    // Keine Vitest-Pattern erkannt → letzte 1500 chars rohen Output (ohne ANSI).
+    const tail = output.slice(-1500).trim();
+    return tail || '(kein Output)';
+  }
+
+  // Plus erste fehlerhafte Test-Diagnose-Stelle (Stack-Trace-Anfang) als Hilfe
+  const errorStart = output.search(/\b(AssertionError|Error|FAIL)\b/);
+  if (errorStart >= 0) {
+    const snippet = output.slice(errorStart, errorStart + 600).trim();
+    if (snippet) {
+      parts.push('');
+      parts.push('— Erster Fehler —');
+      parts.push(snippet);
+    }
+  }
+
+  return parts.join('\n');
+}
 
 function scanForSecrets(diff: string): string[] {
   if (!diff) return [];
