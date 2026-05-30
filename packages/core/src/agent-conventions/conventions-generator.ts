@@ -74,6 +74,16 @@ const SECTION_LABELS_EN: Record<ConventionsSection, string> = {
 };
 
 export class ConventionsGenerator {
+  /**
+   * v835 — Optional secondary LLM-Provider für Multi-Provider-Quorum (Phase 4.4 Upgrade).
+   * Wenn gesetzt: quorum-Modes nutzen unterschiedliche Provider statt N-mal denselben.
+   * Wird in alfred.ts gewired wenn config.llm Multi-Provider hat (anthropic + openai + mistral).
+   */
+  setExtraProviders(providers: LLMProvider[]): void {
+    this.extraProviders = providers;
+  }
+  private extraProviders: LLMProvider[] = [];
+
   constructor(
     private readonly llm: LLMProvider,
     private readonly logger: Logger,
@@ -98,16 +108,27 @@ export class ConventionsGenerator {
    * Kosten: N+1× single. Für Power-User mit hohen Qualitätsansprüchen.
    */
   private async generateQuorum(opts: GenerateOptions, warnings: string[], numCalls: number): Promise<GenerateOutput> {
-    const drafts: Array<{ markdown: string; costUsd: number }> = [];
+    const drafts: Array<{ markdown: string; costUsd: number; providerLabel: string }> = [];
     let totalCost = 0;
+
+    // v835 — Provider-Liste bauen: primary first, dann extras. Wenn nicht genug
+    // extras: füllen mit primary (= old N-times-same Verhalten als Fallback).
+    const providers: Array<{ llm: LLMProvider; label: string }> = [{ llm: this.llm, label: 'primary' }];
+    for (let i = 0; i < this.extraProviders.length; i++) {
+      providers.push({ llm: this.extraProviders[i], label: `extra-${i + 1}` });
+    }
+    while (providers.length < numCalls) providers.push({ llm: this.llm, label: `primary-dup-${providers.length}` });
+
+    const providersToUse = providers.slice(0, numCalls);
+    this.logger.info({ providers: providersToUse.map(p => p.label) }, 'v835 quorum providers selected');
+
     for (let i = 0; i < numCalls; i++) {
-      // Temperature variieren damit echte Diversität entsteht
-      const r = await this.generateSingle({ ...opts, tier: opts.tier }, warnings);
+      const r = await this.generateSingleWith(opts, warnings, providersToUse[i].llm, providersToUse[i].label);
       if (r.ok && r.markdown) {
-        drafts.push({ markdown: r.markdown, costUsd: r.costUsd });
+        drafts.push({ markdown: r.markdown, costUsd: r.costUsd, providerLabel: providersToUse[i].label });
         totalCost += r.costUsd;
       } else {
-        warnings.push(`quorum draft ${i + 1}/${numCalls} failed: ${r.reason ?? 'unknown'}`);
+        warnings.push(`quorum draft ${i + 1}/${numCalls} (${providersToUse[i].label}) failed: ${r.reason ?? 'unknown'}`);
       }
     }
     if (drafts.length === 0) {
@@ -155,13 +176,17 @@ export class ConventionsGenerator {
   }
 
   private async generateSingle(opts: GenerateOptions, warnings: string[]): Promise<GenerateOutput> {
+    return this.generateSingleWith(opts, warnings, this.llm, 'primary');
+  }
+
+  private async generateSingleWith(opts: GenerateOptions, warnings: string[], llm: LLMProvider, providerLabel: string): Promise<GenerateOutput> {
     const systemPrompt = this.buildSystemPrompt(opts.language);
     const userPrompt = this.buildUserPrompt(opts);
 
     let costUsd = 0;
     try {
       const startTime = Date.now();
-      const res = await this.llm.complete({
+      const res = await llm.complete({
         messages: [{ role: 'user', content: userPrompt }],
         system: systemPrompt,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,10 +202,11 @@ export class ConventionsGenerator {
         cwd: opts.cwd,
         tier: opts.tier,
         language: opts.language,
+        provider: providerLabel,
         durationMs,
         outputChars: res.content.length,
         costUsd,
-      }, 'v824 ConventionsGenerator LLM-call complete');
+      }, 'v824/v835 ConventionsGenerator LLM-call complete');
 
       const cleaned = this.extractMarkdown(res.content);
       if (!cleaned || cleaned.length < 50) {

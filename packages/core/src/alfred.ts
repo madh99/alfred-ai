@@ -3356,6 +3356,29 @@ export class Alfred {
           } else {
             const scanner = new RepoScanner(this.logger.child({ component: 'repo-scanner' }));
             const generator = new ConventionsGenerator(this.llmProvider, this.logger.child({ component: 'conventions-generator' }));
+            // v835 Phase 4.4 — Multi-Provider Quorum: weitere LLM-Provider durchreichen wenn config.llm.strong / fast verschiedene Anbieter sind
+            try {
+              const extras: import('@alfred/llm').LLMProvider[] = [];
+              const llmCfg = this.config.llm as Record<string, unknown> | undefined;
+              if (llmCfg && (llmCfg.strong || llmCfg.fast || llmCfg.embeddings)) {
+                const { createLLMProvider } = await import('@alfred/llm');
+                for (const tier of ['strong', 'fast', 'default'] as const) {
+                  const sub = llmCfg[tier] as Record<string, unknown> | undefined;
+                  if (sub && sub.provider && sub.provider !== (llmCfg.provider as string | undefined)) {
+                    try {
+                      const p = createLLMProvider(sub as never);
+                      extras.push(p);
+                    } catch { /* invalid sub-config */ }
+                  }
+                }
+              }
+              if (extras.length > 0) {
+                generator.setExtraProviders(extras);
+                this.logger.info({ count: extras.length }, 'v835 conventions multi-provider quorum: extra-providers wired');
+              }
+            } catch (err) {
+              this.logger.debug({ err }, 'v835 multi-provider wiring failed (non-fatal, quorum will use primary N-times)');
+            }
             const agentConvSkill = new AgentConventionsSkill({
               scanner,
               generator,

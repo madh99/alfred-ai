@@ -5,6 +5,46 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.835] - 2026-05-30
+
+### Added — Multi-Provider Quorum für Agent-Conventions (v835, Punkt 9)
+
+Phase 4.4 Quorum hatte bisher N parallele Calls beim gleichen Provider.
+Jetzt echte Multi-Provider-Diversität wenn `config.llm` Multi-Tier-Setup
+hat (z.B. anthropic primary + openai strong + mistral fast).
+
+**Changes:**
+- `ConventionsGenerator.setExtraProviders(LLMProvider[])` neue Methode
+- `generateSingleWith(opts, warnings, llm, label)` parametrisiert
+- `generateQuorum` baut Provider-Liste: primary + extras + Fallback-Fill
+  mit primary wenn nicht genug extras
+- Pro Draft wird Provider geloggt mit Label (primary/extra-1/...)
+- Judge-Call bleibt auf primary mit tier='strong'
+
+**alfred.ts Wiring:**
+- Liest `config.llm.strong`, `config.llm.fast`, `config.llm.default`
+- Bei verschiedenen `provider`-Werten: erzeugt extra-Provider-Instanzen
+  via createLLMProvider()
+- Übergibt sie an generator.setExtraProviders()
+
+**Aktivierung:** mit existierender Multi-Model-Routing-Config:
+```yaml
+llm:
+  default:
+    provider: anthropic
+    model: claude-sonnet-4-6
+  strong:
+    provider: openai
+    model: gpt-4o
+  fast:
+    provider: mistral
+    model: mistral-large-latest
+agentConventions:
+  generateMode: quorum-3
+```
+
+Damit echte Cross-Provider-Diversität für höchste Conventions-Qualität.
+
 ## [0.19.0-multi-ha.834] - 2026-05-30
 
 ### Added — Per-Project Agent-Conventions Settings-Override (v834, Punkt 8)
