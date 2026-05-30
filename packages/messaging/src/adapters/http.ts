@@ -731,6 +731,8 @@ export class HttpAdapter extends MessagingAdapter {
     conventionsEffectiveness?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsSectionHealth?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     conventionsGlobalPatterns?: () => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsGetConfigOverrides?: (projectId: string) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
+    conventionsSetConfigOverrides?: (projectId: string, overrides: Record<string, unknown>) => Promise<{ ok: boolean; data?: unknown; reason?: string }>;
     // v797 — Manueller Health-Check-Trigger statt 6h-Schedule warten
     triggerHealthCheck?: (projectId: string) => Promise<{ ok: boolean; probes?: Array<{ probe: string; status: string; details?: string }>; reason?: string }>;
   };
@@ -1258,6 +1260,10 @@ export class HttpAdapter extends MessagingAdapter {
       this.handleConventionsSectionHealth(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/conventions/patterns' && req.method === 'GET') {
       this.handleConventionsGlobalPatterns(req, res).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/config-overrides$/) && req.method === 'GET') {
+      this.handleConventionsGetConfigOverrides(req, res, url).catch(err => this.safeError(res, err));
+    } else if (url.pathname.match(/^\/api\/projects\/[^/]+\/conventions\/config-overrides$/) && req.method === 'PUT') {
+      this.handleConventionsSetConfigOverrides(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'GET') {
       this.handleSandboxTemplatesList(req, res, url).catch(err => this.safeError(res, err));
     } else if (url.pathname === '/api/sandbox-templates' && req.method === 'POST') {
@@ -4522,6 +4528,47 @@ export class HttpAdapter extends MessagingAdapter {
     try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
     try {
       const r = await this.projectsCallbacks.conventionsConsolidateLessons(projectId, opts.packagePath);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsGetConfigOverrides(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsGetConfigOverrides) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    try {
+      const r = await this.projectsCallbacks.conventionsGetConfigOverrides(projectId);
+      res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(r));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: (err as Error).message }));
+    }
+  }
+
+  private async handleConventionsSetConfigOverrides(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+    if (!(await this.checkAuth(req, res))) return;
+    if (!this.projectsCallbacks?.conventionsSetConfigOverrides) {
+      res.writeHead(501, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'Conventions not available' })); return;
+    }
+    const projectId = url.pathname.split('/')[3];
+    const body = await this.readBody(req);
+    let opts: { overrides?: Record<string, unknown> } = {};
+    try { opts = JSON.parse(body) as typeof opts; } catch { /* default */ }
+    if (!opts.overrides || typeof opts.overrides !== 'object') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, reason: 'overrides object required' })); return;
+    }
+    try {
+      const r = await this.projectsCallbacks.conventionsSetConfigOverrides(projectId, opts.overrides);
       res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(r));
     } catch (err) {

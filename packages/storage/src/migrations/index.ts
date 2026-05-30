@@ -2357,4 +2357,11 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_conv_testruns_proj ON convention_test_runs(project_id, ran_at DESC)`);
     },
   },
+  {
+    version: 100,
+    description: 'v834 — Per-Project Settings-Overrides für Agent-Conventions (Phase 3.x/Punkt 8).',
+    up(db) {
+      try { db.exec(`ALTER TABLE agent_conventions ADD COLUMN config_overrides TEXT NOT NULL DEFAULT '{}'`); } catch { /* exists */ }
+    },
+  },
 ];

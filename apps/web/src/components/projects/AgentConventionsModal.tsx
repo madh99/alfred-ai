@@ -26,7 +26,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Tab = 'view' | 'draft' | 'history' | 'lessons' | 'effectiveness' | 'patterns';
+type Tab = 'view' | 'draft' | 'history' | 'lessons' | 'effectiveness' | 'patterns' | 'settings';
 
 export function AgentConventionsModal({ client, projectId, projectName, open, onClose }: Props) {
   const [status, setStatus] = useState<AgentConventionsStatus | null>(null);
@@ -44,6 +44,9 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
   const [patterns, setPatterns] = useState<AgentConventionsPattern[]>([]);
   const [sectionHealth, setSectionHealth] = useState<AgentConventionsSectionHealth[]>([]);
   const [suggestedRemovals, setSuggestedRemovals] = useState<AgentConventionsSectionHealth[]>([]);
+  // v834 — Per-Project Settings Override
+  const [configOverrides, setConfigOverrides] = useState<{ global: Record<string, unknown>; overrides: Record<string, unknown>; effective: Record<string, unknown> } | null>(null);
+  const [overridesText, setOverridesText] = useState<string>('{}');
   const [tab, setTab] = useState<Tab>('view');
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +106,29 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
     }
   }, [client, projectId]);
 
+  const loadConfigOverrides = useCallback(async () => {
+    const r = await client.conventionsGetConfigOverrides(projectId);
+    if (r.ok && r.data) {
+      setConfigOverrides(r.data);
+      setOverridesText(JSON.stringify(r.data.overrides, null, 2));
+    }
+  }, [client, projectId]);
+
+  async function saveConfigOverrides() {
+    setBusy('save-overrides'); setError(null); setNotice(null);
+    try {
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(overridesText); } catch (err) { setError(`JSON-Parse: ${(err as Error).message}`); return; }
+      const r = await client.conventionsSetConfigOverrides(projectId, parsed);
+      if (r.ok) {
+        setNotice('✓ Per-Project-Overrides gespeichert');
+        await loadConfigOverrides();
+      } else {
+        setError(r.reason ?? 'Save failed');
+      }
+    } finally { setBusy(null); }
+  }
+
   useEffect(() => {
     if (open) {
       loadStatus();
@@ -111,8 +137,9 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
       loadEffectiveness();
       loadPatterns();
       loadSectionHealth();
+      loadConfigOverrides();
     }
-  }, [open, selectedPackagePath, loadStatus, loadHistory, loadLessons, loadEffectiveness, loadPatterns, loadSectionHealth]);
+  }, [open, selectedPackagePath, loadStatus, loadHistory, loadLessons, loadEffectiveness, loadPatterns, loadSectionHealth, loadConfigOverrides]);
 
   async function runGenerate() {
     setBusy('generate'); setError(null); setNotice(null);
@@ -288,6 +315,9 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
             {suggestedRemovals.length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200">⚠ {suggestedRemovals.length}</span>}
           </button>
           <button onClick={() => setTab('patterns')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'patterns' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>🌐 Cross-Project ({patterns.length})</button>
+          <button onClick={() => setTab('settings')} className={`px-4 py-2 border-r border-[#1f1f1f] ${tab === 'settings' ? 'bg-[#1a1a1a] text-gray-200' : 'text-gray-500 hover:bg-[#161616]'}`}>
+            ⚙️ Settings{configOverrides && Object.keys(configOverrides.overrides).length > 0 && <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-200">{Object.keys(configOverrides.overrides).length}</span>}
+          </button>
         </div>
 
         {/* Body */}
@@ -482,6 +512,49 @@ export function AgentConventionsModal({ client, projectId, projectName, open, on
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'settings' && (
+            <div>
+              <div className="mb-3 text-[11px] text-gray-500">
+                Per-Project Config-Overrides. Werden über die globale Config aus
+                <code className="text-cyan-400 mx-1">config/default.yml</code> gemerged.
+                Beispiel: in einem Projekt aggressiver auto-apply, in anderen off.
+                JSON-Format (subset von AgentConventionsConfig).
+              </div>
+              <div className="mb-2 text-[10px] text-gray-500">Beispiel:</div>
+              <pre className="text-[10px] bg-[#0d0d0d] border border-[#1f1f1f] rounded p-2 mb-3 text-gray-400">{`{
+  "autoApplyMode": "aggressive",
+  "generateTier": "default",
+  "language": "en"
+}`}</pre>
+              <textarea
+                value={overridesText}
+                onChange={e => setOverridesText(e.target.value)}
+                className="w-full h-[35vh] bg-[#0d0d0d] border border-[#1f1f1f] rounded p-3 font-mono text-[11px] text-gray-200"
+                spellCheck={false}
+              />
+              <div className="mt-3 flex justify-end gap-2">
+                <button
+                  onClick={() => { setOverridesText('{}'); }}
+                  disabled={busy !== null}
+                  className="px-3 py-1 text-xs text-gray-400 border border-gray-500/40 rounded hover:bg-gray-500/10"
+                >Reset zu {}</button>
+                <button
+                  onClick={saveConfigOverrides}
+                  disabled={busy !== null}
+                  className="px-3 py-1 text-xs bg-purple-500/20 border border-purple-500/40 text-purple-300 hover:bg-purple-500/30 rounded disabled:opacity-60"
+                >{busy === 'save-overrides' ? '⏳ Speichern …' : '💾 Speichern'}</button>
+              </div>
+              {configOverrides && (
+                <details className="mt-4">
+                  <summary className="text-[10px] text-gray-500 cursor-pointer">Effektive Config (global + overrides)</summary>
+                  <pre className="text-[10px] text-gray-400 bg-[#0d0d0d] border border-[#1f1f1f] rounded p-2 mt-1 overflow-auto">
+                    {JSON.stringify(configOverrides.effective, null, 2)}
+                  </pre>
+                </details>
               )}
             </div>
           )}

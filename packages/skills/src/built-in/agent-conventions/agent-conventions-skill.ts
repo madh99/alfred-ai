@@ -81,7 +81,7 @@ export interface SkillConventionsContribution {
 
 const exec = promisify(execFileCb);
 
-type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern' | 'record_violation' | 'section_health' | 'effectiveness_metrics' | 'self_modify' | 'test_harness_run';
+type Action = 'status' | 'detect' | 'generate' | 'apply' | 'refresh' | 'drift_check' | 'rollback' | 'history' | 'learn' | 'list_lessons' | 'consolidate_lessons' | 'mark_lesson_applied' | 'list_packages' | 'generate_all_packages' | 'mine_patterns' | 'list_patterns' | 'retire_pattern' | 'record_violation' | 'section_health' | 'effectiveness_metrics' | 'self_modify' | 'test_harness_run' | 'get_config_overrides' | 'set_config_overrides';
 
 interface SkillDeps {
   scanner: RepoScannerLike;
@@ -247,12 +247,43 @@ export class AgentConventionsSkill extends Skill {
         case 'effectiveness_metrics': return await this.handleEffectivenessMetrics(projectId);
         case 'self_modify': return await this.handleSelfModify(projectId, packagePath, input);
         case 'test_harness_run': return await this.handleTestHarnessRun(projectId, input);
+        case 'get_config_overrides': return await this.handleGetConfigOverrides(projectId, packagePath);
+        case 'set_config_overrides': return await this.handleSetConfigOverrides(projectId, packagePath, input);
         default: return { success: false, error: `Unknown action: ${action}` };
       }
     } catch (err) {
       this.deps.logger.warn({ err, action, projectId }, 'v824 AgentConventionsSkill.execute failed');
       return { success: false, error: (err as Error).message };
     }
+  }
+
+  /**
+   * v834 — Config-Resolution: globale Config + Project-spezifische Overrides mergen.
+   * Project-Overrides gewinnen. Wird intern statt direkter `this.deps.config()` benutzt
+   * (sobald wir Project-Kontext haben).
+   */
+  private async resolveConfigForProject(projectId: string, packagePath: string): Promise<AgentConventionsConfig> {
+    const global = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath).catch(() => null);
+    const overrides = conv?.configOverrides ?? {};
+    // Shallow merge — nested objects (selfModifyAgent etc.) komplett ersetzen wenn vorhanden
+    return { ...global, ...overrides };
+  }
+
+  // ── get/set config-overrides (Phase 3.x / Punkt 8) ────────────────────
+  private async handleGetConfigOverrides(projectId: string, packagePath: string): Promise<SkillResult> {
+    const conv = await this.deps.conventionsRepo.get(projectId, packagePath);
+    const global = { ...DEFAULT_CONFIG, ...this.deps.config() };
+    const overrides = conv?.configOverrides ?? {};
+    const effective = await this.resolveConfigForProject(projectId, packagePath);
+    return { success: true, data: { global, overrides, effective } };
+  }
+
+  private async handleSetConfigOverrides(projectId: string, packagePath: string, input: Record<string, unknown>): Promise<SkillResult> {
+    const overrides = input.overrides as Partial<AgentConventionsConfig> | undefined;
+    if (!overrides || typeof overrides !== 'object') return { success: false, error: 'overrides object required' };
+    await this.deps.conventionsRepo.setConfigOverrides(projectId, packagePath, overrides);
+    return { success: true, data: { overrides } };
   }
 
   // ── status ─────────────────────────────────────────────────────────────

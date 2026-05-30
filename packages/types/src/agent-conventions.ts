@@ -84,6 +84,8 @@ export interface AgentConventions {
   skillContributions: Record<string, { version: number; includedAt: string }>;
   language: ConventionsLanguage;
   inheritsFrom: string | null;
+  /** v834 — Per-Project-Config-Overrides (subset of AgentConventionsConfig). */
+  configOverrides: Partial<AgentConventionsConfig>;
   createdAt: string;
   updatedAt: string;
 }

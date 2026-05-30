@@ -879,6 +879,21 @@ export class AlfredClient {
     if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
     return data;
   }
+  async conventionsGetConfigOverrides(projectId: string): Promise<{ ok: boolean; data?: { global: Record<string, unknown>; overrides: Record<string, unknown>; effective: Record<string, unknown> }; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/config-overrides`, { headers: this.authHeaders });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
+  async conventionsSetConfigOverrides(projectId: string, overrides: Record<string, unknown>): Promise<{ ok: boolean; reason?: string }> {
+    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/config-overrides`, {
+      method: 'PUT', headers: { ...this.authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ overrides }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: data.reason ?? `http-${res.status}` };
+    return data;
+  }
   async conventionsSectionHealth(projectId: string): Promise<{ ok: boolean; data?: { stats: AgentConventionsSectionHealth[]; suggestedRemoval: AgentConventionsSectionHealth[] }; reason?: string }> {
     const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/conventions/section-health`, { headers: this.authHeaders });
     const data = await res.json().catch(() => ({}));

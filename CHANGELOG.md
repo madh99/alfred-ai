@@ -5,6 +5,34 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.834] - 2026-05-30
+
+### Added — Per-Project Agent-Conventions Settings-Override (v834, Punkt 8)
+
+Pro Projekt eigene Settings (z.B. aggressive autoApplyMode für ein
+spezielles Projekt, off für alle anderen).
+
+**DB-Migration:**
+- SQLite v100 / PG v104: `agent_conventions.config_overrides TEXT DEFAULT '{}'`
+- ADD-only Column, kein Breaking Change
+
+**Skill-Actions (2 neu):**
+- `get_config_overrides` — Returns { global, overrides, effective }
+- `set_config_overrides` — Speichert JSON-Overrides
+
+**Config-Resolution:** `resolveConfigForProject(projectId, packagePath)`
+mergt globale Config + per-Project-Overrides. Overrides gewinnen.
+
+**HTTP-Endpoints (2 neu):**
+- GET  /api/projects/:id/conventions/config-overrides
+- PUT  /api/projects/:id/conventions/config-overrides
+
+**UI:** Neuer Tab "⚙️ Settings" im AgentConventionsModal:
+- JSON-Editor mit Beispiel-Template
+- Save-Button + Reset-zu-{}
+- "Effektive Config"-Expander zeigt Merge-Resultat
+- Tab-Badge mit Anzahl active overrides (purple)
+
 ## [0.19.0-multi-ha.833] - 2026-05-30
 
 ### Added — Embedding-basiertes Pattern-Mining (v833, Punkt 6)

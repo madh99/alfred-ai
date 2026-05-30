@@ -8898,6 +8898,18 @@ Bitte korrigiere den Fehler und implementiere die Aufgabe nochmal. Falls die Auf
             const r = await this.agentConventionsSkillRef.execute({ action: 'list_patterns', project_id: 'system', master_user_id: uid }, ctx);
             return { ok: !!r.success, data: r.data, reason: r.error };
           },
+          conventionsGetConfigOverrides: async (projectId: string) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'get_config_overrides', project_id: projectId }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
+          conventionsSetConfigOverrides: async (projectId: string, overrides: Record<string, unknown>) => {
+            if (!this.agentConventionsSkillRef) return { ok: false, reason: 'agent-conventions skill not initialized' };
+            const ctx = { userId: '', masterUserId: '', chatId: '', platform: 'api', conversationId: '' } as unknown as import('@alfred/types').SkillContext;
+            const r = await this.agentConventionsSkillRef.execute({ action: 'set_config_overrides', project_id: projectId, overrides }, ctx);
+            return { ok: !!r.success, data: r.data, reason: r.error };
+          },
           // v797 — Manueller Health-Check (statt 6h-Schedule warten)
           triggerHealthCheck: async (projectId: string) => {
             if (!this.projectHealthMonitor) {

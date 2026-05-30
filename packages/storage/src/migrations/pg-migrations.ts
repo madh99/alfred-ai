@@ -1675,4 +1675,11 @@ export const PG_MIGRATIONS: PgMigration[] = [
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_conv_testruns_proj ON convention_test_runs(project_id, ran_at DESC)`, []);
     },
   },
+  {
+    version: 104,
+    description: 'v834 — Per-Project Settings-Overrides für Agent-Conventions (PG-Spiegel zu SQLite v100).',
+    async up(db) {
+      try { await db.execute(`ALTER TABLE agent_conventions ADD COLUMN config_overrides TEXT NOT NULL DEFAULT '{}'`, []); } catch { /* exists */ }
+    },
+  },
 ];

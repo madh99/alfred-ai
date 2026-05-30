@@ -63,6 +63,7 @@ function rowToConventions(r: DbRow): AgentConventions {
     skillContributions: parseJson<Record<string, { version: number; includedAt: string }>>(r.skill_contributions, {}),
     language: ((r.language as string) ?? 'de') as ConventionsLanguage,
     inheritsFrom: (r.inherits_from as string | null) ?? null,
+    configOverrides: parseJson<Partial<import('@alfred/types').AgentConventionsConfig>>(r.config_overrides, {}),
     createdAt: r.created_at as string,
     updatedAt: r.updated_at as string,
   };
@@ -240,6 +241,20 @@ export class AgentConventionsRepository {
         opts.inheritsFrom ?? null,
         now, now,
       ],
+    );
+  }
+
+  /** v834 — Per-Project-Config-Overrides setzen. */
+  async setConfigOverrides(projectId: string, packagePath: string, overrides: Partial<import('@alfred/types').AgentConventionsConfig>): Promise<void> {
+    const now = new Date().toISOString();
+    // Ensure row exists
+    const existing = await this.get(projectId, packagePath);
+    if (!existing) {
+      await this.upsert({ projectId, packagePath, generatedBy: 'manual' });
+    }
+    await this.db.execute(
+      `UPDATE agent_conventions SET config_overrides = ?, updated_at = ? WHERE project_id = ? AND package_path = ?`,
+      [JSON.stringify(overrides), now, projectId, packagePath],
     );
   }
 
