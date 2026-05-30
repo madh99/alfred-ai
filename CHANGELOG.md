@@ -5,6 +5,27 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.833] - 2026-05-30
+
+### Added — Embedding-basiertes Pattern-Mining (v833, Punkt 6)
+
+Phase 3.3 Pattern-Mining war bisher Jaccard auf bag-of-words. Jetzt
+embedding-basiertes Clustering wenn `llmProvider.supportsEmbeddings()`.
+
+**Changes:**
+- `SkillDeps.embed?: (text: string) => Promise<number[] | null>` neu
+- Wenn embed gesetzt: Cosine-Similarity ≥ 0.78 für Cluster-Match
+- Centroid wird laufend als gewichteter Durchschnitt aktualisiert
+- Wenn kein embed verfügbar: Fallback zu Jaccard (≥ 0.45)
+- alfred.ts wired automatisch wenn llmProvider Embeddings supportet
+
+**Vorteil:** Semantisch ähnliche aber lexikalisch verschiedene Lessons
+werden jetzt korrekt geclustert. Beispiel:
+- "Migration ohne setup.ts → Tests fail"
+- "Vergessen die Test-DB-Schema-Datei zu pflegen → no such table"
+Jaccard hätte ~0.2 Similarity gegeben → 2 separate Cluster.
+Embedding gibt ~0.85 → 1 Pattern.
+
 ## [0.19.0-multi-ha.832] - 2026-05-30
 
 ### Added — Agent-Conventions Effectiveness + Patterns + Section-Health UI (v832, Punkte 4+7)

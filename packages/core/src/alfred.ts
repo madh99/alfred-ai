@@ -3376,6 +3376,17 @@ export class Alfred {
                   return projs.filter(p => p.cwd).map(p => ({ id: p.id, userId: p.userId, cwd: p.cwd! }));
                 } catch { return []; }
               },
+              // v833 Phase 4.5-Upgrade — Embedding für Pattern-Mining (Embedding-basierte
+              // Cluster statt Jaccard). Wenn llmProvider keine embeddings supportet:
+              // Fallback zu Jaccard.
+              embed: this.llmProvider?.supportsEmbeddings?.()
+                ? async (text: string): Promise<number[] | null> => {
+                    try {
+                      const r = await this.llmProvider!.embed(text);
+                      return r?.embedding ?? null;
+                    } catch { return null; }
+                  }
+                : undefined,
             });
             this.agentConventionsSkillRef = agentConvSkill;
             skillRegistry.register(agentConvSkill);

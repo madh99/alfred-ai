@@ -95,6 +95,9 @@ interface SkillDeps {
   /** Phase 3.3 — Lookup aller Projekte eines Master-Users für Cross-Project Pattern-Mining.
    *  Optional. Wenn nicht gesetzt: Pattern-Mining returns 0 patterns. */
   listProjectsForUser?: (masterUserId: string) => Promise<Array<{ id: string; userId: string; cwd: string }>>;
+  /** v833 Phase 4.5-Upgrade — Optional Embedding-Service für Pattern-Mining + Lesson-Injection.
+   *  Wenn gesetzt: Pattern-Mining nutzt Cosine-Similarity statt Jaccard. */
+  embed?: (text: string) => Promise<number[] | null>;
 }
 
 const DEFAULT_CONFIG: AgentConventionsConfig = {
@@ -940,7 +943,19 @@ export class AgentConventionsSkill extends Skill {
       return { success: true, data: { lessonsAnalyzed: 0, patternsCreated: 0, patternsUpdated: 0 } };
     }
 
-    // Simple Jaccard-Cluster: tokenisiere zu lowercase word-set, ignore stopwords
+    // v833 — Embedding-basiertes Clustering wenn Service verfügbar, sonst Jaccard-Fallback
+    type Cluster = { lessons: typeof allLessons; centroid: number[] | null; tokenUnion: Set<string> };
+    const clusters: Cluster[] = [];
+    const SIMILARITY_THRESHOLD_EMBED = 0.78;
+    const SIMILARITY_THRESHOLD_JACCARD = 0.45;
+
+    const cosine = (a: number[], b: number[]): number => {
+      let dot = 0, magA = 0, magB = 0;
+      for (let i = 0; i < a.length; i++) { dot += a[i] * b[i]; magA += a[i] * a[i]; magB += b[i] * b[i]; }
+      const denom = Math.sqrt(magA) * Math.sqrt(magB);
+      return denom === 0 ? 0 : dot / denom;
+    };
+
     const stopwords = new Set(['der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'in', 'auf', 'mit', 'für', 'zu', 'von', 'the', 'a', 'an', 'and', 'or', 'in', 'on', 'with', 'for', 'to', 'of', 'is', 'are', 'was', 'were', 'ist', 'sind']);
     const tokenize = (s: string): Set<string> => {
       const tokens = s.toLowerCase().match(/[a-zA-Z_][\w./-]{2,}/g) ?? [];
@@ -951,24 +966,48 @@ export class AgentConventionsSkill extends Skill {
       const union = new Set([...a, ...b]).size;
       return union === 0 ? 0 : intersect / union;
     };
-    const SIMILARITY_THRESHOLD = 0.45;
 
-    type Cluster = { lessons: typeof allLessons; tokenUnion: Set<string> };
-    const clusters: Cluster[] = [];
+    const useEmbeddings = !!this.deps.embed;
+    if (useEmbeddings) this.deps.logger.info({ count: allLessons.length }, 'v833 pattern-mining: embedding-mode');
+
     for (const lesson of allLessons) {
+      let lessonEmb: number[] | null = null;
       const lessonTokens = tokenize(lesson.text);
-      if (lessonTokens.size < 3) continue;
+      if (useEmbeddings) {
+        lessonEmb = await this.deps.embed!(lesson.text.slice(0, 800)).catch(() => null);
+      }
+      if (!useEmbeddings && lessonTokens.size < 3) continue;
       let assigned = false;
       for (const cluster of clusters) {
-        if (jaccard(lessonTokens, cluster.tokenUnion) >= SIMILARITY_THRESHOLD) {
-          cluster.lessons.push(lesson);
-          for (const t of lessonTokens) cluster.tokenUnion.add(t);
-          assigned = true;
-          break;
+        let sim = 0;
+        if (useEmbeddings && lessonEmb && cluster.centroid) {
+          sim = cosine(lessonEmb, cluster.centroid);
+          if (sim >= SIMILARITY_THRESHOLD_EMBED) {
+            cluster.lessons.push(lesson);
+            // Centroid-Update (laufender Durchschnitt)
+            const n = cluster.lessons.length;
+            for (let i = 0; i < cluster.centroid.length; i++) {
+              cluster.centroid[i] = (cluster.centroid[i] * (n - 1) + lessonEmb[i]) / n;
+            }
+            assigned = true;
+            break;
+          }
+        } else {
+          sim = jaccard(lessonTokens, cluster.tokenUnion);
+          if (sim >= SIMILARITY_THRESHOLD_JACCARD) {
+            cluster.lessons.push(lesson);
+            for (const t of lessonTokens) cluster.tokenUnion.add(t);
+            assigned = true;
+            break;
+          }
         }
       }
       if (!assigned) {
-        clusters.push({ lessons: [lesson], tokenUnion: new Set(lessonTokens) });
+        clusters.push({
+          lessons: [lesson],
+          centroid: lessonEmb,
+          tokenUnion: new Set(lessonTokens),
+        });
       }
     }
 
