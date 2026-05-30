@@ -972,6 +972,31 @@ export interface SandboxConfig {
   pnpmStorePath?: string | null;
   /** v726 — Pfad in dem Upload-DB-Seeds gespeichert werden. Default '/var/alfred/db-seeds'. */
   uploadSeedsPath?: string;
+  /**
+   * v837 — Container-RAM-Limit in MB. Default 6144 (6 GB).
+   * Vorher hardcoded 2048 → tsc/vitest auf großen Monorepos OOM-crashen.
+   * Trade-off: höhere Defaults = mehr Host-RAM-Verbrauch pro Sandbox (deshalb
+   * `maxConcurrentSandboxes` mit beachten).
+   */
+  memoryMb?: number;
+  /** v837 — Container-CPU-Limit. Default 2. */
+  cpus?: number;
+  /**
+   * v837 — `NODE_OPTIONS=--max-old-space-size=<N>` im Container setzen damit Node
+   * den verfügbaren RAM auch nutzt (sonst Default ~1.4 GB unabhängig vom Container-Limit).
+   * Default: 67% von memoryMb. NULL um zu deaktivieren.
+   */
+  nodeMaxOldSpaceSizeMb?: number;
+  /**
+   * v837 — Merge-Gate-Tests im Container ausführen statt auf Host (eliminiert die
+   * Container-vs-Host-Environment-Asymmetrie die zum setup.ts-Bug geführt hat).
+   * Default true (= Container wenn vorhanden).
+   */
+  mergeGateRunInContainer?: boolean;
+  /** v815 — Stuck-Threshold-Minuten für Auto-Cleanup. Default 10. */
+  stuckThresholdMinutes?: number;
+  /** v815 — Stuck-Cleanup-Interval-Minuten. Default 5. */
+  stuckCleanupIntervalMinutes?: number;
 }
 
 export interface MqttConfig {

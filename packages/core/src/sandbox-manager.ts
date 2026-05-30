@@ -21,6 +21,7 @@ import {
   ensureImage,
   getContainerStatus,
   getContainerStats,
+  runContainerCommand,
 } from './sandbox/docker.js';
 
 const execFileAsync = promisify(execFile);
@@ -368,10 +369,17 @@ export class SandboxManager {
       const fullCmd = `${installCmd} && ${rebuildCmd} && exec ${devCmd}`;
 
       // v726 — Project-ENVs + Default-ENVs zusammenführen. Defaults dürfen NICHT von Project überschrieben werden? Doch — Project hat Vorrang (user-controlled).
+      // v837 — Resource-Limits + NODE_OPTIONS aus Config. Hardcoded 2GB war zu wenig
+      // für tsc/vitest auf größeren Monorepos (V8 SIGABRT bei ~1.4GB Heap-Default).
+      const memoryMb = this.deps.config.memoryMb ?? 6144;
+      const cpus = this.deps.config.cpus ?? 2;
+      const nodeHeapMb = this.deps.config.nodeMaxOldSpaceSizeMb ?? Math.floor(memoryMb * 0.67);
       const containerEnvs: Record<string, string> = {
         CI: '',
         NODE_ENV: 'development',
         ALFRED_DATA_DIR: '/workspace/.alfred-data',
+        // v837 — Node V8 Heap explizit setzen. Sonst Default ~1.4GB egal wie groß der Container ist.
+        NODE_OPTIONS: `--max-old-space-size=${nodeHeapMb}`,
         ...projectEnvs,
       };
 
@@ -382,12 +390,13 @@ export class SandboxManager {
         binds,
         envVars: containerEnvs,
         ports: [[hostPort, detection.internalPort]],
-        memoryMb: 2048,
-        cpus: 2,
+        memoryMb,
+        cpus,
         command: ['sh', '-c', `"${fullCmd}"`],
         restartPolicy: 'no',
         logger: this.deps.logger,
       });
+      this.deps.logger.info({ sandboxId, memoryMb, cpus, nodeHeapMb }, 'v837 sandbox container resource-limits set');
 
       await this.deps.repo.setContainerInfo(sandboxId, containerId, hostPort);
       await this.deps.repo.updateStatus(sandboxId, 'creating', `installing-deps: ${installCmd} läuft, danach dev-server (port ${detection.internalPort})`);
@@ -692,6 +701,26 @@ export class SandboxManager {
       }, 30_000);
     }
     try {
+      // v837 — Merge-Gate via Container-Exec wenn Container existiert und Config erlaubt.
+      // Eliminiert die Container-vs-Host-Environment-Asymmetrie (war Ursache des
+      // alpbyte-games setup.ts-Bugs). Container ist hier noch laufend (wurde nicht
+      // gestoppt vor merge-gate, siehe merge()-Änderung). Vorteil: gleiche env, gleiche
+      // native modules (musl), gleiche .env.local wie Per-Phase-Tests.
+      const useContainer = (this.deps.config.mergeGateRunInContainer ?? true) && !!sb.containerId;
+      if (useContainer && sb.containerId) {
+        this.deps.logger.info({ sandboxId: sb.id, containerId: sb.containerId }, 'v837 merge-gate: running npm test in container (eliminates env-asymmetry)');
+        // Container könnte gestoppt sein → erst starten falls nötig
+        try { await startContainer(sb.containerId); } catch { /* may already be running */ }
+        const r = await runContainerCommand(sb.containerId, 'npm test', { cwd: '/workspace', timeoutMs: 10 * 60_000 });
+        const combined = `$ npm test (in container, exit ${r.exitCode}, ${r.durationMs}ms)\n${r.stderr}\n${r.stdout}`;
+        return {
+          ok: r.exitCode === 0,
+          output: combined,
+          reason: r.exitCode === 0 ? undefined : 'merge-gate-tests-failed',
+        };
+      }
+      // Fallback: Host-Mode (klassische Runs ohne Container, oder Config-Opt-Out)
+      this.deps.logger.info({ sandboxId: sb.id, runAsUser }, 'v813b merge-gate: running npm rebuild + npm test on HOST (no container or mergeGateRunInContainer=false)');
       // 10min Test-Timeout — typischer Next.js-Test-Suite-Run liegt drunter; bei
       // Überschreitung gilt: zu langsam = ablehnen, User debuggt manuell.
       const result = await validateBuild(sb.worktreePath, [packageManagerInstall], ['npm test'], 10 * 60_000, runAsUser);
@@ -799,10 +828,16 @@ export class SandboxManager {
     // das als Heartbeat (wenn >90s ohne Update → "hängt-Warnung").
     await this.deps.repo.updateStatus(sandboxId, 'merging', `step:init · strategy=${opts.strategy}`);
 
+    // v837 — Wann den Container stoppen: bei Container-Merge-Gate-Mode ERST nach Tests
+    // (sonst kein docker exec möglich), bei Host-Mode wie bisher früh (Lock-Konflikte
+    // vermeiden bei git push).
+    const useContainerForGate = (this.deps.config.mergeGateRunInContainer ?? true) && !!sb.containerId;
+
     try {
-      // (1) Container stoppen vor git operations (Lock-Konflikte vermeiden)
-      await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:container-stop');
-      if (sb.containerId) {
+      // (1) Container stoppen vor git operations — nur im HOST-Mode früh.
+      // Im Container-Mode wird das nach den Merge-Gate-Tests gemacht.
+      await this.deps.repo.updateStatus(sandboxId, 'merging', useContainerForGate ? 'step:keep-container-running' : 'step:container-stop');
+      if (sb.containerId && !useContainerForGate) {
         try { await stopContainer(sb.containerId, 5); } catch { /* ignore */ }
       }
 
@@ -881,6 +916,13 @@ export class SandboxManager {
         this.deps.logger.error({ err, sandboxId }, 'v815 merge-gate threw — aborting merge');
         await this.deps.repo.updateStatus(sandboxId, 'paused', `merge-gate-exception: ${msg.slice(0, 100)}`);
         return { ok: false, reason: `Merge-Gate-Exception: ${msg.slice(0, 200)}\nSandbox bleibt paused. Manuell debuggen oder Merge erneut versuchen.` };
+      }
+
+      // v837 — Container-Stop nach Merge-Gate-Pass (nur im Container-Mode). Lock-Konflikt
+      // vermeiden bevor git push läuft. Im Host-Mode wurde der Container schon in (1) gestoppt.
+      if (useContainerForGate && sb.containerId) {
+        await this.deps.repo.updateStatus(sandboxId, 'merging', 'step:container-stop-after-gate');
+        try { await stopContainer(sb.containerId, 5); } catch { /* */ }
       }
 
       // (4) Strategy

@@ -5,6 +5,66 @@ Format basiert auf [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0-multi-ha.837] - 2026-05-30
+
+### Fixed — Sandbox-Container OOM-Crashes + Merge-Gate Environment-Asymmetrie (v837)
+
+User-Problem: tsc/vitest in Sandbox crashen mit `exit 134` (V8 SIGABRT,
+`Runtime_AllocateInYoungGeneration`). Heap-OOM während TS-Compilation.
+Plus: Merge-Gate-Tests laufen in anderem Environment als Per-Phase-Tests,
+was vorher zum alpbyte-games `setup.ts`-Bug geführt hat.
+
+**Root-Cause-Analyse:**
+
+Zwei orthogonale Probleme die sich überlagern:
+
+1. **Container hatte hardcoded 2GB RAM** (seit v697). Plus Node-V8-Heap
+   defaultet im 2GB-Container auf ~1.4GB. tsc auf größerem Monorepo
+   braucht 2-4GB Heap → V8 gibt auf bevor Container-OOM-Killer greift.
+2. **v816 hat Per-Phase-Tests in Container migriert** (richtig wegen
+   ABI-Konflikt musl/glibc), aber Merge-Gate blieb auf Host mit
+   anderem Environment → "Per-Phase grün, Merge-Gate rot"-Asymmetrie.
+
+**Lösung — alle 4 Schichten:**
+
+**Schicht 1: Container-RAM konfigurierbar + Default erhöht**
+- `SandboxConfig.memoryMb` neu (Default 6144 / 6 GB statt 2 GB hardcoded)
+- `SandboxConfig.cpus` neu (Default 2)
+- Zod-Schema + Type erweitert
+
+**Schicht 2: Node V8 Heap explizit gesetzt**
+- `SandboxConfig.nodeMaxOldSpaceSizeMb` neu (Default = 67% von memoryMb)
+- `NODE_OPTIONS=--max-old-space-size=<N>` im Container-Env gesetzt
+- Verhindert dass Node bei 1.4GB schon SIGABRT macht obwohl Container
+  noch 4GB frei hat
+
+**Schicht 3: Merge-Gate-Container-Mode**
+- `SandboxConfig.mergeGateRunInContainer` neu (Default true)
+- Wenn Container existiert: Merge-Gate-Tests via `docker exec` statt
+  auf Host → gleiche env-vars, gleiche .env.local, gleiche native
+  modules (musl)
+- Container wird NICHT mehr vor Merge-Gate gestoppt, sondern erst
+  danach (vor git-operations)
+- Host-Mode bleibt als Fallback wenn kein Container oder Config opt-out
+- Eliminiert die env-Asymmetrie die zum setup.ts-Bug führte
+
+**Schicht 4: Dockerfile-Build-Tools verifiziert**
+- `python3 + make + g++ + libstdc++` bereits in Dockerfile.node-22 → OK
+- Kein Image-Rebuild nötig
+
+**Aktivierung:** Config-Defaults greifen automatisch — keine Aktion nötig
+es sei denn explizite Override gewünscht.
+
+**Trade-off:** Höherer Default-RAM (6GB statt 2GB) bedeutet bei vielen
+parallelen Sandboxen mehr Host-RAM-Verbrauch. Bei .92/.93 mit 32GB:
+- 4 parallele Sandboxen × 6GB = 24GB → OK
+- Wer mehr braucht: `memoryMb: 4096` + `nodeMaxOldSpaceSizeMb: 2700`
+
+**Antwort auf "war v816 falsch?":** Die Kern-Entscheidung war richtig
+(ABI-Konflikt zwingt zu Container-Tests). Was fehlte war (a) RAM-Limit-
+Anpassung, (b) konsistente Migration auch des Merge-Gates in Container.
+v837 korrigiert genau diese Versäumnisse — v816's Architektur bleibt.
+
 ## [0.19.0-multi-ha.836] - 2026-05-30
 
 ### Added — Test-Harness-Runner (v836, Punkt 2 — ALLE 9 PUNKTE FERTIG)

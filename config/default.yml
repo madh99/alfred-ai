@@ -62,6 +62,21 @@ security:
   rulesPath: ./config/rules
   defaultEffect: deny
 
+# v837 — Sandbox-Container-Resources. Defaults sind großzügig damit tsc/vitest
+# auf großen Monorepos nicht OOM-crashen. Bei knappem Host-RAM reduzieren +
+# maxConcurrentSandboxes setzen.
+#
+# sandbox:
+#   memoryMb: 6144                # Container-RAM-Limit (Default 6144 / 6 GB)
+#   cpus: 2                       # Container-CPU-Limit (Default 2)
+#   nodeMaxOldSpaceSizeMb: 4096   # NODE_OPTIONS=--max-old-space-size=4096
+#                                  # Default = 67% von memoryMb. Verhindert
+#                                  # V8-SIGABRT bei großem tsc-Compile.
+#   mergeGateRunInContainer: true  # Merge-Gate-Tests im Container statt Host
+#                                  # (eliminiert env-asymmetrie). Default true.
+#   stuckThresholdMinutes: 10
+#   stuckCleanupIntervalMinutes: 5
+
 # v823-v828 — Agent-Conventions (CLAUDE.md/AGENTS.md Verwaltung für Coding-Agents).
 # Opt-in. Wenn nicht gesetzt: kein Effekt. Aktiviere agentConventions.enabled für
 # das gesamte Feature, danach pro Sub-Feature einzeln.

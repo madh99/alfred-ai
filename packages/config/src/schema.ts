@@ -662,6 +662,13 @@ export const SandboxConfigSchema = z.object({
   containerImage: z.string().optional(),
   pnpmStorePath: z.string().nullable().optional(),
   uploadSeedsPath: z.string().optional(),
+  // v837 — Container-Resource-Limits + Node-Heap-Tuning + Merge-Gate-Container-Mode
+  memoryMb: z.coerce.number().int().positive().optional(),
+  cpus: z.coerce.number().positive().optional(),
+  nodeMaxOldSpaceSizeMb: z.coerce.number().int().positive().optional(),
+  mergeGateRunInContainer: z.coerce.boolean().optional(),
+  stuckThresholdMinutes: z.coerce.number().int().positive().optional(),
+  stuckCleanupIntervalMinutes: z.coerce.number().int().positive().optional(),
 });
 
 export const MqttConfigSchema = z.object({
